@@ -5,7 +5,6 @@ use bun_lint::regex::{Mode, Options as RegexOptions, parse_pattern};
 use bun_lint::types::utils::get_constrained_type_at_location;
 use bun_lint::types::{NameOf, SyntaxKind, TsNode};
 use bun_lint::utils::eslint_utils::get_static_value;
-use bun_lint::utils::text::push_code_point;
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 use std::borrow::Cow;
 
@@ -138,29 +137,12 @@ fn parse_reg_exp(node: Expr) -> Option<Vec<u8>> {
         return None;
     };
     let mut text = Vec::with_capacity(elements.len());
-    // Without the `u` flag a character outside the BMP is two.
-    let mut lead: Option<u32> = None;
     for element in elements {
         let RegexKind::Character { value } = element.kind() else {
             return None;
         };
-        match (lead.take(), value) {
-            (Some(lead), 0xDC00..=0xDFFF) => {
-                push_code_point(&mut text, 0x10000 + ((lead - 0xD800) << 10) + (value - 0xDC00));
-            }
-            (alone, _) => {
-                if let Some(alone) = alone {
-                    push_code_point(&mut text, alone);
-                }
-                match value {
-                    0xD800..=0xDBFF => lead = Some(value),
-                    _ => push_code_point(&mut text, value),
-                }
-            }
-        }
-    }
-    if let Some(alone) = lead {
-        push_code_point(&mut text, alone);
+        // Without the `u` flag a character outside the BMP is two.
+        strings::push_codepoint_wtf8_joined(&mut text, value);
     }
     Some(text)
 }

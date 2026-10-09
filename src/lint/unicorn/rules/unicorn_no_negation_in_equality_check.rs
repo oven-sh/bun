@@ -35,13 +35,17 @@ impl Rule for NoNegationInEqualityCheck {
                 _ => BinOp::EqEqEq,
             });
             let data = [("suggested_operator", suggested_operator.as_bytes()), ("current_operator", bin_op_text(op).as_bytes())];
-            cx.report(left, NO_NEGATION_IN_EQUALITY_CHECK).suggest_with(REMOVE_NEGATION, &data, |fixer| {
+            let report = cx
+                .report(left, NO_NEGATION_IN_EQUALITY_CHECK)
+                .data("suggested_operator", suggested_operator)
+                .data("current_operator", bin_op_text(op));
+            report.suggest_with(REMOVE_NEGATION, &data, |fixer| {
                 let file = fixer.file();
                 let argument_text = file.slice(argument.outer_span());
                 let before = file.text().get(..left.span().start as usize).unwrap_or_default();
                 let prefix = if matches!(argument_text.first(), Some(b'(' | b'[')) && could_be_asi_hazard(e) {
                     ";"
-                } else if text::last_code_point(before).is_some_and(text::is_identifier_start) {
+                } else if text::last_code_point(before).is_some_and(bun_core::lexer::is_identifier_start) {
                     // `return!foo` is `return foo`.
                     " "
                 } else {

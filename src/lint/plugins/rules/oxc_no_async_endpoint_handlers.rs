@@ -82,6 +82,16 @@ impl NoAsyncEndpointHandlers {
             Some(endpoint) => cx.report(Span::new(start, start + 5), NO_ASYNC_HANDLERS_FOR).data("endpoint", endpoint),
             None => cx.report(Span::new(start, start + 5), NO_ASYNC_HANDLERS),
         };
+        let report = report.labels_with(|labels| {
+            let name = handler.name().map(|it| format!(" '{}'", bstr::BStr::new(it.name().bytes())));
+            let name = name.unwrap_or_default();
+            let Some(registered_at) = registered_at else {
+                return labels.first(format!("Async handler{name} is used here"));
+            };
+            let route = endpoint.map(|it| format!(" for route `{}`", bstr::BStr::new(it.bytes()))).unwrap_or_default();
+            labels.first(format!("Async handler{name} is declared here"));
+            labels.push(registered_at, format!("and is registered here{route}"));
+        });
         if let Some(registered_at) = registered_at {
             report.comments_apply_at(registered_at);
         }

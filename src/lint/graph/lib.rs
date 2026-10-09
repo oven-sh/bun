@@ -21,15 +21,15 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
-    Declaration, Flavor, Import, MakeRecord, ModuleId, Modules, Record, Request, RequestKind,
-    Resolved, requests_of,
+    Declaration, Flavor, Import, Lookup, MakeRecord, ModuleId, Modules, Record, Request,
+    RequestKind, Resolved, requests_of,
 };
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, Resolver, ScriptKind, ancestors, join};
+use bun_sema::resolve::{Host, Resolver, ScriptKind, ancestors, join, typescript_path};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
@@ -244,12 +244,19 @@ impl<'h> Graph<'h> {
                 known.configs.insert_ref(directory.to_vec(), found)
             }
         };
-        if let Some(resolver) = known.resolvers.get_ref(&config[..]) {
+        self.resolver_of(config, directory)
+    }
+
+    /// The resolver for the files that the configuration at `config` is for. Empty: none is. `directory`: one of
+    /// theirs.
+    fn resolver_of(&self, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
+        let known = self.known();
+        if let Some(resolver) = known.resolvers.get_ref(config) {
             return resolver;
         }
         // One thread reads a configuration, the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = known.resolvers.get_ref(&config[..]) {
+        if let Some(resolver) = known.resolvers.get_ref(config) {
             return resolver;
         }
         let store: &'h Store = self.store;
@@ -265,7 +272,7 @@ impl<'h> Graph<'h> {
         }
         let project = store.session.keep(project);
         let resolver = Resolver::new(&store.session, store.disk(), &project.options);
-        (known.resolvers).insert_ref(config.clone(), ProjectResolver { resolver, base_url })
+        (known.resolvers).insert_ref(config.to_vec(), ProjectResolver { resolver, base_url })
     }
 
     fn flavor(&self) -> Flavor {
@@ -730,6 +737,38 @@ impl Modules for Graph<'_> {
             module: *self.complete.get()?.ids.get(&path[..])?,
             is_external,
         })
+    }
+
+    fn resolve_file(
+        &self,
+        from: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        lookup: &Lookup,
+    ) -> Option<Vec<u8>> {
+        let from = from_native(from);
+        let found = match lookup {
+            Lookup::TypeScript => {
+                let from = self.store.disk().realpath(&from);
+                (self.resolve_path(&from, specifier, is_require)?.0).into_owned()
+            }
+            Lookup::Node(extensions) if specifier.len() <= 4096 => {
+                // No configuration of TypeScript has a say.
+                let plain = self.resolver_of(b"", &self.store.cwd);
+                (plain.resolver).resolve_as_require(specifier, &from, extensions)?
+            }
+            Lookup::Node(_) => return None,
+        };
+        Some(typescript_path(&found).to_vec())
+    }
+
+    fn cwd(&self) -> &[u8] {
+        typescript_path(&self.store.cwd)
+    }
+
+    fn exists(&self, path: &[u8]) -> bool {
+        let (path, disk) = (from_native(path), self.store.disk());
+        disk.is_file(&path) || disk.is_dir(&path)
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {

@@ -103,8 +103,12 @@ fn slice<'a>(text: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
 
 /// `text.trim()`
 fn trim<'a>(text: &Cow<'a, [u8]>) -> Cow<'a, [u8]> {
-    let start = text.len() - text::trim_start(text).len();
-    slice(text, start, start + text::trim(text).len())
+    let start = text.len() - bun_core::strings::trim_js_whitespace_start(text).len();
+    slice(
+        text,
+        start,
+        start + bun_core::strings::trim_js_whitespace(text).len(),
+    )
 }
 
 /// `/(\s*)(!default).*$/` or the same with `!global`: where the match starts.
@@ -112,9 +116,9 @@ fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
     let mut from = 0;
     while let Some(at) = text::index_of_from(value, directive, from) {
         if bun_core::strings::index_of_any(&value[at..], b"\n\r").is_none()
-            && !text::includes(&value[at..], "\u{2028}".as_bytes())
+            && !bun_core::strings::contains(&value[at..], "\u{2028}".as_bytes())
         {
-            return Some(text::trim_end(&value[..at]).len());
+            return Some(bun_core::strings::trim_js_whitespace_end(&value[..at]).len());
         }
         from = at + 1;
     }
@@ -123,8 +127,8 @@ fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
 
 /// `/^\s*:?\s*/`: the length of the match.
 fn after_name_prefix_len(after_name: &[u8]) -> usize {
-    let rest = text::trim_start(after_name);
-    let rest = text::trim_start(rest.strip_prefix(b":").unwrap_or(rest));
+    let rest = bun_core::strings::trim_js_whitespace_start(after_name);
+    let rest = bun_core::strings::trim_js_whitespace_start(rest.strip_prefix(b":").unwrap_or(rest));
     after_name.len() - rest.len()
 }
 
@@ -153,7 +157,7 @@ fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
 /// `params.replace(/(\$\S+?)(\s+)?\.{3}/, "$1...$2")`
 fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
     let mut from = 0;
-    while let Some(dollar) = text::index_of_char_from(params, b'$', from) {
+    while let Some(dollar) = bun_core::strings::index_of_char_pos(params, b'$', from) {
         // `\S+?` takes as little as it can, and no white space.
         let mut at = dollar + 1;
         while params
@@ -210,7 +214,7 @@ fn without_blanks_at_the_ends_of_interpolations(selector: &[u8]) -> Vec<u8> {
         } else if depth > 0 && byte == b'}' {
             depth -= 1;
             if depth == 0 {
-                result.truncate(text::trim_end(&result).len());
+                result.truncate(bun_core::strings::trim_js_whitespace_end(&result).len());
             }
             result.push(byte);
         } else {
@@ -246,7 +250,7 @@ fn is_scss_nested_property(selector: &[u8]) -> bool {
             None => break,
         }
     }
-    text::trim_end(&selector).ends_with(b":")
+    bun_core::strings::trim_js_whitespace_end(&selector).ends_with(b":")
 }
 
 impl<'a> Context<'a> {
@@ -303,7 +307,7 @@ impl<'a> Context<'a> {
         // For `postcss-less` it is a variable, and `node.value` is a string.
         if raw.variable {
             let mut value = skip(&clean_params, raw.value_skips as usize);
-            if !text::trim(&value).is_empty() {
+            if !bun_core::strings::trim_js_whitespace(&value).is_empty() {
                 for directive in [&b"!default"[..], b"!global"] {
                     if let Some(at) = find_directive(&value, directive) {
                         match &mut value {
@@ -439,20 +443,21 @@ impl<'a> Context<'a> {
         match raw.kind {
             Kind::Root | Kind::Comment => {}
             Kind::Rule => {
-                node.raw_selector = match text::trim(&node.between).is_empty() {
-                    true => Cow::Borrowed(self.of(raw.selector)),
-                    false => self.concat(&[raw.selector, raw.between]),
-                };
+                node.raw_selector =
+                    match bun_core::strings::trim_js_whitespace(&node.between).is_empty() {
+                        true => Cow::Borrowed(self.of(raw.selector)),
+                        false => self.concat(&[raw.selector, raw.between]),
+                    };
                 if self.is_oxfmt
                     && self.syntax == Syntax::Scss
-                    && text::includes(&node.raw_selector, b"#{")
+                    && bun_core::strings::contains(&node.raw_selector, b"#{")
                 {
                     node.raw_selector = Cow::Owned(without_blanks_at_the_ends_of_interpolations(
                         &node.raw_selector,
                     ));
                 }
                 // Prettier has no way to print a selector that is still a string.
-                if text::trim(&node.raw_selector).is_empty()
+                if bun_core::strings::trim_js_whitespace(&node.raw_selector).is_empty()
                     || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))
                 {
                     return Err(self.refusal.note(Message::RuleWithoutSelector, raw.start));
@@ -508,7 +513,7 @@ impl<'a> Context<'a> {
         // A custom property set looks like a declaration.
         if node.prop.starts_with(b"--") && value.starts_with(b"{") {
             let mut rules = None;
-            if text::trim_end(raw.clean_value.as_deref().unwrap_or(value)).ends_with(b"}")
+            if bun_core::strings::trim_js_whitespace_end(raw.clean_value.as_deref().unwrap_or(value)).ends_with(b"}")
                 && let Some(end) = raw.end
                 && let Ok(tree) = postcss::parse_custom_property_set(
                     self.text.get(..end as usize).unwrap_or(self.text),
@@ -538,7 +543,7 @@ impl<'a> Context<'a> {
         }
 
         let mut value = value;
-        if text::trim(value).is_empty() {
+        if bun_core::strings::trim_js_whitespace(value).is_empty() {
             node.value = Value::Text(match &raw.clean_value {
                 Some(clean) => Cow::Owned(clean.to_vec()),
                 None => Cow::Borrowed(value),
@@ -548,13 +553,14 @@ impl<'a> Context<'a> {
             let has_bang = BANG.find(value, 0).is_some();
             if has_bang && let Some(at) = find_directive(value, b"!default") {
                 node.scss_default = true;
-                node.raw_scss_default =
-                    Some(&value[at..]).filter(|it| text::trim(it) != b"!default");
+                node.raw_scss_default = Some(&value[at..])
+                    .filter(|it| bun_core::strings::trim_js_whitespace(it) != b"!default");
                 value = &value[..at];
             }
             if has_bang && let Some(at) = find_directive(value, b"!global") {
                 node.scss_global = true;
-                node.raw_scss_global = Some(&value[at..]).filter(|it| text::trim(it) != b"!global");
+                node.raw_scss_global = Some(&value[at..])
+                    .filter(|it| bun_core::strings::trim_js_whitespace(it) != b"!global");
                 value = &value[..at];
             }
             if value.starts_with(b"progid:") {
@@ -576,7 +582,7 @@ impl<'a> Context<'a> {
             // `a +: b`, which merges: `/^\s*\+\s*:/`
             let spaces = text::leading_white_space_len(&node.between);
             if let Some(rest) = node.between[spaces..].strip_prefix(b"+")
-                && text::trim_start(rest).starts_with(b":")
+                && bun_core::strings::trim_js_whitespace_start(rest).starts_with(b":")
             {
                 node.prop.to_mut().push(b'+');
                 node.between.to_mut().remove(spaces);
@@ -602,7 +608,8 @@ impl<'a> Context<'a> {
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
     ) -> Result<(), Refused> {
-        let has_text = |range: Range| !text::trim(self.of(range)).is_empty();
+        let has_text =
+            |range: Range| !bun_core::strings::trim_js_whitespace(self.of(range)).is_empty();
         let params = trim(&self.concat(&[
             if has_text(raw.after_name) {
                 raw.after_name
@@ -665,12 +672,14 @@ impl<'a> Context<'a> {
                 .strip_prefix(b"(")
                 .and_then(|it| it.strip_suffix(b")"))
                 .is_some_and(|inner| {
-                    let inner = text::trim_start(inner);
+                    let inner = bun_core::strings::trim_js_whitespace_start(inner);
                     let rest = inner
                         .strip_prefix(b"without")
                         .or_else(|| inner.strip_prefix(b"with"));
-                    rest.and_then(|it| text::trim_start(it).strip_prefix(b":"))
-                        .is_some_and(|it| !it.is_empty())
+                    rest.and_then(|it| {
+                        bun_core::strings::trim_js_whitespace_start(it).strip_prefix(b":")
+                    })
+                    .is_some_and(|it| !it.is_empty())
                 });
             match is_query {
                 true => node.params = Params::Value(value(&params, values, selectors)?),
@@ -704,7 +713,7 @@ impl<'a> Context<'a> {
             }
             node.value = Value::Parsed(value(&text, values, selectors)?);
         } else if matches!(&*name.to_ascii_lowercase(), b"media" | b"custom-media") {
-            node.params = if text::includes(&params, b"#{") {
+            node.params = if bun_core::strings::contains(&params, b"#{") {
                 // What Prettier makes of it is lost, and the string of `postcss` stays.
                 Params::Text(match &raw.clean_params {
                     Some(clean) => Cow::Owned(clean.to_vec()),

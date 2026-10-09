@@ -219,7 +219,7 @@ pub(crate) mod valid_expect {
                         {
                             fixes.push(fixer.replace(
                                 statement,
-                                replace_all(statement.text(), b"return", b"await"),
+                                strings::replace_owned(statement.text(), b"return", b"await"),
                             ));
                         }
                         _ => fixes.push(fixer.insert_before(final_node, "await ")),
@@ -228,18 +228,6 @@ pub(crate) mod valid_expect {
                 },
             );
         }
-    }
-
-    fn replace_all(text: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-        let (mut out, mut rest) = (Vec::with_capacity(text.len()), text);
-        while let Some(at) = strings::index_of(rest, from) {
-            let (before, after) = rest.split_at(at);
-            out.extend_from_slice(before);
-            out.extend_from_slice(to);
-            rest = after.get(from.len()..).unwrap_or_default();
-        }
-        out.extend_from_slice(rest);
-        out
     }
 
     /// The last member of `node.a.b().c`.
@@ -1269,7 +1257,9 @@ pub(crate) mod max_expects {
             *count += 1;
             // The first is never too many.
             if *count > max.max(1) {
-                ctx.report(ident, EXCEEDED_MAX_ASSERTION);
+                ctx.report(ident, EXCEEDED_MAX_ASSERTION)
+                    .data("count", count.to_string())
+                    .data("max", max.to_string());
             }
         }
     }

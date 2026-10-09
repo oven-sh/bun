@@ -122,11 +122,15 @@ impl NoRestrictedProperties {
                     Found::ObjectProperty(_) if cx.language().is_oxlint => [object, b".", &property_name].concat(),
                     _ => object.to_vec(),
                 };
-                cx.report(at, RESTRICTED_OBJECT_PROPERTY)
+                let report = cx
+                    .report(at, RESTRICTED_OBJECT_PROPERTY)
                     .data("objectName", object)
                     .data("propertyName", property_name)
                     .data("message", matched.message())
                     .data("allowedPropertiesMessage", allowed);
+                if cx.language().is_oxlint {
+                    report.data("help", matched.message.to_vec());
+                }
             }
             Found::Property(matched) => {
                 let allowed = matched.allowed_message(&[
@@ -134,10 +138,14 @@ impl NoRestrictedProperties {
                     &*property_name,
                     &b"' is only allowed on these objects: "[..],
                 ]);
-                cx.report(at, RESTRICTED_PROPERTY)
+                let report = cx
+                    .report(at, RESTRICTED_PROPERTY)
                     .data("propertyName", property_name)
                     .data("message", matched.message())
                     .data("allowedObjectsMessage", allowed);
+                if cx.language().is_oxlint {
+                    report.data("help", matched.message.to_vec());
+                }
             }
         }
     }

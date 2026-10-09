@@ -1,3 +1,4 @@
+use bun_core::strings;
 use crate::a11y::{
     HTML_TAG, MOUSE_AND_KEYBOARD_EVENT_HANDLERS, NamesByElement, get_static_string_prop_value, is_abstract_role_name,
     is_hidden_from_screen_reader, is_interactive_element, is_interactive_role, is_non_interactive_element,
@@ -7,7 +8,7 @@ use crate::jsx::{
     as_jsx_element, get_element_type, get_prop_value, get_string_literal_prop_value, has_jsx_prop, has_jsx_prop_ignore_case,
     parse_jsx_value,
 };
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use std::borrow::Cow;
@@ -136,7 +137,7 @@ fn is_focusable(jsx_el: Jsx, element_type: &[u8]) -> bool {
 
 /// In lower case.
 fn first_recognized_role(role_value: &[u8]) -> Option<Cow<'_, [u8]>> {
-    split_whitespace(role_value).map(text::to_lower_case).find(|role| is_recognized_role(role))
+    strings::split_unicode_whitespace(role_value).map(text::to_lower_case).find(|role| is_recognized_role(role))
 }
 
 fn is_recognized_role(role: &[u8]) -> bool {

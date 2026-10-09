@@ -116,11 +116,19 @@ impl Case {
     }
 }
 
+/// What is before the element at `i` of a list of `len`.
+fn separator(i: usize, len: usize) -> &'static str {
+    match i {
+        0 => "",
+        _ if i + 1 == len => ", or ",
+        _ => ", ",
+    }
+}
+
 impl FilenameCase {
-    /// The cases that the name of the file should be in, as the message lists them. `None` if it is in one.
-    fn expected_cases(&self, path: &[u8]) -> Option<String> {
-        let separator = strings::last_index_of_any(path, b"/\\");
-        let raw_filename = separator.map_or(path, |it| path.get(it + 1..).unwrap_or_default());
+    /// The name of the file, and the part of it that has to be in one of the cases. `None`: nothing is asked of it.
+    fn checked_part<'p>(&self, path: &'p [u8]) -> Option<(&'p [u8], &'p str)> {
+        let raw_filename = bun_lint::paths::file_name(path);
         if raw_filename.is_empty()
             || raw_filename.starts_with(b".")
             || self.ignore.iter().any(|it| it.test(raw_filename))
@@ -135,20 +143,37 @@ impl FilenameCase {
         if filename.eq_ignore_ascii_case("index") {
             return None;
         }
-        let trimmed_filename = filename.trim_matches('_');
+        Some((raw_filename, filename.trim_matches('_')))
+    }
+
+    /// The cases that the name of the file should be in, as the message lists them. `None` if it is in one.
+    fn expected_cases(&self, path: &[u8]) -> Option<String> {
+        let (_, trimmed_filename) = self.checked_part(path)?;
         if self.cases.iter().any(|it| it.convert(trimmed_filename) == trimmed_filename) {
             return None;
         }
         let mut expected = String::new();
         for (i, case) in self.cases.iter().enumerate() {
-            expected.push_str(match i {
-                0 => "",
-                _ if i + 1 == self.cases.len() => ", or ",
-                _ => ", ",
-            });
+            expected.push_str(separator(i, self.cases.len()));
             expected.push_str(CASES.iter().find(|it| it.0 == *case).map_or("", |it| it.2));
         }
         Some(expected)
+    }
+
+    /// The name of the file in each of the cases.
+    fn help(&self, path: &[u8]) -> String {
+        let Some((raw_filename, trimmed_filename)) = self.checked_part(path) else {
+            return String::new();
+        };
+        let around: Vec<&[u8]> = strings::split(raw_filename, trimmed_filename.as_bytes()).collect();
+        let mut help = b"Rename the file to ".to_vec();
+        for (i, case) in self.cases.iter().enumerate() {
+            help.extend_from_slice(separator(i, self.cases.len()).as_bytes());
+            help.push(b'\'');
+            help.extend_from_slice(&around.join(case.convert(trimmed_filename).as_bytes()));
+            help.push(b'\'');
+        }
+        bstr::BStr::new(&help).to_string()
     }
 }
 
@@ -173,9 +198,11 @@ impl Rule for FilenameCase {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Option<String> {
         let expected = self.expected_cases(file.path()).filter(|_| !file.vue_script().is_second)?;
-        on.finish(|_, cx| {
+        on.finish(|rule, cx| {
             if let Some(cases) = &cx.state {
-                cx.report(Span::empty(0), FILENAME_CASE).data("cases", cases.clone());
+                cx.report(Span::empty(0), FILENAME_CASE)
+                    .data("cases", cases.clone())
+                    .help_with(|| rule.help(cx.file().path()));
             }
         });
         Some(expected)

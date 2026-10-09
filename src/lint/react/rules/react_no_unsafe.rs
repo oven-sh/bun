@@ -40,7 +40,7 @@ impl Rule for NoUnsafe {
                 && rule.is_unsafe_method(name, cx.state.check_unsafe_prefix)
                 && get_parent_component(Node::Member(member), &mut cx.state.parent_component).is_some()
             {
-                cx.report(key.inner_span(cx.file()), NO_UNSAFE).data("method_name", name);
+                report(key, name, cx);
             }
         });
         on.props(|rule, prop, cx| {
@@ -53,11 +53,21 @@ impl Rule for NoUnsafe {
                     .find(Node::Prop(prop), |_, ancestor| is_es5_component(ancestor).then_some(()))
                     .is_some()
             {
-                cx.report(key.inner_span(cx.file()), NO_UNSAFE).data("method_name", name);
+                report(key, name, cx);
             }
         });
         State { check_unsafe_prefix: supports_unsafe_lifecycle_prefix(file), ..State::default() }
     }
+}
+
+fn report<'a>(key: Key<'a>, method_name: Name<'a>, cx: &Cx<'a, NoUnsafe>) {
+    let name = method_name.bytes();
+    let replacement = match name.strip_prefix(b"UNSAFE_").unwrap_or(name) {
+        b"componentWillMount" => "componentDidMount",
+        b"componentWillReceiveProps" => "getDerivedStateFromProps",
+        _ => "componentDidUpdate",
+    };
+    cx.report(key.inner_span(cx.file()), NO_UNSAFE).data("method_name", method_name).data("replacement", replacement);
 }
 
 impl NoUnsafe {

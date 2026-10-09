@@ -1,6 +1,5 @@
 //! The package `brace-expansion` 5.0.12, with which minimatch expands `a{b,c}d` and `{1..3}` before it reads a pattern.
 
-use crate::unit::starts_with_line_terminator;
 use bun_core::strings;
 
 const MAX: usize = 100_000;
@@ -316,7 +315,7 @@ fn has_comma_before_close(text: &[u8], work: &mut usize) -> bool {
             continue;
         }
         let mut at = from;
-        while at < text.len() && !starts_with_line_terminator(&text[at..]) {
+        while at < text.len() && !bun_core::lexer::starts_with_line_break(&text[at..]) {
             if text[at] == b'}' {
                 return true;
             }

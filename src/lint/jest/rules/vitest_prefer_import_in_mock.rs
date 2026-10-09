@@ -36,7 +36,8 @@ impl PreferImportInMock {
             && let Some(value) = import_value.as_string().filter(|_| !import_value.is_parenthesized())
             && jest::parse_general_jest_fn_call(cx.file(), possible_jest_node).is_some()
         {
-            let report = cx.report(import_value.span().to(last.outer_span()), PREFER_IMPORT_IN_MOCK);
+            let report =
+                cx.report(import_value.span().to(last.outer_span()), PREFER_IMPORT_IN_MOCK).data("path", value);
             if self.fixable {
                 report.fix(|fixer| fixer.replace(import_value, [b"import('".as_slice(), value.bytes(), b"')".as_slice()].concat()));
             }

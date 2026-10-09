@@ -26,7 +26,11 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
             && text::starts_with_white_space(right)
         {
             let operator = &rest[blank_len..blank_len + 2];
-            break (&value[..at], operator, text::trim(right));
+            break (
+                &value[..at],
+                operator,
+                bun_core::strings::trim_js_whitespace(right),
+            );
         }
         // From anywhere else in the white space, the same follows it.
         at += blank_len.max(1);
@@ -35,7 +39,7 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
         return None;
     }
     // `.replaceAll(/^\(|\)$/g, "")`
-    let alias = text::trim(alias);
+    let alias = bun_core::strings::trim_js_whitespace(alias);
     let alias = alias.strip_prefix(b"(").unwrap_or(alias);
     let alias = alias.strip_suffix(b")").unwrap_or(alias);
     // `/,([^,\]}]*)(?:,([^,\]}]*))?$/`: the first of the last two commas that no bracket follows.
@@ -48,11 +52,15 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
         .map(|(at, _)| at);
     let left = match (commas.next(), commas.next()) {
         (None, _) => [alias, b"", b""],
-        (Some(last), None) => [&alias[..last], text::trim(&alias[last + 1..]), b""],
+        (Some(last), None) => [
+            &alias[..last],
+            bun_core::strings::trim_js_whitespace(&alias[last + 1..]),
+            b"",
+        ],
         (Some(last), Some(first)) => [
             &alias[..first],
-            text::trim(&alias[first + 1..last]),
-            text::trim(&alias[last + 1..]),
+            bun_core::strings::trim_js_whitespace(&alias[first + 1..last]),
+            bun_core::strings::trim_js_whitespace(&alias[last + 1..]),
         ],
     };
     let is_missing = |index: usize| {

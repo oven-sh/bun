@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
     intersection_constituents, is_intrinsic_undefined_type, union_constituents,
@@ -41,7 +42,7 @@ fn primary_weight(byte: u8) -> Option<u16> {
             Some(digits + 10 + u16::from(byte.to_ascii_lowercase() - b'a'))
         }
         0x80.. => Some(0x100 + u16::from(byte)),
-        _ => bun_core::strings::index_of_char_usize(BEFORE_DIGITS, byte).map(|at| at as u16),
+        _ => strings::index_of_char_usize(BEFORE_DIGITS, byte).map(|at| at as u16),
     }
 }
 
@@ -179,7 +180,7 @@ impl SwitchExhaustivenessCheck {
         file: &'a File<'a>,
     ) -> Option<Span> {
         let default_case_comment = file.comments_after(cases.last()?).next_back()?;
-        let value = text::trim(default_case_comment.comment_value());
+        let value = strings::trim_js_whitespace(default_case_comment.comment_value());
         let is_default_case = match &self.default_case_comment_pattern {
             Some(comment_reg_exp) => comment_reg_exp.test(value),
             None => value.eq_ignore_ascii_case(b"no default"),

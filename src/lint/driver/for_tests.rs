@@ -61,6 +61,7 @@ impl Host for Tester<'_> {
             checks_types: false,
             keeps_text: true,
             reads_fixes: true,
+            reads_help: true,
             reads_suppressions: true,
             js_plugins: &self.js_plugins,
             modules: &Graph::new(&store),
@@ -70,6 +71,7 @@ impl Host for Tester<'_> {
             skipped_in_comments: &bun_threading::Guarded::new(Vec::new()),
             out_of_stack: &bun_threading::Guarded::new(Vec::new()),
             broken_fixes: &bun_threading::Guarded::new(Vec::new()),
+            handed_back: &bun_threading::Guarded::new(Vec::new()),
             invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
         };
         let config = Arc::new(case.config.clone());

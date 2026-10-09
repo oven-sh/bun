@@ -156,6 +156,8 @@ impl Listing {
 /// same few directories repeatedly, mostly for entries that do not exist.
 pub struct Disk {
     pub threads: usize,
+    /// `take_turns`
+    turns: OnceLock<bun_threading::Semaphore>,
     pub(crate) caches: crate::ThreadCaches,
     case_sensitive: bool,
     directories: ShardedMap<Vec<u8>, Directory>,
@@ -374,11 +376,24 @@ impl Disk {
         self.already_read.keys()
     }
 
+    /// From now on several programs are read through it at the same time. Each starts parallel regions of `threads` threads: of
+    /// all of them together, no more than `threads` work at a time.
+    pub(crate) fn take_turns(&self) {
+        self.turns.get_or_init(|| {
+            let turns = bun_threading::Semaphore::default();
+            for _ in 0..self.threads.max(1) {
+                turns.post();
+            }
+            turns
+        });
+    }
+
     /// `project`: a path in the project, in the checker's path format.
     pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
         let case_sensitive = is_file_system_case_sensitive(project);
         Disk {
             threads,
+            turns: OnceLock::new(),
             in_memory: InMemory::by_directory(&already_read, case_sensitive),
             already_read: match case_sensitive {
                 true => already_read,
@@ -1044,6 +1059,8 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         let (name, data) = (property.key.slice(), &property.value);
         let is_map = match name {
             b"name" | b"version" | b"type" | b"tsconfig" | b"main" | b"types" | b"typings" => false,
+            // Not in `Fields`: for `Resolver::resolve_as_require`.
+            b"module" | b"jsnext:main" => false,
             b"dependencies"
             | b"devDependencies"
             | b"peerDependencies"
@@ -1273,11 +1290,12 @@ impl Host for Disk {
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         // In runs: adjacent paths are in the same directory.
-        crate::for_each_parallel_in_runs(
+        crate::for_each_parallel_in_turns(
             &self.caches,
             self.threads,
             count,
             if count > 1024 { 16 } else { 1 },
+            self.turns.get(),
             work,
         );
     }

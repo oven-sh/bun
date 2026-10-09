@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::trim_start;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -52,8 +51,8 @@ impl TripleSlashReference {
     /// `/^\/\s*<reference\s*(types|path|lib)\s*=\s*["|'](.*)["|']/`: what applies to the first
     /// group, and the second group.
     fn parse<'a>(&self, value: &'a [u8]) -> Option<(Policy, &'a [u8])> {
-        let rest = trim_start(value.strip_prefix(b"/")?);
-        let rest = trim_start(rest.strip_prefix(b"<reference")?);
+        let rest = strings::trim_js_whitespace_start(value.strip_prefix(b"/")?);
+        let rest = strings::trim_js_whitespace_start(rest.strip_prefix(b"<reference")?);
         let (policy, rest) = if let Some(rest) = rest.strip_prefix(b"types") {
             (self.types, rest)
         } else if let Some(rest) = rest.strip_prefix(b"path") {
@@ -61,7 +60,7 @@ impl TripleSlashReference {
         } else {
             (self.lib, rest.strip_prefix(b"lib")?)
         };
-        let rest = trim_start(trim_start(rest).strip_prefix(b"=")?);
+        let rest = strings::trim_js_whitespace_start(strings::trim_js_whitespace_start(rest).strip_prefix(b"=")?);
         let (b'"' | b'|' | b'\'', rest) = rest.split_first()? else {
             return None;
         };

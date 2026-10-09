@@ -409,7 +409,7 @@ fn is_react_hook_name(name: &[u8]) -> bool {
         .is_some_and(|rest| match rest.first() {
             None => true,
             Some(first) if first.is_ascii() => first.is_ascii_uppercase() || first.is_ascii_digit(),
-            Some(_) => text::first_code_point(rest)
+            Some(_) => strings::wtf8_first_codepoint(rest)
                 .and_then(char::from_u32)
                 .is_some_and(char::is_uppercase),
         })

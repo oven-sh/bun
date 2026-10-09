@@ -8,11 +8,12 @@ const NO_FUNCTION_CONSTRUCTOR: Message =
 
 impl NoNewFunc {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (callee, is_new) = match e.kind() {
-            ExprKind::Call(call) => (call.callee(), false),
-            ExprKind::New(call) => (call.callee(), true),
+        let (call, is_new) = match e.kind() {
+            ExprKind::Call(call) => (call, false),
+            ExprKind::New(call) => (call, true),
             _ => return,
         };
+        let callee = call.callee();
         let function = match callee.kind() {
             ExprKind::Ident(_) => callee,
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
@@ -26,7 +27,13 @@ impl NoNewFunc {
         };
         if function.is_ident("Function") && ast_utils::is_global_reference(function) {
             // oxlint points at the `Function`.
-            cx.report(if cx.language().is_oxlint { function } else { e }, NO_FUNCTION_CONSTRUCTOR);
+            let place = if cx.language().is_oxlint { function } else { e };
+            cx.report(place, NO_FUNCTION_CONSTRUCTOR).labels_with(|labels| {
+                if let (Some(first), Some(last)) = (call.args().first(), call.args().last()) {
+                    let arguments = first.outer_span().to(last.outer_span());
+                    labels.push(arguments, "`Function` evaluates source text at runtime, similar to `eval`.");
+                }
+            });
         }
     }
 }

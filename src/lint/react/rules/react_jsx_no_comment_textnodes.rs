@@ -1,5 +1,4 @@
 use crate::react::is_jsx;
-use bun_lint_oxlint::text::trim;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -39,5 +38,7 @@ impl Rule for JsxNoCommentTextnodes {
 /// A line of the text starts with `//` or `/*`.
 fn has_comment_pattern(text: &[u8]) -> bool {
     strings::contains_char(text, b'/')
-        && strings::split(text, b"\n").map(trim).any(|line| line.starts_with(b"//") || line.starts_with(b"/*"))
+        && strings::split(text, b"\n")
+            .map(strings::trim_unicode_whitespace)
+            .any(|line| line.starts_with(b"//") || line.starts_with(b"/*"))
 }

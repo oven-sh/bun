@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
@@ -78,9 +79,9 @@ impl ObjectCurlySpacing {
         }
 
         let after = source.get(open as usize + 1..).unwrap_or_default();
-        let rest = text::trim_start(after);
+        let rest = strings::trim_js_whitespace_start(after);
         let gap = Span::new(open + 1, open + 1 + (after.len() - rest.len()) as u32);
-        if !text::has_line_break(cx.slice(gap)) {
+        if !strings::contains_js_line_break(cx.slice(gap)) {
             if self.spaced && gap.is_empty() {
                 let brace = Span::new(open, open + 1);
                 cx.report(brace, REQUIRE_SPACE_AFTER)
@@ -93,9 +94,10 @@ impl ObjectCurlySpacing {
             }
         }
 
-        let penultimate_end = text::trim_end(source.get(..close as usize).unwrap_or_default()).len() as u32;
+        let penultimate_end =
+            strings::trim_js_whitespace_end(source.get(..close as usize).unwrap_or_default()).len() as u32;
         let gap = Span::new(penultimate_end, close);
-        if !text::has_line_break(cx.slice(gap)) {
+        if !strings::contains_js_line_break(cx.slice(gap)) {
             let penultimate = penultimate_end.saturating_sub(1);
             let mut penultimate_type =
                 || utils::estree_type_name(get_node_by_range_index_in(node, penultimate, &mut cx.state));

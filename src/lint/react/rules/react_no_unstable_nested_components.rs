@@ -32,7 +32,8 @@ pub struct State<'a> {
     inside_create_element_props_object: AncestorMemo<'a, bool>,
     nearest_jsx_attribute_name: AncestorMemo<'a, Option<Name<'a>>>,
     nearest_call: AncestorMemo<'a, Expr<'a>>,
-    in_component: AncestorMemo<'a, ()>,
+    /// The name of the component that something is in. `Some(None)`: it has none.
+    in_component: AncestorMemo<'a, Option<Name<'a>>>,
 }
 
 impl Rule for NoUnstableNestedComponents {
@@ -121,8 +122,15 @@ fn check<'a>(rule: &NoUnstableNestedComponents, node: Node<'a>, cx: &mut Cx<'a, 
     {
         return;
     }
-    if state.in_component.find(outer, |_, ancestor| components.is_component(ancestor).then_some(())).is_some() {
-        cx.report(span, NO_UNSTABLE_NESTED_COMPONENTS);
+    if let Some(parent_name) = state.in_component.find(outer, |_, ancestor| components.component_name(ancestor)) {
+        cx.report(span, NO_UNSTABLE_NESTED_COMPONENTS).help_with(|| {
+            let parent = parent_name.map(|it| format!(" `{}`", bstr::BStr::new(it.bytes()))).unwrap_or_default();
+            let info = match is_component_in_prop {
+                true => " If you want to allow component creation in props, set `allowAsProps` option to true.",
+                false => "",
+            };
+            format!("Move this component definition out of the parent component{parent} and pass data as props.{info}")
+        });
     }
 }
 
@@ -178,30 +186,43 @@ impl<'a> Components<'a> {
     }
 
     /// What `find_parent_component_name` stops at.
-    fn is_component(&self, ancestor: Node<'a>) -> bool {
-        let is_component_name = |name: Name| is_react_component_name(name.bytes());
+    /// `None`: `ancestor` is no component. `Some(None)`: one without a name.
+    fn component_name(&self, ancestor: Node<'a>) -> Option<Option<Name<'a>>> {
+        let is_component_name = |name: &Name| is_react_component_name(name.bytes());
         match ancestor {
             Node::Func(func) if as_function(ancestor).is_some() => {
-                self.functions_with_jsx.function_contains_jsx(func)
-                    && !self.is_first_argument_of_hoc_call(ancestor)
-                    && match func.name().map(Ident::name).or_else(|| function_like_name(ancestor)) {
-                        Some(name) => is_component_name(name),
-                        None => is_anonymous_default_export(ancestor),
-                    }
+                if !self.functions_with_jsx.function_contains_jsx(func) || self.is_first_argument_of_hoc_call(ancestor) {
+                    return None;
+                }
+                match func.name().map(Ident::name).or_else(|| function_like_name(ancestor)) {
+                    Some(name) => is_component_name(&name).then_some(Some(name)),
+                    None => is_anonymous_default_export(ancestor).then_some(None),
+                }
             }
-            Node::Class(class) => {
-                is_es6_component(ancestor)
-                    && class
-                        .name()
-                        .map(Ident::name)
-                        .or_else(|| function_like_name(ancestor))
-                        .is_some_and(is_component_name)
+            Node::Class(class) if is_es6_component(ancestor) => {
+                class.name().map(Ident::name).or_else(|| function_like_name(ancestor)).filter(is_component_name).map(Some)
             }
             Node::Expr(e) => {
-                e.as_call().is_some_and(|call| self.is_hoc_component_call(call))
-                    && !self.is_first_argument_of_hoc_call(ancestor)
+                let call = e.as_call().filter(|call| self.is_hoc_component_call(*call))?;
+                if self.is_first_argument_of_hoc_call(ancestor) {
+                    return None;
+                }
+                let name = function_like_name(ancestor).filter(is_component_name);
+                Some(name.or_else(|| hoc_first_argument_name(call).filter(is_component_name)))
             }
-            _ => false,
+            _ => None,
+        }
+    }
+}
+
+/// The `A` of `memo(forwardRef(function A() {}))`.
+fn hoc_first_argument_name(mut call: Call<'_>) -> Option<Name<'_>> {
+    loop {
+        let first_arg = call.args().first().filter(|it| !it.is_parenthesized() && !it.is_chain_root())?;
+        match first_arg.kind() {
+            ExprKind::Fn(func) if !func.is_arrow() => return func.name().map(Ident::name),
+            ExprKind::Call(inner) => call = inner,
+            _ => return None,
         }
     }
 }

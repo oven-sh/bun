@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{lines, number_to_string, trim, trim_start};
+use bun_lint::utils::text::number_to_string;
 use bun_lint::utils::ts_utils::get_string_length;
 
 /// Disallow `@ts-<directive>` comments or require descriptions after directives.
@@ -66,7 +66,7 @@ struct MatchedTsDirective<'a> {
 /// `/^\s*@ts-(?<directive>a|b)(?<description>.*)/` for the `directives` `a` and `b`, on text
 /// without line breaks after the directive.
 fn match_directive<'a>(text: &'a [u8], directives: [&'static str; 2]) -> Option<MatchedTsDirective<'a>> {
-    let rest = trim_start(text).strip_prefix(b"@ts-")?;
+    let rest = strings::trim_js_whitespace_start(text).strip_prefix(b"@ts-")?;
     directives.into_iter().find_map(|directive| {
         Some(MatchedTsDirective {
             directive,
@@ -89,7 +89,7 @@ fn find_directive_in_comment(comment: Token<'_>) -> Option<MatchedTsDirective<'_
         }
         return match_directive(rest, SUPPRESSIONS);
     }
-    let mut rest = trim_start(lines(value).last()?);
+    let mut rest = strings::trim_js_whitespace_start(strings::js_lines(value).last()?);
     while let [b'/' | b'*', after @ ..] = rest {
         rest = after;
     }
@@ -155,7 +155,8 @@ impl BanTsComment {
                     cx.report(place, TS_DIRECTIVE_COMMENT).data("directive", directive);
                 }
                 DirectiveConfig::AllowedWithDescription(format) => {
-                    if (get_string_length(trim(description)) as f64) < self.minimum_description_length {
+                    let length = get_string_length(strings::trim_js_whitespace(description));
+                    if (length as f64) < self.minimum_description_length {
                         cx.report(place, TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION)
                             .data("directive", directive)
                             .data(

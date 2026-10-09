@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::oxlint::goes_by_the_name;
 use bun_lint_oxlint::ast_util::get_inner_expression;
@@ -43,7 +44,7 @@ fn get_cap(name: &[u8]) -> Cap {
         Some(0x80..) => {}
         _ => return Cap::NonAlpha,
     }
-    let end = text::code_points(name).nth(1).map_or(name.len(), |next| next.0);
+    let end = strings::wtf8_codepoints(name).nth(1).map_or(name.len(), |next| next.0);
     let first = name.get(..end).unwrap_or_default();
     let lower = text::to_lower_case(first);
     if lower == text::to_upper_case(first) {

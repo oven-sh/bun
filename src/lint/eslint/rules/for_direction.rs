@@ -116,7 +116,9 @@ fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirectio
     };
     if is_forward != (is_less == is_left) {
         // The other operator, in the place of all that is between the operands.
-        cx.report(test, INCORRECT_DIRECTION).fix_dangerously(|fixer| match update.kind() {
+        let report = cx.report(test, INCORRECT_DIRECTION);
+        let report = report.first_label("This test moves in the wrong direction").label(update, "with this update");
+        report.fix_dangerously(|fixer| match update.kind() {
             ExprKind::Unary { operand, .. } => {
                 let (whole, argument) = (update.span(), operand.span());
                 let operator = match whole.start == argument.start {

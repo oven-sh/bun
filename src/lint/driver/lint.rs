@@ -12,6 +12,7 @@ use bun_core::strings;
 use bun_lint::ast::{File, VueScript};
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
+use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
@@ -40,6 +41,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) keeps_text: bool,
     /// Whether the fixes and the suggestions of messages are read, if only to be counted.
     pub(crate) reads_fixes: bool,
+    /// Whether the help of oxlint is read.
+    pub(crate) reads_help: bool,
     /// Whether it is read which comments suppress a message.
     pub(crate) reads_suppressions: bool,
     /// Runs the rules that are written in JavaScript.
@@ -50,6 +53,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
     /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
+    /// Why files were [handed back](LintResult::handed_back), and how many for each reason.
+    pub(crate) handed_back: &'c Guarded<Vec<(Reason, usize)>>,
     /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that
     /// needs types ran on their files: `typescript(tsconfig-error)`.
     pub(crate) invalid_tsconfigs: &'c Guarded<crate::typed::InvalidTsconfigs>,
@@ -140,6 +145,7 @@ impl Context<'_, '_> {
             // It is part of the configuration: see `Loader::override_config`.
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,
+            wants_help: self.reads_help,
             wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`, and for oxlint, from whose report `--quiet` only hides them.
             rule_filter: match self.options.quiet
@@ -500,6 +506,13 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
+        if let Some(reason) = result.handed_back {
+            let mut all = self.handed_back.lock();
+            match all.iter_mut().find(|it| it.0 == reason) {
+                Some(entry) => entry.1 += 1,
+                None => all.push((reason, 1)),
+            }
+        }
         if !result.skipped_rules.is_empty() {
             let mut all = self.skipped_in_comments.lock();
             for rule in result.skipped_rules {

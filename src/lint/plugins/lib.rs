@@ -5,13 +5,43 @@
 //! - `import`: https://github.com/import-js/eslint-plugin-import (Copyright Ben Mosher, MIT License)
 //! - `n`: https://github.com/eslint-community/eslint-plugin-n (Copyright Toru Nagashima, MIT License)
 //! - `oxc`: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
+//! - `prettier`: https://github.com/prettier/eslint-plugin-prettier and
+//!   https://github.com/prettier/prettier-linter-helpers (Copyright Andres Suarez and Teddy Katz, MIT License)
+//!
+//! And the rules of `bun`, which are Bun's own.
 
 #![forbid(unsafe_code)]
 
+mod bun;
+mod import_resolve;
+mod import_type;
+mod module_visitor;
 mod n;
 mod oxlint;
+mod prettier;
 
 bun_lint::rules! {
+    bun_consistent_directive_prefix::ConsistentDirectivePrefix,
+    bun_jsx_no_forbidden_nesting::JsxNoForbiddenNesting,
+    bun_no_array_just_to_count::NoArrayJustToCount,
+    bun_no_console_window_flash::NoConsoleWindowFlash,
+    bun_no_cwd_dependent_path::NoCwdDependentPath,
+    bun_no_eager_dynamic_import::NoEagerDynamicImport,
+    bun_no_eager_native_addon::NoEagerNativeAddon,
+    bun_no_env_at_module_scope::NoEnvAtModuleScope,
+    bun_no_literal_temp_dir::NoLiteralTempDir,
+    bun_no_negative_repeat_count::NoNegativeRepeatCount,
+    bun_no_redundant_catch_type::NoRedundantCatchType,
+    bun_no_restricted_text::NoRestrictedText,
+    bun_no_side_effects_on_import::NoSideEffectsOnImport,
+    bun_no_unportable_commands::NoUnportableCommands,
+    bun_no_unseeded_random_in_property_test::NoUnseededRandomInPropertyTest,
+    bun_no_useless_spread_fallback::NoUselessSpreadFallback,
+    bun_prefer_builtin_sleep::PreferBuiltinSleep,
+    bun_prefer_lazy_schema::PreferLazySchema,
+    bun_react_no_latest_value_ref::ReactNoLatestValueRef,
+    bun_react_no_namespace_hooks::ReactNoNamespaceHooks,
+    bun_react_prefer_updater_function::ReactPreferUpdaterFunction,
     import_consistent_type_specifier_style::ConsistentTypeSpecifierStyle,
     import_default::Default,
     import_export::Export,
@@ -40,9 +70,11 @@ bun_lint::rules! {
     import_no_namespace::NoNamespace,
     import_no_nodejs_modules::NoNodejsModules,
     import_no_relative_parent_imports::NoRelativeParentImports,
+    import_no_restricted_paths::NoRestrictedPaths,
     import_no_self_import::NoSelfImport,
     import_no_unassigned_import::NoUnassignedImport,
     import_no_webpack_loader_syntax::NoWebpackLoaderSyntax,
+    import_order::Order,
     import_prefer_default_export::PreferDefaultExport,
     import_unambiguous::Unambiguous,
     jsdoc_check_access::CheckAccess,
@@ -110,6 +142,7 @@ bun_lint::rules! {
     oxc_number_arg_out_of_range::NumberArgOutOfRange,
     oxc_only_used_in_recursion::OnlyUsedInRecursion,
     oxc_uninvoked_array_callback::UninvokedArrayCallback,
+    prettier_prettier::Prettier,
     promise_always_return::AlwaysReturn,
     promise_avoid_new::AvoidNew,
     promise_catch_or_return::CatchOrReturn,

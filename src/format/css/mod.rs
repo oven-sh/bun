@@ -294,15 +294,15 @@ fn parse_and_print<'o>(
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
-        let first_line_end =
-            text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
+        let first_line_end = bun_core::strings::index_of_char_pos(front_matter, b'\n', 0)
+            .unwrap_or(front_matter.len());
         let last_line_start =
             bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
-        let language = text::trim(&front_matter[3..first_line_end]);
+        let language = bun_core::strings::trim_js_whitespace(&front_matter[3..first_line_end]);
         let is_toml =
             language == b"toml" || (language.is_empty() && front_matter.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = text::trim(
+        let value = bun_core::strings::trim_js_whitespace(
             front_matter
                 .get(first_line_end..last_line_start)
                 .unwrap_or_default(),
@@ -428,7 +428,7 @@ pub fn format(
         BeforeParsing::Format(text) => text,
     };
     let text = &text[..];
-    if text::trim(text).is_empty() {
+    if bun_core::strings::trim_js_whitespace(text).is_empty() {
         if has_bom {
             out.extend_from_slice(BOM);
         }

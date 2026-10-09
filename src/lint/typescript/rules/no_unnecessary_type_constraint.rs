@@ -48,6 +48,7 @@ impl Rule for NoUnnecessaryTypeConstraint {
             cx.report(param, UNNECESSARY_CONSTRAINT)
                 .data("name", param.name())
                 .data("constraint", keyword.text())
+                .labels_with(|labels| labels.push(constraint, ""))
                 .suggest_with(
                     REMOVE_UNNECESSARY_CONSTRAINT,
                     &[("constraint", keyword.text())],

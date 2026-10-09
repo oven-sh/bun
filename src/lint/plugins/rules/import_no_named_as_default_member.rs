@@ -40,19 +40,21 @@ impl Rule for NoNamedAsDefaultMember {
                     return;
                 };
                 for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
-                    check(ident, remote, cx);
+                    check(ident, remote, entry.declaration.spec(), cx);
                 }
             }
         });
     }
 }
 
-fn check<'a>(ident: Expr<'a>, remote: Loaded<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) {
+fn check<'a>(ident: Expr<'a>, remote: Loaded<'a>, specifier: Name<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) {
     let report = |at: Span, export_name: Name<'a>| {
         if remote.exports(export_name.bytes()) {
             cx.report(at, NO_NAMED_AS_DEFAULT_MEMBER)
                 .data("module_name", debug(ident.text()))
-                .data("export_name", debug(export_name.bytes()));
+                .data("export_name", debug(export_name.bytes()))
+                .data("export", export_name)
+                .data("suggested_module_name", debug(specifier.bytes()));
         }
     };
     match ident.parent() {

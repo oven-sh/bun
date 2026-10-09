@@ -34,6 +34,7 @@ use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Where the code of a case is linted.
 #[derive(Copy, Clone)]
@@ -299,6 +300,7 @@ fn run_case(
     fixture: &Fixture,
     case: &Json,
     kind: Kind,
+    lacking_help: &AtomicUsize,
 ) -> Result<Option<Problem>, ()> {
     let entry = fixture.entry;
     let code = string_of(case, b"code").unwrap_or_default();
@@ -369,7 +371,13 @@ fn run_case(
         }
     };
     if fixture.plugin_of_oxlint().is_some() {
-        return Ok(problem_of_oxlint(entry, code, &messages, case));
+        return Ok(problem_of_oxlint(
+            entry,
+            code,
+            &messages,
+            case,
+            lacking_help,
+        ));
     }
     Ok(problem_of(Some(Outcome::new(entry, code, &messages)), case))
 }
@@ -538,6 +546,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     order.sort_by_key(|&at| chosen[at].kind != Kind::Typed);
     let results: Vec<OnceLock<Result<Option<Problem>, ()>>> =
         chosen.iter().map(|_| OnceLock::new()).collect();
+    let lacking_help = AtomicUsize::new(0);
     host.for_each(flags.threads, chosen.len(), &|at| {
         let at = order[at];
         let (it, fixture) = (chosen[at], &fixtures[chosen[at].fixture]);
@@ -547,6 +556,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             fixture,
             &fixture.cases()[it.index],
             it.kind,
+            &lacking_help,
         ));
     });
 
@@ -596,6 +606,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         total.passed += tally.passed;
         total.failed += tally.failed;
         total.skipped += tally.skipped;
+    }
+    if fixtures.iter().any(|it| it.plugin_of_oxlint().is_some()) {
+        output_line!(
+            "\n{} messages lack the help that oxlint has",
+            lacking_help.load(Ordering::Relaxed)
+        );
     }
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",

@@ -17,7 +17,6 @@ use bun_lint_oxlint::ast_util::{
     as_method_definition, as_object_property, as_property_definition, callee_name,
     get_inner_expression, static_name, static_property_name,
 };
-use bun_lint_oxlint::text::is_whitespace;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::hash::Hash;
@@ -30,7 +29,7 @@ pub(crate) fn is_jsx(file: &File) -> bool {
 
 /// Blanks with a line break in them, which React leaves out.
 pub(crate) fn is_padding_spaces(child: Child) -> bool {
-    matches!(child, Child::Text(text) if is_whitespace(text) && strings::contains_char(text, b'\n'))
+    matches!(child, Child::Text(text) if strings::is_all_unicode_whitespace(text) && strings::contains_char(text, b'\n'))
 }
 
 pub(crate) fn is_create_element_call(call: Call) -> bool {

@@ -233,11 +233,11 @@ fn without_names_of_links(reason: &[u8]) -> Vec<u8> {
         let Some(end) = strings::index_of_char_usize(after, b'}') else {
             break;
         };
-        let inside = text::trim_start(after.get(..end).unwrap_or_default());
+        let inside = strings::trim_js_whitespace_start(after.get(..end).unwrap_or_default());
         let is_in_name = |c: &&u8| c.is_ascii_alphanumeric() || matches!(**c, b'_' | b'$' | b'.');
         let name_len = inside.iter().take_while(is_in_name).count();
         out.extend_from_slice(rest.get(..at).unwrap_or_default());
-        out.extend_from_slice(text::trim_start(inside.get(name_len..).unwrap_or_default()));
+        out.extend_from_slice(strings::trim_js_whitespace_start(inside.get(name_len..).unwrap_or_default()));
         rest = after.get(end + 1..).unwrap_or_default();
     }
     out.extend_from_slice(rest);

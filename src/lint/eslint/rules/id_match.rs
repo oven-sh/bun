@@ -1,3 +1,4 @@
+use bun_core::strings;
 use super::id_length::key_identifier;
 use bun_lint::linter::GlobalVariable;
 use bun_lint::prelude::*;
@@ -125,7 +126,7 @@ impl IdMatch {
     fn fails(&self, name: &[u8]) -> bool {
         // The default.
         if self.pattern == "^.+$" {
-            return name.is_empty() || text::has_line_break(name);
+            return name.is_empty() || strings::contains_js_line_break(name);
         }
         self.regex.as_ref().is_some_and(|regex| !regex.test(name))
     }

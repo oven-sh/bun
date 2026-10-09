@@ -238,10 +238,10 @@ fn estree_type_name_at<'a>(file: &'a File<'a>, offset: u32) -> Option<&'static s
 /// ESLint's `formatReportedCommentValue`, appended to `out`.
 fn format_reported_comment_value(value: &[u8], out: &mut Vec<u8>) {
     let first_line = &value[..strings::index_of_char_usize(value, b'\n').unwrap_or(value.len())];
-    if first_line.len() == value.len() && text::utf16_len(value) <= 12 {
+    if first_line.len() == value.len() && strings::wtf8_len_utf16(value) <= 12 {
         out.extend_from_slice(value);
     } else {
-        out.extend_from_slice(text::utf16_slice(first_line, 0, 12));
+        out.extend_from_slice(strings::wtf8_slice_by_utf16(first_line, 0, 12));
         out.extend_from_slice(b"...");
     }
 }
@@ -282,14 +282,16 @@ impl NoMultiSpaces {
             let spaces = Span::new(left.end(), right.start());
             left = right;
             let between = file.slice(spaces);
-            if between.len() < 2 || !strings::contains(between, b"  ") || text::has_line_break(between) {
+            if between.len() < 2 || !strings::contains(between, b"  ") || strings::contains_js_line_break(between) {
                 continue;
             }
             if self.ignore_eol_comments && right.is_comment() {
                 let mut rest = tokens;
                 let is_last_on_line = rest
                     .next()
-                    .is_none_or(|next| text::has_line_break(file.slice(Span::new(right.end(), next.start()))));
+                    .is_none_or(|next| {
+                        strings::contains_js_line_break(file.slice(Span::new(right.end(), next.start())))
+                    });
                 if is_last_on_line {
                     continue;
                 }

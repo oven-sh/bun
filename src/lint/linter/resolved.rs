@@ -67,6 +67,8 @@ pub struct ConfiguredRule {
     reported_as: &'static Meta,
     /// See [`ConfiguredRule::name`].
     name: Option<Arc<[u8]>>,
+    /// See [`ConfiguredRule::or_else`].
+    or_else: Option<Box<ConfiguredJsRule>>,
 }
 
 impl ConfiguredRule {
@@ -91,6 +93,7 @@ impl ConfiguredRule {
             refusal,
             reported_as: entry.meta,
             name: None,
+            or_else: None,
         }
     }
 
@@ -113,6 +116,17 @@ impl ConfiguredRule {
 
     pub(crate) fn named(mut self, name: Option<Arc<[u8]>>) -> Self {
         self.name = name;
+        self
+    }
+
+    /// The rule of the package in whose place this one answers, for the files that it
+    /// [hands back](crate::ast::File::hand_back).
+    pub fn or_else(&self) -> Option<&ConfiguredJsRule> {
+        self.or_else.as_deref()
+    }
+
+    pub(crate) fn or(mut self, rule: Option<ConfiguredJsRule>) -> Self {
+        self.or_else = rule.map(Box::new);
         self
     }
 
@@ -150,6 +164,11 @@ pub(crate) fn find_js_rule<'p>(
     }
 }
 
+/// Whether the rule finds the files that imports name as `settings["import/resolver"]` says.
+pub(crate) fn needs_resolver(meta: &Meta) -> bool {
+    meta.plugin == Plugin::Import && meta.needs_modules
+}
+
 /// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
 #[derive(Clone, Default)]
 pub struct ResolvedConfig {
@@ -159,7 +178,9 @@ pub struct ResolvedConfig {
     /// In the order of the configuration, which is the order the rules run in.
     pub rules: Vec<ConfiguredRule>,
     /// One of them has a [name](ConfiguredRule::name).
-    pub(crate) has_named_rules: bool,
+    pub has_named_rules: bool,
+    /// `settings["import/resolver"]` names a resolver that the rules here do not do the same as.
+    pub has_unknown_resolver: bool,
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
     /// there, and are skipped otherwise.
     pub js_rules: Vec<ConfiguredJsRule>,
@@ -267,9 +288,11 @@ impl ResolvedConfig {
         if self.foreign_plugins.iter().any(|it| **it == *prefix) {
             return None;
         }
-        let found = registry.find_preferring(id, self.prefers_typescript_rules);
+        let found = registry
+            .find_preferring(id, self.prefers_typescript_rules)
+            .filter(|it| !(self.has_unknown_resolver && needs_resolver(it.meta)));
         if let Some(plugins) = &self.plugins {
-            let has = |plugin: Plugin| plugin == Plugin::Eslint || plugins.contains(&plugin);
+            let has = |plugin: Plugin| plugin.is_always_there() || plugins.contains(&plugin);
             return found.filter(|it| has(it.meta.plugin));
         }
         if found.is_some() || !self.prefers_typescript_rules {

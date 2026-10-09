@@ -3123,6 +3123,63 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
+// InferTypes copies the type of a phi into each phi that it is an operand of. Variables that are assigned from each
+// other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+test("react-compiler leaves a component alone whose types are too complex to infer", async () => {
+  using dir = tempDir("react-compiler-types", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a, b, c, d, e;
+        while (props.x) {
+          switch (c?.p) {
+            case 0: {
+              while (props.y) {
+                switch (f0) {
+                  default: {
+                    try {} catch (err) {}
+                    for (const x3 of 0) {
+                      e = (props.x && (props.x ?? d)) || {};
+                    }
+                    ({ p: a = e, q: c } = props.o);
+                  }
+                  case 0: {
+                    if (fprops.x) {
+                      d = props.y && (fprops.x ? a : f0);
+                    }
+                  }
+                  case 1: {}
+                }
+                while (f(props.x ? null : a) < props.x) {
+                  if (0 === 0) {
+                    ({ p: e = b, q: a } = props.o);
+                    d = d;
+                  }
+                }
+              }
+            }
+            case 1: {}
+            default: {}
+          }
+        }
+        a = {};
+        return <div>{a}{b}{c}{d}{e}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component");
+  expect(stdout).not.toContain("react/compiler-runtime");
+  expect(exitCode).toBe(0);
+});
+
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that
 // return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.

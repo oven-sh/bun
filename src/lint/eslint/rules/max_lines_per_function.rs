@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce a maximum number of lines of code in a function.
@@ -41,10 +42,12 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     let mut count = 0;
     let counts = file.comments().map(|comment| {
         let (first, last) = (file.line_of(comment.start()), file.line_of(comment.end()));
-        let is_first = text::is_blank(file.slice(Span::new(file.line_span(first).start, comment.start())));
+        let is_first =
+            strings::is_all_js_whitespace(file.slice(Span::new(file.line_span(first).start, comment.start())));
         count += match comment.kind() {
             TokenKind::Block => {
-                let is_last = text::is_blank(file.slice(Span::new(comment.end(), file.line_span(last).end)));
+                let is_last =
+                    strings::is_all_js_whitespace(file.slice(Span::new(comment.end(), file.line_span(last).end)));
                 (last + u32::from(is_last)).saturating_sub(first + u32::from(!is_first))
             }
             _ => u32::from(is_first),
@@ -73,7 +76,7 @@ impl MaxLinesPerFunction {
         let mut count = 0;
         let counts = (1..=file.line_count()).map(|line| {
             let is_skipped = comment_only_lines.get(line as usize) == Some(&true)
-                || self.skips_blank_lines && text::is_blank(file.line_text(line));
+                || self.skips_blank_lines && strings::is_all_js_whitespace(file.line_text(line));
             count += u32::from(!is_skipped);
             count
         });

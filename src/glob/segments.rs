@@ -3,7 +3,7 @@
 use crate::braces;
 use crate::node::Program;
 use crate::read_minimatch;
-use crate::unit::{Subject, Text, starts_with_line_terminator};
+use crate::unit::{Subject, Text};
 use bun_collections::StringHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
@@ -199,7 +199,7 @@ fn has_braces(pattern: &[u8]) -> bool {
         match byte {
             b'{' => is_open = true,
             b'}' if is_open => return true,
-            _ if starts_with_line_terminator(rest) => is_open = false,
+            _ if bun_core::lexer::starts_with_line_break(rest) => is_open = false,
             _ => {}
         }
         rest = after;

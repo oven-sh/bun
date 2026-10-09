@@ -1,4 +1,3 @@
-#![allow(dead_code, unused)]
 //! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
 //! struct field points into either the source text or the
 //! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, lifetime
@@ -24,7 +23,6 @@ pub mod parse;
 pub mod react_compiler_host;
 pub(crate) mod repl_transforms;
 pub mod scan;
-pub mod sema;
 pub mod typescript;
 pub mod visit;
 
@@ -243,8 +241,8 @@ pub enum AlreadyBundled {
 }
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
-impl<'a, const IS_TS: bool, const SCAN: bool, const SEMA: bool> bun_ast::expr::EqlParser
-    for crate::p::P<'a, IS_TS, SCAN, SEMA>
+impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
+    for crate::p::P<'a, IS_TS, SCAN>
 {
     #[inline]
     fn arena(&self) -> &bun_alloc::Arena {

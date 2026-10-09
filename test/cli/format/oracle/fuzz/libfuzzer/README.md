@@ -6,7 +6,7 @@ The crate is not a member of Bun's workspace. It links the crates that it tests 
 
 | target | what runs | the first byte chooses |
 | --- | --- | --- |
-| `html` | `bun format` | HTML, Vue, Angular, LWC, MJML, the four kinds of expressions of Angular, and the extensions that stand for them |
+| `html` | `bun format` | HTML, Vue, Angular, LWC, MJML, the four kinds of expressions of Angular, the extensions that stand for them, and Svelte |
 | `embedded` | `bun format` | where the text is: in `` html`..` ``, `/* HTML */`, `@Component({ template })`, `` css`..` ``, `` graphql`..` ``, `` markdown`..` ``, in a block of code or the front matter of Markdown, in a block or an attribute of Vue, HTML or Angular (`PLACES` in `format.rs`). In a template the bytes 1, 2 and 3 are substitutions |
 | `handlebars`, `yaml`, `graphql` | `bun format` | |
 | `css` | `bun format` | CSS, SCSS, Less |

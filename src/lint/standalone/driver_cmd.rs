@@ -64,6 +64,9 @@ enum Command {
 }
 
 pub(crate) fn run(args: &[String]) {
+    if let Ok(cwd) = std::env::current_dir() {
+        bun_paths::fs::FileSystem::init(cwd.into_os_string().as_encoded_bytes());
+    }
     let args: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
     let command = match &args[..] {
         [b"--run-eslint-tests", ..] => Command::Lint(Box::default()),
@@ -126,6 +129,7 @@ pub(crate) fn run(args: &[String]) {
         run_script: &run_script,
         js_engine: &processes,
         version: b"0.0.0-harness",
+        memory: memory(),
     };
     if let [b"--run-eslint-tests", rest @ ..] = &args[..] {
         std::process::exit(i32::from(!bun_lint_driver::for_tests::run_eslint_tests(
@@ -141,4 +145,16 @@ pub(crate) fn run(args: &[String]) {
     let _ = std::io::stdout().write_all(&outcome.stdout);
     let _ = std::io::stderr().write_all(&outcome.stderr);
     std::process::exit(i32::from(outcome.exit_code));
+}
+
+/// `BUN_LINT_MEMORY`, in bytes, which stands for the limit of a container, or else the memory of the machine.
+fn memory() -> usize {
+    let said = host::variable("BUN_LINT_MEMORY").and_then(|it| it.parse().ok());
+    said.unwrap_or_else(|| {
+        let text = host::read_text("/proc/meminfo").unwrap_or_default();
+        let total = host::lines(&text).find_map(|it| it.strip_prefix("MemTotal:"));
+        let kilobytes =
+            total.and_then(|it| it.trim().strip_suffix("kB")?.trim().parse::<usize>().ok());
+        kilobytes.unwrap_or(0) * 1024
+    })
 }

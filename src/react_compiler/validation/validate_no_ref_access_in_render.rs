@@ -172,12 +172,32 @@ impl RefAccessType {
 
 // --- Join operations ---
 
-/// `keeps_place`: `EnvironmentConfig::joined_ref_values_keep_their_place`
+/// What is nested in a type grows with each round of the fixpoint, and a join goes into all of it.
+const MAX_JOINS: u32 = 1 << 22;
+
+struct Joins {
+    /// `EnvironmentConfig::joined_ref_values_keep_their_place`
+    keeps_place: bool,
+    count: std::cell::Cell<u32>,
+}
+
+impl Joins {
+    /// Counts one. After [`MAX_JOINS`] each join is its first argument, and the validation fails.
+    fn may_join(&self) -> bool {
+        self.count.set(self.count.get().saturating_add(1));
+        self.count.get() <= MAX_JOINS
+    }
+}
+
 fn join_ref_access_ref_types(
     a: &RefAccessRefType,
     b: &RefAccessRefType,
-    keeps_place: bool,
+    joins: &Joins,
 ) -> RefAccessRefType {
+    if !joins.may_join() {
+        return a.clone();
+    }
+    let keeps_place = joins.keeps_place;
     match (a, b) {
         (
             RefAccessRefType::RefValue { ref_id: a_id, .. },
@@ -236,7 +256,7 @@ fn join_ref_access_ref_types(
                         Rc::new(join_ref_access_types(
                             &a_fn.return_type,
                             &b_fn.return_type,
-                            keeps_place,
+                            joins,
                         ))
                     },
                 }),
@@ -244,18 +264,19 @@ fn join_ref_access_ref_types(
             let value = match (a_value, b_value) {
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_val), Some(b_val)) if Rc::ptr_eq(a_val, b_val) => Some(Rc::clone(a_val)),
-                (Some(a_val), Some(b_val)) => Some(Rc::new(join_ref_access_ref_types(
-                    a_val,
-                    b_val,
-                    keeps_place,
-                ))),
+                (Some(a_val), Some(b_val)) => {
+                    Some(Rc::new(join_ref_access_ref_types(a_val, b_val, joins)))
+                }
             };
             RefAccessRefType::Structure { value, fn_type }
         }
     }
 }
 
-fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType, keeps_place: bool) -> RefAccessType {
+fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType, joins: &Joins) -> RefAccessType {
+    if !joins.may_join() {
+        return a.clone();
+    }
     match (a, b) {
         (RefAccessType::None, other) | (other, RefAccessType::None) => other.clone(),
         (RefAccessType::Guard { ref_id: a_id }, RefAccessType::Guard { ref_id: b_id }) => {
@@ -271,29 +292,26 @@ fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType, keeps_place: bool
             other.clone()
         }
         (RefAccessType::Nullable, other) | (other, RefAccessType::Nullable) => other.clone(),
-        _ => {
-            match (a.to_ref_type(), b.to_ref_type()) {
-                (Some(a_ref), Some(b_ref)) => RefAccessType::from_ref_type(
-                    &join_ref_access_ref_types(&a_ref, &b_ref, keeps_place),
-                ),
-                (Some(r), None) | (None, Some(r)) => RefAccessType::from_ref_type(&r),
-                _ => RefAccessType::None,
+        _ => match (a.to_ref_type(), b.to_ref_type()) {
+            (Some(a_ref), Some(b_ref)) => {
+                RefAccessType::from_ref_type(&join_ref_access_ref_types(&a_ref, &b_ref, joins))
             }
-        }
+            (Some(r), None) | (None, Some(r)) => RefAccessType::from_ref_type(&r),
+            _ => RefAccessType::None,
+        },
     }
 }
 
-fn join_ref_access_types_many(types: &[RefAccessType], keeps_place: bool) -> RefAccessType {
+fn join_ref_access_types_many(types: &[RefAccessType], joins: &Joins) -> RefAccessType {
     types.iter().fold(RefAccessType::None, |acc, t| {
-        join_ref_access_types(&acc, t, keeps_place)
+        join_ref_access_types(&acc, t, joins)
     })
 }
 
 // --- Env ---
 
 struct Env {
-    /// `EnvironmentConfig::joined_ref_values_keep_their_place`
-    keeps_place: bool,
+    joins: Joins,
     /// `EnvironmentConfig::captured_refs_are_known_in_functions`
     looks_into_functions: bool,
     changed: bool,
@@ -304,7 +322,10 @@ struct Env {
 impl Env {
     fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
         Self {
-            keeps_place,
+            joins: Joins {
+                keeps_place,
+                count: std::cell::Cell::new(0),
+            },
             looks_into_functions,
             changed: false,
             data: IdMap::default(),
@@ -340,11 +361,8 @@ impl Env {
             .map(|p| p.identifier)
             .unwrap_or(key);
         let current = self.data.get(operand_id);
-        let widened_value = join_ref_access_types(
-            &value,
-            current.unwrap_or(&RefAccessType::None),
-            self.keeps_place,
-        );
+        let widened_value =
+            join_ref_access_types(&value, current.unwrap_or(&RefAccessType::None), &self.joins);
         if current.is_none() && widened_value == RefAccessType::None {
             // No change needed
         } else if current.map_or(true, |c| c != &widened_value) {
@@ -532,7 +550,10 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 // --- Main entry point ---
 
-pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
+pub(crate) fn validate_no_ref_access_in_render(
+    func: &HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
     let mut ref_env = Env::new(
         env.config.joined_ref_values_keep_their_place,
         env.config.captured_refs_are_known_in_functions,
@@ -554,9 +575,17 @@ pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Env
         &mut ref_env,
         &mut errors,
     );
+    let joins = ref_env.joins.count.get();
+    bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "refs {}", joins);
+    if joins > MAX_JOINS {
+        return Err(crate::lowering::too_complex(
+            "Its refs are too complex to follow",
+        ));
+    }
     for diagnostic in errors {
         env.record_diagnostic(diagnostic);
     }
+    Ok(())
 }
 
 fn collect_temporaries_sidemap(
@@ -695,7 +724,7 @@ fn validate_no_ref_access_in_render_impl(
                             .unwrap_or(RefAccessType::None)
                     })
                     .collect();
-                let joined = join_ref_access_types_many(&phi_types, ref_env.keeps_place);
+                let joined = join_ref_access_types_many(&phi_types, &ref_env.joins);
                 ref_env.set(phi.place.identifier, joined);
             }
 
@@ -969,7 +998,7 @@ fn validate_no_ref_access_in_render_impl(
                                     .unwrap_or(RefAccessType::None),
                             );
                         }
-                        let value = join_ref_access_types_many(&types_vec, ref_env.keeps_place);
+                        let value = join_ref_access_types_many(&types_vec, &ref_env.joins);
                         match &value {
                             RefAccessType::None
                             | RefAccessType::Guard { .. }
@@ -1020,11 +1049,8 @@ fn validate_no_ref_access_in_render_impl(
                                 if let Some(RefAccessType::Structure { .. }) = &value_type {
                                     let mut object_type = value_type.unwrap();
                                     if let Some(t) = &target {
-                                        object_type = join_ref_access_types(
-                                            &object_type,
-                                            t,
-                                            ref_env.keeps_place,
-                                        );
+                                        object_type =
+                                            join_ref_access_types(&object_type, t, &ref_env.joins);
                                     }
                                     ref_env.set(object.identifier, object_type);
                                 }
@@ -1138,7 +1164,7 @@ fn validate_no_ref_access_in_render_impl(
                             &RefAccessType::Ref {
                                 ref_id: next_ref_id(),
                             },
-                            ref_env.keeps_place,
+                            &ref_env.joins,
                         ),
                     );
                 }
@@ -1160,7 +1186,7 @@ fn validate_no_ref_access_in_render_impl(
                                 loc: instr.loc,
                                 ref_id: None,
                             },
-                            ref_env.keeps_place,
+                            &ref_env.joins,
                         ),
                     );
                 }
@@ -1210,5 +1236,5 @@ fn validate_no_ref_access_in_render_impl(
         return RefAccessType::None;
     }
 
-    join_ref_access_types_many(&return_values, ref_env.keeps_place)
+    join_ref_access_types_many(&return_values, &ref_env.joins)
 }

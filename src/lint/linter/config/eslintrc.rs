@@ -13,16 +13,16 @@ use super::flat::{ConfigError, LoadLocatedPlugin, Reader, Semantics};
 use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
 use super::rc::strings_of;
-use super::{Config, ConfigObject, eslint8, path, presets};
+use super::{Config, ConfigObject, eslint8, presets};
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::Global;
 use crate::linter::message::{RuleId, write_js_string};
 use crate::linter::registry::{Registry, parse_rule_id};
 use crate::linter::resolved::{ConfiguredRule, ResolvedConfig, find_js_rule};
-use crate::linter::space::space_len;
 use crate::linter::{schema, write_json};
 use crate::options::Json;
+use crate::paths::{self, Style};
 use bun_core::strings;
 use std::sync::Arc;
 
@@ -329,17 +329,12 @@ fn shorthand_name(name: &[u8], prefix: &[u8]) -> Vec<u8> {
     name.strip_prefix(&dashed[..]).unwrap_or(name).to_vec()
 }
 
-fn is_absolute(name: &[u8]) -> bool {
-    name.starts_with(b"/")
-        || matches!(name, [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
-}
-
 /// `isFilePath`
 fn is_file_path(name: &[u8]) -> bool {
     matches!(
         name,
         [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
-    ) || is_absolute(name)
+    ) || paths::is_absolute_as(Style::Windows, name)
 }
 
 // ───────────────────────────── the words of ESLint ─────────────────────────────
@@ -733,7 +728,10 @@ fn lacks_rule(
     match find_js_rule(js_plugins, id) {
         Some(found) => found.is_none() && !is_its_own,
         None if prefix.is_empty() => !is_its_own,
-        None => !has_plugin(prefix),
+        None => {
+            use crate::rule::Plugin;
+            !Plugin::of_prefix(prefix).is_some_and(Plugin::is_always_there) && !has_plugin(prefix)
+        }
     }
 }
 
@@ -815,7 +813,7 @@ impl IgnorePattern {
             out.extend(self.lines.iter().cloned());
             return;
         }
-        let prefix = path::relative(base_path, &self.base_path);
+        let prefix = paths::relative_to_base(base_path, &self.base_path);
         for line in &self.lines {
             let (head, body): (&[u8], &[u8]) = match line.strip_prefix(b"!") {
                 Some(body) => (b"!", body),
@@ -961,7 +959,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             return self.body(json, context);
         }
         for pattern in files.iter().chain(&excluded) {
-            if is_absolute(pattern) || strings::contains(pattern, b"..") {
+            if paths::is_absolute_as(Style::Windows, pattern) || strings::contains(pattern, b"..") {
                 return Err(ConfigError::new(&[
                     b"Invalid override pattern (expected relative path not containing '..'): ",
                     pattern,
@@ -989,7 +987,7 @@ impl<'c> Legacy<'_, '_, 'c> {
         let request = normalize_package_name(name, b"eslint-plugin");
         let id = shorthand_name(&request, b"eslint-plugin");
         let importer = context.name.clone();
-        if (0..name.len()).any(|at| space_len(&name[at..]) > 0) {
+        if (0..name.len()).any(|at| strings::js_whitespace_len(&name[at..]) > 0) {
             let thrown = Thrown {
                 message: whitespace_found(&request),
                 has_template: true,
@@ -1209,7 +1207,7 @@ impl<'c> Legacy<'_, '_, 'c> {
         }
         // What is asked for is spelled as `extend` in evaluate-eslintrc.js files it: who changes one side changes the other.
         let request = if is_file_path(name) {
-            path::portable(&context.path, name)
+            paths::portable(&context.path, name)
         } else if name.starts_with(b".") {
             [b"./", name].concat()
         } else {
@@ -1330,7 +1328,7 @@ impl<'c> Legacy<'_, '_, 'c> {
                 name: file.name.clone(),
                 entry: &file.path,
                 base_path: &file.base_path,
-                plugins_from: given.unwrap_or_else(|| path::dirname(&file.path)),
+                plugins_from: given.unwrap_or_else(|| paths::dirname(&file.path)),
                 is_implicit_processor: false,
                 criteria: Vec::new(),
                 depth: 0,
@@ -1369,6 +1367,8 @@ impl<'c> Legacy<'_, '_, 'c> {
             let locations = &mut self.reader.js_locations;
             locations.push((Box::default(), location.clone()));
         }
+        let mut settings = elements.iter().filter_map(|it| it.settings.as_ref());
+        self.reader.has_unknown_resolver = settings.any(super::flat::names_unknown_resolver);
         for &NamedPlugin { ref id, at } in &named.0 {
             let said = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
             if let Some(name) = said(b"name").filter(|_| is_implemented_here(id)) {
@@ -1525,7 +1525,7 @@ impl<'c> Legacy<'_, '_, 'c> {
         if !lines.is_empty() {
             self.ignored.push(IgnorePattern {
                 lines: lines.iter().map(|it| it.to_vec()).collect(),
-                base_path: path::resolve(&self.reader.base_path, base_path),
+                base_path: paths::resolve(&self.reader.base_path, base_path),
             });
         }
     }
@@ -2220,7 +2220,7 @@ impl Config {
         let mut legacy = Legacy {
             reader: Reader {
                 registry,
-                base_path: path::resolve(b"/", options.root),
+                base_path: paths::absolute(options.root),
                 prefers_typescript_rules: false,
                 objects: Vec::new(),
                 notes: Vec::new(),
@@ -2230,6 +2230,8 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                has_unknown_resolver: false,
+                handing_back: Vec::new(),
             },
             load,
             options,

@@ -31,14 +31,14 @@ impl Rule for NumberArgOutOfRange {
             else {
                 return;
             };
-            let range = match name.bytes() {
-                b"toString" => 2.0..=36.0,
-                b"toFixed" | b"toExponential" => 0.0..=20.0,
-                b"toPrecision" => 1.0..=21.0,
+            let (min, max): (u8, u8) = match name.bytes() {
+                b"toString" => (2, 36),
+                b"toFixed" | b"toExponential" => (0, 20),
+                b"toPrecision" => (1, 21),
                 _ => return,
             };
-            if !range.contains(&value) {
-                cx.report(e, NUMBER_ARG_OUT_OF_RANGE);
+            if !(f64::from(min)..=f64::from(max)).contains(&value) {
+                cx.report(e, NUMBER_ARG_OUT_OF_RANGE).data("method_name", name).data("min", min).data("max", max);
             }
         });
     }

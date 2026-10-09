@@ -225,8 +225,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let end_token = self.advance_if(TokenType::DocTypeEnd);
         let end = end_token.or(text).unwrap_or(start_token).span.end;
         let mut node = Node::new(Kind::DocType, Span::new(start_token.span.start, end));
-        node.value =
-            Cow::Borrowed(text.map_or(&b""[..], |text| crate::text::trim(text.span.of(self.text))));
+        node.value = Cow::Borrowed(text.map_or(&b""[..], |text| {
+            bun_core::strings::trim_js_whitespace(text.span.of(self.text))
+        }));
         self.add_to_parent(node);
     }
 

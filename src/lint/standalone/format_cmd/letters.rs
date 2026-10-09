@@ -15,19 +15,6 @@ use std::fmt::Write as _;
 /// and upper and lower case do not count, and neither does where a letter is.
 type Letters = [u64; 26 + 128];
 
-/// The length of the white space that is not ASCII at the start of `text`.
-fn white_space_len(text: &[u8]) -> usize {
-    match text {
-        [0xC2, 0xA0, ..] => 2,
-        [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..]
-        | [0xEF, 0xBB, 0xBF, ..] => 3,
-        _ => 0,
-    }
-}
-
 fn letters_of(text: &[u8]) -> Letters {
     let mut letters = [0; 26 + 128];
     let (mut at, mut previous) = (0, 0);
@@ -39,7 +26,7 @@ fn letters_of(text: &[u8]) -> Letters {
             _ if previous == b'\\' => {}
             b'a'..=b'z' => letters[usize::from(byte - b'a')] += 1,
             b'A'..=b'Z' => letters[usize::from(byte - b'A')] += 1,
-            0x80.. => match white_space_len(&text[at..]) {
+            0x80.. => match strings::js_whitespace_len(&text[at..]) {
                 0 => letters[26 + usize::from(byte - 0x80)] += 1,
                 len => at += len - 1,
             },

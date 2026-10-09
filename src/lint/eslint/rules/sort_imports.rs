@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -83,8 +84,8 @@ fn get_first_local_member_name(import: Import<'_>) -> Option<&[u8]> {
 impl SortImports {
     fn compare(&self, a: &[u8], b: &[u8]) -> Ordering {
         match self.ignore_case {
-            true => text::compare(&text::to_lower_case(a), &text::to_lower_case(b)),
-            false => text::compare(a, b),
+            true => strings::order_utf16(&text::to_lower_case(a), &text::to_lower_case(b)),
+            false => strings::order_utf16(a, b),
         }
     }
 
@@ -102,7 +103,7 @@ impl SortImports {
             false => Cow::Borrowed(name),
         };
         let mut sorted: Vec<_> = specifiers.iter().rev().map(|it| (key(it.local().bytes()), *it)).collect();
-        utils::sort::sort_by(&mut sorted, |a, b| text::compare(&a.0, &b.0));
+        utils::sort::sort_by(&mut sorted, |a, b| strings::order_utf16(&a.0, &b.0));
         for (specifier, (_, next)) in specifiers.iter_mut().zip(sorted) {
             *specifier = next;
         }

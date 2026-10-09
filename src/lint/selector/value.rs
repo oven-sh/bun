@@ -81,15 +81,15 @@ impl Short {
 
 /// `offset` as ESLint counts: in UTF-16 code units, without a byte order mark.
 fn utf16_offset(file: &File, offset: u32) -> f64 {
-    let units = text::utf16_len(file.slice(Span::new(0, offset)));
+    let units = bun_core::strings::wtf8_len_utf16(file.slice(Span::new(0, offset)));
     f64::from(units.saturating_sub(u32::from(file.has_bom())))
 }
 
 /// `text[index]`
 fn unit_at(text: &[u8], index: u32) -> Option<Short> {
     let mut at = 0;
-    for (_, c) in text::code_points(text) {
-        let width = text::utf16_width(c);
+    for (_, c) in bun_core::strings::wtf8_codepoints(text) {
+        let width = bun_core::strings::codepoint_len_utf16(c);
         if index < at + width {
             return Some(Short::of_unit(match (width, index - at) {
                 (1, _) => c,
@@ -161,7 +161,7 @@ impl<'a> Val<'a> {
         use Property as P;
         let is_espree = dialect == Dialect::Espree;
         let string = |text: &[u8]| match key.property {
-            P::Length => Val::Number(f64::from(text::utf16_len(text))),
+            P::Length => Val::Number(f64::from(bun_core::strings::wtf8_len_utf16(text))),
             P::Index(index) => unit_at(text, index).map_or(Val::Undefined, Val::Short),
             _ => Val::Undefined,
         };
@@ -297,7 +297,11 @@ impl<'a> Val<'a> {
             Val::BigInt(digits) => text::string_to_number(digits),
             // Objects are converted to strings first.
             _ if literal.is_number => self.with_string(text::string_to_number),
-            _ => return Some(self.with_string(|text| text::compare(text, &literal.text))),
+            _ => {
+                return Some(
+                    self.with_string(|text| bun_core::strings::order_utf16(text, &literal.text)),
+                );
+            }
         };
         number.partial_cmp(&literal.number)
     }

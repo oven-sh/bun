@@ -118,7 +118,10 @@ fn check_missing_key<'a>(e: Expr<'a>, span: Span, cx: &mut Cx<'a, JsxKey>) {
     }
     match outer {
         InsideArrayOrIterator::Array => cx.report(span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY),
-        InsideArrayOrIterator::Iterator(iter_span) => cx.report(iter_span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR),
+        InsideArrayOrIterator::Iterator(iter_span) => cx
+            .report(iter_span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR)
+            .first_label("Iterator starts here.")
+            .label(span, "Element generated here."),
     };
 }
 

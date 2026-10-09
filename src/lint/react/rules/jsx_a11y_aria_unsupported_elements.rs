@@ -30,7 +30,7 @@ impl Rule for AriaUnsupportedElements {
                     continue;
                 };
                 if *attr_name == *b"role" || is_valid_aria_property(&attr_name) {
-                    cx.report(attr, ARIA_UNSUPPORTED_ELEMENTS).fix(|fixer| fixer.remove(attr));
+                    cx.report(attr, ARIA_UNSUPPORTED_ELEMENTS).data("attr_name", attr_name).fix(|fixer| fixer.remove(attr));
                 }
             }
         });

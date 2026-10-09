@@ -37,7 +37,7 @@ pub struct State<'a> {
     /// For [`is_in_root_scope`].
     in_root_scope: AncestorMemo<'a, ()>,
     /// Where a variable is declared, if that is with a violation.
-    declared_with_violation: FxHashMap<Symbol<'a>, Option<Span>>,
+    declared_with_violation: FxHashMap<Symbol<'a>, Option<(Span, Option<Span>)>>,
 }
 
 /// One of the rules.
@@ -142,7 +142,7 @@ fn run_react_perf_rule<'a, R: ReactPerfRule>(
         return;
     };
     let known = &mut R::state(cx).declared_with_violation;
-    let Some(decl_span) = *known
+    let Some((decl_span, init_span)) = *known
         .entry(symbol)
         .or_insert_with(|| declaration_with_violation::<R>(symbol))
     else {
@@ -153,17 +153,25 @@ fn run_react_perf_rule<'a, R: ReactPerfRule>(
         && scope != file.scope()
         && !is_allowed_on_native_element(rule.native_allow_list(), jsx, attr)
     {
-        cx.report(decl_span, R::MESSAGE);
+        let report = cx
+            .report(decl_span, R::MESSAGE)
+            .first_label("The prop was declared here");
+        let report = match init_span {
+            Some(init_span) => report.label(init_span, "And assigned a new value here"),
+            None => report,
+        };
+        report.label(expr, "And used here");
     }
 }
 
-fn declaration_with_violation<R: ReactPerfRule>(symbol: Symbol) -> Option<Span> {
+/// Where it is declared, and the new value, which oxlint does not show if it is a function.
+fn declaration_with_violation<R: ReactPerfRule>(symbol: Symbol) -> Option<(Span, Option<Span>)> {
     match symbol.declarations().next()? {
         declaration @ Declaration::Var(_) => match declaration.node() {
             Some(Node::VarDecl(decl)) => decl
                 .init()
                 .and_then(check_expression::<R>)
-                .map(|_| decl.pat().span()),
+                .map(|init| (decl.pat().span(), (!R::CHECKS_FUNCTIONS).then_some(init))),
             _ => None,
         },
         Declaration::Param(id) if R::CHECKS_PARAMETERS => {
@@ -173,12 +181,14 @@ fn declaration_with_violation<R: ReactPerfRule>(symbol: Symbol) -> Option<Span> 
                 Node::PatElem(element) => element.default(),
                 _ => None,
             };
-            init.and_then(check_expression::<R>).map(|_| id.span())
+            init.and_then(check_expression::<R>)
+                .map(|init| (id.span(), Some(init)))
         }
-        Declaration::Fn(func) if R::CHECKS_FUNCTIONS => Some(
+        Declaration::Fn(func) if R::CHECKS_FUNCTIONS => Some((
             func.name()
                 .map_or_else(|| func.estree_span(), |it| it.span()),
-        ),
+            None,
+        )),
         _ => None,
     }
 }

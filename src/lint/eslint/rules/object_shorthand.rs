@@ -51,7 +51,7 @@ enum Finding<'a> {
 /// ESLint's `isConstructor`: whether the first character of `name` after `_`, `$` and digits is a
 /// capital letter.
 fn is_constructor(name: &[u8]) -> bool {
-    let mut rest = text::code_points(name).skip_while(|it| matches!(it.1, 0x5F | 0x24 | 0x30..=0x39));
+    let mut rest = strings::wtf8_codepoints(name).skip_while(|it| matches!(it.1, 0x5F | 0x24 | 0x30..=0x39));
     let Some((start, first)) = rest.next() else {
         return false;
     };
@@ -262,7 +262,7 @@ impl ObjectShorthand {
                 // A JSDoc type annotation would be lost.
                 let has_type_annotation = file.comments_in(prop).any(|comment| {
                     let value = comment.comment_value();
-                    let start = if is_quoted { value } else { text::trim_start(value) };
+                    let start = if is_quoted { value } else { strings::trim_js_whitespace_start(value) };
                     comment.kind() == TokenKind::Block && start.starts_with(b"*") && strings::contains(value, b"@type")
                 });
                 (!has_type_annotation).then_some(Finding::PropertyShorthand(name))

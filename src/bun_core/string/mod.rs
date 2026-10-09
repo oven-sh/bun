@@ -2026,7 +2026,7 @@ pub mod printer {
     use crate::string::immutable::{self as strings, Encoding as StrEncoding};
     use crate::string::mutable_string::MutableString;
 
-    use crate::fmt::{hex2_upper, hex4_upper};
+    use crate::fmt::{hex_byte_lower, hex2_upper, hex4_upper};
 
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
@@ -2242,6 +2242,66 @@ pub mod printer {
             }
         }
         Ok(())
+    }
+
+    /// `JSON.stringify(text)`, appended to `out`, byte for byte as JavaScript writes it. Unlike
+    /// [`quote_for_json`]: `\u001f` has lower case, and U+2028, U+2029 and U+FEFF stay as they are.
+    /// `text` is WTF-8: half a surrogate pair becomes `\udXXX`, malformed UTF-8 becomes U+FFFD.
+    pub fn json_stringify(text: &[u8], out: &mut Vec<u8>) {
+        out.reserve(text.len() + 2);
+        out.push(b'"');
+        let mut rest = text;
+        while let Some(at) = strings::index_of_needs_escape_for_java_script_string(rest, b'"') {
+            let (plain, from) = rest.split_at(at as usize);
+            out.extend_from_slice(plain);
+            let byte = from[0];
+            let mut taken = 1;
+            match byte {
+                b'"' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
+                0x08 => out.extend_from_slice(b"\\b"),
+                0x0C => out.extend_from_slice(b"\\f"),
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                0..0x20 => {
+                    let [high, low] = hex_byte_lower(byte);
+                    out.extend_from_slice(&[b'\\', b'u', b'0', b'0', high, low]);
+                }
+                0x20..0x80 => out.push(byte),
+                _ => {
+                    let width = strings::wtf8_byte_sequence_length_with_invalid(byte);
+                    let len = (width as usize).min(from.len());
+                    let mut sequence = [0u8; 4];
+                    sequence[..len].copy_from_slice(&from[..len]);
+                    let c = match width {
+                        1 => MALFORMED,
+                        _ => strings::decode_wtf8_rune_t::<i32>(sequence, width, MALFORMED),
+                    };
+                    match c {
+                        MALFORMED => out.extend_from_slice("\u{FFFD}".as_bytes()),
+                        0xD800..=0xDFFF => {
+                            let [high, low] = (c as u16).to_be_bytes().map(hex_byte_lower);
+                            out.extend_from_slice(&[b'\\', b'u', high[0], high[1], low[0], low[1]]);
+                            taken = len;
+                        }
+                        _ => {
+                            out.extend_from_slice(&from[..len]);
+                            taken = len;
+                        }
+                    }
+                }
+            }
+            rest = &from[taken..];
+        }
+        out.extend_from_slice(rest);
+        out.push(b'"');
+    }
+
+    /// [`json_stringify`] into a new `Vec`.
+    pub fn json_stringify_alloc(text: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        json_stringify(text, &mut out);
+        out
     }
 
     /// Port of `js_printer.quoteForJSON`. MOVE_DOWN so `bun_sourcemap` /

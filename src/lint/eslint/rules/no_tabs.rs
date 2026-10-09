@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text;
 
 /// Disallow all tabs.
 pub struct NoTabs {
@@ -34,7 +33,7 @@ impl Rule for NoTabs {
                 if rule.allow_indentation_tabs {
                     let line = cx.line_span(cx.line_of(tabs.start));
                     if indentation.start != line.start || indentation.is_empty() {
-                        let rest = text::trim_start(cx.slice(line)).len() as u32;
+                        let rest = strings::trim_js_whitespace_start(cx.slice(line)).len() as u32;
                         indentation = Span::new(line.start, line.end - rest);
                     }
                     if tabs.start <= indentation.end {

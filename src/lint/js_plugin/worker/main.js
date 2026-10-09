@@ -113,7 +113,7 @@ const configurations = new Map();
 function exportedAt(exported, path) {
   let found = exported;
   for (const name of path) {
-    const inner = found[name];
+    const inner = found?.[name];
     if (inner !== undefined || name !== "default") found = inner;
   }
   return found;
@@ -134,7 +134,10 @@ async function locatedPlugin(location, prefix) {
       // A module that awaits something.
       found = await load(pathToFileURL(location.module).href);
     }
-    return exportedAt(found, location.export);
+    found = exportedAt(found, location.export);
+    // The configuration file can have put it there: `merge(...tseslint.configs.recommended, other)` changes what the module exports.
+    if ((found !== null && typeof found === "object") || location.else === undefined) return found;
+    return locatedPlugin(location.else, prefix);
   }
   let exported = configurations.get(location.config);
   if (exported === undefined) {
@@ -158,7 +161,9 @@ async function findPlugin([directory, specifier, alias]) {
     const module = await load(pathToFileURL(file).href);
     plugin = module.default ?? module;
   }
-  if (plugin === null || typeof plugin !== "object") throw new TypeError("A plugin must export an object.");
+  if (plugin === null || typeof plugin !== "object") {
+    throw new TypeError(`A plugin must export an object: ${JSON.stringify(alias ?? specifier)}`);
+  }
   let name = alias;
   if (name === null && plugin.meta?.name != null) {
     if (typeof plugin.meta.name !== "string") throw new TypeError("`plugin.meta.name` must be a string if defined");

@@ -49,7 +49,10 @@ impl Rule for NoPlusplus {
             if rule.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {
                 return;
             }
-            let report = cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
+            let mut report = cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
+            if cx.language().is_oxlint {
+                report = report.data("sign", if matches!(op, UnOp::PreInc | UnOp::PostInc) { "+" } else { "-" });
+            }
             // What oxlint suggests for a name, and for a property whose name is known.
             let has_name = operand.tag() == ExprTag::Ident || static_property_name_or_regex(operand).is_some();
             if cx.language().is_oxlint && has_name {

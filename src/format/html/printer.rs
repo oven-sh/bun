@@ -4,9 +4,8 @@ use super::ast::{Attribute, Flags, Id, Kind, StartTagComment, Tree};
 use super::cursor::{Cursor, Target};
 use super::tag::Tags;
 use super::utilities::{
-    html_split, html_trim, html_trim_end, html_trim_preserve_indentation, is_pre_like,
-    is_script_like_tag, is_text_like, min_indentation, should_unquote_attribute_value,
-    unescape_quote_entities,
+    html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag, is_text_like,
+    min_indentation, should_unquote_attribute_value, unescape_quote_entities,
 };
 use super::writer::Writer;
 use super::{Options, Parser};
@@ -52,19 +51,21 @@ enum IgnoredAttributes<'c> {
 impl<'c> IgnoredAttributes<'c> {
     fn from_comment(value: &'c [u8]) -> Self {
         // `/^prettier-ignore-attribute(?:\s+(.+))?$/s`
-        let Some(rest) = text::trim(value).strip_prefix(b"prettier-ignore-attribute") else {
+        let Some(rest) =
+            strings::trim_js_whitespace(value).strip_prefix(b"prettier-ignore-attribute")
+        else {
             return IgnoredAttributes::None;
         };
         match rest {
             b"" => IgnoredAttributes::All,
             _ if text::starts_with_white_space(rest) => {
-                let (mut rest, mut names) = (text::trim_start(rest), Vec::new());
+                let (mut rest, mut names) = (strings::trim_js_whitespace_start(rest), Vec::new());
                 while !rest.is_empty() {
                     let len = (0..rest.len())
                         .find(|&at| text::starts_with_white_space(&rest[at..]))
                         .unwrap_or(rest.len());
                     names.push(&rest[..len]);
-                    rest = text::trim_start(&rest[len..]);
+                    rest = strings::trim_js_whitespace_start(&rest[len..]);
                 }
                 crate::sort::sort(&mut names[..]);
                 IgnoredAttributes::Named(names)
@@ -175,7 +176,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             Kind::AngularControlFlowBlockParameters => {
                 self.print_angular_control_flow_block_parameters(id)
             }
-            Kind::AngularControlFlowBlockParameter => self.out.text(html_trim(&node.value)),
+            Kind::AngularControlFlowBlockParameter => self.out.text(node.value.trim_ascii()),
             Kind::AngularLetDeclaration => self.print_angular_let_declaration(id),
             Kind::AngularIcuExpression => self.print_angular_icu_expression(id),
             Kind::AngularIcuCase => self.print_angular_icu_case(id),
@@ -213,7 +214,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                         .find(|&at| text::starts_with_white_space(&value[at..]))
                         .unwrap_or(value.len());
                     self.out.text(&value[..len]);
-                    let rest = text::trim_start(&value[len..]);
+                    let rest = strings::trim_js_whitespace_start(&value[len..]);
                     if rest.len() < value.len() - len {
                         self.out.token(" ");
                     }
@@ -247,7 +248,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         };
         if parent.kind == Kind::Interpolation {
             // The line break at the end is not a literal one: `/\n[^\S\n]*$/`
-            let text_len = text::trim_end(value).len();
+            let text_len = strings::trim_js_whitespace_end(value).len();
             return match strings::last_index_of_char(&value[text_len..], b'\n') {
                 Some(at) => {
                     self.out.text(&value[..text_len + at]);
@@ -339,12 +340,13 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
         self.out
             .built_text(|out| tags.opening_tag_prefix(child, out));
-        self.out.text(html_trim_end(
+        self.out.text(
             self.options
                 .original_text
                 .get(start..end)
-                .unwrap_or_default(),
-        ));
+                .unwrap_or_default()
+                .trim_ascii_end(),
+        );
         self.out
             .built_text(|out| tags.closing_tag_suffix(child, out));
     }
@@ -716,7 +718,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                     self.with_cursor_marks(Target::InStartTag(comment.span), |printer| {
                         if comment.is_single_line {
                             printer.out.token("//");
-                            printer.out.text(text::trim_end(comment.value));
+                            printer
+                                .out
+                                .text(strings::trim_js_whitespace_end(comment.value));
                         } else {
                             printer.out.token("/*");
                             printer.out.text(comment.value);

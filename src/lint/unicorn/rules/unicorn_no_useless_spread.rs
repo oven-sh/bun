@@ -3,6 +3,7 @@ use bun_lint_oxlint::ast_util::{
     static_property_name,
 };
 use bun_lint_oxlint::codegen::Codegen;
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
@@ -124,7 +125,11 @@ fn check<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUselessSpread>) {
 fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUselessSpread>) {
     let Spread { argument, list, .. } = spread;
     let noun = if argument.tag() == ExprTag::Object { "object" } else { "array" };
-    let report = cx.report(spread.dots(), USELESS_SPREAD).data("noun", noun);
+    let help = match list.tag() {
+        ExprTag::Object | ExprTag::Array => "Consider removing the spread operator.",
+        _ => "Pass arguments directly instead of spreading an array.",
+    };
+    let report = cx.report(spread.dots(), USELESS_SPREAD).data("noun", noun).help(help);
     match (argument.kind(), list.kind()) {
         (ExprKind::Object(inner), ExprKind::Object(outer)) => report.fix(|fixer| {
             let mut properties: SmallVec<[Prop; 8]> = SmallVec::new();
@@ -212,7 +217,9 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
         Node::Stmt(parent) => {
             let is_iterated = matches!(parent.kind(), StmtKind::ForOf { expr, .. } if expr == array);
             if is_iterated {
-                cx.report(spread.dots(), USELESS_SPREAD).data("noun", "array");
+                cx.report(spread.dots(), USELESS_SPREAD)
+                    .data("noun", "array")
+                    .help("`for…of` can iterate over iterable, it's unnecessary to convert to an array.");
             }
             return is_iterated;
         }
@@ -221,7 +228,9 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
     };
     match parent.kind() {
         ExprKind::Yield { star: true, .. } if !array.is_parenthesized() => {
-            cx.report(spread.dots(), USELESS_SPREAD).data("noun", "array");
+            cx.report(spread.dots(), USELESS_SPREAD).data("noun", "array").help(
+                "`yield*` can delegate to another iterable, so it's unnecessary to convert the iterable to an array.",
+            );
             true
         }
         ExprKind::New(new) if new.args().first() == Some(array) => {
@@ -256,6 +265,26 @@ fn get_method_name(call: Call) -> Option<Vec<u8>> {
     Some([object.map_or(&b"unknown"[..], Name::bytes), b".", static_property_name(callee)?.bytes()].concat())
 }
 
+/// What is called or awaited in `target`, which is taken without its parentheses, as it is written. `None`: it is long.
+fn diagnostic_name(target: Expr<'_>) -> Option<&[u8]> {
+    let (mut at, mut span) = (target, target.span());
+    // Parentheses and the whole of an optional chain are nodes for oxlint.
+    while !at.is_chain_root() && span == at.span() {
+        at = match at.kind() {
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::Await(argument) => argument,
+            ExprKind::Binary { op: BinOp::Comma, .. } => {
+                span = Span::new(span.start.saturating_sub(1), span.end + 1);
+                break;
+            }
+            _ => break,
+        };
+        span = at.outer_span();
+    }
+    let snippet = target.file().slice(span);
+    (snippet.len() <= 50 && !strings::contains_char(snippet, b'\n')).then_some(snippet)
+}
+
 /// `spread`: all that is in an array or an object.
 fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUselessSpread>) {
     let target = get_inner_expression(spread.argument);
@@ -266,7 +295,14 @@ fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUse
     {
         return;
     }
-    cx.report(spread.dots(), USELESS_SPREAD).data("noun", noun).fix(|fixer| {
+    let help = || {
+        let name = diagnostic_name(target).map(|it| format!("`{}`", bstr::BStr::new(it)));
+        let name = name.as_deref().unwrap_or("This expression");
+        format!(
+            "{name} returns a new {noun}. Spreading it into an {noun} expression to create a new {noun} is redundant."
+        )
+    };
+    cx.report(spread.dots(), USELESS_SPREAD).data("noun", noun).help_with(help).fix(|fixer| {
         // `[...new Array(1)]` has no holes.
         let has_holes = matches!(target.kind(), ExprKind::New(new)
             if new.args().len() == 1 && get_inner_expression(new.callee()).is_ident("Array"));

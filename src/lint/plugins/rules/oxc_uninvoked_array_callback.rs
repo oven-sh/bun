@@ -45,7 +45,9 @@ impl Rule for UninvokedArrayCallback {
                 && !member.is_chain_root()
                 && call.args().first().is_some_and(|it| is_plain(it, ExprTag::Fn))
             {
-                cx.report(property_span, UNINVOKED_ARRAY_CALLBACK);
+                cx.report(property_span, UNINVOKED_ARRAY_CALLBACK)
+                    .first_label("this callback will not be invoked")
+                    .label(e, "because this is an array with only empty slots");
             }
         });
     }

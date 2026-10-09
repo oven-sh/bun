@@ -8,11 +8,12 @@ use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
 use crate::estree::Dialect;
 use crate::fix::Fix;
-use crate::linter::{write_json, write_json_string};
+use crate::linter::write_json;
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
 use crate::span::Span;
+use bun_core::printer::json_stringify;
 use bun_threading::Guarded;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -42,6 +43,8 @@ pub struct Suggested {
     /// `desc`
     pub message: Vec<u8>,
     pub data: Vec<(Box<str>, Vec<u8>)>,
+    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
+    pub has_data: bool,
     pub fix: Fix,
 }
 
@@ -165,8 +168,9 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
     // `[messageId, desc, data, fix]`
     let suggested = |it: &Json| {
         let parts = it.as_array()?;
-        let data = parts.get(2).and_then(Json::as_object).unwrap_or_default();
-        let data = data.iter().filter_map(|(key, value)| {
+        let data = parts.get(2).and_then(Json::as_object);
+        let has_data = data.is_some();
+        let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
             Some((
                 std::str::from_utf8(key).ok()?.into(),
                 value.as_str()?.to_vec(),
@@ -176,6 +180,7 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
             message_id: text_of(parts.first()),
             message: parts.get(1)?.as_str()?.to_vec(),
             data: data.collect(),
+            has_data,
             fix: fix_of(parts.get(3), offsets)?,
         })
     };
@@ -304,7 +309,7 @@ impl<'e> Host<'e> {
         let mut location = b"[".to_vec();
         for part in [Some(directory), Some(specifier), alias] {
             match part {
-                Some(part) => write_json_string(&mut location, part),
+                Some(part) => json_stringify(part, &mut location),
                 None => location.extend_from_slice(b"null"),
             }
             location.push(b',');
@@ -323,7 +328,7 @@ impl<'e> Host<'e> {
         let mut written = b"[".to_vec();
         write_json(&mut written, &Json::Object(place));
         written.extend_from_slice(b",null,");
-        write_json_string(&mut written, prefix);
+        json_stringify(prefix, &mut written);
         written.push(b']');
         let described = location.get(b"described").and_then(Json::as_str);
         match described.and_then(crate::json::parse) {
@@ -437,7 +442,7 @@ impl<'e> Host<'e> {
                     );
                     out.extend_from_slice(counts.as_bytes());
                 }
-                Err(error) => write_json_string(out, error.message()),
+                Err(error) => json_stringify(error.message(), out),
             }
         }
         out.push(b']');

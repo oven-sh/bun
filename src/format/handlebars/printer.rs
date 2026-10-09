@@ -7,39 +7,13 @@ use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
 use crate::css::doc::{self, Doc, Elements, IndentCommand, Line};
 use crate::options::EmbeddedLanguageFormatting;
-use crate::text::{self, white_space_len};
+use crate::text;
 use bun_core::strings;
 
 const HTML_WHITE_SPACE: &[u8] = b"\t\n\x0C\r ";
 
-fn is_html_white_space(byte: u8) -> bool {
-    matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')
-}
-
 fn has_html_white_space(text: &[u8]) -> bool {
     strings::index_of_any(text, HTML_WHITE_SPACE).is_some()
-}
-
-/// `htmlWhitespace.trimStart(text)`
-fn trim_start(text: &[u8]) -> &[u8] {
-    &text[text
-        .iter()
-        .take_while(|byte| is_html_white_space(**byte))
-        .count()..]
-}
-
-/// `htmlWhitespace.trimEnd(text)`
-fn trim_end(text: &[u8]) -> &[u8] {
-    &text[..text.len()
-        - text
-            .iter()
-            .rev()
-            .take_while(|byte| is_html_white_space(**byte))
-            .count()]
-}
-
-fn count_new_lines(text: &[u8]) -> usize {
-    strings::count_char(text, b'\n')
 }
 
 /// `string.toUpperCase() === string`, for the first UTF-16 code unit of the name of a tag.
@@ -119,7 +93,7 @@ impl<'a> Printer<'a> {
 
     /// A `line`, or as many `hardline`s as `white_space` has line breaks, two at most. `is_dedented`: each in a `dedent`.
     fn breaks(&mut self, white_space: &[u8], is_dedented: bool) {
-        let new_lines = count_new_lines(white_space);
+        let new_lines = strings::count_char(white_space, b'\n');
         for _ in 0..new_lines.clamp(1, 2) {
             if is_dedented {
                 self.out.start_indent(IndentCommand::Dedent);
@@ -193,7 +167,7 @@ impl<'a> Printer<'a> {
                 break;
             }
             separator(self.out);
-            rest = trim_start(rest);
+            rest = rest.trim_ascii_start();
         }
         if blanks.behind {
             separator(self.out);
@@ -206,7 +180,7 @@ impl<'a> Printer<'a> {
 
     /// `isWhitespaceNode`
     fn is_white_space_node(&self, node: NodeId) -> bool {
-        matches!(self.tree.kind(node), Kind::Text { chars } if text::trim_start(self.text(chars)).is_empty())
+        matches!(self.tree.kind(node), Kind::Text { chars } if strings::trim_js_whitespace_start(self.text(chars)).is_empty())
     }
 
     fn are_white_space(&self, nodes: &[NodeId]) -> bool {
@@ -215,7 +189,7 @@ impl<'a> Printer<'a> {
 
     /// `nodes`, which are white space to Prettier, are not printed. A no-break space is none in HTML.
     fn drop_white_space(&mut self, nodes: &[NodeId]) {
-        self.is_damaged |= nodes.iter().any(|node| matches!(self.tree.kind(*node), Kind::Text { chars } if !trim_start(self.text(chars)).is_empty()));
+        self.is_damaged |= nodes.iter().any(|node| matches!(self.tree.kind(*node), Kind::Text { chars } if !self.text(chars).trim_ascii_start().is_empty()));
     }
 
     /// `isVoidElement`
@@ -232,7 +206,7 @@ impl<'a> Printer<'a> {
 
     /// `isPrettierIgnoreNode`
     fn is_prettier_ignore(&self, node: NodeId) -> bool {
-        matches!(self.tree.kind(node), Kind::MustacheComment { value } if text::trim(self.text(value)) == b"prettier-ignore")
+        matches!(self.tree.kind(node), Kind::MustacheComment { value } if strings::trim_js_whitespace(self.text(value)) == b"prettier-ignore")
     }
 
     /// What is ignored is printed as it is written.
@@ -346,20 +320,23 @@ impl<'a> Printer<'a> {
             let language = &raw[front_matter.explicit_language.0..front_matter.explicit_language.1];
             let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
             let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-            let value = match text::trim(&raw[front_matter.value.0..front_matter.value.1]) {
-                b"" if is_yaml || is_toml => Doc::EMPTY,
-                value if is_yaml => doc::strip_trailing_hardline(doc::clean(
-                    crate::yaml::document(value, self.options).ok()?,
-                )),
-                _ => return None,
-            };
+            let value =
+                match strings::trim_js_whitespace(&raw[front_matter.value.0..front_matter.value.1])
+                {
+                    b"" if is_yaml || is_toml => Doc::EMPTY,
+                    value if is_yaml => doc::strip_trailing_hardline(doc::clean(
+                        crate::yaml::document(value, self.options).ok()?,
+                    )),
+                    _ => return None,
+                };
             Some((language, value))
         });
         // The mark of a document that is indented ends the front matter once it is not.
         self.is_damaged |= formatted.is_some()
-            && strings::split(raw, b"\n")
-                .skip(1)
-                .any(|line| line.starts_with(b" ") && text::trim_start(line).starts_with(b"---"));
+            && strings::split(raw, b"\n").skip(1).any(|line| {
+                line.starts_with(b" ")
+                    && strings::trim_js_whitespace_start(line).starts_with(b"---")
+            });
         let Some((language, value)) = formatted else {
             return self.verbatim(raw);
         };
@@ -625,9 +602,9 @@ impl<'a> Printer<'a> {
             return self.with_literal_lines(chars, true);
         }
         // What JavaScript takes for white space can be in the name of a class.
-        self.is_damaged |=
-            (0..chars.len()).any(|at| chars[at] == 0x0B || white_space_len(&chars[at..]) > 1);
-        let mut classes = text::trim(chars);
+        self.is_damaged |= (0..chars.len())
+            .any(|at| chars[at] == 0x0B || strings::js_whitespace_len(&chars[at..]) > 1);
+        let mut classes = strings::trim_js_whitespace(chars);
         if follows_mustache && text::starts_with_white_space(chars) {
             self.out.line(Line::Space);
         }
@@ -635,16 +612,19 @@ impl<'a> Printer<'a> {
         // `.replaceAll(/\s+/g, " ")`
         while !classes.is_empty() {
             let len = (0..classes.len())
-                .find(|at| white_space_len(&classes[*at..]) > 0)
+                .find(|at| strings::js_whitespace_len(&classes[*at..]) > 0)
                 .unwrap_or(classes.len());
             self.escaped(&classes[..len]);
             classes = &classes[len..];
             if !classes.is_empty() {
                 self.token(" ");
-                classes = text::trim_start(classes);
+                classes = strings::trim_js_whitespace_start(classes);
             }
         }
-        if precedes_mustache && has_classes && text::trim_end(chars).len() < chars.len() {
+        if precedes_mustache
+            && has_classes
+            && strings::trim_js_whitespace_end(chars).len() < chars.len()
+        {
             self.out.line(Line::Space);
         }
     }
@@ -664,15 +644,15 @@ impl<'a> Printer<'a> {
             Parent::Pre => return self.with_literal_lines(chars, false),
             Parent::Style => {
                 // The white space between it and a mustache is not kept.
-                self.is_damaged |= (!is_first && trim_start(chars).len() < chars.len())
-                    || (!is_last && trim_end(chars).len() < chars.len());
+                self.is_damaged |= (!is_first && chars.trim_ascii_start().len() < chars.len())
+                    || (!is_last && chars.trim_ascii_end().len() < chars.len());
                 return self.text_in_style(chars);
             }
             Parent::Template | Parent::Block | Parent::Element => {}
         }
         // Only what is right in a `<pre>` is kept as it is.
         self.is_damaged |= self.pre_depth > 0 && has_html_white_space(chars);
-        let is_white_space_only = trim_start(chars).is_empty();
+        let is_white_space_only = chars.trim_ascii_start().is_empty();
 
         if self.is_white_space_sensitive {
             let trims_leading = is_first && parent == Parent::Template;
@@ -683,8 +663,8 @@ impl<'a> Printer<'a> {
                 }
                 return;
             }
-            let without_leading = trim_start(chars);
-            let words = trim_end(without_leading);
+            let without_leading = chars.trim_ascii_start();
+            let words = without_leading.trim_ascii_end();
             let leading = &chars[..chars.len() - without_leading.len()];
             let trailing = &without_leading[words.len()..];
             if !leading.is_empty() {
@@ -710,11 +690,16 @@ impl<'a> Printer<'a> {
             |kind: Kind| matches!(kind, Kind::BlockStatement { .. } | Kind::Element { .. });
         let is_mustache = |kind: Kind| matches!(kind, Kind::Mustache { .. });
 
-        let line_breaks = count_new_lines(chars);
+        let line_breaks = strings::count_char(chars, b'\n');
         // `countLeadingNewLines`, `countTrailingNewLines`
-        let mut leading_line_breaks =
-            count_new_lines(&chars[..chars.len() - text::trim_start(chars).len()]);
-        let mut trailing_line_breaks = count_new_lines(&chars[text::trim_end(chars).len()..]);
+        let mut leading_line_breaks = strings::count_char(
+            &chars[..chars.len() - strings::trim_js_whitespace_start(chars).len()],
+            b'\n',
+        );
+        let mut trailing_line_breaks = strings::count_char(
+            &chars[strings::trim_js_whitespace_end(chars).len()..],
+            b'\n',
+        );
         if is_white_space_only && line_breaks > 0 {
             leading_line_breaks = line_breaks.min(2);
             trailing_line_breaks = 0;
@@ -735,7 +720,7 @@ impl<'a> Printer<'a> {
             (trailing_line_breaks, trailing_space) = (0, false);
         }
 
-        let words = trim_end(trim_start(chars));
+        let words = chars.trim_ascii();
         self.hard_lines(leading_line_breaks);
         if words.is_empty() {
             // The blank before it is taken for one behind it.
@@ -748,8 +733,8 @@ impl<'a> Printer<'a> {
                 },
             );
         } else {
-            let has_leading = chars.first().is_some_and(|byte| is_html_white_space(*byte));
-            let has_trailing = chars.last().is_some_and(|byte| is_html_white_space(*byte));
+            let has_leading = chars.first().is_some_and(u8::is_ascii_whitespace);
+            let has_trailing = chars.last().is_some_and(u8::is_ascii_whitespace);
             self.fill(
                 words,
                 Blanks {
@@ -764,11 +749,11 @@ impl<'a> Printer<'a> {
     /// A text in `<style>` that is not formatted as a style sheet.
     fn text_in_style(&mut self, chars: &[u8]) {
         let text = &chars[chars.iter().take_while(|byte| **byte == b'\n').count()..];
-        let text = trim_end(text);
+        let text = text.trim_ascii_end();
         // `htmlWhitespace.dedentString(text)`
         let mut min_indentation = usize::MAX;
         for line in strings::split(text, b"\n") {
-            let indentation = line.len() - trim_start(line).len();
+            let indentation = line.len() - line.trim_ascii_start().len();
             if line.is_empty() || (indentation == line.len() && indentation > 0) {
                 continue;
             }

@@ -1,8 +1,9 @@
+use bun_core::strings;
 use crate::a11y::{HTML_TAG, is_interactive_element, is_interactive_role};
 use crate::jsx::{
     AttributeValue, as_jsx_element, get_element_type, get_prop_value, has_jsx_prop_ignore_case, parse_jsx_value,
 };
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -60,7 +61,9 @@ impl Rule for NoNoninteractiveTabindex {
             }
             let is_allowed = |role: &[u8]| is_interactive_role(role) || rule.roles.iter().any(|it| it.as_bytes() == role);
             let has_allowed_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
-                Some(AttributeValue::StringLiteral(role)) => split_whitespace(role.value).next().is_some_and(is_allowed),
+                Some(AttributeValue::StringLiteral(role)) => {
+                    strings::split_unicode_whitespace(role.value).next().is_some_and(is_allowed)
+                }
                 Some(AttributeValue::ExpressionContainer(_)) => rule.allow_expression_values,
                 _ => false,
             };

@@ -57,7 +57,6 @@ mod for_eslint;
 mod ignore_lines;
 mod merge;
 mod number_of_rules;
-mod path;
 mod presets;
 mod rc;
 mod shape;
@@ -72,6 +71,7 @@ use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
+use crate::paths;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_glob::{Candidate, How};
@@ -483,8 +483,9 @@ impl Config {
                 };
                 continue;
             };
-            let mut own = path::relative(base_path, &path::resolve(&self.base_path, relative));
-            if own.is_empty() || path::is_external(&own) {
+            let mut own =
+                paths::relative_to_base(base_path, &paths::resolve(&self.base_path, relative));
+            if own.is_empty() || paths::is_external(&own) {
                 continue;
             }
             if relative.ends_with(b"/") {
@@ -501,9 +502,9 @@ impl Config {
     /// What the patterns see of `path`, which is absolute: it is relative to the base path. For oxlint nothing is outside of
     /// a configuration: what is not in the base path is matched by its absolute path.
     fn relative(&self, path: &[u8]) -> Vec<u8> {
-        let relative = path::relative(&self.base_path, path);
-        match self.prefers_typescript_rules && path::is_external(&relative) {
-            true => path::rooted(path),
+        let relative = paths::relative_to_base(&self.base_path, path);
+        match self.prefers_typescript_rules && paths::is_external(&relative) {
+            true => paths::rooted(path),
             false => relative,
         }
     }
@@ -530,7 +531,7 @@ impl Config {
         if relative.is_empty() {
             return false;
         }
-        if path::is_external(&relative) {
+        if paths::is_external(&relative) {
             return true;
         }
         // A directory is ignored if one that it is in is.
@@ -549,11 +550,11 @@ impl Config {
     /// ESLint's `getConfigWithStatus`. `file` is absolute.
     pub fn get(&self, registry: &Registry, file: &[u8]) -> FileConfig {
         let relative = self.relative(file);
-        if path::is_external(&relative) {
+        if paths::is_external(&relative) {
             return FileConfig::External;
         }
         let is_ignored = || {
-            self.is_directory_ignored(path::dirname(file), Dotfiles::AsConfigured)
+            self.is_directory_ignored(paths::dirname(file), Dotfiles::AsConfigured)
                 || self.is_ignored_globally(&relative, Dotfiles::AsConfigured)
         };
         if !self.lints_all_that_is_named && is_ignored() {
@@ -588,8 +589,8 @@ impl Config {
             let own = object
                 .base_path
                 .as_ref()
-                .map(|base_path| path::relative(base_path, file));
-            if own.as_ref().is_some_and(|it| path::is_external(it)) {
+                .map(|base_path| paths::relative_to_base(base_path, file));
+            if own.as_ref().is_some_and(|it| paths::is_external(it)) {
                 continue;
             }
             let ignores = object.ignores.as_deref();
@@ -704,9 +705,40 @@ impl Config {
             b"':\nOptions:\n",
             &printed,
             b"\nErrors:\n",
-            super::space::trim_end(lines),
+            bun_core::strings::trim_js_whitespace_end(lines),
         ]
         .concat()
+    }
+
+    /// What `options` make of `rule`, which is of a JavaScript plugin. `config` keeps the first error.
+    fn js_rule(
+        &self,
+        config: &mut ResolvedConfig,
+        rule: &Arc<js_plugin::Rule>,
+        severity: Severity,
+        options: Arc<[Json]>,
+    ) -> ConfiguredJsRule {
+        // ESLint 8 has validated them already, and takes any for a rule without a schema.
+        let validated = match self.is_legacy {
+            true => Ok(schema::with_js_defaults(rule, &options)),
+            false => schema::validate_js(rule, &options),
+        };
+        if severity != Severity::Off
+            && config.error.is_none()
+            && let Err(lines) = &validated
+        {
+            config.error = Some(self.js_options_error(rule, &options, lines));
+        }
+        let configured = self.cache.js_rule(rule, &options, || {
+            let options = validated.unwrap_or_else(|_| schema::with_js_defaults(rule, &options));
+            js_plugin::Configured::new(Arc::clone(rule), &options)
+        });
+        ConfiguredJsRule {
+            configured,
+            severity,
+            options,
+            position: config.rules.len(),
+        }
     }
 
     /// Merges the objects at `indices`, and does what the constructor of ESLint's `Config` does.
@@ -795,6 +827,9 @@ impl Config {
             (false, true) => Tables::Oxlint,
             (false, false) => Tables::Today,
         };
+        // oxlint has no such setting.
+        config.has_unknown_resolver =
+            !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);
         config.language = LanguageOptions::from_json_for(&language_options, &settings, whose);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
@@ -842,6 +877,9 @@ impl Config {
                         .concat()
                     }),
                     plugin if plugins.contains(&plugin) => None,
+                    plugin if Plugin::of_prefix(plugin).is_some_and(Plugin::is_always_there) => {
+                        None
+                    }
                     plugin => Some(
                         [b"Could not find plugin \"", plugin, b"\" in configuration."].concat(),
                     ),
@@ -886,29 +924,9 @@ impl Config {
             let entry = match (native.or(base), js) {
                 (Some(entry), _) => entry,
                 (None, Some(Some(rule))) => {
-                    let options: Arc<[Json]> = setting.options.into();
-                    // ESLint 8 has validated them already, and takes any for a rule without a schema.
-                    let validated = match self.is_legacy {
-                        true => Ok(schema::with_js_defaults(rule, &options)),
-                        false => schema::validate_js(rule, &options),
-                    };
-                    if setting.severity != Severity::Off
-                        && config.error.is_none()
-                        && let Err(lines) = &validated
-                    {
-                        config.error = Some(self.js_options_error(rule, &options, lines));
-                    }
-                    let configured = self.cache.js_rule(rule, &options, || {
-                        let options =
-                            validated.unwrap_or_else(|_| schema::with_js_defaults(rule, &options));
-                        js_plugin::Configured::new(Arc::clone(rule), &options)
-                    });
-                    config.js_rules.push(ConfiguredJsRule {
-                        configured,
-                        severity: setting.severity,
-                        options,
-                        position: config.rules.len(),
-                    });
+                    let options = setting.options.into();
+                    let rule = self.js_rule(&mut config, rule, setting.severity, options);
+                    config.js_rules.push(rule);
                     continue;
                 }
                 (None, Some(None)) => {
@@ -938,12 +956,19 @@ impl Config {
                     Arc::from((entry.build)(&Options::new(&options)))
                 })
             });
+            let or_else = match js.flatten().filter(|_| entry.meta.hands_back) {
+                Some(rule) => {
+                    Some(self.js_rule(&mut config, rule, setting.severity, Arc::clone(&options)))
+                }
+                None => None,
+            };
             let reported_as = self.reported_as(registry, entry, setting.written_for);
             config.has_named_rules |= name.is_some();
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options, instance)
                     .report_as(reported_as)
-                    .named(name),
+                    .named(name)
+                    .or(or_else),
             );
         }
         if !self.js_plugins.is_empty() {

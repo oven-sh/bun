@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -44,6 +45,8 @@ fn can_be_merged(a: &Entry, b: &Entry) -> bool {
         || is_pair(Type::Namespace, Type::Named))
 }
 
+const MERGED_WITH_IMPORT: &str = "Can be merged with this import";
+
 /// Where oxlint points: at the specifier of an import, at the first name of an export.
 fn oxlint_place(statement: Stmt) -> Span {
     let place = match statement.kind() {
@@ -59,6 +62,8 @@ fn oxlint_place(statement: Stmt) -> Span {
 struct Imported {
     by_import_type: bool,
     by_other_imports: bool,
+    /// Where the first statement is that counts.
+    first: Option<Span>,
     /// Where the first statement is that imports a namespace, one that imports names, one that imports the default.
     namespace: Option<Span>,
     named: Option<Span>,
@@ -117,7 +122,9 @@ impl NoDuplicateImports {
             let (imported, is_type) = (all.entry(import.spec()).or_default(), import.is_type_only());
             let has_names = imported.by_import_type || imported.by_other_imports;
             if has_names && imported.can_merge(first, is_type, self.allow_separate_type_imports) {
-                cx.report(place, IMPORT).data("module", import.spec());
+                cx.report(place, IMPORT)
+                    .data("module", import.spec())
+                    .labels_with(|labels| labels.push(imported.first.unwrap_or_default(), MERGED_WITH_IMPORT));
                 match first {
                     Type::ImportDefault => default = false,
                     Type::Namespace => namespace = false,
@@ -127,6 +134,7 @@ impl NoDuplicateImports {
             if default || namespace || named > 0 {
                 imported.by_import_type |= is_type;
                 imported.by_other_imports |= !is_type;
+                imported.first.get_or_insert(place);
             }
             for (slot, is_imported) in [
                 (&mut imported.default, default),
@@ -142,8 +150,11 @@ impl NoDuplicateImports {
             return;
         }
         for (place, import) in imports() {
-            if std::mem::replace(&mut all.entry(import.spec()).or_default().by_other_imports, true) {
-                cx.report(place, IMPORT).data("module", import.spec());
+            let first = *all.entry(import.spec()).or_default().first.get_or_insert(place);
+            if first != place {
+                cx.report(place, IMPORT)
+                    .data("module", import.spec())
+                    .labels_with(|labels| labels.push(first, MERGED_WITH_IMPORT));
             }
         }
     }
@@ -178,7 +189,7 @@ impl NoDuplicateImports {
             }
             _ => return,
         };
-        let module = text::trim(module.map_or(&[][..], Name::bytes));
+        let module = strings::trim_js_whitespace(module.map_or(&[][..], Name::bytes));
         if !module.is_empty() {
             cx.state.push(Entry {
                 statement,
@@ -232,7 +243,11 @@ impl NoDuplicateImports {
                 for (message, exports) in messages {
                     if self.should_report(entry, &previous, exports) {
                         let place = if is_oxlint { oxlint_place(entry.statement) } else { entry.statement.span() };
-                        cx.report(place, message).data("module", entry.module);
+                        cx.report(place, message).data("module", entry.module).labels_with(|labels| {
+                            let first = of_module.first().map(|it| oxlint_place(it.statement)).unwrap_or_default();
+                            let is_import = message.id == IMPORT.id;
+                            labels.push(first, if is_import { MERGED_WITH_IMPORT } else { "Can be merged with this" });
+                        });
                         // oxlint says one thing about a statement.
                         if is_oxlint {
                             break;

@@ -11,52 +11,13 @@
 
 const REPLACEMENT: u32 = 0xFFFD;
 
-#[inline]
-fn continuation(s: &[u8], i: usize) -> Option<u32> {
-    let b = *s.get(i)?;
-    (b & 0xC0 == 0x80).then_some(u32::from(b & 0x3F))
-}
-
 /// The code point that starts at `i` and its length in bytes. `i` must be less than `s.len()`.
 #[inline]
 pub(crate) fn code_point_at(s: &[u8], i: usize) -> (u32, usize) {
-    let b = s.get(i).copied().unwrap_or(0);
-    if b < 0x80 {
-        return (u32::from(b), 1);
+    match bun_core::strings::wtf8_codepoint_at(s, i) {
+        (_, 0) => (0, 1),
+        found => found,
     }
-    multibyte_at(s, i, b)
-}
-
-fn multibyte_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
-    match b {
-        0xC2..=0xDF => {
-            if let Some(c1) = continuation(s, i + 1) {
-                return ((u32::from(b & 0x1F) << 6) | c1, 2);
-            }
-        }
-        0xE0..=0xEF => {
-            if let (Some(c1), Some(c2)) = (continuation(s, i + 1), continuation(s, i + 2)) {
-                let cp = (u32::from(b & 0x0F) << 12) | (c1 << 6) | c2;
-                if cp >= 0x800 {
-                    return (cp, 3);
-                }
-            }
-        }
-        0xF0..=0xF4 => {
-            if let (Some(c1), Some(c2), Some(c3)) = (
-                continuation(s, i + 1),
-                continuation(s, i + 2),
-                continuation(s, i + 3),
-            ) {
-                let cp = (u32::from(b & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3;
-                if (0x10000..=0x10FFFF).contains(&cp) {
-                    return (cp, 4);
-                }
-            }
-        }
-        _ => {}
-    }
-    (REPLACEMENT, 1)
 }
 
 /// Where the code point starts that `i` is in the middle of. `i` itself if it is not.
@@ -85,7 +46,7 @@ fn astral_around(s: &[u8], i: usize) -> Option<u32> {
     if lead < 0xF0 {
         return None;
     }
-    match multibyte_at(s, start, lead) {
+    match code_point_at(s, start) {
         (cp, 4) => Some(cp),
         _ => None,
     }
@@ -104,28 +65,9 @@ pub(crate) fn unit_at(s: &[u8], i: usize) -> (u32, usize) {
             None => (REPLACEMENT, 1),
         };
     }
-    match multibyte_at(s, i, b) {
+    match code_point_at(s, i) {
         (cp, 4) => (lead_surrogate(cp), 2),
         other => other,
-    }
-}
-
-/// Appends `cp`, which may be a surrogate.
-pub(crate) fn push_code_point(out: &mut Vec<u8>, cp: u32) {
-    match cp {
-        0..=0x7F => out.push(cp as u8),
-        0x80..=0x7FF => out.extend_from_slice(&[0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]),
-        0x800..=0xFFFF => out.extend_from_slice(&[
-            0xE0 | (cp >> 12) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]),
-        _ => out.extend_from_slice(&[
-            0xF0 | ((cp >> 18) & 0x07) as u8,
-            0x80 | ((cp >> 12) & 0x3F) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]),
     }
 }
 

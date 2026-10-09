@@ -17,6 +17,14 @@ pub struct State<'a> {
     declared_in: FxHashMap<Symbol<'a>, Stmt<'a>>,
 }
 
+/// All that is on the left in the declaration that `pat` is in.
+fn pattern_of(pat: Pat) -> Span {
+    match Declaration::Var(pat).node() {
+        Some(Node::VarDecl(declarator)) => declarator.pat().span(),
+        _ => pat.span(),
+    }
+}
+
 impl BlockScopedVar {
     /// The innermost block, loop, `switch` or static block around `statement`. `None` at the top
     /// level of the file, which nothing is outside of.
@@ -74,7 +82,11 @@ impl BlockScopedVar {
                 cx.report(identifier, OUT_OF_SCOPE)
                     .data("name", reference.name())
                     .data("definitionLine", definition.line)
-                    .data("definitionColumn", definition.column + 1);
+                    .data("definitionColumn", definition.column + 1)
+                    .labels_with(|labels| {
+                        labels.first(format!("'{}' is used here", bstr::BStr::new(reference.name().bytes())));
+                        labels.push(pattern_of(pat), "It is declared in a different scope here");
+                    });
                 false
             };
             // They are in source order, but for those in one pattern, which is not partly in a block.
@@ -98,7 +110,11 @@ impl BlockScopedVar {
                     return true;
                 }
                 if cx.file().reference_at(name.start).is_none() {
-                    cx.report(name, OUT_OF_SCOPE).data("name", symbol.name());
+                    cx.report(name, OUT_OF_SCOPE).data("name", symbol.name()).labels_with(|labels| {
+                        labels.first("it is redeclared here");
+                        let name = bstr::BStr::new(symbol.name().bytes());
+                        labels.push(pattern_of(pat), format!("'{name}' is first declared here"));
+                    });
                 }
                 false
             };

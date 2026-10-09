@@ -34,14 +34,22 @@ impl Rule for ConstComparisons {
             if op == BinOp::And && !iter_outer_expressions(e).next().is_some_and(is_and) {
                 check_const_literal_comparisons(e, cx);
             }
-            check_redundant_logical_expression(left, right, cx);
+            check_redundant_logical_expression(left, right, op == BinOp::Or, cx);
         });
         on.binaries([BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge], |_, e, cx| {
             if let ExprKind::Binary { op, left, right } = e.kind()
                 && is_same_inner_expression(left, right)
             {
                 let is_const_truthy = matches!(op, BinOp::Le | BinOp::Ge);
-                cx.report(e, CONSTANT_COMPARISON).data("evaluates_to", if is_const_truthy { "true" } else { "false" });
+                cx.report(e, CONSTANT_COMPARISON)
+                    .data("evaluates_to", if is_const_truthy { "true" } else { "false" })
+                    .data("left", cx.slice(left.outer_span()))
+                    .data("how_often", if is_const_truthy { "always" } else { "never" })
+                    .data("relation", match op {
+                        BinOp::Lt => "less then",
+                        BinOp::Gt => "greater than",
+                        _ => "equal to",
+                    });
             }
         });
     }
@@ -53,6 +61,8 @@ struct ComparisonToConst<'a> {
     op: CmpOp,
     expr: Expr<'a>,
     constant: f64,
+    /// As it is written.
+    literal: Expr<'a>,
     whole: Expr<'a>,
 }
 
@@ -113,28 +123,78 @@ fn check_right_operand<'a>(
             return;
         }
         if left.op.direction() == right.op.direction() {
-            if left_side_is_useless(left.op, ordering) {
-                cx.report(right_operand.outer_span(), REDUNDANT_LEFT_HAND_SIDE);
-            } else {
-                cx.report(left.whole, REDUNDANT_RIGHT_HAND_SIDE);
-            }
+            let (left_span, right_span) = (left.whole.span(), right_operand.outer_span());
+            let (report, other) = match left_side_is_useless(left.op, ordering) {
+                true => (cx.report(right_span, REDUNDANT_LEFT_HAND_SIDE), left_span),
+                false => (cx.report(left_span, REDUNDANT_RIGHT_HAND_SIDE), right_span),
+            };
+            report
+                .first_label("If this evaluates to `true`")
+                .label(other, "This will always evaluate to true.")
+                .data("lhs_str", left.whole.text())
+                .data("rhs_str", cx.slice(right_span));
         } else if !comparison_is_possible(left.op.direction(), ordering) {
-            cx.report(left.whole, IMPOSSIBLE);
+            let report = cx.report(left.whole, IMPOSSIBLE).labels_with(|labels| {
+                let requires = |it: &ComparisonToConst| {
+                    let (expr, literal) = (bstr::BStr::new(left.expr.text()), bstr::BStr::new(it.literal.text()));
+                    format!("Requires that `{expr} {} {literal}` ", it.op.sign())
+                };
+                labels.first(requires(left));
+                labels.push(right.whole, requires(&right));
+            });
+            report.help_with(|| {
+                let text = |e: Expr<'a>| bstr::BStr::new(e.text());
+                let (lhs_str, rhs_str, expr_str) = (text(left.literal), text(right.literal), text(left.expr));
+                let sign = match ordering {
+                    Ordering::Less => '<',
+                    Ordering::Greater => '>',
+                    Ordering::Equal => {
+                        return format!("`{expr_str}` cannot simultaneously be greater than and less than `{lhs_str}`");
+                    }
+                };
+                format!(
+                    "since `{lhs_str}` {sign} `{rhs_str}`, the expression evaluates to false for any value of `{expr_str}`"
+                )
+            });
         }
     }
 }
 
-fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, cx: &Cx<'a, ConstComparisons>) {
+fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, is_or: bool, cx: &Cx<'a, ConstComparisons>) {
+    let complementary = || {
+        let (help, left_label, right_label) = match is_or {
+            true => (
+                "This logical expression will always evaluate to true",
+                "If this expression evaluates to false",
+                "This expression must evaluate to true",
+            ),
+            false => (
+                "This logical expression will always evaluate to false",
+                "If this expression evaluates to true",
+                "This expression cannot also evaluate to true",
+            ),
+        };
+        cx.report(left.outer_span(), COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR)
+            .help(help)
+            .first_label(left_label)
+            .label(right.outer_span(), right_label);
+    };
     if is_same_inner_expression(left, right) {
-        cx.report(left.outer_span(), IDENTICAL_EXPRESSIONS_LOGICAL_OPERATOR);
+        cx.report(left.outer_span(), IDENTICAL_EXPRESSIONS_LOGICAL_OPERATOR)
+            .first_label("If this expression evaluates to true")
+            .label(right.outer_span(), "This expression will always evaluate to true");
         return;
     }
     let (inner_left, inner_right) = (get_inner_expression(left), get_inner_expression(right));
     if let Some(relation) = equality_relation(inner_left, inner_right) {
-        cx.report(left.outer_span(), match relation {
-            EqualityRelation::Equivalent => EQUIVALENT_EXPRESSIONS_LOGICAL_OPERATOR,
-            EqualityRelation::Inverse => COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR,
-        });
+        match relation {
+            EqualityRelation::Equivalent => drop(
+                cx.report(left.outer_span(), EQUIVALENT_EXPRESSIONS_LOGICAL_OPERATOR)
+                    .first_label("If this expression evaluates to true")
+                    .label(right.outer_span(), "This equivalent expression will always evaluate to true"),
+            ),
+            EqualityRelation::Inverse => complementary(),
+        }
         return;
     }
     // `foo && !foo`, `foo || !foo`
@@ -143,7 +203,7 @@ fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, cx: &
             if !operand.is_parenthesized() && is_same_expression(operand, other))
     };
     if is_negation_of(inner_left, inner_right) || is_negation_of(inner_right, inner_left) {
-        cx.report(left.outer_span(), COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR);
+        complementary();
     }
 }
 
@@ -151,11 +211,12 @@ fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, cx: &
 fn comparison_to_const(e: Expr<'_>) -> Option<ComparisonToConst<'_>> {
     let op = CmpOp::of(e.binary_op()?)?;
     let (left, right) = (e.left()?, e.right()?);
-    if let ExprKind::Number(constant) = get_inner_expression(left).kind() {
-        return Some(ComparisonToConst { op: op.reverse(), expr: right, constant, whole: e });
+    let (left_literal, right_literal) = (get_inner_expression(left), get_inner_expression(right));
+    if let ExprKind::Number(constant) = left_literal.kind() {
+        return Some(ComparisonToConst { op: op.reverse(), expr: right, constant, literal: left_literal, whole: e });
     }
-    match get_inner_expression(right).kind() {
-        ExprKind::Number(constant) => Some(ComparisonToConst { op, expr: left, constant, whole: e }),
+    match right_literal.kind() {
+        ExprKind::Number(constant) => Some(ComparisonToConst { op, expr: left, constant, literal: right_literal, whole: e }),
         _ => None,
     }
 }
@@ -230,6 +291,15 @@ impl CmpOp {
             BinOp::Gt => Some(CmpOp::Gt),
             BinOp::Ge => Some(CmpOp::Ge),
             _ => None,
+        }
+    }
+
+    fn sign(self) -> &'static str {
+        match self {
+            CmpOp::Lt => "<",
+            CmpOp::Le => "<=",
+            CmpOp::Ge => ">=",
+            CmpOp::Gt => ">",
         }
     }
 

@@ -14,7 +14,6 @@ use super::order::{self, Candidate, When};
 use crate::ast::{
     Expr, ExprKind, ExprTag, File, Handle, Member, Node, Param, Prop, Stmt, TypeParam,
 };
-use crate::linter::space::trim_start;
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
@@ -856,7 +855,9 @@ impl<'a> Checks<'a> {
                 Kind::MethodDeclaration if is_abstract && has_body => {
                     // `declarationNameToString`: with the comments before the name.
                     let from = self.file.end_of_token_before(raw.name_pos);
-                    let text = trim_start(self.file.slice(Span::new(from, name().end)));
+                    let text = bun_core::strings::trim_js_whitespace_start(
+                        self.file.slice(Span::new(from, name().end)),
+                    );
                     let message = [
                         b"Method '",
                         text,

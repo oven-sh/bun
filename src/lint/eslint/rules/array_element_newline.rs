@@ -1,3 +1,4 @@
+use bun_core::strings;
 use super::function_paren_newline::is_on_one_line;
 use bun_lint::prelude::*;
 
@@ -94,7 +95,7 @@ fn report(cx: &Cx<'_, ArrayElementNewline>, gap: Span, needs_line_break: bool) {
         if comment.is_some() {
             return None;
         }
-        if text::has_line_break(file.slice(at)) {
+        if strings::contains_js_line_break(file.slice(at)) {
             return Some(fixer.replace(at, " "));
         }
         // The comma is on the line of the next element.
@@ -109,7 +110,7 @@ fn check(
     len: usize,
     elements: impl Iterator<Item = Option<Element>> + Clone,
 ) {
-    let has_line_break = |span: &Span| text::has_line_break(cx.slice(*span));
+    let has_line_break = |span: &Span| strings::contains_js_line_break(cx.slice(*span));
     let needs_line_breaks = len >= config.min_items
         || config.multiline && elements.clone().flatten().any(|it| !is_on_one_line(cx.file(), it.span))
         || config.consistent && {

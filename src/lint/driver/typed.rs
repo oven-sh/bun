@@ -240,6 +240,7 @@ fn check_and_lint_in(
             current_directory_is_of_the_project: true,
             reports_nothing_about_files: !context.checks_types,
             only_in_a_project_that_includes: matches!(project, Project::Including),
+            memory: environment.memory,
             refuses_broken_configurations: matches!(project, Project::Including),
             // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
             prefers_the_library_of_the_project: matches!(project, Project::Nearest),

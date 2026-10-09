@@ -22,7 +22,6 @@ mod format;
 mod fs;
 mod gitignore;
 mod lint;
-mod paths;
 mod print_config;
 mod processor;
 mod results;
@@ -33,5 +32,6 @@ mod typed;
 
 pub use args::Param;
 pub use bun_lint::js_plugin;
-pub use paths::from_native as from_native_path;
+pub(crate) use bun_lint::paths;
+pub use bun_lint::paths::from_native as from_native_path;
 pub use run::{Environment, Outcome, Script, Stream, refuse_command_line, run};

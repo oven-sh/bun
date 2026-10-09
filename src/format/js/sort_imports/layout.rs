@@ -27,14 +27,10 @@ fn gap(text: &[u8], from: u32, to: u32) -> Option<u8> {
     Some(breaks.min(2) as u8)
 }
 
-fn skip_blanks(text: &[u8]) -> &[u8] {
-    text.trim_ascii_start()
-}
-
 /// Whether the imports `written` and `printed` have the same tokens, but for a `,` before a `}`
 /// and a `;` at the end. There are no comments in them.
 fn has_same_tokens(written: &[u8], printed: &[u8]) -> bool {
-    let (mut written, mut printed) = (skip_blanks(written), skip_blanks(printed));
+    let (mut written, mut printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
     loop {
         match (written, printed) {
             ([], []) | ([], [b';']) => return true,
@@ -48,12 +44,12 @@ fn has_same_tokens(written: &[u8], printed: &[u8]) -> bool {
             ([a, rest_written @ ..], [b, rest_printed @ ..]) if a == b => {
                 (written, printed) = (rest_written, rest_printed)
             }
-            ([b',', rest @ ..], [b'}', ..]) if skip_blanks(rest).starts_with(b"}") => {
+            ([b',', rest @ ..], [b'}', ..]) if rest.trim_ascii_start().starts_with(b"}") => {
                 written = rest
             }
             _ => return false,
         }
-        (written, printed) = (skip_blanks(written), skip_blanks(printed));
+        (written, printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
     }
 }
 

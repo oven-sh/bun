@@ -1,7 +1,7 @@
 //! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
 //! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (104 KB for 292 rules,
+//! options that the schema of the rule does not allow. The schemas are data here (106 KB for 304 rules,
 //! of which that of a rule is parsed when options for it are validated), not part of the rules.
 //!
 //! The default options are merged into the options for validating and for comparing only. A rule

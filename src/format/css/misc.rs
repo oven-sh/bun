@@ -13,12 +13,6 @@ const CSS_UNITS: [&[u8]; 62] = [
     b"cqb", b"cqmin", b"cqmax", b"fr",
 ];
 
-/// What is white space to the tokenizers.
-#[inline]
-pub(super) fn is_space(byte: Option<&u8>) -> bool {
-    matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
-}
-
 fn css_unit(unit: &[u8]) -> Option<&'static [u8]> {
     CSS_UNITS
         .iter()
@@ -248,7 +242,7 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
         .filter(u8::is_ascii_alphabetic)
         .and_then(|flag| {
             let before = &value[..value.len() - 1];
-            let unflagged = text::trim_end(before);
+            let unflagged = bun_core::strings::trim_js_whitespace_end(before);
             let is_match = unflagged.len() < before.len()
                 && !unflagged.is_empty()
                 && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
@@ -294,5 +288,5 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
 pub(crate) fn last_line_has_inline_comment(value: &[u8]) -> bool {
     let last_line_start =
         bun_core::strings::last_index_of_any(value, b"\n\r").map_or(0, |at| at + 1);
-    text::includes(&value[last_line_start..], b"//")
+    bun_core::strings::contains(&value[last_line_start..], b"//")
 }

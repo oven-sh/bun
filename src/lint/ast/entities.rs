@@ -18,7 +18,7 @@ pub(super) fn unescape(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             index_of_char_usize(rest, b';').and_then(|end| Some((code_point(&rest[1..end])?, end)));
         let taken = match decoded {
             Some((c, end)) => {
-                push_code_point(&mut out, c);
+                bun_core::strings::push_codepoint_wtf8(&mut out, c);
                 end + 1
             }
             None => {
@@ -55,17 +55,5 @@ fn code_point(item: &[u8]) -> Option<u32> {
         [b'#', b'x', hex @ ..] => digits(hex, 16),
         [b'#', decimal @ ..] => digits(decimal, 10),
         _ => JSX_ENTITY.get(item).map(|&c| c as u32),
-    }
-}
-
-/// Appends `c` as UTF-8, a surrogate as the three bytes that WTF-8 has for it.
-fn push_code_point(out: &mut Vec<u8>, c: u32) {
-    match char::from_u32(c) {
-        Some(c) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-        None => out.extend_from_slice(&[
-            0xE0 | (c >> 12) as u8,
-            0x80 | ((c >> 6) & 0x3F) as u8,
-            0x80 | (c & 0x3F) as u8,
-        ]),
     }
 }

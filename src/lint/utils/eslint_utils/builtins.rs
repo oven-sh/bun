@@ -1,7 +1,6 @@
 //! The part of the standard library that [`get_static_value`](super::get_static_value) knows:
 //! what exists, and what may be called.
 
-use super::js_string;
 use super::static_value::{Eval, PropertyKey, StaticSymbol, StaticValue, Stop};
 use bun_core::strings;
 use std::f64::consts;
@@ -337,11 +336,13 @@ pub(super) fn get_member<'a>(
         },
         StaticValue::String(text) => {
             if name == b"length" {
-                return Ok(StaticValue::Number(js_string::len_utf16(text) as f64));
+                return Ok(StaticValue::Number(
+                    strings::element_length_utf8_into_utf16(text) as f64,
+                ));
             }
             match key.as_index() {
-                Some(index) => Ok(match js_string::to_utf16(text).get(index) {
-                    Some(&unit) => StaticValue::string(js_string::from_utf16(&[unit])),
+                Some(index) => Ok(match strings::wtf8_to_utf16(text).get(index) {
+                    Some(&unit) => StaticValue::string(strings::wtf16_to_wtf8(&[unit])),
                     None => StaticValue::Undefined,
                 }),
                 None => inherited("String", "String.prototype", name),

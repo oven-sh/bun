@@ -48,7 +48,8 @@ impl ConsistentEachFor {
         {
             cx.report(last_method.span, CONSISTENT_EACH_FOR)
                 .data("fn_kind", jest_fn_call.name)
-                .data("method_used", *not_allowed_method);
+                .data("method_used", *not_allowed_method)
+                .data("method", if *not_allowed_method == "each" { "for" } else { "each" });
         }
     }
 }

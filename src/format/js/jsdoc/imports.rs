@@ -1,7 +1,7 @@
 //! `@import` tags: those for the same module become one, and they are sorted.
 
 use super::line_buffer::LineBuffer;
-use super::text::{join, lines, split_whitespace, trim, trim_end_matches};
+use super::text::{join, lines, trim_end_matches};
 use crate::options::QuoteStyle;
 use bun_core::strings;
 use bun_lint::ast::jsdoc::JSDocTag;
@@ -15,11 +15,14 @@ struct ImportInfo {
 
 /// `Default, {Named1, Named2} from "module"`
 fn parse_import_tag(comment_text: &[u8]) -> Option<ImportInfo> {
-    let text = join(lines(comment_text).map(trim), b" ");
-    let text = trim(&text);
+    let text = join(
+        lines(comment_text).map(strings::trim_unicode_whitespace),
+        b" ",
+    );
+    let text = strings::trim_unicode_whitespace(&text);
     let from_index = strings::last_index_of(text, b" from ")?;
-    let specifier = trim(&text[..from_index]);
-    let module_part = trim(&text[from_index + 6..]);
+    let specifier = strings::trim_unicode_whitespace(&text[..from_index]);
+    let module_part = strings::trim_unicode_whitespace(&text[from_index + 6..]);
     let quote = *module_part
         .first()
         .filter(|byte| matches!(byte, b'"' | b'\''))?;
@@ -27,13 +30,14 @@ fn parse_import_tag(comment_text: &[u8]) -> Option<ImportInfo> {
     if module_path.is_empty() {
         return None;
     }
-    let collapse = |text: &[u8]| join(split_whitespace(text), b" ");
+    let collapse = |text: &[u8]| join(strings::split_unicode_whitespace(text), b" ");
     let (default_import, named_imports) = match strings::index_of_char_usize(specifier, b'{') {
         Some(brace_start) => {
             let brace_end = strings::last_index_of_char(specifier, b'}')?;
-            let default_part = trim(trim_end_matches(trim(&specifier[..brace_start]), |c| {
-                c == ','
-            }));
+            let default_part = strings::trim_unicode_whitespace(trim_end_matches(
+                strings::trim_unicode_whitespace(&specifier[..brace_start]),
+                |c| c == ',',
+            ));
             let named_part = specifier.get(brace_start + 1..brace_end)?;
             let named = strings::split(named_part, b",")
                 .map(collapse)
@@ -64,8 +68,8 @@ fn cmp_ascii_case_insensitive(a: &[u8], b: &[u8]) -> Ordering {
 /// What a specifier is sorted by: `B1` of `B as B1`.
 fn import_specifier_sort_key(specifier: &[u8]) -> &[u8] {
     match strings::index_of(specifier, b" as ") {
-        Some(index) => trim(&specifier[index + 4..]),
-        None => trim(specifier),
+        Some(index) => strings::trim_unicode_whitespace(&specifier[index + 4..]),
+        None => strings::trim_unicode_whitespace(specifier),
     }
 }
 

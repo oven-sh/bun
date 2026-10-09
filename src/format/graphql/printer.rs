@@ -9,8 +9,7 @@ use super::parser::{
 use crate::ir::element::{Condition, FormatElement, Group, LineMode, PrintMode, Tag, TextWidth};
 use crate::ir::formatter::Formatter;
 use crate::text::{
-    self, has_newline_backwards, is_followed_by_empty_line, is_next_line_empty,
-    is_previous_line_empty,
+    has_newline_backwards, is_followed_by_empty_line, is_next_line_empty, is_previous_line_empty,
 };
 use bun_lint::span::Span;
 
@@ -296,7 +295,7 @@ impl<'t> Builder<'t, '_, '_> {
     pub(crate) fn print_comment_lines(&mut self) {
         let (mut has_comment, mut is_after_blank_line, mut start) = (false, false, 0);
         for line in bun_core::strings::split(self.text, b"\n") {
-            let comment = text::trim(line);
+            let comment = bun_core::strings::trim_js_whitespace(line);
             if !comment.is_empty() {
                 match (has_comment, is_after_blank_line) {
                     (false, _) => {}
@@ -304,7 +303,8 @@ impl<'t> Builder<'t, '_, '_> {
                     (true, false) => self.hardline(),
                 }
                 has_comment = true;
-                let comment_start = start + (line.len() - text::trim_start(line).len()) as u32;
+                let comment_start = start
+                    + (line.len() - bun_core::strings::trim_js_whitespace_start(line).len()) as u32;
                 self.source(Span::new(
                     comment_start,
                     comment_start + comment.len() as u32,

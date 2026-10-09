@@ -1,7 +1,6 @@
 //! `rules/shared/eslint_unicorn/no_negated_condition.rs`: the fix that `eslint/no-negated-condition` and `unicorn/no-negated-condition` have in common.
 
 use crate::ast_util::could_be_asi_hazard;
-use crate::text::trim_start;
 use bun_lint::prelude::*;
 
 pub fn fix_if_statement<'a>(
@@ -65,7 +64,9 @@ pub fn fix_conditional_expression<'a>(
     {
         // What the expression starts with without the `!`.
         let after_bang = file.slice(test.span().shrink(1, 0));
-        let first_significant = text::first_code_point(trim_start(after_bang));
+        let first_significant = bun_core::strings::wtf8_first_codepoint(
+            bun_core::strings::trim_unicode_whitespace_start(after_bang),
+        );
         let starts_with_any = |all: &[u8]| {
             first_significant.is_some_and(|c| all.iter().any(|it| u32::from(*it) == c))
         };
@@ -83,8 +84,10 @@ pub fn fix_conditional_expression<'a>(
             .get(..e.span().start as usize)
             .unwrap_or_default();
         let needs_space_before = !needs_restricted_parens
-            && text::last_code_point(before).is_some_and(text::is_identifier_part)
-            && (first_significant.is_some_and(text::is_identifier_part)
+            && text::last_code_point(before)
+                .is_some_and(|c| bun_core::lexer::is_type_script_identifier_part(c as i32))
+            && (first_significant
+                .is_some_and(|c| bun_core::lexer::is_type_script_identifier_part(c as i32))
                 || starts_with_any(b"\\([`/+-."));
         let needs_asi_semi = !needs_restricted_parens
             && !needs_space_before

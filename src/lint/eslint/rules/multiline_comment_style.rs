@@ -66,14 +66,14 @@ fn join(out: &mut Vec<u8>, lines: &[&[u8]], prefix: &[&[u8]], separator: &[&[u8]
 
 /// `string.slice(start)`
 fn slice_from(string: &[u8], start: i64) -> &[u8] {
-    let len = i64::from(text::utf16_len(string));
+    let len = i64::from(strings::wtf8_len_utf16(string));
     let from = if start < 0 { (len + start).max(0) } else { start.min(len) };
-    string.get(text::utf16_offset_to_byte(string, from as u32)..).unwrap_or_default()
+    string.get(strings::wtf8_offset_of_utf16_index(string, from as u32)..).unwrap_or_default()
 }
 
 /// What `/^\s*/u` matches.
 fn leading_whitespace(line: &[u8]) -> &[u8] {
-    &line[..line.len() - text::trim_start(line).len()]
+    &line[..line.len() - strings::trim_js_whitespace_start(line).len()]
 }
 
 /// The range of a line of ESLint's text, which has no byte order mark.
@@ -82,7 +82,7 @@ fn line_span(file: &File, line: u32) -> Span {
 }
 
 fn is_starred_comment_line(line: &[u8]) -> bool {
-    text::trim_start(line).starts_with(b"*")
+    strings::trim_js_whitespace_start(line).starts_with(b"*")
 }
 
 /// Only whitespace on the first and the last line, and a star at the start of every other.
@@ -90,10 +90,10 @@ fn is_starred_block_comment(comment: Token) -> bool {
     if comment.kind() != TokenKind::Block {
         return false;
     }
-    let mut lines = text::lines(comment.comment_value()).enumerate().peekable();
+    let mut lines = strings::js_lines(comment.comment_value()).enumerate().peekable();
     while let Some((i, line)) = lines.next() {
         let is_valid = match i == 0 || lines.peek().is_none() {
-            true => text::is_blank(line),
+            true => strings::is_all_js_whitespace(line),
             false => is_starred_comment_line(line),
         };
         if !is_valid {
@@ -107,13 +107,13 @@ fn is_jsdoc_comment(comment: Token) -> bool {
     if comment.kind() != TokenKind::Block {
         return false;
     }
-    let mut lines = text::lines(comment.comment_value()).enumerate().peekable();
+    let mut lines = strings::js_lines(comment.comment_value()).enumerate().peekable();
     while let Some((i, line)) = lines.next() {
         let is_last = lines.peek().is_none();
         let is_valid = match (i == 0, is_last) {
             (true, true) => false,
-            (true, false) => line.strip_prefix(b"*").is_some_and(text::is_blank),
-            (false, true) => text::is_blank(line),
+            (true, false) => line.strip_prefix(b"*").is_some_and(strings::is_all_js_whitespace),
+            (false, true) => strings::is_all_js_whitespace(line),
             // `/^\s* /u`
             (false, false) => strings::contains_char(leading_whitespace(line), b' '),
         };
@@ -133,7 +133,7 @@ fn get_initial_offset<'a>(file: &'a File<'a>, comment: Token<'a>) -> &'a [u8] {
 fn process_separate_line_comments<'a>(file: &'a File<'a>, group: Group<'a>) -> Vec<&'a [u8]> {
     let values = file.comments_in(group.span()).map(Token::comment_value);
     let all_lines_have_leading_space =
-        values.clone().filter(|line| !text::is_blank(line)).all(|line| line.starts_with(b" "));
+        values.clone().filter(|line| !strings::is_all_js_whitespace(line)).all(|line| line.starts_with(b" "));
     values
         .map(|value| match all_lines_have_leading_space {
             true => value.strip_prefix(b" ").unwrap_or(value),
@@ -144,14 +144,14 @@ fn process_separate_line_comments<'a>(file: &'a File<'a>, group: Group<'a>) -> V
 
 /// `comment` is in starred-block form.
 fn process_starred_block_comment<'a>(comment: Token<'a>) -> Vec<&'a [u8]> {
-    let mut lines: Vec<&'a [u8]> = text::lines(comment.comment_value()).skip(1).collect();
+    let mut lines: Vec<&'a [u8]> = strings::js_lines(comment.comment_value()).skip(1).collect();
     lines.pop();
     for line in &mut lines {
-        let rest: &'a [u8] = text::trim_start(*line);
+        let rest: &'a [u8] = strings::trim_js_whitespace_start(*line);
         *line = rest.strip_prefix(b"*").unwrap_or(rest);
     }
     let all_lines_have_leading_space =
-        lines.iter().filter(|line| !text::is_blank(line)).all(|line| line.starts_with(b" "));
+        lines.iter().filter(|line| !strings::is_all_js_whitespace(line)).all(|line| line.starts_with(b" "));
     if all_lines_have_leading_space {
         for line in &mut lines {
             let rest: &'a [u8] = *line;
@@ -164,27 +164,27 @@ fn process_starred_block_comment<'a>(comment: Token<'a>) -> Vec<&'a [u8]> {
 fn process_bare_block_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> Vec<&'a [u8]> {
     /// What `/^(\s*\*?\s*)/u` matches.
     fn offset_of(line: &[u8]) -> &[u8] {
-        let rest = text::trim_start(line);
-        let rest = rest.strip_prefix(b"*").map_or(rest, text::trim_start);
+        let rest = strings::trim_js_whitespace_start(line);
+        let rest = rest.strip_prefix(b"*").map_or(rest, strings::trim_js_whitespace_start);
         &line[..line.len() - rest.len()]
     }
-    let lines = text::lines(comment.comment_value());
-    let leading_whitespace = i64::from(text::utf16_len(get_initial_offset(file, comment))) + 3;
+    let lines = strings::js_lines(comment.comment_value());
+    let leading_whitespace = i64::from(strings::wtf8_len_utf16(get_initial_offset(file, comment))) + 3;
 
     // By how much the least indented line is indented less than the text after `/* `. The first
     // line is in line with the delimiter.
     let mut offset: i64 = 0;
-    for line in lines.skip(1).filter(|line| !text::is_blank(line)) {
-        offset = offset.max(leading_whitespace - i64::from(text::utf16_len(offset_of(line))));
+    for line in lines.skip(1).filter(|line| !strings::is_all_js_whitespace(line)) {
+        offset = offset.max(leading_whitespace - i64::from(strings::wtf8_len_utf16(offset_of(line))));
     }
 
     lines
         .map(|line| {
-            if text::is_blank(line) {
+            if strings::is_all_js_whitespace(line) {
                 return &line[line.len()..];
             }
             let line_offset = offset_of(line);
-            let len = i64::from(text::utf16_len(line_offset));
+            let len = i64::from(strings::wtf8_len_utf16(line_offset));
             let kept = match len > leading_whitespace {
                 true => slice_from(line_offset, leading_whitespace - (offset + len)).len(),
                 false => 0,
@@ -251,17 +251,17 @@ impl MultilineCommentStyle {
         }
 
         let value = first.comment_value();
-        let first_line = text::lines(value).next().unwrap_or_default();
-        let last_line = text::lines(value).last().unwrap_or_default();
+        let first_line = strings::js_lines(value).next().unwrap_or_default();
+        let last_line = strings::js_lines(value).last().unwrap_or_default();
 
-        if !text::is_blank(first_line.strip_prefix(b"*").unwrap_or(first_line)) {
+        if !strings::is_all_js_whitespace(first_line.strip_prefix(b"*").unwrap_or(first_line)) {
             let delimiter_end = opening(first).end + u32::from(first_line.starts_with(b"*"));
             cx.report(opening(first), START_NEWLINE).fix(|fixer| {
                 fixer.insert_after(Span::empty(delimiter_end), concat(&[b"\n", initial_offset, b" *"]))
             });
         }
 
-        if !text::is_blank(last_line) {
+        if !strings::is_all_js_whitespace(last_line) {
             let closing = Span::new(first.end() - 2, first.end());
             cx.report(closing, END_NEWLINE)
                 .fix(|fixer| fixer.replace(closing, concat(&[b"\n", initial_offset, b" */"])));
@@ -286,21 +286,23 @@ impl MultilineCommentStyle {
             }
             cx.report(line, MISSING_STAR).fix(|fixer| {
                 let mut prefix = concat(&[initial_offset, b" *"]);
-                match *first_line_with_text.get_or_init(|| text::lines(value).position(|line| !text::is_blank(line))) {
+                match *first_line_with_text
+                    .get_or_init(|| strings::js_lines(value).position(|line| !strings::is_all_js_whitespace(line)))
+                {
                     Some(index) => {
                         let to_align_with = file.slice(line_span(file, start_line + index as u32));
                         // `/^(\s*(?:\/?\*)?(\s*))/u`
-                        let rest = text::trim_start(to_align_with);
+                        let rest = strings::trim_js_whitespace_start(to_align_with);
                         let after_star = rest.strip_prefix(b"/").unwrap_or(rest).strip_prefix(b"*");
                         let after_star_offset = after_star.map_or(&b""[..], leading_whitespace);
-                        let rest = after_star.map_or(rest, text::trim_start);
+                        let rest = after_star.map_or(rest, strings::trim_js_whitespace_start);
                         let matched = &to_align_with[..to_align_with.len() - rest.len()];
-                        let kept = slice_from(whitespace, i64::from(text::utf16_len(matched)));
+                        let kept = slice_from(whitespace, i64::from(strings::wtf8_len_utf16(matched)));
                         prefix.extend_from_slice(kept);
                         prefix.extend_from_slice(after_star_offset);
                         if kept.is_empty()
                             && after_star_offset.is_empty()
-                            && text::trim_start(line_text).starts_with(b"/")
+                            && strings::trim_js_whitespace_start(line_text).starts_with(b"/")
                         {
                             prefix.push(b' ');
                         }

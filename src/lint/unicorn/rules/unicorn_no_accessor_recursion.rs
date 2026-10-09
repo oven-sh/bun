@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::static_property_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -24,10 +25,6 @@ impl Rule for NoAccessorRecursion {
         }
         AncestorMemo::default()
     }
-}
-
-fn without_hash(name: &[u8]) -> &[u8] {
-    name.strip_prefix(b"#").unwrap_or(name)
 }
 
 fn check<'a>(_: &NoAccessorRecursion, this: Expr<'a>, cx: &mut Cx<'a, NoAccessorRecursion>) {
@@ -59,7 +56,7 @@ fn check<'a>(_: &NoAccessorRecursion, this: Expr<'a>, cx: &mut Cx<'a, NoAccessor
     let Some(key) = key.filter(|it| !it.is_computed()) else {
         return;
     };
-    let Some(key_name) = key.name().map(|it| without_hash(it.bytes())) else {
+    let Some(key_name) = key.name().map(|it| strings::without_prefix(it.bytes(), b"#")) else {
         return;
     };
     match target {
@@ -67,13 +64,14 @@ fn check<'a>(_: &NoAccessorRecursion, this: Expr<'a>, cx: &mut Cx<'a, NoAccessor
             if let PatKind::Object(properties) = declarator.pat().kind()
                 && properties.iter().any(|it| it.key().and_then(Key::name).is_some_and(|it| it.bytes() == key_name))
             {
-                cx.report(declarator, NO_ACCESSOR_RECURSION).data("kind", "getters");
+                cx.report(declarator, NO_ACCESSOR_RECURSION).data("kind", "getters").data("method_kind", "get");
             }
         }
         Node::Expr(member) => {
             let is_same_key = match member.is_private_member() {
                 true => {
-                    key.is_private() && member.member_name().is_some_and(|it| without_hash(it.bytes()) == key_name)
+                    key.is_private()
+                        && member.member_name().is_some_and(|it| strings::without_prefix(it.bytes(), b"#") == key_name)
                 }
                 false => static_property_name(member).is_some_and(|it| it.bytes() == key_name),
             };
@@ -81,9 +79,9 @@ fn check<'a>(_: &NoAccessorRecursion, this: Expr<'a>, cx: &mut Cx<'a, NoAccessor
                 return;
             }
             if accessor.kind() == FnKind::Getter {
-                cx.report(member, NO_ACCESSOR_RECURSION).data("kind", "getters");
+                cx.report(member, NO_ACCESSOR_RECURSION).data("kind", "getters").data("method_kind", "get");
             } else if is_property_write(member) {
-                cx.report(member, NO_ACCESSOR_RECURSION).data("kind", "setters");
+                cx.report(member, NO_ACCESSOR_RECURSION).data("kind", "setters").data("method_kind", "set");
             }
         }
         _ => {}

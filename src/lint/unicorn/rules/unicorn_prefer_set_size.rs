@@ -36,7 +36,10 @@ impl Rule for PreferSetSize {
             let (conversion, set) = (obj.span(), maybe_set.outer_span());
             let report = cx.report(name, PREFER_SET_SIZE);
             if cx.file().comments_in(conversion).len() <= cx.file().comments_in(set).len() {
-                report.fix(|fixer| [fixer.replace(conversion, fixer.file().slice(set)), fixer.replace(name, "size")]);
+                // What oxlint calls its fix.
+                report
+                    .help("Replace array conversion with direct `Set.size` access")
+                    .fix(|fixer| [fixer.replace(conversion, fixer.file().slice(set)), fixer.replace(name, "size")]);
             }
         });
     }

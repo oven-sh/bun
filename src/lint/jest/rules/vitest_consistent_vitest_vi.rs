@@ -43,7 +43,10 @@ impl Rule for ConsistentVitestVi {
                 && let Some(object) = member_expression.object()
             {
                 let function = rule.function;
-                cx.report(object.outer_span(), CONSISTENT_VITEST_VI).fix(|fixer| fixer.replace(object.outer_span(), function));
+                cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
+                    .data("function", function)
+                    .data("opposite", rule.opposite)
+                    .fix(|fixer| fixer.replace(object.outer_span(), function));
             }
         });
     }
@@ -63,7 +66,8 @@ impl ConsistentVitestVi {
         let Some(vitest_import) = import_entries_of(import).find(|it| is_named(it, self.opposite)) else {
             return;
         };
-        cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI).fix(|fixer| {
+        let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
+        report.data("function", self.function).data("opposite", self.opposite).fix(|fixer| {
             let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
             let mut import_text = Vec::new();
             for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {

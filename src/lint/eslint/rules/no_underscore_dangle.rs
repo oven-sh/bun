@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
@@ -26,15 +27,10 @@ fn has_dangling_underscore(identifier: &[u8]) -> bool {
     identifier != b"_" && (identifier.starts_with(b"_") || identifier.ends_with(b"_"))
 }
 
-/// ESTree's `name` of a `PrivateIdentifier`.
-fn without_hash(name: &[u8]) -> &[u8] {
-    name.strip_prefix(b"#").unwrap_or(name)
-}
-
 /// ESTree's `object` and `property.name` of a `MemberExpression`. In `a[b]` the name is `b`.
 fn object_and_property_name(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
     match e.kind() {
-        ExprKind::Dot { obj, name, .. } => Some((obj, without_hash(name.bytes()))),
+        ExprKind::Dot { obj, name, .. } => Some((obj, strings::without_prefix(name.bytes(), b"#"))),
         ExprKind::Index { obj, index, .. } => Some((obj, index.as_ident()?.bytes())),
         _ => None,
     }
@@ -190,12 +186,12 @@ impl NoUnderscoreDangle {
             },
             _ => return,
         };
-        if self.is_unexpected(without_hash(name.bytes())) {
+        if self.is_unexpected(strings::without_prefix(name.bytes(), b"#")) {
             // oxlint has the name without the `#`.
             match cx.language().is_oxlint {
                 true => cx
                     .report(key.inner_span(cx.file()), UNEXPECTED_UNDERSCORE)
-                    .data("identifier", without_hash(name.bytes())),
+                    .data("identifier", strings::without_prefix(name.bytes(), b"#")),
                 false => cx.report(at, UNEXPECTED_UNDERSCORE).data("identifier", name),
             };
         }

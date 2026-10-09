@@ -20,7 +20,7 @@ fn check_unsafe_declaration<'a>(
         if let Some(first) = variable.declarations().next().filter(|it| is_unsafe_kind(*it))
             && let Some(place) = first.name_span()
         {
-            cx.report(place, UNSAFE_MERGING);
+            cx.report(place, UNSAFE_MERGING).label(name, "");
         }
         return;
     }

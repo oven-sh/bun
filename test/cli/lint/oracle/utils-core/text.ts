@@ -22,6 +22,10 @@ const texts = new Set<string>([
   "1e400", "-0", "0.1", "123456789012345678901234567890", "5e-324", "0x1p3", "inf", "nan", "\u0661",
   "a1", "a2", "a10", "a01", "a1b", "a1b2", "a1b10", "1a", "10a", "2a", "a-1", "a_1", "a.1", "Z", "z", "_", "$", "-", "/", ":", "@", "[", "`", "{", "~", "a9", "a09", "a0", "a00", "x100y", "x99y",
   "yield", "let", "static", "await", "class", "enum", "null", "true", "if", "a b", "1a", "\u2102", "\uE000", "\uFFFD", "\u{1F600}", "\uE000a", "\u{1F600}a",
+  // Half of a surrogate pair beside a whole one, each before what it is compared with.
+  "\u{10000}", "\uDFFF", "\u{10FFFF}", "\uDBFF", "\uD800", "\uD800a", "\uD7FF", "\uD800\uE000", "a\uDC00", "a\u{10FFFF}",
+  // Numbers that a double does not hold.
+  "a19007199254740993", "a19007199254740992", "90071992547409930", "90071992547409921", "x90071992547409939007199254740993", "x90071992547409929007199254740992",
 ]);
 for (const line of readFileSync(process.argv[2], "utf8").split("\n").slice(0, 60000)) {
   if (!line) continue;

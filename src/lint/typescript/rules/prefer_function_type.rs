@@ -80,6 +80,17 @@ fn comment_text(comment: Token) -> Vec<u8> {
     }
 }
 
+/// The signature `member` as a function type.
+fn function_type(member: Member, return_type: TypeNode) -> Option<Vec<u8>> {
+    let text = member.text();
+    let colon = return_type.annotation_span().start.checked_sub(member.span().start)? as usize;
+    let mut suggestion = [text.get(..colon)?, b" =>", text.get(colon + 1..)?].concat();
+    if suggestion.ends_with(b";") {
+        suggestion.pop();
+    }
+    Some(suggestion)
+}
+
 fn fix<'a>(
     fixer: Fixer<'a>,
     member: Member<'a>,
@@ -87,13 +98,8 @@ fn fix<'a>(
     owner: Owner<'a>,
 ) -> Option<Vec<Fix>> {
     let file = fixer.file();
-    let text = member.text();
-    let colon = return_type.annotation_span().start.checked_sub(member.span().start)? as usize;
-    let mut suggestion = [text.get(..colon)?, b" =>", text.get(colon + 1..)?].concat();
-    let has_semicolon = suggestion.ends_with(b";");
-    if has_semicolon {
-        suggestion.pop();
-    }
+    let has_semicolon = member.text().ends_with(b";");
+    let mut suggestion = function_type(member, return_type)?;
     // What is replaced, and the `export` before it.
     let (replaced, export) = match owner {
         Owner::TypeLiteral(literal) => {
@@ -165,6 +171,11 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     let report = cx
         .report(member, FUNCTION_TYPE_OVER_CALLABLE_TYPE)
         .data("literalOrInterface", phrase);
+    // For the help of oxlint.
+    let report = match cx.language().is_oxlint {
+        true => report.data("suggestion", function_type(member, return_type).unwrap_or_default()),
+        false => report,
+    };
     if !is_default_export {
         report.fix(|fixer| fix(fixer, member, return_type, owner));
     }

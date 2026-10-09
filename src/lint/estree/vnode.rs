@@ -1021,7 +1021,13 @@ impl<'a> VNode<'a> {
             (Node::File(file), _) => Some(match Dialect::of(file) {
                 Dialect::TypeScript => file.program_span(),
                 // ESLint takes a byte order mark off the text.
-                Dialect::Espree => Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end),
+                Dialect::Espree => {
+                    let whole = Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end);
+                    // That of espree 9 is from the first token to the last.
+                    let tokens = (file.language().eslint_8.as_ref())
+                        .and_then(|_| Some((file.first_token(whole)?, file.last_token(whole)?)));
+                    tokens.map_or(whole, |(first, last)| first.span().to(last.span()))
+                }
             }),
             (_, Part::Decorator(_)) => Some(self.modifier()?.span()),
             (_, Part::Attribute(_)) => Some(self.attribute()?.span()),

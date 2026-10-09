@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require or disallow padding within blocks.
@@ -41,7 +42,9 @@ impl PaddedBlocks {
             after_last = comment.span();
         }
         let last =
-            last.unwrap_or_else(|| text::trim_end(file.slice(Span::before(0, after_last))).len() as u32);
+            last.unwrap_or_else(|| {
+                strings::trim_js_whitespace_end(file.slice(Span::before(0, after_last))).len() as u32
+            });
 
         let has_top_padding = file.line_of(first) - file.line_of(before_first.end) >= 2;
         let has_bottom_padding = file.line_of(after_last.start) - file.line_of(last) >= 2;

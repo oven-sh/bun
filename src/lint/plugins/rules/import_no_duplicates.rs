@@ -164,7 +164,11 @@ impl NoDuplicates {
             module_name = module_name.get(..end).unwrap_or_default();
         }
         let message = if module_name.len() > 16 { MODULES } else { MODULE };
-        cx.report(first, message).data("module_name", module_name).fix(|fixer| merge_imports_fix(fixer, self.prefer_inline, imports));
+        let report = cx.report(first, message).data("module_name", module_name);
+        let report = report.first_label("It is first imported here");
+        (imports.iter().skip(1).filter_map(|it| it.spec_span()))
+            .fold(report, |report, other| report.label(other, ""))
+            .fix(|fixer| merge_imports_fix(fixer, self.prefer_inline, imports));
     }
 }
 
@@ -254,10 +258,11 @@ fn merge_imports_fix<'a>(fixer: Fixer<'a>, prefer_inline: bool, decls: &[Import<
     let import_keyword_end = Span::empty(first_span.start + "import".len() as u32);
     let first_is_empty = first.named().is_empty();
     let first_brace_content = braces.map_or(&b""[..], |(open, close)| file.slice(Span::new(open + 1, close)));
-    let first_has_trailing_comma = !first_is_empty && text::trim_end(first_brace_content).ends_with(b",");
+    let first_has_trailing_comma =
+        !first_is_empty && strings::trim_js_whitespace_end(first_brace_content).ends_with(b",");
     let mut existing: FxHashSet<&[u8]> = FxHashSet::default();
     if !first_is_empty {
-        existing.extend(strings::split(first_brace_content, b",").map(text::trim));
+        existing.extend(strings::split(first_brace_content, b",").map(strings::trim_js_whitespace));
     }
     let should_inline_type_imports = prefer_inline || !first.is_type_only() || specifiers.iter().any(|it| !it.decl.is_type_only());
     let specifiers_text =
@@ -313,7 +318,7 @@ fn build_specifiers_text<'a>(
     for specifier in specifiers {
         let (start, is_empty) = (result.len(), specifier.decl.named().is_empty());
         for cur in strings::split(specifier.identifiers, b",") {
-            let trimmed = text::trim(cur);
+            let trimmed = strings::trim_js_whitespace(cur);
             if trimmed.is_empty() || !existing.insert(trimmed) {
                 continue;
             }
@@ -329,7 +334,7 @@ fn build_specifiers_text<'a>(
                 result.extend_from_slice(trimmed);
                 result.push(b'\n');
             } else if !is_type && strings::contains_char(cur, b'\n') {
-                result.extend_from_slice(strip_leading_inline_whitespace(text::trim_end(cur)));
+                result.extend_from_slice(strip_leading_inline_whitespace(strings::trim_js_whitespace_end(cur)));
             } else {
                 result.extend_from_slice(trimmed);
             }
@@ -346,12 +351,12 @@ fn ends_with_line_comment(source: &[u8]) -> bool {
 /// Without the blanks that it starts with, up to a line break.
 fn strip_leading_inline_whitespace(source: &[u8]) -> &[u8] {
     let line = strings::split_once_char(source, b'\n').map_or(source, |it| it.0);
-    source.get(line.len() - text::trim_start(line).len()..).unwrap_or(source)
+    source.get(line.len() - strings::trim_js_whitespace_start(line).len()..).unwrap_or(source)
 }
 
 fn merge_into_braces(fixer: Fixer, open: u32, close: u32, specifiers_text: &[u8]) -> Fix {
     let content = fixer.file().slice(Span::new(open + 1, close));
-    let trailing = content.get(text::trim_end(content).len()..).unwrap_or_default();
+    let trailing = content.get(strings::trim_js_whitespace_end(content).len()..).unwrap_or_default();
     if trailing.len() == content.len() {
         fixer.replace(Span::new(open + 1, close), specifiers_text)
     } else if !trailing.is_empty() {

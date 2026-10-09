@@ -48,6 +48,11 @@ pub(crate) fn is_package_script(command: &[u8]) -> bool {
     {
         return false;
     }
+    let by_an_older_bun =
+        env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().filter(|_| command == b"check");
+    if by_an_older_bun.is_some_and(|running| running_check_scripts(running).any(|it| it == dir)) {
+        return false;
+    }
     if package_of_inherited_script(command).is_some_and(|it| it == dir) {
         return false;
     }
@@ -99,6 +104,17 @@ fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = (&[u8], &
     })
 }
 
+/// The entries of `BUN_INTERNAL_CHECK_SCRIPTS`: the directories of packages. Each is a length, `:` and as many bytes.
+fn running_check_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
+    core::iter::from_fn(move || {
+        let colon = bun_core::strings::index_of_char_usize(running, b':')?;
+        let len: usize = core::str::from_utf8(&running[..colon]).ok()?.parse().ok()?;
+        let (dir, rest) = running[colon + 1..].split_at_checked(len)?;
+        running = rest;
+        Some(dir)
+    })
+}
+
 /// The command whose script `name` is, or runs with: `bun run lint` runs `prelint`, `lint` and
 /// `postlint`.
 fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
@@ -121,6 +137,7 @@ fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
     match env_var::npm_package_json::get() {
         Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
+        None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
         None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
     }
 }

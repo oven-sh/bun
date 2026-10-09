@@ -73,7 +73,7 @@ impl<'a> Lines<'a> for File<'a> {
     }
 }
 
-/// What [`lines`](super::text::lines) gives.
+/// What [`lines`](bun_core::strings::js_lines) gives.
 impl<'a> Lines<'a> for [&'a [u8]] {
     fn count(&self) -> u32 {
         self.len() as u32

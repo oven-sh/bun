@@ -20,9 +20,6 @@ use crate::options::{QuoteProperties, QuoteStyle};
 use crate::syntax_error::{Message, SyntaxError as Reason};
 use crate::text::{is_next_line_empty, make_string};
 use bun_highway::index_of_interesting_character_in_string_literal;
-use bun_lint::utils::text::{
-    code_point_at, is_identifier_part, is_identifier_start, is_js_whitespace,
-};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Kind {
@@ -352,8 +349,8 @@ impl Reader<'_, '_> {
         match self.peek() {
             Some(b'/') => self.comment(enclosing, preceding)?,
             Some(0x80..) => {
-                let (c, len) = code_point_at(self.text, self.at);
-                if !is_js_whitespace(c) {
+                let (c, len) = bun_core::strings::wtf8_codepoint_at(self.text, self.at);
+                if !bun_core::strings::is_js_whitespace(c) {
                     return Ok(false);
                 }
                 self.line_separators += u32::from(matches!(c, 0x2028 | 0x2029));
@@ -939,7 +936,7 @@ impl Reader<'_, '_> {
             }
             b'u' if hex(at + 2..at + 6) => Ok(6),
             b'x' | b'u' => Err(SyntaxError),
-            0x80.. => Ok(1 + code_point_at(self.text, at + 1).1),
+            0x80.. => Ok(1 + bun_core::strings::wtf8_codepoint_at(self.text, at + 1).1),
             _ => Ok(2),
         }
     }
@@ -1014,7 +1011,11 @@ impl Reader<'_, '_> {
         // No name, which includes the `n` of a `bigint`, right after a number.
         match text.get(at) {
             Some(b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' | b'\\') => return Err(SyntaxError),
-            Some(0x80..) if is_identifier_start(code_point_at(text, at).0) => {
+            Some(0x80..)
+                if bun_core::lexer::is_identifier_start(
+                    bun_core::strings::wtf8_codepoint_at(text, at).0,
+                ) =>
+            {
                 return Err(SyntaxError);
             }
             _ => {}
@@ -1041,11 +1042,11 @@ impl Reader<'_, '_> {
                 Some(b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_') => at += 1,
                 Some(b'0'..=b'9') if at > start => at += 1,
                 Some(0x80..) => {
-                    let (c, len) = code_point_at(self.text, at);
+                    let (c, len) = bun_core::strings::wtf8_codepoint_at(self.text, at);
                     let is_part = if at == start {
-                        is_identifier_start(c)
+                        bun_core::lexer::is_identifier_start(c)
                     } else {
-                        is_identifier_part(c)
+                        bun_core::lexer::is_type_script_identifier_part(c as i32)
                     };
                     if !is_part {
                         break;

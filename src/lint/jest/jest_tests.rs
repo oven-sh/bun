@@ -13,8 +13,8 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_member_expr, is_global_turned_off, static_property_name,
 };
+use bun_lint_oxlint::module_record::debug;
 use bun_lint_oxlint::regex_flags::rust_regex;
-use bun_lint_oxlint::text::{trim, trim_start};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -112,7 +112,12 @@ pub(crate) mod no_disabled_tests {
                 } else {
                     DISABLED_TEST
                 },
-            );
+            )
+            .help(if name.starts_with(b"x") {
+                "Remove x prefix"
+            } else {
+                "Remove the appending `.skip`"
+            });
         }
     }
 }
@@ -398,10 +403,12 @@ pub(crate) mod valid_title {
             // escapes are not taken away.
             let inner_span = span.shrink(1, 1);
             let raw_text = ctx.file.slice(inner_span);
-            if !self.ignore_spaces && trim(title).len() != title.len() {
+            if !self.ignore_spaces && strings::trim_unicode_whitespace(title).len() != title.len() {
                 let report = ctx.report(span, ACCIDENTAL_SPACE);
                 if can_trim_raw_title(title, raw_text) {
-                    report.fix(|fixer| fixer.replace(inner_span, trim(raw_text)));
+                    report.fix(|fixer| {
+                        fixer.replace(inner_span, strings::trim_unicode_whitespace(raw_text))
+                    });
                 }
             }
             let prefix = name.iter().take_while(|b| matches!(b, b'f' | b'x')).count();
@@ -414,7 +421,9 @@ pub(crate) mod valid_title {
                     && let Some(unprefixed_cooked) = without_prefix(title)
                     && can_trim_raw_title(unprefixed_cooked, unprefixed_raw)
                 {
-                    report.fix(|fixer| fixer.replace(inner_span, trim(unprefixed_raw)));
+                    report.fix(|fixer| {
+                        fixer.replace(inner_span, strings::trim_unicode_whitespace(unprefixed_raw))
+                    });
                 }
                 return;
             }
@@ -451,10 +460,10 @@ pub(crate) mod valid_title {
     /// Whether there is as much whitespace at the start and at the end of `raw` as of `cooked`.
     fn can_trim_raw_title(cooked: &[u8], raw: &[u8]) -> bool {
         let whitespace_around = |text: &[u8]| {
-            let without_start = trim_start(text).len();
+            let without_start = strings::trim_unicode_whitespace_start(text).len();
             (
                 text.len().saturating_sub(without_start),
-                without_start.saturating_sub(trim(text).len()),
+                without_start.saturating_sub(strings::trim_unicode_whitespace(text).len()),
             )
         };
         whitespace_around(cooked) == whitespace_around(raw)
@@ -556,7 +565,22 @@ pub(crate) mod consistent_test_it {
                         if !jest_fn_call.name.ends_with(preferred.as_bytes()) =>
                     {
                         if let Some(ident) = get_test_name(node) {
-                            ctx.report(ident, CONSISTENT_METHOD).fix(|fixer| {
+                            let report = ctx
+                                .report(ident, CONSISTENT_METHOD)
+                                .data("preferred_method", preferred)
+                                .data(
+                                    "other_method",
+                                    if preferred == "test" { "it" } else { "test" },
+                                )
+                                .data(
+                                    "within",
+                                    if describe_stack.is_empty() {
+                                        ""
+                                    } else {
+                                        " within describe"
+                                    },
+                                );
+                            report.fix(|fixer| {
                                 let prefix = match jest_fn_call.name.first() {
                                     _ if ident.is_ident("fit") => {
                                         return fixer.replace(ident, "test.only");
@@ -618,7 +642,9 @@ pub(crate) mod max_nested_describe {
             }
             active_describes.push(span);
             if active_describes.len() as u32 > max {
-                ctx.report(span, EXCEEDED_MAX_DEPTH);
+                ctx.report(span, EXCEEDED_MAX_DEPTH)
+                    .data("current", active_describes.len().to_string())
+                    .data("max", max.to_string());
             }
         }
     }
@@ -1043,20 +1069,22 @@ pub(crate) mod prefer_each {
             let Some(Some(loop_node)) = enclosing_loop else {
                 continue;
             };
-            if skip.contains(&loop_node)
-                || !matches!(
-                    parse_jest_fn_call(file, PossibleJestNode::new(node)).map(|it| it.kind()),
+            if skip.contains(&loop_node) {
+                continue;
+            }
+            let fn_name =
+                match parse_jest_fn_call(file, PossibleJestNode::new(node)).map(|it| it.kind()) {
+                    Some(JestFnKind::General(JestGeneralFnKind::Test)) => "it",
                     Some(JestFnKind::General(
-                        JestGeneralFnKind::Test
-                            | JestGeneralFnKind::Describe
-                            | JestGeneralFnKind::Hook
-                    ))
-                )
-                || tests
-                    .find(Node::Stmt(loop_node), |_, parent| {
-                        is_member_of_test_called(parent).then_some(())
-                    })
-                    .is_some()
+                        JestGeneralFnKind::Describe | JestGeneralFnKind::Hook,
+                    )) => "describe",
+                    _ => continue,
+                };
+            if tests
+                .find(Node::Stmt(loop_node), |_, parent| {
+                    is_member_of_test_called(parent).then_some(())
+                })
+                .is_some()
             {
                 continue;
             }
@@ -1070,7 +1098,8 @@ pub(crate) mod prefer_each {
             ctx.report(
                 Span::new(loop_node.span().start, body.span().start),
                 USE_PREFER_EACH,
-            );
+            )
+            .data("fn_name", fn_name);
         }
     }
 
@@ -1175,7 +1204,10 @@ pub(crate) mod prefer_lowercase_title {
                 _ => true,
             };
             if !is_ignored {
-                ctx.report(arg, PREFER_LOWERCASE_TITLE).fix(|fixer| {
+                let report = ctx
+                    .report(arg, PREFER_LOWERCASE_TITLE)
+                    .data("title", debug(literal));
+                report.fix(|fixer| {
                     let len = if self.lowercase_first_character_only {
                         1
                     } else {
@@ -1227,7 +1259,17 @@ pub(crate) mod prefer_todo {
         {
             return;
         }
-        ctx.report(callee, PREFER_TODO).fix(|fixer| {
+        let mut report = ctx.report(callee, PREFER_TODO);
+        // What oxlint calls the fix that has two parts.
+        let is_renamed = match callee.kind() {
+            ExprKind::Ident(_) | ExprKind::Index { .. } => true,
+            ExprKind::Dot { .. } => !callee.is_private_member(),
+            _ => false,
+        };
+        if is_renamed && arguments.len() != 1 {
+            report = report.help("Replace with `test.todo` or `it.todo`.");
+        }
+        report.fix(|fixer| {
             let fix = match callee.kind() {
                 ExprKind::Ident(_) => fixer.insert_after(callee, ".todo"),
                 ExprKind::Dot { name, .. } if !callee.is_private_member() => {
@@ -1286,7 +1328,22 @@ pub(crate) mod require_top_level_describe {
             {
                 count += 1;
             } else {
-                ctx.report(node, REQUIRE_TOP_LEVEL_DESCRIBE);
+                let max = max_number_of_top_level_describes;
+                let report = ctx.report(node, REQUIRE_TOP_LEVEL_DESCRIBE);
+                match kind {
+                    JestGeneralFnKind::Test => {
+                        report.help("All test cases must be wrapped in a describe block.")
+                    }
+                    JestGeneralFnKind::Hook => {
+                        report.help("All hooks must be wrapped in a describe block.")
+                    }
+                    _ => report.help_with(|| {
+                        let repeat = if count == 1 { "" } else { "s" };
+                        format!(
+                            "There should not be more than {max} describe{repeat} at the top level."
+                        )
+                    }),
+                };
             }
         }
     }

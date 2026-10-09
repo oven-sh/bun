@@ -78,7 +78,8 @@ impl NoDupeKeys {
                 return;
             }
             cx.report(place, UNEXPECTED)
-                .data("name", get_static_key_name(key).unwrap_or_default());
+                .data("name", get_static_key_name(key).unwrap_or_default())
+                .labels_with(|labels| labels.push(here, "and duplicated here"));
         }
     }
 }

@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{lines, trim_start};
 
 /// Enforce using `@ts-expect-error` over `@ts-ignore`.
 pub struct PreferTsExpectError;
@@ -18,18 +17,18 @@ fn is_valid_ts_ignore_present(comment: Token) -> bool {
     let value = comment.comment_value();
     let rest = match comment.kind() {
         TokenKind::Line => {
-            let rest = trim_start(value);
+            let rest = strings::trim_js_whitespace_start(value);
             rest.strip_prefix(b"/").unwrap_or(rest)
         }
         _ => {
-            let mut rest = trim_start(lines(value).last().unwrap_or(value));
+            let mut rest = strings::trim_js_whitespace_start(strings::js_lines(value).last().unwrap_or(value));
             while let [b'/' | b'*', after @ ..] = rest {
                 rest = after;
             }
             rest
         }
     };
-    trim_start(rest).starts_with(TS_IGNORE)
+    strings::trim_js_whitespace_start(rest).starts_with(TS_IGNORE)
 }
 
 impl Rule for PreferTsExpectError {

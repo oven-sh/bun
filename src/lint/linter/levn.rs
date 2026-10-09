@@ -1,7 +1,6 @@
 //! `levn.parse("Object", text)`: the liberal notation that ESLint reads an `/* eslint .. */`
 //! comment in before it tries JSON.
 
-use super::space::{char_len, space_len, trim};
 use crate::options::Json;
 
 const MAX_DEPTH: usize = 128;
@@ -46,9 +45,9 @@ fn date_end(text: &[u8]) -> Option<usize> {
 fn word_end(text: &[u8]) -> usize {
     let (mut at, mut end) = (0, 0);
     while at < text.len() && !is_special(text[at]) {
-        match space_len(&text[at..]) {
+        match bun_core::strings::js_whitespace_len(&text[at..]) {
             0 => {
-                at += char_len(&text[at..]);
+                at += bun_core::lexer::char_and_size(&text[at..], 0).1.max(1);
                 end = at;
             }
             n => at += n,
@@ -61,7 +60,7 @@ fn tokenize(text: &[u8]) -> Vec<&[u8]> {
     let (mut tokens, mut at) = (Vec::new(), 0);
     while at < text.len() {
         let rest = &text[at..];
-        let space = space_len(rest);
+        let space = bun_core::strings::js_whitespace_len(rest);
         if space > 0 {
             at += space;
             continue;
@@ -178,7 +177,7 @@ impl<'t> Tokens<'t> {
 
 /// `Number(text)`
 pub(crate) fn to_number(text: &[u8]) -> f64 {
-    let text = trim(text);
+    let text = bun_core::strings::trim_js_whitespace(text);
     if text.is_empty() {
         return 0.0;
     }

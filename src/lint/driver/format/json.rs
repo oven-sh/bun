@@ -2,7 +2,8 @@
 
 use super::Meta;
 use crate::results::FileResult;
-use bun_lint::linter::{LintMessage, Utf16Offsets, write_json_string as write_string};
+use bun_core::printer::json_stringify;
+use bun_lint::linter::{LintMessage, Utf16Offsets};
 use bun_threading::Guarded;
 use std::io::Write;
 
@@ -20,7 +21,7 @@ fn write_messages(out: &mut Vec<u8>, messages: &[LintMessage], text: &[u8]) {
 
 fn write_result(out: &mut Vec<u8>, result: &FileResult) {
     out.extend_from_slice(b"{\"filePath\":");
-    write_string(out, &result.path);
+    json_stringify(&result.path, out);
     let counts = result.counts;
     match &result.linted {
         None => {
@@ -29,7 +30,7 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
                 out.extend_from_slice(
                     b"{\"ruleId\":null,\"fatal\":false,\"severity\":1,\"message\":",
                 );
-                write_string(out, &message.message);
+                json_stringify(&message.message, out);
                 out.push(b'}');
             }
             let _ = write!(
@@ -59,10 +60,10 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
             );
             if result.is_fixed {
                 out.extend_from_slice(b",\"output\":");
-                write_string(out, text);
+                json_stringify(text, out);
             } else if linted.has_source {
                 out.extend_from_slice(b",\"source\":");
-                write_string(out, text);
+                json_stringify(text, out);
             }
         }
     }
@@ -110,7 +111,7 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         );
     }
     out.extend_from_slice(b"\"cwd\":");
-    write_string(out, &crate::paths::to_native(meta.cwd.to_vec()));
+    json_stringify(&crate::paths::to_native(meta.cwd.to_vec()), out);
     out.extend_from_slice(b",\"rulesMeta\":{");
     let mut seen: Vec<Vec<u8>> = Vec::new();
     for message in results
@@ -128,7 +129,7 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         if !seen.is_empty() {
             out.push(b',');
         }
-        write_string(out, &id);
+        json_stringify(&id, out);
         let kind = match rule.kind {
             bun_lint::rule::Kind::Problem => "problem",
             bun_lint::rule::Kind::Suggestion => "suggestion",

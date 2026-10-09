@@ -21,7 +21,6 @@ use crate::tokens::TokenKind;
 use crate::utils::ancestor_memo::AncestorMemo;
 use crate::utils::directives::match_directives_pattern;
 use crate::utils::estree_compat::is_assignment_target;
-use crate::utils::text::{code_points, is_js_whitespace, trim};
 use bun_core::strings;
 use bun_sema::atom::known;
 use bun_sema::bind::PatParent;
@@ -88,13 +87,14 @@ impl UsedMarks {
             if comment.kind() != TokenKind::Block {
                 continue;
             }
-            let directive = trim(without_justification(comment.comment_value()));
+            let directive =
+                strings::trim_js_whitespace(without_justification(comment.comment_value()));
             if match_directives_pattern(directive) != Some("exported") {
                 continue;
             }
             let list = directive.get("exported".len()..).unwrap_or_default();
             for item in strings::split(list, b",") {
-                let name = without_quotes(trim(item));
+                let name = without_quotes(strings::trim_js_whitespace(item));
                 if let Some(symbol) = global.symbols().find(|symbol| symbol.name() == name) {
                     self.mark(symbol);
                 }
@@ -106,8 +106,8 @@ impl UsedMarks {
 /// What is before the first `/\s-{2,}\s/u` of the value of a directive comment.
 fn without_justification(value: &[u8]) -> &[u8] {
     let (mut space, mut dashes) = (None, 0);
-    for (at, c) in code_points(value) {
-        if is_js_whitespace(c) {
+    for (at, c) in strings::wtf8_codepoints(value) {
+        if strings::is_js_whitespace(c) {
             if dashes >= 2
                 && let Some(end) = space
             {

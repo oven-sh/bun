@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -38,8 +39,8 @@ impl SortVars {
     fn compare(&self, a: VarDecl, b: VarDecl) -> Ordering {
         let (a, b) = (name_of(a), name_of(b));
         match self.ignore_case {
-            true => text::compare(&text::to_lower_case(a), &text::to_lower_case(b)),
-            false => text::compare(a, b),
+            true => strings::order_utf16(&text::to_lower_case(a), &text::to_lower_case(b)),
+            false => strings::order_utf16(a, b),
         }
     }
 
@@ -55,7 +56,7 @@ impl SortVars {
                 false => Cow::Borrowed(name),
             };
             let mut named: Vec<_> = declarations.iter().rev().map(|it| (key(name_of(*it)), *it)).collect();
-            utils::sort::sort_by(&mut named, |a, b| text::compare(&a.0, &b.0));
+            utils::sort::sort_by(&mut named, |a, b| strings::order_utf16(&a.0, &b.0));
             sorted = named.into_iter().map(|it| it.1).collect();
         }
         text_of(&sorted, declarations, file)

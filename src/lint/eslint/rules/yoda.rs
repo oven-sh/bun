@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
@@ -68,7 +69,7 @@ impl Value<'_> {
     /// `self <= other`
     fn is_at_most(&self, other: &Value) -> bool {
         match (self, other) {
-            (Value::String(a), Value::String(b)) => text::compare(a, b) != Ordering::Greater,
+            (Value::String(a), Value::String(b)) => strings::order_utf16(a, b) != Ordering::Greater,
             (
                 Value::BigInt {
                     is_negative: a_is_negative,
@@ -188,7 +189,7 @@ fn needs_spaces_for_oxlint(source: &[u8], whole: Span, left: Expr, right: Expr) 
         !before.is_empty()
             && (is_literal_or_name(right) || starts_with_keyword(right))
             && !separates(text::last_code_point(before)),
-        !after.is_empty() && is_literal_or_name(left) && !separates(text::first_code_point(after)),
+        !after.is_empty() && is_literal_or_name(left) && !separates(strings::wtf8_first_codepoint(after)),
     )
 }
 

@@ -5,7 +5,7 @@ use super::line_buffer::LineBuffer;
 use super::markdown::format_description;
 use super::normalize::normalize_tag_kind;
 use super::param_order::reorder_param_tags;
-use super::text::{is_blank, split_lines, trim, trim_end, trim_end_matches};
+use super::text::trim_end_matches;
 use crate::options::{CommentLineStrategy, FormatOptions, IndentStyle, JsdocOptions, QuoteStyle};
 use bun_core::strings;
 use bun_lint::ast::File;
@@ -37,17 +37,19 @@ impl JsdocFormatter<'_> {
     fn format<'a>(mut self, doc: JSDoc<'a>, file: &'a File<'a>) -> Option<FormattedJsdoc> {
         let content = file.slice(doc.comment_span());
         let description = doc.comment().parsed_preserving_whitespace();
-        if is_blank(&description) && doc.tags().next().is_none() {
+        if strings::is_all_unicode_whitespace(&description) && doc.tags().next().is_none() {
             return Some(FormattedJsdoc::Empty);
         }
         let sorted_tags = sort_tags_by_groups(doc.tags());
 
         // The description and the `@description` tags are one.
-        let mut merged_description = trim(&description).to_vec();
+        let mut merged_description = strings::trim_unicode_whitespace(&description).to_vec();
         let mut effective_tags: Vec<(JSDocTag<'a>, &'a [u8])> =
             Vec::with_capacity(sorted_tags.len());
         for &(tag, normalized_kind) in &sorted_tags {
-            if should_remove_empty_tag(normalized_kind) && is_blank(&tag.comment().parsed()) {
+            if should_remove_empty_tag(normalized_kind)
+                && strings::is_all_unicode_whitespace(&tag.comment().parsed())
+            {
                 continue;
             }
             if normalized_kind != b"description" {
@@ -55,7 +57,7 @@ impl JsdocFormatter<'_> {
                 continue;
             }
             let parsed = tag.comment().parsed();
-            let parsed = trim(&parsed);
+            let parsed = strings::trim_unicode_whitespace(&parsed);
             if !parsed.is_empty() {
                 if !merged_description.is_empty() {
                     merged_description.extend_from_slice(b"\n\n");
@@ -68,7 +70,7 @@ impl JsdocFormatter<'_> {
         // `/** @type */`
         if merged_description.is_empty()
             && is_single_line
-            && matches!(effective_tags[..], [(tag, b"type")] if is_blank(&tag.comment().parsed()))
+            && matches!(effective_tags[..], [(tag, b"type")] if strings::is_all_unicode_whitespace(&tag.comment().parsed()))
         {
             return None;
         }
@@ -192,7 +194,7 @@ impl JsdocFormatter<'_> {
 
         let all = self.content_lines.into_bytes();
         let all = trim_end_matches(&all, |c| c == '\n');
-        let mut lines = split_lines(all).skip_while(|line| line.is_empty());
+        let mut lines = strings::split(all, b"\n").skip_while(|line| line.is_empty());
         let Some(first) = lines.next() else {
             return Some(FormattedJsdoc::Empty);
         };
@@ -224,7 +226,7 @@ impl JsdocFormatter<'_> {
             return;
         }
         let out = self.content_lines.begin_line();
-        for (index, line) in split_lines(description).enumerate() {
+        for (index, line) in strings::split(description, b"\n").enumerate() {
             if index > 0 {
                 out.push(b'\n');
             }
@@ -488,7 +490,7 @@ fn is_escaped(bytes: &[u8], pos: usize) -> bool {
 
 /// The value of `@default`: what looks like JSON gets its spaces and the quotes of `quote_style`.
 pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow<'_, [u8]> {
-    let trimmed = trim(value);
+    let trimmed = strings::trim_unicode_whitespace(value);
     let (target_quote, other_quote) = match quote_style {
         QuoteStyle::Double => (b'"', b'\''),
         QuoteStyle::Single => (b'\'', b'"'),
@@ -574,13 +576,13 @@ pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow
 /// `desc` without "Default is .." at its end, which is made anew from `[name=value]`.
 pub(super) fn strip_default_is_suffix(desc: &[u8]) -> &[u8] {
     let before = |pos: usize| {
-        let before = trim_end(&desc[..pos]);
-        trim_end(before.strip_suffix(b".").unwrap_or(before))
+        let before = strings::trim_unicode_whitespace_end(&desc[..pos]);
+        strings::trim_unicode_whitespace_end(before.strip_suffix(b".").unwrap_or(before))
     };
     if let Some(pos) = strings::index_of(desc, b"Default is ") {
         return before(pos);
     }
-    let trimmed = trim_end(desc);
+    let trimmed = strings::trim_unicode_whitespace_end(desc);
     if trimmed.ends_with(b"Default is") {
         return before(trimmed.len() - b"Default is".len());
     }

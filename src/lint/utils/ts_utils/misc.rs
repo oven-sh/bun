@@ -7,7 +7,6 @@ use crate::semantic::Declaration;
 use crate::tokens::{skip_trivia, skip_trivia_back};
 use crate::utils::ast_utils::get_static_string_value;
 use crate::utils::estree_compat::estree_span;
-use crate::utils::text::{code_points, is_identifier_part, is_identifier_start};
 use std::borrow::Cow;
 
 /// typescript-eslint's `isDefinitionFile`: `*.d.ts`, `*.d.cts`, `*.d.mts`, `*.d.*.ts`, in any case.
@@ -194,12 +193,11 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
 /// `requiresQuoting` of `@typescript-eslint/type-utils`: whether `name` is not an identifier name.
 /// As upstream, which looks at UTF-16 code units, a character outside the BMP requires quoting.
 pub fn requires_quoting(name: &[u8]) -> bool {
-    // U+30FB and U+FF65 are `ID_Continue` since Unicode 15.1.
-    let is_part = |c: u32| c <= 0xFFFF && (is_identifier_part(c) || matches!(c, 0x30FB | 0xFF65));
-    let mut points = code_points(name).map(|it| it.1);
+    let is_part = |c: u32| c <= 0xFFFF && bun_core::lexer::is_type_script_identifier_part(c as i32);
+    let mut points = bun_core::strings::wtf8_codepoints(name).map(|it| it.1);
     !points
         .next()
-        .is_some_and(|c| c <= 0xFFFF && is_identifier_start(c))
+        .is_some_and(|c| c <= 0xFFFF && bun_core::lexer::is_identifier_start(c))
         || !points.all(is_part)
 }
 

@@ -974,7 +974,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let mut is_deferred = false;
         if self.token() == T::Dot {
             self.next();
-            match self.lx.text() {
+            match self.name_after_import_and_dot() {
                 b"meta" if self.token() == T::Identifier => {
                     self.next();
                     return self.finish_expr(ExprKind::ImportMeta, start);
@@ -992,6 +992,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::OpenParen => self.import_call(start, is_deferred).0,
             _ => self.import_without_arguments(start, is_deferred),
         }
+    }
+
+    /// `meta`, `defer` or `source`, or nothing. For TypeScript's parser a name is what it is with an
+    /// escape too, for acorn and Babel it is an error.
+    fn name_after_import_and_dot(&self) -> &'static [u8] {
+        let name = match self.lx.has_escape && !self.is_ecmascript {
+            true => self.lx.text_of(self.lx.atom),
+            false => self.lx.text(),
+        };
+        let names: [&'static [u8]; 3] = [b"meta", b"defer", b"source"];
+        names.into_iter().find(|it| *it == name).unwrap_or_default()
     }
 
     /// At the `(` of `import(..)`, which starts at `start`: the call and its arguments.

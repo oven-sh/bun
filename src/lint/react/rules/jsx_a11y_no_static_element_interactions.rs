@@ -1,3 +1,4 @@
+use bun_core::strings;
 use crate::a11y::{
     HTML_TAG, is_abstract_role, is_hidden_from_screen_reader, is_interactive_element, is_interactive_role,
     is_non_interactive_element, is_non_interactive_role, is_null_literal, is_presentation_role,
@@ -5,7 +6,7 @@ use crate::a11y::{
 use crate::jsx::{
     AttributeValue, as_jsx_element, get_element_type, get_prop_value, has_jsx_prop, has_jsx_prop_ignore_case,
 };
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -55,8 +56,10 @@ impl Rule for NoStaticElementInteractions {
                 return;
             }
             let has_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
-                Some(AttributeValue::StringLiteral(role)) => (split_whitespace(&text::to_lower_case(role.value)).next())
-                    .is_some_and(|first_role| is_interactive_role(first_role) || is_non_interactive_role(first_role)),
+                Some(AttributeValue::StringLiteral(role)) => {
+                    (strings::split_unicode_whitespace(&text::to_lower_case(role.value)).next())
+                        .is_some_and(|first_role| is_interactive_role(first_role) || is_non_interactive_role(first_role))
+                }
                 Some(AttributeValue::ExpressionContainer(_)) => rule.allow_expression_values,
                 _ => false,
             };

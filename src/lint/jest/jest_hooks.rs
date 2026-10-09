@@ -100,7 +100,8 @@ pub(crate) mod prefer_hooks_in_order {
             (it.span().start, std::cmp::Reverse(it.span().end))
         });
         let mut scopes = Scopes::default();
-        let mut previous_hook_orders: FxHashMap<Option<Node<'a>>, usize> = FxHashMap::default();
+        let mut previous_hook_orders: FxHashMap<Option<Node<'a>>, (usize, Span)> =
+            FxHashMap::default();
         for node in calls {
             let hook_name = parse_general_jest_fn_call(ctx.file, PossibleJestNode::new(node))
                 .filter(|it| it.kind == JestFnKind::General(JestGeneralFnKind::Hook))
@@ -117,13 +118,26 @@ pub(crate) mod prefer_hooks_in_order {
             let Some(hook_order) = HOOKS.iter().position(|it| it.as_bytes() == hook_name) else {
                 continue;
             };
-            if previous_hook_orders
+            if let Some(&(previous_hook_order, previous_hook_span)) = previous_hook_orders
                 .get(&scope)
-                .is_some_and(|previous_hook_order| hook_order < *previous_hook_order)
+                .filter(|previous| hook_order < previous.0)
             {
-                ctx.report(node, REORDER_HOOKS);
+                let name = |order: usize| HOOKS.get(order).copied().unwrap_or_default();
+                let (hook, previous) = (name(hook_order), name(previous_hook_order));
+                ctx.report(node, REORDER_HOOKS)
+                    .data("hook", hook_name)
+                    .data("previous_hook", previous)
+                    .labels_with(|labels| {
+                        labels.first(format!(
+                            "this should be moved to before the {previous:?} hook"
+                        ));
+                        labels.push(
+                            previous_hook_span,
+                            format!("{hook:?} hook should be called before this"),
+                        );
+                    });
             } else {
-                previous_hook_orders.insert(scope, hook_order);
+                previous_hook_orders.insert(scope, (hook_order, node.span()));
             }
         }
     }

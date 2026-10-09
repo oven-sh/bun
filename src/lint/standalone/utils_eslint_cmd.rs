@@ -372,7 +372,7 @@ fn dump(case: Object<'_>) -> String {
                 if i > 0 {
                     line.push(',');
                 }
-                line.push_str(&host::text(&text::json_stringify(fact.as_bytes())));
+                line.push_str(&host::text(&bun_core::printer::json_stringify_alloc(fact.as_bytes())));
             }
             line.push_str("]}");
             line

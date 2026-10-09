@@ -5,7 +5,6 @@
 
 use super::collation_tables::{EXPANSIONS, PRIMARY, SECONDARY, TERTIARY};
 use bstr::ByteSlice;
-use bun_lint::utils::text::is_js_whitespace;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
@@ -114,7 +113,7 @@ fn decimal_literal_len<T: Unit>(text: &[T]) -> usize {
 fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
     let blank = text
         .iter()
-        .take_while(|unit| is_js_whitespace(unit.code()))
+        .take_while(|unit| bun_core::strings::is_js_whitespace(unit.code()))
         .count();
     let text = &text[blank..];
     let sign = usize::from(
@@ -149,13 +148,13 @@ fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
     }
     let start = text
         .iter()
-        .take_while(|unit| is_js_whitespace(unit.code()))
+        .take_while(|unit| bun_core::strings::is_js_whitespace(unit.code()))
         .count();
     let end = text.len()
         - text[start..]
             .iter()
             .rev()
-            .take_while(|unit| is_js_whitespace(unit.code()))
+            .take_while(|unit| bun_core::strings::is_js_whitespace(unit.code()))
             .count();
     let text = &text[start..end];
     if text.is_empty() {

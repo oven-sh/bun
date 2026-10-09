@@ -4,10 +4,7 @@ use super::embedded::{format_embedded_js, format_embedded_language, is_js_ts_lan
 use super::line_buffer::LineBuffer;
 use super::markers::{ListMarker, list_marker};
 use super::normalize::{append_trailing_dot, capitalize_first};
-use super::text::{
-    first_char, is_blank, lines, parse_index, push_number, push_spaces, split_lines, str_width,
-    trim, trim_start, trim_start_matches,
-};
+use super::text::{first_char, lines, parse_index, push_number, push_spaces, trim_start_matches};
 use super::wrap::{format_table_block, wrap_paragraph, wrap_plain_paragraphs};
 use crate::markdown::ast::{Kind, Node, NodeId, ReferenceType, Tree};
 use crate::options::{FormatOptions, LineWrappingStyle};
@@ -140,7 +137,7 @@ fn map_lines<'a>(
 /// `1- foo` becomes `1. foo`.
 fn normalize_legacy_ordered_list_markers(text: &[u8]) -> Bytes<'_> {
     map_lines(text, |_, line, out| {
-        let trimmed = trim_start(line);
+        let trimmed = strings::trim_unicode_whitespace_start(line);
         let digits = trimmed
             .iter()
             .take_while(|byte| byte.is_ascii_digit())
@@ -152,7 +149,7 @@ fn normalize_legacy_ordered_list_markers(text: &[u8]) -> Bytes<'_> {
         {
             return false;
         }
-        let rest = trim_start(&trimmed[digits + 1..]);
+        let rest = strings::trim_unicode_whitespace_start(&trimmed[digits + 1..]);
         if rest.is_empty() {
             return false;
         }
@@ -169,7 +166,7 @@ fn convert_star_list_markers(text: &[u8]) -> Bytes<'_> {
         return Cow::Borrowed(text);
     }
     map_lines(text, |_, line, out| {
-        let trimmed = trim_start(line);
+        let trimmed = strings::trim_unicode_whitespace_start(line);
         let Some(after_star) = trimmed.strip_prefix(b"* ") else {
             return false;
         };
@@ -411,7 +408,7 @@ impl<'a> Serializer<'a> {
     /// Pushes the lines of a paragraph that has been broken into lines.
     fn push_paragraph_lines(&self, paragraph: &[u8], indent: usize, lines: &mut LineBuffer) {
         let count = strings::count_char(paragraph, b'\n') + 1;
-        for (index, line) in split_lines(paragraph).enumerate() {
+        for (index, line) in strings::split(paragraph, b"\n").enumerate() {
             let mut line = Cow::Borrowed(line);
             if indent == 0 && self.capitalize && index == 0 {
                 line = Cow::Owned(capitalize_first(&line).into_owned());
@@ -486,12 +483,12 @@ impl<'a> Serializer<'a> {
                             merged.push(b' ');
                         }
                         match self.node(child) {
-                            Some(html) if html.kind == Kind::Html => {
-                                merged.extend_from_slice(trim(self.str(html.value)))
-                            }
-                            _ => {
-                                merged.extend_from_slice(trim(&self.inline_text_of_children(child)))
-                            }
+                            Some(html) if html.kind == Kind::Html => merged.extend_from_slice(
+                                strings::trim_unicode_whitespace(self.str(html.value)),
+                            ),
+                            _ => merged.extend_from_slice(strings::trim_unicode_whitespace(
+                                &self.inline_text_of_children(child),
+                            )),
                         }
                     }
                     self.wrap_and_push(
@@ -553,7 +550,7 @@ impl<'a> Serializer<'a> {
                     }
                     let mut inner = LineBuffer::new();
                     self.serialize_node(child, 0, 0, &mut inner);
-                    for line in split_lines(&inner.into_bytes()) {
+                    for line in strings::split(&inner.into_bytes(), b"\n") {
                         let out = lines.begin_line();
                         out.extend_from_slice(if line.is_empty() { b">" } else { b"> " });
                         out.extend_from_slice(line);
@@ -614,8 +611,10 @@ impl<'a> Serializer<'a> {
                     continue;
                 }
                 let text = match indent == 0 && self.capitalize && lines.is_empty() {
-                    true => capitalize_first(trim(&segment)).into_owned(),
-                    false => trim(&segment).to_vec(),
+                    true => {
+                        capitalize_first(strings::trim_unicode_whitespace(&segment)).into_owned()
+                    }
+                    false => strings::trim_unicode_whitespace(&segment).to_vec(),
                 };
                 let out = lines.begin_line();
                 push_spaces(out, indent);
@@ -623,23 +622,23 @@ impl<'a> Serializer<'a> {
                 out.push(b'\\');
                 segment.clear();
             }
-            if !is_blank(&segment) {
+            if !strings::is_all_unicode_whitespace(&segment) {
                 let out = lines.begin_line();
                 push_spaces(out, indent);
-                out.extend_from_slice(trim(&segment));
+                out.extend_from_slice(strings::trim_unicode_whitespace(&segment));
             }
             return;
         }
         if self.is_balanced {
             let effective_width = self.max_width.saturating_sub(indent);
             let original_lines: Vec<&[u8]> = super::text::lines(raw)
-                .map(trim)
+                .map(strings::trim_unicode_whitespace)
                 .filter(|line| !line.is_empty())
                 .collect();
             if original_lines.len() > 1
                 && original_lines
                     .iter()
-                    .all(|line| str_width(line) <= effective_width)
+                    .all(|line| strings::element_length_utf8_into_utf16(line) <= effective_width)
             {
                 for (index, line) in original_lines.iter().enumerate() {
                     let mut line = Cow::Borrowed(*line);
@@ -673,7 +672,7 @@ impl<'a> Serializer<'a> {
         lines: &mut LineBuffer,
     ) -> bool {
         let is_row = |line: &[u8]| {
-            let trimmed = trim_start(line);
+            let trimmed = strings::trim_unicode_whitespace_start(line);
             trimmed.starts_with(b"|") && trimmed.ends_with(b"|") && trimmed.len() > 2
         };
         let raw_lines: Vec<&[u8]> = super::text::lines(raw).collect();
@@ -683,7 +682,10 @@ impl<'a> Serializer<'a> {
         let mut index = 0;
         let mut emitted_segment = false;
         loop {
-            while raw_lines.get(index).is_some_and(|line| is_blank(line)) {
+            while raw_lines
+                .get(index)
+                .is_some_and(|line| strings::is_all_unicode_whitespace(line))
+            {
                 index += 1;
             }
             let Some(first) = raw_lines.get(index) else {
@@ -712,7 +714,7 @@ impl<'a> Serializer<'a> {
             } else {
                 let parts: Vec<&[u8]> = segment
                     .iter()
-                    .map(|line| trim(line))
+                    .map(|line| strings::trim_unicode_whitespace(line))
                     .filter(|line| !line.is_empty())
                     .collect();
                 if parts.is_empty() {
@@ -726,7 +728,7 @@ impl<'a> Serializer<'a> {
                     0,
                     &mut paragraph,
                 );
-                for (index, line) in split_lines(&paragraph.into_bytes()).enumerate() {
+                for (index, line) in strings::split(&paragraph.into_bytes(), b"\n").enumerate() {
                     let out = lines.begin_line();
                     push_spaces(out, indent);
                     match indent == 0 && self.capitalize && index == 0 {
@@ -761,9 +763,11 @@ impl<'a> Serializer<'a> {
             for (child_index, child) in self.tree.children(item).enumerate() {
                 let kind = self.tree.kind(child);
                 if child_index == 0 {
-                    for (line_index, line) in
-                        split_lines(&self.serialize_node_for_list_item(child, marker_width, true))
-                            .enumerate()
+                    for (line_index, line) in strings::split(
+                        &self.serialize_node_for_list_item(child, marker_width, true),
+                        b"\n",
+                    )
+                    .enumerate()
                     {
                         let out = lines.begin_line();
                         if line_index == 0 {
@@ -792,11 +796,10 @@ impl<'a> Serializer<'a> {
                         self.serialize_node(child, nested_indent, 0, lines);
                     }
                     _ => {
-                        for line in split_lines(&self.serialize_node_for_list_item(
-                            child,
-                            marker_width,
-                            false,
-                        )) {
+                        for line in strings::split(
+                            &self.serialize_node_for_list_item(child, marker_width, false),
+                            b"\n",
+                        ) {
                             let out = lines.begin_line();
                             if !line.is_empty() {
                                 push_spaces(out, indent + marker_width);
@@ -858,8 +861,8 @@ impl<'a> Serializer<'a> {
         }
         // Without a language it is indented by four spaces, and by no more.
         let min_indent = super::text::lines(&formatted)
-            .filter(|line| !is_blank(line))
-            .map(|line| line.len() - trim_start(line).len())
+            .filter(|line| !strings::is_all_unicode_whitespace(line))
+            .map(|line| line.len() - strings::trim_unicode_whitespace_start(line).len())
             .min()
             .unwrap_or(0);
         for line in super::text::lines(&formatted) {
@@ -874,7 +877,7 @@ impl<'a> Serializer<'a> {
 
 /// Whether `html` starts with a tag that has a name.
 fn is_inline_html(html: &[u8]) -> bool {
-    let Some(rest) = trim(html).strip_prefix(b"<") else {
+    let Some(rest) = strings::trim_unicode_whitespace(html).strip_prefix(b"<") else {
         return false;
     };
     let Some(tag_end) = strings::index_of_char_usize(rest, b'>') else {
@@ -906,7 +909,7 @@ pub(super) fn format_description(
     capitalize: bool,
     format_options: &FormatOptions,
 ) -> Vec<u8> {
-    if is_blank(text) {
+    if strings::is_all_unicode_whitespace(text) {
         return Vec::new();
     }
     let jsdoc_options = format_options.jsdoc.as_ref();
@@ -921,7 +924,7 @@ pub(super) fn format_description(
         }
         // The first word of each paragraph gets the capital letter, the last line the dot.
         let mut out = Vec::with_capacity(result.len() + 1);
-        let mut iter = split_lines(&result).peekable();
+        let mut iter = strings::split(&result, b"\n").peekable();
         let mut at_paragraph_start = true;
         let mut is_first = true;
         while let Some(line) = iter.next() {
@@ -947,7 +950,7 @@ pub(super) fn format_description(
     let (protected, placeholders) = protect_jsdoc_links(&text);
     let mut tree = Tree::default();
     let Some(root) = crate::markdown::parse_plain(&protected, &mut tree) else {
-        return super::text::join(lines(&text).map(trim), b"\n");
+        return super::text::join(lines(&text).map(strings::trim_unicode_whitespace), b"\n");
     };
     let serializer = Serializer {
         tree: &tree,

@@ -79,8 +79,10 @@ impl CheckedRequiresOnchangeOrReadonly {
         let Some(checked) = checked else {
             return;
         };
-        if !self.ignore_exclusive_checked_attribute && default_checked.is_some() {
-            cx.report(checked, EXCLUSIVE_CHECKED_ATTRIBUTE);
+        if !self.ignore_exclusive_checked_attribute
+            && let Some(default_checked) = default_checked
+        {
+            cx.report(checked, EXCLUSIVE_CHECKED_ATTRIBUTE).label(default_checked, "");
         }
         if !self.ignore_missing_properties && is_missing_property {
             cx.report(checked, MISSING_PROPERTY);

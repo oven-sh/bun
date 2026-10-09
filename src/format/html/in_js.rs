@@ -99,7 +99,7 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
     }
     // Half of a surrogate pair, which an escape can stand for, is U+FFFD once what Prettier prints is written as UTF-8.
     let mut from = 0;
-    while let Some(at) = text::index_of_char_from(&text, 0xED, from) {
+    while let Some(at) = strings::index_of_char_pos(&text, 0xED, from) {
         if text.get(at + 1).is_some_and(|&byte| byte >= 0xA0)
             && let Some(half) = text.get_mut(at..at + 3)
         {
@@ -118,8 +118,9 @@ fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
-    (text::starts_with_white_space(text) && text::trim_end(text).len() < text.len())
-        .then_some(LineMode::SoftOrSpace)
+    (text::starts_with_white_space(text)
+        && strings::trim_js_whitespace_end(text).len() < text.len())
+    .then_some(LineMode::SoftOrSpace)
 }
 
 /// How many `indent`s are around the line that `e` starts on, if the file is indented the way it is going to be.
@@ -389,7 +390,7 @@ pub(crate) fn write_template<'a>(
     }
     match line {
         Some(mode) => f.write_element(FormatElement::Line(mode)),
-        None if text::trim_end(&text).len() < text.len() => f.write_token(" "),
+        None if strings::trim_js_whitespace_end(&text).len() < text.len() => f.write_token(" "),
         None => {}
     }
     f.write_token("`");

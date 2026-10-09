@@ -10,7 +10,7 @@ struct Dump<'t, 'a> {
 
 impl Dump<'_, '_> {
     fn text(&mut self, text: &[u8]) {
-        bun_lint::linter::write_json_string(&mut self.out, text);
+        bun_core::printer::json_stringify(text, &mut self.out);
     }
 
     fn span(&mut self, span: Span) {

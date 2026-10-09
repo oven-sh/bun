@@ -1,3 +1,4 @@
+use bun_core::printer::json_stringify_alloc;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{is_false_literal_type, is_true_literal_type, union_constituents};
 use bun_lint::types::{Literal, Type, TypeFlags};
@@ -156,7 +157,7 @@ fn join<'a>(parts: impl Iterator<Item = TypeFlagsWithName<'a>>) -> Vec<u8> {
 
 fn describe_literal_type(ty: Type) -> Vec<u8> {
     match ty.value() {
-        Some(Literal::String(value)) => return text::json_stringify(value),
+        Some(Literal::String(value)) => return json_stringify_alloc(value),
         Some(Literal::BigInt { negative, base10 }) => {
             let sign: &[u8] = if negative { b"-" } else { b"" };
             return [sign, base10, b"n"].concat();
@@ -214,7 +215,7 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         TypeKind::Keyword(Keyword::Number) => b"number",
         TypeKind::Keyword(Keyword::String) => b"string",
         TypeKind::Keyword(Keyword::Unknown) => b"unknown",
-        TypeKind::StringLit(value) => return text::json_stringify(value.bytes()),
+        TypeKind::StringLit(value) => return json_stringify_alloc(value.bytes()),
         TypeKind::NumberLit(value) => return text::number_to_string(value),
         TypeKind::BoolLit(true) => b"true",
         TypeKind::BoolLit(false) => b"false",

@@ -69,13 +69,13 @@ fn parse_media_feature(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> 
         }
         if *modes.last().ok_or(ParseError)? == Mode::Normal && character == b':' {
             feature_end = i;
-            value = Some(text::trim(&normalized[i + 1..]));
+            value = Some(bun_core::strings::trim_js_whitespace(&normalized[i + 1..]));
             break;
         }
     }
     let mut result = vec![leaf(
         MediaKind::Feature,
-        text::trim(&normalized[..feature_end]),
+        bun_core::strings::trim_js_whitespace(&normalized[..feature_end]),
     )];
     if let Some(value) = value {
         result.push(leaf(MediaKind::Colon, b":"));
@@ -99,7 +99,7 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         }
         match element {
             None => {
-                if let len @ 1.. = text::white_space_len(&string[i..]) {
+                if let len @ 1.. = bun_core::strings::js_whitespace_len(&string[i..]) {
                     skip = len - 1;
                     continue;
                 }
@@ -200,9 +200,10 @@ pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
     let mut level = 0i32;
 
     // `/^(\s*)url\s*\(/`
-    let after_spaces = text::trim_start(string);
+    let after_spaces = bun_core::strings::trim_js_whitespace_start(string);
     if let Some(rest) = after_spaces.strip_prefix(b"url")
-        && let Some(after_paren) = text::trim_start(rest).strip_prefix(b"(")
+        && let Some(after_paren) =
+            bun_core::strings::trim_js_whitespace_start(rest).strip_prefix(b"(")
     {
         let mut i = string.len() - after_paren.len();
         let mut parentheses = 1;
@@ -214,7 +215,10 @@ pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
             }
             i += 1;
         }
-        result.push(leaf(MediaKind::Url, text::trim(&string[..i])));
+        result.push(leaf(
+            MediaKind::Url,
+            bun_core::strings::trim_js_whitespace(&string[..i]),
+        ));
         interim_index = i;
     }
 
@@ -232,7 +236,7 @@ pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
     result.push(media_query(&string[interim_index..])?);
     Ok(MediaNode {
         kind: MediaKind::QueryList,
-        value: text::trim(string),
+        value: bun_core::strings::trim_js_whitespace(string),
         nodes: Some(result),
     })
 }
@@ -240,7 +244,7 @@ pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
 fn media_query(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
     Ok(MediaNode {
         kind: MediaKind::Query,
-        value: text::trim(string),
+        value: bun_core::strings::trim_js_whitespace(string),
         nodes: Some(parse_media_query(string)?),
     })
 }

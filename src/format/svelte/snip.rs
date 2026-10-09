@@ -3,7 +3,7 @@
 //!
 //! The plugin keeps what it takes out in an attribute, as Base64. Here the attribute has a number.
 
-use crate::text::{self, white_space_len};
+use crate::text;
 use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
@@ -42,7 +42,7 @@ struct Missing {
 /// `((?:\s+[^=>'"\/\s]+=(?:"[^"]*"|'[^']*'|[^>\s]+)|\s+[^=>'"\/\s]+)*\s*)>` at `from`. Returns where the `>` is.
 fn attributes_end(source: &[u8], from: usize, missing: &mut Missing) -> Option<usize> {
     let white_space = |mut at: usize| {
-        while let len @ 1.. = white_space_len(&source[at..]) {
+        while let len @ 1.. = strings::js_whitespace_len(&source[at..]) {
             at += len;
         }
         at
@@ -57,7 +57,7 @@ fn attributes_end(source: &[u8], from: usize, missing: &mut Missing) -> Option<u
         let mut name_end = name;
         while name > at && name_end < source.len() {
             if matches!(source[name_end], b'=' | b'>' | b'\'' | b'"' | b'/')
-                || white_space_len(&source[name_end..]) > 0
+                || strings::js_whitespace_len(&source[name_end..]) > 0
             {
                 break;
             }
@@ -86,7 +86,7 @@ fn attributes_end(source: &[u8], from: usize, missing: &mut Missing) -> Option<u
                 let mut end = value;
                 while end < source.len()
                     && source[end] != b'>'
-                    && white_space_len(&source[end..]) == 0
+                    && strings::js_whitespace_len(&source[end..]) == 0
                 {
                     end += 1;
                 }
@@ -154,7 +154,7 @@ fn next_match(source: &[u8], from: usize, tag: &[u8], missing: &mut Missing) -> 
             let Some(behind) = source[search..].strip_prefix(tag) else {
                 continue;
             };
-            let behind = text::trim_start(behind);
+            let behind = strings::trim_js_whitespace_start(behind);
             if behind.first() == Some(&b'>') {
                 return Some(Match {
                     start,
@@ -184,7 +184,7 @@ fn says_typescript(attributes: &[u8]) -> bool {
         let at = from + found;
         from = at + 1;
         let before = &attributes[..at];
-        let is_behind_white_space = text::trim_end(before).len() < before.len();
+        let is_behind_white_space = strings::trim_js_whitespace_end(before).len() < before.len();
         let value = &attributes[at + 5..];
         let value = match value {
             [b'"' | b'\'', rest @ ..] => rest,
@@ -270,7 +270,7 @@ pub(crate) fn snip(source: &[u8]) -> Snipped {
     };
     let (snipped, _) = snip_tag(&without_scripts, &styles, &mut contents, &mut is_typescript);
     Snipped {
-        text: text::trim(&snipped).to_vec(),
+        text: strings::trim_js_whitespace(&snipped).to_vec(),
         contents,
         is_typescript,
     }
@@ -304,7 +304,7 @@ fn snipped_tag(text: &[u8], from: usize) -> Option<(usize, usize, &[u8], usize)>
             continue;
         }
         // `(<\w+.*?)\s*`: the first `<` with a letter behind it from which no line break is in the way.
-        let group_end = floor + text::trim_end(&text[floor..attribute]).len();
+        let group_end = floor + strings::trim_js_whitespace_end(&text[floor..attribute]).len();
         let line_start = (floor..group_end)
             .rev()
             .find(|&at| is_line_break(at))

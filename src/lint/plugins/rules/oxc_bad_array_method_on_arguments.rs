@@ -30,8 +30,9 @@ impl Rule for BadArrayMethodOnArguments {
             {
                 return;
             }
-            if static_property_name(member).is_some_and(|name| ARRAY_METHODS.binary_search(&name.bytes()).is_ok()) {
-                cx.report(member, BAD_ARRAY_METHOD_ON_ARGUMENTS);
+            let is_array_method = |name: &Name| ARRAY_METHODS.binary_search(&name.bytes()).is_ok();
+            if let Some(method_name) = static_property_name(member).filter(is_array_method) {
+                cx.report(member, BAD_ARRAY_METHOD_ON_ARGUMENTS).data("method_name", method_name);
             }
         });
     }

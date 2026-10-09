@@ -94,6 +94,13 @@ impl Session {
         }
     }
 
+    /// The bytes that are in use in the arenas. For a moment at which no thread allocates in them.
+    pub fn allocated_bytes(&self) -> usize {
+        std::iter::successors(self.first.get(), |node| node.next.get())
+            .map(|node| node.arena.allocated_bytes())
+            .sum()
+    }
+
     /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
     /// what the program refers to, since nothing drops the program.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {

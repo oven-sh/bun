@@ -15,8 +15,11 @@ pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
     let first_line_break = 3 + bun_core::strings::index_of_char_usize(&text[3..], b'\n')?;
     let first_line = &text[3..first_line_break];
-    let language_start = 3 + (first_line.len() - crate::text::trim_start(first_line).len());
-    let language = crate::text::trim_end(crate::text::trim_start(first_line));
+    let language_start =
+        3 + (first_line.len() - bun_core::strings::trim_js_whitespace_start(first_line).len());
+    let language = bun_core::strings::trim_js_whitespace_end(
+        bun_core::strings::trim_js_whitespace_start(first_line),
+    );
     let find = |needle: &[u8]| {
         Some(first_line_break + bun_core::strings::index_of(&text[first_line_break..], needle)?)
     };

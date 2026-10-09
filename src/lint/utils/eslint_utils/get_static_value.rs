@@ -3,7 +3,6 @@
 use super::builtins::{Member, get_member, global_value, set_property};
 use super::calls::{assign, call, construct, iterate, sorted_flags, string_raw};
 use super::find_variable::find_variable_of;
-use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
 use crate::ast::{
@@ -405,9 +404,9 @@ impl<'a> Evaluator<'a> {
         let values = self.elements(template.exprs())?;
         let mut text = Vec::new();
         for i in 0..template.quasi_count() {
-            js_string::push_str(&mut text, template.cooked(i).ok_or(Stop::Abort)?.bytes());
+            strings::push_wtf8(&mut text, template.cooked(i).ok_or(Stop::Abort)?.bytes());
             if let Some(value) = values.get(i) {
-                js_string::push_str(&mut text, &value.to_primitive()?.to_string()?);
+                strings::push_wtf8(&mut text, &value.to_primitive()?.to_string()?);
             }
             if text.len() > MAX_LEN {
                 return Err(Stop::Abort);

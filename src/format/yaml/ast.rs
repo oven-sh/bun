@@ -552,7 +552,7 @@ impl<'a> Context<'_, 'a> {
             NodeKind::Scalar(ScalarType::Plain) if start == end => {
                 // `findLastCharIndex(text, start - 1, /\S/) + 1`
                 let before = self.text.get(..start as usize).unwrap_or_default();
-                let index = crate::text::trim_end(before).len() as u32;
+                let index = strings::trim_js_whitespace_end(before).len() as u32;
                 let id = self.new_node(Kind::Plain, self.position(index, index));
                 self.transform_content_properties(id, node, props)?;
                 Ok(id)
@@ -1045,7 +1045,7 @@ impl<'a> Context<'_, 'a> {
                     .text
                     .get(data.node.range[2] as usize..)
                     .unwrap_or_default();
-                text_len - crate::text::trim_start(rest).len() as u32
+                text_len - strings::trim_js_whitespace_start(rest).len() as u32
             }
         };
         let mut body_start =

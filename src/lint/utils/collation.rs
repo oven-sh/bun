@@ -2,7 +2,6 @@
 //! of English. Exact for ASCII. Other characters come after ASCII in the order of their code
 //! points: no accents are folded (`é` is not an `e`) and nothing expands (`ß` is not `ss`).
 
-use super::text;
 use bun_core::strings;
 use std::cmp::Ordering;
 
@@ -23,7 +22,7 @@ fn primary_weight(text: &[u8]) -> Option<(Option<u32>, usize)> {
             1,
         ),
         0x80.. => {
-            let mut code_points = text::code_points(text);
+            let mut code_points = strings::wtf8_codepoints(text);
             let c = code_points.next().map_or(0, |it| it.1);
             let lower = char::from_u32(c)
                 .and_then(|c| c.to_lowercase().next())

@@ -3,7 +3,6 @@
 use super::ast::{Flags, Id, Kind};
 use super::cursor::Target;
 use super::printer::Printer;
-use crate::text;
 
 /// `ANGULAR_CONTROL_FLOW_BLOCK_SETTINGS.get(name)?.has(next)`
 fn can_follow(name: &[u8], next: &[u8]) -> bool {
@@ -97,7 +96,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.out.line();
             }
             // One string to Prettier, with the line breaks in it.
-            let expression = super::utilities::html_trim(&self.tree[parameter].value);
+            let expression = self.tree[parameter].value.trim_ascii();
             self.with_cursor_marks(Target::Node(parameter), |printer| {
                 printer.out.string(expression);
             });
@@ -135,7 +134,8 @@ impl Printer<'_, '_, '_, '_, '_> {
         self.out.built_text(|out| tags.opening_tag_start(id, out));
         let group_id = self.out.new_group_id();
         self.out.start_group_with(false, Some(group_id));
-        self.out.string(text::trim(&node.value));
+        self.out
+            .string(bun_core::strings::trim_js_whitespace(&node.value));
         self.out.token(", ");
         self.out.string(&node.name);
         if self.tree.has_children(id) {

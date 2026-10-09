@@ -5,7 +5,6 @@
 //! set (`retainLines`, `compact`, `concise`, source maps, ..) is left out.
 
 use super::babel::{CommentId, Model, Node, SpecifierKind, Which, attribute_key_span};
-use crate::text::{utf16_len, white_space_len};
 use bun_core::strings;
 
 /// What `_buf._last` is after a string has been appended.
@@ -198,7 +197,7 @@ impl<'m, 'a> Printer<'m, 'a> {
     fn get_current_column(&self) -> u32 {
         let line = strings::last_index_of_char(&self.out, b'\n')
             .map_or(&self.out[..], |at| &self.out[at + 1..]);
-        utf16_len(line) + u32::from(self.queued != 0)
+        strings::wtf8_len_utf16(line) + u32::from(self.queued != 0)
     }
 
     // ───────────────────────────── printer.js ─────────────────────────────
@@ -326,7 +325,7 @@ impl<'m, 'a> Printer<'m, 'a> {
                 .list(self.model.comments_of(node, Which::Trailing));
             self.has_failed |= trailing.iter().any(|it| {
                 !self.model.comments[*it as usize].is_block
-                    || has_newline(self.model.comment_value(*it))
+                    || strings::contains_js_line_break(self.model.comment_value(*it))
             });
             self.no_line_terminator = true;
             self.print_trailing_comments(node, 0);
@@ -425,7 +424,9 @@ impl<'m, 'a> Printer<'m, 'a> {
             return 0;
         }
         let value = self.model.comment_value(comment);
-        if self.no_line_terminator && (has_newline(value) || strings::contains(value, b"*/")) {
+        if self.no_line_terminator
+            && (strings::contains_js_line_break(value) || strings::contains(value, b"*/"))
+        {
             return 2;
         }
         self.printed_comments[comment as usize] = true;
@@ -451,7 +452,7 @@ impl<'m, 'a> Printer<'m, 'a> {
             self.current,
             Some(Node::Interpreter | Node::Directive(_) | Node::Import(_) | Node::Empty)
         );
-        let adjusted = match comment.is_block && has_newline(written) {
+        let adjusted = match comment.is_block && strings::contains_js_line_break(written) {
             true => {
                 let mut indent_size = self.get_current_column();
                 if self.should_indent() > 0 {
@@ -573,7 +574,7 @@ impl<'m, 'a> Printer<'m, 'a> {
             let skip = if len == 1 {
                 let is_single_line = match comment.has_loc {
                     true => comment.start_line == comment.end_line,
-                    false => !has_newline(model.comment_value(id)),
+                    false => !strings::contains_js_line_break(model.comment_value(id)),
                 };
                 let is_statement = matches!(node, Node::Import(_) | Node::Empty | Node::NewLine);
                 match is_single_line && !is_statement && kind != 1 {
@@ -862,13 +863,6 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 }
 
-/// `/[\n\r  ]/.test(text)`
-fn has_newline(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some()
-        || strings::contains(text, b"\xE2\x80\xA8")
-        || strings::contains(text, b"\xE2\x80\xA9")
-}
-
 /// `adjustMultilineComment`: takes up to `offset` characters of whitespace off the start of every
 /// line of `comment` but the first, and puts `indent_size` spaces there.
 fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Vec<u8> {
@@ -880,7 +874,7 @@ fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Ve
         rest = &rest[at + 1..];
         // `\n\s{1,offset}`, which can take line breaks too.
         for _ in 0..offset {
-            match white_space_len(rest) {
+            match strings::js_whitespace_len(rest) {
                 0 => break,
                 len => rest = &rest[len..],
             }

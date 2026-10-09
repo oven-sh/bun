@@ -11,7 +11,7 @@
 //! | `n \| 0`, `n >>> 0` | [`to_int32`], [`to_uint32`] |
 //! | `String(n)` | [`number_to_string`](crate::utils::text::number_to_string) |
 
-use crate::utils::text::{number_to_string, trim, trim_start};
+use crate::utils::text::number_to_string;
 
 /// `n | 0`: `ToInt32`.
 pub fn to_int32(n: f64) -> i32 {
@@ -92,7 +92,7 @@ fn split_sign(text: &[u8]) -> (f64, &[u8]) {
 /// `Number(text)`: `StringToNumber`. `None` for more digits in a radix other than 10 than can be
 /// rounded correctly here.
 pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
-    let text = trim(text);
+    let text = bun_core::strings::trim_js_whitespace(text);
     if text.is_empty() {
         return Some(0.0);
     }
@@ -121,7 +121,7 @@ pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
 
 /// `parseFloat(text)`
 pub fn parse_float(text: &[u8]) -> f64 {
-    let (sign, unsigned) = split_sign(trim_start(text));
+    let (sign, unsigned) = split_sign(bun_core::strings::trim_js_whitespace_start(text));
     if unsigned.starts_with(b"Infinity") {
         return sign * f64::INFINITY;
     }
@@ -134,7 +134,7 @@ pub fn parse_float(text: &[u8]) -> f64 {
 /// `parseInt(text, radix)`, where `radix` has gone through `ToInt32`. `None` if the result cannot
 /// be computed here.
 pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
-    let (sign, mut digits) = split_sign(trim_start(text));
+    let (sign, mut digits) = split_sign(bun_core::strings::trim_js_whitespace_start(text));
     let mut radix = radix;
     if radix != 0 && !(2..=36).contains(&radix) {
         return Some(f64::NAN);

@@ -161,7 +161,7 @@ fn check_for_acceptable_escape(value: u32, source: &[u8]) -> bool {
         // The first half of a character outside the BMP, which can only stand for itself.
         [0xF0..=0xFF, _] => Some(value),
         rest => {
-            let mut code_points = text::code_points(rest).map(|it| it.1);
+            let mut code_points = strings::wtf8_codepoints(rest).map(|it| it.1);
             code_points.next().filter(|_| code_points.next().is_none())
         }
     };

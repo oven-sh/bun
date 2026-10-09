@@ -14,7 +14,7 @@ use crate::js::comments::{self, Comment, Comments, ParsedBy};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
 use crate::options::{Flavor, LineEnding};
-use crate::text::{BOM, trim_end, trim_start, utf16_len, white_space_len};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{File, FnBody, FnKind, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
@@ -71,7 +71,7 @@ pub fn format_with_cursor<'a>(
     let mut formatted = Vec::new();
     // Where the cursor is in `formatted`, if it is in the range.
     let mut cursor_in_formatted = None;
-    if !trim_start(slice).is_empty() {
+    if !bun_core::strings::trim_js_whitespace_start(slice).is_empty() {
         let alignment = alignment_size(
             before.get(first..).unwrap_or_default(),
             options.indent_width.value(),
@@ -82,8 +82,9 @@ pub fn format_with_cursor<'a>(
         let slice_options = FormatOptions {
             range_start: None,
             range_end: None,
-            cursor_offset: cursor_in_slice
-                .map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice))),
+            cursor_offset: cursor_in_slice.map(|cursor| {
+                bun_core::strings::wtf8_len_utf16(slice.get(..cursor).unwrap_or(slice))
+            }),
             line_ending: LineEnding::Lf,
             ..options.clone()
         };
@@ -101,7 +102,7 @@ pub fn format_with_cursor<'a>(
             );
         });
         cursor_in_formatted = result?.and_then(|cursor| offset_of_utf16_index(&formatted, cursor));
-        formatted.truncate(trim_end(&formatted).len());
+        formatted.truncate(bun_core::strings::trim_js_whitespace_end(&formatted).len());
     }
 
     // Everything is put together with `\n`, which is replaced at the end.
@@ -127,7 +128,8 @@ pub fn format_with_cursor<'a>(
     let cursor_in_whole = cursor_in_whole.map(|cursor| cursor.min(whole.len()));
     let (up_to_cursor, rest) = whole.split_at(cursor_in_whole.unwrap_or(0));
     write_with_line_ending(up_to_cursor, line_ending, out);
-    let cursor_in_out = cursor_in_whole.map(|_| utf16_len(&out[out_start..]));
+    let cursor_in_out =
+        cursor_in_whole.map(|_| bun_core::strings::wtf8_len_utf16(&out[out_start..]));
     write_with_line_ending(rest, line_ending, out);
     Ok(cursor_in_out)
 }
@@ -198,7 +200,7 @@ pub(crate) fn alignment_size(before: &[u8], tab_width: u8) -> usize {
     let line_start = last(b'\n').max(last(b'\r'));
     let (mut rest, mut size, tab_width) = (&before[line_start..], 0, usize::from(tab_width.max(1)));
     loop {
-        match white_space_len(rest) {
+        match bun_core::strings::js_whitespace_len(rest) {
             0 => return size,
             len => {
                 size = if rest[0] == b'\t' {
@@ -525,11 +527,11 @@ fn calculate_range<'a>(
     let text = file.text();
     // The range is narrowed so that it starts and ends with something.
     let selected = text.get(start as usize..end as usize)?;
-    let trimmed = trim_start(selected);
+    let trimmed = bun_core::strings::trim_js_whitespace_start(selected);
     let is_all_white_space = trimmed.is_empty();
     if !is_all_white_space {
         start += (selected.len() - trimmed.len()) as u32;
-        end = start + trim_end(trimmed).len() as u32;
+        end = start + bun_core::strings::trim_js_whitespace_end(trimmed).len() as u32;
     }
 
     let start_path = find_node_at_offset(file, start, Edge::Start)?;

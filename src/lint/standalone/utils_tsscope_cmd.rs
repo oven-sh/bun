@@ -12,7 +12,6 @@ use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Object};
 use bun_lint::span::Span;
 use bun_lint::utils::estree_compat::estree_span;
-use bun_lint::utils::text::json_stringify;
 use bun_lint::utils::ts_scope::{self, ReturnTypeOptions, UsedMarks, Variable};
 use std::fmt::Write as _;
 
@@ -110,7 +109,7 @@ impl<'a> Visitor<'a> for Functions {
 }
 
 fn write_string(out: &mut String, text: &[u8]) {
-    let _ = write!(out, "{}", bstr::BStr::new(&json_stringify(text)));
+    let _ = write!(out, "{}", bstr::BStr::new(&bun_core::printer::json_stringify_alloc(text)));
 }
 
 fn write_rows(out: &mut String, mut rows: Vec<String>) {

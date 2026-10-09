@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -10,11 +11,6 @@ const PREFER_CLASS_FIELDS: Message =
 const SAME_NAMED_FIELD: Message =
     Message::new("", "Encountered same-named class field declaration and `this` assignment in constructor.");
 const REPLACE_ASSIGNMENT: Message = Message::new("", "Replace `this` assignment with class field declaration");
-
-/// A name without the `#` of a private one: for oxlint `#a` and `a` have the same name.
-fn without_hash(name: &[u8]) -> &[u8] {
-    name.strip_prefix(b"#").unwrap_or(name)
-}
 
 fn print(before: &[u8], value: Expr, after: &[u8]) -> Vec<u8> {
     let mut codegen = Codegen::default();
@@ -69,12 +65,13 @@ impl Rule for PreferClassFields {
             {
                 return;
             }
-            let property_name = without_hash(name.bytes());
+            let property_name = strings::without_prefix(name.bytes(), b"#");
             let existing_property = class.members().iter().find(|it| {
                 it.kind() == MemberKind::Property
                     && !it.flags().intersects(Flags::STATIC | Flags::ABSTRACT | Flags::ACCESSOR)
                     && it.key().is_some_and(|key| {
-                        !key.is_computed() && key.name().is_some_and(|it| without_hash(it.bytes()) == property_name)
+                        !key.is_computed()
+                            && key.name().is_some_and(|it| strings::without_prefix(it.bytes(), b"#") == property_name)
                     })
             });
             if let Some(old_value) = existing_property.and_then(Member::init) {

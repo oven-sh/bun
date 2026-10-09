@@ -135,7 +135,12 @@ impl NewlineAfterImport {
             .data("line_suffix", if self.count == 1 { "" } else { "s" })
             .data("keyword", keyword);
         if line_diff < expected_line_diff {
-            report.fix(|fixer| fixer.insert_after(stmt, "\n".repeat(expected_line_diff - line_diff)));
+            // What oxlint calls its fix.
+            let help = match keyword {
+                "import" => "Add empty line(s) after import",
+                _ => "Add empty line(s) after require",
+            };
+            report.help(help).fix(|fixer| fixer.insert_after(stmt, "\n".repeat(expected_line_diff - line_diff)));
         }
     }
 }

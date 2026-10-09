@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce consistent comma style.
@@ -58,7 +59,7 @@ fn move_comma<'a>(
         Style::First => replaced.push(b','),
         Style::Last => {}
         Style::Between => {
-            if let Some((at, len)) = text::find_line_break(&replaced) {
+            if let Some((at, len)) = strings::find_js_line_break(&replaced) {
                 replaced.drain(at..at + len);
             }
         }

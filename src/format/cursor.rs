@@ -1852,7 +1852,9 @@ fn resolve(
     let new_text = formatted
         .get(new_span.start as usize..new_span.end as usize)
         .unwrap_or_default();
-    let new_start = count_units(formatted.get(..new_span.start as usize).unwrap_or_default());
+    let new_start = bun_core::strings::element_length_utf8_into_utf16(
+        formatted.get(..new_span.start as usize).unwrap_or_default(),
+    );
     let cursor = (offset.bytes.saturating_sub(old_span.start) as usize).min(old_text.len());
     let (before_cursor, after_cursor) = old_text.split_at(cursor);
 
@@ -1873,16 +1875,10 @@ fn resolve(
     new_start
         + units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES).unwrap_or_else(|| {
             let bytes = bytes_before_cursor_by_count(old_text, cursor, new_text);
-            count_units(new_text.get(..bytes).unwrap_or(new_text))
+            bun_core::strings::element_length_utf8_into_utf16(
+                new_text.get(..bytes).unwrap_or(new_text),
+            )
         })
-}
-
-/// How many UTF-16 code units `text` is.
-fn count_units(text: &[u8]) -> usize {
-    // Every byte that starts a character is one unit, and one that starts four bytes is two.
-    text.iter()
-        .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
-        .sum()
 }
 
 /// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's
@@ -1890,12 +1886,15 @@ fn count_units(text: &[u8]) -> usize {
 /// part.
 fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     let units = options.cursor_offset? as usize;
-    if units > count_units(source) || (units == 0 && source.starts_with(b"\xEF\xBB\xBF")) {
+    if units > bun_core::strings::element_length_utf8_into_utf16(source)
+        || (units == 0 && source.starts_with(b"\xEF\xBB\xBF"))
+    {
         return None;
     }
     // The bytes of the characters that end at or before it.
     let mut offset = units_to_bytes(source, units);
-    let is_in_character = count_units(source.get(..offset)?) > units;
+    let is_in_character =
+        bun_core::strings::element_length_utf8_into_utf16(source.get(..offset)?) > units;
     if is_in_character {
         offset = offset.saturating_sub(4);
     }
@@ -1932,7 +1931,8 @@ pub(crate) fn format_with<'a>(
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<Option<u32>, FormatError> {
     let source = file.text();
-    let offset = offset_in(source, options).filter(|_| !crate::text::trim(source).is_empty());
+    let offset =
+        offset_in(source, options).filter(|_| !strings::trim_js_whitespace(source).is_empty());
     let items = offset.map(|offset| locate_items(file, offset.bytes));
     let cursor = offset
         .zip(items)
@@ -2014,8 +2014,9 @@ pub(crate) fn cursor_in_region(
         let behind = source
             .get(span.start as usize..offset as usize)
             .unwrap_or_default();
-        return (count_units(formatted.get(..start as usize).unwrap_or_default())
-            + count_units(behind)) as u32;
+        return (bun_core::strings::element_length_utf8_into_utf16(
+            formatted.get(..start as usize).unwrap_or_default(),
+        ) + bun_core::strings::element_length_utf8_into_utf16(behind)) as u32;
     }
     let offset = Offset {
         bytes: offset,
@@ -2032,7 +2033,8 @@ pub fn cursor_in_formatted_text(
     options: &FormatOptions,
     formatted: &[u8],
 ) -> Option<u32> {
-    let offset = offset_in(source, options).filter(|_| !crate::text::trim(source).is_empty())?;
+    let offset =
+        offset_in(source, options).filter(|_| !strings::trim_js_whitespace(source).is_empty())?;
     let everything = Region::Between {
         before: None,
         after: None,

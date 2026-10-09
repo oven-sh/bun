@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::init_declarations::{Config, declared_namespace_around, has_declare};
 
@@ -52,7 +53,7 @@ impl Rule for InitDeclarations {
                 let start = cx.position(pat.span().start);
                 report.end_at(Position {
                     line: start.line,
-                    column: start.column + text::utf16_len(found.name.bytes()),
+                    column: start.column + strings::wtf8_len_utf16(found.name.bytes()),
                 });
             }
         });

@@ -72,7 +72,8 @@ pub(super) fn sort_classes(tree: &mut Tree, source: &[u8], tailwind: &Tailwind) 
                 let old = tree.text(source, chars);
                 let ends = Ends {
                     ignores_first: around.has_previous && !text::starts_with_white_space(old),
-                    ignores_last: around.has_next && text::trim_end(old).len() == old.len(),
+                    ignores_last: around.has_next
+                        && bun_core::strings::trim_js_whitespace_end(old).len() == old.len(),
                     collapses_start: !around.has_previous,
                     collapses_end: !around.has_next,
                 };

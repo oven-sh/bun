@@ -224,8 +224,11 @@ fn es_comment(bytes: &[u8], start: usize) -> Option<((usize, usize), usize)> {
         let brace = skip(close + 2);
         if bytes.get(brace) == Some(&b'}') {
             let value = &bytes[value_start..close];
-            let leading = value.len() - crate::text::trim_start(value).len();
-            let len = crate::text::trim_end(crate::text::trim_start(value)).len();
+            let leading = value.len() - bun_core::strings::trim_js_whitespace_start(value).len();
+            let len = bun_core::strings::trim_js_whitespace_end(
+                bun_core::strings::trim_js_whitespace_start(value),
+            )
+            .len();
             return Some((
                 (value_start + leading, value_start + leading + len),
                 brace + 1,

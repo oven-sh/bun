@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 
@@ -80,7 +81,7 @@ fn is_followed_by_else_for_oxlint(block: Stmt<'_>) -> bool {
     let skipped = match rest {
         [b'\r', b'\n', ..] | [b'\n', b'\r', ..] => 2,
         [] => return false,
-        _ => text::code_point_at(rest, 0).1,
+        _ => strings::wtf8_codepoint_at(rest, 0).1,
     };
     let mut rest = rest.get(skipped..).unwrap_or_default().trim_ascii_start();
     while let Some(after) = rest.strip_prefix(b"else") {

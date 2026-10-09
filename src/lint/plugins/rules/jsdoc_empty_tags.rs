@@ -35,7 +35,7 @@ impl Rule for EmptyTags {
                         || rule.tags.iter().any(|it| **it == *tag_name))
                         && !comment.is_empty()
                     {
-                        cx.report(comment.span_trimmed_first_line(), EMPTY_TAGS_MESSAGE);
+                        cx.report(comment.span_trimmed_first_line(), EMPTY_TAGS_MESSAGE).data("tag_name", tag_name);
                     }
                 }
             });

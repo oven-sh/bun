@@ -846,8 +846,6 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
- "bun_sema",
- "bun_sema_parser",
  "bun_url",
  "bun_wyhash",
  "bytemuck",
@@ -1012,10 +1010,12 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_glob",
+ "bun_node_path",
  "bun_parsers",
  "bun_paths",
  "bun_sema",
  "bun_threading",
+ "bun_wyhash",
  "bun_yarr",
  "rustc-hash",
  "smallvec",
@@ -1115,9 +1115,11 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
+ "bun_glob",
  "bun_lint",
  "bun_lint_oxlint",
  "bun_semver",
+ "bun_text_diff",
  "rustc-hash",
  "smallvec",
 ]
@@ -1168,6 +1170,7 @@ dependencies = [
  "bun_lint_react_compiler",
  "bun_lint_typescript",
  "bun_lint_unicorn",
+ "bun_paths",
  "bun_react_compiler",
  "bun_sema",
  "bun_sema_driver",
@@ -1227,6 +1230,16 @@ name = "bun_mimalloc_sys"
 version = "0.0.0"
 dependencies = [
  "bun_opaque",
+]
+
+[[package]]
+name = "bun_node_path"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_paths",
+ "bun_sys",
+ "bytemuck",
 ]
 
 [[package]]
@@ -1504,6 +1517,7 @@ dependencies = [
  "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
+ "bun_node_path",
  "bun_opaque",
  "bun_options_types",
  "bun_output",
@@ -1533,6 +1547,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_text_diff",
  "bun_threading",
  "bun_url",
  "bun_uws",
@@ -1929,6 +1944,14 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_text_diff"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_wyhash",
 ]
 
 [[package]]

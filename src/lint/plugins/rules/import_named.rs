@@ -55,7 +55,11 @@ fn check<'a>(_: &Named, cx: &mut Cx<'a, Named>) {
     let module_record = ModuleRecord::new(file);
     let mut star_exports = StarExports::default();
     let loaded_module = |specifier: Name<'a>| get_loaded_module(file, specifier.bytes()).filter(|it| it.record.has_module_syntax);
-    let report = |name: NameSpan<'a>| drop(cx.report(name.span, NAMED).data("imported_name", debug(name.name.bytes())));
+    let report = |name: NameSpan<'a>, module_name: Name<'a>| {
+        cx.report(name.span, NAMED)
+            .data("imported_name", debug(name.name.bytes()))
+            .data("module_name", debug(module_name.bytes()));
+    };
     for import_entry in &module_record.import_entries {
         let ImportImportName::Name(specifier) = import_entry.import_name else {
             continue;
@@ -66,7 +70,7 @@ fn check<'a>(_: &Named, cx: &mut Cx<'a, Named>) {
         let import_name = NameSpan::from(specifier.imported());
         let name = import_name.name.bytes();
         if !(name == b"default" && remote.record.has_export_default) && !remote.exports(name) && !star_exports.contains(remote, name) {
-            report(import_name);
+            report(import_name, import_entry.declaration.spec());
         }
     }
     let is_default = |it: &&ImportEntry<'a>| matches!(it.import_name, ImportImportName::Default(_));
@@ -84,7 +88,7 @@ fn check<'a>(_: &Named, cx: &mut Cx<'a, Named>) {
             && !is_reexport_of_default_import(&default_imports, export_entry, module_request, import_name, remote)
             && !remote.exports(name)
         {
-            report(import_name);
+            report(import_name, module_request.name);
         }
     }
 }

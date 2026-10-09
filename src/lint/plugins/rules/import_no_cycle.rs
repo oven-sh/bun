@@ -1,4 +1,5 @@
 use bun_core::strings;
+use crate::module_visitor::{self, Systems};
 use crate::oxlint;
 use bun_lint::modules::{Declaration, Flavor, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
 use bun_lint::prelude::*;
@@ -121,7 +122,7 @@ impl Settings {
 
     /// eslint-plugin-import has no `ExportMap` for the file at `path`.
     fn is_ignored(&self, path: &[u8]) -> bool {
-        let name = &path[strings::last_index_of_char(path, b'/').map_or(0, |it| it + 1)..];
+        let name = bun_lint::paths::file_name(path);
         let extension = strings::last_index_of_char(name, b'.').filter(|&at| at > 0).map_or(&b""[..], |at| &name[at..]);
         let is_valid = match &self.extensions {
             Some(extensions) => extensions.iter().any(|it| **it == *extension),
@@ -316,99 +317,36 @@ impl NoCycle {
                 oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1))
             };
             if leads_back {
-                cx.report(request.span, DETECTED_BY_OXLINT);
+                let label = if imported == me { "this module references itself" } else { "" };
+                cx.report(request.span, DETECTED_BY_OXLINT).first_label(label);
             }
         }
     }
 
-    /// What `moduleVisitor` visits, in the order of the source.
+    /// What `moduleVisitor` visits, in the order of the source, without what the rule passes over.
     fn checks<'a>(&self, file: &'a File<'a>) -> Vec<Check<'a>> {
-        let mut checks = Vec::new();
-        let string_of = |e: Expr<'a>| e.as_string().map(Name::bytes);
-        if self.esmodule {
-            for tag in [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar] {
-                for stmt in file.stmts_of_kind(tag) {
-                    let specifier = match stmt.kind() {
-                        // Also one that imports nothing: upstream asks whether every specifier is a type.
-                        StmtKind::Import(import) if self.ignore_types => {
-                            let has_values = import.default().is_some()
-                                || import.namespace().is_some()
-                                || import.named().iter().any(|it| !it.is_type_only());
-                            (has_values && !import.is_type_only()).then(|| import.spec())
-                        }
-                        StmtKind::Import(import) => Some(import.spec()),
-                        StmtKind::ExportNamed(export) => export.spec(),
-                        StmtKind::ExportStar { spec, .. } => spec,
-                        _ => None,
-                    };
-                    if let Some(specifier) = specifier {
-                        checks.push(Check {
-                            specifier: specifier.bytes(),
-                            importer: stmt.span(),
-                            is_require: false,
-                            is_dynamic: false,
-                        });
-                    }
+        let systems = Systems { esmodule: self.esmodule, commonjs: self.commonjs, amd: self.amd };
+        // Also an `import` that imports nothing: upstream asks whether every specifier is a type.
+        let has_values = |importer: Node<'a>| match importer {
+            Node::Stmt(stmt) => match stmt.kind() {
+                StmtKind::Import(import) if self.ignore_types => {
+                    !import.is_type_only()
+                        && (import.default().is_some()
+                            || import.namespace().is_some()
+                            || import.named().iter().any(|it| !it.is_type_only()))
                 }
-            }
-            for e in file.exprs_of_kind(ExprTag::ImportCall) {
-                if let ExprKind::ImportCall { args } = e.kind()
-                    && let Some(specifier) = args.first().and_then(string_of)
-                {
-                    checks.push(Check {
-                        specifier,
-                        importer: e.span(),
-                        is_require: false,
-                        is_dynamic: true,
-                    });
-                }
-            }
-        }
-        if self.commonjs || self.amd {
-            for e in file.exprs_of_kind(ExprTag::Call) {
-                let ExprKind::Call(call) = e.kind() else {
-                    continue;
-                };
-                let (Some(callee), args) = (call.callee().as_ident(), call.args()) else {
-                    continue;
-                };
-                let mut require = |specifier: &'a [u8], importer: Span| {
-                    checks.push(Check {
-                        specifier,
-                        importer,
-                        is_require: true,
-                        is_dynamic: false,
-                    });
-                };
-                if self.commonjs
-                    && callee.is("require")
-                    && args.len() == 1
-                    && let Some(module_path) = args.first()
-                {
-                    let specifier = match module_path.kind() {
-                        ExprKind::Template(template) => template.as_static().map(Name::bytes),
-                        _ => string_of(module_path),
-                    };
-                    if let Some(specifier) = specifier {
-                        require(specifier, e.span());
-                    }
-                }
-                if self.amd
-                    && callee.is_any(&["require", "define"])
-                    && args.len() == 2
-                    && let Some(ExprKind::Array(elements)) = args.first().map(Expr::kind)
-                {
-                    for element in elements {
-                        if let Some(specifier) = string_of(element).filter(|it| !matches!(*it, b"require" | b"exports")) {
-                            require(specifier, element.span());
-                        }
-                    }
-                }
-            }
-        }
-        checks.retain(|check| !self.ignore.iter().any(|it| it.test(check.specifier)));
-        utils::sort::sort_by_key(&mut checks, |it| (it.importer.start, std::cmp::Reverse(it.importer.end)));
-        checks
+                _ => true,
+            },
+            _ => true,
+        };
+        let visited = module_visitor::visit(file, systems).into_iter().filter(|it| has_values(it.importer));
+        let checks = visited.filter(|it| !self.ignore.iter().any(|ignored| ignored.test(it.specifier))).map(|it| Check {
+            specifier: it.specifier,
+            importer: it.importer.span(),
+            is_require: it.is_require,
+            is_dynamic: matches!(it.importer, Node::Expr(e) if e.tag() == ExprTag::ImportCall),
+        });
+        checks.collect()
     }
 
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {

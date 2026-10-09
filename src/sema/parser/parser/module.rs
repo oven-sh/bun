@@ -294,7 +294,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.unclosed_import_attributes(open);
         }
         if !has_only_strings && !self.has_failed() {
-            match self.is_read_as_by_other_parsers() {
+            // In a TypeScript file Prettier asks typescript-estree, which takes any expression.
+            match self.is_ecmascript {
                 true => self.refuse(Refusal::Reported),
                 false if is_in_type => {}
                 false => self.after_expressions_of_declaration(open, declarations),

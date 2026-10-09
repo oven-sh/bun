@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce consistent spacing after the `//` or `/*` in a comment.
@@ -58,7 +59,7 @@ impl Style {
     /// `createExceptionsPattern`, at the start of `rest`: whitespace, or an exception that is
     /// repeated up to the end of the line.
     fn starts_with_space_or_exception(&self, rest: &[u8]) -> bool {
-        if text::first_code_point(rest).is_some_and(text::is_js_whitespace) {
+        if strings::wtf8_first_codepoint(rest).is_some_and(strings::is_js_whitespace) {
             return true;
         }
         self.exceptions.iter().any(|exception| {
@@ -67,7 +68,7 @@ impl Style {
             }
             let mut rest = rest;
             while let Some(after) = rest.strip_prefix(&exception[..]) {
-                if after.is_empty() || text::line_break_len(after) > 0 {
+                if after.is_empty() || strings::js_line_break_len(after) > 0 {
                     return true;
                 }
                 rest = after;
@@ -88,7 +89,7 @@ impl Style {
 
     /// `createExceptionsPattern` followed by `$`, anywhere in `value`.
     fn ends_with_space_or_exception(&self, value: &[u8]) -> bool {
-        text::last_code_point(value).is_some_and(text::is_js_whitespace)
+        text::last_code_point(value).is_some_and(strings::is_js_whitespace)
             || self.exceptions.iter().any(|exception| value.ends_with(exception))
     }
 

@@ -6,7 +6,9 @@
 //! does what that round trip does to the spelling of strings and numbers.
 
 use crate::text::BOM;
-use bun_lint::utils::text::{number_to_string, push_code_point};
+use bun_core::fmt::parse_hex4;
+use bun_core::printer::json_stringify;
+use bun_lint::utils::text::number_to_string;
 use std::borrow::Cow;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -135,11 +137,9 @@ impl<'a> Reader<'a> {
     }
 
     fn hex4(&mut self) -> Option<u32> {
-        let digits = self.text.get(self.at..self.at + 4)?;
+        let value = parse_hex4(self.text.get(self.at..)?)?;
         self.at += 4;
-        digits.iter().try_fold(0, |value, digit| {
-            Some(value * 16 + (*digit as char).to_digit(16)?)
-        })
+        Some(u32::from(value))
     }
 
     /// The value of the string at the cursor.
@@ -184,7 +184,7 @@ impl<'a> Reader<'a> {
                                 }
                                 c => c,
                             };
-                            push_code_point(&mut value, c);
+                            bun_core::strings::push_codepoint_wtf8(&mut value, c);
                             owned = Some(value);
                         }
                         _ => return None,
@@ -391,38 +391,12 @@ fn write_f64(value: f64) -> Vec<u8> {
     out
 }
 
-fn write_string(value: &[u8], out: &mut Vec<u8>) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    out.push(b'"');
-    for &byte in value {
-        match byte {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            0x0C => out.extend_from_slice(b"\\f"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0..0x20 => out.extend_from_slice(&[
-                b'\\',
-                b'u',
-                b'0',
-                b'0',
-                HEX[usize::from(byte >> 4)],
-                HEX[usize::from(byte & 15)],
-            ]),
-            _ => out.push(byte),
-        }
-    }
-    out.push(b'"');
-}
-
 /// The nesting is limited by [`Reader::value`].
 fn write_value(value: &Value<'_>, out: &mut Vec<u8>) {
     match value {
         Value::Literal(text) => out.extend_from_slice(text),
         Value::Number(text) => out.extend_from_slice(text),
-        Value::String(value) => write_string(value, out),
+        Value::String(value) => json_stringify(value, out),
         Value::Array(values) => {
             out.push(b'[');
             for (index, value) in values.iter().enumerate() {
@@ -439,7 +413,7 @@ fn write_value(value: &Value<'_>, out: &mut Vec<u8>) {
                 if index > 0 {
                     out.push(b',');
                 }
-                write_string(key, out);
+                json_stringify(key, out);
                 out.push(b':');
                 write_value(value, out);
             }

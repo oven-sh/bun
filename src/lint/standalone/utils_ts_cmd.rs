@@ -13,12 +13,11 @@ use bun_lint::context::Severity;
 use bun_lint::prelude::*;
 use bun_lint::runner::{Enabled, RuleEntry};
 use bun_lint::utils::estree_compat::{estree_parent, estree_span};
-use bun_lint::utils::text::json_stringify;
 use bun_lint::utils::ts_utils::{self, MemberAccessValue, OperatorPrecedence, WrappingFixerParams};
 use std::fmt::Write as _;
 
 fn string(text: &[u8]) -> String {
-    host::text(&json_stringify(text))
+    host::text(&bun_core::printer::json_stringify_alloc(text))
 }
 
 /// Long text is compared by its length, its start and its end.

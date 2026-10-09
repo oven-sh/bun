@@ -6,7 +6,6 @@
 use super::ast::{Attribute, Id, Kind, Tree};
 use super::{Parser, js, parse, without_front_matter};
 use crate::tailwind::Tailwind;
-use crate::text::trim;
 use bun_core::strings;
 
 /// The plugin's `nameFromDynamicAttr`
@@ -101,8 +100,11 @@ pub(super) fn with_sorted_classes(
         for child in tree.children(id) {
             let node = &tree[child];
             match node.kind {
-                Kind::Comment => is_ignored = trim(&node.value).starts_with(b"prettier-ignore"),
-                Kind::Text if trim(&node.value).is_empty() => {}
+                Kind::Comment => {
+                    is_ignored =
+                        strings::trim_js_whitespace(&node.value).starts_with(b"prettier-ignore")
+                }
+                Kind::Text if strings::trim_js_whitespace(&node.value).is_empty() => {}
                 _ if std::mem::take(&mut is_ignored) => {}
                 _ => nodes.push(child),
             }

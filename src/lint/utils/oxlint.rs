@@ -28,7 +28,7 @@ fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>)
         _ => false,
     };
     starts_operand
-        && !super::text::has_line_break(file.slice(Span::new(after, next)))
+        && !bun_core::strings::contains_js_line_break(file.slice(Span::new(after, next)))
         && in_function
             .find(Node::Expr(e), |_, parent| parent.as_func().map(|_| ()))
             .is_none()

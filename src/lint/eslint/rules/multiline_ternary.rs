@@ -28,7 +28,7 @@ const UNEXPECTED_CONS_ALT: Message = Message::new(
 fn join_lines(fixer: Fixer, before: Span, operator: Span, after: Span) -> Vec<Fix> {
     [before.between(operator), operator.between(after)]
         .into_iter()
-        .filter(|gap| ast_utils::has_linebreak(fixer.file().slice(*gap)))
+        .filter(|gap| bun_core::strings::contains_js_line_break(fixer.file().slice(*gap)))
         .map(|gap| fixer.remove(gap))
         .collect()
 }

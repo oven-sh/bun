@@ -149,14 +149,19 @@ fn parse(
             return Err(refused);
         }
         let recovers = true;
-        attempt(
-            Options {
-                recovers,
-                ..options
-            },
-            scratch,
-        )
-        .or(Err(refused))
+        let general = Options {
+            recovers,
+            ..options
+        };
+        let file = attempt(general, scratch).or(Err(refused))?;
+        // TypeScript's parser takes `var;`, `class {}` and `catch (a = 1)`, and leaves them to its checker. For acorn
+        // and Babel they are no JavaScript, and the parser that refuses a text knows what is.
+        let is_an_error = matches!(refused.0, Refusal::Syntax | Refusal::Reported);
+        if is_ecmascript && is_an_error && file.diagnostics.is_empty() {
+            scratch.recycle(file);
+            return Err(refused);
+        }
+        Ok(file)
     });
     let mut file = match parsed {
         Ok(file) => file,

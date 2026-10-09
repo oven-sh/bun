@@ -1,4 +1,3 @@
-use bun_lint_oxlint::text::trim_start;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -30,7 +29,7 @@ impl Rule for NoAbusiveEslintDisable {
                     TokenKind::Block => comment.span().shrink(2, 2),
                     _ => continue,
                 };
-                let text = trim_start(cx.slice(comment_span));
+                let text = strings::trim_unicode_whitespace_start(cx.slice(comment_span));
                 let (message, rest) = match (text.strip_prefix(b"eslint-disable"), text.strip_prefix(b"oxlint-disable"))
                 {
                     (Some(rest), _) => (ESLINT, rest),
@@ -39,7 +38,7 @@ impl Rule for NoAbusiveEslintDisable {
                 };
                 let rest = rest.strip_prefix(b"-next-line").or_else(|| rest.strip_prefix(b"-line")).unwrap_or(rest);
                 // `eslint-disablefoo` is nothing.
-                if !rest.is_empty() && trim_start(rest).len() == rest.len() {
+                if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len() {
                     continue;
                 }
                 let (mut has_rule, mut invalid_rules) = (false, 0);
@@ -60,7 +59,7 @@ impl Rule for NoAbusiveEslintDisable {
 fn for_each_rule_name<'t>(text: &'t [u8], mut emit_rule: impl FnMut(&'t [u8])) {
     let is_whitespace = |c: u32| char::from_u32(c).is_some_and(char::is_whitespace);
     let (mut rule_start, mut rule_end) = (None, text.len());
-    let mut chars = text::code_points(text).peekable();
+    let mut chars = strings::wtf8_codepoints(text).peekable();
     let mut previous = None;
     while let Some((index, ch)) = chars.next() {
         // `--`, or `-` between blanks: the rest says why.

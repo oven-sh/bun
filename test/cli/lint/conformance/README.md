@@ -36,8 +36,9 @@ See `extract-oxlint.ts`. They differ from the others in this:
 - A case is linted with an `.oxlintrc.json`: only that rule, the plugins in `plugins`, and what is in `oxlintrc` (`settings`, `env`,
   `globals`).
 - A message has no id, and is where the first label of oxlint's diagnostic is. Compared are the number of messages and, of each, the
-  text, the line, the column, the end line and the end column. Not compared: `help`, the labels after the first, the severity, what a
-  suggestion says, and the suggestions of a report after the first.
+  text, the line, the column, the end line and the end column. A `help` that is printed has to be oxlint's; the messages without one
+  for which oxlint has one are counted, in a line of `expected-oxlint.txt`, and may not become more. Not compared: the labels
+  after the first, the severity, what a suggestion says, and the suggestions of a report after the first.
 - oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
   `outputDangerously` after these and `--fix-dangerously`: each is `null` if it is the same as the one before.
 - `oxlint-import-project/` has the files that the cases of `import/*` are next to.

@@ -484,7 +484,7 @@ pub(crate) fn run_analysis_passes(
             timed!(
                 "ValidateNoRefAccessInRender",
                 crate::validation::validate_no_ref_access_in_render(hir, env)
-            );
+            )?;
         }
 
         if env.config.validate_no_set_state_in_render {

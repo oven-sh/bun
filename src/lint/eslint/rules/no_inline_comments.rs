@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow inline comments after code.
@@ -37,7 +38,7 @@ fn is_in_jsx_empty_expression<'a>(file: &'a File<'a>, offset: u32) -> bool {
 
 /// oxlint's `is_directive_comment`: also `oxlint-disable`, and not `/* global a */` and `/* exported a */`.
 fn is_directive_for_oxlint(comment: Token) -> bool {
-    let value = text::trim(comment.comment_value());
+    let value = strings::trim_js_whitespace(comment.comment_value());
     let after_name = value.strip_prefix(b"eslint").or_else(|| value.strip_prefix(b"oxlint"));
     match after_name.and_then(|it| it.first()) {
         Some(b'-') => true,
@@ -50,8 +51,8 @@ impl NoInlineComments {
     fn test_code_around_comment<'a>(&self, comment: Token<'a>, cx: &mut Cx<'a, Self>) {
         let start_line = cx.line_span(cx.line_of(comment.start()));
         let end_line = cx.line_span(cx.line_of(comment.end()));
-        let preamble = text::trim(cx.slice(Span::new(start_line.start, comment.start())));
-        let postamble = text::trim(cx.slice(Span::new(comment.end(), end_line.end)));
+        let preamble = strings::trim_js_whitespace(cx.slice(Span::new(start_line.start, comment.start())));
+        let postamble = strings::trim_js_whitespace(cx.slice(Span::new(comment.end(), end_line.end)));
         if preamble.is_empty() && postamble.is_empty() {
             return;
         }

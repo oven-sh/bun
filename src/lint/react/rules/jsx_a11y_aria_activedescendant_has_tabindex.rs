@@ -41,7 +41,7 @@ impl Rule for AriaActivedescendantHasTabindex {
                 _ => false,
             });
             if let Some(name) = name {
-                cx.report(name, ARIA_ACTIVEDESCENDANT_HAS_TABINDEX);
+                cx.report(name, ARIA_ACTIVEDESCENDANT_HAS_TABINDEX).data("el_name", name.text());
             }
         });
     }

@@ -6,7 +6,6 @@ use super::compare::{locale_compare, natural_sort};
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
-use crate::text::utf16_len;
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
 use std::cmp::Ordering;
@@ -72,8 +71,7 @@ impl Options {
 
     /// `shouldSkipFile`
     fn skips(&self, path: &[u8]) -> bool {
-        let name = bun_core::strings::last_index_of_char(path, b'/')
-            .map_or(path, |slash| &path[slash + 1..]);
+        let name = bun_lint::paths::file_name(path);
         self.exclude
             .iter()
             .any(|it| it.glob.matches(if it.has_slash { path } else { name }))
@@ -142,9 +140,9 @@ fn sorted_by_import_order(
             .any(|it| model.specifiers[*it as usize].kind == SpecifierKind::Namespace)
     };
     let length = |declaration: &Declaration| {
-        declaration
-            .span
-            .map_or(0, |span| utf16_len(model.file.slice(span)))
+        declaration.span.map_or(0, |span| {
+            bun_core::strings::wtf8_len_utf16(model.file.slice(span))
+        })
     };
     // `getSortedNodesGroup`, for each group.
     crate::sort::sort_by_key(&mut grouped[..], |it| it.0);

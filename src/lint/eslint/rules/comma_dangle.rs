@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require or disallow trailing commas.
@@ -75,7 +76,7 @@ fn check(mode: Mode, last: LastItem, cx: &Cx<'_, CommaDangle>) {
     // The closing token is not on the line of what precedes it.
     let is_multiline = || {
         let trailing_end = if has_comma { after + 1 } else { last.end };
-        text::has_line_break(file.slice(Span::new(trailing_end, skip_trivia(source, trailing_end))))
+        strings::contains_js_line_break(file.slice(Span::new(trailing_end, skip_trivia(source, trailing_end))))
     };
     let forces = match mode {
         Mode::Ignore => return,

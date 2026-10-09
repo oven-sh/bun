@@ -46,7 +46,21 @@ impl Rule for NoInvalidRemoveEventListener {
                 && name.name().is("removeEventListener")
                 && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
             {
-                cx.report(name, INVALID_CALL);
+                // Of a long function only its head.
+                let listener_span = match listener.kind() {
+                    ExprKind::Fn(func) if listener.span().len() > 20 => {
+                        let end = match func.body() {
+                            _ if !func.is_arrow() => func.params_span().map(|it| it.end),
+                            FnBody::Expr(body) => Some(body.outer_span().start),
+                            _ => func.body_span().map(|it| it.start),
+                        };
+                        Span::new(listener.span().start, end.unwrap_or(listener.span().end))
+                    }
+                    _ => listener.span(),
+                };
+                cx.report(name, INVALID_CALL)
+                    .first_label("`removeEventListener` called here.")
+                    .label(listener_span, "Invalid argument here");
             }
         });
     }

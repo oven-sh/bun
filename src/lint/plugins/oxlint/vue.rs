@@ -2,7 +2,6 @@
 //!
 //! oxlint lints the scripts of a `.vue` file, each as a program of its own, and knows nothing of the template.
 
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
@@ -19,10 +18,7 @@ use std::rc::Rc;
 
 /// `ctx.file_extension().is_some_and(|ext| ext == "vue")`
 pub(crate) fn is_vue_file(file: &File) -> bool {
-    let path = file.path();
-    let name = strings::last_index_of_any(path, b"/\\")
-        .and_then(|at| path.get(at + 1..))
-        .unwrap_or(path);
+    let name = bun_lint::paths::file_name(file.path());
     name.len() > 4 && name.ends_with(b".vue")
 }
 
@@ -1160,7 +1156,7 @@ pub(crate) mod casing {
     }
 
     fn has_white_space(s: &[u8]) -> bool {
-        (0..s.len()).any(|at| text::white_space_len(s.get(at..).unwrap_or_default()) > 0)
+        (0..s.len()).any(|at| strings::js_whitespace_len(s.get(at..).unwrap_or_default()) > 0)
     }
 
     fn has_separator(s: &[u8]) -> bool {

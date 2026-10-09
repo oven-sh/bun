@@ -1280,7 +1280,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB, which are not heavy yet, are 6 MB, which three engines are for.
+      // 24 files of 250 KB, which are not heavy yet, are 6 MB: an engine that is started still finds work.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1293,7 +1293,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       // A thread only asks for an engine while the others are in use.
       for (const it of [largeWithTypes, large]) {
         expect(it.engines).toBeGreaterThan(1);
-        expect(it.engines).toBeLessThanOrEqual(3);
+        expect(it.engines).toBeLessThanOrEqual(8);
       }
       expect(largeWithTypes.stdout).toBe(oneWithTypes.stdout);
       expect(large.stdout).toBe(one.stdout);
@@ -1781,13 +1781,17 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         export default {
           rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
         };`,
-        // 200 of them are 16 MB, which five engines are for.
+        // 200 of them are 16 MB, which is work for an engine on each of the 8 threads.
         ...Object.fromEntries(
           Array.from({ length: count }, (_, i) => [`f${i}.js`, `1;\n/*${Buffer.alloc(80_000, "x")}*/\n`]),
         ),
       });
       const helpers = async (count: number, variables?: Record<string, string>) => {
-        const { raw } = await lint(files(count), ["--threads", "8", "-f", "json"], [], variables);
+        // As on a machine with 8 cores.
+        const { raw } = await lint(files(count), ["--threads", "8", "-f", "json"], [], {
+          GOMAXPROCS: "8",
+          ...variables,
+        });
         const results = JSON.parse(raw) as { messages: { ruleId: string; message: string }[] }[];
         const reported = results.flatMap(it => it.messages.filter(message => message.ruleId === "threads/helpers"));
         return [...new Set(reported.map(it => it.message))];
@@ -1947,6 +1951,65 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         "2 statements: 1": each,
         "3 statements: 3": each,
       });
+    },
+    timeout,
+  );
+
+  test(
+    "a suggestion has the data that the rule gave, also if that is empty",
+    async () => {
+      const { raw, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          const rule = {
+            meta: { hasSuggestions: true, messages: { a: "a", b: "b", c: "c {{ it }}" } },
+            create: context => ({
+              Program(node) {
+                const fix = fixer => fixer.insertTextAfter(node, ";");
+                const suggest = [{ messageId: "b", data: {}, fix }, { messageId: "b", fix }, { messageId: "c", data: { it: "x" }, fix }];
+                context.report({ node, messageId: "a", suggest });
+              },
+            }),
+          };
+          export default [{ files: ["a.js"], plugins: { own: { rules: { rule } } }, rules: { "own/rule": "error" } }];`,
+          "a.js": "1\n",
+        },
+        ["-f", "json", "a.js"],
+      );
+      const suggestions = JSON.parse(raw)[0].messages[0].suggestions;
+      expect(suggestions.map((it: any) => [it.desc, it.data])).toEqual([
+        ["b", {}],
+        ["b", undefined],
+        ["c x", { it: "x" }],
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // As `merge(...tseslint.configs.recommended, other)` of lodash does.
+  test(
+    "a plugin that the configuration file has put into what a package exports",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "node_modules/eslint-config-shared/package.json": JSON.stringify({
+            name: "eslint-config-shared",
+            main: "index.js",
+          }),
+          "node_modules/eslint-config-shared/index.js": `module.exports = { configs: { recommended: [{ plugins: {} }] } };`,
+          "eslint.config.mjs": `
+          import shared from "eslint-config-shared";
+          const seen = { create: context => ({ Program: node => context.report({ node, message: "seen" }) }) };
+          const [first] = shared.configs.recommended;
+          first.plugins.own = { rules: { seen } };
+          export default [{ ...first, files: ["a.js"], rules: { "own/seen": "error" } }];`,
+          "a.js": "1;\n",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toContain("<dir>/a.js:1:1: seen [Error/own/seen]");
+      expect(exitCode).toBe(1);
     },
     timeout,
   );

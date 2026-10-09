@@ -30,7 +30,7 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use crate::node::path as node_path;
+use bun_node_path as node_path;
 #[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]

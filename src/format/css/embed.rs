@@ -505,7 +505,7 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions
 
 /// Whether `template` is written ` `` `.
 pub(crate) fn is_blank(template: Template<'_>) -> bool {
-    template.quasi_count() == 1 && text::trim(template.raw(0)).is_empty()
+    template.quasi_count() == 1 && bun_core::strings::trim_js_whitespace(template.raw(0)).is_empty()
 }
 
 /// Prettier's `embed`, for the languages that there is a formatter for. Returns whether it has written

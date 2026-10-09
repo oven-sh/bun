@@ -5,7 +5,7 @@ use super::js_number::{
     parse_float, parse_int, to_exponential, to_fixed, to_int32, to_precision, to_radix_string,
     to_uint32,
 };
-use super::js_string::{self, from_utf16, to_utf16};
+use super::js_string;
 use super::static_value::{
     Eval, IteratorKind, MAX_LEN, PropertyKey, StaticSymbol, StaticValue, Stop, join,
     string_to_bigint,
@@ -35,7 +35,7 @@ fn index_or_minus_one<'a>(index: Option<usize>) -> Eval<StaticValue<'a>> {
 }
 
 fn text_of_units<'a>(units: &[u16]) -> Eval<StaticValue<'a>> {
-    Ok(StaticValue::string(from_utf16(units)))
+    Ok(StaticValue::string(strings::wtf16_to_wtf8(units)))
 }
 
 /// An index that counts from the end if it is negative, within `0..=len`.
@@ -92,10 +92,10 @@ pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>>
             .iter()
             .map(|(key, value)| pair(key.clone(), value.clone()))
             .collect(),
-        StaticValue::String(text) => js_string::code_points_of(&to_utf16(text))
+        StaticValue::String(text) => js_string::code_points_of(&strings::wtf8_to_utf16(text))
             .map(|c| {
                 let mut text = Vec::with_capacity(4);
-                js_string::push_code_point(&mut text, c);
+                strings::push_codepoint_wtf8(&mut text, c);
                 StaticValue::string(text)
             })
             .collect(),
@@ -111,8 +111,13 @@ pub(super) fn own_enumerable<'a>(
     Ok(match value {
         StaticValue::Undefined | StaticValue::Null | StaticValue::Hole => return Err(Stop::Abort),
         StaticValue::Wrapper(primitive) => return own_enumerable(primitive),
-        StaticValue::String(text) => (to_utf16(text).iter().enumerate())
-            .map(|(i, &unit)| (index(i), StaticValue::string(from_utf16(&[unit]))))
+        StaticValue::String(text) => (strings::wtf8_to_utf16(text).iter().enumerate())
+            .map(|(i, &unit)| {
+                (
+                    index(i),
+                    StaticValue::string(strings::wtf16_to_wtf8(&[unit])),
+                )
+            })
             .collect(),
         StaticValue::Array(items) => (items.iter().enumerate())
             .filter(|(_, item)| **item != StaticValue::Hole)
@@ -135,11 +140,11 @@ pub(super) fn string_raw<'a>(
 ) -> Eval<StaticValue<'a>> {
     let mut text = Vec::new();
     for (i, piece) in raw.iter().enumerate() {
-        js_string::push_str(&mut text, piece);
+        strings::push_wtf8(&mut text, piece);
         if i + 1 < raw.len()
             && let Some(substitution) = substitutions.get(i)
         {
-            js_string::push_str(&mut text, &substitution.to_string()?);
+            strings::push_wtf8(&mut text, &substitution.to_string()?);
         }
         if text.len() > MAX_LEN {
             return Err(Stop::Abort);
@@ -262,8 +267,8 @@ pub(super) fn call<'a>(
                     return Err(Stop::Abort);
                 }
                 let mut one = Vec::with_capacity(4);
-                js_string::push_code_point(&mut one, c as u32);
-                js_string::push_str(&mut text, &one);
+                strings::push_codepoint_wtf8(&mut one, c as u32);
+                strings::push_wtf8(&mut text, &one);
             }
             Ok(StaticValue::string(text))
         }
@@ -271,9 +276,9 @@ pub(super) fn call<'a>(
             let raw = get_member(first, &PropertyKey::String(Cow::Borrowed(b"raw")))?;
             let pieces: Eval<Vec<_>> = match &raw {
                 StaticValue::Array(items) => items.iter().map(StaticValue::to_string).collect(),
-                StaticValue::String(text) => to_utf16(text)
+                StaticValue::String(text) => strings::wtf8_to_utf16(text)
                     .iter()
-                    .map(|&unit| Ok(Cow::Owned(from_utf16(&[unit]))))
+                    .map(|&unit| Ok(Cow::Owned(strings::wtf16_to_wtf8(&[unit]))))
                     .collect(),
                 _ => return Err(Stop::Abort),
             };
@@ -294,7 +299,7 @@ pub(super) fn call<'a>(
         "encodeURI" => encode_uri(&first.to_string()?, b";/?:@&=+$,#-_.!~*'()"),
         "encodeURIComponent" => encode_uri(&first.to_string()?, b"-_.!~*'()"),
         "escape" => Ok(escape(&first.to_string()?)),
-        "unescape" => text_of_units(&unescape(&to_utf16(&first.to_string()?))),
+        "unescape" => text_of_units(&unescape(&strings::wtf8_to_utf16(&first.to_string()?))),
         "isFinite" => boolean(first.to_number()?.is_finite()),
         "isNaN" => boolean(first.to_number()?.is_nan()),
         // Nothing that is made by evaluating an expression is the prototype of anything.
@@ -485,9 +490,9 @@ fn string_method<'a>(
     };
     match name {
         b"toString" => return Ok(StaticValue::String(text.clone())),
-        b"trim" => return borrowed(text::trim),
-        b"trimStart" => return borrowed(text::trim_start),
-        b"trimEnd" => return borrowed(text::trim_end),
+        b"trim" => return borrowed(strings::trim_js_whitespace),
+        b"trimStart" => return borrowed(strings::trim_js_whitespace_start),
+        b"trimEnd" => return borrowed(strings::trim_js_whitespace_end),
         b"toLowerCase" => return mapped(text::to_lower_case),
         b"toUpperCase" => return mapped(text::to_upper_case),
         b"concat" => {
@@ -513,12 +518,12 @@ fn string_method<'a>(
         _ => {}
     }
 
-    let units = to_utf16(text);
+    let units = strings::wtf8_to_utf16(text);
     let len = units.len();
     // The argument of the methods that throw if they are given a regular expression.
     let search_text = || match first {
         StaticValue::Regex { .. } => Err(Stop::Abort),
-        _ => Ok(to_utf16(&first.to_string()?)),
+        _ => Ok(strings::wtf8_to_utf16(&first.to_string()?)),
     };
     match name {
         b"at" => match at_index(first, len)? {
@@ -572,7 +577,7 @@ fn string_method<'a>(
             boolean(js_string::index_of(&units, &search, clamped_index(second, len)?).is_some())
         }
         b"indexOf" => {
-            let search = to_utf16(&first.to_string()?);
+            let search = strings::wtf8_to_utf16(&first.to_string()?);
             index_or_minus_one(js_string::index_of(
                 &units,
                 &search,
@@ -580,7 +585,7 @@ fn string_method<'a>(
             ))
         }
         b"lastIndexOf" => {
-            let search = to_utf16(&first.to_string()?);
+            let search = strings::wtf8_to_utf16(&first.to_string()?);
             let position = second.to_number()?;
             let from = if position.is_nan() {
                 len
@@ -593,7 +598,7 @@ fn string_method<'a>(
             let target = first.to_integer()?.max(0.0);
             let filler = match second {
                 StaticValue::Undefined => vec![u16::from(b' ')],
-                filler => to_utf16(&filler.to_string()?),
+                filler => strings::wtf8_to_utf16(&filler.to_string()?),
             };
             if target <= len as f64 || filler.is_empty() {
                 return Ok(StaticValue::String(text.clone()));
@@ -1043,7 +1048,7 @@ fn decode_uri<'a>(text: &[u8], preserved: &[u8]) -> Eval<StaticValue<'a>> {
 
 fn escape<'a>(text: &[u8]) -> StaticValue<'a> {
     let mut escaped = Vec::with_capacity(text.len());
-    for unit in to_utf16(text) {
+    for unit in strings::wtf8_to_utf16(text) {
         match u8::try_from(unit) {
             Ok(byte)
                 if byte.is_ascii_alphanumeric() || strings::contains_char(b"@*_+-./", byte) =>

@@ -42,10 +42,11 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferCalledOnc
             parsed_expect.members.iter().find(|member| MATCHERS.iter().any(|it| member.is_name_equal(it)))
     {
         let matcher_span = matcher_to_be_fixed.span;
-        cx.report(Span::new(matcher_span.start, call_end), PREFER_CALLED_ONCE).fix(|fixer| {
+        // Without `Times`.
+        let without_suffix = cx.slice(Span::new(matcher_span.start, matcher_span.end.saturating_sub(5)));
+        let report = cx.report(Span::new(matcher_span.start, call_end), PREFER_CALLED_ONCE);
+        report.data("without_suffix", without_suffix).fix(|fixer| {
             let file = fixer.file();
-            // Without `Times`.
-            let without_suffix = file.slice(Span::new(matcher_span.start, matcher_span.end.saturating_sub(5)));
             let comma = find_next_token_within(file, Span::after(called_times_value.span(), call_end), b",");
             let mut fixes = vec![
                 fixer.replace(matcher_span, [without_suffix, b"Once".as_slice()].concat()),

@@ -4,7 +4,7 @@
 use super::ast::{Id, Kind, Span, Tree};
 use crate::html::js::{EXPRESSION_JSX, EXPRESSION_TS, Parse};
 use crate::tailwind::{Ends, Tailwind, Tidies, plugin};
-use crate::text::{starts_with_white_space, trim_end};
+use crate::text::starts_with_white_space;
 use std::borrow::Cow;
 
 /// The values of the attributes for classes: the parts of each.
@@ -44,7 +44,8 @@ pub(crate) fn sort(
                 Kind::Text { raw } => {
                     let ends = Ends {
                         ignores_first: index > 0 && !starts_with_white_space(raw),
-                        ignores_last: index + 1 < parts.len() && trim_end(raw).len() == raw.len(),
+                        ignores_last: index + 1 < parts.len()
+                            && bun_core::strings::trim_js_whitespace_end(raw).len() == raw.len(),
                         collapses_start: false,
                         collapses_end: false,
                     };

@@ -1,0 +1,224 @@
+{
+  "bun/consistent-directive-prefix": [
+    {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "enum": ["eslint", "oxlint"]
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/jsx-no-forbidden-nesting": [
+    {
+      "type": "object",
+      "properties": {
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "outer": {
+                "type": "string"
+              },
+              "inner": {
+                "type": "string"
+              }
+            },
+            "required": ["outer", "inner"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-array-just-to-count": [
+    {
+      "type": "object",
+      "properties": {
+        "countFunction": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-console-window-flash": [],
+  "bun/no-cwd-dependent-path": [
+    {
+      "type": "object",
+      "properties": {
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-eager-dynamic-import": [],
+  "bun/no-eager-native-addon": [],
+  "bun/no-env-at-module-scope": [
+    {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-literal-temp-dir": [
+    {
+      "type": "object",
+      "properties": {
+        "directories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-negative-repeat-count": [],
+  "bun/no-redundant-catch-type": [],
+  "bun/no-restricted-text": [
+    {
+      "type": "object",
+      "properties": {
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "flags": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "in": {
+                "type": "array",
+                "items": {
+                  "enum": ["strings", "templates", "jsxText", "comments", "regularExpressions"]
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": ["pattern"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-side-effects-on-import": [
+    {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-unportable-commands": [
+    {
+      "type": "object",
+      "properties": {
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "posixOnly": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "launchers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-unseeded-random-in-property-test": [],
+  "bun/no-useless-spread-fallback": [
+    {
+      "type": "object",
+      "properties": {
+        "ignoreConditionsThatCall": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/prefer-builtin-sleep": [],
+  "bun/prefer-lazy-schema": [
+    {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "factorySuffix": {
+          "type": "string"
+        },
+        "lazyWrapper": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/react-no-latest-value-ref": [],
+  "bun/react-no-namespace-hooks": [],
+  "bun/react-prefer-updater-function": []
+}

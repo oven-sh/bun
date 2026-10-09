@@ -31,7 +31,7 @@ impl Rule for BranchesSharingCode {
             let start = if_stmt.span().start;
             let if_span = Span::new(start, start + 2);
             if let Some(count) = start_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, false)) {
-                let report = cx.report(if_span, AT_START);
+                let report = cx.report(if_span, AT_START).labels_with(|labels| label(labels, count, &bodies, false));
                 if count == 1 {
                     report.suggest(MOVE_BEFORE, |fixer| {
                         let indent = get_preceding_indent_str(fixer.file().text(), start)?;
@@ -46,7 +46,7 @@ impl Rule for BranchesSharingCode {
                 }
             }
             if let Some(count) = end_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, true)) {
-                let report = cx.report(if_span, AT_END);
+                let report = cx.report(if_span, AT_END).labels_with(|labels| label(labels, count, &bodies, true));
                 if count == 1 {
                     report.suggest(MOVE_AFTER, |fixer| {
                         let indent = get_preceding_indent_str(fixer.file().text(), start)?;
@@ -116,6 +116,17 @@ fn scan_blocks_for_eq<'a>(file: &'a File<'a>, bodies: &Bodies<'a>) -> (Option<us
     let end_begin_eq = (1..=min_stmt_count - start_end_eq).take_while(|&offset| is_shared(offset, true)).count();
     let has_remaining_code_for_end = bodies.iter().any(|body| body.len().saturating_sub(end_begin_eq) > start_end_eq);
     (Some(start_end_eq).filter(|&it| it > 0), Some(end_begin_eq).filter(|&it| it > 0 && has_remaining_code_for_end))
+}
+
+/// The `if`, and in each block the statements that all have.
+fn label(labels: &mut Details, count: usize, bodies: &Bodies<'_>, reverse: bool) {
+    labels.first("`if` statement declared here");
+    for body in bodies {
+        let skipped = if reverse { body.len().saturating_sub(count) } else { 0 };
+        let mut duplicated = body.iter().skip(skipped).take(count).map(Stmt::span);
+        let first = duplicated.next().unwrap_or_default();
+        labels.push(Span::new(first.start, duplicated.last().unwrap_or(first).end), "");
+    }
 }
 
 fn duplicated_stmts_are_empty(count: usize, bodies: &Bodies<'_>, reverse: bool) -> bool {

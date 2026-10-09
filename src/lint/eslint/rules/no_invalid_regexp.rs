@@ -21,7 +21,7 @@ impl NoInvalidRegexp {
         let (mut flags_to_check, mut duplicate_flags) = (Vec::new(), Vec::new());
         // The flags that exist so far, each once.
         let mut seen: SmallVec<[&[u8]; 8]> = SmallVec::new();
-        let ends = text::code_points(flags).map(|(offset, _)| offset).skip(1).chain([flags.len()]);
+        let ends = strings::wtf8_codepoints(flags).map(|(offset, _)| offset).skip(1).chain([flags.len()]);
         let mut start = 0;
         for end in ends.filter(|_| !flags.is_empty()) {
             let flag = &flags[start..end];

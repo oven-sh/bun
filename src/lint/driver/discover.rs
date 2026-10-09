@@ -451,8 +451,8 @@ pub(crate) fn find_files(
                     },
                 )
             }
-            None if paths::is_glob(&pattern) => add(
-                paths::resolve(cwd, &paths::glob_parent(&pattern)),
+            None if bun_glob::scan::is_glob(&pattern) => add(
+                paths::resolve(cwd, &bun_glob::scan::glob_parent(&pattern)),
                 Wanted {
                     pattern: path,
                     raw: pattern,

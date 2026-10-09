@@ -42,22 +42,6 @@ pub(super) fn trim_end_matches(mut text: &[u8], matches: impl Fn(char) -> bool) 
     text
 }
 
-pub(super) fn trim_start(text: &[u8]) -> &[u8] {
-    trim_start_matches(text, char::is_whitespace)
-}
-
-pub(super) fn trim_end(text: &[u8]) -> &[u8] {
-    trim_end_matches(text, char::is_whitespace)
-}
-
-pub(super) fn trim(text: &[u8]) -> &[u8] {
-    trim_end(trim_start(text))
-}
-
-pub(super) fn is_blank(text: &[u8]) -> bool {
-    trim_start(text).is_empty()
-}
-
 /// `str::lines`
 pub(super) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
     let has_last_line_break = text.ends_with(b"\n");
@@ -76,46 +60,6 @@ pub(super) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
                 false => line,
             }
         })
-}
-
-/// `text.split('\n')`
-pub(super) fn split_lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
-    strings::split(text, b"\n")
-}
-
-/// `str::split_whitespace`
-pub(super) fn split_whitespace(text: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut rest = text;
-    std::iter::from_fn(move || {
-        rest = trim_start(rest);
-        if rest.is_empty() {
-            return None;
-        }
-        let mut len = 0;
-        while let Some((_, char_len)) = first_char(&rest[len..]).filter(|it| !it.0.is_whitespace())
-        {
-            len += char_len;
-        }
-        let (word, after) = rest.split_at(len);
-        rest = after;
-        Some(word)
-    })
-}
-
-/// The index of the first ASCII white space.
-pub(super) fn find_ascii_whitespace(text: &[u8]) -> Option<usize> {
-    strings::index_of_any(text, b" \t\n\x0C\r")
-}
-
-/// How long `text` is in JavaScript: the number of UTF-16 code units.
-pub(super) fn str_width(text: &[u8]) -> usize {
-    match text.is_ascii() {
-        true => text.len(),
-        false => text
-            .iter()
-            .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
-            .sum(),
-    }
 }
 
 /// The parts of `parts` with `separator` between them.

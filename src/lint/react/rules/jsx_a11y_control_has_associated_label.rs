@@ -1,3 +1,4 @@
+use bun_core::strings;
 use crate::a11y::{
     HTML_TAG, LabelSearch, is_hidden_from_screen_reader, is_interactive_element, is_interactive_role,
     search_for_accessible_label,
@@ -6,7 +7,7 @@ use crate::jsx::{
     AttributeValue, as_jsx_element, children, get_element_type, get_jsx_attribute_name, get_prop_value,
     get_string_literal_prop_value, has_jsx_prop,
 };
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -91,7 +92,9 @@ impl ControlHasAssociatedLabel {
             is_labelling
                 && match get_prop_value(attribute) {
                     None => false,
-                    Some(AttributeValue::StringLiteral(literal)) => split_whitespace(literal.value).next().is_some(),
+                    Some(AttributeValue::StringLiteral(literal)) => {
+                        strings::split_unicode_whitespace(literal.value).next().is_some()
+                    }
                     Some(_) => true,
                 }
         })

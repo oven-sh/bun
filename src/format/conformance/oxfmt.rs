@@ -8,7 +8,7 @@
 //! <the output>
 //! ```
 
-use crate::{Bundle, Count, Failure, Flags, Format, output_line, trim_bytes};
+use crate::{Bundle, Count, Failure, Flags, Format, output_line};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -23,7 +23,7 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     let body = body.strip_suffix(END).unwrap_or(body);
     let lines: Vec<&[u8]> = strings::split(body, b"\n").collect();
     let is_rule = |line: &[u8], len: usize| {
-        line.len() == len && !line.is_empty() && trim_bytes(line, b"-").is_empty()
+        line.len() == len && !line.is_empty() && strings::trim(line, b"-").is_empty()
     };
     let is_header = |at: usize| {
         matches!(lines.get(at..at + 3), Some([above, options, below])
@@ -50,7 +50,7 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
         ..FormatOptions::default()
     };
     options.set(b"flavor", flavor).ok()?;
-    for option in strings::split(trim_bytes(line, b"{} "), b", ") {
+    for option in strings::split(strings::trim(line, b"{} "), b", ") {
         let (name, value) = strings::split_once(option, b": ")?;
         // Prettier passes over an option that it does not know.
         if name.starts_with(b"jsdoc") && flavor == b"prettier" {
@@ -58,7 +58,7 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
         }
         // Which JSON it is.
         let name = if name == b"variant" { b"parser" } else { name };
-        options.set(name, trim_bytes(value, b"\"")).ok()?;
+        options.set(name, strings::trim(value, b"\"")).ok()?;
     }
     Some(options)
 }

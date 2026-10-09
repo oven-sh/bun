@@ -1,5 +1,5 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_new_expression};
-use bun_lint_oxlint::text::trim_start;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -60,7 +60,7 @@ impl Rule for NoUselessCollectionArgument {
 fn remove_argument<'a>(fixer: Fixer<'a>, first_arg: Expr<'a>) -> Fix {
     let span = first_arg.outer_span();
     let after_arg = fixer.file().text().get(span.end as usize..).unwrap_or_default();
-    let trimmed = trim_start(after_arg);
+    let trimmed = strings::trim_unicode_whitespace_start(after_arg);
     let delete_end = match trimmed.starts_with(b",") {
         true => span.end + (after_arg.len() - trimmed.len()) as u32 + 1,
         false => span.end,

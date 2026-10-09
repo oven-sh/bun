@@ -125,7 +125,11 @@ fn check_statements<'a>(
         let (Some(span_to_remove), Some(called_with)) = (expects.span_to_remove, expects.called_with) else {
             continue;
         };
-        cx.report(expects.span_to_substitute, PREFER_CALLED_EXACTLY_ONCE_WITH).fix_dangerously(|fixer| {
+        let report = cx
+            .report(expects.span_to_substitute, PREFER_CALLED_EXACTLY_ONCE_WITH)
+            .first_label("Replace with `toHaveBeenCalledExactlyOnceWith`")
+            .label(span_to_remove, "Remove this expect");
+        report.fix_dangerously(|fixer| {
             let arguments = text_of_arguments(called_with.args());
             let substitute = [
                 b"expect(".as_slice(),

@@ -2,7 +2,6 @@ use bun_core::strings;
 pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax};
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
-use bun_lint::utils::text;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -364,7 +363,7 @@ pub const STATEMENTS: [StmtTag; 4] = [
 pub fn import_source<'a>(statement: Stmt<'a>, dialect: Dialect) -> Option<&'a [u8]> {
     // oxlint takes it as it is.
     let is_oxlint = statement.file().language().is_oxlint;
-    let trim = |it: &'a [u8]| if is_oxlint { it } else { text::trim(it) };
+    let trim = |it: &'a [u8]| if is_oxlint { it } else { strings::trim_js_whitespace(it) };
     match statement.kind() {
         StmtKind::Import(import) => Some(trim(import.spec().bytes())),
         StmtKind::ExportNamed(export) => Some(trim(export.spec()?.bytes())),

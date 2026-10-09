@@ -384,6 +384,29 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             .unwrap_or(Span::EMPTY)
     }
 
+    /// After two or more parameters, which are on the stack from `base` on: `hir::File::may_bind_a_parameter_twice`.
+    #[inline]
+    fn note_names_of_parameters(&mut self, base: usize) {
+        let (pats, params) = (&self.f.pats, self.s.params.get(base..).unwrap_or_default());
+        let name_of = |it: &Param| match pats.get(it.pat.idx()) {
+            Some(&Pat {
+                kind: PatKind::Ident(name),
+                ..
+            }) => name,
+            // What a pattern binds is not looked at here.
+            _ => Atom::NONE,
+        };
+        let mut rest = params;
+        while let [first, others @ ..] = rest {
+            let name = name_of(first);
+            if name.is_none() || others.iter().any(|it| name_of(it) == name) {
+                self.f.may_bind_a_parameter_twice = true;
+                return;
+            }
+            rest = others;
+        }
+    }
+
     /// `parseParametersWorker`. `None`: it is no list of parameters, and what was built is left to
     /// the speculative parse that is going on.
     fn parameter_list_if(
@@ -411,6 +434,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.leave_list(lists);
         self.context = saved;
+        if self.s.params.len() > base + 1 {
+            self.note_names_of_parameters(base);
+        }
         let params: Span<ParamId> = take_span!(self, params, base);
         for index in modifiers..self.s.param_modifiers.len() {
             let (param, list) = self.s.param_modifiers[index];

@@ -340,7 +340,8 @@ impl ClassSorter<'_> {
         let (is_left, is_right) = self.sides_of(span);
         let ends = Ends {
             ignores_first: index > 0 && !text::starts_with_white_space(text),
-            ignores_last: index + 1 < count && text::trim_end(text).len() == text.len(),
+            ignores_last: index + 1 < count
+                && strings::trim_js_whitespace_end(text).len() == text.len(),
             collapses_start: !is_right && index == 0,
             collapses_end: !is_left && index + 1 == count,
         };

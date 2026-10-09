@@ -1,8 +1,8 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{
     is_opening_brace_token, is_token_on_same_line, matches_comments_ignore_pattern,
 };
-use bun_lint::utils::text::is_blank;
 use bun_lint::utils::{estree_span, get_node_by_range_index};
 
 /// Require empty lines around comments.
@@ -187,7 +187,7 @@ fn is_code_around<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
 
 /// Whether the line before `comment`, which is `line`, is empty, or a comment starts or ends on it.
 fn is_free_before<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool {
-    if is_blank(file.line_text(line)) {
+    if strings::is_all_js_whitespace(file.line_text(line)) {
         return true;
     }
     // The last that ends on `line` or above, and the one after it, which can start on `line`.
@@ -199,7 +199,7 @@ fn is_free_before<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool
 
 /// The same for the line after `comment`.
 fn is_free_after<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool {
-    if is_blank(file.line_text(line)) {
+    if strings::is_all_js_whitespace(file.line_text(line)) {
         return true;
     }
     // The first that starts on `line` or below, and the one before it, which can end on `line`.

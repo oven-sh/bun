@@ -1,7 +1,8 @@
 //! `--print-config`
 
 use bun_lint::language::{Global, Parser, SourceType};
-use bun_lint::linter::{ResolvedConfig, RuleId, write_json, write_json_string};
+use bun_core::printer::json_stringify;
+use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 
 /// `JSON.stringify(value, null, "  ")`
@@ -30,7 +31,7 @@ pub(crate) fn write_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
                     out.push(b',');
                 }
                 new_line(out, depth + 1);
-                write_json_string(out, key);
+                json_stringify(key, out);
                 out.extend_from_slice(b": ");
                 write_indented(out, item, depth + 1);
             }

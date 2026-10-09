@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
 
@@ -47,9 +48,9 @@ const NO_LINEBREAK: Message = Message::new(
 /// `written`, or without its line breaks if it has nothing else but whitespace and `keeps` is not
 /// set.
 fn without_linebreaks(written: &[u8], keeps: bool) -> Cow<'_, [u8]> {
-    match keeps || !text::is_blank(written) || !text::has_line_break(written) {
+    match keeps || !strings::is_all_js_whitespace(written) || !strings::contains_js_line_break(written) {
         true => Cow::Borrowed(written),
-        false => Cow::Owned(text::lines(written).collect::<Vec<_>>().concat()),
+        false => Cow::Owned(strings::js_lines(written).collect::<Vec<_>>().concat()),
     }
 }
 
@@ -102,7 +103,7 @@ impl OperatorLinebreak {
     /// ESLint's `validateNode`. `left_end`: a position that is not after the end of the token
     /// before the operator. Without a line break from there to `right`, there is nothing to report.
     fn validate<'a>(&self, left_end: u32, right: Expr<'a>, operator: &'static str, cx: &Cx<'a, Self>) {
-        if !text::has_line_break(cx.slice(Span::before(left_end, right.outer_span()))) {
+        if !strings::contains_js_line_break(cx.slice(Span::before(left_end, right.outer_span()))) {
             return;
         }
         let file = cx.file();
@@ -139,7 +140,7 @@ impl OperatorLinebreak {
             ExprKind::Assign { op, target, value } => {
                 let left_end = target.outer_span().end;
                 // The default value in a pattern is not an `AssignmentExpression`.
-                if text::has_line_break(cx.slice(Span::before(left_end, value.outer_span())))
+                if strings::contains_js_line_break(cx.slice(Span::before(left_end, value.outer_span())))
                     && (op.is_some() || !utils::is_assignment_target(e))
                 {
                     self.validate(left_end, value, assign_op_text(op), cx);

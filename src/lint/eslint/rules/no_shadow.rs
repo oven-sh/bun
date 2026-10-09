@@ -601,7 +601,8 @@ impl Checker {
         cx.report(variable.place, if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW })
             .data("name", name)
             .data("shadowedLine", position.line)
-            .data("shadowedColumn", position.column + 1);
+            .data("shadowedColumn", position.column + 1)
+            .labels_with(|labels| labels.push(shadowed.identifier, "shadowed declaration is here"));
     }
 
     /// Reports every variable of the file that shadows another. What is declared in the global

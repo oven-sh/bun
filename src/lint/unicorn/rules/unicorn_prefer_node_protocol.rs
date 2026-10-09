@@ -16,6 +16,7 @@ fn check<'a>(module_name: Option<Name<'a>>, span: Option<Span>, cx: &Cx<'a, Pref
         && is_nodejs_builtin_module(module_name.bytes())
     {
         cx.report(span, PREFER_NODE_PROTOCOL)
+            .data("module_name", module_name)
             .fix(|fixer| fixer.replace(span.shrink(1, 1), [&b"node:"[..], module_name.bytes()].concat()));
     }
 }

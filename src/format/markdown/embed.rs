@@ -19,7 +19,7 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> b
 }
 
 fn is_blank(template: Template<'_>) -> bool {
-    crate::text::trim_start(template.raw(0)).is_empty()
+    bun_core::strings::trim_js_whitespace_start(template.raw(0)).is_empty()
 }
 
 /// Whether `e` is a template with the tag `md` or `markdown` that is more than ` `` `: for Prettier, its

@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
 use bun_lint::types::utils::{
@@ -1408,7 +1409,7 @@ fn get_new_code<'a>(file: &'a File<'a>, chain: &[ValidOperand<'a>]) -> Option<Ve
 /// `offset` as an index of ESLint's text.
 fn index_of(file: &File, offset: u32) -> u32 {
     let start = if file.has_bom() { 3 } else { 0 };
-    text::utf16_len(file.slice(Span::new(start, offset)))
+    strings::wtf8_len_utf16(file.slice(Span::new(start, offset)))
 }
 
 /// Replaces `report_range`, which is in `node`, by `new_code`.
@@ -1444,11 +1445,11 @@ fn fix_chain<'a>(fixer: Fixer<'a>, node: Span, report_range: Span, new_code: Vec
     let mut left_code = file.slice(node).to_vec();
     for &paren in unmatched_close_parens.iter().rev() {
         let index = index_of(file, paren);
-        let from = text::utf16_offset_to_byte(&left_code, index);
-        let to = text::utf16_offset_to_byte(&left_code, index + 1);
+        let from = strings::wtf8_offset_of_utf16_index(&left_code, index);
+        let to = strings::wtf8_offset_of_utf16_index(&left_code, index + 1);
         left_code.drain(from..to);
     }
-    let rest = text::utf16_offset_to_byte(&left_code, index_of(file, report_range.end));
+    let rest = strings::wtf8_offset_of_utf16_index(&left_code, index_of(file, report_range.end));
     let mut code = new_code;
     code.extend_from_slice(left_code.get(rest..).unwrap_or_default());
     fixer.replace(node, code)

@@ -2,7 +2,7 @@
 
 use crate::import_resolve::{Resolved, Resolvers};
 use bun_core::strings;
-use bun_lint::linter::config::path;
+use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::utils::node::is_builtin_module;
 use std::cell::OnceCell;
@@ -86,7 +86,7 @@ fn parent_of(directory: &[u8]) -> Option<&[u8]> {
 
 /// `!path.relative(directory, file).startsWith("..")`
 fn is_below(directory: &[u8], file: &[u8]) -> bool {
-    !path::relative(directory, file).starts_with(b"..")
+    !paths::relative(directory, file).starts_with(b"..")
 }
 
 /// What is the same for all the names in a file.
@@ -131,9 +131,9 @@ impl<'a> ImportTypes<'a> {
 
     fn package(&self) -> Option<&[u8]> {
         let found = self.package.get_or_init(|| {
-            let file = path::portable(self.file.path(), self.file.path());
+            let file = paths::portable(self.file.path(), self.file.path());
             let mut directories = std::iter::successors(parent_of(&file), |it| parent_of(it));
-            let found = directories.find(|it| self.exists(&path::resolve(it, b"package.json")));
+            let found = directories.find(|it| self.exists(&paths::resolve(it, b"package.json")));
             found.map(<[u8]>::to_vec)
         });
         found.as_deref()
@@ -146,7 +146,7 @@ impl<'a> ImportTypes<'a> {
             if folder.starts_with(b"/") {
                 return is_below(folder, found);
             }
-            if is_below(&path::resolve(package, folder), found) {
+            if is_below(&paths::resolve(package, folder), found) {
                 return true;
             }
             let end = folder
@@ -166,10 +166,10 @@ impl<'a> ImportTypes<'a> {
         };
         self.folders.iter().any(|folder| {
             if folder.starts_with(b"/") {
-                return self.exists(&path::resolve(folder, base));
+                return self.exists(&paths::resolve(folder, base));
             }
             let mut directories = std::iter::successors(Some(package), |it| parent_of(it));
-            directories.any(|it| self.exists(&path::resolve(&path::resolve(it, folder), base)))
+            directories.any(|it| self.exists(&paths::resolve(&paths::resolve(it, folder), base)))
         })
     }
 

@@ -84,7 +84,9 @@ fn check_many<'a>(cases: List<'a, Case<'a>>, is_text_enough: bool, cx: &Cx<'a, N
 
 /// oxlint points at the first test that is the same.
 fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
-    cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED);
+    cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED).labels_with(|labels| {
+        labels.push(case.test().map(Expr::span).unwrap_or_default(), "is duplicated here");
+    });
 }
 
 impl Rule for NoDuplicateCase {

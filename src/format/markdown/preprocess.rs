@@ -180,22 +180,6 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
     }
 }
 
-fn trim_html_whitespace_start(text: &[u8]) -> &[u8] {
-    &text[text
-        .iter()
-        .take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' '))
-        .count()..]
-}
-
-fn trim_html_whitespace_end(text: &[u8]) -> &[u8] {
-    &text[..text.len()
-        - text
-            .iter()
-            .rev()
-            .take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' '))
-            .count()]
-}
-
 /// The length of a `>` at the start of `line`, however it is written, with the blanks around it.
 fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
     let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
@@ -310,13 +294,16 @@ pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64,
     let head = text
         .get(node.start as usize..end as usize)
         .unwrap_or_default();
-    let head = crate::text::trim_start(head);
+    let head = bun_core::strings::trim_js_whitespace_start(head);
     let digits = head.iter().take_while(|byte| byte.is_ascii_digit()).count();
     let number = head[..digits]
         .iter()
         .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
     let after = head.get(digits + 1..).unwrap_or_default();
-    (number, after.len() - crate::text::trim_start(after).len())
+    (
+        number,
+        after.len() - bun_core::strings::trim_js_whitespace_start(after).len(),
+    )
 }
 
 /// Whether `code` is indented code, by the looks of it.
@@ -571,10 +558,10 @@ impl Preprocessor<'_> {
         }
         if around.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
             if node.previous == super::ast::NONE {
-                text = trim_html_whitespace_start(text);
+                text = text.trim_ascii_start();
             }
             if node.next == super::ast::NONE {
-                text = trim_html_whitespace_end(text);
+                text = text.trim_ascii_end();
             }
         }
 

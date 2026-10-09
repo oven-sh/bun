@@ -162,7 +162,12 @@ function serializeConfigObject(given, index) {
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [
         prefix,
-        { ...(locateDeep(plugin) ?? { config: path, index }), described: describedOnce(prefix, plugin) },
+        // `else`: the file itself can have put it where it was found.
+        {
+          ...(locateDeep(plugin) ?? { config: path, index }),
+          else: { config: path, index },
+          described: describedOnce(prefix, plugin),
+        },
       ]),
     );
   }

@@ -7,9 +7,8 @@ use super::ast::{
     Comment, DirectiveKind, Element, ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind,
     Pattern, Span, Tree, Value,
 };
-use crate::text::{self, white_space_len};
+use crate::text;
 use bun_core::strings;
-use bun_lint::utils::text::{is_identifier_part, is_identifier_start};
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
@@ -190,7 +189,7 @@ fn closing_tag_omitted(current: &[u8], next: &[u8]) -> bool {
 }
 
 fn code_points(text: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    bun_lint::utils::text::code_points(text).map(|it| it.1)
+    strings::wtf8_codepoints(text).map(|it| it.1)
 }
 
 /// `PCENChar` without the ASCII ones.
@@ -263,7 +262,7 @@ fn is_valid_element_name(name: &[u8]) -> bool {
 /// `regex_valid_component_name`
 fn is_valid_component_name(name: &[u8]) -> bool {
     // `[$\u200c\u200d\p{ID_Continue}]`
-    let is_part = is_identifier_part;
+    let is_part = |c: u32| bun_core::lexer::is_type_script_identifier_part(c as i32);
     let Some(first) = code_points(name).next() else {
         return false;
     };
@@ -277,8 +276,9 @@ fn is_valid_component_name(name: &[u8]) -> bool {
     let mut parts = strings::split(name, b".");
     let head = parts.next().unwrap_or_default();
     let mut head = code_points(head);
-    let starts_well = (head.next())
-        .is_some_and(|c| is_identifier_start(c) && c != u32::from(b'$') && c != u32::from(b'_'));
+    let starts_well = (head.next()).is_some_and(|c| {
+        bun_core::lexer::is_identifier_start(c) && c != u32::from(b'$') && c != u32::from(b'_')
+    });
     let mut count = 0;
     starts_well
         && head.all(is_part)
@@ -393,13 +393,13 @@ impl<'a> Parser<'a, '_> {
     }
 
     fn allow_whitespace(&mut self) {
-        while let len @ 1.. = white_space_len(self.rest()) {
+        while let len @ 1.. = strings::js_whitespace_len(self.rest()) {
             self.index += len;
         }
     }
 
     fn require_whitespace(&mut self) -> Result<()> {
-        if white_space_len(self.rest()) == 0 {
+        if strings::js_whitespace_len(self.rest()) == 0 {
             return fail("expected_whitespace", self.index);
         }
         self.allow_whitespace();
@@ -422,10 +422,10 @@ impl<'a> Parser<'a, '_> {
         let start = self.index;
         let rest = self.rest();
         let mut len = 0;
-        for (at, c) in bun_lint::utils::text::code_points(rest) {
+        for (at, c) in strings::wtf8_codepoints(rest) {
             let is_in_name = match at {
-                0 => is_identifier_start(c),
-                _ => is_identifier_part(c),
+                0 => bun_core::lexer::is_identifier_start(c),
+                _ => bun_core::lexer::is_type_script_identifier_part(c as i32),
             };
             if !is_in_name {
                 break;
@@ -481,7 +481,7 @@ impl<'a> Parser<'a, '_> {
             let Some(rest) = self.text.get(at..self.len) else {
                 return;
             };
-            let rest = text::trim_start(rest);
+            let rest = strings::trim_js_whitespace_start(rest);
             let start = self.len - rest.len();
             let end = match rest {
                 [b'/', b'/', ..] => {
@@ -674,7 +674,7 @@ impl<'a> Parser<'a, '_> {
             let byte = rest[len];
             if matches!(byte, b'/' | b'>')
                 || (is_attribute && matches!(byte, b'"' | b'\'' | b'='))
-                || white_space_len(&rest[len..]) > 0
+                || strings::js_whitespace_len(&rest[len..]) > 0
             {
                 break;
             }
@@ -945,7 +945,7 @@ impl<'a> Parser<'a, '_> {
         }
         match &rest[10..] {
             [b'>', ..] => Some(11),
-            behind if white_space_len(behind) > 0 => {
+            behind if strings::js_whitespace_len(behind) > 0 => {
                 Some(10 + strings::index_of_char_usize(behind, b'>')? + 1)
             }
             _ => None,
@@ -987,7 +987,7 @@ impl<'a> Parser<'a, '_> {
                     let mut len = 0;
                     while len < rest.len()
                         && rest[len] != b'>'
-                        && white_space_len(&rest[len..]) == 0
+                        && strings::js_whitespace_len(&rest[len..]) == 0
                     {
                         len += 1;
                     }
@@ -1175,7 +1175,7 @@ impl<'a> Parser<'a, '_> {
                 let rest = self.rest();
                 rest.starts_with(b"/>")
                     || matches!(rest, [b'"' | b'\'' | b'=' | b'<' | b'>' | b'`', ..])
-                    || white_space_len(rest) > 0
+                    || strings::js_whitespace_len(rest) > 0
             }
             Done::Textarea => self.closing_textarea_tag_len().is_some(),
         }
@@ -1241,7 +1241,7 @@ impl<'a> Parser<'a, '_> {
                 return fail("element_unclosed", self.len);
             };
             search += found + 8;
-            let behind = text::trim_start(&self.text[search..self.len]);
+            let behind = strings::trim_js_whitespace_start(&self.text[search..self.len]);
             if behind.first() == Some(&b'>') {
                 break self.len - behind.len() + 1;
             }
@@ -1304,7 +1304,7 @@ impl<'a> Parser<'a, '_> {
 
     /// `/\s*}/y`
     fn is_before_closing_brace(&self) -> bool {
-        text::trim_start(self.rest()).first() == Some(&b'}')
+        strings::trim_js_whitespace_start(self.rest()).first() == Some(&b'}')
     }
 
     /// Whether `word` is next, and no part of a name behind it: `/word\b/y`.
@@ -1969,7 +1969,8 @@ fn is_typescript(text: &[u8]) -> bool {
             }
             continue;
         }
-        let Some(attributes) = (rest.strip_prefix(b"script")).filter(|it| white_space_len(it) > 0)
+        let Some(attributes) =
+            (rest.strip_prefix(b"script")).filter(|it| strings::js_whitespace_len(it) > 0)
         else {
             continue;
         };
@@ -2000,7 +2001,7 @@ fn is_typescript(text: &[u8]) -> bool {
 
 /// `parse(text, { modern: true })`
 pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
-    let text = text::trim_end(text);
+    let text = strings::trim_js_whitespace_end(text);
     js.start(is_typescript(text));
     let mut tree = Tree::default();
     // The first, which is what `tree.fragment` says.

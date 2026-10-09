@@ -202,13 +202,6 @@ impl std::fmt::Display for Count {
     }
 }
 
-/// The number of UTF-16 code units of `text`, which is UTF-8.
-fn utf16_len(text: &[u8]) -> usize {
-    text.iter()
-        .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
-        .sum()
-}
-
 /// Puts `<|>` where the cursor is, the way Prettier's snapshots show it.
 fn show_cursor(text: &mut Vec<u8>, cursor: Option<u32>) {
     let Some(cursor) = cursor else {
@@ -223,18 +216,4 @@ fn show_cursor(text: &mut Vec<u8>, cursor: Option<u32>) {
     });
     let at = at.unwrap_or(text.len());
     text.splice(at..at, *b"<|>");
-}
-
-fn trim_bytes<'a>(mut text: &'a [u8], what: &[u8]) -> &'a [u8] {
-    while let [first, rest @ ..] = text
-        && what.contains(first)
-    {
-        text = rest;
-    }
-    while let [rest @ .., last] = text
-        && what.contains(last)
-    {
-        text = rest;
-    }
-    text
 }

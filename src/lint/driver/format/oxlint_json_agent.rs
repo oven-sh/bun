@@ -5,7 +5,8 @@ use super::Meta;
 use super::info::{Position, Source};
 use super::oxlint::{code, is_error, plugin};
 use crate::results::FileResult;
-use bun_lint::linter::{LintMessage, RuleId, write_json_string};
+use bun_core::printer::json_stringify;
+use bun_lint::linter::{LintMessage, RuleId};
 use std::io::Write;
 
 /// The page of oxlint about the rule. A rule of a plugin in JavaScript has none.
@@ -30,7 +31,7 @@ fn write_label(out: &mut Vec<u8>, source: &Source, (start, end): (usize, usize),
     out.push(b'{');
     if !text.is_empty() {
         out.extend_from_slice(b"\"label\": ");
-        write_json_string(out, text.as_bytes());
+        json_stringify(text.as_bytes(), out);
         out.push(b',');
     }
     let length = end.saturating_sub(start);
@@ -44,10 +45,10 @@ fn write_label(out: &mut Vec<u8>, source: &Source, (start, end): (usize, usize),
 /// `JSONReportHandler::render_report`
 fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
     out.extend_from_slice(b"{\"message\": ");
-    write_json_string(out, &message.message);
+    json_stringify(&message.message, out);
     if let Some(code) = code(message) {
         out.extend_from_slice(b",\"code\": ");
-        write_json_string(out, &code);
+        json_stringify(&code, out);
     }
     out.extend_from_slice(if is_error(message) {
         b",\"severity\": \"error\""
@@ -56,18 +57,18 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
     });
     if let Some(url) = url(message) {
         out.extend_from_slice(b",\"url\": ");
-        write_json_string(out, &url);
+        json_stringify(&url, out);
     }
     let details = message.details.as_deref();
-    let texts = details.map(|it| [("help", &it.help), ("note", &it.note)]);
-    for (key, text) in texts.into_iter().flatten() {
+    let note = details.map_or("", |it| &*it.note);
+    for (key, text) in [("help", message.help()), ("note", note)] {
         if !text.is_empty() {
             let _ = write!(out, ",\"{key}\": ");
-            write_json_string(out, text.as_bytes());
+            json_stringify(text.as_bytes(), out);
         }
     }
     out.extend_from_slice(b",\"filename\": ");
-    write_json_string(out, &source.name);
+    json_stringify(&source.name, out);
     out.extend_from_slice(b",\"labels\": [");
     if let Some(first) = source.span(message) {
         let text = details.map_or("", |it| &*it.first_label);
@@ -108,22 +109,29 @@ pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
 fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
     let start = out.len();
     let mut is_after_blank = false;
-    let mut put = |out: &mut Vec<u8>, character: char| {
-        if character.is_whitespace() {
+    let mut put = |out: &mut Vec<u8>, part: &str| {
+        if part.starts_with(char::is_whitespace) {
             is_after_blank = true;
             return;
         }
         if std::mem::take(&mut is_after_blank) && out.len() > start {
             out.push(b' ');
         }
-        out.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
+        out.extend_from_slice(part.as_bytes());
     };
     for chunk in text.utf8_chunks() {
-        for character in chunk.valid().chars() {
-            put(out, character);
+        let mut rest = chunk.valid();
+        // What is in ASCII of a word at once, any other character alone.
+        while let Some(first) = rest.chars().next() {
+            let len = rest.bytes().take_while(u8::is_ascii_graphic).count();
+            let Some((part, after)) = rest.split_at_checked(len.max(first.len_utf8())) else {
+                break;
+            };
+            put(out, part);
+            rest = after;
         }
         if !chunk.invalid().is_empty() {
-            put(out, char::REPLACEMENT_CHARACTER);
+            put(out, "\u{FFFD}");
         }
     }
 }
@@ -149,7 +157,7 @@ pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
             }
             out.extend_from_slice(b": ");
             write_compact(out, &message.message);
-            let help = message.details.as_deref().map_or("", |it| &*it.help);
+            let help = message.help();
             if !help.is_empty() {
                 out.extend_from_slice(b" help: ");
                 write_compact(out, help.as_bytes());

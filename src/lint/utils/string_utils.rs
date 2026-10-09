@@ -1,6 +1,5 @@
 //! ESLint's `lib/shared/string-utils.js` and `lib/rules/utils/string-utils.js`.
 
-use super::text::{code_point_at, code_points};
 use super::unicode::is_in_runs;
 use bun_core::strings;
 use std::ops::Range;
@@ -19,14 +18,14 @@ pub fn is_letter(c: u32) -> bool {
 /// ESLint's `LETTER_PATTERN`. Where `text.match(LETTER_PATTERN)` is: the range in bytes of the first
 /// letter of `text`.
 pub fn find_letter(text: &[u8]) -> Option<Range<usize>> {
-    let (at, _) = code_points(text).find(|&(_, c)| is_letter(c))?;
-    Some(at..at + code_point_at(text, at).1)
+    let (at, _) = strings::wtf8_codepoints(text).find(|&(_, c)| is_letter(c))?;
+    Some(at..at + strings::wtf8_codepoint_at(text, at).1)
 }
 
 /// ESLint's `containsLetter`.
 #[inline]
 pub fn contains_letter(text: &[u8]) -> bool {
-    code_points(text).any(|(_, c)| is_letter(c))
+    strings::wtf8_codepoints(text).any(|(_, c)| is_letter(c))
 }
 
 /// ESLint's `getGraphemeCount`. The length of text that is ASCII, where `\r\n` counts as two, and
@@ -56,7 +55,7 @@ impl<'t> Iterator for Graphemes<'t> {
 
     fn next(&mut self) -> Option<&'t [u8]> {
         use Class::*;
-        let (first, mut at) = code_point_at(self.text, 0);
+        let (first, mut at) = strings::wtf8_codepoint_at(self.text, 0);
         if at == 0 {
             return None;
         }
@@ -69,7 +68,7 @@ impl<'t> Iterator for Graphemes<'t> {
         // A cluster starts with an even number of regional indicators before it.
         let mut is_second_regional_indicator = false;
         loop {
-            let (c, size) = code_point_at(self.text, at);
+            let (c, size) = strings::wtf8_codepoint_at(self.text, at);
             if size == 0 {
                 break;
             }

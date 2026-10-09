@@ -58,13 +58,12 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
         let order = OxlintOrder::new(file);
         utils::sort::sort_by_cached_key(&mut missing_globals, |name| order.rank(file.name_of(name)));
     }
-    // The first label.
-    let mut first_span: Option<Span> = None;
+    let mut globals_spans: Vec<Span> = Vec::new();
     for name in &missing_globals {
         for reference in file.unresolved_references_to(name.as_bytes()) {
             // What is called, also where it is an argument.
             if let Some(call_expr) = reference.expr().and_then(parent_expression).and_then(Expr::as_call) {
-                first_span.get_or_insert_with(|| call_expr.callee().outer_span());
+                globals_spans.push(call_expr.callee().outer_span());
             }
         }
     }
@@ -81,7 +80,7 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
             for reference in symbol.references().filter_map(Reference::expr) {
                 let is_callee = |it: &Expr<'a>| it.as_call().is_some_and(|it| it.callee() == reference);
                 if let Some(call) = parent_expression(reference).filter(is_callee) {
-                    first_span.get_or_insert_with(|| call.span());
+                    globals_spans.push(call.span());
                     if !missing_globals.contains(&name) {
                         missing_globals.push(name);
                     }
@@ -92,17 +91,27 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
     if missing_globals.is_empty() {
         return;
     }
-    let report = match first_span {
-        Some(span) => cx.report(span, PREFER_IMPORTING_VITEST_GLOBALS),
+    const ADD_THIS: &str = "Add this global vitest import";
+    let report = match globals_spans.split_first() {
+        Some((first, others)) => {
+            let report = cx.report(*first, PREFER_IMPORTING_VITEST_GLOBALS).first_label(ADD_THIS);
+            others.iter().fold(report, |report, span| report.label(*span, ADD_THIS))
+        }
         None => cx.report_file(PREFER_IMPORTING_VITEST_GLOBALS),
     };
-    report.fix(|fixer| {
+    let globals_imports = || {
         // oxlint prints them in the order of an `FxHashSet`.
         let mut table = HashOrder::new();
         missing_globals.iter().for_each(|name| table.insert(FxBuildHasher.hash_one(*name), *name));
         let names: SmallVec<[&str; 8]> = table.iter().collect();
-        build_fix(file, &names.join(", "), fixer)
-    });
+        names.join(", ")
+    };
+    report
+        .help_with(|| {
+            let globals_founds = globals_imports();
+            format!("Import global functions `{globals_founds}` from `vitest` package instead of using globals.")
+        })
+        .fix(|fixer| build_fix(file, &globals_imports(), fixer));
 }
 
 /// The calls of the global `require` with one argument, which is a string that names Vitest.
@@ -128,7 +137,7 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
                 if file.comment_around(statement_span.start + close_brace_pos as u32).is_some() {
                     continue;
                 }
-                let trimmed = trim_end(source);
+                let trimmed = strings::trim_unicode_whitespace_end(source);
                 let comma = if trimmed.ends_with(b",") { "" } else { "," };
                 let replaced = Span::new(statement_span.start + trimmed.len() as u32, statement_span.start + close_brace_pos as u32 + 1);
                 return fixer.replace(replaced, format!("{comma} {globals_imports} }}"));
@@ -166,9 +175,4 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
     let import_source = import_source.map_or(b"vitest".as_slice(), Name::bytes);
     let text = [b"import { ".as_slice(), globals_imports.as_bytes(), b" } from '".as_slice(), import_source, b"';\n".as_slice()];
     fixer.insert_before(Span::empty(0), text.concat())
-}
-
-/// `str::trim_end`
-fn trim_end(text: &[u8]) -> &[u8] {
-    std::str::from_utf8(text).map_or(text, |it| it.trim_end().as_bytes())
 }

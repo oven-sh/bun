@@ -26,7 +26,10 @@ impl Rule for NoLabelVar {
                 // oxlint points at where the variable is declared.
                 let declared = (variable.filter(|_| cx.language().is_oxlint))
                     .and_then(|it| it.declarations().next()?.name_span());
-                cx.report(declared.unwrap_or_else(|| stmt.span()), IDENTIFIER_CLASH_WITH_LABEL).data("name", label);
+                let start = stmt.span().start;
+                cx.report(declared.unwrap_or_else(|| stmt.span()), IDENTIFIER_CLASH_WITH_LABEL)
+                    .data("name", label)
+                    .labels_with(|labels| labels.push(Span::new(start, start + 1), "Label with the same name."));
             }
         });
     }

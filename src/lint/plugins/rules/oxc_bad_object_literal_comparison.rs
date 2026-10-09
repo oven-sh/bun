@@ -17,14 +17,15 @@ impl Rule for BadObjectLiteralComparison {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.binaries([BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq], |_, e, cx| {
-            let ExprKind::Binary { left, right, .. } = e.kind() else {
+            let ExprKind::Binary { op, left, right } = e.kind() else {
                 return;
             };
+            let const_result = if matches!(op, BinOp::NotEq | BinOp::NotEqEq) { "true" } else { "false" };
             if is_empty_object_expression(left) || is_empty_object_expression(right) {
-                cx.report(e, OBJECT_COMPARISON);
+                cx.report(e, OBJECT_COMPARISON).data("const_result", const_result);
             }
             if is_empty_array_expression(left) || is_empty_array_expression(right) {
-                cx.report(e, ARRAY_COMPARISON);
+                cx.report(e, ARRAY_COMPARISON).data("const_result", const_result);
             }
         });
     }

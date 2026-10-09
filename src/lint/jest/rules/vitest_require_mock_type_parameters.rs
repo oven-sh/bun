@@ -52,7 +52,7 @@ impl RequireMockTypeParameters {
             && call_expr.callee() == member_expression
             && call_expr.type_args().is_empty()
         {
-            cx.report(member.span, REQUIRE_MOCK_TYPE_PARAMETERS);
+            cx.report(member.span, REQUIRE_MOCK_TYPE_PARAMETERS).data("method_name", member.name().unwrap_or_default());
         }
     }
 }

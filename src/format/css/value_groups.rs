@@ -140,7 +140,7 @@ fn is_color_adjuster_func(node: ValueRef<'_>) -> bool {
     is_func(node)
         && node
             .value()
-            .is_some_and(|value| NAMES.iter().any(|name| text::eq_lower_case(value, name)))
+            .is_some_and(|value| NAMES.iter().any(|name| value.eq_ignore_ascii_case(name)))
 }
 
 fn is_possible_font_size(node: Option<ValueRef<'_>>) -> bool {
@@ -238,9 +238,9 @@ impl<'a> Printer<'a, '_> {
 
         // `insideValueFunctionNode`
         let function = self.value_function(values);
-        let inside_url = function.is_some_and(|name| text::eq_lower_case(name, b"url"));
-        let inside_calc = function.is_some_and(|name| text::eq_lower_case(name, b"calc"));
-        let inside_type = function.is_some_and(|name| text::eq_lower_case(name, b"type"));
+        let inside_url = function.is_some_and(|name| name.eq_ignore_ascii_case(b"url"));
+        let inside_calc = function.is_some_and(|name| name.eq_ignore_ascii_case(b"calc"));
+        let inside_type = function.is_some_and(|name| name.eq_ignore_ascii_case(b"type"));
         let is_in_scss_if = self.syntax() == Syntax::Scss
             && is_in_paren_group
             && grandparent.is_some_and(|it| is_func(it) && it.value() == Some(b"if"));
@@ -628,7 +628,7 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
 
-            if at_rule.is_some_and(|it| text::eq_lower_case(it.name, b"namespace")) {
+            if at_rule.is_some_and(|it| it.name.eq_ignore_ascii_case(b"namespace")) {
                 self.sink.token(" ");
                 continue;
             }
@@ -774,7 +774,7 @@ impl<'a> Printer<'a, '_> {
         ) else {
             return false;
         };
-        text::trim_end(
+        bun_core::strings::trim_js_whitespace_end(
             self.original_text()
                 .get(start as usize..end as usize)
                 .unwrap_or_default(),
@@ -946,7 +946,7 @@ impl<'a> Printer<'a, '_> {
             is_func(it)
                 && it
                     .value()
-                    .is_some_and(|value| text::eq_lower_case(value, b"url"))
+                    .is_some_and(|value| value.eq_ignore_ascii_case(b"url"))
         });
         if is_url
             && (count == 1
@@ -1011,7 +1011,7 @@ impl<'a> Printer<'a, '_> {
             is_func(it)
                 && it
                     .value()
-                    .is_some_and(|value| text::eq_lower_case(value, b"var"))
+                    .is_some_and(|value| value.eq_ignore_ascii_case(b"var"))
         });
         let is_scss_map_item = self.is_scss_map_item(statement, node);
         // What has written the group that this is in knows. There can be as many of these in it as the text is long.

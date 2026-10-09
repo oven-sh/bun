@@ -293,7 +293,7 @@ impl Builder<'_> {
             } else {
                 comment.end
             };
-            let text = bun_lint::utils::text::trim(this.slice(comment.start + 2, end));
+            let text = bun_core::strings::trim_js_whitespace(this.slice(comment.start + 2, end));
             this.config.flavor.is_ignore_comment(text)
         })
     }

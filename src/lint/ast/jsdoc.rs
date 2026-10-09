@@ -30,10 +30,6 @@ fn span_of(range: Range) -> Span {
     Span::new(range.start, range.end)
 }
 
-fn trim(text: &[u8]) -> &[u8] {
-    text.trim_with(char::is_whitespace)
-}
-
 #[derive(Copy, Clone)]
 pub struct JSDocs<'a> {
     file: &'a File<'a>,
@@ -197,7 +193,7 @@ impl<'a> JSDocTagTypePart<'a> {
     /// Without them and the white space in them.
     pub fn parsed(self) -> &'a [u8] {
         let end = self.raw.len().saturating_sub(1);
-        trim(self.raw.get(1..end).unwrap_or_default())
+        strings::trim_unicode_whitespace(self.raw.get(1..end).unwrap_or_default())
     }
 }
 
@@ -223,8 +219,9 @@ impl<'a> JSDocTagTypeNamePart<'a> {
             return self.raw;
         }
         let inner = self.raw.trim_start_with(|c| c == '[');
-        let inner = trim(inner.trim_end_with(|c| c == ']'));
-        strings::split_once_char(inner, b'=').map_or(inner, |(name, _)| trim(name))
+        let inner = strings::trim_unicode_whitespace(inner.trim_end_with(|c| c == ']'));
+        strings::split_once_char(inner, b'=')
+            .map_or(inner, |(name, _)| strings::trim_unicode_whitespace(name))
     }
 }
 
@@ -253,14 +250,14 @@ impl<'a> JSDocCommentPart<'a> {
     /// The first line that has something, without the white space around it.
     pub fn span_trimmed_first_line(self) -> Span {
         let JSDocCommentPart { span, raw } = self;
-        let start_trimmed = raw.trim_start_with(char::is_whitespace);
+        let start_trimmed = strings::trim_unicode_whitespace_start(raw);
         if start_trimmed.is_empty() {
             return Span::empty(span.start);
         }
         let start = span.start + (raw.len() - start_trimmed.len()) as u32;
         // `raw.lines().count() == 1`
         if strings::index_of_char_usize(raw, b'\n').is_none_or(|at| at + 1 == raw.len()) {
-            let end_trimmed = raw.trim_end_with(char::is_whitespace);
+            let end_trimmed = strings::trim_unicode_whitespace_end(raw);
             return Span::new(start, span.end - (raw.len() - end_trimmed.len()) as u32);
         }
         Span::new(
@@ -273,9 +270,9 @@ impl<'a> JSDocCommentPart<'a> {
     fn parsed_lines(self) -> impl Iterator<Item = &'a [u8]> + 'a {
         let is_multiline = strings::contains_char(self.raw, b'\n');
         let lines = strings::split(self.raw, b"\n").map(move |line| {
-            let trimmed = trim(line);
+            let trimmed = strings::trim_unicode_whitespace(line);
             match without_star(trimmed).filter(|_| is_multiline) {
-                Some(rest) => rest.trim_start_with(char::is_whitespace),
+                Some(rest) => strings::trim_unicode_whitespace_start(rest),
                 None => trimmed,
             }
         });
@@ -291,14 +288,14 @@ impl<'a> JSDocCommentPart<'a> {
     /// a line stay.
     pub fn parsed_preserving_whitespace(self) -> Vec<u8> {
         if !strings::contains_char(self.raw, b'\n') {
-            return trim(self.raw).to_vec();
+            return strings::trim_unicode_whitespace(self.raw).to_vec();
         }
         let mut result = Vec::with_capacity(self.raw.len());
         for (index, line) in self.raw.lines().enumerate() {
             if index > 0 {
                 result.push(b'\n');
             }
-            let trimmed = trim(line);
+            let trimmed = strings::trim_unicode_whitespace(line);
             let content = match without_star(trimmed) {
                 Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
                 None => trimmed,

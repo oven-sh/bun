@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require parentheses around arrow function arguments.
@@ -59,10 +60,11 @@ impl ArrowParens {
             return;
         }
         // Anything but whitespace and a trailing comma inside the parentheses is a comment.
-        let Some(before_open) = text::trim_end(cx.slice(Span::before(0, name))).strip_suffix(b"(") else {
+        let before_name = strings::trim_js_whitespace_end(cx.slice(Span::before(0, name)));
+        let Some(before_open) = before_name.strip_suffix(b"(") else {
             return;
         };
-        if !matches!(text::trim(cx.slice(Span::after(name, close))), b"" | b",") {
+        if !matches!(strings::trim_js_whitespace(cx.slice(Span::after(name, close))), b"" | b",") {
             return;
         }
         let open = Span::new(before_open.len() as u32, before_open.len() as u32 + 1);

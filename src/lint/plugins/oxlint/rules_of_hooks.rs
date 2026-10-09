@@ -5,6 +5,8 @@ use crate::rules::react_hooks_rules_of_hooks::{Memo, Ranges};
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::static_property_name;
 
+const CALLED_HERE: &str = "Hook is called here";
+
 const FUNCTION: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called in function \"{{function}}\" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word \"use\".",
@@ -219,7 +221,11 @@ fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, mem
         {
             return;
         }
-        _ => return drop(cx.report(node, EFFECT_EVENT_INLINE)),
+        _ => {
+            cx.report(node, EFFECT_EVENT_INLINE)
+                .first_label("Effect Event is passed directly instead of being assigned locally.");
+            return;
+        }
     };
     if !is_somewhere_inside_component_or_hook(Node::Expr(node), memo) {
         return;
@@ -261,7 +267,8 @@ fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, mem
         };
         cx.report(e, EFFECT_EVENT_REFERENCE)
             .data("function", e.text())
-            .data("hint", hint);
+            .data("hint", hint)
+            .first_label("Effect Event escapes its component or custom Hook.");
     }
 }
 
@@ -279,14 +286,22 @@ pub(crate) fn check<'a, R: Rule>(
     let Some(hook) = callee_name(call) else {
         return;
     };
-    let report = |at: Span, message: Message| drop(cx.report(at, message).data("hook", hook));
+    let report = |message: Message, first_label: &'static str| {
+        cx.report(node, message)
+            .data("hook", hook)
+            .first_label(first_label)
+    };
     let is_use = is_react_function_call(call, "use");
     let Some(func) = root
         .as_func()
         .filter(is_function_like)
         .or_else(|| function_around(root, memo))
     else {
-        return report(node.span(), TOP_LEVEL);
+        report(
+            TOP_LEVEL,
+            "This Hook call is outside a component or custom Hook.",
+        );
+        return;
     };
     if is_react_function_call(call, "useEffectEvent") {
         check_use_effect_event_usage(cx, node, memo);
@@ -300,40 +315,52 @@ pub(crate) fn check<'a, R: Rule>(
         _ => false,
     };
     if is_in_class {
-        return report(node.span(), CLASS);
+        report(CLASS, CALLED_HERE).labels_with(|labels| {
+            if let Some(class) = Node::Func(func).enclosing_class() {
+                let span = class
+                    .name()
+                    .map_or_else(|| class.keyword_span(), Ident::span);
+                labels.push(span, "Class component is defined here.");
+            }
+        });
+        return;
     }
-    let function_error = |name: &'a [u8]| {
-        drop(
-            cx.report(call.callee(), FUNCTION)
-                .data("hook", hook)
-                .data("function", name),
-        )
+    let function_error = |name: &'a [u8], outer_function: Span| {
+        cx.report(call.callee(), FUNCTION)
+            .data("hook", hook)
+            .data("function", name)
+            .first_label(CALLED_HERE)
+            .label(outer_function, "Outer function");
     };
     let is_declared_as_something_else = || {
         get_declaration_identifier(func).is_some_and(|it| !is_component_or_hook_name(it.bytes()))
     };
     match own_name(func) {
         Some(name) if !is_component_or_hook_name(name.bytes()) => {
-            return function_error(name.bytes());
+            let outer_function = func.name().map(Ident::span).unwrap_or_default();
+            return function_error(name.bytes(), outer_function);
         }
         // oxlint does not look for loops and conditions in a callback. The plugin reports a hook in a loop wherever it is.
         None if is_non_react_func_arg(func) => {
             if !is_use && is_somewhere_inside_component_or_hook(Node::Func(func), memo) {
-                report(node.span(), CALLBACK);
+                report(CALLBACK, "This Hook call is inside a nested callback.");
             }
             return;
         }
         None if !(func.is_arrow() && func.is_async()) => {
             if is_declared_as_something_else() {
-                return function_error(b"Anonymous");
+                return function_error(b"Anonymous", func.estree_span());
             }
         }
         _ if func.is_async() => {
             if has_name_of_component_or_hook(func) || is_memo_or_forward_ref_callback(func, memo) {
-                return report(node.span(), ASYNC);
+                let start = func.estree_span().start;
+                report(ASYNC, CALLED_HERE)
+                    .label(Span::new(start, start + 5), "This function is async.");
+                return;
             }
             if is_declared_as_something_else() {
-                return function_error(b"Anonymous");
+                return function_error(b"Anonymous", func.estree_span());
             }
         }
         _ => {}
@@ -345,20 +372,94 @@ pub(crate) fn check<'a, R: Rule>(
     let is_inside_try_catch = is_within(memo.try_statements(cx.file()));
     if is_use {
         if is_inside_try_catch {
-            report(node.span(), TRY_CATCH);
+            report(TRY_CATCH, "This Hook call is inside a try/catch block.");
         }
         return;
     }
     let is_cyclic = flow.is_cyclic || is_within(memo.do_while_loops(cx.file()));
-    if is_inside_try_catch {
-        return report(node.span(), if is_cyclic { LOOP } else { CONDITIONAL });
-    }
-    if !flow.is_reachable {
+    if !is_inside_try_catch && !flow.is_reachable {
         return;
     }
     if is_cyclic {
-        report(node.span(), LOOP);
-    } else if flow.is_conditional {
-        report(node.span(), CONDITIONAL);
+        report(LOOP, CALLED_HERE).labels_with(|labels| {
+            if let Some(keyword) = loop_keyword_span(node, func) {
+                labels.push(keyword, "This loop may execute the Hook more than once.");
+            }
+        });
+    } else if is_inside_try_catch || flow.is_conditional {
+        report(
+            CONDITIONAL,
+            "This Hook call is not reachable on every render path.",
+        )
+        .labels_with(|labels| {
+            if let Some((span, text)) = conditional_context(node, func) {
+                labels.push(span, text);
+            }
+        });
     }
+}
+
+/// What is around `hook` in `func`.
+fn within<'a>(hook: Expr<'a>, func: Func<'a>) -> impl Iterator<Item = Node<'a>> {
+    Node::Expr(hook)
+        .ancestors()
+        .take_while(move |it| *it != Node::Func(func))
+}
+
+fn loop_keyword_span<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<Span> {
+    let statement = within(hook, func).find_map(|it| it.as_stmt().filter(|it| it.is_loop()))?;
+    let start = statement.span().start;
+    let len = match statement.tag() {
+        StmtTag::DoWhile => 2,
+        StmtTag::While => 5,
+        _ => 3,
+    };
+    Some(Span::new(start, start + len))
+}
+
+/// The nearest condition by which `hook` can be skipped, and what oxlint says there. What is in a condition is evaluated before it
+/// decides.
+fn conditional_context<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<(Span, &'static str)> {
+    within(hook, func).find_map(|ancestor| {
+        let (condition, text) = match ancestor {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::If { test, no, .. } => (
+                    test.outer_span(),
+                    match no.is_some_and(|it| it.span().contains(hook.span())) {
+                        true => "When this condition is true, this Hook is skipped.",
+                        false => "When this condition is false, this Hook is skipped.",
+                    },
+                ),
+                _ => return None,
+            },
+            Node::Expr(e) => match e.kind() {
+                ExprKind::Cond { test, .. } => (
+                    test.outer_span(),
+                    "Only one side of this conditional expression calls the Hook.",
+                ),
+                ExprKind::Binary { op, left, .. } => (
+                    left.outer_span(),
+                    match op {
+                        BinOp::And => "This short-circuits when falsy, skipping the Hook call.",
+                        BinOp::Or => "This short-circuits when truthy, skipping the Hook call.",
+                        BinOp::Nullish => {
+                            "This short-circuits when not nullish, skipping the Hook call."
+                        }
+                        _ => return None,
+                    },
+                ),
+                _ => return None,
+            },
+            Node::Case(case) => {
+                let start = case.span().start;
+                let default = Span::new(start, start + 7);
+                (
+                    case.test().map_or(default, Expr::outer_span),
+                    "Only this switch case calls the Hook.",
+                )
+            }
+            _ => return None,
+        };
+        (!condition.contains(hook.span())).then_some((condition, text))
+    })
 }

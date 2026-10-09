@@ -1,3 +1,4 @@
+use bun_core::printer::json_stringify_alloc;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::ast::{Assertion, Kind as RegexKind};
@@ -5,7 +6,7 @@ use bun_lint::regex::{Mode, Options as RegexOptions, parse_pattern};
 use bun_lint::types::TypeFlags;
 use bun_lint::types::utils::get_type_name;
 use bun_lint::utils::eslint_utils::{StaticValue, get_property_name, get_static_value};
-use bun_lint::utils::text::{json_stringify, string_from_code_points, utf16_len};
+use bun_lint::utils::text::string_from_code_points;
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 
 /// Enforce using `String#startsWith` and `String#endsWith` over other equivalent methods of
@@ -68,7 +69,7 @@ fn is_number(node: Expr, value: f64) -> bool {
 
 /// Whether `node` is a string of one UTF-16 code unit.
 fn is_character(node: Expr) -> bool {
-    static_value(node).is_some_and(|evaluated| evaluated.as_str().is_some_and(|it| utf16_len(it) == 1))
+    static_value(node).is_some_and(|evaluated| evaluated.as_str().is_some_and(|it| strings::wtf8_len_utf16(it) == 1))
 }
 
 fn is_equality_comparison(op: BinOp) -> bool {
@@ -92,7 +93,7 @@ fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>) -> b
         return false;
     };
     static_value(expected_object_node)
-        .is_some_and(|it| it.as_str().is_some_and(|it| evaluated_length == f64::from(utf16_len(it))))
+        .is_some_and(|it| it.as_str().is_some_and(|it| evaluated_length == f64::from(strings::wtf8_len_utf16(it))))
 }
 
 /// Whether `node` is `-substring.length` or `parentString.length - substring.length`.
@@ -315,7 +316,7 @@ impl PreferStringStartsEndsWith {
                 get_property_range(it.member, it.object),
                 side.access(it.member.is_optional()),
             ));
-            fixes.push(fixer.replace(argument, json_stringify(&text)));
+            fixes.push(fixer.replace(argument, json_stringify_alloc(&text)));
             fixes.push(fixer.remove(Span::new(call_node.span().end, it.node.span().end)));
             fixes
         });
@@ -457,7 +458,7 @@ impl PreferStringStartsEndsWith {
                 fixes.push(fixer.insert_before(arg_node, "("));
                 fixes.push(fixer.insert_after(arg_node, ")"));
             }
-            let (access, search) = (side.access(callee.is_optional()).as_bytes(), json_stringify(&text));
+            let (access, search) = (side.access(callee.is_optional()).as_bytes(), json_stringify_alloc(&text));
             fixes.push(fixer.insert_after(arg_node, [access, b"(", search.as_slice()].concat()));
             fixes
         });

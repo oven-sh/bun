@@ -1,3 +1,4 @@
+use bun_core::strings;
 use crate::a11y::{
     NamesByElement, cow_to_ascii_lowercase, get_element_implicit_roles, get_static_string_prop_value,
 };
@@ -5,7 +6,6 @@ use crate::jsx::{
     AttributeValue, as_jsx_element, get_element_type, get_prop_value, get_string_literal_prop_value, has_jsx_prop_ignore_case,
     parse_jsx_value,
 };
-use bun_lint_oxlint::text::split_whitespace;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -40,7 +40,7 @@ impl Rule for NoRedundantRoles {
                 return;
             };
             let component = get_element_type(cx.file(), jsx_el);
-            for role in split_whitespace(role_values) {
+            for role in strings::split_unicode_whitespace(role_values) {
                 if let Some(implicit_role) = get_redundant_implicit_role(&component, jsx_el, role)
                     && !rule.is_allowed_redundant_role(&component, implicit_role)
                 {
@@ -77,7 +77,7 @@ fn get_redundant_implicit_role(element: &[u8], jsx_el: Jsx, explicit_role: &[u8]
 fn get_img_implicit_role(jsx_el: Jsx) -> Option<&'static str> {
     let alt = has_jsx_prop_ignore_case(jsx_el, "alt").and_then(get_string_literal_prop_value);
     let src = has_jsx_prop_ignore_case(jsx_el, "src").and_then(get_static_string_prop_value);
-    (!alt.is_some_and(<[u8]>::is_empty) && !src.is_some_and(|src| bun_core::strings::contains(src, b".svg"))).then_some("img")
+    (!alt.is_some_and(<[u8]>::is_empty) && !src.is_some_and(|src| strings::contains(src, b".svg"))).then_some("img")
 }
 
 fn get_select_implicit_role(jsx_el: Jsx) -> &'static str {

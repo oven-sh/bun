@@ -440,7 +440,7 @@ impl<'l> Loader<'l> {
     }
 
     /// Adds to [`Loader::advice`].
-    fn advise(&self, line: Vec<u8>) {
+    pub(crate) fn advise(&self, line: Vec<u8>) {
         let mut advice = self.advice.lock();
         if !advice.contains(&line) {
             advice.push(line);

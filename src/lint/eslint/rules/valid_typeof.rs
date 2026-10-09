@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::text::best_match;
 
 /// Enforce comparing `typeof` expressions against valid strings.
 pub struct ValidTypeof {
@@ -46,12 +47,12 @@ impl ValidTypeof {
         match sibling.kind() {
             ExprKind::String(value) => {
                 if !value.is_any(&VALID_TYPES) {
-                    cx.report(sibling, INVALID_VALUE);
+                    report_invalid_value(sibling, value.bytes(), cx);
                 }
             }
             ExprKind::Template(template) if template.exprs().is_empty() => {
                 if !template.as_static().is_some_and(|value| value.is_any(&VALID_TYPES)) {
-                    cx.report(sibling, INVALID_VALUE);
+                    report_invalid_value(sibling, template.as_static().map_or(&[][..], Name::bytes), cx);
                 }
             }
             ExprKind::Number(_)
@@ -70,7 +71,9 @@ impl ValidTypeof {
                 let report = cx.report(sibling, message);
                 // What ESLint suggests is a fix in oxlint.
                 if cx.language().is_oxlint {
-                    report.fix(|fixer| fixer.replace(sibling, "\"undefined\""));
+                    report
+                        .help("Use `\"undefined\"` instead of `undefined`.")
+                        .fix(|fixer| fixer.replace(sibling, "\"undefined\""));
                     return;
                 }
                 report.suggest_with(SUGGEST_STRING, &[("type", "undefined".as_bytes())], |fixer| {
@@ -83,6 +86,17 @@ impl ValidTypeof {
                 }
             }
         }
+    }
+}
+
+/// oxlint's `help` names the type that `value` is nearly.
+fn report_invalid_value<'a>(at: Expr<'a>, value: &[u8], cx: &Cx<'a, ValidTypeof>) {
+    let report = cx.report(at, INVALID_VALUE);
+    if cx.language().is_oxlint {
+        report.help_with(|| match best_match(value, &VALID_TYPES, 2) {
+            Some(suggestion) => format!("Did you mean `\"{suggestion}\"`?"),
+            None => String::new(),
+        });
     }
 }
 

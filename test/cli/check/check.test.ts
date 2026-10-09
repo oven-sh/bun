@@ -76,6 +76,7 @@ const env = {
   npm_lifecycle_event: undefined,
   npm_package_json: undefined,
   BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
   NO_COLOR: "1",
 };
 
@@ -16148,6 +16149,30 @@ describe.concurrent("--check", () => {
       1,
     ]);
   });
+
+  // The path is compared as `bun run` spells it.
+  test.skipIf(isWindows)(
+    "in a `check` script that a Bun with only `bun check` has started, `bun check` is the type checker",
+    async () => {
+      using dir = project({
+        "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+        "tsconfig.json": tsconfig,
+        "a.ts": `export const a: number = "1";\n`,
+      });
+      const cwd = String(dir);
+      const results = await Promise.all([
+        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
+        // Of another package.
+        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
+      ]);
+      expect(
+        results.map(it => [it.stdout.includes("TS2322"), it.stdout.includes("the script ran"), it.exitCode]),
+      ).toEqual([
+        [true, false, 1],
+        [false, true, 0],
+      ]);
+    },
+  );
 
   test("--check with --filter, --parallel or --sequential checks the project before the scripts", async () => {
     using dir = project({

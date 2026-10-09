@@ -1,6 +1,6 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{is_semicolon_token, is_token_on_same_line};
-use bun_lint::utils::text::has_line_break;
 
 /// Enforce location of semicolons.
 pub struct SemiStyle {
@@ -48,7 +48,7 @@ fn check<'a>(cx: &Cx<'a, SemiStyle>, semicolon: Span, expects_first: bool) {
     // Most are decided by the text next to the semicolon.
     if expects_first {
         let next = skip_trivia(text, semicolon.end);
-        if next as usize >= text.len() || !has_line_break(file.slice(Span::after(semicolon, next))) {
+        if next as usize >= text.len() || !strings::contains_js_line_break(file.slice(Span::after(semicolon, next))) {
             return;
         }
     } else {

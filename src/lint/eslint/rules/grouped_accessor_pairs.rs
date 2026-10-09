@@ -134,7 +134,16 @@ impl GroupedAccessorPairs {
             if is_said {
                 cx.report(Span::new(head.start, end), message)
                     .data("formerName", ast_utils::get_function_name_with_kind(first.func))
-                    .data("latterName", ast_utils::get_function_name_with_kind(second.func));
+                    .data("latterName", ast_utils::get_function_name_with_kind(second.func))
+                    .labels_with(|labels| {
+                        let is_here = |it: Accessor<'a>| {
+                            let name = ast_utils::get_function_name_with_kind(it.func);
+                            format!("{} is here", bstr::BStr::new(&name))
+                        };
+                        let start = ast_utils::get_function_head_loc(setter.func).start;
+                        labels.first(is_here(getter));
+                        labels.push(Span::new(start, setter.key.inner_span(cx.file()).end), is_here(setter));
+                    });
             }
         }
     }

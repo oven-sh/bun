@@ -2,7 +2,7 @@
 
 use crate::class::Class;
 use crate::node::{Assertion, Node};
-use crate::unit::{Subject, Text, is_line_terminator};
+use crate::unit::{Subject, Text};
 use bun_collections::smallvec::SmallVec;
 
 /// `out`: where to go on.
@@ -355,7 +355,11 @@ impl Program {
         match *self.insts.get(pc as usize)? {
             Inst::Unit { unit: wanted, out } if wanted == unit => Some(out),
             Inst::Any { out } if unit != SLASH => Some(out),
-            Inst::Dot { newlines, out } if newlines || !is_line_terminator(unit) => Some(out),
+            Inst::Dot { newlines, out }
+                if newlines || !bun_core::strings::is_js_line_terminator(unit) =>
+            {
+                Some(out)
+            }
             Inst::Class { index, out } if self.classes.get(index as usize)?.has(unit) => Some(out),
             _ => None,
         }

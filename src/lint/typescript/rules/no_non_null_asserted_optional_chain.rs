@@ -10,6 +10,22 @@ const NO_NON_NULL_OPTIONAL_CHAIN: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "You should remove the non-null assertion.");
 
+/// Where that ends which the last `?.` of the chain `e` comes after.
+fn end_before_optional_link(e: Expr) -> Option<u32> {
+    let mut at = e;
+    loop {
+        let (is_optional, before) = match at.kind() {
+            ExprKind::Call(call) => (call.is_optional(), call.callee()),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (at.is_optional(), obj),
+            _ => return None,
+        };
+        if is_optional {
+            return Some(before.outer_span().end);
+        }
+        at = before.skip_type_wrappers();
+    }
+}
+
 /// What oxlint 1.87 does: each `!` is reported by itself, where it is, and what only concerns types is seen through, so
 /// that `(a?.b as T)!` is reported too.
 fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNullAssertedOptionalChain>) {
@@ -31,7 +47,13 @@ fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNull
     let last = (is_whole_chain || e.is_chain_root()).then(|| e.span());
     for assertion in e.inner_non_null_spans().chain(last) {
         let mark = Span::new(assertion.end.saturating_sub(1), assertion.end);
-        cx.report(mark, NO_NON_NULL_OPTIONAL_CHAIN).suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(mark));
+        cx.report(mark, NO_NON_NULL_OPTIONAL_CHAIN)
+            .labels_with(|labels| {
+                if let Some(end) = end_before_optional_link(inner) {
+                    labels.push(Span::new(end, end + 1), "optional chain used");
+                }
+            })
+            .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(mark));
     }
 }
 

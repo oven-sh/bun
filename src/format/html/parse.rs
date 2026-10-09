@@ -7,7 +7,6 @@ use super::error::SyntaxError;
 use super::lexer::{self, LexedAttribute};
 use super::parser;
 use super::utilities::is_unknown_namespace;
-use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -408,7 +407,7 @@ impl<'a> Context<'a, '_> {
         // `<!\s*\[endif\]$`: what is before it.
         let before_end = value
             .strip_suffix(b"[endif]")
-            .and_then(|rest| text::trim_end(rest).strip_suffix(b"<!"));
+            .and_then(|rest| strings::trim_js_whitespace_end(rest).strip_suffix(b"<!"));
         if before_end == Some(b"") {
             self.tree[id].kind = Kind::IeConditionalEndComment;
             return Ok(());
@@ -484,10 +483,10 @@ impl<'a> Context<'a, '_> {
 
 /// `text.trim().replaceAll(/\s+/g, " ")`
 pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
-    let mut rest = text::trim(value);
+    let mut rest = strings::trim_js_whitespace(value);
     let mut result = Vec::with_capacity(rest.len());
     while let Some(&byte) = rest.first() {
-        match text::white_space_len(rest) {
+        match strings::js_whitespace_len(rest) {
             len @ 1.. => {
                 if result.last() != Some(&b' ') {
                     result.push(b' ');

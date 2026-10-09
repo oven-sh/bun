@@ -15,10 +15,9 @@ use super::utilities::{html_split, html_trim_preserve_indentation, min_indentati
 use crate::ir::element::TextWidth;
 use crate::options::{HtmlRoot, InHtml};
 use crate::prelude::*;
-use crate::text;
 use crate::write;
+use bun_core::printer::json_stringify;
 use bun_core::strings;
-use bun_lint::utils::text::json_stringify;
 use microsyntax::Part;
 use parser::{Code, Expression, Parser};
 
@@ -49,13 +48,13 @@ impl<'c> LineComment<'c> {
             lines_before += 1;
         }
         LineComment {
-            text: text::trim_end(&code[start..]),
+            text: strings::trim_js_whitespace_end(&code[start..]),
             lines_before,
         }
     }
 
     fn is_prettier_ignore(self) -> bool {
-        text::trim(&self.text[2..]) == b"prettier-ignore"
+        strings::trim_js_whitespace(&self.text[2..]) == b"prettier-ignore"
     }
 
     /// Prettier's `printTrailingComment`.
@@ -256,7 +255,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     fn write_microsyntax_key(&mut self, name: &[u8]) {
         match is_plain_microsyntax_key(name) {
             true => self.out.text(name),
-            false => self.out.built_text(|out| out.extend(json_stringify(name))),
+            false => self.out.built_text(|out| json_stringify(name, out)),
         }
     }
 
@@ -294,7 +293,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 write!(f, " as ");
                 match is_plain_microsyntax_key(alias) {
                     true => write!(f, text(alias)),
-                    false => f.write_built_text(|out| out.extend(json_stringify(alias))),
+                    false => f.write_built_text(|out| json_stringify(alias, out)),
                 }
             });
         }
@@ -399,7 +398,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let parent = &tree[element];
         self.print_expand(!strings::contains(value, b"@@"), |printer| {
             // `getTextValueParts`
-            let value = text::trim(value);
+            let value = strings::trim_js_whitespace(value);
             if parent.has(Flags::IS_WHITESPACE_SENSITIVE) {
                 // All that is between the parts of the `fill` is forced line breaks, so it is as good as an array.
                 if parent.has(Flags::IS_INDENTATION_SENSITIVE) {
@@ -546,7 +545,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         }
         let content = self.tree[parameters].span.of(self.options.original_text);
-        if text::trim(content).is_empty() {
+        if strings::trim_js_whitespace(content).is_empty() {
             return false;
         }
         let in_html = InHtml {

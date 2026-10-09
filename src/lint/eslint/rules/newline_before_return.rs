@@ -1,7 +1,6 @@
 use super::one_var::body_of;
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::lines;
 
 /// Require an empty line before `return` statements.
 pub struct NewlineBeforeReturn;
@@ -19,7 +18,7 @@ fn previous_sibling(stmt: Stmt<'_>) -> Option<Stmt<'_>> {
 }
 
 fn line_breaks(text: &[u8]) -> i32 {
-    lines(text).count() as i32 - 1
+    strings::js_lines(text).count() as i32 - 1
 }
 
 impl NewlineBeforeReturn {

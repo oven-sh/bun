@@ -72,7 +72,20 @@ impl Rule for CheckTagNames {
                             || rule.typed && is_redundant_if_typed()
                             || !is_valid())
                     {
-                        cx.report(tag.kind.span, CHECK_TAG_NAMES);
+                        cx.report(tag.kind.span, CHECK_TAG_NAMES).help_with(|| {
+                            let is_in = |tags: &[&str]| rule.typed && contains_name(tags, tag_name);
+                            let what = if is_in(&ALWAYS_INVALID_TAGS_IF_TYPED) {
+                                "is redundant when using a type system."
+                            } else if rule.typed && tag_name == b"template" && tag.comment().is_empty() {
+                                "without a name is redundant when using a type system."
+                            } else if !is_ambient && is_in(&OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED) {
+                                "is redundant outside of ambient(`declare` or `.d.ts`) contexts when using a type system."
+                            } else {
+                                "is invalid tag name."
+                            };
+                            let reason = settings.reason_against_tag_name(tag_name);
+                            reason.unwrap_or_else(|| format!("`@{}` {what}", bstr::BStr::new(tag_name)))
+                        });
                     }
                 }
             });

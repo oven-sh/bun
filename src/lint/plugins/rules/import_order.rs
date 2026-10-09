@@ -209,7 +209,7 @@ impl Rule for Order {
         let newlines_between = newlines_of(options.str("newlines-between")).unwrap_or(Newlines::Ignore);
         // `convertGroupsToRanks`
         let types_of = |group: &Json| -> Vec<ImportType> {
-            let items = group.as_array().unwrap_or(std::slice::from_ref(group));
+            let items = group.as_array().unwrap_or_else(|| std::slice::from_ref(group));
             items.iter().filter_map(Json::as_str).filter_map(ImportType::named).collect()
         };
         let written: Vec<Vec<ImportType>> = match options.has("groups") {
@@ -424,7 +424,7 @@ fn description_of(entry: &Entry) -> &'static str {
 }
 
 /// The `name` of a name in the braces of an import or an export. One in quotes is a `Literal`, which has none.
-fn name_of(name: Ident) -> &[u8] {
+fn name_of(name: Ident<'_>) -> &[u8] {
     if name.is_string() { b"undefined" } else { name.bytes() }
 }
 
@@ -619,7 +619,7 @@ impl Order {
             && (self.newlines_between == AlwaysAndInsideGroups || self.newlines_between_types == AlwaysAndInsideGroups);
         for (previous, current) in imported.iter().zip(imported.iter().skip(1)) {
             let mut lines = file.line_of(previous.node.end) + 1..file.line_of(current.node.start);
-            let has_empty_lines = lines.any(|it| text::is_blank(file.line_text(it)));
+            let has_empty_lines = lines.any(|it| strings::is_all_js_whitespace(file.line_text(it)));
             let is_start_of_distinct_group = current.rank - 1.0 >= previous.rank;
             let is_type_only = current.import_kind == ImportKind::Type;
             let is_beside_other_kind = is_type_only != (previous.import_kind == ImportKind::Type) && sorts_types;
@@ -652,7 +652,7 @@ impl Order {
             let remove = |message: Message| {
                 let start = end_of_line_with_comments(file, previous.root);
                 let end = start_of_line_with_comments(file, current.root);
-                let is_blank = start <= end && text::is_blank(slice(file.text(), start, end));
+                let is_blank = start <= end && strings::is_all_js_whitespace(slice(file.text(), start, end));
                 cx.report(previous.node, message).fix(|fixer| is_blank.then(|| fixer.remove(Span::new(start, end))));
             };
             let mut is_reported = true;
@@ -693,9 +693,9 @@ impl Order {
         let by_name = loop {
             match (of_a.next(), of_b.next()) {
                 (Some(x), Some(y)) if is_first && is_relative(x) && is_relative(y) && x != y => {
-                    break text::compare(a.0, b.0);
+                    break strings::order_utf16(a.0, b.0);
                 }
-                (Some(x), Some(y)) => match text::compare(x, y) {
+                (Some(x), Some(y)) => match strings::order_utf16(x, y) {
                     Ordering::Equal => is_first = false,
                     unequal => break unequal,
                 },
@@ -842,14 +842,14 @@ impl Order {
             let second_trivia = slice(text, second.node.end, second_end);
             report.fix(|fixer| match is_after {
                 false => {
-                    let trimmed = text::trim_end(second_trivia);
+                    let trimmed = strings::trim_js_whitespace_end(second_trivia);
                     let gap = slice(text, first_end, second_start.saturating_sub(1));
                     let blanks = second_trivia.get(trimmed.len()..).unwrap_or_default();
                     let moved = [second_code, b",", trimmed, first_code, first_trivia, gap, blanks].concat();
                     fixer.replace(Span::new(first_start, second_end), moved)
                 }
                 true => {
-                    let trimmed = text::trim_end(first_trivia);
+                    let trimmed = strings::trim_js_whitespace_end(first_trivia);
                     let gap = slice(text, second_end + 1, first_start);
                     let blanks = first_trivia.get(trimmed.len()..).unwrap_or_default();
                     let moved = [gap, first_code, b",", trimmed, second_code, blanks].concat();

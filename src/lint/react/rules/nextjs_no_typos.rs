@@ -1,8 +1,7 @@
-use bstr::ByteSlice;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
+use bun_lint_oxlint::text::best_match;
 
 /// Detects common typos in Next.js data fetching function names.
 pub struct NoTypos;
@@ -55,43 +54,9 @@ impl Rule for NoTypos {
 }
 
 fn check_function_name<'a>(name: Name<'a>, span: Span, cx: &Cx<'a, NoTypos>) {
-    if let Some(suggestion) = best_match(name.bytes()) {
+    if let Some(suggestion) = best_match(name.bytes(), &NEXTJS_DATA_FETCHING_FUNCTIONS, THRESHOLD) {
         let data = [("typo", name.bytes()), ("suggestion", suggestion.as_bytes())];
         let report = cx.report(span, NO_TYPOS).data("typo", name).data("suggestion", suggestion);
         report.suggest_with(CHANGE, &data, |fixer| fixer.replace(span, suggestion));
     }
-}
-
-/// `oxc_span`'s `min_edit_distance`: how many characters have to be replaced, added or removed. `b` is ASCII.
-fn min_edit_distance(a: &[u8], b: &[u8]) -> usize {
-    let mut prev: SmallVec<[usize; 24]> = (0..=b.len()).collect();
-    let mut curr: SmallVec<[usize; 24]> = SmallVec::new();
-    for (i, ca) in a.chars().enumerate() {
-        curr.clear();
-        curr.push(i + 1);
-        for (j, &cb) in b.iter().enumerate() {
-            let (Some(&replaced), Some(&removed), Some(&added)) = (prev.get(j), prev.get(j + 1), curr.get(j)) else {
-                break;
-            };
-            curr.push((replaced + usize::from(ca != char::from(cb))).min(removed + 1).min(added + 1));
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev.last().copied().unwrap_or(0)
-}
-
-/// `oxc_span`'s `best_match`: the closest of the names. `None` if `needle` is one of them, or like none.
-fn best_match(needle: &[u8]) -> Option<&'static str> {
-    let mut best: Option<(&'static str, usize)> = None;
-    for candidate in NEXTJS_DATA_FETCHING_FUNCTIONS {
-        if candidate.len().abs_diff(needle.len()) > THRESHOLD {
-            continue;
-        }
-        match min_edit_distance(needle, candidate.as_bytes()) {
-            0 => return None,
-            distance if distance <= THRESHOLD && best.is_none_or(|it| distance < it.1) => best = Some((candidate, distance)),
-            _ => {}
-        }
-    }
-    best.map(|it| it.0)
 }

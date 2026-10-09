@@ -9,7 +9,7 @@
 // inner-allows.inventory.json, by file. It can only shrink.
 //
 // If this fails because you ADDED one: repair what the lint reports, or put `#[allow(..)]` with a reason on the one item
-// that needs it. The inventory does not take it: `--update` refuses what grows.
+// that needs it. The inventory does not take it: `--update` leaves out what grows.
 // If it fails because you REMOVED or MOVED one:
 //   bun ./test/internal/source-lints/inner-allows.test.ts --update
 
@@ -25,16 +25,11 @@ const INVENTORY = import.meta.dir + "/inner-allows.inventory.json";
 // `#![allow(a, b)]`, `#![expect(a)]`, `#![cfg_attr(<predicate>, allow(a))]`, on one line or wrapped by rustfmt.
 const INNER = /#!\[\s*(?:cfg_attr\([^\]]+?,\s*)?(?:allow|expect)\(([^)]*)\)[^\]]*\]/g;
 
-// Only files tracked in HEAD: see dead-code-escapes.test.ts.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
+// A module of helpers for the rules of a plugin that are still being written: a helper has no user until its rule is there.
+// Only beside `rules/` of these crates, only as the first line, only with these words. It goes when the plugin is whole.
+const UNTIL_WRITTEN = "#![allow(dead_code)] // until every rule of the plugin is written\n";
+const HELPERS = /^src\/lint\/(?:unicorn|react|jest|plugins)\/[a-z0-9_]+\.rs$/;
+const WAITING = "dead_code, until every rule of the plugin is written";
 
 type Inventory = Record<string, string[]>;
 const found: Inventory = {};
@@ -43,15 +38,17 @@ let scanned = 0;
 for (const abs of globAllSources().rust.filter(p => p.endsWith(".rs"))) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
-  const stripped = (await file(abs).text()).replace(/^\s*\/\/.*$/gm, "");
+  const text = await file(abs).text();
+  const isWaiting = HELPERS.test(source) && text.startsWith(UNTIL_WRITTEN);
+  const stripped = text.slice(isWaiting ? UNTIL_WRITTEN.length : 0).replace(/^\s*\/\/.*$/gm, "");
   const lints = [...stripped.matchAll(INNER)].flatMap(it =>
     it[1]
       .split(",")
       .map(it => it.trim())
       .filter(it => it !== "" && !it.startsWith("reason")),
   );
+  if (isWaiting) lints.push(WAITING);
   if (lints.length > 0) found[source] = lints.sort();
 }
 
@@ -66,22 +63,32 @@ const totals = (inventory: Inventory) => {
 };
 
 if (process.argv.includes("--update")) {
-  // A file can be moved or split. No lint can be allowed more often than before.
-  const before: Inventory | null = await Bun.file(INVENTORY)
+  // A file can be moved or split. No lint can be allowed more often than before: of such a lint the inventory stays as
+  // it is, so that one who has removed an allow does not wait for a stranger who has added one.
+  const before: Inventory = await Bun.file(INVENTORY)
     .json()
-    .catch(() => null);
-  if (before !== null) {
-    const [was, is] = [totals(before), totals(normalized)];
-    const grown = Object.keys(is).filter(lint => is[lint] > (was[lint] ?? 0));
-    if (grown.length > 0) {
-      for (const lint of grown) console.error(`#![allow(${lint})]: ${was[lint] ?? 0} -> ${is[lint]}`);
-      console.error("The inventory only shrinks: not written.");
-      process.exit(1);
-    }
+    .catch(() => ({}));
+  const isFirst = Object.keys(before).length === 0;
+  const [was, is] = [totals(before), totals(normalized)];
+  const grown = isFirst ? [] : Object.keys(is).filter(lint => lint !== WAITING && is[lint] > (was[lint] ?? 0));
+  const files: Inventory = {};
+  for (const [source, lints] of Object.entries(normalized)) {
+    for (const lint of lints) if (!grown.includes(lint)) (files[source] ??= []).push(lint);
   }
-  await Bun.write(INVENTORY, JSON.stringify(normalized, null, 2) + "\n");
-  console.log(`Wrote ${Object.keys(normalized).length} files to ${path.basename(INVENTORY)}`);
-  process.exit(0);
+  for (const [source, lints] of Object.entries(before)) {
+    for (const lint of lints) if (grown.includes(lint)) (files[source] ??= []).push(lint);
+  }
+  const sorted: Inventory = Object.fromEntries(
+    Object.entries(files)
+      .map(([source, lints]) => [source, lints.sort()] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+  await Bun.write(INVENTORY, JSON.stringify(sorted, null, 2) + "\n");
+  console.log(`Wrote ${Object.keys(sorted).length} files to ${path.basename(INVENTORY)}`);
+  for (const lint of grown) {
+    console.error(`NOT #![allow(${lint})]: ${was[lint] ?? 0} -> ${is[lint]}: the inventory only shrinks.`);
+  }
+  process.exit(grown.length > 0 ? 1 : 0);
 }
 
 const inventory: Inventory = await Bun.file(INVENTORY).json();
@@ -100,7 +107,7 @@ describe("no new #![allow(..)]", () => {
     const added = actual.filter(lint => {
       const at = left.indexOf(lint);
       if (at >= 0) left.splice(at, 1);
-      return at < 0;
+      return at < 0 && lint !== WAITING;
     });
     if (added.length > 0) {
       throw new Error(

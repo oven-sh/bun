@@ -3,12 +3,13 @@
 use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
 use super::rc::strings_of;
-use super::{Config, ConfigObject, Pattern, path, presets};
+use super::{Config, ConfigObject, Pattern, presets};
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::linter::registry::{Registry, parse_rule_id};
-use crate::linter::resolved::find_js_rule;
+use crate::linter::resolved::{find_js_rule, needs_resolver};
 use crate::options::Json;
+use crate::paths;
 use crate::rule::{Plugin, minor_of};
 use crate::runner::RuleEntry;
 use std::sync::Arc;
@@ -58,6 +59,10 @@ pub(super) struct Reader<'r> {
     pub(super) defaults: usize,
     /// The names of the plugins of the configuration that are not [built in](is_built_in).
     pub(super) foreign_prefixes: Vec<Box<[u8]>>,
+    /// [`names_unknown_resolver`] somewhere.
+    pub(super) has_unknown_resolver: bool,
+    /// The names of the plugins of which a rule is on that is answered for here and can hand a file back.
+    pub(super) handing_back: Vec<Box<[u8]>>,
 }
 
 /// Whether the plugin that a configuration has as `prefix` is the one that is implemented here: it has the name that is usual
@@ -93,6 +98,35 @@ fn add_foreign_prefixes(json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
     if let Some(extends) = json.get(b"extends") {
         add_foreign_prefixes(extends, depth + 1, into);
     }
+}
+
+/// Whether `settings` has an `import/resolver` that the rules here do not do the same as. The package answers then.
+pub(super) fn names_unknown_resolver(settings: &Json) -> bool {
+    let is_known = |name: &[u8]| {
+        let name = name
+            .strip_prefix(b"eslint-import-resolver-")
+            .unwrap_or(name);
+        matches!(name, b"node" | b"typescript")
+    };
+    let is_unknown = |it: &Json| match it {
+        Json::String(name) => !is_known(name),
+        Json::Object(entries) => entries.iter().any(|it| !is_known(&it.0)),
+        _ => false,
+    };
+    match settings.get(b"import/resolver") {
+        Some(Json::Array(items)) => items.iter().any(is_unknown),
+        Some(one) => is_unknown(one),
+        None => false,
+    }
+}
+
+/// The same for what a configuration file exports, or a part of it.
+fn has_unknown_resolver(json: &Json, depth: usize) -> bool {
+    if let Json::Array(items) = json {
+        return depth < 64 && items.iter().any(|it| has_unknown_resolver(it, depth + 1));
+    }
+    json.get(b"settings").is_some_and(names_unknown_resolver)
+        || (json.get(b"extends")).is_some_and(|it| has_unknown_resolver(it, depth + 1))
 }
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
@@ -250,7 +284,7 @@ impl Reader<'_> {
         (self
             .registry
             .find_preferring(id, self.prefers_typescript_rules))
-        .filter(|_| !is_foreign)
+        .filter(|it| !is_foreign && !(self.has_unknown_resolver && needs_resolver(it.meta)))
     }
 
     /// The rules of an object.
@@ -295,6 +329,10 @@ impl Reader<'_> {
             }
             match self.native_rule(id) {
                 Some(entry) => {
+                    let is_new = !self.handing_back.iter().any(|it| **it == *prefix);
+                    if entry.meta.hands_back && setting.severity != Severity::Off && is_new {
+                        self.handing_back.push(prefix.into());
+                    }
                     setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into()
                 }
                 // One more instance of a rule of ESLint, which is of no plugin.
@@ -370,8 +408,8 @@ impl Reader<'_> {
         let entries = json.as_object().unwrap_or_default();
         let mut object = ConfigObject::default();
         if let Some(base_path) = json.get(b"basePath").and_then(Json::as_str) {
-            let base_path = path::portable(&self.base_path, base_path);
-            object.base_path = Some(path::resolve(&self.base_path, &base_path));
+            let base_path = paths::portable(&self.base_path, base_path);
+            object.base_path = Some(paths::resolve(&self.base_path, &base_path));
         }
         if let Some(files) = json.get(b"files").and_then(Json::as_array) {
             let mut alternatives = Vec::with_capacity(files.len());
@@ -613,7 +651,7 @@ impl Config {
     ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
             registry,
-            base_path: path::resolve(b"/", base_path),
+            base_path: paths::absolute(base_path),
             prefers_typescript_rules: false,
             objects: Vec::new(),
             notes: Vec::new(),
@@ -623,6 +661,8 @@ impl Config {
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
+            has_unknown_resolver: has_unknown_resolver(json, 0),
+            handing_back: Vec::new(),
         };
         add_foreign_prefixes(json, 0, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
@@ -659,7 +699,10 @@ impl Reader<'_> {
         for (prefix, location) in &mut self.js_locations {
             let mut unknown = self.unknown_rules.iter();
             // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
-            if prefix.is_empty() || unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
+            if prefix.is_empty()
+                || unknown.any(|id| parse_rule_id(id).0 == &prefix[..])
+                || self.handing_back.contains(prefix)
+            {
                 self.js_plugins.push(load(location, prefix).map_err(|why| {
                     ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])
                 })?);

@@ -165,7 +165,15 @@ impl PreferExportFrom {
         for (violations, is_namespace) in [(namespace_violations, true), (regular_violations, false)] {
             let group = Group { import_decl, specifiers: &specifiers, violations: &violations, re_export_decl, is_namespace };
             for violation in &violations {
-                cx.report(statement, PREFER_EXPORT_FROM).suggest(USE_EXPORT_FROM, |fixer| group.fix(fixer, violation));
+                let specifier = specifiers.get(violation.specifier_index).map(|it| match it.specifier {
+                    Specifier::Default(name) => name.span(),
+                    Specifier::Namespace(span) => span,
+                    Specifier::Named(specifier) => specifier.span(),
+                });
+                cx.report(statement, PREFER_EXPORT_FROM)
+                    .first_label("Imported here.")
+                    .label(specifier.unwrap_or_default(), "Re-exported here.")
+                    .suggest(USE_EXPORT_FROM, |fixer| group.fix(fixer, violation));
             }
         }
     }

@@ -25,7 +25,7 @@
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::to_precision(n, p)`, `js_number::decimal_digits(n, p)`, .. |
-//! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
+//! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | `equalTokens` of each of n nodes with each other | [`token_key`] | `TokenClasses::default().number_of(file, node)`: the same number for the same tokens |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
@@ -42,8 +42,8 @@
 //! | ESLint | [`ast_utils`] |
 //! | --- | --- |
 //! | `COMMENTS_IGNORE_PATTERN.test(s)` | `matches_comments_ignore_pattern(s)` |
-//! | `LINEBREAK_MATCHER.test(s)`, `.exec(s)` | `has_linebreak(s)`, `text::find_line_break(s)` |
-//! | `createGlobalLinebreakMatcher()` | `create_global_linebreak_matcher(s)`, `text::lines(s)` |
+//! | `LINEBREAK_MATCHER.test(s)`, `.exec(s)` | `bun_core::strings::contains_js_line_break(s)`, `bun_core::strings::find_js_line_break(s)` |
+//! | `createGlobalLinebreakMatcher()` | `create_global_linebreak_matcher(s)`, `bun_core::strings::js_lines(s)` |
 //! | `SHEBANG_MATCHER` | `match_shebang(s)` |
 //! | `STATEMENT_LIST_PARENTS.has(node.parent.type)` | `is_statement_list_parent(stmt.parent())` |
 //! | `ECMASCRIPT_GLOBALS` | `is_ecmascript_global(name)`, `ecmascript_global_since(name)` |

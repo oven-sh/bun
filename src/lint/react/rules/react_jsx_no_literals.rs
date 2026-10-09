@@ -1,6 +1,5 @@
 use bun_lint_oxlint::ast_util::is_react_component_name;
 use crate::jsx::{AttributeValue, get_prop_value};
-use bun_lint_oxlint::text::trim;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -43,7 +42,7 @@ impl JsxNoLiteralsOptions {
             allowed_strings: options
                 .strings("allowedStrings")
                 .into_iter()
-                .map(|it| trim(it.as_bytes()).into())
+                .map(|it| strings::trim_unicode_whitespace(it.as_bytes()).into())
                 .collect(),
             ignore_props: options.bool_or("ignoreProps", false),
             no_attribute_strings: options.bool_or("noAttributeStrings", false),
@@ -56,7 +55,8 @@ impl JsxNoLiteralsOptions {
     }
 
     fn is_allowed_string(&self, str_literal: &[u8]) -> bool {
-        !self.allowed_strings.is_empty() && self.allowed_strings.iter().any(|allowed| **allowed == *trim(str_literal))
+        let trimmed = strings::trim_unicode_whitespace(str_literal);
+        !self.allowed_strings.is_empty() && self.allowed_strings.iter().any(|allowed| **allowed == *trimmed)
     }
 }
 
@@ -222,7 +222,7 @@ fn inspect_element_literals<'a>(jsx: Jsx<'a>, options: &JsxNoLiteralsOptions, cx
     for child in jsx.children() {
         let is_literal = if child.is_jsx_text() {
             let value = child.text();
-            !trim(value).is_empty() && !options.is_allowed_string(value)
+            !strings::trim_unicode_whitespace(value).is_empty() && !options.is_allowed_string(value)
         } else {
             options.no_strings
                 && child.jsx_container_span().is_some()

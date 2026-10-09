@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -890,7 +891,7 @@ fn remove_node_with_trailing_newline(fixer: Fixer, node: Span) -> Fix {
         false => file.span().end,
     };
     let lines = Span::new(line_range_start, line_range_end);
-    match file.slice(node) == text::trim(file.slice(lines)) {
+    match file.slice(node) == strings::trim_js_whitespace(file.slice(lines)) {
         true => fixer.remove(lines),
         false => fixer.remove(node),
     }
@@ -1179,6 +1180,35 @@ impl NoUnusedVars {
         }
     }
 
+    /// oxlint's `help`.
+    #[cold]
+    #[inline(never)]
+    fn oxlint_help(&self, variable: Variable, message: Message) -> String {
+        if message.id == USED_IGNORED_VAR.id {
+            let without_underscore = variable.name().bytes().strip_prefix(b"_");
+            let to = match (self.vars_ignore_pattern.as_ref().map(Pattern::source), without_underscore) {
+                (None, _) if self.has_options_object => ".".to_owned(),
+                (None | Some("^_"), Some(name)) => format!(" to '{}'.", bstr::BStr::new(name)),
+                (None | Some("^_"), None) => ".".to_owned(),
+                (Some(source), _) => format!(" to match the pattern /{source}/."),
+            };
+            let pronoun = oxlint_pronoun_for_symbol(variable).0.to_ascii_lowercase();
+            return format!("Consider renaming this {pronoun}{to}");
+        }
+        let help = match variable.defs().next() {
+            Some(Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) | Declaration::ImportSpec(_)) => {
+                "Consider removing this import."
+            }
+            Some(Declaration::Param(_)) => "Consider removing this parameter.",
+            Some(def @ Declaration::Var(_)) if def.is_catch_parameter() => "Consider handling this error.",
+            Some(Declaration::Var(_)) if variable.references().any(|it| it.is_write() && !it.is_init()) => {
+                "Did you mean to use this variable?"
+            }
+            _ => "Consider removing this declaration.",
+        };
+        help.to_owned()
+    }
+
     /// oxlint's `rename_or_remove_var_declaration`. `own`: where the declarator binds the name.
     #[cold]
     #[inline(never)]
@@ -1307,7 +1337,7 @@ impl NoUnusedVars {
         let start = cx.position(id.start);
         let end = Position {
             line: start.line,
-            column: start.column + text::utf16_len(name.bytes()),
+            column: start.column + strings::wtf8_len_utf16(name.bytes()),
         };
         let is_oxlint = cx.language().is_oxlint;
         let mut report = cx
@@ -1317,7 +1347,23 @@ impl NoUnusedVars {
             .data("action", action)
             .data("additional", additional);
         if is_oxlint {
-            report = report.data("text", self.oxlint_text(unused_var, message));
+            report = report
+                .data("text", self.oxlint_text(unused_var, message))
+                .help_with(|| self.oxlint_help(unused_var, message))
+                .labels_with(|labels| {
+                let def = unused_var.defs().next().filter(|_| message.id != USED_IGNORED_VAR.id);
+                let how = match def.and_then(Declaration::kind) {
+                    _ if matches!(def, Some(Declaration::ImportEquals(_))) => "declared",
+                    Some(DeclarationKind::ImportBinding) => "imported",
+                    _ => "declared",
+                };
+                labels.first(format!("'{}' is {how} here", bstr::BStr::new(name.bytes())));
+                if matches!(def, Some(def @ Declaration::Var(_)) if !def.is_catch_parameter())
+                    && let Some(last_write) = unused_var.references().filter(|it| it.is_write() && !it.is_init()).last()
+                {
+                    labels.push(last_write.span(), "it was last assigned here");
+                }
+            });
             let Some(def) = unused_var.defs().next().filter(|_| message.id != USED_IGNORED_VAR.id) else {
                 return;
             };

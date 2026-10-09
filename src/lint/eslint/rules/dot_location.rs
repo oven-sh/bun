@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce consistent newlines before and after dots.
@@ -28,7 +29,7 @@ impl DotLocation {
         let start = skip_trivia(cx.text(), access.object_end);
         let dot = Span::new(start, start + if access.is_optional { 2 } else { 1 });
         if self.on_object {
-            if text::has_line_break(cx.slice(Span::before(access.object_end, dot))) {
+            if strings::contains_js_line_break(cx.slice(Span::before(access.object_end, dot))) {
                 cx.report(dot, EXPECTED_DOT_AFTER_OBJECT).fix(|fixer| {
                     let moved = match (access.is_optional, access.is_decimal_integer) {
                         (true, _) => "?.",
@@ -38,7 +39,7 @@ impl DotLocation {
                     [fixer.insert_after(Span::empty(access.object_end), moved), fixer.remove(dot)]
                 });
             }
-        } else if text::has_line_break(cx.slice(Span::after(dot, access.property))) {
+        } else if strings::contains_js_line_break(cx.slice(Span::after(dot, access.property))) {
             cx.report(dot, EXPECTED_DOT_BEFORE_PROPERTY).fix(|fixer| {
                 let moved = if access.is_optional { "?." } else { "." };
                 [fixer.remove(dot), fixer.insert_before(Span::empty(access.property), moved)]
@@ -63,7 +64,9 @@ impl Rule for DotLocation {
                 return;
             };
             let (object_end, property) = (obj.outer_span().end, name.start());
-            if text::has_line_break(cx.slice(Span::new(object_end, property))) && ast_utils::is_member_expression(e) {
+            if strings::contains_js_line_break(cx.slice(Span::new(object_end, property)))
+                && ast_utils::is_member_expression(e)
+            {
                 let access = Access {
                     object_end,
                     property,
@@ -83,7 +86,7 @@ impl Rule for DotLocation {
                 return;
             };
             if name.len() < 2
-                || !text::has_line_break(cx.slice(name.span()))
+                || !strings::contains_js_line_break(cx.slice(name.span()))
                 || utils::estree_type_name(Node::Type(ty)) == "TSTypeReference"
             {
                 return;

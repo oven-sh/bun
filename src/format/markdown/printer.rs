@@ -5,8 +5,7 @@ use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
 };
-use super::strings::{character_reference, first_char, is_in, last_char};
-use super::unicode_tables::SPACE_SEPARATOR;
+use super::strings::{character_reference, first_char, last_char};
 use crate::FormatOptions;
 use crate::css::doc::{
     self, Alignment, Doc, Line, align_with_spaces, docs, fill, group, hardline, indent,
@@ -192,7 +191,8 @@ fn min_not_present_continuous_count(text: &[u8], marker: u8) -> usize {
 
 /// `[\p{Space_Separator}\t\n\f\r]`
 fn is_commonmark_whitespace(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\u{C}' | '\r') || is_in(SPACE_SEPARATOR, c as u32)
+    matches!(c, '\t' | '\n' | '\u{C}' | '\r')
+        || bun_core::strings::is_unicode_space_separator(c as u32)
 }
 
 /// Collects the parts of a `fill`: content and separators take turns.
@@ -376,7 +376,9 @@ impl<'a> Printer<'a, '_> {
                     .str(node.value)
                     .strip_prefix(b"<!--")?
                     .strip_suffix(b"-->")?;
-                crate::text::trim_end(crate::text::trim_start(comment))
+                bun_core::strings::trim_js_whitespace_end(
+                    bun_core::strings::trim_js_whitespace_start(comment),
+                )
             }
             Kind::EsComment => self.str(node.value),
             Kind::Paragraph if self.is_mdx && node.first_child == node.last_child => self.str(
@@ -497,7 +499,7 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `isLooseListItemLegacy`, with what remark-parse 8 says about an item: it is spread out if there
     /// is an empty line in it that something follows, and it ends behind the empty lines before the next item.
     fn is_loose_list_item_legacy(&self, item: &Node) -> bool {
-        let source = crate::text::trim_end(self.source(item));
+        let source = bun_core::strings::trim_js_whitespace_end(self.source(item));
         // The indentation of the item is taken away from its lines first, also from one with nothing else on it.
         let indent = self
             .node(item.first_child)
@@ -717,7 +719,7 @@ impl<'a> Printer<'a, '_> {
             && self.has_ancestor(id, |it| it.kind == Kind::Blockquote)
         {
             // `/\n>\s*$/`
-            let trimmed = crate::text::trim_end(source);
+            let trimmed = bun_core::strings::trim_js_whitespace_end(source);
             if let Some(without) = trimmed.strip_suffix(b"\n>") {
                 source = without;
             }
@@ -1322,7 +1324,7 @@ impl<'a> Printer<'a, '_> {
         // The package collapse-white-space: every run of white space is a space.
         let mut rest = label;
         while !rest.is_empty() {
-            let trimmed = crate::text::trim_start(rest);
+            let trimmed = bun_core::strings::trim_js_whitespace_start(rest);
             if trimmed.len() < rest.len() {
                 printed.push(b' ');
                 rest = trimmed;
@@ -1497,7 +1499,7 @@ impl<'a> Printer<'a, '_> {
             Kind::Html => {
                 let mut value = self.str(node.value);
                 if self.kind(node.parent) == Some(Kind::Root) && node.next == NONE {
-                    value = crate::text::trim_end(value);
+                    value = bun_core::strings::trim_js_whitespace_end(value);
                 }
                 if self.options.flavor.is_oxfmt() {
                     value = value.strip_suffix(b"\n").unwrap_or(value);
@@ -1519,9 +1521,9 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::List => self.print_list(id, node),
             Kind::ListItem | Kind::TableRow => Doc::EMPTY,
-            Kind::Import | Kind::Export | Kind::Jsx => {
-                Doc::from(crate::text::trim_end(self.str(node.value)))
-            }
+            Kind::Import | Kind::Export | Kind::Jsx => Doc::from(
+                bun_core::strings::trim_js_whitespace_end(self.str(node.value)),
+            ),
             Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
             Kind::ThematicBreak => {
                 let is_of_asterisks = match self.find_ancestor(id, |it| it.kind == Kind::List) {
@@ -1817,7 +1819,9 @@ impl<'a> Printer<'a, '_> {
                 code,
                 width: (self.options.line_width.value() as usize).saturating_sub(self.indentation),
             })?;
-            return Some(lines_of(crate::text::trim_end(&formatted)));
+            return Some(lines_of(bun_core::strings::trim_js_whitespace_end(
+                &formatted,
+            )));
         }
         if node.kind != Kind::Code || node.second.is_null() {
             return None;
@@ -1835,7 +1839,8 @@ impl<'a> Printer<'a, '_> {
                 return None;
             }
             // Nothing but white space in a language that is formatted: an empty line.
-            if crate::text::trim_end(code).is_empty() && super::parser_of_oxfmt(language).is_some()
+            if bun_core::strings::trim_js_whitespace_end(code).is_empty()
+                && super::parser_of_oxfmt(language).is_some()
             {
                 let style = vec![self.fence_unit(node); 3];
                 return Some(docs![
@@ -1852,7 +1857,7 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        let formatted = crate::text::trim_end(&formatted);
+        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
         let run = is_oxfmt.then(|| max_continuous_count(formatted, self.fence_unit(node)));
         let is_as_it_is = self.indentation == 0
             && !self.is_in_template
@@ -1881,7 +1886,9 @@ impl<'a> Printer<'a, '_> {
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
         let value = &self.original[front_matter.value.0..front_matter.value.1];
-        let value = crate::text::trim_end(crate::text::trim_start(value));
+        let value = bun_core::strings::trim_js_whitespace_end(
+            bun_core::strings::trim_js_whitespace_start(value),
+        );
         let formatted = match value {
             b"" if is_yaml || is_toml => (self.embed)(&Embedded {
                 language: b"",
@@ -1898,7 +1905,7 @@ impl<'a> Printer<'a, '_> {
         let Some(formatted) = formatted else {
             return Doc::from(raw);
         };
-        let formatted = crate::text::trim_end(&formatted);
+        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
         mark_as_root(docs![
             &raw[..3],
             language,

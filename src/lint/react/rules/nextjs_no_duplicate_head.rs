@@ -32,8 +32,9 @@ impl Rule for NoDuplicateHead {
                 return;
             }
             let mut elements = elements_named(import, head);
-            if let (Some((first, _)), Some(_)) = (elements.next(), elements.next()) {
-                cx.report(first, NO_DUPLICATE_HEAD);
+            if let (Some((first, _)), Some((second, _))) = (elements.next(), elements.next()) {
+                let report = cx.report(first, NO_DUPLICATE_HEAD).label(second, "");
+                elements.fold(report, |report, (further, _)| report.label(further, ""));
             }
         });
     }

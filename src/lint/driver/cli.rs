@@ -121,7 +121,7 @@ pub const PARAMS: &[Param] = &[
     ),
     clap::param!("--rules                         List the rules that are built in"),
     clap::param!(
-        "--threads <n>                   Number of threads <d>(default: one per CPU core, at most 16 with plugins in JavaScript)<r>"
+        "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),

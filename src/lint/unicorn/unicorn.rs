@@ -578,17 +578,21 @@ pub(crate) fn pad_fix_with_token_boundary(
     span: Span,
     replacement: &mut Vec<u8>,
 ) {
-    let (Some(first), Some(last)) = (text::first_code_point(replacement), replacement.last())
-    else {
+    let (Some(first), Some(last)) = (
+        bun_core::strings::wtf8_first_codepoint(replacement),
+        replacement.last(),
+    ) else {
         return;
     };
     let before = (span.start as usize)
         .checked_sub(1)
         .and_then(|it| source_text.get(it));
-    let needs_pad_start = before.is_some_and(|it| text::is_identifier_part(u32::from(*it)))
-        && text::is_identifier_part(first);
+    let needs_pad_start = before
+        .is_some_and(|it| bun_core::lexer::is_type_script_identifier_part(i32::from(*it)))
+        && bun_core::lexer::is_type_script_identifier_part(first as i32);
     let after = source_text.get(span.end as usize);
-    let needs_pad_end = after.is_some_and(|it| text::is_identifier_start(u32::from(*it)))
+    let needs_pad_end = after
+        .is_some_and(|it| bun_core::lexer::is_identifier_start(u32::from(*it)))
         && !last.is_ascii_whitespace();
     if needs_pad_start {
         replacement.insert(0, b' ');

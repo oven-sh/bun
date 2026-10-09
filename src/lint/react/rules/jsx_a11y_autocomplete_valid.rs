@@ -1,5 +1,6 @@
+use bun_core::strings;
 use crate::jsx::{as_jsx_element, get_element_type, get_string_literal_prop_value, has_jsx_prop_ignore_case};
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -26,7 +27,7 @@ fn is_part_of_address(value: &[u8]) -> bool {
 }
 
 fn is_valid_autocomplete_value(value: &[u8]) -> bool {
-    let mut parts = split_whitespace(value);
+    let mut parts = strings::split_unicode_whitespace(value);
     match (parts.next(), parts.next(), parts.next()) {
         (Some(only), None, _) => contains_name(&VALID_AUTOCOMPLETE_VALUES, only),
         (Some(b"billing" | b"shipping"), Some(second), None) => is_part_of_address(second),

@@ -12,6 +12,7 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
 use bun_lint::linter::{FileConfig, LintMessage, Linter, Registry, RuleId};
 use bun_sema::util::FxHashSet;
@@ -83,6 +84,9 @@ pub struct Environment<'e> {
     pub js_engine: &'e dyn Engine,
     /// The version of Bun.
     pub version: &'e [u8],
+    /// The memory of the machine, or of the container that the process is in, in bytes. 0: it is not known, and the programs of
+    /// a run with types are checked one after the other.
+    pub memory: usize,
 }
 
 /// What to print, and the exit code: 0, 1 if there are problems in the code, 2 if linting failed.
@@ -149,10 +153,6 @@ pub(crate) struct Pool {
     threads: usize,
 }
 
-/// More engines for JavaScript than this take more time and memory, and are no faster: the engines of a process share what
-/// hands out memory for compiled code.
-const MOST_ENGINES: usize = 16;
-
 /// What it takes to lint a file, beyond what is in this program.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Needs {
@@ -191,6 +191,18 @@ fn needs(target: &Target) -> Needs {
     } else {
         Needs::Nothing
     }
+}
+
+/// Whether a rule that is on for the file has the rule of its package beside it, to which it can hand the file back.
+fn may_be_handed_back(target: &Target) -> bool {
+    let Status::Matched(config) = &target.status else {
+        return false;
+    };
+    let mut on = config
+        .rules
+        .iter()
+        .filter(|it| it.severity != Severity::Off);
+    on.any(|it| it.or_else().is_some())
 }
 
 impl Needs {
@@ -253,7 +265,7 @@ impl Timing {
     }
 }
 
-/// Whether `a.filePath < b.filePath` in JavaScript ([`bun_lint::utils::text::compare`]) is the order of the bytes for `path`.
+/// Whether `a.filePath < b.filePath` in JavaScript ([`strings::order_utf16`]) is the order of the bytes for `path`.
 fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
@@ -706,12 +718,14 @@ impl Run<'_> {
             loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
-        let most_engines = (pool.threads())
-            .min(MOST_ENGINES)
-            .min(context.js_plugins.most_realms());
+        let most_engines = (pool.threads()).min(context.js_plugins.most_realms());
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
-        let size: u64 = shared.map(|it| it.size).sum();
-        (context.js_plugins).expect(with_engine.count(), size, most_engines);
+        // Those that a rule may hand back to the rule of its package count: it costs nothing if they do not come.
+        let may_come =
+            (supported.iter()).filter(|it| needs(it) == Needs::Nothing && may_be_handed_back(it));
+        let size: u64 = shared.chain(may_come.clone()).map(|it| it.size).sum();
+        let count = with_engine.count() + may_come.count();
+        (context.js_plugins).expect(count, size, most_engines);
         if !with_types.is_empty() {
             if !is_oxlint {
                 loader.advise_about_typescript();
@@ -884,11 +898,13 @@ impl Run<'_> {
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let broken_fixes = Guarded::new(Vec::new());
+        let handed_back = Guarded::new(Vec::new());
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
             broken_fixes: &broken_fixes,
+            handed_back: &handed_back,
             invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
@@ -899,6 +915,7 @@ impl Run<'_> {
             checks_types,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
+            reads_help: format.reads_help() && !options.silent,
             reads_suppressions: format.reads_suppressions() && !options.silent,
             js_plugins: &js_plugins,
             modules: &modules,
@@ -949,6 +966,17 @@ impl Run<'_> {
                 b" in JavaScript did not run, only the built-in rules have types: ",
                 &ids.join(&b", "[..]),
             ]);
+        }
+        for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
+            // That is so until the formatter is there, and says nothing to the user.
+            if reason != Reason::NoFormatter {
+                let noun = if files == 1 { "file" } else { "files" };
+                let text = reason.text();
+                loader.advise(
+                    format!("prettier/prettier ran in JavaScript for {files} {noun}: {text}.")
+                        .into_bytes(),
+                );
+            }
         }
         let mut broken = std::mem::take(&mut *broken_fixes.lock());
         bun_lint::utils::sort::sort_by(&mut broken, |a, b| a.0.cmp(&b.0));
@@ -1104,7 +1132,7 @@ impl Run<'_> {
         match results.iter().all(|it| is_ordered_by_bytes(&it.path)) {
             true => bun_lint::utils::sort::sort_by(&mut results, |a, b| a.path.cmp(&b.path)),
             false => bun_lint::utils::sort::sort_by(&mut results, |a, b| {
-                bun_lint::utils::text::compare(&a.path, &b.path)
+                strings::order_utf16(&a.path, &b.path)
             }),
         }
         results.extend(about_suppressions);

@@ -5,7 +5,6 @@
 //! since Prettier goes by them.
 
 use super::Parser as Syntax;
-use super::misc::is_space;
 use super::selector_parser::{SelectorId, Selectors};
 use crate::text::{self, ByteSet};
 
@@ -91,7 +90,7 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
         match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
                 let mut at = pos + 1;
-                while is_space(css.get(at)) {
+                while css.get(at).is_some_and(u8::is_ascii_whitespace) {
                     if css[at] == b'\n' {
                         offset = at as i64;
                         line += 1;
@@ -125,7 +124,8 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
             b'\'' | b'"' => {
                 let mut close = pos;
                 loop {
-                    close = text::index_of_char_from(css, code, close + 1).ok_or(ParseError)?;
+                    close = bun_core::strings::index_of_char_pos(css, code, close + 1)
+                        .ok_or(ParseError)?;
                     let backslashes = css[..close]
                         .iter()
                         .rev()
@@ -155,7 +155,8 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                 let last = if css[pos + 1] == b'*' {
                     text::index_of_from(css, b"*/", pos + 2).ok_or(ParseError)? + 1
                 } else {
-                    text::index_of_char_from(css, b'\n', pos + 2).map_or(length, |at| at - 1)
+                    bun_core::strings::index_of_char_pos(css, b'\n', pos + 2)
+                        .map_or(length, |at| at - 1)
                 };
                 let content = &css[pos..(last + 1).min(length)];
                 let lines = bun_core::strings::count_char(content, b'\n') as u32;
@@ -603,8 +604,10 @@ impl ValuesParser<'_> {
                 TokenKind::Comment => {
                     // `.replace(/\/\*|\*\//g, "")`
                     let text = self.text_of(token);
-                    let has_delimiter =
-                        |text: &[u8]| text::includes(text, b"/*") || text::includes(text, b"*/");
+                    let has_delimiter = |text: &[u8]| {
+                        bun_core::strings::contains(text, b"/*")
+                            || bun_core::strings::contains(text, b"*/")
+                    };
                     let mut value = match text
                         .strip_prefix(b"/*")
                         .and_then(|it| it.strip_suffix(b"*/"))
@@ -1075,10 +1078,14 @@ impl Grouper<'_> {
                             .text
                             .get(self.base + start..self.base + end)
                             .unwrap_or_default();
-                        let skipped = inner.len() - text::trim_start(inner).len();
+                        let skipped =
+                            inner.len() - bun_core::strings::trim_js_whitespace_start(inner).len();
                         let start = self.base + start + skipped;
                         let text = self.add(&ValueNode {
-                            value: (start as u32, (start + text::trim(inner).len()) as u32),
+                            value: (
+                                start as u32,
+                                (start + bun_core::strings::trim_js_whitespace(inner).len()) as u32,
+                            ),
                             ..ValueNode::new(ValueKind::Text)
                         });
                         self.values.nodes[node.group as usize].groups =
@@ -1156,7 +1163,8 @@ impl ValuesParser<'_> {
     fn line_column_to_index(&mut self, (line, column): (u32, u32)) -> u32 {
         let (from, mut index) = Some(self.line).filter(|it| it.0 <= line).unwrap_or((1, 0));
         for _ in from..line {
-            index = text::index_of_char_from(self.text(), b'\n', index).map_or(0, |at| at + 1);
+            index = bun_core::strings::index_of_char_pos(self.text(), b'\n', index)
+                .map_or(0, |at| at + 1);
         }
         self.line = (line.max(1), index);
         index as u32 + column

@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::next_token;
 
@@ -71,7 +72,7 @@ impl NewlineAfterVar {
         // A semicolon on a line of its own, as some write before a `(`, counts as what follows.
         let (last_end, next_start) = match (statement.semicolon(), declarations.last()) {
             (Some(semicolon), Some(last))
-                if text::has_line_break(file.slice(last.span().between(semicolon))) =>
+                if strings::contains_js_line_break(file.slice(last.span().between(semicolon))) =>
             {
                 (last.span().end, semicolon.start)
             }
@@ -81,8 +82,8 @@ impl NewlineAfterVar {
             return;
         }
         let between = file.slice(Span::new(last_end, next_start));
-        let no_next_line_token = text::lines(between).count() > 2;
-        let has_comments = !text::is_blank(between);
+        let no_next_line_token = strings::js_lines(between).count() > 2;
+        let has_comments = !strings::is_all_js_whitespace(between);
 
         if self.is_never {
             if !no_next_line_token || has_comments && comment_end_line(file, file.line_of(last_end) + 1).is_some() {
@@ -90,7 +91,7 @@ impl NewlineAfterVar {
             }
             cx.report(statement, UNEXPECTED).fix(|fixer| {
                 let mut replacement = Vec::with_capacity(between.len());
-                let mut lines = text::lines(between).peekable();
+                let mut lines = strings::js_lines(between).peekable();
                 while let Some(line) = lines.next() {
                     if lines.peek().is_none() {
                         replacement.push(b'\n');

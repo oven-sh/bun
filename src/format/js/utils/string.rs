@@ -37,7 +37,7 @@ pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
         })
     };
     !name.is_empty()
-        && bun_lint::utils::text::code_points(name).all(|(at, c)| match u8::try_from(c) {
+        && bun_core::strings::wtf8_codepoints(name).all(|(at, c)| match u8::try_from(c) {
             Ok(b) if b.is_ascii() => {
                 b.is_ascii_alphabetic()
                     || matches!(b, b'$' | b'_')

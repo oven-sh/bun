@@ -5,7 +5,8 @@
   "file": "a.js",
   "code": "class A { set a(foo) {} }",
   "options": [],
-  "message": "Setter is defined without a getter"
+  "message": "Setter is defined without a getter",
+  "help": "Define a getter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -13,7 +14,8 @@
   "file": "a.ts",
   "code": "({ set prop(value) {} });",
   "options": [],
-  "message": "Setter is defined without a getter"
+  "message": "Setter is defined without a getter",
+  "help": "Define a getter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -21,7 +23,8 @@
   "file": "a.js",
   "code": "Object.create(null, {foo: {set: function(value) {}}});",
   "options": [],
-  "message": "Setter is defined without a getter"
+  "message": "Setter is defined without a getter",
+  "help": "Define a getter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -33,7 +36,8 @@
     "enforceForTSTypes": true
    }
   ],
-  "message": "Setter is defined without a getter"
+  "message": "Setter is defined without a getter",
+  "help": "Define a getter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -46,7 +50,8 @@
     "getWithoutSet": true
    }
   ],
-  "message": "Getter is defined without a setter"
+  "message": "Getter is defined without a setter",
+  "help": "Define a setter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -58,7 +63,8 @@
     "getWithoutSet": true
    }
   ],
-  "message": "Getter is defined without a setter"
+  "message": "Getter is defined without a setter",
+  "help": "Define a setter for this property"
  },
  {
   "rule": "eslint/accessor-pairs",
@@ -71,7 +77,8 @@
     "getWithoutSet": true
    }
   ],
-  "message": "Getter is defined without a setter"
+  "message": "Getter is defined without a setter",
+  "help": "Define a setter for this property"
  },
  {
   "rule": "eslint/array-callback-return",
@@ -79,7 +86,8 @@
   "file": "a.js",
   "code": "foo.every(() => {})",
   "options": [],
-  "message": "Callback for array method \"Array.prototype.every\" does not return on all code paths"
+  "message": "Callback for array method \"Array.prototype.every\" does not return on all code paths",
+  "help": "\"Array.prototype.every\" uses the callback's return value. Add a `return` on every possible code path.\nReturn a value on each path (or enable `allowImplicit` to allow `return;`)."
  },
  {
   "rule": "eslint/array-callback-return",
@@ -92,7 +100,8 @@
     "checkForEach": true
    }
   ],
-  "message": "Unexpected return value in callback for \"Array.prototype.forEach\""
+  "message": "Unexpected return value in callback for \"Array.prototype.forEach\"",
+  "help": "\"Array.prototype.forEach\" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array."
  },
  {
   "rule": "eslint/arrow-body-style",
@@ -102,7 +111,8 @@
   "options": [
    "never"
   ],
-  "message": "Unexpected empty block statement surrounding arrow body."
+  "message": "Unexpected empty block statement surrounding arrow body.",
+  "help": "Put a value of `undefined` immediately after the `=>`."
  },
  {
   "rule": "eslint/arrow-body-style",
@@ -112,7 +122,8 @@
   "options": [
    "as-needed"
   ],
-  "message": "Unexpected block statement surrounding arrow body."
+  "message": "Unexpected block statement surrounding arrow body.",
+  "help": "Move the returned value to be immediately after the `=>`."
  },
  {
   "rule": "eslint/arrow-body-style",
@@ -125,7 +136,8 @@
     "requireReturnForObjectLiteral": true
    }
   ],
-  "message": "Unexpected block statement surrounding arrow body."
+  "message": "Unexpected block statement surrounding arrow body.",
+  "help": "Move the returned value to be immediately after the `=>`."
  },
  {
   "rule": "eslint/block-scoped-var",
@@ -133,7 +145,8 @@
   "file": "a.js",
   "code": "{ var a = 0; } a;",
   "options": [],
-  "message": "'a' is used outside of binding context."
+  "message": "'a' is used outside of binding context.",
+  "help": "Variable 'a' is used outside its declaration block. Declare it outside the block or use 'let'/'const'."
  },
  {
   "rule": "eslint/capitalized-comments",
@@ -143,7 +156,8 @@
   "options": [
    "always"
   ],
-  "message": "Comments should not begin with a lowercase letter"
+  "message": "Comments should not begin with a lowercase letter",
+  "help": "Change the first letter of the comment to uppercase"
  },
  {
   "rule": "eslint/capitalized-comments",
@@ -153,7 +167,8 @@
   "options": [
    "never"
   ],
-  "message": "Comments should not begin with an uppercase letter"
+  "message": "Comments should not begin with an uppercase letter",
+  "help": "Change the first letter of the comment to lowercase"
  },
  {
   "rule": "eslint/class-methods-use-this",
@@ -161,7 +176,8 @@
   "file": "a.js",
   "code": "class A { foo() {} }",
   "options": [],
-  "message": "Expected method `foo` to have this."
+  "message": "Expected method `foo` to have this.",
+  "help": "Consider converting method `foo` to a static method."
  },
  {
   "rule": "eslint/class-methods-use-this",
@@ -175,7 +191,8 @@
     ]
    }
   ],
-  "message": "Expected method to have this."
+  "message": "Expected method to have this.",
+  "help": "Consider converting method to a static method."
  },
  {
   "rule": "eslint/complexity",
@@ -243,7 +260,8 @@
   "file": "a.js",
   "code": "class A extends 100 { constructor() { super(); } }",
   "options": [],
-  "message": "Unexpected `super()` because `super` is not a constructor."
+  "message": "Unexpected `super()` because `super` is not a constructor.",
+  "help": "Remove the `super()` call or change the `extends` clause to a constructable superclass."
  },
  {
   "rule": "eslint/constructor-super",
@@ -251,7 +269,8 @@
   "file": "a.js",
   "code": "class A extends B { constructor() { super(); super(); } }",
   "options": [],
-  "message": "Unexpected duplicate `super()`."
+  "message": "Unexpected duplicate `super()`.",
+  "help": "Remove the duplicate `super()` call"
  },
  {
   "rule": "eslint/constructor-super",
@@ -259,7 +278,8 @@
   "file": "a.js",
   "code": "class A extends B { constructor() { } }",
   "options": [],
-  "message": "Expected to call `super()`."
+  "message": "Expected to call `super()`.",
+  "help": "Add a `super()` call to the constructor"
  },
  {
   "rule": "eslint/constructor-super",
@@ -267,7 +287,8 @@
   "file": "a.js",
   "code": "class A extends B { constructor() { if (a) super(); } }",
   "options": [],
-  "message": "Lacked a call of `super()` in some code paths."
+  "message": "Lacked a call of `super()` in some code paths.",
+  "help": "Ensure `super()` is called in all code paths"
  },
  {
   "rule": "eslint/curly",
@@ -277,7 +298,8 @@
   "options": [
    "multi"
   ],
-  "message": "Unexpected { after 'do'."
+  "message": "Unexpected { after 'do'.",
+  "help": "Replace `{foo();}` with ` foo();`."
  },
  {
   "rule": "eslint/curly",
@@ -287,7 +309,8 @@
   "options": [
    "multi"
   ],
-  "message": "Unexpected { after 'for' condition."
+  "message": "Unexpected { after 'for' condition.",
+  "help": "Replace `{foo()}` with `foo()`."
  },
  {
   "rule": "eslint/default-case",
@@ -299,7 +322,8 @@
     "commentPattern": ".?"
    }
   ],
-  "message": "Require `default` cases in `switch` statements."
+  "message": "Require `default` cases in `switch` statements.",
+  "help": "Add a `default` case."
  },
  {
   "rule": "eslint/default-case-last",
@@ -315,7 +339,8 @@
   "file": "a.js",
   "code": "function f(a = 5, b) {}",
   "options": [],
-  "message": "Default parameters should be last"
+  "message": "Default parameters should be last",
+  "help": "Enforce default parameters to be last."
  },
  {
   "rule": "eslint/eqeqeq",
@@ -328,7 +353,8 @@
     "null": "never"
    }
   ],
-  "message": "Expected != and instead saw !=="
+  "message": "Expected != and instead saw !==",
+  "help": "Prefer != operator"
  },
  {
   "rule": "eslint/eqeqeq",
@@ -336,7 +362,8 @@
   "file": "a.js",
   "code": "a!=b;",
   "options": [],
-  "message": "Expected !== and instead saw !="
+  "message": "Expected !== and instead saw !=",
+  "help": "Prefer !== operator"
  },
  {
   "rule": "eslint/eqeqeq",
@@ -349,7 +376,8 @@
     "null": "never"
    }
   ],
-  "message": "Expected == and instead saw ==="
+  "message": "Expected == and instead saw ===",
+  "help": "Prefer == operator"
  },
  {
   "rule": "eslint/eqeqeq",
@@ -357,7 +385,8 @@
   "file": "a.js",
   "code": "0 == 0",
   "options": [],
-  "message": "Expected === and instead saw =="
+  "message": "Expected === and instead saw ==",
+  "help": "Prefer === operator"
  },
  {
   "rule": "eslint/for-direction",
@@ -365,7 +394,8 @@
   "file": "a.js",
   "code": "for(var i = 0; 10 > i; i--){}",
   "options": [],
-  "message": "The update clause in this loop moves the variable in the wrong direction"
+  "message": "The update clause in this loop moves the variable in the wrong direction",
+  "help": "Use `while` loop for intended infinite loop"
  },
  {
   "rule": "eslint/func-name-matching",
@@ -375,7 +405,8 @@
   "options": [
    "never"
   ],
-  "message": "Function name `x` should not match property name `x`."
+  "message": "Function name `x` should not match property name `x`.",
+  "help": "Rename the function or the variable/property so the names satisfy this rule."
  },
  {
   "rule": "eslint/func-name-matching",
@@ -385,7 +416,8 @@
   "options": [
    "never"
   ],
-  "message": "Function name `foo` should not match variable name `foo`."
+  "message": "Function name `foo` should not match variable name `foo`.",
+  "help": "Rename the function or the variable/property so the names satisfy this rule."
  },
  {
   "rule": "eslint/func-names",
@@ -395,7 +427,8 @@
   "options": [
    "never"
   ],
-  "message": "Unexpected named function `foo`."
+  "message": "Unexpected named function `foo`.",
+  "help": "Remove the name on this function expression."
  },
  {
   "rule": "eslint/func-names",
@@ -408,7 +441,8 @@
     "generators": "never"
    }
   ],
-  "message": "Unexpected named generator function `baz`."
+  "message": "Unexpected named generator function `baz`.",
+  "help": "Remove the name on this function expression."
  },
  {
   "rule": "eslint/func-names",
@@ -418,7 +452,8 @@
   "options": [
    "never"
   ],
-  "message": "Unexpected named method `foo`."
+  "message": "Unexpected named method `foo`.",
+  "help": "Remove the name on this function expression."
  },
  {
   "rule": "eslint/func-names",
@@ -428,7 +463,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed async function `delete`."
+  "message": "Unexpected unnamed async function `delete`.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -438,7 +474,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed function `foo`."
+  "message": "Unexpected unnamed function `foo`.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -448,7 +485,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed function."
+  "message": "Unexpected unnamed function.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -458,7 +496,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed method `foo`."
+  "message": "Unexpected unnamed method `foo`.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -468,7 +507,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed private method `foo`."
+  "message": "Unexpected unnamed private method `foo`.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -478,7 +518,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed public method `foo`."
+  "message": "Unexpected unnamed public method `foo`.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/func-names",
@@ -488,7 +529,8 @@
   "options": [
    "always"
   ],
-  "message": "Unexpected unnamed public method."
+  "message": "Unexpected unnamed public method.",
+  "help": "Consider giving this function expression a name."
  },
  {
   "rule": "eslint/getter-return",
@@ -496,7 +538,8 @@
   "file": "a.js",
   "code": "class foo { get bar(){} }",
   "options": [],
-  "message": "Expected to always return a value in getter."
+  "message": "Expected to always return a value in getter.",
+  "help": "Return a value from all code paths in getter."
  },
  {
   "rule": "eslint/grouped-accessor-pairs",
@@ -504,7 +547,8 @@
   "file": "a.js",
   "code": "({ set 'abc'(foo){}, b:1, get 'abc'(){} })",
   "options": [],
-  "message": "Accessor pair getter 'abc' and setter 'abc' should be grouped."
+  "message": "Accessor pair getter 'abc' and setter 'abc' should be grouped.",
+  "help": "Require grouped accessor pairs in object literals and classes"
  },
  {
   "rule": "eslint/grouped-accessor-pairs",
@@ -512,7 +556,8 @@
   "file": "a.js",
   "code": "({ set [a](foo){}, set a(bar){}, get [a](){} })",
   "options": [],
-  "message": "Accessor pair getter and setter should be grouped."
+  "message": "Accessor pair getter and setter should be grouped.",
+  "help": "Require grouped accessor pairs in object literals and classes"
  },
  {
   "rule": "eslint/grouped-accessor-pairs",
@@ -522,7 +567,8 @@
   "options": [
    "setBeforeGet"
   ],
-  "message": "Accessor pair static getter 'a' and static setter 'a' should be grouped."
+  "message": "Accessor pair static getter 'a' and static setter 'a' should be grouped.",
+  "help": "Require grouped accessor pairs in object literals and classes"
  },
  {
   "rule": "eslint/guard-for-in",
@@ -530,7 +576,8 @@
   "file": "a.js",
   "code": "for (var x in o) foo();",
   "options": [],
-  "message": "Require `for-in` loops to include an `if` statement"
+  "message": "Require `for-in` loops to include an `if` statement",
+  "help": "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype."
  },
  {
   "rule": "eslint/id-length",
@@ -591,7 +638,8 @@
   "file": "a.js",
   "code": "class Foo {}\nclass Bar {}",
   "options": [],
-  "message": "File has too many classes (2). Maximum allowed is 1"
+  "message": "File has too many classes (2). Maximum allowed is 1",
+  "help": "Reduce the number of classes in this file"
  },
  {
   "rule": "eslint/max-lines",
@@ -603,7 +651,8 @@
     "max": 0
    }
   ],
-  "message": "File has too many lines (1)."
+  "message": "File has too many lines (1).",
+  "help": "Maximum allowed is 0."
  },
  {
   "rule": "eslint/max-lines-per-function",
@@ -613,7 +662,8 @@
   "options": [
    1
   ],
-  "message": "The function `name` has too many lines (2). Maximum allowed is 1."
+  "message": "The function `name` has too many lines (2). Maximum allowed is 1.",
+  "help": "Consider splitting it into smaller functions."
  },
  {
   "rule": "eslint/max-lines-per-function",
@@ -623,7 +673,8 @@
   "options": [
    1
   ],
-  "message": "The function has too many lines (2). Maximum allowed is 1."
+  "message": "The function has too many lines (2). Maximum allowed is 1.",
+  "help": "Consider splitting it into smaller functions."
  },
  {
   "rule": "eslint/max-lines-per-function",
@@ -637,7 +688,8 @@
     "skipBlankLines": false
    }
   ],
-  "message": "The method `method` has too many lines (5). Maximum allowed is 2."
+  "message": "The method `method` has too many lines (5). Maximum allowed is 2.",
+  "help": "Consider splitting it into smaller functions."
  },
  {
   "rule": "eslint/max-params",
@@ -650,7 +702,8 @@
     "max": 1
    }
   ],
-  "message": "Function has too many parameters (2). Maximum allowed is 1."
+  "message": "Function has too many parameters (2). Maximum allowed is 1.",
+  "help": "This rule enforces a maximum number of parameters allowed in function definitions."
  },
  {
   "rule": "eslint/max-statements",
@@ -662,7 +715,8 @@
     "max": 0
    }
   ],
-  "message": "function `foo` has too many statements (1). Maximum allowed is 0."
+  "message": "function `foo` has too many statements (1). Maximum allowed is 0.",
+  "help": "Consider splitting it into smaller functions."
  },
  {
   "rule": "eslint/max-statements",
@@ -672,7 +726,8 @@
   "options": [
    2
   ],
-  "message": "function has too many statements (3). Maximum allowed is 2."
+  "message": "function has too many statements (3). Maximum allowed is 2.",
+  "help": "Consider splitting it into smaller functions."
  },
  {
   "rule": "eslint/no-alert",
@@ -680,7 +735,8 @@
   "file": "a.js",
   "code": "alert(foo)",
   "options": [],
-  "message": "`alert`, `confirm` and `prompt` functions are not allowed"
+  "message": "`alert`, `confirm` and `prompt` functions are not allowed",
+  "help": "Use a custom UI instead"
  },
  {
   "rule": "eslint/no-array-constructor",
@@ -688,7 +744,8 @@
   "file": "a.js",
   "code": "Array()",
   "options": [],
-  "message": "Avoid calls to the `Array` constructor"
+  "message": "Avoid calls to the `Array` constructor",
+  "help": "Use array literal notation [] instead."
  },
  {
   "rule": "eslint/no-async-promise-executor",
@@ -696,7 +753,8 @@
   "file": "a.js",
   "code": "new Promise(((((async () => {})))))",
   "options": [],
-  "message": "Promise executor functions should not be `async`."
+  "message": "Promise executor functions should not be `async`.",
+  "help": "Remove the `async` keyword from the Promise executor function."
  },
  {
   "rule": "eslint/no-bitwise",
@@ -704,7 +762,8 @@
   "file": "a.js",
   "code": "~a",
   "options": [],
-  "message": "Unexpected use of `\"~\"`."
+  "message": "Unexpected use of `\"~\"`.",
+  "help": "bitwise operators are not allowed, maybe you mistyped `&&` or `||`?"
  },
  {
   "rule": "eslint/no-caller",
@@ -712,7 +771,8 @@
   "file": "a.js",
   "code": "var x = arguments.callee",
   "options": [],
-  "message": "Do not use `arguments.callee`."
+  "message": "Do not use `arguments.callee`.",
+  "help": "`caller`, `callee`, and `arguments` properties may not be accessed on strict mode functions or the arguments objects for calls to them."
  },
  {
   "rule": "eslint/no-class-assign",
@@ -720,7 +780,8 @@
   "file": "a.js",
   "code": "A = 0; class A { }",
   "options": [],
-  "message": "Unexpected re-assignment of class A"
+  "message": "Unexpected re-assignment of class A",
+  "help": "Use a different variable name instead of re-assigning the class declaration."
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -728,7 +789,8 @@
   "file": "a.js",
   "code": "-0 != x",
   "options": [],
-  "message": "Do not use the != operator to compare against -0."
+  "message": "Do not use the != operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -736,7 +798,8 @@
   "file": "a.js",
   "code": "-0 !== x",
   "options": [],
-  "message": "Do not use the !== operator to compare against -0."
+  "message": "Do not use the !== operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -744,7 +807,8 @@
   "file": "a.js",
   "code": "-0 < x",
   "options": [],
-  "message": "Do not use the < operator to compare against -0."
+  "message": "Do not use the < operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -752,7 +816,8 @@
   "file": "a.js",
   "code": "-0 <= x",
   "options": [],
-  "message": "Do not use the <= operator to compare against -0."
+  "message": "Do not use the <= operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -760,7 +825,8 @@
   "file": "a.js",
   "code": "-0 == x",
   "options": [],
-  "message": "Do not use the == operator to compare against -0."
+  "message": "Do not use the == operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -768,7 +834,8 @@
   "file": "a.js",
   "code": "-0 === x",
   "options": [],
-  "message": "Do not use the === operator to compare against -0."
+  "message": "Do not use the === operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -776,7 +843,8 @@
   "file": "a.js",
   "code": "-0 > x",
   "options": [],
-  "message": "Do not use the > operator to compare against -0."
+  "message": "Do not use the > operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-compare-neg-zero",
@@ -784,7 +852,8 @@
   "file": "a.js",
   "code": "-0 >= x",
   "options": [],
-  "message": "Do not use the >= operator to compare against -0."
+  "message": "Do not use the >= operator to compare against -0.",
+  "help": "Use Object.is(x, -0) to test equality with -0 and use 0 for other cases"
  },
  {
   "rule": "eslint/no-cond-assign",
@@ -792,7 +861,8 @@
   "file": "a.js",
   "code": "var x; if ((x) = (0));",
   "options": [],
-  "message": "Expected a conditional expression and instead saw an assignment"
+  "message": "Expected a conditional expression and instead saw an assignment",
+  "help": "Consider wrapping the assignment in additional parentheses"
  },
  {
   "rule": "eslint/no-cond-assign",
@@ -802,7 +872,8 @@
   "options": [
    "always"
   ],
-  "message": "Expected a conditional expression and instead saw an assignment"
+  "message": "Expected a conditional expression and instead saw an assignment",
+  "help": "Consider wrapping the assignment in additional parentheses"
  },
  {
   "rule": "eslint/no-console",
@@ -816,7 +887,8 @@
     ]
    }
   ],
-  "message": "Unexpected console statement."
+  "message": "Unexpected console statement.",
+  "help": "Supported methods are: error."
  },
  {
   "rule": "eslint/no-const-assign",
@@ -824,7 +896,8 @@
   "file": "a.js",
   "code": "const b = 0; ({a, ...b} = {a: 1, c: 2, d: 3})",
   "options": [],
-  "message": "Unexpected re-assignment of `const` variable b."
+  "message": "Unexpected re-assignment of `const` variable b.",
+  "help": "Use `let` instead of `const` if you need to reassign this variable."
  },
  {
   "rule": "eslint/no-const-assign",
@@ -832,7 +905,8 @@
   "file": "a.js",
   "code": "const [a, b, ...[c, ...d]] = [1, 2, 3, 4, 5]; d = 123",
   "options": [],
-  "message": "Unexpected re-assignment of `const` variable d."
+  "message": "Unexpected re-assignment of `const` variable d.",
+  "help": "Use `let` instead of `const` if you need to reassign this variable."
  },
  {
   "rule": "eslint/no-const-assign",
@@ -840,7 +914,8 @@
   "file": "a.js",
   "code": "for (const i = 0; i < 10; ++i) { foo(i); }",
   "options": [],
-  "message": "Unexpected re-assignment of `const` variable i."
+  "message": "Unexpected re-assignment of `const` variable i.",
+  "help": "Use `let` instead of `const` if you need to reassign this variable."
  },
  {
   "rule": "eslint/no-const-assign",
@@ -848,7 +923,8 @@
   "file": "a.js",
   "code": "const x = 0; ++x;",
   "options": [],
-  "message": "Unexpected re-assignment of `const` variable x."
+  "message": "Unexpected re-assignment of `const` variable x.",
+  "help": "Use `let` instead of `const` if you need to reassign this variable."
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -856,7 +932,8 @@
   "file": "a.jsx",
   "code": "x !== {}",
   "options": [],
-  "message": "Unexpected comparison to newly constructed object"
+  "message": "Unexpected comparison to newly constructed object",
+  "help": "These two values can never be equal"
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -864,7 +941,8 @@
   "file": "a.jsx",
   "code": "({}) == []",
   "options": [],
-  "message": "Unexpected comparison of two newly constructed objects"
+  "message": "Unexpected comparison of two newly constructed objects",
+  "help": "These two values can never be equal"
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -872,7 +950,8 @@
   "file": "a.jsx",
   "code": "true == 1",
   "options": [],
-  "message": "Unexpected constant binary expression"
+  "message": "Unexpected constant binary expression",
+  "help": "This compares constantly with the left-hand side of the =="
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -880,7 +959,8 @@
   "file": "a.jsx",
   "code": "10 > 5",
   "options": [],
-  "message": "Unexpected constant relational comparison"
+  "message": "Unexpected constant relational comparison",
+  "help": "Both sides of the > are literal values"
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -888,7 +968,8 @@
   "file": "a.jsx",
   "code": "1 ?? foo",
   "options": [],
-  "message": "Unexpected constant nullishness on the left-hand side of a \"??\" expression"
+  "message": "Unexpected constant nullishness on the left-hand side of a \"??\" expression",
+  "help": "This expression always evaluates to the constant on the left-hand side"
  },
  {
   "rule": "eslint/no-constant-binary-expression",
@@ -896,7 +977,8 @@
   "file": "a.jsx",
   "code": "'' && foo",
   "options": [],
-  "message": "Unexpected constant truthiness on the left-hand side of a \"&&\" expression"
+  "message": "Unexpected constant truthiness on the left-hand side of a \"&&\" expression",
+  "help": "This expression always evaluates to the constant on the left-hand side"
  },
  {
   "rule": "eslint/no-constant-condition",
@@ -904,7 +986,8 @@
   "file": "a.js",
   "code": "if(1);",
   "options": [],
-  "message": "Unexpected constant condition"
+  "message": "Unexpected constant condition",
+  "help": "Update the condition to not be constant, or remove the condition entirely"
  },
  {
   "rule": "eslint/no-continue",
@@ -912,7 +995,8 @@
   "file": "a.js",
   "code": "var sum = 0, i; for(i = 0; i < 10; i++){ if(i <= 5) { continue; } sum += i; }",
   "options": [],
-  "message": "Unexpected use of `continue` statement."
+  "message": "Unexpected use of `continue` statement.",
+  "help": "Do not use the `continue` statement."
  },
  {
   "rule": "eslint/no-control-regex",
@@ -920,7 +1004,8 @@
   "file": "a.js",
   "code": "/\\x00/",
   "options": [],
-  "message": "Unexpected control character"
+  "message": "Unexpected control character",
+  "help": "Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression."
  },
  {
   "rule": "eslint/no-control-regex",
@@ -928,7 +1013,8 @@
   "file": "a.js",
   "code": "var regex = new RegExp('\\x1f\\x1e')",
   "options": [],
-  "message": "Unexpected control characters"
+  "message": "Unexpected control characters",
+  "help": "Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression."
  },
  {
   "rule": "eslint/no-debugger",
@@ -936,7 +1022,8 @@
   "file": "a.js",
   "code": "for (;;) debugger",
   "options": [],
-  "message": "`debugger` statement is not allowed"
+  "message": "`debugger` statement is not allowed",
+  "help": "Remove the debugger statement"
  },
  {
   "rule": "eslint/no-delete-var",
@@ -944,7 +1031,8 @@
   "file": "a.js",
   "code": "delete x",
   "options": [],
-  "message": "Variables should not be deleted"
+  "message": "Variables should not be deleted",
+  "help": "Assign `undefined` to the variable instead of using `delete`. The `delete` operator is intended for removing properties from objects, not for variables."
  },
  {
   "rule": "eslint/no-dupe-class-members",
@@ -952,7 +1040,8 @@
   "file": "a.js",
   "code": "class A { foo; foo; }",
   "options": [],
-  "message": "Duplicate class member: \"foo\""
+  "message": "Duplicate class member: \"foo\"",
+  "help": "The last declaration overwrites previous ones, remove one of them or rename if both should be retained"
  },
  {
   "rule": "eslint/no-dupe-else-if",
@@ -960,7 +1049,8 @@
   "file": "a.js",
   "code": "if (a); else if (a);",
   "options": [],
-  "message": "Duplicate conditions in if-else-if chain"
+  "message": "Duplicate conditions in if-else-if chain",
+  "help": "Remove or modify the duplicate condition, as its branch will never be executed."
  },
  {
   "rule": "eslint/no-dupe-keys",
@@ -968,7 +1058,8 @@
   "file": "a.js",
   "code": "var x = { y: 1, y: 2 };",
   "options": [],
-  "message": "Duplicate key 'y'"
+  "message": "Duplicate key 'y'",
+  "help": "Consider removing the duplicated key"
  },
  {
   "rule": "eslint/no-duplicate-case",
@@ -976,7 +1067,8 @@
   "file": "a.js",
   "code": "switch (a) { case a: case a: }",
   "options": [],
-  "message": "Duplicate case label"
+  "message": "Duplicate case label",
+  "help": "Remove the duplicated case"
  },
  {
   "rule": "eslint/no-duplicate-imports",
@@ -988,7 +1080,8 @@
     "includeExports": true
    }
   ],
-  "message": "'os' export is duplicated"
+  "message": "'os' export is duplicated",
+  "help": "Merge the duplicated exports into a single export statement"
  },
  {
   "rule": "eslint/no-duplicate-imports",
@@ -1000,7 +1093,8 @@
     "includeExports": true
    }
   ],
-  "message": "'os' export is duplicated"
+  "message": "'os' export is duplicated",
+  "help": "Merge the duplicated exports into a single export statement"
  },
  {
   "rule": "eslint/no-duplicate-imports",
@@ -1008,7 +1102,8 @@
   "file": "a.js",
   "code": "import \"fs\";\nimport \"fs\"",
   "options": [],
-  "message": "'fs' import is duplicated"
+  "message": "'fs' import is duplicated",
+  "help": "Merge the duplicated import into a single import statement"
  },
  {
   "rule": "eslint/no-duplicate-imports",
@@ -1020,7 +1115,8 @@
     "includeExports": true
    }
   ],
-  "message": "'os' export is duplicated"
+  "message": "'os' export is duplicated",
+  "help": "Merge the duplicated exports into a single export statement"
  },
  {
   "rule": "eslint/no-else-return",
@@ -1028,7 +1124,8 @@
   "file": "a.ts",
   "code": "if(0)return;else r",
   "options": [],
-  "message": "Unnecessary `else` after `return`."
+  "message": "Unnecessary `else` after `return`.",
+  "help": "Remove the `else` block, moving its contents outside of the `if` statement."
  },
  {
   "rule": "eslint/no-empty",
@@ -1036,7 +1133,8 @@
   "file": "a.js",
   "code": "if (foo) {}",
   "options": [],
-  "message": "Unexpected empty block statements"
+  "message": "Unexpected empty block statements",
+  "help": "Remove this block or add a comment inside it"
  },
  {
   "rule": "eslint/no-empty-character-class",
@@ -1044,7 +1142,8 @@
   "file": "a.js",
   "code": "var foo = /[]/v;",
   "options": [],
-  "message": "Empty character class will not match anything"
+  "message": "Empty character class will not match anything",
+  "help": "Remove the empty character class: `[]`"
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1052,7 +1151,8 @@
   "file": "a.js",
   "code": "async function a(){}",
   "options": [],
-  "message": "Unexpected empty async function `a`"
+  "message": "Unexpected empty async function `a`",
+  "help": "Consider removing this async function or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1060,7 +1160,8 @@
   "file": "a.js",
   "code": "class A {constructor() {}}",
   "options": [],
-  "message": "Unexpected empty constructor `constructor`"
+  "message": "Unexpected empty constructor `constructor`",
+  "help": "Consider removing this constructor or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1068,7 +1169,8 @@
   "file": "a.js",
   "code": "var obj = {foo() {}};",
   "options": [],
-  "message": "Unexpected empty function"
+  "message": "Unexpected empty function",
+  "help": "Consider removing this function or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1076,7 +1178,8 @@
   "file": "a.js",
   "code": "function foo() {}",
   "options": [],
-  "message": "Unexpected empty function `foo`"
+  "message": "Unexpected empty function `foo`",
+  "help": "Consider removing this function or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1084,7 +1187,8 @@
   "file": "a.js",
   "code": "function* baz() {}",
   "options": [],
-  "message": "Unexpected empty generator function `baz`"
+  "message": "Unexpected empty generator function `baz`",
+  "help": "Consider removing this generator function or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1092,7 +1196,8 @@
   "file": "a.js",
   "code": "class A {get foo() {}}",
   "options": [],
-  "message": "Unexpected empty getter `foo`"
+  "message": "Unexpected empty getter `foo`",
+  "help": "Consider removing this getter or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1100,7 +1205,8 @@
   "file": "a.js",
   "code": "class A {foo() {}}",
   "options": [],
-  "message": "Unexpected empty method `foo`"
+  "message": "Unexpected empty method `foo`",
+  "help": "Consider removing this method or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1108,7 +1214,8 @@
   "file": "a.js",
   "code": "class A {set foo(value) {}}",
   "options": [],
-  "message": "Unexpected empty setter `foo`"
+  "message": "Unexpected empty setter `foo`",
+  "help": "Consider removing this setter or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-function",
@@ -1116,7 +1223,8 @@
   "file": "a.js",
   "code": "class A {static foo() {}}",
   "options": [],
-  "message": "Unexpected empty static method `foo`"
+  "message": "Unexpected empty static method `foo`",
+  "help": "Consider removing this static method or adding logic to it."
  },
  {
   "rule": "eslint/no-empty-pattern",
@@ -1124,7 +1232,8 @@
   "file": "a.js",
   "code": "var [] = foo",
   "options": [],
-  "message": "Empty array binding pattern"
+  "message": "Empty array binding pattern",
+  "help": "Passing non-iterable values (null, undefined, numbers, booleans, etc.) will result in a runtime error because these values are not iterable."
  },
  {
   "rule": "eslint/no-empty-pattern",
@@ -1132,7 +1241,8 @@
   "file": "a.js",
   "code": "var {} = foo",
   "options": [],
-  "message": "Empty object binding pattern"
+  "message": "Empty object binding pattern",
+  "help": "Passing `null` or `undefined` will result in runtime error because `null` and `undefined` cannot be destructured."
  },
  {
   "rule": "eslint/no-empty-static-block",
@@ -1140,7 +1250,8 @@
   "file": "a.js",
   "code": "class Foo { static {} }",
   "options": [],
-  "message": "Unexpected empty static blocks"
+  "message": "Unexpected empty static blocks",
+  "help": "Remove this empty block or add content to it."
  },
  {
   "rule": "eslint/no-eq-null",
@@ -1148,7 +1259,8 @@
   "file": "a.js",
   "code": "if (x != null) { }",
   "options": [],
-  "message": "Do not use `null` comparisons without type-checking operators."
+  "message": "Do not use `null` comparisons without type-checking operators.",
+  "help": "Use '!==' to compare with null"
  },
  {
   "rule": "eslint/no-eval",
@@ -1156,7 +1268,8 @@
   "file": "a.js",
   "code": "eval(foo)",
   "options": [],
-  "message": "eval can be harmful."
+  "message": "eval can be harmful.",
+  "help": "Avoid eval(). For JSON parsing use JSON.parse(); for dynamic property access use bracket notation (obj[key]); for other cases refactor to avoid evaluating strings as code."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1164,7 +1277,8 @@
   "file": "a.js",
   "code": "AggregateError.prototype.p = 0",
   "options": [],
-  "message": "AggregateError prototype is read-only, properties should not be added."
+  "message": "AggregateError prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1172,7 +1286,8 @@
   "file": "a.js",
   "code": "Array.prototype.p &&= 0",
   "options": [],
-  "message": "Array prototype is read-only, properties should not be added."
+  "message": "Array prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1180,7 +1295,8 @@
   "file": "a.js",
   "code": "BigInt.prototype.p = 0",
   "options": [],
-  "message": "BigInt prototype is read-only, properties should not be added."
+  "message": "BigInt prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1188,7 +1304,8 @@
   "file": "a.js",
   "code": "FinalizationRegistry.prototype.p = 0",
   "options": [],
-  "message": "FinalizationRegistry prototype is read-only, properties should not be added."
+  "message": "FinalizationRegistry prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1196,7 +1313,8 @@
   "file": "a.js",
   "code": "Function.prototype['p'] = 0",
   "options": [],
-  "message": "Function prototype is read-only, properties should not be added."
+  "message": "Function prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1204,7 +1322,8 @@
   "file": "a.js",
   "code": "Number['prototype']['p'] = 0",
   "options": [],
-  "message": "Number prototype is read-only, properties should not be added."
+  "message": "Number prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1212,7 +1331,8 @@
   "file": "a.js",
   "code": "Object.prototype.p = 0",
   "options": [],
-  "message": "Object prototype is read-only, properties should not be added."
+  "message": "Object prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1220,7 +1340,8 @@
   "file": "a.js",
   "code": "String['prototype'].p = 0",
   "options": [],
-  "message": "String prototype is read-only, properties should not be added."
+  "message": "String prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extend-native",
@@ -1228,7 +1349,8 @@
   "file": "a.js",
   "code": "WeakRef.prototype.p = 0",
   "options": [],
-  "message": "WeakRef prototype is read-only, properties should not be added."
+  "message": "WeakRef prototype is read-only, properties should not be added.",
+  "help": "Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype."
  },
  {
   "rule": "eslint/no-extra-boolean-cast",
@@ -1236,7 +1358,8 @@
   "file": "a.js",
   "code": "!Boolean();",
   "options": [],
-  "message": "Redundant Boolean call"
+  "message": "Redundant Boolean call",
+  "help": "Remove the Boolean call as it will already be coerced to a boolean"
  },
  {
   "rule": "eslint/no-extra-boolean-cast",
@@ -1244,7 +1367,8 @@
   "file": "a.js",
   "code": "!!!a",
   "options": [],
-  "message": "Redundant double negation"
+  "message": "Redundant double negation",
+  "help": "Remove the double negation as it will already be coerced to a boolean"
  },
  {
   "rule": "eslint/no-extra-label",
@@ -1252,7 +1376,8 @@
   "file": "a.js",
   "code": "A: while (a) break A;",
   "options": [],
-  "message": "This label 'A' is unnecessary"
+  "message": "This label 'A' is unnecessary",
+  "help": "Remove this label. It will have the same result because the labeled statement 'A' has no nested loops or switches"
  },
  {
   "rule": "eslint/no-fallthrough",
@@ -1264,7 +1389,8 @@
     "allowEmptyCase": false
    }
   ],
-  "message": "Expected a `break` statement before `case`."
+  "message": "Expected a `break` statement before `case`.",
+  "help": "Use a `break` statement to prevent fallthrough, or add a comment to indicate intentional fallthrough."
  },
  {
   "rule": "eslint/no-fallthrough",
@@ -1272,7 +1398,8 @@
   "file": "a.js",
   "code": "switch(foo) { case 0:\n\n default: b() }",
   "options": [],
-  "message": "Expected a `break` statement before `default`."
+  "message": "Expected a `break` statement before `default`.",
+  "help": "Use a `break` statement to prevent fallthrough, or add a comment to indicate intentional fallthrough."
  },
  {
   "rule": "eslint/no-implicit-coercion",
@@ -1280,7 +1407,8 @@
   "file": "a.js",
   "code": "!!foo",
   "options": [],
-  "message": "Unexpected implicit coercion to boolean"
+  "message": "Unexpected implicit coercion to boolean",
+  "help": "Use `Boolean(value)` instead"
  },
  {
   "rule": "eslint/no-implicit-coercion",
@@ -1288,7 +1416,8 @@
   "file": "a.js",
   "code": "+foo",
   "options": [],
-  "message": "Unexpected implicit coercion to number"
+  "message": "Unexpected implicit coercion to number",
+  "help": "Use `Number(value)` instead"
  },
  {
   "rule": "eslint/no-implicit-coercion",
@@ -1296,7 +1425,8 @@
   "file": "a.js",
   "code": "\"\"+foo",
   "options": [],
-  "message": "Unexpected implicit coercion to string"
+  "message": "Unexpected implicit coercion to string",
+  "help": "Use `String(value)` instead"
  },
  {
   "rule": "eslint/no-implicit-globals",
@@ -1308,7 +1438,8 @@
     "lexicalBindings": true
    }
   ],
-  "message": "Unexpected 'let' declaration in the global scope."
+  "message": "Unexpected 'let' declaration in the global scope.",
+  "help": "Wrap it in a block or in an IIFE."
  },
  {
   "rule": "eslint/no-implicit-globals",
@@ -1316,7 +1447,8 @@
   "file": "a.js",
   "code": "var a = 1;",
   "options": [],
-  "message": "Unexpected 'var' declaration in the global scope."
+  "message": "Unexpected 'var' declaration in the global scope.",
+  "help": "Wrap it in an IIFE for a local variable, or assign it as a global property for a global variable."
  },
  {
   "rule": "eslint/no-implicit-globals",
@@ -1324,7 +1456,8 @@
   "file": "a.js",
   "code": "a = 1;",
   "options": [],
-  "message": "Global variable leak."
+  "message": "Global variable leak.",
+  "help": "Declare the variable if it is intended to be local."
  },
  {
   "rule": "eslint/no-import-assign",
@@ -1332,7 +1465,8 @@
   "file": "a.js",
   "code": "import mod3 from 'mod'; mod3++",
   "options": [],
-  "message": "Do not assign to imported bindings"
+  "message": "Do not assign to imported bindings",
+  "help": "Imported bindings are readonly"
  },
  {
   "rule": "eslint/no-import-assign",
@@ -1340,7 +1474,8 @@
   "file": "a.js",
   "code": "import * as mod3 from 'mod'; mod3.named++",
   "options": [],
-  "message": "Do not assign to imported bindings"
+  "message": "Do not assign to imported bindings",
+  "help": "Imported bindings are readonly"
  },
  {
   "rule": "eslint/no-inline-comments",
@@ -1348,7 +1483,8 @@
   "file": "a.jsx",
   "code": "var a = \n{/**/}",
   "options": [],
-  "message": "Unexpected comment inline with code"
+  "message": "Unexpected comment inline with code",
+  "help": "Move the comment to a separate line"
  },
  {
   "rule": "eslint/no-inner-declarations",
@@ -1358,7 +1494,8 @@
   "options": [
    "both"
   ],
-  "message": "Variable or `function` declarations are not allowed in nested blocks"
+  "message": "Variable or `function` declarations are not allowed in nested blocks",
+  "help": "Move variable declaration to program root"
  },
  {
   "rule": "eslint/no-irregular-whitespace",
@@ -1366,7 +1503,8 @@
   "file": "a.js",
   "code": "\u000b",
   "options": [],
-  "message": "Unexpected irregular whitespace"
+  "message": "Unexpected irregular whitespace",
+  "help": "Try to remove the irregular whitespace"
  },
  {
   "rule": "eslint/no-iterator",
@@ -1374,7 +1512,8 @@
   "file": "a.js",
   "code": "var a = test.__iterator__;",
   "options": [],
-  "message": "Reserved name `__iterator__`"
+  "message": "Reserved name `__iterator__`",
+  "help": "Consider using [Symbol.iterator] instead"
  },
  {
   "rule": "eslint/no-label-var",
@@ -1382,7 +1521,8 @@
   "file": "a.js",
   "code": "function bar(baz) { baz: for(;;) { break baz; } }",
   "options": [],
-  "message": "Found identifier 'baz' with the same name as a label."
+  "message": "Found identifier 'baz' with the same name as a label.",
+  "help": "Rename either the variable or the label to avoid confusion."
  },
  {
   "rule": "eslint/no-labels",
@@ -1390,7 +1530,8 @@
   "file": "a.js",
   "code": "A: var foo = 0;",
   "options": [],
-  "message": "Labeled statement is not allowed"
+  "message": "Labeled statement is not allowed",
+  "help": "Consider refactoring the code to eliminate the need for labels."
  },
  {
   "rule": "eslint/no-labels",
@@ -1399,7 +1540,8 @@
   "code": "A: while (a) { break A; }",
   "options": [],
   "index": 1,
-  "message": "Label in break statement is not allowed"
+  "message": "Label in break statement is not allowed",
+  "help": "Consider refactoring the code to eliminate the need for labels."
  },
  {
   "rule": "eslint/no-labels",
@@ -1408,7 +1550,8 @@
   "code": "A: while (a) { continue A; }",
   "options": [],
   "index": 1,
-  "message": "Label in continue statement is not allowed"
+  "message": "Label in continue statement is not allowed",
+  "help": "Consider refactoring the code to eliminate the need for labels."
  },
  {
   "rule": "eslint/no-lone-blocks",
@@ -1416,7 +1559,8 @@
   "file": "a.js",
   "code": "{}",
   "options": [],
-  "message": "Block is unnecessary."
+  "message": "Block is unnecessary.",
+  "help": "Remove the unnecessary block statement. If you need to limit variable scope, consider using a function or module instead."
  },
  {
   "rule": "eslint/no-lonely-if",
@@ -1424,7 +1568,8 @@
   "file": "a.js",
   "code": "if (a) {;} else { if (b) {;} }",
   "options": [],
-  "message": "Unexpected `if` as the only statement in an `else` block"
+  "message": "Unexpected `if` as the only statement in an `else` block",
+  "help": "Consider using `else if` instead."
  },
  {
   "rule": "eslint/no-loop-func",
@@ -1432,7 +1577,8 @@
   "file": "a.js",
   "code": "for (var i in {}) { (function() { i; }) }",
   "options": [],
-  "message": "Function declared in a loop contains unsafe references to variable(s)"
+  "message": "Function declared in a loop contains unsafe references to variable(s)",
+  "help": "Variables declared with 'var' are function-scoped, not block-scoped. Consider using 'let' or 'const' for block-scoped variables, or move the function outside the loop."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1444,7 +1590,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: -0b110"
+  "message": "No magic number: -0b110",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1456,7 +1603,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: -0o71"
+  "message": "No magic number: -0o71",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1468,7 +1616,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: -0x12"
+  "message": "No magic number: -0x12",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1482,7 +1631,8 @@
     ]
    }
   ],
-  "message": "No magic number: -0xbc"
+  "message": "No magic number: -0xbc",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1496,7 +1646,8 @@
     ]
    }
   ],
-  "message": "No magic number: -100n"
+  "message": "No magic number: -100n",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1508,7 +1659,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: -1e310"
+  "message": "No magic number: -1e310",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1522,7 +1674,8 @@
     ]
    }
   ],
-  "message": "No magic number: -3e4"
+  "message": "No magic number: -3e4",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1536,7 +1689,8 @@
     ]
    }
   ],
-  "message": "No magic number: -4n"
+  "message": "No magic number: -4n",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1550,7 +1704,8 @@
     ]
    }
   ],
-  "message": "No magic number: -7e-8"
+  "message": "No magic number: -7e-8",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1562,7 +1717,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: -1"
+  "message": "No magic number: -1",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1576,7 +1732,8 @@
     ]
    }
   ],
-  "message": "No magic number: -7.1e-8"
+  "message": "No magic number: -7.1e-8",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1590,7 +1747,8 @@
     ]
    }
   ],
-  "message": "No magic number: -3.1e4"
+  "message": "No magic number: -3.1e4",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1604,7 +1762,8 @@
     ]
    }
   ],
-  "message": "No magic number: 0x0a"
+  "message": "No magic number: 0x0a",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1616,7 +1775,8 @@
     "ignoreTypeIndexes": false
    }
   ],
-  "message": "No magic number: 0xab"
+  "message": "No magic number: 0xab",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1630,7 +1790,8 @@
     ]
    }
   ],
-  "message": "No magic number: 100n"
+  "message": "No magic number: 100n",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1642,7 +1803,8 @@
     "ignoreTypeIndexes": false
    }
   ],
-  "message": "No magic number: 10n"
+  "message": "No magic number: 10n",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1656,7 +1818,8 @@
     ]
    }
   ],
-  "message": "No magic number: 1e2"
+  "message": "No magic number: 1e2",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1668,7 +1831,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: 1e300"
+  "message": "No magic number: 1e300",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1680,7 +1844,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: 1e310"
+  "message": "No magic number: 1e310",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1694,7 +1859,8 @@
     ]
    }
   ],
-  "message": "No magic number: 3n"
+  "message": "No magic number: 3n",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1706,7 +1872,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: 56e-1"
+  "message": "No magic number: 56e-1",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1720,7 +1887,8 @@
     ]
    }
   ],
-  "message": "No magic number: 5e-6"
+  "message": "No magic number: 5e-6",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1734,7 +1902,8 @@
     ]
    }
   ],
-  "message": "No magic number: 100"
+  "message": "No magic number: 100",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1746,7 +1915,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: 0.12e1"
+  "message": "No magic number: 0.12e1",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1760,7 +1930,8 @@
     ]
    }
   ],
-  "message": "No magic number: 5.1e-6"
+  "message": "No magic number: 5.1e-6",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1774,7 +1945,8 @@
     ]
    }
   ],
-  "message": "No magic number: 1.1e2"
+  "message": "No magic number: 1.1e2",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1786,7 +1958,8 @@
     "ignoreArrayIndexes": true
    }
   ],
-  "message": "No magic number: 1.678e2"
+  "message": "No magic number: 1.678e2",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-magic-numbers",
@@ -1798,7 +1971,8 @@
     "ignoreTypeIndexes": false
    }
   ],
-  "message": "No magic number: 5.6e1"
+  "message": "No magic number: 5.6e1",
+  "help": "Use a named constant instead of a magic number to make the code more readable and maintainable."
  },
  {
   "rule": "eslint/no-misleading-character-class",
@@ -1810,7 +1984,8 @@
     "allowEscape": false
    }
   ],
-  "message": "Unexpected combining class in character class."
+  "message": "Unexpected combining class in character class.",
+  "help": "Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences."
  },
  {
   "rule": "eslint/no-misleading-character-class",
@@ -1818,7 +1993,8 @@
   "file": "a.js",
   "code": "var r = /[👶🏻]/u",
   "options": [],
-  "message": "Unexpected emoji modifier in character class."
+  "message": "Unexpected emoji modifier in character class.",
+  "help": "Use Unicode code point escapes (e.g., \\u{1F3FB} for the light skin tone modifier) instead of emoji modifier sequences in character classes."
  },
  {
   "rule": "eslint/no-misleading-character-class",
@@ -1826,7 +2002,8 @@
   "file": "a.js",
   "code": "var r = /[🇯🇵]/u",
   "options": [],
-  "message": "Unexpected regional indicator in character class."
+  "message": "Unexpected regional indicator in character class.",
+  "help": "Use Unicode code point escapes (e.g., \\u{1F1EF} for the regional indicator symbol for 'J') instead of regional indicator symbol pairs in character classes."
  },
  {
   "rule": "eslint/no-misleading-character-class",
@@ -1838,7 +2015,8 @@
     "allowEscape": true
    }
   ],
-  "message": "Unexpected surrogate pair in character class."
+  "message": "Unexpected surrogate pair in character class.",
+  "help": "Add the Unicode flag 'u'."
  },
  {
   "rule": "eslint/no-multi-assign",
@@ -1846,7 +2024,8 @@
   "file": "a.js",
   "code": "a=b=c",
   "options": [],
-  "message": "Do not use chained assignment"
+  "message": "Do not use chained assignment",
+  "help": "Separate each assignment into its own statement"
  },
  {
   "rule": "eslint/no-multi-str",
@@ -1854,7 +2033,8 @@
   "file": "a.js",
   "code": "'foo\\ ar';",
   "options": [],
-  "message": "Unexpected multi string."
+  "message": "Unexpected multi string.",
+  "help": "Multiline strings are not allowed. Use template literals or string concatenation instead."
  },
  {
   "rule": "eslint/no-new-func",
@@ -1862,7 +2042,8 @@
   "file": "a.js",
   "code": "var a = Function(\"b\", \"c\", \"return b+c\");",
   "options": [],
-  "message": "Using `new Function` or `Function` is not allowed."
+  "message": "Using `new Function` or `Function` is not allowed.",
+  "help": "Avoid the `Function` constructor. Define the function directly with a function declaration/expression or an arrow function."
  },
  {
   "rule": "eslint/no-new-wrappers",
@@ -1870,7 +2051,8 @@
   "file": "a.js",
   "code": "new String()",
   "options": [],
-  "message": "Do not use `String` as a constructor"
+  "message": "Do not use `String` as a constructor",
+  "help": "Remove the `new` operator."
  },
  {
   "rule": "eslint/no-obj-calls",
@@ -1878,7 +2060,8 @@
   "file": "a.js",
   "code": "Intl()",
   "options": [],
-  "message": "`Intl` is not a function and cannot be called"
+  "message": "`Intl` is not a function and cannot be called",
+  "help": "This call will throw a TypeError at runtime."
  },
  {
   "rule": "eslint/no-obj-calls",
@@ -1886,7 +2069,8 @@
   "file": "a.js",
   "code": "let j = JSON; j();",
   "options": [],
-  "message": "`j` is not a function and cannot be called"
+  "message": "`j` is not a function and cannot be called",
+  "help": "This call will throw a TypeError at runtime."
  },
  {
   "rule": "eslint/no-object-constructor",
@@ -1894,7 +2078,8 @@
   "file": "a.js",
   "code": "Object()",
   "options": [],
-  "message": "Disallow calls to the `Object` constructor without an argument"
+  "message": "Disallow calls to the `Object` constructor without an argument",
+  "help": "Use object literal notation {} instead"
  },
  {
   "rule": "eslint/no-promise-executor-return",
@@ -1906,7 +2091,8 @@
     "allowVoid": true
    }
   ],
-  "message": "Return statement should not be used in Promise executor."
+  "message": "Return statement should not be used in Promise executor.",
+  "help": "Use `resolve()` or `reject()` instead of returning a value."
  },
  {
   "rule": "eslint/no-proto",
@@ -1914,7 +2100,8 @@
   "file": "a.js",
   "code": "var a = test.__proto__;",
   "options": [],
-  "message": "The '__proto__' property is deprecated"
+  "message": "The '__proto__' property is deprecated",
+  "help": "use `Object.getPrototypeOf` and `Object.setPrototypeOf` instead."
  },
  {
   "rule": "eslint/no-prototype-builtins",
@@ -1922,7 +2109,8 @@
   "file": "a.js",
   "code": "foo.isPrototypeOf('bar')",
   "options": [],
-  "message": "do not access Object.prototype method \"isPrototypeOf\" from target object"
+  "message": "do not access Object.prototype method \"isPrototypeOf\" from target object",
+  "help": "to avoid prototype pollution, use `Object.prototype.isPrototypeOf.call` instead"
  },
  {
   "rule": "eslint/no-redeclare",
@@ -1930,7 +2118,8 @@
   "file": "a.js",
   "code": "var a; var a;",
   "options": [],
-  "message": "'a' is already defined."
+  "message": "'a' is already defined.",
+  "help": "Use a different variable name or remove the duplicate declaration."
  },
  {
   "rule": "eslint/no-regex-spaces",
@@ -1938,7 +2127,8 @@
   "file": "a.js",
   "code": "var foo = /  /;",
   "options": [],
-  "message": "Multiple consecutive spaces are hard to count."
+  "message": "Multiple consecutive spaces are hard to count.",
+  "help": "Use a quantifier: ` {2}`"
  },
  {
   "rule": "eslint/no-restricted-exports",
@@ -1952,7 +2142,8 @@
     }
    }
   ],
-  "message": "Exporting named value as default is restricted."
+  "message": "Exporting named value as default is restricted.",
+  "help": "Use named export instead."
  },
  {
   "rule": "eslint/no-restricted-exports",
@@ -1966,7 +2157,8 @@
     }
    }
   ],
-  "message": "Reexporting 'default' export is restricted."
+  "message": "Reexporting 'default' export is restricted.",
+  "help": "Use named export instead."
  },
  {
   "rule": "eslint/no-restricted-exports",
@@ -1980,7 +2172,8 @@
     }
    }
   ],
-  "message": "Reexporting named export as default is restricted."
+  "message": "Reexporting named export as default is restricted.",
+  "help": "Use named export instead."
  },
  {
   "rule": "eslint/no-restricted-exports",
@@ -1994,7 +2187,8 @@
     }
    }
   ],
-  "message": "Reexporting namespace as default is restricted."
+  "message": "Reexporting namespace as default is restricted.",
+  "help": "Use named export instead."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2115,7 +2309,8 @@
     ]
    }
   ],
-  "message": "'Bar' import from 'foo' is restricted because only imports that match the pattern '^Foo' are allowed from 'foo'."
+  "message": "'Bar' import from 'foo' is restricted because only imports that match the pattern '^Foo' are allowed from 'foo'.",
+  "help": "Only imports that match the pattern '/^Foo/u' are allowed to be imported from 'foo'."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2138,7 +2333,8 @@
     ]
    }
   ],
-  "message": "'Disallowed' import from 'foo' is restricted because only Allowed1, Allowed2 import(s) is/are allowed."
+  "message": "'Disallowed' import from 'foo' is restricted because only Allowed1, Allowed2 import(s) is/are allowed.",
+  "help": "Fix this please."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2158,7 +2354,8 @@
     ]
    }
   ],
-  "message": "'DisallowedObject' import from 'foo' is restricted because only AllowedObject import(s) is/are allowed."
+  "message": "'DisallowedObject' import from 'foo' is restricted because only AllowedObject import(s) is/are allowed.",
+  "help": "Only 'AllowedObject' is allowed to be imported from 'foo'."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2179,7 +2376,8 @@
     ]
    }
   ],
-  "message": "'SomethingBad' import from 'foo' is restricted because only GoodThing, AlsoGood import(s) is/are allowed."
+  "message": "'SomethingBad' import from 'foo' is restricted because only GoodThing, AlsoGood import(s) is/are allowed.",
+  "help": "Only good stuff allowed."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2236,7 +2434,8 @@
     ]
    }
   ],
-  "message": "* import is invalid because only 'AllowedObject, AnotherObject' from 'foo' is/are allowed."
+  "message": "* import is invalid because only 'AllowedObject, AnotherObject' from 'foo' is/are allowed.",
+  "help": "Nothing else."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2275,7 +2474,8 @@
     ]
    }
   ],
-  "message": "* import is invalid because only imports that match the pattern '^Allow' from 'foo/bar' are allowed."
+  "message": "* import is invalid because only imports that match the pattern '^Allow' from 'foo/bar' are allowed.",
+  "help": "Only import names starting with 'Allow' are allowed to be imported from 'foo'."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2295,7 +2495,8 @@
     ]
    }
   ],
-  "message": "* import is invalid because 'DisallowedObject' from 'foo' is restricted."
+  "message": "* import is invalid because 'DisallowedObject' from 'foo' is restricted.",
+  "help": "Please import 'DisallowedObject' from /bar/ instead."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2315,7 +2516,8 @@
     ]
    }
   ],
-  "message": "'' import from 'fs' is restricted."
+  "message": "'' import from 'fs' is restricted.",
+  "help": "Don't import ''."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2333,7 +2535,8 @@
     ]
    }
   ],
-  "message": "'import-foo' import is restricted from being used."
+  "message": "'import-foo' import is restricted from being used.",
+  "help": "Please use import-bar instead."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2378,7 +2581,8 @@
     ]
    }
   ],
-  "message": "* import is invalid because 'Foo, Bar' from 'foo-bar-baz' is restricted from being used by a pattern."
+  "message": "* import is invalid because 'Foo, Bar' from 'foo-bar-baz' is restricted from being used by a pattern.",
+  "help": "Use only 'Baz'."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2417,7 +2621,8 @@
     ]
    }
   ],
-  "message": "* import is invalid because import name matching '^Foo' pattern from 'foo' is restricted from being used."
+  "message": "* import is invalid because import name matching '^Foo' pattern from 'foo' is restricted from being used.",
+  "help": "Use bar."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2439,7 +2644,8 @@
     ]
    }
   ],
-  "message": "'Foo' import from 'foo' is restricted from being used by a pattern."
+  "message": "'Foo' import from 'foo' is restricted from being used by a pattern.",
+  "help": "Use bar."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -2458,7 +2664,8 @@
     ]
    }
   ],
-  "message": "'foo' import is restricted from being used by a pattern."
+  "message": "'foo' import is restricted from being used by a pattern.",
+  "help": "foo is forbidden, use bar instead"
  },
  {
   "rule": "eslint/no-restricted-properties",
@@ -2486,7 +2693,8 @@
     "message": "Please use someObject.allowedProperty instead."
    }
   ],
-  "message": "'someObject' is restricted from being used. Only these properties are allowed: allowedProperty."
+  "message": "'someObject' is restricted from being used. Only these properties are allowed: allowedProperty.",
+  "help": "Please use someObject.allowedProperty instead."
  },
  {
   "rule": "eslint/no-restricted-properties",
@@ -2514,7 +2722,8 @@
     "message": "Please use someObject.allowedProperty instead."
    }
   ],
-  "message": "'disallowedProperty' is restricted from being used. Property 'disallowedProperty' is only allowed on these objects: anotherObject."
+  "message": "'disallowedProperty' is restricted from being used. Property 'disallowedProperty' is only allowed on these objects: anotherObject.",
+  "help": "Please use someObject.allowedProperty instead."
  },
  {
   "rule": "eslint/no-return-assign",
@@ -2522,7 +2731,8 @@
   "file": "a.js",
   "code": "() => result = a * b",
   "options": [],
-  "message": "Returned expression contains an assignment."
+  "message": "Returned expression contains an assignment.",
+  "help": "Compute the value before returning it, or wrap the assignment in parentheses to make the intent explicit."
  },
  {
   "rule": "eslint/no-return-assign",
@@ -2530,7 +2740,8 @@
   "file": "a.js",
   "code": "() => { return result = a * b; }",
   "options": [],
-  "message": "Returned expression contains an assignment."
+  "message": "Returned expression contains an assignment.",
+  "help": "Compute the value before returning it, or wrap the assignment in parentheses to make the intent explicit."
  },
  {
   "rule": "eslint/no-script-url",
@@ -2538,7 +2749,8 @@
   "file": "a.js",
   "code": "var a = 'javascript:';",
   "options": [],
-  "message": "Unexpected `javascript:` url"
+  "message": "Unexpected `javascript:` url",
+  "help": "Execute the code directly instead."
  },
  {
   "rule": "eslint/no-self-assign",
@@ -2546,7 +2758,8 @@
   "file": "a.js",
   "code": "a = a",
   "options": [],
-  "message": "this expression is assigned to itself"
+  "message": "this expression is assigned to itself",
+  "help": "Remove the self-assignment or assign to a different variable."
  },
  {
   "rule": "eslint/no-self-compare",
@@ -2554,7 +2767,8 @@
   "file": "a.js",
   "code": "x < x",
   "options": [],
-  "message": "Both sides of this comparison are exactly the same"
+  "message": "Both sides of this comparison are exactly the same",
+  "help": "If you are testing for NaN, you can use the `Number.isNaN()` function."
  },
  {
   "rule": "eslint/no-sequences",
@@ -2562,7 +2776,8 @@
   "file": "a.js",
   "code": "1, 2;",
   "options": [],
-  "message": "Unexpected use of comma operator"
+  "message": "Unexpected use of comma operator",
+  "help": "Do not use the comma operator. If you intended to write a sequence, wrap it in parentheses."
  },
  {
   "rule": "eslint/no-setter-return",
@@ -2570,7 +2785,8 @@
   "file": "a.js",
   "code": "({ set a(val) { return 1; } })",
   "options": [],
-  "message": "Setter cannot return a value"
+  "message": "Setter cannot return a value",
+  "help": "Remove the return statement or ensure it does not return a value."
  },
  {
   "rule": "eslint/no-shadow",
@@ -2582,7 +2798,8 @@
     "hoist": "all"
    }
   ],
-  "message": "'a' is already declared in the upper scope."
+  "message": "'a' is already declared in the upper scope.",
+  "help": "Consider renaming 'a' to avoid shadowing the variable from the outer scope."
  },
  {
   "rule": "eslint/no-shadow-restricted-names",
@@ -2590,7 +2807,8 @@
   "file": "a.js",
   "code": "class undefined {}",
   "options": [],
-  "message": "Shadowing of global properties such as `undefined` is not allowed."
+  "message": "Shadowing of global properties such as `undefined` is not allowed.",
+  "help": "Rename 'undefined' to avoid shadowing the global property."
  },
  {
   "rule": "eslint/no-sparse-arrays",
@@ -2598,7 +2816,8 @@
   "file": "a.js",
   "code": "var a = [,];",
   "options": [],
-  "message": "Unexpected comma in middle of array"
+  "message": "Unexpected comma in middle of array",
+  "help": "remove the comma or insert `undefined`"
  },
  {
   "rule": "eslint/no-sparse-arrays",
@@ -2606,7 +2825,8 @@
   "file": "a.js",
   "code": "var a = [ 1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,, 2];",
   "options": [],
-  "message": "30 unexpected commas in middle of array"
+  "message": "30 unexpected commas in middle of array",
+  "help": "remove the comma or insert `undefined`"
  },
  {
   "rule": "eslint/no-template-curly-in-string",
@@ -2614,7 +2834,8 @@
   "file": "a.js",
   "code": "\"Hello, ${name}\"",
   "options": [],
-  "message": "Template placeholders will not interpolate in regular strings"
+  "message": "Template placeholders will not interpolate in regular strings",
+  "help": "Did you mean to use a template string literal?"
  },
  {
   "rule": "eslint/no-ternary",
@@ -2622,7 +2843,8 @@
   "file": "a.js",
   "code": "true ? thing() : stuff();",
   "options": [],
-  "message": "Unexpected use of ternary expression"
+  "message": "Unexpected use of ternary expression",
+  "help": "Do not use the ternary expression."
  },
  {
   "rule": "eslint/no-this-before-super",
@@ -2630,7 +2852,8 @@
   "file": "a.js",
   "code": "class A extends B { constructor() { this.c(); } }",
   "options": [],
-  "message": "Expected to always call `super()` before `this`/`super` property access."
+  "message": "Expected to always call `super()` before `this`/`super` property access.",
+  "help": "Call `super()` before `this`/`super` property access."
  },
  {
   "rule": "eslint/no-throw-literal",
@@ -2638,7 +2861,8 @@
   "file": "a.js",
   "code": "throw 0;",
   "options": [],
-  "message": "Expected an error object to be thrown"
+  "message": "Expected an error object to be thrown",
+  "help": "Throwing literals or non-Error objects is not recommended. Use an Error object instead."
  },
  {
   "rule": "eslint/no-throw-literal",
@@ -2646,7 +2870,8 @@
   "file": "a.js",
   "code": "throw undefined;",
   "options": [],
-  "message": "Do not throw undefined"
+  "message": "Do not throw undefined",
+  "help": "Throwing literals or non-Error objects is not recommended. Use an Error object instead."
  },
  {
   "rule": "eslint/no-undefined",
@@ -2662,7 +2887,8 @@
   "file": "a.js",
   "code": "foo._bar;",
   "options": [],
-  "message": "Unexpected dangling '_' in '`_bar`'."
+  "message": "Unexpected dangling '_' in '`_bar`'.",
+  "help": "Remove the dangling '_' or add `_bar` to the 'allow' configuration."
  },
  {
   "rule": "eslint/no-unexpected-multiline",
@@ -2670,7 +2896,8 @@
   "file": "a.js",
   "code": "\n\t\t\tfoo\n\t\t\t/ bar /g\n\t\t",
   "options": [],
-  "message": "Unexpected newline between numerator and division operator"
+  "message": "Unexpected newline between numerator and division operator",
+  "help": "If you did not intend to divide, insert ';' before the slash"
  },
  {
   "rule": "eslint/no-unexpected-multiline",
@@ -2678,7 +2905,8 @@
   "file": "a.js",
   "code": "var a = b\n(x || y).doSomething()",
   "options": [],
-  "message": "Unexpected newline between function name and open parenthesis of function call"
+  "message": "Unexpected newline between function name and open parenthesis of function call",
+  "help": "If you did not intend to make a function call, insert ';' before the parenthesis"
  },
  {
   "rule": "eslint/no-unexpected-multiline",
@@ -2686,7 +2914,8 @@
   "file": "a.js",
   "code": "class C { field1 = obj\n[field2]; }",
   "options": [],
-  "message": "Unexpected newline between object and open bracket of property access"
+  "message": "Unexpected newline between object and open bracket of property access",
+  "help": "If you did not intend to access a property, insert ';' before the bracket"
  },
  {
   "rule": "eslint/no-unexpected-multiline",
@@ -2694,7 +2923,8 @@
   "file": "a.js",
   "code": "x\n.y\nz\n`Invalid Test Case`",
   "options": [],
-  "message": "Unexpected newline between template tag and template literal"
+  "message": "Unexpected newline between template tag and template literal",
+  "help": "If you did not intend for this to be a tagged template, insert ';' before the backtick"
  },
  {
   "rule": "eslint/no-unneeded-ternary",
@@ -2706,7 +2936,8 @@
     "defaultAssignment": false
    }
   ],
-  "message": "Unnecessary use of conditional expression for default assignment"
+  "message": "Unnecessary use of conditional expression for default assignment",
+  "help": "Remove this ternary operator and use the variable directly"
  },
  {
   "rule": "eslint/no-unneeded-ternary",
@@ -2714,7 +2945,8 @@
   "file": "a.ts",
   "code": "foo as any ? false : true",
   "options": [],
-  "message": "Unnecessary use of boolean literals in conditional expression"
+  "message": "Unnecessary use of boolean literals in conditional expression",
+  "help": "Remove this ternary operator"
  },
  {
   "rule": "eslint/no-unsafe-finally",
@@ -2722,7 +2954,8 @@
   "file": "a.js",
   "code": "var foo = function() { while (true) try {} finally { break; } }",
   "options": [],
-  "message": "Unsafe `finally` block."
+  "message": "Unsafe `finally` block.",
+  "help": "Control flow inside `try` or `catch` blocks will be overwritten by this statement."
  },
  {
   "rule": "eslint/no-unsafe-negation",
@@ -2734,7 +2967,8 @@
     "enforceForOrderingRelations": true
    }
   ],
-  "message": "Unexpected negation of the left operand of '<=' operator."
+  "message": "Unexpected negation of the left operand of '<=' operator.",
+  "help": "Use `()` to negate the whole expression, as '!' binds more closely than '<='"
  },
  {
   "rule": "eslint/no-unsafe-optional-chaining",
@@ -2746,7 +2980,8 @@
     "disallowArithmeticOperators": true
    }
   ],
-  "message": "Unsafe arithmetic operation on optional chaining"
+  "message": "Unsafe arithmetic operation on optional chaining",
+  "help": "This can result in NaN."
  },
  {
   "rule": "eslint/no-unsafe-optional-chaining",
@@ -2754,7 +2989,8 @@
   "file": "a.js",
   "code": "(obj?.foo)();",
   "options": [],
-  "message": "Unsafe usage of optional chaining"
+  "message": "Unsafe usage of optional chaining",
+  "help": "If this short-circuits with 'undefined' the evaluation will throw TypeError"
  },
  {
   "rule": "eslint/no-unused-expressions",
@@ -2762,7 +2998,8 @@
   "file": "a.js",
   "code": "0",
   "options": [],
-  "message": "Expected expression to be used"
+  "message": "Expected expression to be used",
+  "help": "Consider using this expression or removing it"
  },
  {
   "rule": "eslint/no-unused-private-class-members",
@@ -2770,7 +3007,8 @@
   "file": "a.js",
   "code": "class Foo {\n    #unusedMember = 5;\n}",
   "options": [],
-  "message": "'unusedMember' is defined but never used."
+  "message": "'unusedMember' is defined but never used.",
+  "help": "Remove the declaration or use it in the code."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2778,7 +3016,8 @@
   "file": "a.js",
   "code": "try {} catch(e){ }",
   "options": [],
-  "message": "Catch parameter 'e' is caught but never used."
+  "message": "Catch parameter 'e' is caught but never used.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2790,7 +3029,8 @@
     "caughtErrorsIgnorePattern": "\\w"
    }
   ],
-  "message": "Catch parameter '$' is caught but never used. Unused caught errors should match /\\w/."
+  "message": "Catch parameter '$' is caught but never used. Unused caught errors should match /\\w/.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2803,7 +3043,8 @@
     "caughtErrorsIgnorePattern": "^ignore"
    }
   ],
-  "message": "Catch parameter 'err' is caught but never used. Unused caught errors should match /^ignore/."
+  "message": "Catch parameter 'err' is caught but never used. Unused caught errors should match /^ignore/.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2816,7 +3057,8 @@
     "caughtErrorsIgnorePattern": "^ignored"
    }
   ],
-  "message": "Catch parameter 'foo' is caught but never used. Unused caught errors should match /^ignored/."
+  "message": "Catch parameter 'foo' is caught but never used. Unused caught errors should match /^ignored/.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2828,7 +3070,8 @@
     "caughtErrorsIgnorePattern": "foo"
    }
   ],
-  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /foo/."
+  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /foo/.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2841,7 +3084,8 @@
     "varsIgnorePattern": "_"
    }
   ],
-  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /ignored/."
+  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /ignored/.",
+  "help": "Consider handling this error."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2853,7 +3097,8 @@
     "ignoreClassWithStaticInitBlock": true
    }
   ],
-  "message": "Class 'Foo' is declared but never used."
+  "message": "Class 'Foo' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2861,7 +3106,8 @@
   "file": "a.ts",
   "code": "enum Foo { A }",
   "options": [],
-  "message": "Enum 'Foo' is declared but never used."
+  "message": "Enum 'Foo' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2869,7 +3115,8 @@
   "file": "a.js",
   "code": "function foo() {}",
   "options": [],
-  "message": "Function 'foo' is declared but never used."
+  "message": "Function 'foo' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2877,7 +3124,8 @@
   "file": "a.js",
   "code": "export function promisify() { var fn; function fn() { fn() } }",
   "options": [],
-  "message": "Function 'fn' is declared but never used. Unused functions should start with a '_'."
+  "message": "Function 'fn' is declared but never used. Unused functions should start with a '_'.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2885,7 +3133,8 @@
   "file": "a.js",
   "code": "import x from \"y\";",
   "options": [],
-  "message": "Identifier 'x' is imported but never used."
+  "message": "Identifier 'x' is imported but never used.",
+  "help": "Consider removing this import."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2893,7 +3142,8 @@
   "file": "a.ts",
   "code": "interface LinkedList<T> { next: LinkedList<T> | undefined }",
   "options": [],
-  "message": "Interface 'LinkedList' is declared but never used."
+  "message": "Interface 'LinkedList' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2906,7 +3156,8 @@
     "caughtErrorsIgnorePattern": "^_"
    }
   ],
-  "message": "Parameter '_a' is declared but never used."
+  "message": "Parameter '_a' is declared but never used.",
+  "help": "Consider removing this parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2919,7 +3170,8 @@
     "argsIgnorePattern": "[iI]gnored"
    }
   ],
-  "message": "Parameter '_a' is declared but never used. Unused parameters should match /[iI]gnored/."
+  "message": "Parameter '_a' is declared but never used. Unused parameters should match /[iI]gnored/.",
+  "help": "Consider removing this parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2931,7 +3183,8 @@
     "argsIgnorePattern": "^ignored"
    }
   ],
-  "message": "Parameter 'unused' is declared but never used. Unused parameters should match /^ignored/."
+  "message": "Parameter 'unused' is declared but never used. Unused parameters should match /^ignored/.",
+  "help": "Consider removing this parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2944,7 +3197,8 @@
     "varsIgnorePattern": "_"
    }
   ],
-  "message": "Parameter '_' is declared but never used. Unused parameters should match /ignored/."
+  "message": "Parameter '_' is declared but never used. Unused parameters should match /ignored/.",
+  "help": "Consider removing this parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2952,7 +3206,8 @@
   "file": "a.js",
   "code": "array.forEach(a => {})",
   "options": [],
-  "message": "Parameter 'a' is declared but never used. Unused parameters should start with a '_'."
+  "message": "Parameter 'a' is declared but never used. Unused parameters should start with a '_'.",
+  "help": "Consider removing this parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2960,7 +3215,8 @@
   "file": "a.ts",
   "code": "type Foo = Foo",
   "options": [],
-  "message": "Type alias 'Foo' is declared but never used."
+  "message": "Type alias 'Foo' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2972,7 +3228,8 @@
     "ignoreRestSiblings": true
    }
   ],
-  "message": "Variable 'coords' is assigned a value but never used."
+  "message": "Variable 'coords' is assigned a value but never used.",
+  "help": "Did you mean to use this variable?"
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2984,7 +3241,8 @@
     "varsIgnorePattern": "^tooCompli[cated]"
    }
   ],
-  "message": "Variable 'x' is assigned a value but never used. Unused variables should match /^tooCompli[cated]/."
+  "message": "Variable 'x' is assigned a value but never used. Unused variables should match /^tooCompli[cated]/.",
+  "help": "Did you mean to use this variable?"
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -2992,7 +3250,8 @@
   "file": "a.js",
   "code": "let a; a = foo;",
   "options": [],
-  "message": "Variable 'a' is assigned a value but never used. Unused variables should start with a '_'."
+  "message": "Variable 'a' is assigned a value but never used. Unused variables should start with a '_'.",
+  "help": "Did you mean to use this variable?"
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3004,7 +3263,8 @@
     "argsIgnorePattern": "^_"
    }
   ],
-  "message": "Variable '_a' is declared but never used."
+  "message": "Variable '_a' is declared but never used.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3017,7 +3277,8 @@
     "varsIgnorePattern": "[iI]gnored"
    }
   ],
-  "message": "Variable 'secondItem' is declared but never used. Unused variables should match /[iI]gnored/."
+  "message": "Variable 'secondItem' is declared but never used. Unused variables should match /[iI]gnored/.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3025,7 +3286,8 @@
   "file": "a.js",
   "code": "var a=10",
   "options": [],
-  "message": "Variable 'a' is declared but never used. Unused variables should start with a '_'."
+  "message": "Variable 'a' is declared but never used. Unused variables should start with a '_'.",
+  "help": "Consider removing this declaration."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3039,7 +3301,8 @@
     "reportUsedIgnorePattern": true
    }
   ],
-  "message": "Catch parameter '_err' is marked as ignored but is used."
+  "message": "Catch parameter '_err' is marked as ignored but is used.",
+  "help": "Consider renaming this catch parameter."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3052,7 +3315,8 @@
     "varsIgnorePattern": "^_"
    }
   ],
-  "message": "Function '_foo' is marked as ignored but is used."
+  "message": "Function '_foo' is marked as ignored but is used.",
+  "help": "Consider renaming this function to 'foo'."
  },
  {
   "rule": "eslint/no-unused-vars",
@@ -3065,7 +3329,8 @@
     "reportUsedIgnorePattern": true
    }
   ],
-  "message": "Variable '_a' is marked as ignored but is used."
+  "message": "Variable '_a' is marked as ignored but is used.",
+  "help": "Consider renaming this variable to 'a'."
  },
  {
   "rule": "eslint/no-useless-assignment",
@@ -3073,7 +3338,8 @@
   "file": "a.js",
   "code": "let v = 'used';\n            console.log(v);\n            v = 'unused'",
   "options": [],
-  "message": "This assigned value is not used in subsequent statements."
+  "message": "This assigned value is not used in subsequent statements.",
+  "help": "Consider removing or reusing the assigned value."
  },
  {
   "rule": "eslint/no-useless-backreference",
@@ -3081,7 +3347,8 @@
   "file": "a.js",
   "code": "/(?<!(a)\\1)b/",
   "options": [],
-  "message": "Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."
+  "message": "Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern.",
+  "help": "Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation."
  },
  {
   "rule": "eslint/no-useless-backreference",
@@ -3089,7 +3356,8 @@
   "file": "a.js",
   "code": "/(a)|\\1b/",
   "options": [],
-  "message": "Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."
+  "message": "Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative.",
+  "help": "Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation."
  },
  {
   "rule": "eslint/no-useless-backreference",
@@ -3097,7 +3365,8 @@
   "file": "a.js",
   "code": "/\\1(a)/",
   "options": [],
-  "message": "Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."
+  "message": "Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind.",
+  "help": "Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation."
  },
  {
   "rule": "eslint/no-useless-backreference",
@@ -3105,7 +3374,8 @@
   "file": "a.js",
   "code": "/(?<!(a))b\\1/",
   "options": [],
-  "message": "Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."
+  "message": "Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround.",
+  "help": "Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation."
  },
  {
   "rule": "eslint/no-useless-call",
@@ -3113,7 +3383,8 @@
   "file": "a.js",
   "code": "foo.apply(null, [1, 2]);",
   "options": [],
-  "message": "Avoid unnecessary use of .apply()"
+  "message": "Avoid unnecessary use of .apply()",
+  "help": "Replace with a normal function invocation"
  },
  {
   "rule": "eslint/no-useless-call",
@@ -3121,7 +3392,8 @@
   "file": "a.js",
   "code": "foo.call(null, 1, 2);",
   "options": [],
-  "message": "Avoid unnecessary use of .call()"
+  "message": "Avoid unnecessary use of .call()",
+  "help": "Replace with a normal function invocation"
  },
  {
   "rule": "eslint/no-useless-catch",
@@ -3129,7 +3401,8 @@
   "file": "a.js",
   "code": "\n        try {\n          foo();\n        } catch (err) {\n          throw err;\n        }\n      ",
   "options": [],
-  "message": "Unnecessary try/catch wrapper"
+  "message": "Unnecessary try/catch wrapper",
+  "help": "Remove the try/catch wrapper, since it does not provide any additional error handling or functionality."
  },
  {
   "rule": "eslint/no-useless-catch",
@@ -3137,7 +3410,8 @@
   "file": "a.js",
   "code": "\n        try {\n          foo();\n        } catch (err) {\n          throw err;\n        } finally {\n          foo();\n        }\n      ",
   "options": [],
-  "message": "Unnecessary catch clause"
+  "message": "Unnecessary catch clause",
+  "help": "Remove the catch clause, since it does not provide any additional error handling or functionality beyond what the finalizer already provides."
  },
  {
   "rule": "eslint/no-useless-computed-key",
@@ -3145,7 +3419,8 @@
   "file": "a.js",
   "code": "({ [0]: 0 })",
   "options": [],
-  "message": "Unnecessarily computed property `0` found."
+  "message": "Unnecessarily computed property `0` found.",
+  "help": "Replace the computed property with a plain identifier or string literal"
  },
  {
   "rule": "eslint/no-useless-constructor",
@@ -3153,7 +3428,8 @@
   "file": "a.js",
   "code": "class A { constructor(){} }",
   "options": [],
-  "message": "Empty constructors are unnecessary"
+  "message": "Empty constructors are unnecessary",
+  "help": "Remove the constructor or add code to it."
  },
  {
   "rule": "eslint/no-useless-constructor",
@@ -3161,7 +3437,8 @@
   "file": "a.js",
   "code": "class A extends B { constructor() { super(); } }",
   "options": [],
-  "message": "Redundant super call in constructor"
+  "message": "Redundant super call in constructor",
+  "help": "Remove this constructor or add code to it."
  },
  {
   "rule": "eslint/no-useless-escape",
@@ -3169,7 +3446,8 @@
   "file": "a.js",
   "code": "`\\a```",
   "options": [],
-  "message": "Unnecessary escape character 'a'"
+  "message": "Unnecessary escape character 'a'",
+  "help": "Replace `\\a` with `a`."
  },
  {
   "rule": "eslint/no-useless-rename",
@@ -3177,7 +3455,8 @@
   "file": "a.js",
   "code": "({foo: foo}) => {}",
   "options": [],
-  "message": "Do not rename import, export, or destructured assignments to the same name"
+  "message": "Do not rename import, export, or destructured assignments to the same name",
+  "help": "Use the variable's original name or rename it to a different name"
  },
  {
   "rule": "eslint/no-void",
@@ -3185,7 +3464,8 @@
   "file": "a.js",
   "code": "void 0",
   "options": [],
-  "message": "Unexpected `void` operator"
+  "message": "Unexpected `void` operator",
+  "help": "Use `undefined` instead"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3200,7 +3480,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected '!todo' comment: !!!TODO comment starting with term..."
+  "message": "Unexpected '!todo' comment: !!!TODO comment starting with term...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3215,7 +3496,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected '!todo' comment: !TODO comment starting with term..."
+  "message": "Unexpected '!todo' comment: !TODO comment starting with term...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3230,7 +3512,8 @@
     "location": "start"
    }
   ],
-  "message": "Unexpected '!xxx' comment: !XXX comment starting with no spaces..."
+  "message": "Unexpected '!xxx' comment: !XXX comment starting with no spaces...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3248,7 +3531,8 @@
     ]
    }
   ],
-  "message": "Unexpected '*todo' comment: **TODO term starts with a decoration..."
+  "message": "Unexpected '*todo' comment: **TODO term starts with a decoration...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3260,7 +3544,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo' comment: ..."
+  "message": "Unexpected 'todo' comment: ...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3279,7 +3564,8 @@
     ]
    }
   ],
-  "message": "Unexpected 'todo' comment: /*/*/ TODO decorated single-line comment..."
+  "message": "Unexpected 'todo' comment: /*/*/ TODO decorated single-line comment...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3298,7 +3584,8 @@
     ]
    }
   ],
-  "message": "Unexpected 'todo' comment: /// TODO decorated single-line comment..."
+  "message": "Unexpected 'todo' comment: /// TODO decorated single-line comment...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3313,7 +3600,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo' comment: Comment ending with term followed by..."
+  "message": "Unexpected 'todo' comment: Comment ending with term followed by...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3328,7 +3616,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo!' comment: Comment ending with term including..."
+  "message": "Unexpected 'todo!' comment: Comment ending with term including...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3343,7 +3632,8 @@
     "location": "start"
    }
   ],
-  "message": "Unexpected 'todo' comment: TODO undecorated multi-line block..."
+  "message": "Unexpected 'todo' comment: TODO undecorated multi-line block...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3355,7 +3645,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo' comment: TODO: small"
+  "message": "Unexpected 'todo' comment: TODO: small",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3367,7 +3658,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo' comment: TODO: something really longer than 40..."
+  "message": "Unexpected 'todo' comment: TODO: something really longer than 40...",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3379,7 +3671,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'todo' comment: TODO: something small"
+  "message": "Unexpected 'todo' comment: TODO: something small",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3394,7 +3687,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'fixme' comment: any FIXME"
+  "message": "Unexpected 'fixme' comment: any FIXME",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3409,7 +3703,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'fixme' comment: any fIxMe"
+  "message": "Unexpected 'fixme' comment: any fIxMe",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3421,7 +3716,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected 'fixme' comment: any fixme"
+  "message": "Unexpected 'fixme' comment: any fixme",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3435,7 +3731,8 @@
     ]
    }
   ],
-  "message": "Unexpected 'eslint' comment: eslint one-var: 2"
+  "message": "Unexpected 'eslint' comment: eslint one-var: 2",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3443,7 +3740,8 @@
   "file": "a.js",
   "code": "// fixme",
   "options": [],
-  "message": "Unexpected 'fixme' comment: fixme"
+  "message": "Unexpected 'fixme' comment: fixme",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3451,7 +3749,8 @@
   "file": "a.js",
   "code": "/* fixme and todo */",
   "options": [],
-  "message": "Unexpected 'fixme' comment: fixme and todo"
+  "message": "Unexpected 'fixme' comment: fixme and todo",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3465,7 +3764,8 @@
     ]
    }
   ],
-  "message": "Unexpected 'fixme' comment: fixme!"
+  "message": "Unexpected 'fixme' comment: fixme!",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3480,7 +3780,8 @@
     "location": "anywhere"
    }
   ],
-  "message": "Unexpected '[litera|$]' comment: regex [litera|$]"
+  "message": "Unexpected '[litera|$]' comment: regex [litera|$]",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-warning-comments",
@@ -3495,7 +3796,8 @@
     "location": "start"
    }
   ],
-  "message": "Unexpected 'todo!' comment: todo! with punctuation at start"
+  "message": "Unexpected 'todo!' comment: todo! with punctuation at start",
+  "help": "Remove or rephrase this comment"
  },
  {
   "rule": "eslint/no-with",
@@ -3503,7 +3805,8 @@
   "file": "a.js",
   "code": "with(foo) { bar() }",
   "options": [],
-  "message": "Unexpected use of `with` statement."
+  "message": "Unexpected use of `with` statement.",
+  "help": "Do not use the `with` statement."
  },
  {
   "rule": "eslint/prefer-const",
@@ -3511,7 +3814,8 @@
   "file": "a.js",
   "code": "let [a] = [1]",
   "options": [],
-  "message": "`a` is never reassigned."
+  "message": "`a` is never reassigned.",
+  "help": "Use `const` instead."
  },
  {
   "rule": "eslint/prefer-destructuring",
@@ -3519,7 +3823,8 @@
   "file": "a.js",
   "code": "foo = array[0];",
   "options": [],
-  "message": "Use Array destructuring."
+  "message": "Use Array destructuring.",
+  "help": "Use array destructuring rather than direct member access."
  },
  {
   "rule": "eslint/prefer-destructuring",
@@ -3527,7 +3832,8 @@
   "file": "a.js",
   "code": "foo = object.foo;",
   "options": [],
-  "message": "Use Object destructuring."
+  "message": "Use Object destructuring.",
+  "help": "Use object destructuring rather than direct member access."
  },
  {
   "rule": "eslint/prefer-exponentiation-operator",
@@ -3535,7 +3841,8 @@
   "file": "a.js",
   "code": "Math.pow(2, 3)",
   "options": [],
-  "message": "Prefer `**` over `Math.pow`."
+  "message": "Prefer `**` over `Math.pow`.",
+  "help": "Replace `Math.pow(a, b)` with `a ** b`."
  },
  {
   "rule": "eslint/prefer-named-capture-group",
@@ -3543,7 +3850,8 @@
   "file": "a.js",
   "code": "/([0-9]{4})/",
   "options": [],
-  "message": "Capture group should be named."
+  "message": "Capture group should be named.",
+  "help": "Use a named capture group like \"(?<name>...)\" — this regex has 1 unnamed group."
  },
  {
   "rule": "eslint/prefer-numeric-literals",
@@ -3551,7 +3859,8 @@
   "file": "a.js",
   "code": "parseInt('11', 2)",
   "options": [],
-  "message": "Use binary literals instead of parseInt()."
+  "message": "Use binary literals instead of parseInt().",
+  "help": "Replace `parseInt('11', 2)` with `0b11`."
  },
  {
   "rule": "eslint/prefer-numeric-literals",
@@ -3559,7 +3868,8 @@
   "file": "a.js",
   "code": "5+parseInt('A', 16)",
   "options": [],
-  "message": "Use hexadecimal literals instead of parseInt()."
+  "message": "Use hexadecimal literals instead of parseInt().",
+  "help": "Replace `parseInt('A', 16)` with `0xA`."
  },
  {
   "rule": "eslint/prefer-numeric-literals",
@@ -3575,7 +3885,8 @@
   "file": "a.js",
   "code": "({}).hasOwnProperty.call(obj, 'foo')",
   "options": [],
-  "message": "Disallow use of `Object.prototype.hasOwnProperty.call()` and prefer use of `Object.hasOwn()`."
+  "message": "Disallow use of `Object.prototype.hasOwnProperty.call()` and prefer use of `Object.hasOwn()`.",
+  "help": "Replace `({}).hasOwnProperty.call` with `Object.hasOwn`."
  },
  {
   "rule": "eslint/prefer-object-spread",
@@ -3583,7 +3894,8 @@
   "file": "a.js",
   "code": "Object.assign({})",
   "options": [],
-  "message": "Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead"
+  "message": "Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead",
+  "help": "Use an object literal instead of `Object.assign`. eg: `{ foo: bar }`."
  },
  {
   "rule": "eslint/prefer-object-spread",
@@ -3591,7 +3903,8 @@
   "file": "a.js",
   "code": "Object.assign({}, foo)",
   "options": [],
-  "message": "Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead"
+  "message": "Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead",
+  "help": "Use an object spread instead of `Object.assign` eg: `{ ...foo }`."
  },
  {
   "rule": "eslint/prefer-promise-reject-errors",
@@ -3599,7 +3912,8 @@
   "file": "a.js",
   "code": "Promise.reject()",
   "options": [],
-  "message": "Expected the Promise rejection reason to be an Error"
+  "message": "Expected the Promise rejection reason to be an Error",
+  "help": "Only pass an Error object to the reject() function for user-defined errors in Promises."
  },
  {
   "rule": "eslint/prefer-regex-literals",
@@ -3639,7 +3953,8 @@
   "file": "a.js",
   "code": "function foo() { arguments; }",
   "options": [],
-  "message": "Use the rest parameters instead of `arguments`."
+  "message": "Use the rest parameters instead of `arguments`.",
+  "help": "Replace `arguments` with rest parameters (`...args`)."
  },
  {
   "rule": "eslint/prefer-spread",
@@ -3647,7 +3962,8 @@
   "file": "a.js",
   "code": "foo.apply(null, args);",
   "options": [],
-  "message": "Use spread operators instead of `.apply()`."
+  "message": "Use spread operators instead of `.apply()`.",
+  "help": "Replace `.apply()` with spread syntax (`...args`)."
  },
  {
   "rule": "eslint/preserve-caught-error",
@@ -3655,7 +3971,8 @@
   "file": "a.js",
   "code": "try {\n\t\t\t\tdoSomething();\n\t\t\t} catch (error) {\n\t\t\t\tif (whatever) {\n\t\t\t\t\tconst error = anotherError;\n\t\t\t\t\tthrow new Error(\"Something went wrong\", { cause: error });\n\t\t\t\t}\n\t\t\t}",
   "options": [],
-  "message": "There is no cause error attached to this new thrown error."
+  "message": "There is no cause error attached to this new thrown error.",
+  "help": "Preserve the original error by using the `cause` property when re-throwing errors."
  },
  {
   "rule": "eslint/preserve-caught-error",
@@ -3663,7 +3980,8 @@
   "file": "a.js",
   "code": "try {} catch (error) {\n\t\t\t\tthrow new Error(\"Something failed\", { get cause() { } });\n\t\t\t}",
   "options": [],
-  "message": "There is no cause error attached to this new thrown error."
+  "message": "There is no cause error attached to this new thrown error.",
+  "help": "Preserve the original error by using the `cause` property when re-throwing errors."
  },
  {
   "rule": "eslint/preserve-caught-error",
@@ -3675,7 +3993,8 @@
     "requireCatchParameter": true
    }
   ],
-  "message": "The caught error is not accessible because the catch clause has no error parameter."
+  "message": "The caught error is not accessible because the catch clause has no error parameter.",
+  "help": "Add an error parameter to the catch clause to access the caught error."
  },
  {
   "rule": "eslint/preserve-caught-error",
@@ -3683,7 +4002,8 @@
   "file": "a.js",
   "code": "try {} catch (err) { throw new Error; }",
   "options": [],
-  "message": "There is no cause error attached to this new thrown error."
+  "message": "There is no cause error attached to this new thrown error.",
+  "help": "Preserve the original error by using the `cause` property when re-throwing errors."
  },
  {
   "rule": "eslint/preserve-caught-error",
@@ -3691,7 +4011,8 @@
   "file": "a.js",
   "code": "try {\n\t\t\t\tdoSomething();\n\t\t\t} catch ({ message }) {\n\t\t\t\tthrow new Error(message);\n\t\t\t}",
   "options": [],
-  "message": "There is no cause error attached to this new thrown error."
+  "message": "There is no cause error attached to this new thrown error.",
+  "help": "Preserve the original error by using the `cause` property when re-throwing errors."
  },
  {
   "rule": "eslint/require-await",
@@ -3699,7 +4020,8 @@
   "file": "a.mts",
   "code": "async function O(){r}",
   "options": [],
-  "message": "Async function has no `await` expression."
+  "message": "Async function has no `await` expression.",
+  "help": "Consider removing the `async` keyword."
  },
  {
   "rule": "eslint/require-yield",
@@ -3707,7 +4029,8 @@
   "file": "a.js",
   "code": "function* foo() { return 0; }",
   "options": [],
-  "message": "This generator function does not have `yield`"
+  "message": "This generator function does not have `yield`",
+  "help": "Add a `yield` expression inside the generator body, or convert it to a regular function if iteration behavior is not needed."
  },
  {
   "rule": "eslint/sort-imports",
@@ -3723,7 +4046,8 @@
   "file": "a.js",
   "code": "var obj = {a:1, B:2}",
   "options": [],
-  "message": "Object keys should be sorted"
+  "message": "Object keys should be sorted",
+  "help": "Replace `a:1, B:2` with `B:2, a:1`."
  },
  {
   "rule": "eslint/sort-vars",
@@ -3731,7 +4055,8 @@
   "file": "a.js",
   "code": "var b, a",
   "options": [],
-  "message": "Variable declarations should be sorted"
+  "message": "Variable declarations should be sorted",
+  "help": "Sort variable declarations in ascending order (case-sensitive by default)."
  },
  {
   "rule": "eslint/unicode-bom",
@@ -3741,7 +4066,8 @@
   "options": [
    "always"
   ],
-  "message": "Expected Unicode BOM (Byte Order Mark)"
+  "message": "Expected Unicode BOM (Byte Order Mark)",
+  "help": "File must begin with the Unicode BOM"
  },
  {
   "rule": "eslint/unicode-bom",
@@ -3751,7 +4077,8 @@
   "options": [
    "never"
   ],
-  "message": "Unexpected Unicode BOM (Byte Order Mark)"
+  "message": "Unexpected Unicode BOM (Byte Order Mark)",
+  "help": "File must not begin with the Unicode BOM"
  },
  {
   "rule": "eslint/use-isnan",
@@ -3763,7 +4090,8 @@
     "enforceForSwitchCase": true
    }
   ],
-  "message": "Checking for NaN in `case` clause will never match"
+  "message": "Checking for NaN in `case` clause will never match",
+  "help": "Use the `isNaN` function instead of the switch."
  },
  {
   "rule": "eslint/use-isnan",
@@ -3771,7 +4099,8 @@
   "file": "a.js",
   "code": "1 == NaN",
   "options": [],
-  "message": "Checking equality with NaN will always return false"
+  "message": "Checking equality with NaN will always return false",
+  "help": "Use the `isNaN` function to compare with NaN."
  },
  {
   "rule": "eslint/use-isnan",
@@ -3779,7 +4108,8 @@
   "file": "a.js",
   "code": "1 != NaN",
   "options": [],
-  "message": "Checking inequality with NaN will always return true"
+  "message": "Checking inequality with NaN will always return true",
+  "help": "Use the `isNaN` function to compare with NaN."
  },
  {
   "rule": "eslint/use-isnan",
@@ -3787,7 +4117,8 @@
   "file": "a.js",
   "code": "\"abc\" < NaN;",
   "options": [],
-  "message": "Comparison with NaN will always return false"
+  "message": "Comparison with NaN will always return false",
+  "help": "Use the `isNaN` function to compare with NaN."
  },
  {
   "rule": "eslint/use-isnan",
@@ -3799,7 +4130,8 @@
     "enforceForIndexOf": true
    }
   ],
-  "message": "NaN values will never be found by `Array.prototype.indexOf`"
+  "message": "NaN values will never be found by `Array.prototype.indexOf`",
+  "help": "Use the `isNaN` function to check for NaN values."
  },
  {
   "rule": "eslint/use-isnan",
@@ -3811,7 +4143,8 @@
     "enforceForSwitchCase": true
    }
   ],
-  "message": "Checking `switch` discriminant against NaN will never match"
+  "message": "Checking `switch` discriminant against NaN will never match",
+  "help": "Use the `isNaN` function instead of the switch."
  },
  {
   "rule": "eslint/valid-typeof",
@@ -3819,7 +4152,8 @@
   "file": "a.js",
   "code": "'strnig' != typeof foo",
   "options": [],
-  "message": "Invalid `typeof` comparison value."
+  "message": "Invalid `typeof` comparison value.",
+  "help": "Did you mean `\"string\"`?"
  },
  {
   "rule": "eslint/valid-typeof",
@@ -3841,7 +4175,8 @@
   "options": [
    "never"
   ],
-  "message": "Require or disallow \"Yoda\" conditions"
+  "message": "Require or disallow \"Yoda\" conditions",
+  "help": "Expected literal to be on the right side of >."
  },
  {
   "rule": "typescript/adjacent-overload-signatures",
@@ -3849,7 +4184,8 @@
   "file": "a.ts",
   "code": "\nfunction foo(s: string) {}\nfunction foo(n: number) {}\nclass Bar {}\nfunction foo(sn: string | number) {}\n      ",
   "options": [],
-  "message": "All \"foo\" signatures should be adjacent."
+  "message": "All \"foo\" signatures should be adjacent.",
+  "help": "Move all \"foo\" overload signatures together, placing them consecutively before any other members."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3861,7 +4197,8 @@
     "ts-check": true
    }
   ],
-  "message": "Do not use @ts-check because it alters compilation errors."
+  "message": "Do not use @ts-check because it alters compilation errors.",
+  "help": "Remove the @ts-check directive and fix the underlying TypeScript error instead. If you must suppress an error, consider using @ts-expect-error with a descriptive comment explaining why it's necessary."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3873,7 +4210,8 @@
     "ts-expect-error": true
    }
   ],
-  "message": "Do not use @ts-expect-error because it alters compilation errors."
+  "message": "Do not use @ts-expect-error because it alters compilation errors.",
+  "help": "Remove the @ts-expect-error directive and fix the underlying TypeScript error instead. If you must suppress an error, consider using @ts-expect-error with a descriptive comment explaining why it's necessary."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3881,7 +4219,8 @@
   "file": "a.ts",
   "code": "// @ts-nocheck",
   "options": [],
-  "message": "Do not use @ts-nocheck because it alters compilation errors."
+  "message": "Do not use @ts-nocheck because it alters compilation errors.",
+  "help": "Remove the @ts-nocheck directive and fix the underlying TypeScript error instead. If you must suppress an error, consider using @ts-expect-error with a descriptive comment explaining why it's necessary."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3895,7 +4234,8 @@
     }
    }
   ],
-  "message": "The description for the @ts-check directive must match the ^: TS\\d+ because .+$ format."
+  "message": "The description for the @ts-check directive must match the ^: TS\\d+ because .+$ format.",
+  "help": "Update the description after @ts-check to match the required pattern: ^: TS\\d+ because .+$."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3909,7 +4249,8 @@
     }
    }
   ],
-  "message": "The description for the @ts-expect-error directive must match the ^: TS\\d+ because .+$ format."
+  "message": "The description for the @ts-expect-error directive must match the ^: TS\\d+ because .+$ format.",
+  "help": "Update the description after @ts-expect-error to match the required pattern: ^: TS\\d+ because .+$."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3923,7 +4264,8 @@
     }
    }
   ],
-  "message": "The description for the @ts-ignore directive must match the ^: TS\\d+ because .+$ format."
+  "message": "The description for the @ts-ignore directive must match the ^: TS\\d+ because .+$ format.",
+  "help": "Update the description after @ts-ignore to match the required pattern: ^: TS\\d+ because .+$."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3937,7 +4279,8 @@
     }
    }
   ],
-  "message": "The description for the @ts-nocheck directive must match the ^: TS\\d+ because .+$ format."
+  "message": "The description for the @ts-nocheck directive must match the ^: TS\\d+ because .+$ format.",
+  "help": "Update the description after @ts-nocheck to match the required pattern: ^: TS\\d+ because .+$."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3949,7 +4292,8 @@
     "ts-check": "allow-with-description"
    }
   ],
-  "message": "Include a description after the @ts-check directive to explain why the @ts-check is necessary. The description must be 3 characters or longer."
+  "message": "Include a description after the @ts-check directive to explain why the @ts-check is necessary. The description must be 3 characters or longer.",
+  "help": "Add a description after @ts-check that is at least 3 characters long, explaining why the directive is necessary. For example: `// @ts-check: TS2345 - This is a known limitation with third-party types`"
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3961,7 +4305,8 @@
     "ts-expect-error": "allow-with-description"
    }
   ],
-  "message": "Include a description after the @ts-expect-error directive to explain why the @ts-expect-error is necessary. The description must be 3 characters or longer."
+  "message": "Include a description after the @ts-expect-error directive to explain why the @ts-expect-error is necessary. The description must be 3 characters or longer.",
+  "help": "Add a description after @ts-expect-error that is at least 3 characters long, explaining why the directive is necessary. For example: `// @ts-expect-error: TS2345 - This is a known limitation with third-party types`"
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3973,7 +4318,8 @@
     "ts-ignore": "allow-with-description"
    }
   ],
-  "message": "Include a description after the @ts-ignore directive to explain why the @ts-ignore is necessary. The description must be 3 characters or longer."
+  "message": "Include a description after the @ts-ignore directive to explain why the @ts-ignore is necessary. The description must be 3 characters or longer.",
+  "help": "Add a description after @ts-ignore that is at least 3 characters long, explaining why the directive is necessary. For example: `// @ts-ignore: TS2345 - This is a known limitation with third-party types`"
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3985,7 +4331,8 @@
     "ts-nocheck": "allow-with-description"
    }
   ],
-  "message": "Include a description after the @ts-nocheck directive to explain why the @ts-nocheck is necessary. The description must be 3 characters or longer."
+  "message": "Include a description after the @ts-nocheck directive to explain why the @ts-nocheck is necessary. The description must be 3 characters or longer.",
+  "help": "Add a description after @ts-nocheck that is at least 3 characters long, explaining why the directive is necessary. For example: `// @ts-nocheck: TS2345 - This is a known limitation with third-party types`"
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -3993,7 +4340,8 @@
   "file": "a.ts",
   "code": "// @ts-ignore",
   "options": [],
-  "message": "Use \"@ts-expect-error\" instead of @ts-ignore, as \"@ts-ignore\" will do nothing if the following line is error-free."
+  "message": "Use \"@ts-expect-error\" instead of @ts-ignore, as \"@ts-ignore\" will do nothing if the following line is error-free.",
+  "help": "Replace \"@ts-ignore\" with \"@ts-expect-error\"."
  },
  {
   "rule": "typescript/ban-tslint-comment",
@@ -4001,7 +4349,8 @@
   "file": "a.ts",
   "code": "/* tslint:enable */",
   "options": [],
-  "message": "tslint comment detected: \"tslint:enable\""
+  "message": "tslint comment detected: \"tslint:enable\"",
+  "help": "Delete this code."
  },
  {
   "rule": "typescript/consistent-return",
@@ -4022,7 +4371,8 @@
     "assertionStyle": "angle-bracket"
    }
   ],
-  "message": "Use `<A>` instead of `as A`."
+  "message": "Use `<A>` instead of `as A`.",
+  "help": "Replace `as A` with `<A>`. For example, change `value as A` to `<A>value`."
  },
  {
   "rule": "typescript/consistent-type-assertions",
@@ -4034,7 +4384,8 @@
     "assertionStyle": "as"
    }
   ],
-  "message": "Use `as A` instead of `<A>`."
+  "message": "Use `as A` instead of `<A>`.",
+  "help": "Replace `<A>b` with `b as A`."
  },
  {
   "rule": "typescript/consistent-type-assertions",
@@ -4047,7 +4398,8 @@
     "assertionStyle": "as"
    }
   ],
-  "message": "Always prefer `const x: T[] = [ ... ]`."
+  "message": "Always prefer `const x: T[] = [ ... ]`.",
+  "help": "Replace the array literal type assertion with a type annotation. For example, change `const x = [1, 2] as Type[]` to `const x: Type[] = [1, 2]`. Alternatively, use `const x = [1, 2] satisfies Type[]` if you want TypeScript to infer the exact array type."
  },
  {
   "rule": "typescript/consistent-type-assertions",
@@ -4060,7 +4412,8 @@
     "objectLiteralTypeAssertions": "allow-as-parameter"
    }
   ],
-  "message": "Always prefer `const x: T = { ... }`."
+  "message": "Always prefer `const x: T = { ... }`.",
+  "help": "Replace the object literal type assertion with a type annotation. For example, change `const x = { a: 1 } as Type` to `const x: Type = { a: 1 }`. Alternatively, use `const x = { a: 1 } satisfies Type` if you want TypeScript to infer the exact shape."
  },
  {
   "rule": "typescript/consistent-type-definitions",
@@ -4070,7 +4423,8 @@
   "options": [
    "interface"
   ],
-  "message": "Use `interface` instead of `type`."
+  "message": "Use `interface` instead of `type`.",
+  "help": "Replace `type foo = ({});` with `interface foo {}`."
  },
  {
   "rule": "typescript/consistent-type-definitions",
@@ -4080,7 +4434,8 @@
   "options": [
    "type"
   ],
-  "message": "Use `type` instead of `interface`."
+  "message": "Use `type` instead of `interface`.",
+  "help": "Replace `interface S {}` with `type S = {}`."
  },
  {
   "rule": "typescript/consistent-type-exports",
@@ -4089,7 +4444,8 @@
   "code": "\ntype T = 1;\nexport { type T, T };\n      ",
   "options": [],
   "typed": true,
-  "message": "All exports in the declaration are only used as types."
+  "message": "All exports in the declaration are only used as types.",
+  "help": "Use `export type`."
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4097,7 +4453,8 @@
   "file": "a.ts",
   "code": "\nimport { A, B, C } from 'foo';\nconst foo: A = B();\nlet bar: C;\n          ",
   "options": [],
-  "message": "Imports A and C are only used as type."
+  "message": "Imports A and C are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4105,7 +4462,8 @@
   "file": "a.ts",
   "code": "\nimport A, { B } from 'foo';\nB();\ntype T = A;\n          ",
   "options": [],
-  "message": "Imports A are only used as type."
+  "message": "Imports A are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4113,7 +4471,8 @@
   "file": "a.ts",
   "code": "\nimport A, { B, C, D } from 'foo';\nB();\ntype T = { foo: A; bar: C; baz: D };\n          ",
   "options": [],
-  "message": "Imports A, C, and D are only used as type."
+  "message": "Imports A, C, and D are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4126,7 +4485,8 @@
     "prefer": "type-imports"
    }
   ],
-  "message": "Imports B and C are only used as type."
+  "message": "Imports B and C are only used as type.",
+  "help": "Add type specifier to imported types"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4134,7 +4494,8 @@
   "file": "a.ts",
   "code": "\nimport A, { /* comment */ B } from 'foo';\ntype T = B;\n          ",
   "options": [],
-  "message": "Imports B are only used as type."
+  "message": "Imports B are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4146,7 +4507,8 @@
     "prefer": "type-imports"
    }
   ],
-  "message": "Imports Default are only used as type."
+  "message": "Imports Default are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4154,7 +4516,8 @@
   "file": "a.ts",
   "code": "\nimport 'foo';\nimport { Foo, Bar } from 'foo';\nfunction test(foo: Foo) {}\n          ",
   "options": [],
-  "message": "Imports Foo are only used as type."
+  "message": "Imports Foo are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/consistent-type-imports",
@@ -4166,7 +4529,8 @@
     "prefer": "type-imports"
    }
   ],
-  "message": "Imports Rest are only used as type."
+  "message": "Imports Rest are only used as type.",
+  "help": "Mark all type-only imports with the type specifier"
  },
  {
   "rule": "typescript/explicit-member-accessibility",
@@ -4178,7 +4542,8 @@
     "accessibility": "explicit"
    }
   ],
-  "message": "Missing accessibility modifier on method definition computed-method-name."
+  "message": "Missing accessibility modifier on method definition computed-method-name.",
+  "help": "Add an explicit 'public', 'private', or 'protected' modifier. Members without a modifier are implicitly public, which may not be intentional."
  },
  {
   "rule": "typescript/explicit-module-boundary-types",
@@ -4190,7 +4555,8 @@
     "allowArgumentsExplicitlyTypedAsAny": false
    }
   ],
-  "message": "Argument is explicitly typed as `any`"
+  "message": "Argument is explicitly typed as `any`",
+  "help": "Avoid explicit `any` at module boundaries; prefer `unknown` and narrow before use."
  },
  {
   "rule": "typescript/explicit-module-boundary-types",
@@ -4202,7 +4568,8 @@
     "allowArgumentsExplicitlyTypedAsAny": false
    }
   ],
-  "message": "Argument is explicitly typed as `any`"
+  "message": "Argument is explicitly typed as `any`",
+  "help": "Avoid explicit `any` at module boundaries; prefer `unknown` and narrow before use."
  },
  {
   "rule": "typescript/explicit-module-boundary-types",
@@ -4210,7 +4577,8 @@
   "file": "a.ts",
   "code": "export function foo(...bar): void {}",
   "options": [],
-  "message": "Missing argument type on function"
+  "message": "Missing argument type on function",
+  "help": "Define an explicit argument type for each argument."
  },
  {
   "rule": "typescript/explicit-module-boundary-types",
@@ -4218,7 +4586,8 @@
   "file": "a.ts",
   "code": "export function foo([bar]): void {}",
   "options": [],
-  "message": "Missing argument type on function"
+  "message": "Missing argument type on function",
+  "help": "Define an explicit argument type for each argument."
  },
  {
   "rule": "typescript/explicit-module-boundary-types",
@@ -4230,7 +4599,8 @@
     "allowHigherOrderFunctions": true
    }
   ],
-  "message": "Missing return type on function"
+  "message": "Missing return type on function",
+  "help": "Define an explicit return type for the function."
  },
  {
   "rule": "typescript/method-signature-style",
@@ -4238,7 +4608,8 @@
   "file": "a.ts",
   "code": "\ntype Test = { f?<T>(a?: T): T };\n      ",
   "options": [],
-  "message": "Use a property signature instead of a method signature."
+  "message": "Use a property signature instead of a method signature.",
+  "help": "Replace the method signature with a property whose type is a function type."
  },
  {
   "rule": "typescript/method-signature-style",
@@ -4248,7 +4619,8 @@
   "options": [
    "method"
   ],
-  "message": "Use a method signature instead of a property signature."
+  "message": "Use a method signature instead of a property signature.",
+  "help": "Replace the property signature with method shorthand syntax."
  },
  {
   "rule": "typescript/no-confusing-non-null-assertion",
@@ -4256,7 +4628,8 @@
   "file": "a.ts",
   "code": "a! = b;",
   "options": [],
-  "message": "Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`."
+  "message": "Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`.",
+  "help": "Remove the `!`, or wrap the left-hand side in parentheses."
  },
  {
   "rule": "typescript/no-confusing-non-null-assertion",
@@ -4264,7 +4637,8 @@
   "file": "a.ts",
   "code": "a! == b;",
   "options": [],
-  "message": "Confusing combinations of non-null assertion and equal test like `a! == b`, which looks very similar to not equal `a !== b`."
+  "message": "Confusing combinations of non-null assertion and equal test like `a! == b`, which looks very similar to not equal `a !== b`.",
+  "help": "Remove the `!`, or prefix the `=` with it."
  },
  {
   "rule": "typescript/no-confusing-void-expression",
@@ -4273,7 +4647,8 @@
   "code": "\n!console.log('foo');\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Placing a void expression inside another expression is forbidden."
+  "message": "Placing a void expression inside another expression is forbidden.",
+  "help": "Move it to its own statement instead."
  },
  {
   "rule": "typescript/no-confusing-void-expression",
@@ -4282,7 +4657,8 @@
   "code": "() => console.log('foo');\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Returning a void expression from an arrow function shorthand is forbidden."
+  "message": "Returning a void expression from an arrow function shorthand is forbidden.",
+  "help": "Add braces to the arrow function."
  },
  {
   "rule": "typescript/no-confusing-void-expression",
@@ -4295,7 +4671,8 @@
    }
   ],
   "typed": true,
-  "message": "Returning a void expression from a function is forbidden."
+  "message": "Returning a void expression from a function is forbidden.",
+  "help": "Move it before the `return` statement."
  },
  {
   "rule": "typescript/no-confusing-void-expression",
@@ -4308,7 +4685,8 @@
    }
   ],
   "typed": true,
-  "message": "Returning a void expression from a function is forbidden."
+  "message": "Returning a void expression from a function is forbidden.",
+  "help": "Remove the `return` statement."
  },
  {
   "rule": "typescript/no-deprecated",
@@ -4325,7 +4703,8 @@
   "file": "a.ts",
   "code": "\nenum E {\n  A = 1,\n  B = 1,\n}\n      ",
   "options": [],
-  "message": "Duplicate enum value `1`"
+  "message": "Duplicate enum value `1`",
+  "help": "Give B a unique value"
  },
  {
   "rule": "typescript/no-duplicate-type-constituents",
@@ -4486,7 +4865,8 @@
   "file": "a.ts",
   "code": "interface Foo {}",
   "options": [],
-  "message": "an empty interface is equivalent to `{}`"
+  "message": "an empty interface is equivalent to `{}`",
+  "help": "Add members to this interface, or use a type alias if it is intentionally empty."
  },
  {
   "rule": "typescript/no-empty-interface",
@@ -4494,7 +4874,8 @@
   "file": "a.ts",
   "code": "interface Foo extends Array<number> {}",
   "options": [],
-  "message": "an interface declaring no members is equivalent to its supertype"
+  "message": "an interface declaring no members is equivalent to its supertype",
+  "help": "Remove this interface and use the extended type directly or add members to this interface."
  },
  {
   "rule": "typescript/no-empty-object-type",
@@ -4502,7 +4883,8 @@
   "file": "a.ts",
   "code": "interface Base {}",
   "options": [],
-  "message": "Do not use an empty interface declaration."
+  "message": "Do not use an empty interface declaration.",
+  "help": "To avoid confusion around the {} type allowing any non-nullish value, this rule bans usage of the {} type."
  },
  {
   "rule": "typescript/no-empty-object-type",
@@ -4510,7 +4892,8 @@
   "file": "a.ts",
   "code": "interface Base extends Array<number> {}",
   "options": [],
-  "message": "Do not use an empty interface declaration."
+  "message": "Do not use an empty interface declaration.",
+  "help": "To avoid confusion around the {} type allowing any non-nullish value, this rule bans usage of the {} type."
  },
  {
   "rule": "typescript/no-empty-object-type",
@@ -4518,7 +4901,8 @@
   "file": "a.ts",
   "code": "let value: {};",
   "options": [],
-  "message": "Do not use the empty object type literal."
+  "message": "Do not use the empty object type literal.",
+  "help": "To avoid confusion around the {} type allowing any non-nullish value, this rule bans usage of the {} type."
  },
  {
   "rule": "typescript/no-explicit-any",
@@ -4526,7 +4910,8 @@
   "file": "a.ts",
   "code": "Foo<any>();",
   "options": [],
-  "message": "Unexpected `any`. Specify a different type."
+  "message": "Unexpected `any`. Specify a different type.",
+  "help": "Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct."
  },
  {
   "rule": "typescript/no-extra-non-null-assertion",
@@ -4534,7 +4919,8 @@
   "file": "a.ts",
   "code": "function foo(bar?: { n: number }) { return bar!?.n; }",
   "options": [],
-  "message": "extra non-null assertion"
+  "message": "extra non-null assertion",
+  "help": "Remove the redundant non-null assertion operator (`!`)."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4547,7 +4933,8 @@
    }
   ],
   "typed": true,
-  "message": "Promises must be awaited, add await operator."
+  "message": "Promises must be awaited, add await operator.",
+  "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4560,7 +4947,8 @@
    }
   ],
   "typed": true,
-  "message": "An array of Promises may be unintentional."
+  "message": "An array of Promises may be unintentional.",
+  "help": "Consider handling the promises' fulfillment or rejection with Promise.all or similar."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4569,7 +4957,8 @@
   "code": "\n[1, 2, Promise.reject(), 3];\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "An array of Promises may be unintentional."
+  "message": "An array of Promises may be unintentional.",
+  "help": "Consider handling the promises' fulfillment or rejection with Promise.all or similar, or explicitly marking the expression as ignored with the `void` operator."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4582,7 +4971,8 @@
    }
   ],
   "typed": true,
-  "message": "Promises must be awaited, add await operator."
+  "message": "Promises must be awaited, add await operator.",
+  "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4591,7 +4981,8 @@
   "code": "\nPromise.reject().catch(undefined).finally(() => {});\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Promises must be awaited, add void operator to ignore."
+  "message": "Promises must be awaited, add void operator to ignore.",
+  "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator. A rejection handler that is not a function will be ignored."
  },
  {
   "rule": "typescript/no-floating-promises",
@@ -4600,7 +4991,8 @@
   "code": "\n<Promise<number>>{};\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Promises must be awaited, add void operator to ignore."
+  "message": "Promises must be awaited, add void operator to ignore.",
+  "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator."
  },
  {
   "rule": "typescript/no-for-in-array",
@@ -4609,7 +5001,8 @@
   "code": "\nfor (const x in [3, 4, 5]) {\n  console.log(x);\n}\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties."
+  "message": "For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties.",
+  "help": "Use a more robust iteration method such as for-of or array.forEach instead."
  },
  {
   "rule": "typescript/no-implied-eval",
@@ -4618,7 +5011,8 @@
   "code": "\nconst foo = 'foo';\nconst bar = () => {};\n\nsetTimeout(Math.radom() > 0.5 ? foo : bar, 0);\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Implied eval."
+  "message": "Implied eval.",
+  "help": "Consider passing a function."
  },
  {
   "rule": "typescript/no-import-type-side-effects",
@@ -4626,7 +5020,8 @@
   "file": "a.ts",
   "code": "import { type A } from 'mod';",
   "options": [],
-  "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+  "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime.",
+  "help": "Convert this to a top-level type qualifier to properly remove the entire import."
  },
  {
   "rule": "typescript/no-inferrable-types",
@@ -4634,7 +5029,8 @@
   "file": "a.ts",
   "code": "const a: null = null;",
   "options": [],
-  "message": "Type can be trivially inferred from the initializer"
+  "message": "Type can be trivially inferred from the initializer",
+  "help": "Remove the type annotation"
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4648,7 +5044,8 @@
     ]
    }
   ],
-  "message": "Do not use `void` as a type argument for `Banned`."
+  "message": "Do not use `void` as a type argument for `Banned`.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4660,7 +5057,8 @@
     "allowInGenericTypeArguments": false
    }
   ],
-  "message": "Use `void` only as a return type."
+  "message": "Use `void` only as a return type.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4668,7 +5066,8 @@
   "file": "a.ts",
   "code": "let letVoid: void;",
   "options": [],
-  "message": "Use `void` only as a return type or generic type argument."
+  "message": "Use `void` only as a return type or generic type argument.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4681,7 +5080,8 @@
     "allowInGenericTypeArguments": false
    }
   ],
-  "message": "Use `void` only as a return type or as the type of a `this` parameter."
+  "message": "Use `void` only as a return type or as the type of a `this` parameter.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4694,7 +5094,8 @@
     "allowInGenericTypeArguments": true
    }
   ],
-  "message": "Use `void` only as a return type, generic type argument, or the type of a `this` parameter."
+  "message": "Use `void` only as a return type, generic type argument, or the type of a `this` parameter.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-invalid-void-type",
@@ -4702,7 +5103,8 @@
   "file": "a.ts",
   "code": "type invalidVoidUnion = void | Map;",
   "options": [],
-  "message": "Remove `void` from this union type constituent."
+  "message": "Remove `void` from this union type constituent.",
+  "help": "Replace this `void` type with an allowed type, or keep `void` only in a valid return position."
  },
  {
   "rule": "typescript/no-misused-spread",
@@ -4711,7 +5113,8 @@
   "code": "declare function f(): void;\nexport const o = { ...f };\n",
   "options": [],
   "typed": true,
-  "message": "Using the spread operator on a function without additional properties can cause unexpected behavior."
+  "message": "Using the spread operator on a function without additional properties can cause unexpected behavior.",
+  "help": "Did you forget to call the function?"
  },
  {
   "rule": "typescript/no-misused-spread",
@@ -4720,7 +5123,8 @@
   "code": "declare const m: Map<string, number>;\nexport const o = { ...m };\n",
   "options": [],
   "typed": true,
-  "message": "Using the spread operator on a Map in an object will result in an empty object."
+  "message": "Using the spread operator on a Map in an object will result in an empty object.",
+  "help": "Did you mean to use `Object.fromEntries(map)` instead?"
  },
  {
   "rule": "typescript/no-misused-spread",
@@ -4729,7 +5133,8 @@
   "code": "declare const p: Promise<number>;\nexport const o = { ...p };\n",
   "options": [],
   "typed": true,
-  "message": "Using the spread operator on Promise in an object can cause unexpected behavior."
+  "message": "Using the spread operator on Promise in an object can cause unexpected behavior.",
+  "help": "Did you forget to await the promise before spreading it?"
  },
  {
   "rule": "typescript/no-misused-spread",
@@ -4738,7 +5143,8 @@
   "code": "declare const s: string;\nexport const a = [...s];\n",
   "options": [],
   "typed": true,
-  "message": "Using the spread operator on a string can mishandle special characters, because it produces Unicode code points, which will break complex characters (like emojis) into multiple parts."
+  "message": "Using the spread operator on a string can mishandle special characters, because it produces Unicode code points, which will break complex characters (like emojis) into multiple parts.",
+  "help": "Consider using `Intl.Segmenter` for locale-aware string decomposition. Otherwise, if you don't need to preserve emojis or other non-ASCII characters, disable this lint rule on this line or configure the 'allow' rule option."
  },
  {
   "rule": "typescript/no-non-null-asserted-nullish-coalescing",
@@ -4746,7 +5152,8 @@
   "file": "a.ts",
   "code": "foo! ?? bar;",
   "options": [],
-  "message": "'Disallow non-null assertions in the left operand of a nullish coalescing operator"
+  "message": "'Disallow non-null assertions in the left operand of a nullish coalescing operator",
+  "help": "The nullish coalescing operator is designed to handle undefined and null - using a non-null assertion is not needed."
  },
  {
   "rule": "typescript/no-non-null-asserted-optional-chain",
@@ -4754,7 +5161,8 @@
   "file": "a.ts",
   "code": "foo?.bar!",
   "options": [],
-  "message": "Optional chain expressions can return undefined by design: using a non-null assertion is unsafe and wrong."
+  "message": "Optional chain expressions can return undefined by design: using a non-null assertion is unsafe and wrong.",
+  "help": "Remove the non-null assertion."
  },
  {
   "rule": "typescript/no-redundant-type-constituents",
@@ -4856,7 +5264,8 @@
     "allowAsImport": true
    }
   ],
-  "message": "Expected \"import\" statement instead of \"require\" call"
+  "message": "Expected \"import\" statement instead of \"require\" call",
+  "help": "Do not use CommonJS `require` calls"
  },
  {
   "rule": "typescript/no-restricted-types",
@@ -4873,7 +5282,8 @@
     }
    }
   ],
-  "message": "Do not use `Banned` as a type"
+  "message": "Do not use `Banned` as a type",
+  "help": "Use Ok instead."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -4930,7 +5340,8 @@
   "file": "a.ts",
   "code": "\nclass Foo {\n  constructor(public foo = '') {\n    this.foo = foo;\n  }\n}\n      ",
   "options": [],
-  "message": "Assignment of parameter property is unnecessary"
+  "message": "Assignment of parameter property is unnecessary",
+  "help": "Remove the unnecessary assignment"
  },
  {
   "rule": "typescript/no-unnecessary-type-assertion",
@@ -4956,7 +5367,8 @@
   "file": "a.ts",
   "code": "class Data<T extends unknown> {}",
   "options": [],
-  "message": "constraining the generic type \"T\" to \"unknown\" does nothing and is unnecessary"
+  "message": "constraining the generic type \"T\" to \"unknown\" does nothing and is unnecessary",
+  "help": "Remove the unnecessary \"unknown\" constraint"
  },
  {
   "rule": "typescript/no-unnecessary-type-conversion",
@@ -5061,7 +5473,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe assignment of an any value. `this` is typed as `any`.\n"
+  "message": "Unsafe assignment of an any value. `this` is typed as `any`.\n",
+  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5130,7 +5543,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe call of a(n) `error` type typed value. `this` is typed as `error` type.\n"
+  "message": "Unsafe call of a(n) `error` type typed value. `this` is typed as `error` type.\n",
+  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-call",
@@ -5163,7 +5577,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe call of a(n) `any` typed value. `this` is typed as `any`.\n"
+  "message": "Unsafe call of a(n) `any` typed value. `this` is typed as `any`.\n",
+  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-function-type",
@@ -5171,7 +5586,8 @@
   "file": "a.ts",
   "code": "let value: Function;",
   "options": [],
-  "message": "The `Function` type accepts any function-like value."
+  "message": "The `Function` type accepts any function-like value.",
+  "help": "Prefer explicitly defining any function parameters and return type."
  },
  {
   "rule": "typescript/no-unsafe-member-access",
@@ -5204,7 +5620,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe member access .a on an `any` value. `this` is typed as `any`."
+  "message": "Unsafe member access .a on an `any` value. `this` is typed as `any`.",
+  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-return",
@@ -5219,7 +5636,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe return of a value of type ``any``. `this` is typed as `any`."
+  "message": "Unsafe return of a value of type ``any``. `this` is typed as `any`.",
+  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5228,7 +5646,8 @@
   "code": "\ndeclare const a: [any];\na as [number];\n        \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unsafe assertion from `any` detected."
+  "message": "Unsafe assertion from `any` detected.",
+  "help": "Consider using type guards or a safer assertion."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5237,7 +5656,8 @@
   "code": "\n'foo' as any;\n        \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unsafe assertion to `any` detected."
+  "message": "Unsafe assertion to `any` detected.",
+  "help": "Consider using a more specific type to ensure safety."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5246,7 +5666,8 @@
   "code": "\nconst bar = 'foo' as errorType;\n        \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unsafe assertion to error typed detected."
+  "message": "Unsafe assertion to error typed detected.",
+  "help": "Consider using a more specific type to ensure safety."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5264,7 +5685,8 @@
   "code": "\n[1, 2, 3].map((a = 42) => a + 1);\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because the parameter has type `number` (not nullish). This default assignment will never be used."
+  "message": "Default value is useless because the parameter has type `number` (not nullish). This default assignment will never be used.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-default-assignment",
@@ -5273,7 +5695,8 @@
   "code": "\ninterface B {\n  foo: (b: boolean | string) => void;\n}\n\nconst h: B = {\n  foo: (b = false) => {},\n};\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because the parameter is not nullish. This default assignment will never be used."
+  "message": "Default value is useless because the parameter is not nullish. This default assignment will never be used.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-default-assignment",
@@ -5282,7 +5705,8 @@
   "code": "\nfunction Bar({ foo = '' }: { foo: string }) {\n  return foo;\n}\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because the property has type `string` (not nullish). This default assignment will never be used."
+  "message": "Default value is useless because the property has type `string` (not nullish). This default assignment will never be used.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-default-assignment",
@@ -5291,7 +5715,8 @@
   "code": "\nconst { a = 'baz' } = cond ? { a() {} } : { a: 'bar' };\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because the property is not nullish. This default assignment will never be used."
+  "message": "Default value is useless because the property is not nullish. This default assignment will never be used.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-default-assignment",
@@ -5300,7 +5725,8 @@
   "code": "\nfunction foo(a = undefined) {}\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because it is undefined. Optional parameters are already undefined by default."
+  "message": "Default value is useless because it is undefined. Optional parameters are already undefined by default.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-default-assignment",
@@ -5309,7 +5735,8 @@
   "code": "\nconst [a = undefined] = [];\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Default value is useless because it is undefined. Optional properties are already undefined by default."
+  "message": "Default value is useless because it is undefined. Optional properties are already undefined by default.",
+  "help": "Remove the default assignment"
  },
  {
   "rule": "typescript/no-useless-empty-export",
@@ -5317,7 +5744,8 @@
   "file": "a.ts",
   "code": "export * from '_';export {};",
   "options": [],
-  "message": "Empty exports do nothing in module files"
+  "message": "Empty exports do nothing in module files",
+  "help": "Remove this empty export."
  },
  {
   "rule": "typescript/no-wrapper-object-types",
@@ -5325,7 +5753,8 @@
   "file": "a.ts",
   "code": "0 as Number;",
   "options": [],
-  "message": "Do not use wrapper object types."
+  "message": "Do not use wrapper object types.",
+  "help": "Replace `Number` with `number`."
  },
  {
   "rule": "typescript/prefer-as-const",
@@ -5333,7 +5762,8 @@
   "file": "a.ts",
   "code": "let foo = 5 as 5;",
   "options": [],
-  "message": "Expected a `const` assertion instead of a literal type annotation."
+  "message": "Expected a `const` assertion instead of a literal type annotation.",
+  "help": "You should use `as const` instead of type annotation."
  },
  {
   "rule": "typescript/prefer-enum-initializers",
@@ -5341,7 +5771,8 @@
   "file": "a.ts",
   "code": "\nenum Direction {\n  Up,\n}\n      ",
   "options": [],
-  "message": "The value of the member \"Up\" should be explicitly defined."
+  "message": "The value of the member \"Up\" should be explicitly defined.",
+  "help": "Using default numerical values for enum members can cause bugs later on if the enum is modified. Instead give \"Up\" an explicit initializer (for example `= 0` or `= 'Up'`)."
  },
  {
   "rule": "typescript/prefer-for-of",
@@ -5349,7 +5780,8 @@
   "file": "a.ts",
   "code": "for (let x = 0; x < arr.length; x++) {}",
   "options": [],
-  "message": "Expected a `for...of` loop instead of a `for` loop with this simple iteration."
+  "message": "Expected a `for...of` loop instead of a `for` loop with this simple iteration.",
+  "help": "Consider using a `for...of` loop for this simple iteration."
  },
  {
   "rule": "typescript/prefer-function-type",
@@ -5357,7 +5789,8 @@
   "file": "a.ts",
   "code": "type K = { new(): T };",
   "options": [],
-  "message": "Enforce using function types instead of interfaces with call signatures."
+  "message": "Enforce using function types instead of interfaces with call signatures.",
+  "help": "The function type form `new() => T` is generally preferred when possible for being more succinct."
  },
  {
   "rule": "typescript/prefer-function-type",
@@ -5365,7 +5798,8 @@
   "file": "a.ts",
   "code": "\ninterface Foo {\n  (arg: this): void;\n}\n      ",
   "options": [],
-  "message": "Enforce using function types instead of interfaces with call signatures."
+  "message": "Enforce using function types instead of interfaces with call signatures.",
+  "help": "The function type form `(arg: this) => void` is generally preferred when possible for being more succinct."
  },
  {
   "rule": "typescript/prefer-literal-enum-member",
@@ -5373,7 +5807,8 @@
   "file": "a.ts",
   "code": "\nenum Foo {\n  A,\n  B = +A,\n}\n      ",
   "options": [],
-  "message": "Explicit enum values must only be literal values (string, number, boolean, etc.)."
+  "message": "Explicit enum values must only be literal values (string, number, boolean, etc.).",
+  "help": "Require all enum members to be literal values."
  },
  {
   "rule": "typescript/prefer-literal-enum-member",
@@ -5385,7 +5820,8 @@
     "allowBitwiseExpressions": true
    }
   ],
-  "message": "Explicit enum values must only be literal values (string, number, boolean, etc.)."
+  "message": "Explicit enum values must only be literal values (string, number, boolean, etc.).",
+  "help": "Require all enum members to be literal values."
  },
  {
   "rule": "typescript/prefer-namespace-keyword",
@@ -5393,7 +5829,8 @@
   "file": "a.ts",
   "code": "module A.B {}",
   "options": [],
-  "message": "Use `namespace` instead of `module` to declare custom TypeScript modules."
+  "message": "Use `namespace` instead of `module` to declare custom TypeScript modules.",
+  "help": "Replace `module` with `namespace` for internal declarations."
  },
  {
   "rule": "typescript/prefer-nullish-coalescing",
@@ -5424,7 +5861,8 @@
   "code": "\nclass Test {\n  private prop = 10;\n}\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Member 'prop' is never reassigned."
+  "message": "Member 'prop' is never reassigned.",
+  "help": "Mark it as `readonly`."
  },
  {
   "rule": "typescript/prefer-readonly-parameter-types",
@@ -5450,7 +5888,8 @@
   "file": "a.ts",
   "code": "// @ts-ignore",
   "options": [],
-  "message": "Enforce using `@ts-expect-error` over `@ts-ignore`"
+  "message": "Enforce using `@ts-expect-error` over `@ts-ignore`",
+  "help": "Use \"@ts-expect-error\" to ensure an error is actually being suppressed."
  },
  {
   "rule": "typescript/promise-function-async",
@@ -5459,7 +5898,8 @@
   "code": "\nfunction promiseInUnionWithoutExplicitReturnType(p: boolean) {\n  return p ? Promise.resolve(5) : 5;\n}\n      \nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Functions that return promises must be async."
+  "message": "Functions that return promises must be async.",
+  "help": "Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types."
  },
  {
   "rule": "typescript/require-await",
@@ -5486,7 +5926,8 @@
   "code": "'' + new Date();\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Invalid operand of type 'Date' for a '+' operation."
+  "message": "Invalid operand of type 'Date' for a '+' operation.",
+  "help": "Operands must each be a number or string, allowing a string + any of: `any`, `boolean`, `null`, `RegExp`, `undefined`."
  },
  {
   "rule": "typescript/restrict-plus-operands",
@@ -5503,7 +5944,8 @@
    }
   ],
   "typed": true,
-  "message": "Operands of '+' operations must be of the same type."
+  "message": "Operands of '+' operations must be of the same type.",
+  "help": "Operands must both be a number or both be string."
  },
  {
   "rule": "typescript/restrict-plus-operands",
@@ -5512,7 +5954,8 @@
   "code": "declare const s: string, u: string | string[];\nexport const x = s + u;\n",
   "options": [],
   "typed": true,
-  "message": "Invalid operand of type 'string | string[]' for a '+' operation."
+  "message": "Invalid operand of type 'string | string[]' for a '+' operation.",
+  "help": "Operands must each be a number or string, allowing a string + any of: `any`, `boolean`, `null`, `RegExp`, `undefined`."
  },
  {
   "rule": "typescript/restrict-template-expressions",
@@ -5534,7 +5977,8 @@
   "code": "x => !x;\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unexpected any value in conditional."
+  "message": "Unexpected any value in conditional.",
+  "help": "Use a more specific type to ensure type safety."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5547,7 +5991,8 @@
    }
   ],
   "typed": true,
-  "message": "Unexpected nullable boolean value in conditional."
+  "message": "Unexpected nullable boolean value in conditional.",
+  "help": "Handle the nullish case explicitly."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5560,7 +6005,8 @@
    }
   ],
   "typed": true,
-  "message": "Unexpected nullable enum value in conditional."
+  "message": "Unexpected nullable enum value in conditional.",
+  "help": "Handle the nullish and falsy enum cases explicitly."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5569,7 +6015,8 @@
   "code": "(x?: number) => !x;\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unexpected nullable number value in conditional."
+  "message": "Unexpected nullable number value in conditional.",
+  "help": "Handle the nullish and zero cases explicitly."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5582,7 +6029,8 @@
    }
   ],
   "typed": true,
-  "message": "Unexpected nullable object value in conditional."
+  "message": "Unexpected nullable object value in conditional.",
+  "help": "Handle the nullish case explicitly."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5591,7 +6039,8 @@
   "code": "(x?: string) => !x;\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Unexpected nullable string value in conditional."
+  "message": "Unexpected nullable string value in conditional.",
+  "help": "Handle the nullish and empty string cases explicitly."
  },
  {
   "rule": "typescript/strict-boolean-expressions",
@@ -5658,7 +6107,8 @@
   "code": "export function f<T>(t: T | null) {\n  if (t) {}\n}\n",
   "options": [],
   "typed": true,
-  "message": "Unexpected any value in conditional."
+  "message": "Unexpected any value in conditional.",
+  "help": "Use a more specific type to ensure type safety."
  },
  {
   "rule": "typescript/switch-exhaustiveness-check",
@@ -5739,7 +6189,8 @@
   "code": "const x = Promise.all;\nexport {};\n",
   "options": [],
   "typed": true,
-  "message": "Avoid referencing unbound methods which may cause unintentional scoping of `this`."
+  "message": "Avoid referencing unbound methods which may cause unintentional scoping of `this`.",
+  "help": "If your function does not access `this`, you can annotate it with `this: void`, or consider using an arrow function instead."
  },
  {
   "rule": "typescript/unified-signatures",

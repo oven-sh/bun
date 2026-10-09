@@ -386,23 +386,6 @@ impl Iterator for Children<'_> {
 /// The tree for debugging and for comparing it with Prettier's: a node on each line, with its range in
 /// bytes, its lines and columns, and its fields in alphabetical order.
 pub(crate) fn dump(text: &[u8], tree: &Tree, root: NodeId, out: &mut Vec<u8>) {
-    fn json(string: &[u8], out: &mut Vec<u8>) {
-        out.push(b'"');
-        for &byte in string {
-            match byte {
-                b'"' => out.extend_from_slice(b"\\\""),
-                b'\\' => out.extend_from_slice(b"\\\\"),
-                b'\n' => out.extend_from_slice(b"\\n"),
-                b'\r' => out.extend_from_slice(b"\\r"),
-                b'\t' => out.extend_from_slice(b"\\t"),
-                0x08 => out.extend_from_slice(b"\\b"),
-                0x0C => out.extend_from_slice(b"\\f"),
-                0..=0x1F => out.extend_from_slice(format!("\\u{byte:04x}").as_bytes()),
-                _ => out.push(byte),
-            }
-        }
-        out.push(b'"');
-    }
     fn column(text: &[u8], tree: &Tree, offset: u32) -> usize {
         let line = text
             .get(tree.line_start(offset) as usize..offset as usize)
@@ -435,7 +418,7 @@ pub(crate) fn dump(text: &[u8], tree: &Tree, root: NodeId, out: &mut Vec<u8>) {
             out.extend_from_slice(format!(" {name}=").as_bytes());
             match string.is_null() {
                 true => out.extend_from_slice(b"null"),
-                false => json(tree.str(text, string), out),
+                false => bun_core::printer::json_stringify(tree.str(text, string), out),
             }
         };
         let reference_type = match node.reference_type {

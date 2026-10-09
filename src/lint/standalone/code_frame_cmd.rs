@@ -6,7 +6,6 @@
 use crate::host::{self, error_line, output};
 use bun_core::fmt::{hex_digit_value, hex_lower};
 use bun_lint::utils::code_frame::{self, Frame, Place, Version};
-use bun_lint::utils::text;
 use std::fmt::Write as _;
 
 fn unhex(text: &str) -> Vec<u8> {
@@ -46,7 +45,7 @@ pub(crate) fn run(args: &[String]) {
             lines_above: number(5).unwrap_or(0),
             lines_below: number(6).unwrap_or(0),
         };
-        let lines: Vec<&[u8]> = text::lines(&source).collect();
+        let lines: Vec<&[u8]> = bun_core::strings::js_lines(&source).collect();
         let mut printed = Vec::new();
         let is_printed = match (number(7), number(8)) {
             (Some(from), Some(to)) => {

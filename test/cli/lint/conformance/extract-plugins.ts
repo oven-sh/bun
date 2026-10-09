@@ -21,7 +21,7 @@
 // first, which is also where oxlint looks for a comment that disables the rule.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import Module, { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -64,6 +64,7 @@ const ALL = [
   "oxc/no-accumulating-spread",
   "import/no-mutable-exports",
   "import/no-cycle",
+  "import/no-restricted-paths",
   "n/no-unsupported-features/es-builtins",
   "n/no-unsupported-features/es-syntax",
   "n/no-unsupported-features/node-builtins",
@@ -229,10 +230,16 @@ function copyImportProject(): string {
   const files = join(realpathSync(requiredEnv("ESLINT_PLUGIN_IMPORT_DIR")), "tests/files");
   rmSync(project, { recursive: true, force: true });
   mkdirSync(project, { recursive: true });
-  for (const name of ["cycles", "bar.js", "package.json"]) cpSync(join(files, name), join(project, name), { recursive: true });
+  for (const name of ["cycles", "restricted-paths", "bar.js", "package.json"]) cpSync(join(files, name), join(project, name), { recursive: true });
   const ofOxlint = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/fixtures/import/cycles");
   for (const name of ["typescript", "issue_21252"]) cpSync(join(ofOxlint, name), join(project, "cycles", name), { recursive: true });
   return project;
+}
+
+/** The paths in `options`, which upstream writes from its root, from `files`: that is the working directory of a case. */
+function inProject(options: unknown[] | undefined, files: string): unknown[] | undefined {
+  const text = JSON.stringify(options)?.replaceAll(JSON.stringify(files + "/").slice(1, -1), "");
+  return text === undefined ? undefined : JSON.parse(text.replaceAll('"./tests/files/', '"./').replaceAll('"tests/files/', '"'));
 }
 
 function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string } {
@@ -276,7 +283,7 @@ function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: stri
           valid,
           name: item.name ?? null,
           code: item.code,
-          options: item.options,
+          options: inProject(item.options, files),
           filename: isAbsolute(item.filename) ? relative(files, item.filename) : item.filename,
           settings: item.settings,
           languageOptions: { ...languageOptions, parser: name === "typescript" ? "typescript" : "espree" },
@@ -292,7 +299,9 @@ function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: stri
 /** oxlint's `change_rule_path(..)`, by the line of the case. */
 function importCasesOfOxlint(rule: string): Raw[] {
   const path = `import/${rule.replaceAll("-", "_")}.rs`;
-  const source = readFileSync(join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/src/rules", path), "utf8");
+  const file = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/src/rules", path);
+  if (!existsSync(file)) return [];
+  const source = readFileSync(file, "utf8");
   const paths = [...source.matchAll(/\.change_rule_path\("([^"]+)"\)/g)].map(it => ({
     line: source.slice(0, it.index).split("\n").length,
     path: it[1],
@@ -513,7 +522,15 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
       rules: { [id]: ["error", ...optionsToLintWith(id, options)] },
     };
     const filename = cwd && !attempt.filename.startsWith("<") ? resolve(cwd, attempt.filename) : attempt.filename;
-    const messages: LintMessage[] = linter.verify(raw.code, [config], { filename });
+    // `basePath` of import/no-restricted-paths is `process.cwd()` unless the options say otherwise.
+    const before = process.cwd();
+    if (cwd) process.chdir(cwd);
+    let messages: LintMessage[];
+    try {
+      messages = linter.verify(raw.code, [config], { filename });
+    } finally {
+      process.chdir(before);
+    }
     last = { attempt, messages, parserOptions };
     if (!messages.some(it => it.fatal)) break;
   }
@@ -523,7 +540,8 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
   if (fatal) skip = raw.foreignParser ? `parser: ${raw.foreignParser}` : `fatal: ${fatal.message}`;
   const resolver = raw.settings?.["import/resolver"];
   const isNode = resolver === undefined || resolver === "node" || (typeof resolver === "object" && Object.keys(resolver).join() === "node");
-  if (!isNode) skip ??= `resolver: ${JSON.stringify(resolver)}`;
+  const isTypeScript = typeof resolver === "object" && Object.keys(resolver).join() === "eslint-import-resolver-typescript";
+  if (!isNode && !(isTypeScript && id === "import/no-restricted-paths")) skip ??= `resolver: ${JSON.stringify(resolver)}`;
   const dropped: string[] = [];
   const jsonOptions = jsonPart(options, dropped, "options") as unknown[];
   const settings = jsonPart(raw.settings ?? {}, dropped, "settings") as Config;

@@ -192,7 +192,9 @@ fn check_call<'a>(_: &NoUselessUndefined, e: Expr<'a>, cx: &mut Cx<'a, NoUseless
     let (Some(first_undefined), Some(last_undefined)) = (arguments.get(remaining_count), arguments.last()) else {
         return;
     };
-    cx.report(first_undefined, NO_USELESS_UNDEFINED).fix(|fixer| {
+    let report = cx.report(first_undefined, NO_USELESS_UNDEFINED);
+    let report = arguments.iter().skip(remaining_count + 1).fold(report, |report, it| report.label(it, ""));
+    report.fix(|fixer| {
         fixer.remove(match remaining_count.checked_sub(1).and_then(|it| arguments.get(it)) {
             Some(previous_argument) => Span::new(previous_argument.outer_span().end, last_undefined.span().end),
             // With the comma at the end.

@@ -4,46 +4,32 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// `str::trim`, which goes by the property `White_Space` of Unicode.
-pub fn trim(s: &[u8]) -> &[u8] {
-    let mut rest = trim_start(s);
-    while let Some(c) = text::last_code_point(rest)
-        .and_then(char::from_u32)
-        .filter(|it| it.is_whitespace())
-    {
-        rest = rest
-            .get(..rest.len().saturating_sub(c.len_utf8()))
-            .unwrap_or_default();
-    }
-    rest
-}
-
-/// `str::trim_start`. It reads what it takes away and no more: `s` can be the rest of the file.
-pub fn trim_start(s: &[u8]) -> &[u8] {
-    let mut at = 0;
-    loop {
-        let (c, size) = text::code_point_at(s, at);
-        if size == 0 || !char::from_u32(c).is_some_and(char::is_whitespace) {
-            return s.get(at..).unwrap_or_default();
-        }
-        at += size;
-    }
-}
-
-/// `s.chars().all(char::is_whitespace)`
-pub fn is_whitespace(s: &[u8]) -> bool {
-    trim_start(s).is_empty()
-}
-
-/// `str::split_whitespace`
-pub fn split_whitespace(text: &[u8]) -> impl Iterator<Item = &[u8]> {
-    std::str::from_utf8(text)
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(str::as_bytes)
-}
-
 /// Whether `name` is in `sorted`, which is sorted.
+/// `oxc_span`'s `best_match`: the closest of `candidates`, which are ASCII. `None` if `needle` is one of them, or
+/// further than `threshold` from all.
+pub fn best_match(
+    needle: &[u8],
+    candidates: &[&'static str],
+    threshold: usize,
+) -> Option<&'static str> {
+    let mut best: Option<(&'static str, usize)> = None;
+    for candidate in candidates {
+        if candidate.len().abs_diff(needle.len()) > threshold {
+            continue;
+        }
+        // The first byte of each character: that of one that is not ASCII is like nothing in a candidate.
+        let characters = needle.iter().copied().filter(|it| it & 0xC0 != 0x80);
+        match strings::edit_distance(characters, candidate.as_bytes()) {
+            0 => return None,
+            distance if distance <= threshold && best.is_none_or(|it| distance < it.1) => {
+                best = Some((candidate, distance));
+            }
+            _ => {}
+        }
+    }
+    best.map(|it| it.0)
+}
+
 pub fn contains_name(sorted: &[&str], name: &[u8]) -> bool {
     sorted
         .binary_search_by(|it| it.as_bytes().cmp(name))

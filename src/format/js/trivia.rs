@@ -399,7 +399,7 @@ impl<'a> Format<'a> for Comment {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let content = f.source_text().text_for(&self.span);
         if self.is_line() {
-            return write!(f, text(crate::text::trim_end(content)));
+            return write!(f, text(bun_core::strings::trim_js_whitespace_end(content)));
         }
         if super::jsdoc::write_comment(self, f) {
             return;
@@ -411,9 +411,9 @@ impl<'a> Format<'a> for Comment {
                 && !is_printed_by_prettier_for_oxfmt(f);
             let mut lines = lines(content).peekable();
             let first = lines.next().unwrap_or_default();
-            write!(f, text(crate::text::trim_end(first)));
+            write!(f, text(bun_core::strings::trim_js_whitespace_end(first)));
             while let Some(line) = lines.next() {
-                let trimmed = crate::text::trim(line);
+                let trimmed = bun_core::strings::trim_js_whitespace(line);
                 write!(f, [hard_line_break(), " ", text(trimmed)]);
                 if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
                     // A line break in a text keeps the spaces before it. The one that follows

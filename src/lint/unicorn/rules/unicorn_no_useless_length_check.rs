@@ -86,7 +86,12 @@ impl Rule for NoUselessLengthCheck {
                         if cx.has_reported_too_much() {
                             return;
                         }
-                        cx.report(span, USELESS_LENGTH_CHECK);
+                        cx.report(span, USELESS_LENGTH_CHECK).help(match operator {
+                            BinOp::And => {
+                                "The non-empty check is useless as `Array#some()` returns `false` for an empty array."
+                            }
+                            _ => "The empty check is useless as `Array#every()` returns `true` for an empty array.",
+                        });
                     }
                 }
                 previous = current;

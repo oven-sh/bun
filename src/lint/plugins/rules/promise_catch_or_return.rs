@@ -11,6 +11,7 @@ pub struct CatchOrReturn {
     termination_method: Vec<String>,
     /// For the message.
     expected_methods: String,
+    help: String,
 }
 
 const CATCH_OR_RETURN: Message = Message::new("", "Expected {{expected_methods}}.");
@@ -31,12 +32,19 @@ impl Rule for CatchOrReturn {
             [method] => format!("`{method}` or `return`"),
             methods => format!("`{}`, or `return`", methods.join("`, `")),
         };
+        let help = match &termination_method[..] {
+            [] => "Return the promise.".to_owned(),
+            [method] => format!("Return the promise or chain a `{method}()`."),
+            [first, second] => format!("Return the promise or chain `{first}()` or `{second}()`."),
+            [methods @ .., last] => format!("Return the promise or chain `{}()`, or `{last}()`.", methods.join("()`, `")),
+        };
         CatchOrReturn {
             allow_finally: options.bool_or("allowFinally", false),
             allow_then: options.bool_or("allowThen", false),
             allow_then_strict: options.bool_or("allowThenStrict", false),
             termination_method,
             expected_methods,
+            help,
         }
     }
 
@@ -57,7 +65,9 @@ impl Rule for CatchOrReturn {
             if (is_promise_call(call_expr) || object_call(call_expr).is_some_and(is_promise_call))
                 && !rule.is_allowed_promise_termination(call_expr)
             {
-                cx.report(e, CATCH_OR_RETURN).data("expected_methods", rule.expected_methods.clone());
+                cx.report(e, CATCH_OR_RETURN)
+                    .data("expected_methods", rule.expected_methods.clone())
+                    .help_with(|| rule.help.clone());
             }
         });
     }

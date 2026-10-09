@@ -45,7 +45,6 @@ use crate::ast::Node;
 use crate::estree::{Dialect, NodeType, VNode};
 use crate::rule::NodeTags;
 use crate::span::{Span, Spanned};
-use crate::utils::text;
 use matcher::Matcher;
 use program::{Id, Op, Program, TypeSet};
 use std::cmp::Ordering;
@@ -254,7 +253,7 @@ impl Selector {
     pub fn compare(&self, other: &Selector) -> Ordering {
         (self.attribute_count.cmp(&other.attribute_count))
             .then(self.identifier_count.cmp(&other.identifier_count))
-            .then_with(|| text::compare(&self.source, &other.source))
+            .then_with(|| bun_core::strings::order_utf16(&self.source, &other.source))
     }
 
     /// Whether ESLint calls the listener with `node`.

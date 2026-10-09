@@ -127,6 +127,8 @@ pub(crate) fn run_and_exit(
         run_script(script)
     };
     let js_engine = super::lint_js::Engines::default();
+    // `path.win32.resolve` asks for it where a path names another drive than its base.
+    bun_paths::fs::FileSystem::init(&working_directory());
     let environment = Environment {
         cwd: bun_lint_driver::from_native_path(&working_directory()),
         stdout: Stream {
@@ -143,6 +145,7 @@ pub(crate) fn run_and_exit(
         run_script: &run_script,
         js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
+        memory: super::lint_js::memory(),
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.

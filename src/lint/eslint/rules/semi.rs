@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::next_token;
 use bun_lint::utils::fix_tracker::FixTracker;
@@ -88,7 +89,7 @@ fn is_last_in_one_liner<'a>(node: Node<'a>, braces_of: fn(Node<'a>) -> Option<Sp
     let file = node.file();
     let next = skip_trivia(file.text(), node.span().end);
     file.text().get(next as usize) == Some(&b'}')
-        && braces_of(node.parent()).is_some_and(|braces| !text::has_line_break(file.slice(braces)))
+        && braces_of(node.parent()).is_some_and(|braces| !strings::contains_js_line_break(file.slice(braces)))
 }
 
 /// The braces of a `BlockStatement` or a `StaticBlock`.

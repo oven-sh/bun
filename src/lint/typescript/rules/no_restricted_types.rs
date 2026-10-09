@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
 
@@ -31,10 +32,10 @@ fn remove_spaces(text: &[u8]) -> Cow<'_, [u8]> {
         return Cow::Borrowed(text);
     }
     let mut out = Vec::with_capacity(text.len());
-    let mut points = text::code_points(text).peekable();
+    let mut points = strings::wtf8_codepoints(text).peekable();
     while let Some((at, c)) = points.next() {
         let end = points.peek().map_or(text.len(), |next| next.0);
-        if !text::is_js_whitespace(c) {
+        if !strings::is_js_whitespace(c) {
             out.extend_from_slice(&text[at..end]);
         }
     }
@@ -79,6 +80,13 @@ impl NoRestrictedTypes {
             .report(at, BANNED_TYPE_MESSAGE)
             .data("name", name.to_vec())
             .data("customMessage", ban.custom_message.clone());
+        if cx.language().is_oxlint {
+            // Without the blank before it.
+            report = report.help_with(|| match ban.custom_message.get(1..) {
+                Some(message) => std::str::from_utf8(message).unwrap_or_default().to_owned(),
+                None => "This type is restricted from being used.".to_owned(),
+            });
+        }
         if let Some(fix_with) = &ban.fix_with {
             report = report.fix(|fixer| fixer.replace(at, &fix_with[..]));
         }

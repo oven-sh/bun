@@ -7,7 +7,6 @@ use super::parser::{Kind, Node, Tree};
 use super::{Config, Scratch, format_normalized};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
-use bun_lint::utils::text::{is_js_whitespace, trim, utf16_len, utf16_offset_to_byte};
 
 #[derive(Copy, Clone, PartialEq)]
 enum End {
@@ -94,10 +93,10 @@ fn calculate_range(
 ) -> Option<(usize, usize)> {
     // Without the white space at its ends.
     let range = text.get(start..end)?;
-    let trimmed = trim(range);
+    let trimmed = bun_core::strings::trim_js_whitespace(range);
     let is_all_whitespace = trimmed.is_empty();
     if !is_all_whitespace {
-        start += range.len() - bun_lint::utils::text::trim_start(range).len();
+        start += range.len() - bun_core::strings::trim_js_whitespace_start(range).len();
         end = start + trimmed.len();
     }
     let (mut start_path, mut end_path) = (Vec::new(), Vec::new());
@@ -136,7 +135,7 @@ pub(super) fn format(
     let has_bom = original.starts_with(BOM);
     // The offsets count UTF-16 code units of the original. One that is not in the text does not
     // count.
-    let original_len = utf16_len(original);
+    let original_len = bun_core::strings::wtf8_len_utf16(original);
     let body = original.strip_prefix(BOM).unwrap_or(original);
     let to_byte = |offset: Option<u32>| {
         let offset = offset.filter(|it| *it <= original_len)?;
@@ -146,7 +145,7 @@ pub(super) fn format(
             offset
         };
         let before = body
-            .get(..utf16_offset_to_byte(body, offset))
+            .get(..bun_core::strings::wtf8_offset_of_utf16_index(body, offset))
             .unwrap_or_default();
         // A `\r\n` is one byte of `text`.
         let mut pairs = 0;
@@ -188,9 +187,9 @@ pub(super) fn format(
         while let Some(&byte) = indentation.get(at) {
             let (c, len) = match byte < 0x80 {
                 true => (u32::from(byte), 1),
-                false => bun_lint::utils::text::code_point_at(indentation, at),
+                false => bun_core::strings::wtf8_codepoint_at(indentation, at),
             };
-            if !is_js_whitespace(c) {
+            if !bun_core::strings::is_js_whitespace(c) {
                 break;
             }
             at += len;
@@ -209,7 +208,7 @@ pub(super) fn format(
     format_normalized(&text[start..end], &config, options, scratch, &mut formatted)?;
     let mut result = Vec::with_capacity(text.len() + formatted.len());
     result.extend_from_slice(&text[..start]);
-    result.extend_from_slice(trim(&formatted));
+    result.extend_from_slice(bun_core::strings::trim_js_whitespace(&formatted));
     result.extend_from_slice(&text[end..]);
     for (index, line) in bun_core::strings::split(&result, b"\n").enumerate() {
         if index > 0 {

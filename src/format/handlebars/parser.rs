@@ -124,18 +124,11 @@ struct Segment {
     token: Token,
 }
 
-/// What `.` in a regular expression does not match.
-fn has_line_terminator(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some()
-        || strings::contains(text, "\u{2028}".as_bytes())
-        || strings::contains(text, "\u{2029}".as_bytes())
-}
-
 /// `/^this(?:\..+)?$/u`
 fn is_this_path(original: &[u8]) -> bool {
     match original.strip_prefix(b"this") {
         Some([]) => true,
-        Some([b'.', rest @ ..]) => !rest.is_empty() && !has_line_terminator(rest),
+        Some([b'.', rest @ ..]) => !rest.is_empty() && !strings::contains_js_line_break(rest),
         _ => false,
     }
 }
@@ -302,7 +295,9 @@ impl Parser<'_> {
     fn id(&mut self, token: Token) -> (Text, bool) {
         let text = self.id_text(token);
         match self.text(text) {
-            [b'[', inner @ .., b']'] if !has_line_terminator(inner) => (text.without_ends(), true),
+            [b'[', inner @ .., b']'] if !strings::contains_js_line_break(inner) => {
+                (text.without_ends(), true)
+            }
             _ => (text, false),
         }
     }
@@ -675,7 +670,7 @@ impl Parser<'_> {
             && self.text(*last).ends_with(b"]")
             && !names
                 .iter()
-                .any(|name| has_line_terminator(self.text(*name)))
+                .any(|name| strings::contains_js_line_break(self.text(*name)))
         {
             return Err(self.error(Message::UnexpectedToken));
         }

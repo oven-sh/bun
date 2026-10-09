@@ -5,7 +5,6 @@
 //! is a range of the text.
 
 use super::Parser as Syntax;
-use super::misc::is_space;
 use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use crate::text::{self, ByteSet};
 
@@ -194,7 +193,7 @@ impl<'a> Tokenizer<'a> {
     fn find_unescaped(&self, byte: u8, from: usize) -> Option<usize> {
         let mut next = from;
         loop {
-            next = text::index_of_char_from(self.css, byte, next + 1)?;
+            next = bun_core::strings::index_of_char_pos(self.css, byte, next + 1)?;
             let backslashes = self.css[..next]
                 .iter()
                 .rev()
@@ -250,7 +249,7 @@ impl<'a> Tokenizer<'a> {
         let (kind, next) = match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
                 let mut end = pos + 1;
-                while is_space(css.get(end)) {
+                while css.get(end).is_some_and(u8::is_ascii_whitespace) {
                     end += 1;
                 }
                 (TokenKind::Space, end - 1)
@@ -341,7 +340,10 @@ impl<'a> Tokenizer<'a> {
                         at += 1;
                     }
                     (kind, next) = (TokenKind::Brackets, at);
-                } else if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && !is_space(n) {
+                } else if prev == b"url"
+                    && !matches!(n, Some(b'\'' | b'"'))
+                    && !n.is_some_and(u8::is_ascii_whitespace)
+                {
                     let close = match self.find_unescaped(b')', pos) {
                         None if ignore_unclosed => pos,
                         close => close.ok_or_else(|| {
@@ -354,7 +356,7 @@ impl<'a> Tokenizer<'a> {
                 } else {
                     let close = match self.next_close {
                         Some(close) if close.is_none_or(|at| at > pos) => close,
-                        _ => text::index_of_char_from(css, b')', pos + 1),
+                        _ => bun_core::strings::index_of_char_pos(css, b')', pos + 1),
                     };
                     self.next_close = Some(close);
                     // `/.[\r\n"'(/\\]/`
@@ -420,7 +422,11 @@ impl<'a> Tokenizer<'a> {
                     escape = !escape;
                 }
                 let after = css.get(last + 1);
-                if escape && after.is_some() && after != Some(&b'/') && !is_space(after) {
+                if escape
+                    && after.is_some()
+                    && after != Some(&b'/')
+                    && !after.is_some_and(u8::is_ascii_whitespace)
+                {
                     last += 1;
                     if css[last].is_ascii_hexdigit() {
                         while css.get(last + 1).is_some_and(u8::is_ascii_hexdigit) {
@@ -789,7 +795,7 @@ impl<'a> Parser<'a> {
     /// The part of `inner` that is left when it is trimmed.
     fn trimmed(&self, inner: Range) -> Range {
         let content = inner.of(self.css);
-        let trimmed = text::trim(content);
+        let trimmed = bun_core::strings::trim_js_whitespace(content);
         let left = text::leading_white_space_len(content).min(content.len() - trimmed.len()) as u32;
         Range::new(
             inner.start + left,
@@ -1099,7 +1105,9 @@ impl<'a> Parser<'a> {
                 let mut string = Range::default();
                 let mut j = index - base;
                 while j > 0 {
-                    let starts_with_bang = text::trim(self.texts.of(string)).starts_with(b"!");
+                    let starts_with_bang =
+                        bun_core::strings::trim_js_whitespace(self.texts.of(string))
+                            .starts_with(b"!");
                     if starts_with_bang
                         && cache.get(j).is_some_and(|it| it.kind != TokenKind::Space)
                     {
@@ -1110,7 +1118,7 @@ impl<'a> Parser<'a> {
                     }
                     j -= 1;
                 }
-                if text::trim(self.texts.of(string)).starts_with(b"!") {
+                if bun_core::strings::trim_js_whitespace(self.texts.of(string)).starts_with(b"!") {
                     let node = self.node(id);
                     node.important = true;
                     node.raw_important = Some(string);
@@ -1262,7 +1270,7 @@ impl<'a> Parser<'a> {
             if with_colon {
                 if token.kind != TokenKind::Comment && !token.is(b'{') {
                     first_byte = first_byte.or_else(|| text.first().copied());
-                    is_blank = is_blank && text::trim(text).is_empty();
+                    is_blank = is_blank && bun_core::strings::trim_js_whitespace(text).is_empty();
                 }
             } else if token.kind == TokenKind::Space
                 && bun_core::strings::contains_char(text, b'\n')
@@ -1506,7 +1514,8 @@ impl<'a> Parser<'a> {
             let text = self.text_of(token);
             text.len() >= 9
                 && text[text.len() - 9..].eq_ignore_ascii_case(b"important")
-                && text::trim_end(&text[..text.len() - 9]).ends_with(b"!")
+                && bun_core::strings::trim_js_whitespace_end(&text[..text.len() - 9])
+                    .ends_with(b"!")
         });
         let important = important_index
             .filter(|&index| index > 0)

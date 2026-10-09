@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
+use bun_lint_oxlint::module_record::debug;
 use crate::jest::{self, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -36,13 +37,14 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, NoUntypedMockFa
     {
         match name_node.kind() {
             ExprKind::String(value) => {
-                cx.report(property_span, ADD_TYPE_PARAMETER_TO_MODULE_MOCK).fix(|fixer| {
+                let report = cx.report(property_span, ADD_TYPE_PARAMETER_TO_MODULE_MOCK);
+                report.data("module_name", debug(value.bytes())).fix(|fixer| {
                     let code = [b"<typeof import('".as_slice(), value.bytes(), b"')>".as_slice()].concat();
                     fixer.insert_after(call_expr.callee(), code)
                 });
             }
-            ExprKind::Ident(_) => {
-                cx.report(property_span, ADD_TYPE_PARAMETER_TO_MODULE_MOCK);
+            ExprKind::Ident(name) => {
+                cx.report(property_span, ADD_TYPE_PARAMETER_TO_MODULE_MOCK).data("module_name", debug(name.bytes()));
             }
             _ => {}
         }

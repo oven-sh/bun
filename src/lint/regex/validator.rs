@@ -391,10 +391,6 @@ fn digit_to_int(cp: i32) -> i32 {
         .unwrap_or(0) as i32
 }
 
-fn is_line_terminator(cp: i32) -> bool {
-    matches!(cp, 0x0A | 0x0D | 0x2028 | 0x2029)
-}
-
 fn is_lead_surrogate(cp: i32) -> bool {
     (0xD800..=0xDBFF).contains(&cp)
 }
@@ -827,7 +823,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         let mut escaped = false;
         loop {
             let cp = self.cp;
-            if cp == EOF || is_line_terminator(cp) {
+            if cp == EOF || bun_core::strings::is_js_line_terminator(cp as u32) {
                 return self.raise(if in_class {
                     "Unterminated character class"
                 } else {
@@ -1743,9 +1739,9 @@ impl<'s, 'h> Validator<'s, 'h> {
     fn eat_regexp_identifier_name(&mut self) -> Consumed {
         if self.eat_regexp_identifier_char(true)? {
             self.last_str_value.clear();
-            wtf8::push_code_point(&mut self.last_str_value, self.last_int_value as u32);
+            strings::push_codepoint_wtf8(&mut self.last_str_value, self.last_int_value as u32);
             while self.eat_regexp_identifier_char(false)? {
-                wtf8::push_code_point(&mut self.last_str_value, self.last_int_value as u32);
+                strings::push_codepoint_wtf8(&mut self.last_str_value, self.last_int_value as u32);
             }
             return Ok(true);
         }

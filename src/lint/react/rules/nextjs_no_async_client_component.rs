@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::get_declaration_of_variable;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -27,7 +28,7 @@ impl Rule for NoAsyncClientComponent {
 }
 
 fn starts_with_uppercase(name: &[u8]) -> bool {
-    text::first_code_point(name).and_then(char::from_u32).is_some_and(char::is_uppercase)
+    strings::wtf8_first_codepoint(name).and_then(char::from_u32).is_some_and(char::is_uppercase)
 }
 
 /// The name of an `async function Name`.

@@ -5,8 +5,10 @@ use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::js_plugin;
 use crate::options::Json;
+use crate::oxlint_help::Help;
 use crate::rule::{Meta, Plugin};
 use crate::span::Span;
+use bun_core::printer::json_stringify;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -115,12 +117,15 @@ pub struct Suggestion {
     pub message: Vec<u8>,
     /// What the placeholders of the message stand for.
     pub data: Vec<(Cow<'static, str>, Vec<u8>)>,
+    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
+    pub has_data: bool,
     pub fix: Fix,
     pub kind: SuggestionKind,
 }
 
 impl From<crate::context::Suggestion> for Suggestion {
     fn from(it: crate::context::Suggestion) -> Suggestion {
+        let has_data = !it.data.is_empty();
         let data = it.data.into_iter();
         Suggestion {
             message_id: Cow::Borrowed(it.message_id),
@@ -128,6 +133,7 @@ impl From<crate::context::Suggestion> for Suggestion {
             data: data
                 .map(|(name, value)| (Cow::Borrowed(name), value))
                 .collect(),
+            has_data,
             fix: it.fix,
             kind: it.kind,
         }
@@ -145,6 +151,7 @@ impl From<js_plugin::Suggested> for Suggestion {
             data: data
                 .map(|(name, value)| (Cow::Owned(name.into()), value))
                 .collect(),
+            has_data: it.has_data,
             fix: it.fix,
             kind: SuggestionKind::Suggestion,
         }
@@ -177,6 +184,18 @@ pub struct LintMessage {
     /// with a configuration of oxlint it counts.
     pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
     pub details: Option<Box<Details>>,
+    /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
+    pub constant_help: Option<Help>,
+}
+
+impl LintMessage {
+    /// oxlint's `help`. Empty: there is none.
+    pub fn help(&self) -> &str {
+        match (self.details.as_deref(), self.constant_help) {
+            (Some(details), _) if !details.help.is_empty() => &details.help,
+            (_, help) => help.map_or("", Help::text),
+        }
+    }
 }
 
 /// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
@@ -207,6 +226,7 @@ impl Default for LintMessage {
             suppressions: Vec::new(),
             comments_apply_at: None,
             details: None,
+            constant_help: None,
         }
     }
 }
@@ -250,37 +270,12 @@ impl<'a> Locator<'a> {
             suppressions: Vec::new(),
             comments_apply_at: None,
             details: None,
+            constant_help: None,
         }
     }
 }
 
 // ───────────────────────────── as JSON ─────────────────────────────
-
-/// `JSON.stringify(text)`
-pub fn write_json_string(out: &mut Vec<u8>, text: &[u8]) {
-    use std::io::Write;
-    out.push(b'"');
-    for chunk in text.utf8_chunks() {
-        for &byte in chunk.valid().as_bytes() {
-            match byte {
-                b'"' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
-                0x08 => out.extend_from_slice(b"\\b"),
-                0x0C => out.extend_from_slice(b"\\f"),
-                b'\n' => out.extend_from_slice(b"\\n"),
-                b'\r' => out.extend_from_slice(b"\\r"),
-                b'\t' => out.extend_from_slice(b"\\t"),
-                0..0x20 => {
-                    let _ = write!(out, "\\u{byte:04x}");
-                }
-                _ => out.push(byte),
-            }
-        }
-        if !chunk.invalid().is_empty() {
-            out.extend_from_slice("\u{FFFD}".as_bytes());
-        }
-    }
-    out.push(b'"');
-}
 
 /// `JSON.stringify(value)`
 pub fn write_json(out: &mut Vec<u8>, value: &Json) {
@@ -291,7 +286,7 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
         Json::Number(value) => {
             out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
         }
-        Json::String(value) => write_json_string(out, value),
+        Json::String(value) => json_stringify(value, out),
         Json::Array(items) => {
             out.push(b'[');
             for (i, item) in items.iter().enumerate() {
@@ -308,7 +303,7 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
                 if i > 0 {
                     out.push(b',');
                 }
-                write_json_string(out, key);
+                json_stringify(key, out);
                 out.push(b':');
                 write_json(out, value);
             }
@@ -337,7 +332,7 @@ pub(crate) fn write_json_indented(out: &mut Vec<u8>, value: &Json, depth: usize)
             for (i, (key, value)) in entries.iter().enumerate() {
                 out.push(if i == 0 { b'{' } else { b',' });
                 new_line(out, depth + 1);
-                write_json_string(out, key);
+                json_stringify(key, out);
                 out.extend_from_slice(b": ");
                 write_json_indented(out, value, depth + 1);
             }
@@ -429,7 +424,7 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
         offsets.convert(fix.span.end),
     );
     let _ = write!(out, "{{\"range\":[{start},{end}],\"text\":");
-    write_json_string(out, &fix.text);
+    json_stringify(&fix.text, out);
     out.push(b'}');
 }
 
@@ -447,7 +442,7 @@ impl LintMessage {
         use std::io::Write;
         out.extend_from_slice(b"{\"ruleId\":");
         match &self.rule_id {
-            Some(id) => write_json_string(out, &id.to_vec()),
+            Some(id) => json_stringify(&id.to_vec(), out),
             None => out.extend_from_slice(b"null"),
         }
         // What the linter says itself, other than about a file that cannot be parsed, is made by another function of ESLint.
@@ -459,13 +454,13 @@ impl LintMessage {
             let _ = write!(out, ",\"severity\":{}", self.severity as u8);
         }
         out.extend_from_slice(b",\"message\":");
-        write_json_string(out, &self.message);
+        json_stringify(&self.message, out);
         if !self.is_fatal || self.line != 0 {
             let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
         }
         if let Some(id) = self.message_id.as_deref().filter(|it| !it.is_empty()) {
             out.extend_from_slice(b",\"messageId\":");
-            write_json_string(out, id.as_bytes());
+            json_stringify(id.as_bytes(), out);
         }
         if let Some((line, column)) = self.end {
             let _ = write!(out, ",\"endLine\":{line},\"endColumn\":{column}");
@@ -489,27 +484,32 @@ impl LintMessage {
                 // A rule that has no ids writes `desc` itself, first.
                 if suggestion.message_id.is_empty() {
                     out.extend_from_slice(b"{\"desc\":");
-                    write_json_string(out, &suggestion.message);
+                    json_stringify(&suggestion.message, out);
                     out.extend_from_slice(b",\"fix\":");
                     write_fix(out, &suggestion.fix, offsets);
                     out.push(b'}');
                     continue;
                 }
                 out.extend_from_slice(b"{\"messageId\":");
-                write_json_string(out, suggestion.message_id.as_bytes());
-                for (i, (name, value)) in suggestion.data.iter().enumerate() {
-                    out.extend_from_slice(if i == 0 { b",\"data\":{" } else { b"," });
-                    write_json_string(out, name.as_bytes());
-                    out.push(b':');
-                    write_json_string(out, value);
+                json_stringify(suggestion.message_id.as_bytes(), out);
+                if suggestion.has_data {
+                    out.extend_from_slice(b",\"data\":{");
                 }
-                if !suggestion.data.is_empty() {
+                for (i, (name, value)) in suggestion.data.iter().enumerate() {
+                    if i > 0 {
+                        out.push(b',');
+                    }
+                    json_stringify(name.as_bytes(), out);
+                    out.push(b':');
+                    json_stringify(value, out);
+                }
+                if suggestion.has_data {
                     out.push(b'}');
                 }
                 out.extend_from_slice(b",\"fix\":");
                 write_fix(out, &suggestion.fix, offsets);
                 out.extend_from_slice(b",\"desc\":");
-                write_json_string(out, &suggestion.message);
+                json_stringify(&suggestion.message, out);
                 out.push(b'}');
             }
             out.push(b']');
@@ -524,7 +524,7 @@ impl LintMessage {
                     SuppressionKind::Directive => b"{\"kind\":\"directive\",\"justification\":",
                     SuppressionKind::File => b"{\"kind\":\"file\",\"justification\":",
                 });
-                write_json_string(out, &suppression.justification);
+                json_stringify(&suppression.justification, out);
                 out.push(b'}');
             }
             out.push(b']');

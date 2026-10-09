@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce the location of single-line statements.
@@ -40,12 +41,12 @@ fn validate_statement<'a>(
         },
     };
     let between = Span::before(token_end, body.span());
-    let is_beside = !text::has_line_break(cx.slice(between));
+    let is_beside = !strings::contains_js_line_break(cx.slice(between));
     if is_beside && placement == Placement::Below {
         cx.report(body, EXPECT_LINEBREAK).fix(|fixer| fixer.insert_before(body, "\n"));
     } else if !is_beside && placement == Placement::Beside {
         cx.report(body, EXPECT_NO_LINEBREAK).fix(|fixer| {
-            text::is_blank(fixer.file().slice(between)).then(|| fixer.replace(between, " "))
+            strings::is_all_js_whitespace(fixer.file().slice(between)).then(|| fixer.replace(between, " "))
         });
     }
 }

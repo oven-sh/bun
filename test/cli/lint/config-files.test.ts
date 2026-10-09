@@ -496,6 +496,39 @@ describe.concurrent("an eslint.config.js", () => {
   });
 });
 
+// The rule here answers only where its text is that of the package, byte for byte. Where it cannot tell, the package's rule runs.
+test.concurrent("prettier/prettier: what the rule here cannot answer for, the rule of the package does", async () => {
+  const theirs = `{ create: context => ({ VariableDeclaration(node) { context.report({ node, message: "theirs" }); } }) }`;
+  const plugin = `{ meta: { name: "eslint-plugin-prettier", version: "5.5.6" }, rules: { prettier: ${theirs} } }`;
+  const config = `export default [{ plugins: { prettier: ${plugin} }, rules: { "prettier/prettier": "error", "no-var": "error" } }];`;
+  const files = {
+    "eslint.config.mjs": config,
+    "a.js": "var a;\n",
+    "b.js": "// eslint-disable-next-line prettier/prettier\nvar b;\n",
+  };
+  const { problems, exitCode } = await lint(files, ["a.js", "b.js"]);
+  expect(problems).toEqual(["a.js:1:1 no-var", "a.js:1:1 prettier/prettier", "b.js:2:1 no-var"]);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent.each([
+  ["no setting", undefined, []],
+  ["node", "node", []],
+  ["node and typescript, with options", { node: { extensions: [".js"] }, typescript: {} }, []],
+  ["by the names of the packages", ["eslint-import-resolver-node", { "eslint-import-resolver-typescript": {} }], []],
+  ["webpack", "webpack", ["a.js:1:1 import/no-cycle"]],
+  ["webpack beside node", { node: {}, webpack: { config: "webpack.config.js" } }, ["a.js:1:1 import/no-cycle"]],
+  ["in a list", ["node", { alias: {} }], ["a.js:1:1 import/no-cycle"]],
+])("import/resolver: the package answers for a resolver that is not known here: %s", async (_, resolver, expected) => {
+  const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
+  const config = `export default [
+    { settings: ${JSON.stringify({ "import/resolver": resolver })} },
+    { plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: { "no-cycle": ${theirs} } } }, rules: { "import/no-cycle": "error" } },
+  ];`;
+  const { problems } = await lint({ "eslint.config.mjs": config, "a.js": "export {};\n" }, ["a.js"]);
+  expect(problems).toEqual(expected);
+});
+
 describe.concurrent("a note says that a plugin that is built in is installed in an older version", () => {
   const notes = async (files: Record<string, string>, ...flags: string[]) =>
     (await lint({ "a.js": "export {};\n", ...files }, ["-f", "stylish", ...flags, "a.js"])).stderr

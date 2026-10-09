@@ -1,5 +1,5 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text;
 
 /// Disallow empty block statements.
 pub struct NoEmpty {
@@ -15,7 +15,7 @@ impl NoEmpty {
     /// comments. `place`: where it is reported. `removed`: what oxlint suggests to remove.
     fn check(braces: Span, place: Span, kind: &'static str, removed: Option<Span>, cx: &Cx<'_, Self>) {
         let inside = braces.shrink(1, 1);
-        if !text::is_blank(cx.slice(inside)) {
+        if !strings::is_all_js_whitespace(cx.slice(inside)) {
             return;
         }
         let report = cx.report(place, UNEXPECTED).data("type", kind);
@@ -98,7 +98,7 @@ impl Rule for NoEmpty {
                 return Self::check(braces, braces, "switch", None, cx);
             }
             // oxlint points at the whole statement, which a comment does not fill.
-            if text::is_blank(cx.slice(braces.shrink(1, 1))) {
+            if strings::is_all_js_whitespace(cx.slice(braces.shrink(1, 1))) {
                 Self::check(braces, stmt.span(), "switch", Some(stmt.span()), cx);
             } else {
                 cx.report(stmt, UNEXPECTED).data("type", "switch").fix(|fixer| fixer.remove(stmt));

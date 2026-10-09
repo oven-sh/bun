@@ -136,7 +136,7 @@ pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
         let code_point = digits.iter().try_fold(0u32, |all, &digit| {
             Some(all.checked_mul(16)? + char::from(digit).to_digit(16)?)
         });
-        bun_lint::utils::text::push_code_point(&mut out, code_point.unwrap_or(0xFFFD));
+        bun_core::strings::push_codepoint_wtf8(&mut out, code_point.unwrap_or(0xFFFD));
         rest = after;
     }
     out

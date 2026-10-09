@@ -85,10 +85,11 @@ fn opening_paren_of_arrow_function(file: &File, func: Func) -> Option<Span> {
 pub(crate) fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
     const LOOKED_AT: u32 = 512;
     if span.len() <= LOOKED_AT {
-        return !text::has_line_break(file.slice(span));
+        return !strings::contains_js_line_break(file.slice(span));
     }
     let middle = span.start + LOOKED_AT;
-    !text::has_line_break(file.slice(Span::new(span.start, middle))) && file.is_on_same_line(middle, span.end)
+    !strings::contains_js_line_break(file.slice(Span::new(span.start, middle)))
+        && file.is_on_same_line(middle, span.end)
 }
 
 impl FunctionParenNewline {
@@ -113,8 +114,8 @@ impl FunctionParenNewline {
 
         let after_left = Span::after(left, skip_trivia(file.text(), left.end));
         let before_right = Span::before(before_right, right);
-        let has_left_newline = text::has_line_break(file.slice(after_left));
-        let has_right_newline = text::has_line_break(file.slice(before_right));
+        let has_left_newline = strings::contains_js_line_break(file.slice(after_left));
+        let has_right_newline = strings::contains_js_line_break(file.slice(before_right));
         let elements: SmallVec<[Span; 8]> = elements.collect();
         let pairs = || elements.iter().zip(elements.iter().skip(1));
         let needs_newlines = match self.mode {
@@ -126,7 +127,9 @@ impl FunctionParenNewline {
             Mode::MinItems(min_items) => elements.len() >= min_items,
         };
         // Not if there is a comment.
-        let remove = |fixer: Fixer<'a>, space: Span| text::trim(file.slice(space)).is_empty().then(|| fixer.remove(space));
+        let remove = |fixer: Fixer<'a>, space: Span| {
+            strings::trim_js_whitespace(file.slice(space)).is_empty().then(|| fixer.remove(space))
+        };
 
         if has_left_newline && !needs_newlines {
             cx.report(left, UNEXPECTED_AFTER).fix(|fixer| remove(fixer, after_left));

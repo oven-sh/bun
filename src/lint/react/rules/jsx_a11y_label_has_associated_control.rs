@@ -1,3 +1,4 @@
+use bun_core::strings;
 use crate::a11y::{LabelSearch, search_for_accessible_label};
 use crate::jsx::{
     AttributeValue, Child, as_jsx_element, children, get_attribute_names_of_settings, get_element_type, get_jsx_attribute_name,
@@ -170,7 +171,7 @@ impl<'a> Value<'a> {
 
     fn has_value(self, trim_strings: bool) -> bool {
         match self {
-            Value::String(text) if trim_strings => !text::is_blank(text),
+            Value::String(text) if trim_strings => !strings::is_all_js_whitespace(text),
             Value::String(text) => !text.is_empty(),
             Value::Number(value) => value != 0.0 && !value.is_nan(),
             Value::BigInt(nonzero) => nonzero,

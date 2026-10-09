@@ -1,6 +1,5 @@
 //! `ConfigCommentParser` of `@eslint/plugin-kit`: how the text of a directive comment is read.
 
-use super::space::{char_len, space_len, space_len_back, trim};
 use super::{json_v8, levn};
 use crate::options::Json;
 use bun_core::strings;
@@ -23,7 +22,10 @@ fn find_justification_separator(text: &[u8]) -> Option<(usize, usize)> {
     while let Some(found) = strings::index_of(&text[from..], b"--") {
         let dashes = from + found;
         let after = dashes + text[dashes..].iter().take_while(|b| **b == b'-').count();
-        let (before, following) = (space_len_back(&text[..dashes]), space_len(&text[after..]));
+        let (before, following) = (
+            strings::js_whitespace_len_back(&text[..dashes]),
+            strings::js_whitespace_len(&text[after..]),
+        );
         if before > 0 && following > 0 {
             return Some((dashes - before, after + following));
         }
@@ -35,8 +37,11 @@ fn find_justification_separator(text: &[u8]) -> Option<(usize, usize)> {
 /// `parseDirective`. `text`: the comment without its delimiters.
 pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
     let (directive, justification) = match find_justification_separator(text) {
-        Some((start, end)) => (trim(&text[..start]), trim(&text[end..])),
-        None => (trim(text), &text[text.len()..]),
+        Some((start, end)) => (
+            strings::trim_js_whitespace(&text[..start]),
+            strings::trim_js_whitespace(&text[end..]),
+        ),
+        None => (strings::trim_js_whitespace(text), &text[text.len()..]),
     };
     // `^([a-z]+(?:-[a-z]+)*)(?:\s|$)`
     let mut end = 0;
@@ -51,13 +56,13 @@ pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
         end += word;
         match directive.get(end) {
             Some(b'-') => end += 1,
-            Some(_) if space_len(&directive[end..]) == 0 => return None,
+            Some(_) if strings::js_whitespace_len(&directive[end..]) == 0 => return None,
             _ => break,
         }
     }
     Some(DirectiveComment {
         label: &directive[..end],
-        value: trim(&directive[end..]),
+        value: strings::trim_js_whitespace(&directive[end..]),
         justification,
     })
 }
@@ -68,7 +73,7 @@ pub fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     // All of them, once there are many.
     let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     for name in strings::split(text, b",") {
-        let name = match trim(name) {
+        let name = match strings::trim_js_whitespace(name) {
             [b'\'', inner @ .., b'\''] | [b'"', inner @ .., b'"'] => inner,
             name => name,
         };
@@ -94,18 +99,18 @@ pub fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
 /// `parseStringConfig`: `name` or `name:value`, separated by commas or white space. The last value
 /// of a name counts.
 pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
-    let text = trim(text);
+    let text = strings::trim_js_whitespace(text);
     // `.replace(/(?<!\s)\s*([:,])\s*/gu, "$1")`
     let skip_space = |mut at: usize| {
-        while space_len(&text[at..]) > 0 {
-            at += space_len(&text[at..]);
+        while strings::js_whitespace_len(&text[at..]) > 0 {
+            at += strings::js_whitespace_len(&text[at..]);
         }
         at
     };
     let mut collapsed = Vec::with_capacity(text.len());
     let mut at = 0;
     while at < text.len() {
-        if space_len_back(&text[..at]) == 0 {
+        if strings::js_whitespace_len_back(&text[..at]) == 0 {
             let mark = skip_space(at);
             if let Some(&byte @ (b':' | b',')) = text.get(mark) {
                 collapsed.push(byte);
@@ -113,7 +118,7 @@ pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
                 continue;
             }
         }
-        let len = char_len(&text[at..]);
+        let len = bun_core::lexer::char_and_size(&text[at..], 0).1.max(1);
         collapsed.extend_from_slice(&text[at..at + len]);
         at += len;
     }
@@ -124,11 +129,14 @@ pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     let mut at = 0;
     while at < collapsed.len() {
         let start = at;
-        while at < collapsed.len() && collapsed[at] != b',' && space_len(&collapsed[at..]) == 0 {
+        while at < collapsed.len()
+            && collapsed[at] != b','
+            && strings::js_whitespace_len(&collapsed[at..]) == 0
+        {
             at += 1;
         }
         let name = &collapsed[start..at];
-        at += space_len(&collapsed[at..]).max(1);
+        at += strings::js_whitespace_len(&collapsed[at..]).max(1);
         if name.is_empty() {
             continue;
         }
@@ -196,8 +204,8 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
     while at < quoted.len() {
         if quoted[at] == b']' || quoted[at].is_ascii_digit() {
             let mut end = at + 1;
-            while space_len(&quoted[end..]) > 0 {
-                end += space_len(&quoted[end..]);
+            while strings::js_whitespace_len(&quoted[end..]) > 0 {
+                end += strings::js_whitespace_len(&quoted[end..]);
             }
             if end > at + 1 && quoted.get(end) == Some(&b'"') {
                 quoted.splice(at + 1..end, *b",");

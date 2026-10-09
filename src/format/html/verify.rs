@@ -11,7 +11,6 @@
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
-use crate::text::white_space_len;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 
@@ -115,7 +114,8 @@ impl Reader {
                 b"\xC4\xB0".iter().for_each(|&byte| self.take_back(byte));
                 b"i\xCC\x87".iter().for_each(|&byte| self.add(byte));
             }
-            _ => (rest.iter().take(white_space_len(rest))).for_each(|&byte| self.take_back(byte)),
+            _ => (rest.iter().take(bun_core::strings::js_whitespace_len(rest)))
+                .for_each(|&byte| self.take_back(byte)),
         }
     }
 

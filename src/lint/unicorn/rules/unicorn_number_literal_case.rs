@@ -46,7 +46,9 @@ impl Rule for NumberLiteralCase {
                     None => return,
                 },
             };
-            cx.report(span, message).fix(|fixer| fixer.replace(raw_span, fixed_literal));
+            let lowercase_prefix = fixed_literal.get(..2).unwrap_or_default().to_vec();
+            let report = cx.report(span, message).data("prefix", lowercase_prefix);
+            report.fix(|fixer| fixer.replace(raw_span, fixed_literal));
         });
     }
 }

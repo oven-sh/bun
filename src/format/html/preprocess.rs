@@ -4,7 +4,7 @@
 //! done for a node, in the same order, before its children have their turn. Only the last step comes after them.
 
 use super::ast::{Flags, Id, Kind, Node, Span, Tree};
-use super::utilities::{self, has_html_whitespace, html_trim, is_pre_like, is_script_like_tag};
+use super::utilities::{is_pre_like, is_script_like_tag};
 use super::{Options, Parser};
 use bun_core::strings;
 use std::borrow::Cow;
@@ -230,7 +230,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 // start to its end.
                 let node = &mut self.tree[child];
                 if node.value.len() != node.span.len() as usize {
-                    let units = crate::text::utf16_len(&node.value);
+                    let units = strings::wtf8_len_utf16(&node.value);
                     node.span.end = moved_by(self.options.original_text, node.span.start, units);
                 }
                 continue;
@@ -279,7 +279,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             Some(first) => {
                 self.tree.next(first).is_none()
                     && self.tree[first].kind == Kind::Text
-                    && html_trim(&self.tree[first].value).is_empty()
+                    && self.tree[first].value.trim_ascii().is_empty()
             }
         };
         if is_blank {
@@ -301,8 +301,8 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                     continue;
                 }
                 let value = &self.tree[child].value;
-                let leading = utilities::leading_whitespace_count(value);
-                let trailing = utilities::trailing_whitespace_count(&value[leading..]);
+                let leading = value.len() - value.trim_ascii_start().len();
+                let trailing = value.len() - leading - value[leading..].trim_ascii_end().len();
                 let (is_all_whitespace, is_empty) =
                     (leading + trailing == value.len(), value.is_empty());
                 if is_all_whitespace {
@@ -354,7 +354,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 return false;
             };
             for expected in *b"//>" {
-                match crate::text::trim_start(rest).split_first() {
+                match strings::trim_js_whitespace_start(rest).split_first() {
                     Some((&first, after)) if first == expected => rest = after,
                     _ => return false,
                 }
@@ -417,7 +417,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             && self.tree.only_child(id).is_some_and(|only| {
                 let only = &self.tree[only];
                 only.kind == Kind::Text
-                    && !has_html_whitespace(&only.value)
+                    && !only.value.iter().any(u8::is_ascii_whitespace)
                     && !only
                         .flags
                         .intersects(Flags::HAS_LEADING_SPACES | Flags::HAS_TRAILING_SPACES)

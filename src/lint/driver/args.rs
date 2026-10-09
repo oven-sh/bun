@@ -27,21 +27,6 @@ pub(crate) enum Argument<'a> {
     Positional(&'a [u8]),
 }
 
-/// How many single-character edits turn `a` into `b`.
-fn distance(a: &[u8], b: &[u8]) -> usize {
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, x) in a.iter().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, y) in b.iter().enumerate() {
-            let substituted = diagonal + usize::from(x != y);
-            diagonal = row[j + 1];
-            row[j + 1] = substituted.min(row[j] + 1).min(diagonal + 1);
-        }
-    }
-    row[b.len()]
-}
-
 /// Calls `take` with each part of `args`, in order.
 pub(crate) fn parse<'a>(
     params: &'static [Param],
@@ -56,7 +41,7 @@ pub(crate) fn parse<'a>(
     let find_short = |name: u8| params.iter().find(|param| param.names.short == Some(name));
     let unknown = |written: &[u8], name: &[u8]| {
         let closest = (params.iter().filter_map(|param| param.names.long))
-            .min_by_key(|long| distance(name, long));
+            .min_by_key(|long| strings::edit_distance(name.iter().copied(), *long));
         match closest {
             Some(closest) => error(&[
                 b"Invalid option '",

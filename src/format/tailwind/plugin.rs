@@ -115,7 +115,7 @@ fn expressions_of(template: Template<'_>) -> Vec<InTemplate> {
     for (index, it) in all.iter_mut().enumerate().rev().filter(|_| is_babel) {
         let text = template.raw(index + 1);
         behind.start |= !text::starts_with_white_space(text);
-        behind.end |= text::trim_end(text).len() == text.len();
+        behind.end |= strings::trim_js_whitespace_end(text).len() == text.len();
         it.kept.start |= behind.start;
         it.kept.end = behind.end;
     }
@@ -161,7 +161,8 @@ impl<'a> Sorter<'a, '_> {
     fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize), kept: Kept) {
         let ends = Ends {
             ignores_first: index > 0 && !text::starts_with_white_space(text),
-            ignores_last: index + 1 < count && text::trim_end(text).len() == text.len(),
+            ignores_last: index + 1 < count
+                && strings::trim_js_whitespace_end(text).len() == text.len(),
             collapses_start: !kept.start && index == 0,
             collapses_end: !kept.end && index + 1 == count,
         };

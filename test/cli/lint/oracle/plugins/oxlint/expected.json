@@ -4752,5 +4752,25 @@
  ],
  "no-duplicates/full-table": [
   "a.js:111:26+11 import(no-duplicates)"
+ ],
+ "no-unnecessary-condition/what-a-predicate-returns-and-the-first-signature": [
+  "a.ts:11:19+5 typescript(no-unnecessary-condition)",
+  "a.ts:13:20+2 typescript(no-unnecessary-condition)",
+  "a.ts:15:49+1 typescript(no-unnecessary-condition)",
+  "a.ts:18:76+4 typescript(no-unnecessary-condition)",
+  "a.ts:1:19+4 typescript(no-unnecessary-condition)",
+  "a.ts:1:27+6 typescript(no-unnecessary-condition)",
+  "a.ts:1:37+3 typescript(no-unnecessary-condition)",
+  "a.ts:23:19+9 typescript(no-unnecessary-condition)",
+  "a.ts:24:46+15 typescript(no-unnecessary-condition)",
+  "a.ts:25:40+15 typescript(no-unnecessary-condition)",
+  "a.ts:26:40+5 typescript(no-unnecessary-condition)",
+  "a.ts:27:38+4 typescript(no-unnecessary-condition)",
+  "a.ts:30:33+6 typescript(no-unnecessary-condition)",
+  "a.ts:31:19+5 typescript(no-unnecessary-condition)",
+  "a.ts:6:38+3 typescript(no-unnecessary-condition)"
+ ],
+ "no-unnecessary-condition/awaited-and-overloads": [
+  "c10.ts:2:19+9 typescript(no-unnecessary-condition)"
  ]
 }

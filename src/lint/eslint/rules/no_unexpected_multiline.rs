@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow confusing multiline expressions.
@@ -30,14 +31,14 @@ fn break_after(e: Expr) -> Option<Span> {
         return None;
     }
     let open = skip_trivia(file.text(), before.end);
-    text::has_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
+    strings::contains_js_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
 }
 
 /// The `(` of a call with type arguments, if it is on another line than their `>`: where oxlint looks.
 fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span> {
     let open = file.token_before(call.args().first()?.outer_span())?.span();
     let close = file.token_before(open)?.span();
-    text::has_line_break(file.slice(close.between(open))).then_some(open)
+    strings::contains_js_line_break(file.slice(close.between(open))).then_some(open)
 }
 
 /// With `--fix-dangerously` oxlint puts a `;` before it.
@@ -78,14 +79,14 @@ impl NoUnexpectedMultiline {
         let Some(template) = call.template().map(|it| it.span()) else {
             return;
         };
-        if !text::has_line_break(cx.slice(call.callee().outer_span().between(template))) {
+        if !strings::contains_js_line_break(cx.slice(call.callee().outer_span().between(template))) {
             return;
         }
         if !call.type_args().is_empty() {
             let Some(before) = cx.file().token_before(Span::empty(template.start)) else {
                 return;
             };
-            if !text::has_line_break(cx.slice(before.span().between(template))) {
+            if !strings::contains_js_line_break(cx.slice(before.span().between(template))) {
                 return;
             }
         }

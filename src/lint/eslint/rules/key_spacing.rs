@@ -107,10 +107,10 @@ fn get_property_whitespace<'a>(file: &'a File<'a>, key: Key<'a>, value_start: u3
     let (before, after) = (between.get(..colon)?, between.get(colon + 1..)?);
     let colon = start + colon as u32;
     Some(Whitespace {
-        before_colon: Span::new(start + text::trim_end(before).len() as u32, colon),
+        before_colon: Span::new(start + strings::trim_js_whitespace_end(before).len() as u32, colon),
         after_colon: Span::new(
             colon + 1,
-            colon + 1 + (after.len() - text::trim_start(after).len()) as u32,
+            colon + 1 + (after.len() - strings::trim_js_whitespace_start(after).len()) as u32,
         ),
     })
 }
@@ -118,7 +118,7 @@ fn get_property_whitespace<'a>(file: &'a File<'a>, key: Key<'a>, value_start: u3
 /// The offset that is `units` UTF-16 code units after `from`.
 fn forward(source: &[u8], from: u32, units: usize) -> u32 {
     let rest = source.get(from as usize..).unwrap_or_default();
-    from + text::utf16_offset_to_byte(rest, units as u32) as u32
+    from + strings::wtf8_offset_of_utf16_index(rest, units as u32) as u32
 }
 
 /// The offset that is `units` UTF-16 code units before `from`.
@@ -127,7 +127,7 @@ fn backward(source: &[u8], from: u32, units: usize) -> u32 {
     let mut left = units as u32;
     while left > 0 && !before.is_empty() {
         let (c, start) = bun_core::lexer::last_char(before);
-        left = left.saturating_sub(text::utf16_width(c as u32));
+        left = left.saturating_sub(strings::codepoint_len_utf16(c as u32));
         before = before.get(..start).unwrap_or_default();
     }
     before.len() as u32
@@ -148,11 +148,11 @@ fn report<'a>(
     };
     let file = cx.file();
     let whitespace = file.slice(whitespace);
-    let length = text::utf16_len(whitespace) as usize;
+    let length = strings::wtf8_len_utf16(whitespace) as usize;
     let is_extra = length > expected;
     if length == expected
         || (mode == Mode::Minimum && is_extra && expected != 0)
-        || (expected != 0 && text::has_line_break(whitespace))
+        || (expected != 0 && strings::contains_js_line_break(whitespace))
     {
         return;
     }

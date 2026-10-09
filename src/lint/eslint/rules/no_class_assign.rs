@@ -13,7 +13,11 @@ impl NoClassAssign {
         // oxlint points at the declaration.
         let declared = class.name().filter(|_| cx.language().is_oxlint).map(|it| it.span());
         for reference in ast_utils::get_modifying_references(symbol.references()) {
-            cx.report(declared.unwrap_or_else(|| reference.span()), CLASS).data("name", reference.name());
+            let report = cx.report(declared.unwrap_or_else(|| reference.span()), CLASS).data("name", reference.name());
+            report.labels_with(|labels| {
+                let name = bstr::BStr::new(reference.name().bytes());
+                labels.push(reference.span(), format!("{name} is re-assigned here"));
+            });
         }
     }
 }

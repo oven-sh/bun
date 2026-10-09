@@ -41,9 +41,12 @@ impl Rule for RequireParamType {
                     }
                     let is_destructured_root = tag.is_current_root_tag && tag.is_about_nested_param;
                     match tag.name_part.filter(|_| rule.set_default_destructured_root_type && is_destructured_root) {
-                        Some(name_part) => cx.report(tag.kind.span, MISSING_ROOT_TYPE).fix(|fixer| {
-                            fixer.insert_before(name_part.span, format!("{{{}}} ", rule.default_destructured_root_type))
-                        }),
+                        Some(name_part) => cx
+                            .report(tag.kind.span, MISSING_ROOT_TYPE)
+                            .help_with(|| format!("Add {{{}}} to `@param` tag.", rule.default_destructured_root_type))
+                            .fix(|fixer| {
+                                fixer.insert_before(name_part.span, format!("{{{}}} ", rule.default_destructured_root_type))
+                            }),
                         None => cx.report(tag.kind.span, MISSING_TYPE),
                     };
                 }

@@ -193,6 +193,8 @@ struct Printer<'d> {
     measured_group_fits: bool,
     has_empty_line: bool,
     line_width: usize,
+    /// The length of `out` where this line starts.
+    line_start: usize,
     /// What is being printed.
     elements: Elements<'d>,
     /// That of the last of `buffers.frames`.
@@ -243,6 +245,7 @@ pub(crate) fn print(
         measured_group_fits: true,
         has_empty_line: false,
         line_width: 0,
+        line_start: start,
         elements: Elements::new(Run::of(root), &storage.pool),
         mode: PrintMode::Expanded,
         is_mark_pending: [false; 2],
@@ -395,7 +398,7 @@ impl<'d> Printer<'d> {
                 FormatElement::Cursor(mark) => self.note_mark(*mark),
                 FormatElement::Skip(skip) => self.elements.skip(skip.len),
                 FormatElement::Space => {
-                    if self.line_width > 0 {
+                    if self.is_in_line() {
                         self.pending_space = true;
                     }
                 }
@@ -430,7 +433,7 @@ impl<'d> Printer<'d> {
                     };
                     if fits {
                         self.insert_group_mode(*id, PrintMode::Flat);
-                        if self.line_width > 0 {
+                        if self.is_in_line() {
                             self.pending_space = true;
                         }
                     } else {
@@ -581,7 +584,7 @@ impl<'d> Printer<'d> {
             match line_mode {
                 LineMode::Soft | LineMode::SoftEmpty => return,
                 LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
-                    if self.line_width > 0 {
+                    if self.is_in_line() {
                         self.pending_space = true;
                     }
                     return;
@@ -595,8 +598,8 @@ impl<'d> Printer<'d> {
             return self.flush_line_suffixes(Some(line_break(line_mode)));
         }
 
-        // Not if the line is empty.
-        if self.line_width > 0 {
+        // Not if there is nothing on the line.
+        if self.is_in_line() {
             self.out.trim_trailing_whitespace();
             self.pull_marks_back();
             self.print_line_break();
@@ -650,13 +653,13 @@ impl<'d> Printer<'d> {
                         )
                         | Tag::EndIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty),
                     ) => {
-                        if self.line_width > 0 {
+                        if self.is_in_line() {
                             self.pending_space = true;
                         }
                     }
                     FormatElement::IndentedLineGroup(id) => {
                         self.insert_group_mode(*id, PrintMode::Flat);
-                        if self.line_width > 0 {
+                        if self.is_in_line() {
                             self.pending_space = true;
                         }
                     }
@@ -979,6 +982,14 @@ impl<'d> Printer<'d> {
             line_ending => self.out.bytes(line_ending.as_bytes()),
         }
         self.line_width = 0;
+        self.line_start = self.out.len();
+    }
+
+    /// Something has been printed on this line. Its width says so, unless all of it is text without a width: control
+    /// characters, combining marks.
+    #[inline(always)]
+    fn is_in_line(&self) -> bool {
+        self.line_width > 0 || self.out.len() > self.line_start
     }
 }
 

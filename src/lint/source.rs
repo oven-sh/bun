@@ -65,14 +65,6 @@ pub(crate) struct Lines {
 const FAR: u32 = 512;
 const BLOCK: usize = 1024;
 
-/// How many UTF-16 code units the characters of valid UTF-8 have that start in `bytes`.
-fn units_of_characters_starting_in(bytes: &[u8]) -> u32 {
-    bytes
-        .iter()
-        .map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0))
-        .sum()
-}
-
 /// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
 /// all the lines are not looked for.
 #[derive(Default)]
@@ -144,7 +136,8 @@ impl<'a> File<'a> {
                 units.push(0);
                 for block in text.chunks(BLOCK) {
                     units.push(
-                        units.last().copied().unwrap_or(0) + units_of_characters_starting_in(block),
+                        units.last().copied().unwrap_or(0)
+                            + bun_core::strings::element_length_utf8_into_utf16(block) as u32,
                     );
                 }
                 units
@@ -153,7 +146,9 @@ impl<'a> File<'a> {
         let block = offset as usize / BLOCK;
         Some(
             units.as_ref()?.get(block)?
-                + units_of_characters_starting_in(text.get(block * BLOCK..offset as usize)?),
+                + bun_core::strings::element_length_utf8_into_utf16(
+                    text.get(block * BLOCK..offset as usize)?,
+                ) as u32,
         )
     }
 

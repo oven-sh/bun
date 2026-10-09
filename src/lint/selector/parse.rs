@@ -137,16 +137,6 @@ struct Parser<'s> {
 /// deep.
 const MAX_DEPTH: u32 = 200;
 
-/// The number of bytes of the character that starts with `first`.
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0xF0.. => 4,
-        0xE0.. => 3,
-        0xC0.. => 2,
-        _ => 1,
-    }
-}
-
 /// The types of a class of ESLint's `matchesSelectorClass`, and whether an `Identifier` in a
 /// `MetaProperty` is left out.
 fn class_named(name: &[u8]) -> Option<(TypeSet, bool)> {
@@ -209,7 +199,7 @@ impl<'s> Parser<'s> {
     fn class(&mut self, set: &[u8], is_inverted: bool, expected: Expected) -> bool {
         match self.text.get(self.at) {
             Some(&first) if strings::contains_char(set, first) != is_inverted => {
-                self.at += utf8_len(first);
+                self.at += usize::from(strings::wtf8_byte_sequence_length(first));
                 true
             }
             _ => {
@@ -845,7 +835,7 @@ impl<'s> Parser<'s> {
         message.extend_from_slice(self.text);
         message.extend_from_slice(b"\" at position ");
         let before = self.text.get(..self.max_fail_at).unwrap_or(self.text);
-        message.extend_from_slice(text::utf16_len(before).to_string().as_bytes());
+        message.extend_from_slice(strings::wtf8_len_utf16(before).to_string().as_bytes());
         message.extend_from_slice(b": Expected ");
         let count = self.expected.count_ones();
         let descriptions = DESCRIPTIONS
@@ -863,7 +853,7 @@ impl<'s> Parser<'s> {
             message.extend_from_slice(description.as_bytes());
         }
         message.extend_from_slice(b" but ");
-        match text::first_code_point(self.text.get(self.max_fail_at..).unwrap_or_default()) {
+        match strings::wtf8_first_codepoint(self.text.get(self.max_fail_at..).unwrap_or_default()) {
             Some(found) => {
                 message.push(b'"');
                 push_escaped(&mut message, found);

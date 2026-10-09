@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce position of line comments.
@@ -12,15 +13,15 @@ const BESIDE: Message = Message::new("beside", "Expected comment to be beside co
 
 /// `/^\s*falls?\s?through/u`
 fn is_fall_through(value: &[u8]) -> bool {
-    let Some(rest) = text::trim_start(value).strip_prefix(b"fall") else {
+    let Some(rest) = strings::trim_js_whitespace_start(value).strip_prefix(b"fall") else {
         return false;
     };
     let rest = rest.strip_prefix(b"s").unwrap_or(rest);
     if rest.starts_with(b"through") {
         return true;
     }
-    let mut points = text::code_points(rest);
-    points.next().is_some_and(|(_, c)| text::is_js_whitespace(c))
+    let mut points = strings::wtf8_codepoints(rest);
+    points.next().is_some_and(|(_, c)| strings::is_js_whitespace(c))
         && points.next().and_then(|(at, _)| rest.get(at..)).is_some_and(|it| it.starts_with(b"through"))
 }
 
@@ -37,7 +38,7 @@ impl LineCommentPosition {
         }
         // A token or a comment ends on the line before the comment if anything is written there.
         let line_start = cx.line_span(cx.line_of(comment.start())).start;
-        let is_on_same_line = !text::is_blank(cx.slice(Span::new(line_start, comment.start())));
+        let is_on_same_line = !strings::is_all_js_whitespace(cx.slice(Span::new(line_start, comment.start())));
         if is_on_same_line == self.is_above {
             cx.report(comment, if self.is_above { ABOVE } else { BESIDE });
         }

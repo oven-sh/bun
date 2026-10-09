@@ -20,8 +20,12 @@ pub struct State<'a> {
     initializers: Initializers<'a>,
 }
 
-fn report<'a>(reference: Reference<'a>, cx: &mut Cx<'a, NoUseBeforeDefine>) {
-    cx.report(reference, NO_USE_BEFORE_DEFINE).data("name", reference.name());
+fn report<'a>(reference: Reference<'a>, at: Span, cx: &mut Cx<'a, NoUseBeforeDefine>) {
+    cx.report(at, NO_USE_BEFORE_DEFINE).data("name", reference.name()).labels_with(|labels| {
+        if let Some(defined) = reference.symbol().and_then(|it| it.declarations().next()?.name_span()) {
+            labels.push(defined, "defined here");
+        }
+    });
 }
 
 /// For oxlint the computed key of a member that is only a type is a reference in a type: `{ [a]: 1 }` as a type or in
@@ -135,12 +139,12 @@ impl NoUseBeforeDefine {
                     && !is_class_ref_in_class_decorator(definition, identifier)
                     && reference.scope().kind() != ScopeKind::FunctionType
             {
-                report(reference, cx);
+                report(reference, reference.span(), cx);
                 // For oxlint that is a reference too.
                 if cx.language().is_oxlint
                     && let Some(closing) = name_in_closing_tag(reference).filter(|it| it.end < definition_end)
                 {
-                    cx.report(closing, NO_USE_BEFORE_DEFINE).data("name", reference.name());
+                    report(reference, closing, cx);
                 }
             }
         }
@@ -153,7 +157,7 @@ impl NoUseBeforeDefine {
         }
         for reference in cx.file().unresolved_references() {
             if is_named_export(reference) && cx.file().global(reference.name().bytes()).is_none() {
-                report(reference, cx);
+                report(reference, reference.span(), cx);
             }
         }
     }

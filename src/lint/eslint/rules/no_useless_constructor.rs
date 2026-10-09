@@ -103,6 +103,12 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         (true, true) => REDUNDANT_SUPER_CALL,
     };
     cx.report(place, message)
+        .labels_with(|labels| {
+            if has_super_class && let Some(StmtKind::Expr(super_call)) = body.first().map(Stmt::kind) {
+                labels.first("This constructor is unnecessary,");
+                labels.push(super_call, "because it only passes arguments through to the superclass");
+            }
+        })
         .suggest(REMOVE_CONSTRUCTOR, |fixer| {
             let next = fixer.file().token_after(member);
             let adds_semicolon = next.is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))

@@ -36,19 +36,12 @@ use std::borrow::Cow;
 
 // ───────────────────────────── constants ─────────────────────────────
 
-/// ESLint's `LINEBREAK_MATCHER.test(text)`. `LINEBREAK_MATCHER.exec` is
-/// [`text::find_line_break`].
-#[inline]
-pub fn has_linebreak(text: &[u8]) -> bool {
-    text::has_line_break(text)
-}
-
 /// ESLint's `createGlobalLinebreakMatcher`: where each line break of `text` starts, and its length
-/// in bytes. `text.split(createGlobalLinebreakMatcher())` is [`text::lines`].
+/// in bytes. `text.split(createGlobalLinebreakMatcher())` is [`strings::js_lines`].
 pub fn create_global_linebreak_matcher(text: &[u8]) -> impl Iterator<Item = (usize, usize)> + '_ {
     let mut from = 0;
     std::iter::from_fn(move || {
-        let (at, len) = text::find_line_break(text.get(from..)?)?;
+        let (at, len) = strings::find_js_line_break(text.get(from..)?)?;
         let start = from + at;
         from = start + len;
         Some((start, len))
@@ -65,7 +58,7 @@ pub fn match_shebang(text: &[u8]) -> Option<&[u8]> {
 
 /// ESLint's `COMMENTS_IGNORE_PATTERN.test(value)`, for the value of a comment.
 pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
-    let rest = text::trim_start(value);
+    let rest = strings::trim_js_whitespace_start(value);
     if rest.starts_with(b"eslint") || rest.starts_with(b"jscs") {
         return true;
     }
@@ -74,7 +67,7 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     ]
     .iter()
     .filter_map(|word| rest.strip_prefix(word.as_bytes()))
-    .any(|after| text::first_code_point(after).is_some_and(text::is_js_whitespace))
+    .any(|after| strings::wtf8_first_codepoint(after).is_some_and(strings::is_js_whitespace))
 }
 
 /// ESLint's `STATEMENT_LIST_PARENTS.has(node.type)`, for the parent of a statement: a `Program`, a
@@ -227,10 +220,10 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
 pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
     const LOOKED_AT: u32 = 512;
     if span.len() <= LOOKED_AT {
-        return !text::has_line_break(file.slice(span));
+        return !strings::contains_js_line_break(file.slice(span));
     }
     let middle = span.start + LOOKED_AT;
-    !text::has_line_break(file.slice(Span::new(span.start, middle)))
+    !strings::contains_js_line_break(file.slice(Span::new(span.start, middle)))
         && file.is_on_same_line(middle, span.end)
 }
 
@@ -335,7 +328,7 @@ fn is_decimal_integer_text(raw: &[u8]) -> bool {
 
 /// ESLint's `isDirectiveComment`.
 pub fn is_directive_comment(comment: &Token<'_>) -> bool {
-    let value = text::trim(comment.comment_value());
+    let value = strings::trim_js_whitespace(comment.comment_value());
     match comment.kind() {
         TokenKind::Line => value.starts_with(b"eslint-"),
         TokenKind::Block => ["eslint-", "eslint ", "globals ", "global ", "exported "]
@@ -421,7 +414,7 @@ fn end_of_string(text: &[u8], start: usize) -> Option<usize> {
 fn end_of_regex(text: &[u8], start: usize) -> Option<usize> {
     let (mut at, mut in_class) = (start + 1, false);
     loop {
-        if text::line_break_len(text.get(at..)?) != 0 {
+        if strings::js_line_break_len(text.get(at..)?) != 0 {
             return None;
         }
         match *text.get(at)? {
@@ -433,9 +426,11 @@ fn end_of_regex(text: &[u8], start: usize) -> Option<usize> {
         }
         at += 1;
     }
-    Some(bun_core::lexer::end_of_run(text, at + 1, |c| {
-        text::is_identifier_part(c as u32)
-    }))
+    Some(bun_core::lexer::end_of_run(
+        text,
+        at + 1,
+        bun_core::lexer::is_type_script_identifier_part,
+    ))
 }
 
 /// A word after which a `/` starts a regular expression.
@@ -470,7 +465,7 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
     let mut braces: SmallVec<[bool; 8]> = SmallVec::new();
     let mut at = 0;
     loop {
-        at = bun_core::lexer::end_of_run(text, at, |c| text::is_js_whitespace(c as u32));
+        at = bun_core::lexer::end_of_run(text, at, |c| strings::is_js_whitespace(c as u32));
         let Some(&c) = text.get(at) else {
             break;
         };
@@ -480,7 +475,7 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
                 let rest = &text[at..];
                 (
                     TokenKind::Line,
-                    at + text::find_line_break(rest).map_or(rest.len(), |it| it.0),
+                    at + strings::find_js_line_break(rest).map_or(rest.len(), |it| it.0),
                 )
             }
             b'/' if next == Some(b'*') => (
@@ -505,7 +500,7 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
             }
             b'#' if at == 0 && next == Some(b'!') => (
                 TokenKind::Shebang,
-                text::find_line_break(text).map_or(text.len(), |it| it.0),
+                strings::find_js_line_break(text).map_or(text.len(), |it| it.0),
             ),
             b'#' => (
                 TokenKind::PrivateIdentifier,
@@ -518,7 +513,8 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
             _ => {
                 let end = at + token_len(&text[at..]).max(1);
                 let is_word = c == b'\\'
-                    || text::first_code_point(&text[at..]).is_some_and(text::is_identifier_start);
+                    || strings::wtf8_first_codepoint(&text[at..])
+                        .is_some_and(bun_core::lexer::is_identifier_start);
                 match is_word {
                     true if is_keyword_before_expression(&text[at..end]) => {
                         (TokenKind::Keyword, end)
@@ -595,7 +591,7 @@ pub fn can_tokens_be_adjacent<'t>(
 pub fn get_name_location_in_global_directive_comment(comment: &Token<'_>, name: &[u8]) -> Span {
     let value = comment.comment_value();
     let base = comment.start() + 2;
-    let is_separator = |c: u32| text::is_js_whitespace(c) || c == u32::from(b',');
+    let is_separator = |c: u32| strings::is_js_whitespace(c) || c == u32::from(b',');
     let limit = strings::index_of(value, b"global")
         .map_or(5, |at| at + 6)
         .min(value.len());
@@ -606,7 +602,7 @@ pub fn get_name_location_in_global_directive_comment(comment: &Token<'_>, name: 
             .and_then(|rest| strings::index_of(rest, name))
     {
         let at = from + found;
-        let after = text::first_code_point(&value[at + name.len()..]);
+        let after = strings::wtf8_first_codepoint(&value[at + name.len()..]);
         if text::last_code_point(&value[limit..at]).is_some_and(is_separator)
             && after.is_none_or(|c| is_separator(c) || c == u32::from(b':'))
         {
@@ -1904,10 +1900,10 @@ fn has_this_tag(value: &[u8]) -> bool {
             let Some(c) = text::last_code_point(before) else {
                 return true;
             };
-            if text::is_line_terminator(c) {
+            if strings::is_js_line_terminator(c) {
                 return true;
             }
-            if !text::is_js_whitespace(c) && c != u32::from(b'*') {
+            if !strings::is_js_whitespace(c) && c != u32::from(b'*') {
                 break;
             }
             before = &before[..bun_core::lexer::last_char(before).1];

@@ -1,6 +1,6 @@
+use bun_core::strings;
 use crate::a11y::cow_to_ascii_lowercase;
 use crate::jsx::{AttributeValue, get_jsx_attribute_name, get_prop_value, to_boolean};
-use bun_lint_oxlint::text::split_whitespace;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use std::borrow::Cow;
@@ -40,7 +40,7 @@ impl Rule for AriaProptypes {
                     None => allow_none_value(aria_prop_type),
                 };
                 if !is_valid {
-                    cx.report(attr, ARIA_PROPTYPES).data("prop_name", name);
+                    cx.report(attr, ARIA_PROPTYPES).help_with(|| help(aria_prop_type, &name)).data("prop_name", name);
                 }
             }
         });
@@ -59,6 +59,25 @@ enum AriaPropType {
     IdList,
     Token(&'static [&'static str]),
     TokenList(&'static [&'static str]),
+}
+
+fn help(aria_prop_type: AriaPropType, prop_name: &[u8]) -> String {
+    let (valid_prop_message, tokens): (&str, &[&str]) = match aria_prop_type {
+        AriaPropType::Boolean => ("'true' or 'false'", &[]),
+        AriaPropType::Tristate => ("'true', 'false', or 'mixed'", &[]),
+        AriaPropType::String => ("a string value", &[]),
+        AriaPropType::Number if prop_name.starts_with(b"aria-value") => ("a number value", &[]),
+        AriaPropType::Number => ("an integer value", &[]),
+        AriaPropType::Id => ("a single element ID", &[]),
+        AriaPropType::IdList => ("a space-separated list of element IDs", &[]),
+        AriaPropType::Token(tokens) => ("one of the following tokens: ", tokens),
+        AriaPropType::TokenList(tokens) => ("a space-separated list of the following tokens: ", tokens),
+    };
+    format!(
+        "The valid value for '{}' is: {valid_prop_message}{}.\nYou can find a list of valid ARIA state and property values at https://www.w3.org/TR/wai-aria/#x6-7-definitions-of-states-and-properties-all-aria-attributes",
+        bstr::BStr::new(prop_name),
+        tokens.join(", "),
+    )
 }
 
 /// Whether there can be no value: `<button aria-expanded>`.
@@ -96,13 +115,14 @@ fn is_valid_value_for_aria_prop_type(aria_prop_type: AriaPropType, value: Attrib
         },
         AriaPropType::IdList => {
             is_template_with_expressions()
-                || parse_aria_prop_value_as_string(value, false).is_some_and(|it| split_whitespace(&it).next().is_some())
+                || parse_aria_prop_value_as_string(value, false)
+                    .is_some_and(|it| strings::split_unicode_whitespace(&it).next().is_some())
         }
         AriaPropType::Token(valid_tokens) => {
             parse_aria_prop_value_as_string(value, true).is_some_and(|it| is_one_of(valid_tokens, &it))
         }
         AriaPropType::TokenList(valid_tokens) => parse_aria_prop_value_as_string(value, true).is_some_and(|it| {
-            let mut tokens = split_whitespace(&it).peekable();
+            let mut tokens = strings::split_unicode_whitespace(&it).peekable();
             tokens.peek().is_some() && tokens.all(|token| is_one_of(valid_tokens, token))
         }),
     }

@@ -1,3 +1,4 @@
+use bun_core::strings;
 use super::max_lines_per_function::count_comment_lines_as_oxlint;
 use bun_lint::prelude::*;
 
@@ -42,7 +43,7 @@ impl MaxLines {
         // twice. It points at the last byte of the file.
         if cx.language().is_oxlint {
             let lines = match self.skip_blank_lines {
-                true => (1..=count).filter(|line| !text::is_blank(file.line_text(*line))).count(),
+                true => (1..=count).filter(|line| !strings::is_all_js_whitespace(file.line_text(*line))).count(),
                 false => count as usize,
             };
             let comment_lines = match self.skip_comments {
@@ -71,7 +72,7 @@ impl MaxLines {
         }
         let (mut actual, mut first_excess) = (0usize, None);
         for line in 1..=count {
-            if self.skip_blank_lines && text::is_blank(file.line_text(line))
+            if self.skip_blank_lines && strings::is_all_js_whitespace(file.line_text(line))
                 || is_comment_line.get(line as usize) == Some(&true)
             {
                 continue;

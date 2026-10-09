@@ -1,6 +1,6 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{is_closing_brace_token, is_comma_token, is_opening_brace_token};
-use bun_lint::utils::text::trim;
 use bun_lint::utils::ts_utils::format_word_list;
 use rustc_hash::FxHashMap;
 
@@ -411,7 +411,7 @@ impl ConsistentTypeImports {
             } else {
                 // `import Type , { .. } from 'foo'`
                 let comma = file.tokens_after(default).find(is_comma_token)?;
-                let default_text = trim(file.slice(Span::new(default.start, comma.start())));
+                let default_text = strings::trim_js_whitespace(file.slice(Span::new(default.start, comma.start())));
                 let text = concat(&[b"import type ", default_text, b" from ", source_text, b";\n"]);
                 fixes.push(fixer.insert_before(statement, text));
                 let after = file.tokens_after(comma).with_comments().next()?;
@@ -492,9 +492,21 @@ impl ConsistentTypeImports {
                         format_word_list(&in_quotes.collect::<Vec<_>>())
                     }
                 };
-                cx.report(statement, SOME_IMPORTS_ARE_ONLY_TYPES)
-                    .data("typeImports", type_imports)
-                    .fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
+                // What oxlint says about its fix.
+                let (import, named) = (report.import, report.import.named());
+                let adds_to_each = self.fixes_inline
+                    && import.namespace().is_none()
+                    && match import.default() {
+                        Some(_) => !report.is_type(Specifier::Default(import)) && !named.is_empty(),
+                        None => named.iter().any(|it| report.is_type(Specifier::Named(it))),
+                    };
+                let problem = cx.report(statement, SOME_IMPORTS_ARE_ONLY_TYPES).data("typeImports", type_imports);
+                let problem = match (cx.language().is_oxlint, adds_to_each) {
+                    (false, _) => problem,
+                    (true, true) => problem.help("Add type specifier to imported types"),
+                    (true, false) => problem.help("Mark all type-only imports with the type specifier"),
+                };
+                problem.fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
             } else if !has_attributes(report.import) {
                 cx.report(statement, TYPE_OVER_VALUE)
                     .fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));

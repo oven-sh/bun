@@ -17,7 +17,6 @@
 
 mod tables;
 
-use super::space::{space_len, space_len_back};
 use crate::ast::File;
 use crate::language::{Global, LanguageOptions, Parser, SourceType};
 use crate::span::Span;
@@ -447,11 +446,13 @@ impl<'a> File<'a> {
             let separator = if before.ends_with(b",") {
                 1
             } else {
-                space_len_back(before)
+                strings::js_whitespace_len_back(before)
             };
             let is_separated = separator > 0 && at - separator >= floor;
             if is_separated
-                && (after.is_empty() || matches!(after[0], b',' | b':') || space_len(after) > 0)
+                && (after.is_empty()
+                    || matches!(after[0], b',' | b':')
+                    || strings::js_whitespace_len(after) > 0)
             {
                 let start = comment.start + 2 + at as u32;
                 return Span::new(start, start + name.len() as u32);

@@ -6,7 +6,8 @@ mod data;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_lint::linter::{ResolvedConfig, RuleId, write_json, write_json_string};
+use bun_core::printer::json_stringify;
+use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 
 /// `getShorthandName(name, "eslint-plugin")`
@@ -47,7 +48,7 @@ fn replacements(deprecated: &Json, replaced_by: &Json) -> Json {
 
 fn write_js(out: &mut Vec<u8>, rule: &js_plugin::Rule, (deprecated, replaced_by): &(Json, Json)) {
     out.extend_from_slice(b"{\"ruleId\":");
-    write_json_string(out, &rule.id);
+    json_stringify(&rule.id, out);
     out.extend_from_slice(b",\"replacedBy\":");
     write_json(out, &replacements(deprecated, replaced_by));
     if let Json::Object(_) = deprecated {

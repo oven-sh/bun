@@ -16,7 +16,7 @@ use crate::ir::element::{Align, FormatElement, LineMode, Tag};
 use crate::js::context::JsFormatContext;
 use crate::options::LineEnding;
 use crate::range::{Offsets, alignment_size, normalized_len, write_with_line_ending};
-use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma, is_blank, trim};
+use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for GraphQL.
@@ -109,7 +109,11 @@ fn format_range(
 
     let line_ending = options.line_ending.as_bytes();
     write_with_line_ending(before, line_ending, out);
-    write_with_line_ending(trim(&formatted), line_ending, out);
+    write_with_line_ending(
+        bun_core::strings::trim_js_whitespace(&formatted),
+        line_ending,
+        out,
+    );
     write_with_line_ending(after, line_ending, out);
     Ok(())
 }
@@ -123,7 +127,7 @@ fn format_normalized(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    if is_blank(text) {
+    if bun_core::strings::is_all_js_whitespace(text) {
         return Ok(());
     }
     let Scratch {

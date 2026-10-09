@@ -599,25 +599,6 @@ impl Default for Loc {
 impl Loc {
     pub const EMPTY: Loc = Loc { start: -1 };
 
-    /// Whether `start` is not a source offset but an index, marked by bit 30. Only the parse for
-    /// the type checker creates such a location (`bun_js_parser::sema::notes`).
-    #[inline]
-    pub const fn is_index(self) -> bool {
-        self.start >= 1 << 30
-    }
-
-    #[inline]
-    pub const fn from_index(index: usize) -> Loc {
-        Loc {
-            start: index as i32 | 1 << 30,
-        }
-    }
-
-    #[inline]
-    pub const fn index(self) -> usize {
-        (self.start & !(1 << 30)) as usize
-    }
-
     #[inline]
     pub fn to_nullable(self) -> Option<Loc> {
         if self.start == -1 { None } else { Some(self) }
@@ -814,7 +795,6 @@ impl Location {
                     offset: 0,
                 });
             }
-            debug_assert!(!r.loc.is_index());
             let data = match tracker {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
@@ -2927,7 +2907,6 @@ pub mod server_component_boundary;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;
-pub mod ts_syntax;
 pub mod use_directive;
 
 pub mod lexer_log;

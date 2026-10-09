@@ -35,15 +35,6 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
-/// `path.extname`
-fn extname(path: &[u8]) -> &[u8] {
-    let name = paths::basename(path);
-    match bun_core::strings::last_index_of_char(name, b'.') {
-        Some(at) if at > 0 => &name[at..],
-        _ => b"",
-    }
-}
-
 /// What is said about the file at `path`, which only ESLint can lint, if there is no ESLint.
 fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
     let (what, name): (&[u8], _) = match config.is_javascript() {
@@ -143,7 +134,7 @@ impl Context<'_, '_> {
         let FileConfig::Matched(own) = found else {
             return LintResult::default();
         };
-        if text == file.text && extname(&path) == extname(file.path) {
+        if text == file.text && paths::extname(&path) == paths::extname(file.path) {
             let path = &path;
             return self.verify_as_it_is(loaded, Text { path, text, ..file }, config);
         }

@@ -6,7 +6,6 @@ use super::printer::Builder;
 use crate::ir::element::LineMode;
 use crate::js::print::template::write_embedded_template_expression;
 use crate::prelude::*;
-use crate::text::{is_blank, trim};
 use smallvec::SmallVec;
 
 fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
@@ -34,8 +33,11 @@ fn follows_language_comment(
             return false;
         }
         let between = source.text_for(&Span::after(comment.span, position));
-        if !is_blank(between) {
-            if !is_statement || !bun_core::strings::split(between, b";").all(is_blank) {
+        if !bun_core::strings::is_all_js_whitespace(between) {
+            if !is_statement
+                || !bun_core::strings::split(between, b";")
+                    .all(bun_core::strings::is_all_js_whitespace)
+            {
                 return false;
             }
             has_empty_statement = true;
@@ -51,7 +53,9 @@ fn follows_language_comment(
         let mut first = comment;
         for previous in comments {
             if first.preceded_by_newline()
-                || !is_blank(source.text_for(&previous.span.between(first.span)))
+                || !bun_core::strings::is_all_js_whitespace(
+                    source.text_for(&previous.span.between(first.span)),
+                )
             {
                 break;
             }
@@ -59,7 +63,9 @@ fn follows_language_comment(
         }
         return first.preceded_by_newline()
             || matches!(
-                trim(source.text_for(&Span::before(0, first.span))),
+                bun_core::strings::trim_js_whitespace(
+                    source.text_for(&Span::before(0, first.span))
+                ),
                 [] | [.., b'{']
             );
     }
@@ -196,13 +202,13 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     let count = all.clone().count();
     let has_only_comments = all
         .clone()
-        .all(|line| matches!(trim(line), [] | [b'#', ..]));
+        .all(|line| matches!(bun_core::strings::trim_js_whitespace(line), [] | [b'#', ..]));
     let content = if !has_only_comments {
         let (mut tree, mut attached) = (Tree::default(), Vec::new());
         parser::parse(text, &mut tree).ok()?;
         comments::attach(text, &tree, &mut attached);
         Content::Document(tree, attached)
-    } else if is_blank(text) {
+    } else if bun_core::strings::is_all_js_whitespace(text) {
         Content::Nothing
     } else {
         Content::Comments
@@ -210,8 +216,16 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     Some(Part {
         text,
         content,
-        starts_with_blank_line: count > 2 && all.clone().take(2).all(is_blank),
-        ends_with_blank_line: count > 2 && all.rev().take(2).all(is_blank),
+        starts_with_blank_line: count > 2
+            && all
+                .clone()
+                .take(2)
+                .all(bun_core::strings::is_all_js_whitespace),
+        ends_with_blank_line: count > 2
+            && all
+                .rev()
+                .take(2)
+                .all(bun_core::strings::is_all_js_whitespace),
     })
 }
 
@@ -224,7 +238,7 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> b
 }
 
 fn is_blank_template(template: Template<'_>) -> bool {
-    template.quasi_count() == 1 && is_blank(template.raw(0))
+    template.quasi_count() == 1 && bun_core::strings::is_all_js_whitespace(template.raw(0))
 }
 
 fn parse<'a>(template: Template<'a>) -> Option<SmallVec<[Part<'a>; 2]>> {

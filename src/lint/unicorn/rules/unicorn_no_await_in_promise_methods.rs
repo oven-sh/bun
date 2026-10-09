@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{get_member_expr, is_computed, is_method_call, static_property_name};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -41,7 +42,7 @@ impl Rule for NoAwaitInPromiseMethods {
                 let keyword = Span::new(start, start + 5);
                 cx.report(keyword, NO_AWAIT_IN_PROMISE_METHODS).data("method_name", method_name).suggest(REMOVE_AWAIT, |fixer| {
                     let after = fixer.file().text().get(keyword.end as usize..).unwrap_or_default();
-                    let spaces = after.len() - text::trim_start(after).len();
+                    let spaces = after.len() - strings::trim_js_whitespace_start(after).len();
                     fixer.remove(Span::new(start, keyword.end + spaces as u32))
                 });
             }

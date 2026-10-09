@@ -12,7 +12,6 @@ use super::ast::{Expression, FragmentId, Id, Kind, Pattern, Span, Tree, Value};
 use super::parser::{self, Js};
 use super::snip::{self, ATTRIBUTE};
 use crate::html::verify::{Reader, Signature};
-use crate::text::trim;
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
@@ -163,7 +162,7 @@ impl Check<'_, '_> {
         self.tree
             .fragment(fragment)
             .iter()
-            .all(|&id| matches!(&self.tree[id].kind, Kind::Text { raw } if trim(raw).is_empty()))
+            .all(|&id| matches!(&self.tree[id].kind, Kind::Text { raw } if bun_core::strings::trim_js_whitespace(raw).is_empty()))
     }
 
     /// Reads `id`, and says in `next` what is in it, the last first.

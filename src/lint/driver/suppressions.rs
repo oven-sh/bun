@@ -5,7 +5,8 @@ use crate::results::{Counts, FileResult};
 use crate::run::Fatal;
 use crate::{fs, paths};
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, RuleId, Suppression, parse_rule_id, write_json_string};
+use bun_core::printer::json_stringify;
+use bun_lint::linter::{LintMessage, RuleId, Suppression, parse_rule_id};
 use bun_lint::options::Json;
 use std::io::Write;
 
@@ -103,11 +104,11 @@ impl Suppressions {
         for (i, (file, rules)) in self.0.iter_mut().enumerate() {
             bun_lint::utils::sort::sort_by(rules, |a, b| a.0.cmp(&b.0));
             out.extend_from_slice(if i > 0 { b",\n  " } else { b"\n  " });
-            write_json_string(&mut out, file);
+            json_stringify(file, &mut out);
             out.extend_from_slice(b": {");
             for (j, (rule, count)) in rules.iter().enumerate() {
                 out.extend_from_slice(if j > 0 { b",\n    " } else { b"\n    " });
-                write_json_string(&mut out, rule);
+                json_stringify(rule, &mut out);
                 let _ = write!(out, ": {{\n      \"count\": {count}\n    }}");
             }
             out.extend_from_slice(if rules.is_empty() { b"}" } else { b"\n  }" });

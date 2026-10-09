@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow multiple empty lines.
@@ -31,7 +32,7 @@ fn start_of_line(file: &File, line: u32) -> u32 {
 
 impl NoMultipleEmptyLines {
     fn collect_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !text::has_line_break(e.text()) {
+        if !strings::contains_js_line_break(e.text()) {
             return;
         }
         let ExprKind::Template(template) = e.kind() else {
@@ -39,7 +40,7 @@ impl NoMultipleEmptyLines {
         };
         for i in 0..template.quasi_count() {
             let quasi = template.quasi_span(i);
-            if text::has_line_break(cx.slice(quasi)) {
+            if strings::contains_js_line_break(cx.slice(quasi)) {
                 cx.state.push(quasi);
             }
         }
@@ -65,7 +66,7 @@ impl NoMultipleEmptyLines {
         for line in 1..=line_count + 1 {
             if line <= line_count {
                 let span = file.line_span(line);
-                if text::is_blank(file.slice(span)) && !is_in_template(span.start) {
+                if strings::is_all_js_whitespace(file.slice(span)) && !is_in_template(span.start) {
                     continue;
                 }
             }

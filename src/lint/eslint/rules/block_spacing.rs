@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow or enforce spaces inside of blocks after opening block and before closing block.
@@ -16,7 +17,7 @@ impl BlockSpacing {
             return;
         };
         // What is next to a brace is whitespace, and then a token or a comment.
-        let content = text::trim_start(inner);
+        let content = strings::trim_js_whitespace_start(inner);
         if content.is_empty() {
             return;
         }
@@ -26,7 +27,7 @@ impl BlockSpacing {
         let open = Span::new(braces.start, braces.start + 1);
         let close = Span::new(braces.end - 1, braces.end);
         let after_open = Span::after(open, open.end + (inner.len() - content.len()) as u32);
-        let before_close = Span::before(open.end + text::trim_end(inner).len() as u32, close);
+        let before_close = Span::before(open.end + strings::trim_js_whitespace_end(inner).len() as u32, close);
 
         if !self.is_valid(cx.slice(after_open)) {
             let report = match self.is_always {
@@ -46,7 +47,7 @@ impl BlockSpacing {
 
     /// `between`: the whitespace between a brace and what is next to it.
     fn is_valid(&self, between: &[u8]) -> bool {
-        text::has_line_break(between) || between.is_empty() != self.is_always
+        strings::contains_js_line_break(between) || between.is_empty() != self.is_always
     }
 
     fn spacing(&self) -> &'static str {

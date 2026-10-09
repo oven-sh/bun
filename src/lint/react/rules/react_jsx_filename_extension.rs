@@ -36,11 +36,15 @@ impl Rule for JsxFilenameExtension {
         let has_ext_allowed = self.extensions.iter().any(|it| **it == *ext);
         let has_jsx = file.has_exprs([ExprTag::Jsx]);
         if !has_ext_allowed && has_jsx {
-            on.finish(|_, cx| {
+            on.finish(|rule, cx| {
                 let file = cx.file();
                 if let Some(jsx_elt) = file.exprs_of_kind(ExprTag::Jsx).min_by_key(|it| it.span().start) {
                     let ext = file_extension(file.path()).unwrap_or_default();
-                    cx.report(jsx_elt, NO_JSX_WITH_FILENAME_EXTENSION).data("ext", ext);
+                    cx.report(jsx_elt, NO_JSX_WITH_FILENAME_EXTENSION).data("ext", ext).help_with(|| {
+                        let allowed_extensions = rule.extensions.join(&b", ."[..]);
+                        let allowed_extensions = bstr::BStr::new(&allowed_extensions);
+                        format!("Rename the file to use an allowed extension: .{allowed_extensions}")
+                    });
                 }
             });
         } else if has_ext_allowed

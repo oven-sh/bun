@@ -3,7 +3,6 @@
 use super::Error;
 use super::positions::Positions;
 use crate::syntax_error::{Message, Refusal};
-use crate::text::white_space_len;
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -81,7 +80,7 @@ pub(crate) fn id_len(text: &[u8]) -> usize {
             .take_while(|byte| IS_ASCII_OF_ID[**byte as usize])
             .count();
         match text.get(at) {
-            Some(0x80..) if white_space_len(&text[at..]) == 0 => at += 1,
+            Some(0x80..) if strings::js_whitespace_len(&text[at..]) == 0 => at += 1,
             _ => return at,
         }
     }
@@ -90,7 +89,7 @@ pub(crate) fn id_len(text: &[u8]) -> usize {
 fn white_space_run(text: &[u8]) -> usize {
     let mut at = 0;
     loop {
-        match white_space_len(&text[at..]) {
+        match strings::js_whitespace_len(&text[at..]) {
             0 => return at,
             len => at += len,
         }
@@ -102,12 +101,12 @@ fn is_lookahead(rest: &[u8]) -> bool {
     matches!(
         rest.first(),
         Some(b'=' | b'~' | b'}' | b'/' | b'.' | b')' | b']' | b'|')
-    ) || white_space_len(rest) > 0
+    ) || strings::js_whitespace_len(rest) > 0
 }
 
 /// `LITERAL_LOOKAHEAD`: `[~}\s)\]]`
 fn is_literal_lookahead(rest: &[u8]) -> bool {
-    matches!(rest.first(), Some(b'~' | b'}' | b')' | b']')) || white_space_len(rest) > 0
+    matches!(rest.first(), Some(b'~' | b'}' | b')' | b']')) || strings::js_whitespace_len(rest) > 0
 }
 
 /// `open(\\close|[^close])*close`, where `text` starts with the opening character: how long the match is. It ends
@@ -404,7 +403,7 @@ impl Lexer<'_> {
             }
             b'@' => self.token(TokenKind::Data, 1),
             b'|' => self.token(TokenKind::CloseBlockParams, 1),
-            _ if white_space_len(rest) > 0 => self.at += white_space_run(rest),
+            _ if strings::js_whitespace_len(rest) > 0 => self.at += white_space_run(rest),
             _ if followed_by(b"true") => self.token(TokenKind::Boolean, 4),
             _ if followed_by(b"false") => self.token(TokenKind::Boolean, 5),
             _ if followed_by(b"undefined") => self.token(TokenKind::Undefined, 9),

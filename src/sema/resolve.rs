@@ -638,6 +638,10 @@ pub struct Options {
     pub resolves_like_node16: bool,
     /// `ModuleResolution` is `GetModuleResolutionKind()`: it is specified, and still supported.
     pub specifies_module_resolution: bool,
+    /// `moduleResolution` is `classic`, which only `AS_BEFORE_6` has.
+    pub is_classic: bool,
+    /// `allowSyntheticDefaultImports` is off, which only `AS_BEFORE_6` has.
+    pub forbids_synthetic_default_imports: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
     pub module_detection: ModuleDetection,
     /// `FileNames`: the root files.
@@ -806,6 +810,10 @@ impl Options {
     }
 }
 
+/// Among `compilerOptions`, where no configuration file can have it: what the file does not say is as TypeScript 5 has it,
+/// and `node10` and `classic` are what they were. For a tool that stands in for one that runs on the compiler of the project.
+pub const AS_BEFORE_6: &[u8] = b"(as before TypeScript 6)";
+
 impl Options {
     /// Builds the options from `compiler`, the `compilerOptions` of a configuration file in
     /// `base_dir`.
@@ -830,7 +838,16 @@ impl Options {
             None | Some(b"") => Vec::new(),
             Some(specified) => join(base_dir, specified),
         };
-        let target = lower(b"target");
+        let before_6 = flag(AS_BEFORE_6);
+        // `getEmitScriptTarget` of TypeScript 5
+        let target = lower(b"target").or_else(|| {
+            before_6.then(|| match lower(b"module").as_deref() {
+                Some(b"node16" | b"node18") => b"es2022".to_vec(),
+                Some(b"node20") => b"es2023".to_vec(),
+                Some(b"nodenext") => b"esnext".to_vec(),
+                _ => b"es5".to_vec(),
+            })
+        });
         options.paths_base_dir = word(b"pathsBasePath").unwrap_or(base_dir).to_vec();
         if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
             for (pattern, targets) in paths {
@@ -850,14 +867,14 @@ impl Options {
             (None, Some(b"es3" | b"es5")) => vec![Vec::new()],
             (None, target) => vec![[target.unwrap_or(b"es2025"), b".full"].concat()],
         };
-        options.types = words(b"types");
+        options.types = words(b"types").or_else(|| before_6.then(|| vec![b"*".to_vec()]));
         options.type_roots = directories(b"typeRoots");
         options.custom_conditions = words(b"customConditions").unwrap_or_default();
         options.root_dirs = directories(b"rootDirs").unwrap_or_default();
         options.module_suffixes = words(b"moduleSuffixes").unwrap_or_default();
         options.no_resolve = flag(b"noResolve");
         options.preserve_symlinks = flag(b"preserveSymlinks");
-        options.lib_replacement = flag(b"libReplacement");
+        options.lib_replacement = specified(b"libReplacement").unwrap_or(before_6);
         options.trace_resolution = flag(b"traceResolution");
         options.no_unchecked_indexed_access = flag(b"noUncheckedIndexedAccess");
         options.no_property_access_from_index_signature =
@@ -885,7 +902,7 @@ impl Options {
         options.no_unused_parameters = flag(b"noUnusedParameters");
         options.experimental_decorators = flag(b"experimentalDecorators");
         // Since TypeScript 6.0 `strict` defaults to true.
-        let strict = specified(b"strict").unwrap_or(true);
+        let strict = specified(b"strict").unwrap_or(!before_6);
         let strict_flag = |name: &[u8]| specified(name).unwrap_or(strict);
         options.strict_builtin_iterator_return = strict_flag(b"strictBuiltinIteratorReturn");
         options.strict_null_checks = strict_flag(b"strictNullChecks");
@@ -898,7 +915,7 @@ impl Options {
         options.strict_property_initialization = strict_flag(b"strictPropertyInitialization");
         options.no_implicit_this = strict_flag(b"noImplicitThis");
         options.no_unchecked_side_effect_imports =
-            specified(b"noUncheckedSideEffectImports").unwrap_or(true);
+            specified(b"noUncheckedSideEffectImports").unwrap_or(!before_6);
         options.retains_duplicate_packages = specified(b"deduplicatePackages") == Some(false);
         options.force_consistent_casing_in_file_names =
             specified(b"forceConsistentCasingInFileNames");
@@ -909,11 +926,13 @@ impl Options {
         }
         let one_of = |name: &[u8]| word(name).unwrap_or_default();
         options.target = *SCRIPT_TARGETS
-            .get_ascii_case_insensitive(one_of(b"target"))
+            .get_ascii_case_insensitive(target.as_deref().unwrap_or_default())
             .unwrap_or(&ScriptTarget::None);
         // `GetEmitModuleKind`
         options.module = match MODULE_KINDS.get_ascii_case_insensitive(one_of(b"module")) {
             Some(&specified) => specified,
+            None if before_6 && options.target >= ScriptTarget::ES2015 => ModuleKind::Es2015,
+            None if before_6 => ModuleKind::CommonJs,
             None => match options.target {
                 ScriptTarget::ESNext => ModuleKind::EsNext,
                 ScriptTarget::ES5 => ModuleKind::CommonJs,
@@ -954,14 +973,32 @@ impl Options {
             Some(b"node16" | b"nodenext" | b"bundler")
         );
         let like_node = options.resolves_like_node;
+        // `getEmitModuleResolutionKind` of TypeScript 5, where it is one of the two that 7 does not have, and whether it is
+        // `classic`. `node10` is `bundler` without `exports` and `imports`.
+        let old = match resolution.as_deref() {
+            _ if !before_6 => None,
+            Some(b"node16" | b"nodenext" | b"bundler") => None,
+            Some(b"node" | b"node10") => Some(false),
+            Some(b"classic") => Some(true),
+            _ if options.module == ModuleKind::CommonJs => Some(false),
+            _ if like_node || options.module == ModuleKind::Preserve => None,
+            _ => Some(true),
+        };
+        options.is_classic = old == Some(true);
         // `IsTrueOrUnknown`
-        let is_not_off = |name: &[u8]| specified(name) != Some(false);
+        let is_not_off = |name: &[u8]| specified(name) != Some(false) && old.is_none();
         options.resolve_package_json_exports = is_not_off(b"resolvePackageJsonExports");
         options.resolve_package_json_imports = is_not_off(b"resolvePackageJsonImports");
+        let is_bundler = !like_node && old.is_none();
         // `GetResolveJsonModule`
         options.resolve_json_module = specified(b"resolveJsonModule").unwrap_or(
-            matches!(options.module, ModuleKind::Node20 | ModuleKind::NodeNext) || !like_node,
+            matches!(options.module, ModuleKind::Node20 | ModuleKind::NodeNext) || is_bundler,
         );
+        let interop = specified(b"esModuleInterop")
+            .unwrap_or(options.module.is_node() || options.module == ModuleKind::Preserve);
+        options.forbids_synthetic_default_imports = before_6
+            && !specified(b"allowSyntheticDefaultImports")
+                .unwrap_or(interop || options.module == ModuleKind::System || is_bundler);
         options.jsx_factory = text(b"jsxFactory");
         options.jsx_fragment_factory = text(b"jsxFragmentFactory");
         options.react_namespace = text(b"reactNamespace");
@@ -1545,7 +1582,7 @@ impl Tracer {
 /// What a lookup has found besides the path: the fields of `resolutionState` and of `resolved` that
 /// are written during the search.
 #[derive(Default)]
-struct Outcome {
+struct Outcome<'a> {
     /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
     /// finds, so the cell is set at most once.
     using_ts_extension: Cell<bool>,
@@ -1558,6 +1595,11 @@ struct Outcome {
     found_package: Cell<bool>,
     /// `IsExternalLibraryImport`
     is_external: Cell<bool>,
+    /// With [`Look::as_require`]: a package has a `main` that leads to nothing, for which `resolve` throws: the search
+    /// is over.
+    is_blocked: Cell<bool>,
+    /// With [`Look::as_require`]: what is added to a name.
+    require_extensions: &'a [&'a [u8]],
     /// `resolved.packageId`, as what `getPackageId` has made it of: `PackageDirectory` of the
     /// `packageInfo`, and `resolved.path`, both before symlinks are resolved. `None`: it is empty,
     /// as it is in every `resolved` that `tryFile` has found the file of.
@@ -1591,12 +1633,15 @@ struct Look<'a> {
     /// `candidateEndingIsFromConfig`: the extension of the candidate comes from `paths`, `typesVersions` or a `package.json` field, not
     /// from the specifier.
     ending_from_config: bool,
-    outcome: &'a Outcome,
+    outcome: &'a Outcome<'a>,
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
     /// `resolvePackageDirectoryOnly`
     resolve_package_directory_only: bool,
+    /// Not the rules of TypeScript but those of the package `resolve` 2.0 under eslint-import-resolver-node: see
+    /// [`Resolver::resolve_as_require`].
+    as_require: bool,
 }
 
 impl Look<'_> {
@@ -2537,7 +2582,12 @@ impl<'h> Resolver<'h> {
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
     /// resolves to declaration files only.
-    fn look<'a>(&self, mode: ResolutionMode, is_module: bool, outcome: &'a Outcome) -> Look<'a> {
+    fn look<'a>(
+        &self,
+        mode: ResolutionMode,
+        is_module: bool,
+        outcome: &'a Outcome<'a>,
+    ) -> Look<'a> {
         let like_node = self.options.resolves_like_node;
         Look {
             tracer: None,
@@ -2554,6 +2604,41 @@ impl<'h> Resolver<'h> {
             outcome,
             ignores_exports: false,
             resolve_package_directory_only: false,
+            as_require: false,
+        }
+    }
+
+    /// The file that `require(spec)` means in the file `from` for eslint-import-resolver-node, which the rules of
+    /// eslint-plugin-import ask unless they are told otherwise: what is named, or that with one of `extensions`, or the
+    /// entry of that directory; a package is looked for in the `node_modules` upwards; its entry is its `module`, its
+    /// `jsnext:main` or its `main`, the first that leads to a file, or its `index`. There are no `exports`, `imports`,
+    /// `typesVersions` or `paths`, and no link is followed. Whether a directory that an entry names is a package again
+    /// is not asked.
+    pub fn resolve_as_require(
+        &self,
+        spec: &[u8],
+        from: &[u8],
+        extensions: &[&[u8]],
+    ) -> Option<Vec<u8>> {
+        let outcome = Outcome {
+            require_extensions: extensions,
+            ..Outcome::default()
+        };
+        let look = Look {
+            esm: false,
+            // Nor is anything looked for in `@types`.
+            typescript: false,
+            declarations: false,
+            ignores_exports: true,
+            as_require: true,
+            ..self.look(ResolutionMode::Require, true, &outcome)
+        };
+        let from_dir = dirname::<Posix>(from);
+        match is_relative(spec) {
+            true => self.relative(spec, from_dir, look),
+            // `node:fs`
+            false if strings::contains_char(spec, b':') => None,
+            false => self.node_modules_once(spec, from_dir, look).file(),
         }
     }
 
@@ -2579,6 +2664,9 @@ impl<'h> Resolver<'h> {
             && let Some(found) = self.through_paths(spec, look)
         {
             return Some(real(found));
+        }
+        if self.options.is_classic {
+            return self.classic(spec, from_dir, look).map(real);
         }
         if is_relative(spec) {
             return self
@@ -2614,6 +2702,32 @@ impl<'h> Resolver<'h> {
             found = Found::of(self.in_type_roots(roots, true, spec, look.for_declarations()));
         }
         found.file().map(real)
+    }
+
+    /// `classicNameResolver` of TypeScript 5, after `paths`: a file, in the directory or in one above it. No directory is a
+    /// module, and of what is in `node_modules` only `@types`.
+    fn classic(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
+        if is_relative(spec) {
+            let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
+            let through_root_dirs = self.through_root_dirs(spec, from_dir, look);
+            return through_root_dirs.or_else(|| self.file(&candidate, look));
+        }
+        if let Some(found) = ancestors(from_dir).find_map(|dir| self.file(&join(dir, spec), look)) {
+            return Some(found);
+        }
+        if !look.declarations {
+            return None;
+        }
+        let (mangled, look) = (
+            look.mangle_scoped_package_name(spec),
+            look.for_declarations(),
+        );
+        let in_types = ancestors(from_dir).find_map(|dir| {
+            let types = inside(dir, b"node_modules/@types");
+            (self.is_dir(&types)).then(|| self.in_modules(&types, &mangled, look).file())?
+        });
+        let roots = self.options.type_roots.as_ref();
+        in_types.or_else(|| self.in_type_roots(roots?, true, spec, look))
     }
 
     /// `loadModuleFromSelfNameReference`: a package can import what it exports, by its own name.
@@ -3220,6 +3334,12 @@ impl<'h> Resolver<'h> {
     /// `loadModuleFromFile`: the file that `path` maps to through its own extension, or else `path`
     /// with an extension added.
     fn file(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
+        if look.as_require {
+            let named = |path: Vec<u8>| self.is_file(&path).then_some(path);
+            let extensions = look.outcome.require_extensions.iter();
+            let mut extended = extensions.map(|it| [path, *it].concat());
+            return named(path.to_vec()).or_else(|| extended.find_map(named));
+        }
         if let Some(found) = self.load_module_from_file_no_implicit_extensions(path, look) {
             return Some(found);
         }
@@ -3361,6 +3481,26 @@ impl<'h> Resolver<'h> {
         is_package_dir: bool,
         look: Look,
     ) -> Option<Vec<u8>> {
+        if look.as_require {
+            let json = package.filter(|_| is_package_dir).map(|it| &it.json);
+            let named = |field: &[u8]| {
+                let entry = get_package_json_path_field(json?, field, candidate, look)?;
+                let entry = strings::without_trailing_slash(&entry);
+                self.node_load_module_by_relative_name(entry, ConsiderPackageJson::No, look)
+            };
+            let index = || self.file(&inside(candidate, b"index"), look);
+            let main = json
+                .and_then(|it| it.get(b"main"))
+                .filter(|it| !is_falsy(it));
+            return (named(b"module").or_else(|| named(b"jsnext:main"))).or_else(|| {
+                let found = match main {
+                    Some(main) => main.as_str().and_then(|_| named(b"main").or_else(index)),
+                    None => return index(),
+                };
+                look.outcome.is_blocked.set(found.is_none());
+                found
+            });
+        }
         let index: &[u8] = if look.is_config_lookup {
             b"tsconfig"
         } else {
@@ -3576,13 +3716,17 @@ impl<'h> Resolver<'h> {
             Some(found)
         };
         if !rest.is_empty()
+            && !look.as_require
             && let Some(package) = package
             && let Some(paths) = get_version_paths(&package.json, look)
             && let Some(found) = self.through_types_versions(paths, &package_dir, rest, &load, look)
         {
             return Found::File(found);
         }
-        Found::of(load(&candidate, false))
+        match load(&candidate, false) {
+            None if look.outcome.is_blocked.get() => Found::Blocked,
+            found => Found::of(found),
+        }
     }
 
     /// `loadModuleFromExports`: resolves `key`, which is `.` or `./sub/path`, through the `exports`

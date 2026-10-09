@@ -11,7 +11,7 @@ use crate::css::doc::{self, Doc, Elements};
 use crate::options::{QuoteStyle, TrailingCommas};
 use crate::range::Offsets;
 use crate::syntax_error::{Message, SyntaxError};
-use crate::text::{self, BOM, has_pragma_in_hash_comment as has_pragma};
+use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
@@ -23,7 +23,7 @@ pub struct Scratch {
 
 /// Whether Prettier takes the file at `path` for YAML.
 pub fn is_yaml_path(path: &[u8]) -> bool {
-    let name = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |at| at + 1)..];
+    let name = bun_lint::paths::file_name(path);
     const EXTENSIONS: [&[u8]; 10] = [
         b".yml",
         b".mir",
@@ -100,7 +100,7 @@ fn write_document(
 
 /// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
 fn can_be_json(path: &[u8]) -> bool {
-    let name = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |at| at + 1)..];
+    let name = bun_lint::paths::file_name(path);
     matches!(name, b".prettierrc" | b".stylelintrc" | b".lintstagedrc")
 }
 
@@ -141,7 +141,7 @@ pub fn format(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if text::trim(&text).is_empty() {
+    if bun_core::strings::trim_js_whitespace(&text).is_empty() {
         return Ok(());
     }
     // It has to be YAML in any case.

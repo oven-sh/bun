@@ -249,7 +249,7 @@ fn is_lower_case(text: &[u8]) -> bool {
 
 /// `is_in_case(name[0])`. Half of a surrogate pair has no case.
 fn is_first_in_case(name: &[u8], is_in_case: fn(&[u8]) -> bool) -> bool {
-    let mut points = text::code_points(name);
+    let mut points = strings::wtf8_codepoints(name);
     match points.next() {
         Some((_, c)) if c <= 0xFFFF => {
             let end = points.next().map_or(name.len(), |next| next.0);
@@ -263,7 +263,7 @@ fn has_strict_camel_humps(name: &[u8], mut is_upper: bool) -> bool {
     if name.starts_with(b"_") {
         return false;
     }
-    let mut points = text::code_points(name).peekable();
+    let mut points = strings::wtf8_codepoints(name).peekable();
     let mut is_first = true;
     while let Some((at, c)) = points.next() {
         let end = points.peek().map_or(name.len(), |next| next.0);

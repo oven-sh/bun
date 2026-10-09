@@ -421,7 +421,7 @@ impl<'a, 'r> Offsets<'a, 'r> {
             if token.end_line != token.line
                 && let Some(first) = first_of_line.get_mut(token.end_line as usize)
                 && *first == NONE
-                && !text::is_blank(file.slice(Span::new(start_of_line(token.end_line), token.end)))
+                && !strings::is_all_js_whitespace(file.slice(Span::new(start_of_line(token.end_line), token.end)))
             {
                 *first = i as u32;
             }
@@ -715,7 +715,7 @@ impl<'a> Offsets<'a, '_> {
             TokenKind::Block => text.get(2..text.len().saturating_sub(2)).unwrap_or_default(),
             _ => return false,
         };
-        strings::index_of_char_usize(value, b'\n').is_some_and(|at| text::is_blank(&value[..at]))
+        strings::index_of_char_usize(value, b'\n').is_some_and(|at| strings::is_all_js_whitespace(&value[..at]))
     }
 
     /// ESLint's `getDesiredIndent`.
@@ -743,7 +743,7 @@ impl<'a> Offsets<'a, '_> {
                     let first = self.token(first as usize);
                     let first_of_line = self.first_token_of_line(first.line);
                     let start = first_of_line.map_or(first.start, |it| self.token(it).start);
-                    (first_of_line, text::utf16_len(self.file.slice(Span::new(start, first.start))))
+                    (first_of_line, strings::wtf8_len_utf16(self.file.slice(Span::new(start, first.start))))
                 }
                 None => {
                     let Some(&descriptor) = self.descriptors.get(at) else {
@@ -804,7 +804,7 @@ impl<'a> Offsets<'a, '_> {
             return 0;
         }
         let value = self.text_of(token);
-        let trailing = &value[text::trim_end(value).len()..];
+        let trailing = &value[strings::trim_js_whitespace_end(value).len()..];
         ast_utils::create_global_linebreak_matcher(trailing).count() as u32
     }
 
@@ -1110,7 +1110,7 @@ impl<'a> Offsets<'a, '_> {
         let (actual, character) = (self.indent_of(token), self.rule.character);
         let base: &'a [u8] = if desired.base == NONE { b"" } else { self.indent_of(desired.base as usize) };
         let is_tab = character == b'\t';
-        let expected = text::utf16_len(base) as usize + desired.extra as usize;
+        let expected = strings::wtf8_len_utf16(base) as usize + desired.extra as usize;
         let (spaces, tabs) = (strings::count_char(actual, b' '), strings::count_char(actual, b'\t'));
         let found = match (spaces, tabs) {
             (1.., _) if is_tab => format!("{spaces} space{}", plural(spaces)),

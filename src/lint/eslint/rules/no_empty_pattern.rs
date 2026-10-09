@@ -25,6 +25,22 @@ fn is_allowed_parameter(pat: Pat) -> bool {
     }
 }
 
+fn report<'a>(at: Span, kind: &'static str, cx: &Cx<'a, NoEmptyPattern>) {
+    let report = cx.report(at, UNEXPECTED).data("type", kind);
+    if cx.language().is_oxlint {
+        report.help(match kind {
+            "array" => {
+                "Passing non-iterable values (null, undefined, numbers, booleans, etc.) will result in a runtime \
+                 error because these values are not iterable."
+            }
+            _ => {
+                "Passing `null` or `undefined` will result in runtime error because `null` and `undefined` cannot \
+                 be destructured."
+            }
+        });
+    }
+}
+
 impl Rule for NoEmptyPattern {
     const META: Meta = Meta::eslint("no-empty-pattern", Kind::Problem).recommended();
     type State<'a> = ();
@@ -49,7 +65,7 @@ impl Rule for NoEmptyPattern {
                 PatKind::Array(elements) if elements.is_empty() => "array",
                 _ => return,
             };
-            cx.report(utils::estree_span(pat.into()), UNEXPECTED).data("type", kind);
+            report(utils::estree_span(pat.into()), kind, cx);
         });
         on.exprs([ExprTag::Object, ExprTag::Array], |_, e, cx| {
             let kind = match e.kind() {
@@ -58,7 +74,7 @@ impl Rule for NoEmptyPattern {
                 _ => return,
             };
             if utils::is_assignment_target(e) {
-                cx.report(e, UNEXPECTED).data("type", kind);
+                report(e.span(), kind, cx);
             }
         });
     }

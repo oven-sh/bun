@@ -103,7 +103,11 @@ pub fn check<'a, R: Rule>(
             // oxlint points at the member before.
             let before = std::mem::replace(last_key, key);
             if is_duplicate {
-                cx.report(if is_oxlint { before } else { key }, UNEXPECTED).data("name", name.clone());
+                cx.report(if is_oxlint { before } else { key }, UNEXPECTED)
+                    .labels_with(|labels| {
+                        labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
+                    })
+                    .data("name", name.clone());
             }
         }
     }

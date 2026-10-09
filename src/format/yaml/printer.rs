@@ -233,7 +233,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let mut rest = rest.get(line_len + 1..).unwrap_or_default();
         loop {
             rest = &rest[rest.iter().take_while(|byte| **byte == b' ').count()..];
-            match text::white_space_len(rest) {
+            match strings::js_whitespace_len(rest) {
                 0 => return false,
                 _ if rest[0] == b'\n' => return true,
                 len => rest = &rest[len..],
@@ -262,13 +262,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             },
             _ => node.leading_comments,
         };
-        comments
-            .last()
-            .is_some_and(|comment| match text::trim(self.node(comment).value) {
+        comments.last().is_some_and(|comment| {
+            match strings::trim_js_whitespace(self.node(comment).value) {
                 b"prettier-ignore" => true,
                 b"oxfmt-ignore" => self.is_oxfmt,
                 _ => false,
-            })
+            }
+        })
     }
 
     /// What `print` does with most nodes: a scalar on one line or an alias, or the key or value that is nothing else.
@@ -366,7 +366,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if is_ignored {
             // `replaceEndOfLine`
             for (index, line) in
-                strings::split(text::trim_end(self.source(node)), b"\n").enumerate()
+                strings::split(strings::trim_js_whitespace_end(self.source(node)), b"\n")
+                    .enumerate()
             {
                 if index > 0 {
                     self.out.line(Line::Literal);
@@ -561,7 +562,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
                 self.out.token("%");
-                let parts = strings::split_any(text::trim(node.value), b" \t")
+                let parts = strings::split_any(strings::trim_js_whitespace(node.value), b" \t")
                     .filter(|part| !part.is_empty());
                 for (index, part) in parts.enumerate() {
                     if index > 0 {
@@ -745,9 +746,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         for (index, line) in raw_lines.iter_mut().enumerate() {
             *line = match (index == 0, index + 1 == count) {
                 (true, true) => line,
-                (false, false) => text::trim(line),
-                (true, false) => text::trim_end(line),
-                (false, true) => text::trim_start(line),
+                (false, false) => strings::trim_js_whitespace(line),
+                (true, false) => strings::trim_js_whitespace_end(line),
+                (false, true) => strings::trim_js_whitespace_start(line),
             };
         }
         if self.prose_wrap == ProseWrap::Preserve {
@@ -805,69 +806,70 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .map(|line| line.get(leading_space_count..).unwrap_or_default())
             .collect();
 
-        let lines: Vec<Words<'a>> =
-            if self.prose_wrap == ProseWrap::Preserve || node.kind == Kind::BlockLiteral {
-                raw_lines.iter().map(|&line| Words::line(line)).collect()
-            } else {
-                let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
-                for (index, line) in raw_lines.iter().enumerate() {
-                    let words = match self.is_oxfmt && text::starts_with_white_space(line) {
-                        // A line that is indented more is not folded, so oxfmt leaves it as it is.
-                        true => vec![*line],
-                        false => split_with_single_space(line),
-                    };
-                    // The test is made with the words joined by commas.
-                    let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
-                        word.is_some_and(|word| match at_start {
-                            true => text::starts_with_white_space(word),
-                            false => text::trim_end(word).len() < word.len(),
-                        })
-                    };
-                    match lines.last_mut() {
-                        Some(last)
-                            if index > 0
-                                && !words.is_empty()
-                                && !raw_lines[index - 1].is_empty()
-                                && !is_blank_at(words.first(), true)
-                                && !is_blank_at(last.first(), true)
-                                && !is_blank_at(last.last(), false) =>
-                        {
-                            last.extend(words);
+        let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve
+            || node.kind == Kind::BlockLiteral
+        {
+            raw_lines.iter().map(|&line| Words::line(line)).collect()
+        } else {
+            let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
+            for (index, line) in raw_lines.iter().enumerate() {
+                let words = match self.is_oxfmt && text::starts_with_white_space(line) {
+                    // A line that is indented more is not folded, so oxfmt leaves it as it is.
+                    true => vec![*line],
+                    false => split_with_single_space(line),
+                };
+                // The test is made with the words joined by commas.
+                let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
+                    word.is_some_and(|word| match at_start {
+                        true => text::starts_with_white_space(word),
+                        false => strings::trim_js_whitespace_end(word).len() < word.len(),
+                    })
+                };
+                match lines.last_mut() {
+                    Some(last)
+                        if index > 0
+                            && !words.is_empty()
+                            && !raw_lines[index - 1].is_empty()
+                            && !is_blank_at(words.first(), true)
+                            && !is_blank_at(last.first(), true)
+                            && !is_blank_at(last.last(), false) =>
+                    {
+                        last.extend(words);
+                    }
+                    _ => lines.push(words),
+                }
+            }
+            // No white space at the end of a line: a word that ends with some takes the next one along.
+            let mut merged: Vec<Words<'a>> = Vec::with_capacity(lines.len());
+            for words in lines {
+                let needs_merging = words
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .any(|word| strings::trim_js_whitespace_end(word).len() < word.len());
+                if !needs_merging && self.prose_wrap != ProseWrap::Never {
+                    merged.push(Words::Slices(words));
+                    continue;
+                }
+                if self.prose_wrap == ProseWrap::Never {
+                    merged.push(Words::Joined(words.join(&b" "[..])));
+                    continue;
+                }
+                // The words are next to each other in the text, with one space in between.
+                let mut slices: Vec<&'a [u8]> = Vec::with_capacity(words.len());
+                for word in words {
+                    match slices.last_mut() {
+                        Some(last) if strings::trim_js_whitespace_end(last).len() < last.len() => {
+                            let start = last.as_ptr().addr() - self.text.as_ptr().addr();
+                            *last = &self.text[start..start + last.len() + 1 + word.len()];
                         }
-                        _ => lines.push(words),
+                        _ => slices.push(word),
                     }
                 }
-                // No white space at the end of a line: a word that ends with some takes the next one along.
-                let mut merged: Vec<Words<'a>> = Vec::with_capacity(lines.len());
-                for words in lines {
-                    let needs_merging = words
-                        .iter()
-                        .rev()
-                        .skip(1)
-                        .any(|word| text::trim_end(word).len() < word.len());
-                    if !needs_merging && self.prose_wrap != ProseWrap::Never {
-                        merged.push(Words::Slices(words));
-                        continue;
-                    }
-                    if self.prose_wrap == ProseWrap::Never {
-                        merged.push(Words::Joined(words.join(&b" "[..])));
-                        continue;
-                    }
-                    // The words are next to each other in the text, with one space in between.
-                    let mut slices: Vec<&'a [u8]> = Vec::with_capacity(words.len());
-                    for word in words {
-                        match slices.last_mut() {
-                            Some(last) if text::trim_end(last).len() < last.len() => {
-                                let start = last.as_ptr().addr() - self.text.as_ptr().addr();
-                                *last = &self.text[start..start + last.len() + 1 + word.len()];
-                            }
-                            _ => slices.push(word),
-                        }
-                    }
-                    merged.push(Words::Slices(slices));
-                }
-                merged
-            };
+                merged.push(Words::Slices(slices));
+            }
+            merged
+        };
 
         // `removeUnnecessaryTrailingNewlines`
         let mut lines = lines;
@@ -1077,7 +1079,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
         // A backslash at the end of a line: `/\\$/m`
         let source = self.source(node);
-        if source.ends_with(b"\\") || text::includes(source, b"\\\n") {
+        if source.ends_with(b"\\") || strings::contains(source, b"\\\n") {
             return false;
         }
         let value = scalar_source(kind, source);

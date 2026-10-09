@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require or disallow newlines around directives.
@@ -75,7 +76,7 @@ impl LinesAroundDirective {
                 }
                 (Location::After(at), false) => {
                     let after = fixer.file().slice(Span::new(at, fixer.file().span().end));
-                    fixer.remove(Span::new(at, at + text::utf16_offset_to_byte(after, 1) as u32))
+                    fixer.remove(Span::new(at, at + strings::wtf8_offset_of_utf16_index(after, 1) as u32))
                 }
             });
     }

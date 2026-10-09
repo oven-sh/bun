@@ -1,5 +1,4 @@
 use crate::oxlint::jsdoc::JSDocFinder;
-use bstr::ByteSlice;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -37,7 +36,7 @@ impl Rule for NoBlankBlocks {
 }
 
 fn is_blank_jsdoc(content: &[u8]) -> bool {
-    strings::split(content, b"\n").enumerate().all(|(index, line)| match line.trim_with(char::is_whitespace) {
+    strings::split(content, b"\n").enumerate().all(|(index, line)| match strings::trim_unicode_whitespace(line) {
         [] => true,
         [b'*'] => index > 0,
         _ => false,

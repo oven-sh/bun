@@ -697,7 +697,8 @@ impl UnifiedSignatures {
                     );
                     cx.report(parameter_span(p1), SINGLE_PARAMETER_DIFFERENCE)
                         .data("failureStringStart", start(parameter_span(p0)))
-                        .data("types", types);
+                        .data("types", types)
+                        .labels_with(|labels| labels.push(parameter_span(p0), "with this overload parameter"));
                 }
                 Some(Unify::ExtraParameter {
                     extra_parameter,
@@ -708,14 +709,20 @@ impl UnifiedSignatures {
                         false => OMITTING_SINGLE_PARAMETER,
                     };
                     cx.report(parameter_span(extra_parameter), message)
-                        .data("failureStringStart", start(other_signature.estree_span()));
+                        .data("failureStringStart", start(other_signature.estree_span()))
+                        .labels_with(|labels| {
+                            if let Some(anchor_parameter) = other_signature.params_with_this().last() {
+                                labels.push(parameter_span(anchor_parameter), "matching overload ends here");
+                            }
+                        });
                 }
                 Some(Unify::AllParametersAreSame {
                     signature0,
                     signature1,
                 }) => {
                     cx.report(signature1.estree_span(), ALL_PARAMETERS_ARE_SAME)
-                        .data("failureStringStart", start(signature0.estree_span()));
+                        .data("failureStringStart", start(signature0.estree_span()))
+                        .labels_with(|labels| labels.push(signature0.estree_span(), "with this overload signature"));
                 }
             }
         }

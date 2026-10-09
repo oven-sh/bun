@@ -71,7 +71,7 @@ impl Rule for JsxPascalCase {
 }
 
 fn chars(text: &[u8]) -> impl Iterator<Item = char> {
-    text::code_points(text).filter_map(|it| char::from_u32(it.1))
+    strings::wtf8_codepoints(text).filter_map(|it| char::from_u32(it.1))
 }
 
 /// The index of the last letter is taken to be the number of bytes less one.

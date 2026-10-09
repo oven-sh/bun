@@ -1,6 +1,6 @@
 //! A class of units, and the four grammars in which one is written.
 
-use crate::unit::{Subject, Text, Unit, is_line_terminator, push_utf8, unfold};
+use crate::unit::{Subject, Text, Unit, push_utf8, unfold};
 use bun_core::strings;
 
 const BANG: u32 = b'!' as u32;
@@ -338,7 +338,9 @@ pub(crate) fn minimatch(glob: &[u8], at: usize, code_points: bool) -> Read {
     }
     let len = end - at;
     // `/^\\?.$/`: one UTF-16 unit that is no line terminator.
-    let is_one_unit = only <= 0xFFFF && char::from_u32(only).is_some() && !is_line_terminator(only);
+    let is_one_unit = only <= 0xFFFF
+        && char::from_u32(only).is_some()
+        && !bun_core::strings::is_js_line_terminator(only);
     if not_names == 0 && count == 1 && !negated && is_one_unit {
         return Read::One { unit: only, len };
     }

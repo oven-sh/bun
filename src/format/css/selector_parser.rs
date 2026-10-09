@@ -1,7 +1,6 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
-use super::misc::is_space;
 use crate::text::{self, ByteSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -47,7 +46,7 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
         match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
                 let mut at = pos + 1;
-                while is_space(css.get(at)) {
+                while css.get(at).is_some_and(u8::is_ascii_whitespace) {
                     at += 1;
                 }
                 (kind, end) = (TokenKind::Space, at);
@@ -65,7 +64,8 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
             b'\'' | b'"' => {
                 let mut close = pos;
                 loop {
-                    close = text::index_of_char_from(css, code, close + 1).ok_or(ParseError)?;
+                    close = bun_core::strings::index_of_char_pos(css, code, close + 1)
+                        .ok_or(ParseError)?;
                     let backslashes = css[..close]
                         .iter()
                         .rev()
@@ -91,7 +91,7 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                     escape = !escape;
                 }
                 let after = css.get(last + 1);
-                if escape && after != Some(&b'/') && !is_space(after) {
+                if escape && after != Some(&b'/') && !after.is_some_and(u8::is_ascii_whitespace) {
                     last += 1;
                 }
                 (kind, end) = (TokenKind::Word, (last + 1).min(css.len()));
@@ -370,12 +370,12 @@ impl<'t> Parser<'t> {
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
-                let trimmed = text::trim_end(value);
-                let before_flag = trimmed
-                    .strip_suffix(b"i")
-                    .filter(|rest| text::trim_end(rest).len() < rest.len());
+                let trimmed = bun_core::strings::trim_js_whitespace_end(value);
+                let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
+                    bun_core::strings::trim_js_whitespace_end(rest).len() < rest.len()
+                });
                 let value_len = match before_flag {
-                    Some(rest) => text::trim_end(rest).len(),
+                    Some(rest) => bun_core::strings::trim_js_whitespace_end(rest).len(),
                     None => value.len(),
                 };
                 node.insensitive = before_flag.is_some();
@@ -602,7 +602,7 @@ fn has_comment(selector: &[u8]) -> bool {
     let mut at = 0;
     while let Some(&byte) = selector.get(at) {
         match byte {
-            b'"' | b'\'' => match text::index_of_char_from(selector, byte, at + 1) {
+            b'"' | b'\'' => match bun_core::strings::index_of_char_pos(selector, byte, at + 1) {
                 // There has to be something between the quotes.
                 Some(close) if close > at + 1 => {
                     // What is before and after the string ends up side by side.
@@ -653,10 +653,14 @@ impl Selectors {
         self.text.extend_from_slice(selector);
         let root = self.nodes.len() as SelectorId;
         if has_comment(selector) {
-            let start = base + selector.len() - text::trim_start(selector).len();
+            let start =
+                base + selector.len() - bun_core::strings::trim_js_whitespace_start(selector).len();
             self.nodes.push(SelectorNode::new(
                 SelectorKind::Unknown,
-                (start, start + text::trim(selector).len()),
+                (
+                    start,
+                    start + bun_core::strings::trim_js_whitespace(selector).len(),
+                ),
                 0,
             ));
             return root;

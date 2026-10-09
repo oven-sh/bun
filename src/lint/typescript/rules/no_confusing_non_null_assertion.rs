@@ -63,6 +63,12 @@ impl NoConfusingNonNullAssertion {
         let report = cx.report(e, message).data("operator", operator);
         // `a?.b!` is a `ChainExpression`.
         if left.tag() != ExprTag::NonNull || left.is_in_optional_chain() {
+            let report = match cx.language().is_oxlint && message.id == CONFUSING_EQUAL.id {
+                true => report.help(
+                    "Wrap left-hand side in parentheses to avoid putting non-null assertion `!` and `=` together.",
+                ),
+                false => report,
+            };
             report.suggest_with(WRAP_UP_LEFT, &data, wrap_up_left);
             return;
         }

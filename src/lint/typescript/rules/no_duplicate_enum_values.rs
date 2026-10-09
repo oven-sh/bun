@@ -87,12 +87,15 @@ fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumVal
         let before = seen.entry(value.key()).or_insert(here);
         if *before != here {
             let place = *before;
+            let second_name = member.key().and_then(Key::name).map_or(&b""[..], |it| it.bytes());
+            let report = cx.report(place, DUPLICATE_VALUE).data("second_name", second_name);
+            let report = report.label(here, "and is re-used here");
             // A number is said as it is written.
             match value {
-                Value::Number(_) => cx.report(place, DUPLICATE_VALUE).data("value", initializer.text()),
+                Value::Number(_) => report.data("value", initializer.text()),
                 Value::String(string) => {
                     *before = here;
-                    cx.report(place, DUPLICATE_VALUE).data("value", [&b"'"[..], string.bytes(), b"'"].concat())
+                    report.data("value", [&b"'"[..], string.bytes(), b"'"].concat())
                 }
             };
         }

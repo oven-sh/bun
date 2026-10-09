@@ -35,7 +35,8 @@ impl Rule for NoHtmlLinkForPages {
                 && has_jsx_prop(jsx, "download").is_none()
                 && has_jsx_prop(jsx, "href").and_then(get_string_literal_prop_value).is_some_and(is_internal_page_link)
             {
-                cx.report(jsx.opening_span(), NO_HTML_LINK_FOR_PAGES);
+                cx.report(jsx.opening_span(), NO_HTML_LINK_FOR_PAGES)
+                    .first_label("Replace with `<Link>` from `next/link`");
             }
         });
     }

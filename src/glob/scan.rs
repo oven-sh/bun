@@ -1,6 +1,5 @@
 //! `is_glob`, `glob_parent`. They match nothing: they read patterns.
 
-use crate::unit::starts_with_line_terminator;
 use bun_core::strings;
 
 /// `path.posix.dirname(path)` of any text.
@@ -49,7 +48,7 @@ impl Next {
 /// Where the line ends that `from` is in.
 fn end_of_line(text: &[u8], from: usize) -> usize {
     let mut at = from;
-    while at < text.len() && !starts_with_line_terminator(&text[at..]) {
+    while at < text.len() && !bun_core::lexer::starts_with_line_break(&text[at..]) {
         at += 1;
     }
     at
@@ -65,7 +64,7 @@ fn is_extglob(text: &[u8]) -> bool {
         let after = text.get(at + 1..).unwrap_or_default();
         match (byte, after) {
             // `.` does not match a line terminator.
-            (b'\\', [_, ..]) if !starts_with_line_terminator(after) => at += 2,
+            (b'\\', [_, ..]) if !bun_core::lexer::starts_with_line_break(after) => at += 2,
             (b'@' | b'?' | b'!' | b'+' | b'*', [b'(', ..]) => {
                 let inside = at + 2;
                 let end = match line_end {

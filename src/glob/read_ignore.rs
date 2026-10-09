@@ -3,7 +3,7 @@
 use crate::class::{self, Class, Escape, Read};
 use crate::ignore::{IgnoreOptions, IgnoreSyntax};
 use crate::node::{Assertion, MAX_NESTING, Node, simplify};
-use crate::unit::{Subject, Text, Unit, is_line_terminator, push_utf8};
+use crate::unit::{Subject, Text, Unit, push_utf8};
 use bun_core::strings;
 
 pub(crate) struct Line {
@@ -68,24 +68,12 @@ fn anything() -> Node {
 
 // ───────────────────────────── globset: `GitignoreBuilder::add_line` of `ignore` 0.4.33, `Parser` of globset 0.4.18 ─────────────────────────────
 
-/// `str::trim_end`
-fn trim_end(bytes: &[u8]) -> &[u8] {
-    let (mut at, mut end) = (0, 0);
-    while let Some((c, len)) = CODE_POINTS.next(Subject::of(bytes), at) {
-        at += len;
-        if !char::from_u32(c).is_some_and(char::is_whitespace) {
-            end = at;
-        }
-    }
-    &bytes[..end]
-}
-
 fn globset_line(mut line: &[u8], folds: bool) -> Result<Option<Line>, Vec<u8>> {
     if line.starts_with(b"#") {
         return Ok(None);
     }
     if !line.ends_with(b"\\ ") {
-        line = trim_end(line);
+        line = bun_core::strings::trim_unicode_whitespace_end(line);
     }
     if line.is_empty() {
         return Ok(None);
@@ -546,24 +534,6 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
 
 // ───────────────────────────── legacy: npm `ignore` 5.3.2 and 7.0.5 ─────────────────────────────
 
-/// `\s` of JavaScript
-fn is_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t'..='\r'
-            | ' '
-            | '\u{A0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200A}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202F}'
-            | '\u{205F}'
-            | '\u{3000}'
-            | '\u{FEFF}'
-    )
-}
-
 fn chars_of(bytes: &[u8]) -> Vec<char> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
@@ -576,7 +546,11 @@ fn chars_of(bytes: &[u8]) -> Vec<char> {
 
 fn legacy_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
     let chars = chars_of(line);
-    if chars.iter().all(|c| is_space(*c)) || chars.first() == Some(&'#') {
+    if chars
+        .iter()
+        .all(|c| bun_core::strings::is_js_whitespace(*c as u32))
+        || chars.first() == Some(&'#')
+    {
         return None;
     }
     // `/(?:[^\\]|^)\\$/`
@@ -649,7 +623,11 @@ fn legacy_source(pattern: &[char], syntax: IgnoreSyntax) -> Vec<char> {
         .to_vec();
 
     // Trailing spaces are ignored unless they are quoted with a backslash.
-    let end = s.len() - s.iter().rev().take_while(|c| is_space(**c)).count();
+    let end = s.len()
+        - s.iter()
+            .rev()
+            .take_while(|c| bun_core::strings::is_js_whitespace(**c as u32))
+            .count();
     if end < s.len() {
         s.truncate(end);
         if trailing_backslashes(&s) % 2 == 1 {
@@ -669,7 +647,9 @@ fn legacy_source(pattern: &[char], syntax: IgnoreSyntax) -> Vec<char> {
             continue;
         }
         i += backslashes;
-        let is_before_space = s.get(i).is_some_and(|c| is_space(*c));
+        let is_before_space = s
+            .get(i)
+            .is_some_and(|c| bun_core::strings::is_js_whitespace(*c as u32));
         let kept = if is_before_space {
             backslashes - backslashes % 2
         } else {
@@ -740,7 +720,7 @@ fn legacy_source(pattern: &[char], syntax: IgnoreSyntax) -> Vec<char> {
         let mut ends = (1..=count).rev().map(|n| at + 2 * n);
         ends.find(|&end| {
             s.get(end)
-                .is_some_and(|c| !is_line_terminator(u32::from(*c)))
+                .is_some_and(|c| !bun_core::strings::is_js_line_terminator(u32::from(*c)))
         })
     };
     let mut out = Vec::with_capacity(s.len() * 2);

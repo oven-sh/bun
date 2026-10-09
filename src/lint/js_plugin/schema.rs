@@ -2,7 +2,7 @@
 
 use super::ast::STRINGS;
 use crate::estree::NodeType;
-use crate::linter::write_json_string;
+use bun_core::printer::json_stringify;
 
 /// The program: the names of its parts in `worker/`, and what is in them. They share one scope.
 pub const PROGRAM: &[(&str, &str)] = &[
@@ -24,7 +24,7 @@ pub const PROGRAM: &[(&str, &str)] = &[
 /// 8 for what is not enumerable.
 pub(super) fn write_start(cwd: &[u8], measures: bool, out: &mut Vec<u8>) {
     out.extend_from_slice(b"{\"cwd\":");
-    write_json_string(out, cwd);
+    json_stringify(cwd, out);
     out.extend_from_slice(if measures {
         b",\"measures\":true"
     } else {
@@ -35,7 +35,7 @@ pub(super) fn write_start(cwd: &[u8], measures: bool, out: &mut Vec<u8>) {
         if i > 0 {
             out.push(b',');
         }
-        write_json_string(out, string.as_bytes());
+        json_stringify(string.as_bytes(), out);
     }
     out.extend_from_slice(b"],\"types\":[");
     for (i, node_type) in NodeType::ALL.iter().enumerate() {

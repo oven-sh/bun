@@ -9,9 +9,7 @@
 //!
 //! So does this. The message of a syntax error is not compared.
 
-use crate::{
-    Bundle, Count, Failure, Flags, Format, output_line, show_cursor, trim_bytes, utf16_len,
-};
+use crate::{Bundle, Count, Failure, Flags, Format, output_line, show_cursor};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -154,7 +152,7 @@ fn is_separator(line: &[u8], title: &[u8]) -> bool {
     line.len() == 80
         && line.starts_with(b"=")
         && line.ends_with(b"=")
-        && trim_bytes(line, b"=") == title
+        && strings::trim(line, b"=") == title
 }
 
 /// The text that a code frame shows: `> 1 | text`, with lines of `^` in between.
@@ -243,7 +241,7 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
             continue;
         };
         let key = [title, b" ", number].concat();
-        let parser = trim_bytes(parser, b"[]");
+        let parser = strings::trim(parser, b"[]");
         let name = unescape(strings::split_once(title, b" - {").map_or(title, |it| it.0));
         let body = unescape(body);
 
@@ -278,18 +276,18 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
             },
         };
         for line in &option_lines {
-            let Some((name, value)) = strings::split_once(trim_bytes(line, b" |"), b": ") else {
+            let Some((name, value)) = strings::split_once(strings::trim(line, b" |"), b": ") else {
                 continue;
             };
             if name == b"parsers" {
                 // `[]`: it is left to the name of the file.
                 let names =
-                    strings::split(trim_bytes(value, b"[]"), b", ").filter(|it| !it.is_empty());
-                case.parsers = names.map(|it| trim_bytes(it, b"\"").to_vec()).collect();
+                    strings::split(strings::trim(value, b"[]"), b", ").filter(|it| !it.is_empty());
+                case.parsers = names.map(|it| strings::trim(it, b"\"").to_vec()).collect();
             } else {
                 let value = value.strip_suffix(b" (default)").unwrap_or(value);
                 case.options
-                    .push((name.to_vec(), trim_bytes(value, b"\"").to_vec()));
+                    .push((name.to_vec(), strings::trim(value, b"\"").to_vec()));
             }
         }
         cases.insert(key, case);
@@ -315,7 +313,12 @@ fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8>
     for (at, name, placeholder) in found {
         text.extend_from_slice(&original[end_of_previous..at]);
         end_of_previous = at + placeholder.len();
-        let _ = options.set(name, utf16_len(&text).to_string().as_bytes());
+        let _ = options.set(
+            name,
+            strings::element_length_utf8_into_utf16(&text)
+                .to_string()
+                .as_bytes(),
+        );
     }
     text.extend_from_slice(&original[end_of_previous..]);
     text
@@ -565,7 +568,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         let noted = strings::split(filenames, b"\n")
                             .filter_map(|line| strings::split_once(line, b"\t"));
                         let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
-                        let name = noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
+                        let name =
+                            noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
                         let extension: &[u8] = match (named_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",

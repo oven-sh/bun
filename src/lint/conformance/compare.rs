@@ -6,7 +6,7 @@ use bun_lint::fix::{Fix, SuggestionKind};
 use bun_lint::linter::{LintMessage, RuleId, Utf16Offsets};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
-use bun_lint::utils::text::to_well_formed;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What is reported for the code of a case, and the code after one pass of fixes.
 pub struct Outcome {
@@ -113,9 +113,12 @@ fn text_of(json: &Json, key: &[u8]) -> BString {
 
 /// A message as it is printed: here it is valid UTF-8 from the start.
 fn message_of(json: &Json, key: &[u8]) -> BString {
-    to_well_formed(string_of(json, key).unwrap_or_default())
-        .into_owned()
-        .into()
+    let mut message = Vec::new();
+    bun_core::strings::push_wtf8_well_formed(
+        &mut message,
+        string_of(json, key).unwrap_or_default(),
+    );
+    message.into()
 }
 
 fn number_of(json: &Json, key: &[u8]) -> Option<u32> {
@@ -192,12 +195,14 @@ pub struct Problem {
 }
 
 /// What is wrong with `messages`, which are about `code`, where oxlint is the judge: the messages without their fixes, and the code
-/// after the fixes that each further flag of oxlint applies.
+/// after the fixes that each further flag of oxlint applies. A help that is there has to be oxlint's. `lacking` counts the messages
+/// without one for which oxlint has one.
 pub(crate) fn problem_of_oxlint(
     entry: &'static RuleEntry,
     code: &[u8],
     messages: &[LintMessage],
     case: &Json,
+    lacking: &AtomicUsize,
 ) -> Option<Problem> {
     let mut outcome = Outcome::new(entry, code, messages);
     for message in &mut outcome.messages {
@@ -209,6 +214,29 @@ pub(crate) fn problem_of_oxlint(
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
     if let Some(problem) = problem_of(Some(outcome), case) {
         return Some(problem);
+    }
+    let expected = case.get(b"messages").and_then(Json::as_array);
+    for message in messages {
+        // Several can say the same at one place.
+        let there = expected.unwrap_or_default().iter().filter(|it| {
+            (number_of(it, b"line"), number_of(it, b"column"))
+                == (Some(message.line), Some(message.column))
+                && message_of(it, b"message") == message.message
+        });
+        let helps = there.filter_map(|it| string_of(it.get(b"oxlint")?, b"help"));
+        let helps: Vec<&bstr::BStr> = helps.map(bstr::BStr::new).collect();
+        match message.help() {
+            "" => {
+                lacking.fetch_add(usize::from(!helps.is_empty()), Ordering::Relaxed);
+            }
+            help if helps.iter().any(|it| **it == help) => {}
+            help => {
+                return Some(Problem {
+                    summary: "the help differs",
+                    details: format!("  expected: {helps:?}\n  actual: {help:?}"),
+                });
+            }
+        }
     }
     let steps: [(&[u8], &[SuggestionKind]); 3] = [
         (b"output", &[]),

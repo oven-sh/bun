@@ -721,7 +721,7 @@ pub(crate) fn expand(
                 // `removeLeadingDotSegment` of `fast-glob`
                 let pattern = input.strip_prefix(b"./").unwrap_or(&input);
                 let glob = bun_glob::Pattern::new(pattern, bun_glob::Options::FAST_GLOB_DOT);
-                let parent = paths::glob_parent(pattern);
+                let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {
                     written_base = (parent, base.clone());

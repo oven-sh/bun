@@ -52,12 +52,12 @@ fn is_self_config(value: &[u8]) -> bool {
 fn comment_to_display(comment: &[u8]) -> Vec<u8> {
     let mut shown = Vec::new();
     let mut shown_len = 0;
-    let mut rest = text::trim(comment);
+    let mut rest = strings::trim_js_whitespace(comment);
     while !rest.is_empty() {
-        let mut characters = text::code_points(rest);
-        let end = characters.find(|it| text::is_js_whitespace(it.1)).map_or(rest.len(), |it| it.0);
+        let mut characters = strings::wtf8_codepoints(rest);
+        let end = characters.find(|it| strings::is_js_whitespace(it.1)).map_or(rest.len(), |it| it.0);
         let (word, after) = rest.split_at(end);
-        let len = shown_len + u32::from(!shown.is_empty()) + text::utf16_len(word);
+        let len = shown_len + u32::from(!shown.is_empty()) + strings::wtf8_len_utf16(word);
         if len > CHAR_LIMIT {
             shown.extend_from_slice(b"...");
             break;
@@ -67,7 +67,7 @@ fn comment_to_display(comment: &[u8]) -> Vec<u8> {
         }
         shown.extend_from_slice(word);
         shown_len = len;
-        rest = text::trim_start(after);
+        rest = strings::trim_js_whitespace_start(after);
     }
     shown
 }
@@ -105,7 +105,7 @@ impl NoWarningComments {
         let mut rest = value;
         while !is_here(term, rest) {
             let after_decoration = |c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c));
-            rest = match text::white_space_len(rest) {
+            rest = match strings::js_whitespace_len(rest) {
                 0 => match self.decoration.iter().find_map(after_decoration) {
                     Some(rest) => rest,
                     None => return false,

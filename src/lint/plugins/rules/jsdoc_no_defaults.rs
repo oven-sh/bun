@@ -35,7 +35,8 @@ impl Rule for NoDefaults {
                         && name_part.optional
                         && (rule.no_optional_param_names || name_part.default)
                     {
-                        cx.report(name_part.span, NO_DEFAULTS);
+                        let what = if rule.no_optional_param_names { "Optional param names" } else { "Defaults" };
+                        cx.report(name_part.span, NO_DEFAULTS).data("what", what).data("tag_name", resolved_param_tag_name);
                     }
                 }
             });

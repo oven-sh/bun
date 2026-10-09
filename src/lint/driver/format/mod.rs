@@ -117,6 +117,18 @@ impl Format {
         matches!(self, Format::Json | Format::JsonWithMetadata)
     }
 
+    /// Whether it prints [`LintMessage::help`](bun_lint::linter::LintMessage::help).
+    pub(crate) fn reads_help(self) -> bool {
+        matches!(
+            self,
+            Format::Pretty
+                | Format::Agent
+                | Format::OxlintDefault
+                | Format::OxlintJson
+                | Format::OxlintAgent
+        )
+    }
+
     /// Whether it prints fixes or suggestions, or counts what can be fixed.
     pub(crate) fn reads_fixes(self) -> bool {
         matches!(

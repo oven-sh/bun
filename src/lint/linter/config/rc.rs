@@ -13,13 +13,14 @@ mod categories;
 use super::flat::{ConfigError, Reader, Semantics};
 use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
-use super::{Config, ConfigObject, Pattern, path, presets, shape};
+use super::{Config, ConfigObject, Pattern, presets, shape};
 use crate::context::Severity;
 use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
 use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
+use crate::paths;
 use crate::rule::{Meta, Plugin};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -524,7 +525,7 @@ impl Rc<'_, '_> {
                 }
                 continue;
             }
-            let portable = path::portable(directory, name);
+            let portable = paths::portable(directory, name);
             let Some(extended) = (self.load)(directory, &portable) else {
                 return Err(ConfigError::new(&[
                     b"Failed to load config \"",
@@ -532,8 +533,8 @@ impl Rc<'_, '_> {
                     b"\" to extend from.",
                 ]));
             };
-            let file = path::resolve(directory, &portable);
-            let read = self.file(&extended, path::dirname(&file), true, depth + 1);
+            let file = paths::resolve(directory, &portable);
+            let read = self.file(&extended, paths::dirname(&file), true, depth + 1);
             read.map_err(|error| {
                 ConfigError::new(&[
                     b"invalid config file ",
@@ -667,7 +668,7 @@ impl Rc<'_, '_> {
 
     /// Whether the rules of `plugin` run wherever no override says otherwise.
     fn has_plugin(&self, plugin: Plugin) -> bool {
-        plugin == Plugin::Eslint || is_among(plugin, &self.plugins_of_files)
+        plugin.is_always_there() || is_among(plugin, &self.plugins_of_files)
     }
 
     /// Adds a setting for each of the rules in `lists` that exist here: the plugins as oxlint calls them, each with the names of
@@ -905,7 +906,7 @@ impl Rc<'_, '_> {
         ];
         let objects = kinds.into_iter().map(|(files, lists)| {
             let mut rules = Vec::new();
-            let is_on = |it: Plugin| it == Plugin::Eslint || is_among(it, &self.plugins);
+            let is_on = |it: Plugin| it.is_always_there() || is_among(it, &self.plugins);
             self.add_settings(lists, Severity::Off, &is_on, &mut rules);
             ConfigObject {
                 files: Some(vec![vec![Pattern::new(files)]]),
@@ -952,7 +953,7 @@ impl Config {
         load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
         load_plugin: Option<&'l mut LoadPlugin<'l>>,
     ) -> Result<Config, ConfigError> {
-        let base_path = path::resolve(b"/", base_path);
+        let base_path = paths::absolute(base_path);
         let categories = vec![(b"correctness".to_vec(), Severity::Warn)];
         let mut rc = Rc {
             reader: Reader {
@@ -967,6 +968,8 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                has_unknown_resolver: false,
+                handing_back: Vec::new(),
             },
             load,
             load_plugin,

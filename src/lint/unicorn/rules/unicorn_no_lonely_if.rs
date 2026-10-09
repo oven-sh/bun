@@ -26,8 +26,9 @@ impl Rule for NoLonelyIf {
                     None => has_no_else(parent),
                 };
             if is_lonely {
-                let start = if_stmt.span().start;
-                cx.report(Span::new(start, start + 2), NO_LONELY_IF);
+                let keyword = |start: u32| Span::new(start, start + 2);
+                let outer = if parent.as_block().is_some() { parent.parent().span() } else { parent.span() };
+                cx.report(keyword(if_stmt.span().start), NO_LONELY_IF).label(keyword(outer.start), "");
             }
         });
     }

@@ -55,9 +55,9 @@ fn check<'a>(_: &Export, cx: &mut Cx<'a, Export>) {
     if all_export_names.is_empty() {
         return;
     }
-    for name in module_record.exported_bindings.keys() {
+    for (name, span) in &module_record.exported_bindings {
         if let Some(first) = all_export_names.get(name.bytes()) {
-            cx.report(*first, MULTIPLE_EXPORTS).data("name", *name);
+            cx.report(*first, MULTIPLE_EXPORTS).data("name", *name).label(*span, "");
         }
     }
 }
@@ -96,8 +96,13 @@ fn diagnose_duplicate_named_exports<'a>(module_record: &ModuleRecord<'a>, cx: &C
             spans.has_named_specifier |= is_named_export_specifier(export_entry, cx.file());
         }
     }
-    for ((name, _), spans) in export_names.iter().filter(|it| it.1.has_named_specifier) {
-        cx.report(spans.first, MULTIPLE_EXPORTS).data("name", *name);
+    for ((name, is_type), spans) in export_names.iter().filter(|it| it.1.has_named_specifier) {
+        cx.report(spans.first, MULTIPLE_EXPORTS).data("name", *name).labels_with(|labels| {
+            let same = entries().filter(|it| it.is_type == *is_type).filter_map(export_name).filter(|it| it.0 == *name);
+            for (_, span) in same.skip(1) {
+                labels.push(span, "");
+            }
+        });
     }
 }
 

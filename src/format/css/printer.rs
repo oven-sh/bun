@@ -68,7 +68,7 @@ impl<'s, 'a> Statement<'s, 'a> {
         self.at_rule.is_some_and(|node| {
             names
                 .iter()
-                .any(|name| text::eq_lower_case(node.name, name))
+                .any(|name| node.name.eq_ignore_ascii_case(name))
         })
     }
 
@@ -191,7 +191,10 @@ fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
 /// starts with a variable or an interpolation, which oxfmt does not read either. The `(` of a function does not count.
 fn is_range_or_condition(text: &[u8]) -> bool {
     let inner = text.get(1..).unwrap_or_default();
-    if matches!(text::trim_start(inner).first(), Some(b'$' | b'@' | b'#')) {
+    if matches!(
+        bun_core::strings::trim_js_whitespace_start(inner).first(),
+        Some(b'$' | b'@' | b'#')
+    ) {
         return false;
     }
     let mut from = 0;
@@ -314,15 +317,15 @@ fn with_blanks_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
 
 fn normalize_bang(text: &[u8], word: &[u8], allows_space: bool) -> Vec<u8> {
     let mut from = 0;
-    while let Some(bang) = text::index_of_char_from(text, b'!', from) {
+    while let Some(bang) = bun_core::strings::index_of_char_pos(text, b'!', from) {
         let after = &text[bang + 1..];
         let after = if allows_space {
-            text::trim_start(after)
+            bun_core::strings::trim_js_whitespace_start(after)
         } else {
             after
         };
         if after.len() >= word.len() && after[..word.len()].eq_ignore_ascii_case(word) {
-            let mut out = text::trim_end(&text[..bang]).to_vec();
+            let mut out = bun_core::strings::trim_js_whitespace_end(&text[..bang]).to_vec();
             out.extend_from_slice(b" !");
             out.extend_from_slice(word);
             out.extend_from_slice(&after[word.len()..]);
@@ -374,9 +377,9 @@ impl<'a> Printer<'a, '_> {
             Ok(root) => root,
             Err(_) => return self.fail(self.context.refusal.reason()),
         };
-        let mut after = text::trim(root.after);
+        let mut after = bun_core::strings::trim_js_whitespace(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
-            after = text::trim(rest);
+            after = bun_core::strings::trim_js_whitespace(rest);
         }
         let scope = Scope {
             node: &root,
@@ -614,7 +617,7 @@ impl<'a> Printer<'a, '_> {
         let start = (raw.start as usize).min(text.len());
         if previous.is_some_and(|it| {
             it.kind == Kind::Comment
-                && match text::trim(self.context.of(it.text)) {
+                && match bun_core::strings::trim_js_whitespace(self.context.of(it.text)) {
                     b"prettier-ignore" => true,
                     b"oxfmt-ignore" => self.is_oxfmt,
                     _ => false,
@@ -628,7 +631,7 @@ impl<'a> Printer<'a, '_> {
                 .get(start..self.context.end_of(tree, id, parsed))
                 .unwrap_or_default();
             return self.sink.text(if raw.inline || raw.raw_inline {
-                text::trim_end(comment)
+                bun_core::strings::trim_js_whitespace_end(comment)
             } else {
                 comment
             });
@@ -705,7 +708,7 @@ impl<'a> Printer<'a, '_> {
             let value = statement.selectors.value(selector);
             value.starts_with(b"@")
                 && bun_core::strings::index_of_any(value, b"\n\r").is_none()
-                && text::index_of_char_from(value, b':', 2).is_some()
+                && bun_core::strings::index_of_char_pos(value, b':', 2).is_some()
         });
         self.unit(false, |printer| {
             if printer.is_oxfmt && has_placeholder_in_first_selector(&node.raw_selector) {
@@ -788,12 +791,14 @@ impl<'a> Printer<'a, '_> {
                         && node.prop.starts_with(b"--")
                         && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
                 {
-                    printer.sink.text(text::trim(printer.context.of(raw.value)));
+                    printer.sink.text(bun_core::strings::trim_js_whitespace(
+                        printer.context.of(raw.value),
+                    ));
                 }
                 Value::Parsed(value) => {
                     // `hasComposesNode`
                     let is_without_lines = statement.values.node(*value).kind == ValueKind::Root
-                        && text::eq_lower_case(&node.prop, b"composes");
+                        && node.prop.eq_ignore_ascii_case(b"composes");
                     if is_without_lines {
                         printer.sink.start_without_lines();
                     }
@@ -804,7 +809,8 @@ impl<'a> Printer<'a, '_> {
                     // `$a: 1,` is a list of one in SCSS, and for oxfmt it stays one.
                     if printer.is_oxfmt
                         && node.prop.starts_with(b"$")
-                        && text::trim_end(printer.context.of(raw.value)).ends_with(b",")
+                        && bun_core::strings::trim_js_whitespace_end(printer.context.of(raw.value))
+                            .ends_with(b",")
                         && top_level_group(statement.values, *value).is_none_or(|group| {
                             let it = statement.values.node(group);
                             it.kind != ValueKind::ParenGroup
@@ -840,7 +846,7 @@ impl<'a> Printer<'a, '_> {
     /// What is before the value. Returns whether an `indent` and a `dedent` in it have been started for the value.
     fn print_name_and_extend(&mut self, statement: Statement<'_, 'a>) -> bool {
         let node = statement.node();
-        let trimmed_between = text::trim(&node.between);
+        let trimmed_between = bun_core::strings::trim_js_whitespace(&node.between);
         let is_colon = trimmed_between == b":";
         let is_value_all_space =
             matches!(&node.value, Value::Text(value) if value.iter().all(|&b| b == b' '));
@@ -927,7 +933,7 @@ impl<'a> Printer<'a, '_> {
             |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
                 Some(raw) => self.sink.text(&normalize_bang(
                     match is_oxfmt {
-                        true => text::trim_end(raw),
+                        true => bun_core::strings::trim_js_whitespace_end(raw),
                         false => raw,
                     },
                     word.as_bytes(),
@@ -1010,7 +1016,7 @@ impl<'a> Printer<'a, '_> {
             .raw_params
             .strip_prefix(b"(")
             .and_then(|it| it.strip_suffix(b")"))
-            .is_some_and(|inner| text::trim(inner).is_empty());
+            .is_some_and(|inner| bun_core::strings::trim_js_whitespace(inner).is_empty());
         if self.syntax() == Syntax::Less {
             if node.mixin {
                 if let Some(selector) = node.selector {
@@ -1029,7 +1035,7 @@ impl<'a> Printer<'a, '_> {
                 return self.sink.token(semicolon);
             }
             if node.variable {
-                let between = text::trim(&node.between);
+                let between = bun_core::strings::trim_js_whitespace(&node.between);
                 self.sink.token("@");
                 self.sink.text(node.name);
                 self.sink.token(": ");
@@ -1262,12 +1268,16 @@ impl<'a> Printer<'a, '_> {
                     && value[..4].eq_ignore_ascii_case(b"url(")
                     && text::starts_with_white_space(&value[4..])
                 {
-                    value = [b"url(", text::trim_start(&value[4..])].concat();
+                    value = [
+                        b"url(",
+                        bun_core::strings::trim_js_whitespace_start(&value[4..]),
+                    ]
+                    .concat();
                 }
                 if let Some(rest) = value.strip_suffix(b")")
-                    && text::trim_end(rest).len() < rest.len()
+                    && bun_core::strings::trim_js_whitespace_end(rest).len() < rest.len()
                 {
-                    value = [text::trim_end(rest), b")"].concat();
+                    value = [bun_core::strings::trim_js_whitespace_end(rest), b")"].concat();
                 }
                 self.sink.text(&adjust_strings(&value, self.single_quote));
             }
@@ -1282,7 +1292,8 @@ impl<'a> Printer<'a, '_> {
             None => {}
             Some(Namespace::Empty) => self.sink.token("|"),
             Some(Namespace::Name(name)) => {
-                self.sink.text(text::trim(selectors.text(name)));
+                self.sink
+                    .text(bun_core::strings::trim_js_whitespace(selectors.text(name)));
                 self.sink.token("|");
             }
         }
@@ -1356,8 +1367,8 @@ impl<'a> Printer<'a, '_> {
                     return self.sink.text(value);
                 }
                 // `isKeyframeAtRuleKeywords`
-                let is_keyframe_keyword = (text::eq_lower_case(value, b"from")
-                    || text::eq_lower_case(value, b"to"))
+                let is_keyframe_keyword = (value.eq_ignore_ascii_case(b"from")
+                    || value.eq_ignore_ascii_case(b"to"))
                     && statement.is_in_keyframes();
                 match is_keyframe_keyword {
                     true => self.sink.text(&value.to_ascii_lowercase()),
@@ -1393,14 +1404,17 @@ impl<'a> Printer<'a, '_> {
             SelectorKind::Attribute => {
                 self.sink.token("[");
                 self.print_namespace(selectors, node.namespace);
-                self.sink.text(text::trim(selectors.text(node.attribute)));
+                self.sink.text(bun_core::strings::trim_js_whitespace(
+                    selectors.text(node.attribute),
+                ));
                 self.sink.text(
                     node.operator
                         .map(|it| selectors.text(it))
                         .unwrap_or_default(),
                 );
                 if node.has_value {
-                    let adjusted = adjust_strings(text::trim(value), single_quote);
+                    let adjusted =
+                        adjust_strings(bun_core::strings::trim_js_whitespace(value), single_quote);
                     // `replaceEndOfLine(.., literallineWithoutBreakParent)`
                     for (index, line) in bun_core::strings::split(
                         &quote_attribute_value(adjusted, single_quote),
@@ -1434,10 +1448,11 @@ impl<'a> Printer<'a, '_> {
                 if value.iter().all(u8::is_ascii_whitespace) {
                     return self.sink.line();
                 }
-                if text::trim_start(value).starts_with(b"(") {
+                if bun_core::strings::trim_js_whitespace_start(value).starts_with(b"(") {
                     self.sink.line();
                 }
-                let adjusted = adjust_strings(text::trim(value), single_quote);
+                let adjusted =
+                    adjust_strings(bun_core::strings::trim_js_whitespace(value), single_quote);
                 let adjusted = adjust_numbers(&adjusted);
                 match adjusted.is_empty() {
                     true => self.sink.line(),
@@ -1506,7 +1521,9 @@ impl<'a> Printer<'a, '_> {
                 .loc
                 .start_offset()
                 .map_or(0, |at| at as usize);
-            let selector = text::trim(self.original_text().get(start..end).unwrap_or_default());
+            let selector = bun_core::strings::trim_js_whitespace(
+                self.original_text().get(start..end).unwrap_or_default(),
+            );
             if last_line_has_inline_comment(selector) {
                 self.sink.break_parent();
             }
@@ -1516,7 +1533,7 @@ impl<'a> Printer<'a, '_> {
         let parent = statement.node();
         if self.value_stack.is_empty() && !parent.raw_selector.is_empty() {
             let end = parent.start + parent.raw_selector.len();
-            return self.sink.text(text::trim(
+            return self.sink.text(bun_core::strings::trim_js_whitespace(
                 self.original_text()
                     .get(parent.start..end)
                     .unwrap_or_default(),
@@ -1540,7 +1557,7 @@ impl<'a> Printer<'a, '_> {
     /// `insideValueFunctionNode`
     pub(crate) fn inside_value_function(&self, values: &Values, name: &[u8]) -> bool {
         self.value_function(values)
-            .is_some_and(|value| text::eq_lower_case(value, name))
+            .is_some_and(|value| value.eq_ignore_ascii_case(name))
     }
 
     /// `previous`: what is before `id` in the group that it is in.
@@ -1565,7 +1582,8 @@ impl<'a> Printer<'a, '_> {
                 match node.inline {
                     true => {
                         self.sink.start_line_suffix();
-                        self.sink.text(text::trim_end(text));
+                        self.sink
+                            .text(bun_core::strings::trim_js_whitespace_end(text));
                         self.sink.end_line_suffix();
                     }
                     false => self.sink.text(text),
@@ -1576,7 +1594,7 @@ impl<'a> Printer<'a, '_> {
             ValueKind::Func => {
                 let is_keyword = ["not", "and", "or"]
                     .iter()
-                    .any(|it| text::eq_lower_case(value, it.as_bytes()));
+                    .any(|it| value.eq_ignore_ascii_case(it.as_bytes()));
                 self.sink.text(value);
                 if is_keyword && statement.inside_at_rule(&[b"supports"]) {
                     self.sink.token(" ");
@@ -1600,7 +1618,7 @@ impl<'a> Printer<'a, '_> {
             ValueKind::Word => {
                 let is_wide_keyword = ["initial", "inherit", "unset", "revert"]
                     .iter()
-                    .any(|it| text::eq_lower_case(value, it.as_bytes()));
+                    .any(|it| value.eq_ignore_ascii_case(it.as_bytes()));
                 match (node.is_color && node.is_hex) || is_wide_keyword {
                     true => self.sink.text(&text::to_lower_case(value)),
                     false => self.sink.text(value),
@@ -1623,7 +1641,7 @@ impl<'a> Printer<'a, '_> {
                     && statement.inside_at_rule(&[b"import"])
                     && self
                         .value_function(values)
-                        .is_some_and(|name| !text::eq_lower_case(name, b"url")) =>
+                        .is_some_and(|name| !name.eq_ignore_ascii_case(b"url")) =>
             {
                 self.sink.text(values.raw_string(id));
             }

@@ -50,20 +50,22 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     }
     for (name, spans) in identifiers {
         if let [first, .., _] = spans[..] {
-            cx.report(first, MULTIPLE_IDENTIFIERS)
+            (spans.iter().skip(1))
+                .fold(cx.report(first, MULTIPLE_IDENTIFIERS), |report, span| report.label(*span, ""))
                 .data("prop_name", name)
                 .fix(|fixer| spans.iter().rev().skip(1).map(|span| fixer.remove(*span)).collect::<Vec<_>>());
         }
     }
     for alike in member_expressions.values() {
         for (i, &(left, left_span)) in alike.iter().enumerate() {
-            for &(right, _) in alike.iter().skip(i + 1) {
+            for &(right, right_span) in alike.iter().skip(i + 1) {
                 if cx.has_reported_too_much() {
                     return;
                 }
                 if is_same_member_expression(left, right) {
                     cx.report(left_span, MULTIPLE_MEMBER_EXPRESSIONS)
                         .data("member_name", left.text())
+                        .label(right_span, "")
                         .fix(|fixer| fixer.remove(left_span));
                 }
             }

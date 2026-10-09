@@ -139,9 +139,7 @@ fn has_component_tests(path: &[u8]) -> bool {
 
 /// `foo/bar.test.ts`, `__tests__/foo.ts`
 fn is_jestlike_file(path: &[u8]) -> bool {
-    let file_name = strings::last_index_of_any(path, b"/\\")
-        .and_then(|at| path.get(at + 1..))
-        .unwrap_or(path);
+    let file_name = bun_lint::paths::file_name(path);
     let name_or_first_ext = strings::rsplit_once_char(file_name, b'.')
         .map(|(rest, _)| strings::rsplit_once_char(rest, b'.').map_or(rest, |it| it.1));
     matches!(name_or_first_ext, Some(b"test" | b"spec")) || has_component_tests(path)

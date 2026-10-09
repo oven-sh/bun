@@ -33,22 +33,22 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferExpectTyp
         && let Some(type_expected) = expect_call.matcher_arguments.and_then(List::first)
         && type_expected.tag() != ExprTag::Spread
     {
-        cx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF).fix(|fixer| {
-            let file = fixer.file();
-            let mut code = [b"expect(".as_slice(), file.slice(operand.outer_span()), b")".as_slice()].concat();
-            for modifier in expect_call.modifiers() {
-                let (open, close) = match modifier.element {
-                    MemberExpressionElement::IdentName(_) => (".", ""),
-                    MemberExpressionElement::Expression(_) => ("[", "]"),
-                };
-                code.extend_from_slice(open.as_bytes());
-                code.extend_from_slice(file.slice(modifier.span));
-                code.extend_from_slice(close.as_bytes());
-            }
-            code.extend_from_slice(b".toBeTypeOf(");
-            code.extend_from_slice(file.slice(type_expected.outer_span()));
-            code.push(b')');
-            fixer.replace(possible_jest_node.node, code)
-        });
+        let file = cx.file();
+        let mut code = [b"expect(".as_slice(), file.slice(operand.outer_span()), b")".as_slice()].concat();
+        for modifier in expect_call.modifiers() {
+            let (open, close) = match modifier.element {
+                MemberExpressionElement::IdentName(_) => (".", ""),
+                MemberExpressionElement::Expression(_) => ("[", "]"),
+            };
+            code.extend_from_slice(open.as_bytes());
+            code.extend_from_slice(file.slice(modifier.span));
+            code.extend_from_slice(close.as_bytes());
+        }
+        code.extend_from_slice(b".toBeTypeOf(");
+        code.extend_from_slice(file.slice(type_expected.outer_span()));
+        code.push(b')');
+        cx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF)
+            .data("code", code.clone())
+            .fix(|fixer| fixer.replace(possible_jest_node.node, code));
     }
 }

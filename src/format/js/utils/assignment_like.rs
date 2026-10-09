@@ -1223,7 +1223,7 @@ pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Form
     let is_oxfmt = f.options().flavor.is_oxfmt();
     let len = |text: &[u8]| match is_oxfmt {
         true => text.len(),
-        false => bun_lint::utils::text::utf16_len(text) as usize,
+        false => bun_core::strings::wtf8_len_utf16(text) as usize,
     };
     match argument.as_ast_nodes() {
         AstNodes::IdentifierReference(_) => len(argument.text()) <= threshold,

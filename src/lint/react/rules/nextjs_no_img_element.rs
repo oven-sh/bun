@@ -1,3 +1,4 @@
+use crate::jsx::{get_jsx_attribute_name, get_prop_value};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -29,7 +30,16 @@ impl Rule for NoImgElement {
                 && matches!(e.parent().as_expr().map(Expr::kind),
                     Some(ExprKind::Jsx(parent)) if parent.tag().is_some_and(|it| it.is_ident("picture")));
             if !is_child_of_picture {
-                cx.report(name, NO_IMG_ELEMENT);
+                let report = cx.report(name, NO_IMG_ELEMENT).first_label("Use `<Image />` from `next/image` instead.");
+                report.labels_with(|labels| {
+                    let src = jsx.attrs().iter().find_map(|it| {
+                        let literal = get_prop_value(it)?.as_string_literal()?;
+                        (get_jsx_attribute_name(it)? == b"src").then_some(literal.span)
+                    });
+                    if let Some(src) = src {
+                        labels.push(src, "Use a static image import instead.");
+                    }
+                });
             }
         });
     }

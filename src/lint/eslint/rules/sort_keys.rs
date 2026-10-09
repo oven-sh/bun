@@ -66,7 +66,7 @@ fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: 
     }
     let fold = |it: u32| if is_insensitive && (0x41..=0x5A).contains(&it) { it + 0x20 } else { it };
     let is_alphanumeric = |it: u32| char::from_u32(it).is_some_and(char::is_alphanumeric);
-    let (mut a, mut b) = (text::code_points(a).map(|it| it.1), text::code_points(b).map(|it| it.1));
+    let (mut a, mut b) = (strings::wtf8_codepoints(a).map(|it| it.1), strings::wtf8_codepoints(b).map(|it| it.1));
     loop {
         let (x, y) = match (a.next(), b.next()) {
             (None, None) => return Ordering::Equal,
@@ -113,7 +113,7 @@ fn has_empty_line(text: &[u8]) -> bool {
     let mut at = 0;
     let mut is_after_break = false;
     while let Some(rest) = text.get(at..).filter(|it| !it.is_empty()) {
-        let len = text::line_break_len(rest);
+        let len = strings::js_line_break_len(rest);
         if len > 0 && is_after_break {
             return true;
         }
@@ -279,7 +279,7 @@ impl SortKeys {
         };
         let order = match self.is_natural {
             true => text::natural_compare(&a, &b),
-            false => text::compare(&a, &b),
+            false => strings::order_utf16(&a, &b),
         };
         order != Ordering::Greater
     }

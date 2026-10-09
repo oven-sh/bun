@@ -38,7 +38,7 @@ use crate::js::context::JsFormatContext;
 use crate::js::sort_imports::SortImports;
 use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser};
 use crate::range::{Offsets, normalized_len, write_with_line_ending};
-use crate::text::{self, BOM, trim_end};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions, front_matter};
 use bun_core::strings;
 use cursor::Cursor;
@@ -117,11 +117,13 @@ pub(crate) struct Options<'o> {
 /// `/^\s*<!--\s*@(?:a|b)\s*-->/.test(text)`
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     (|| {
-        let rest =
-            text::trim_start(text::trim_start(text).strip_prefix(b"<!--")?).strip_prefix(b"@")?;
+        let rest = strings::trim_js_whitespace_start(
+            strings::trim_js_whitespace_start(text).strip_prefix(b"<!--")?,
+        )
+        .strip_prefix(b"@")?;
         let rest = pragmas.iter().find_map(|pragma| {
             rest.strip_prefix(*pragma)
-                .filter(|rest| text::trim_start(rest).starts_with(b"-->"))
+                .filter(|rest| strings::trim_js_whitespace_start(rest).starts_with(b"-->"))
         });
         rest.map(|_| ())
     })()
@@ -176,7 +178,8 @@ fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t,
 fn keeps_content(before: &[u8], after: &[u8], parser: Parser, options: &FormatOptions) -> bool {
     let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
     prepared_text(before, options).is_none_or(|(before, _)| {
-        text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
+        strings::trim_js_whitespace(&before).is_empty()
+            || verify::has_same_content(&before, &after, parser)
     })
 }
 
@@ -249,7 +252,7 @@ fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> 
         let Some(code) = text.get(start..end).filter(|_| node.end_span().is_some()) else {
             continue;
         };
-        if text::trim(code).is_empty() && tree.attribute(id, b"src").is_none() {
+        if strings::trim_js_whitespace(code).is_empty() && tree.attribute(id, b"src").is_none() {
             continue;
         }
         let is_setup = tree.attribute(id, b"setup").is_some();
@@ -421,7 +424,7 @@ fn format_angular_expression(
         None => text,
     };
     let text = normalize_end_of_line(text);
-    if text::trim(&text).is_empty() {
+    if strings::trim_js_whitespace(&text).is_empty() {
         return Ok(());
     }
     let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
@@ -510,7 +513,7 @@ pub fn format_with(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if text::trim(&text).is_empty() {
+    if strings::trim_js_whitespace(&text).is_empty() {
         return Ok(None);
     }
     // Prettier's `isSourceElement`: nothing can be formatted on its own, except that in Vue everything can. It does not
@@ -589,7 +592,7 @@ pub fn format_with(
         .inspect_err(|_| out.truncate(start))?;
     // `formatRange` leaves out the line break at the end.
     if is_range {
-        out.truncate(printed_from + trim_end(&out[printed_from..]).len());
+        out.truncate(printed_from + strings::trim_js_whitespace_end(&out[printed_from..]).len());
     }
     let (Some(offset), Some(region)) = (cursor_offset, region) else {
         return Ok(None);

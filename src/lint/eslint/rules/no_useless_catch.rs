@@ -43,7 +43,7 @@ impl Rule for NoUselessCatch {
             if cx.language().is_oxlint {
                 if !argument.is_parenthesized() {
                     let message = if finalizer.is_some() { UNNECESSARY_CATCH_CLAUSE } else { UNNECESSARY_CATCH };
-                    cx.report(param.pat(), message);
+                    cx.report(param.pat(), message).first_label("is caught here").label(first, "and re-thrown here");
                 }
                 return;
             }

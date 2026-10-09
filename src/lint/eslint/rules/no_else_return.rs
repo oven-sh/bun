@@ -217,7 +217,10 @@ impl Rule for NoElseReturn {
             let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
                 Some(returning) => {
                     let (start, end) = (consequent.span().end, else_node.span().start);
-                    cx.report(returning, UNEXPECTED).comments_apply_at(Span::new(start, end))
+                    cx.report(returning, UNEXPECTED)
+                        .comments_apply_at(Span::new(start, end))
+                        .first_label("This consequent block always returns,")
+                        .label(Span::new(start, end), "Making this `else` block unnecessary.")
                 }
                 None => cx.report(else_node, UNEXPECTED),
             };

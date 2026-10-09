@@ -3,7 +3,6 @@
 
 use super::parser::{Comment, Owner, Tree};
 use crate::text::{has_newline, has_newline_backwards};
-use bun_lint::utils::text::{code_point_at, is_js_whitespace};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Placement {
@@ -27,9 +26,9 @@ fn is_gap(text: &[u8]) -> bool {
         let (c, len) = if byte < 0x80 {
             (u32::from(byte), 1)
         } else {
-            code_point_at(text, at)
+            bun_core::strings::wtf8_codepoint_at(text, at)
         };
-        if c != u32::from(b'(') && !is_js_whitespace(c) {
+        if c != u32::from(b'(') && !bun_core::strings::is_js_whitespace(c) {
             return false;
         }
         at += len;

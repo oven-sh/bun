@@ -2,7 +2,7 @@ use crate::a11y::HTML_TAG;
 use bun_lint_oxlint::ast_util::get_identifier_name;
 use crate::jsx::as_jsx_element;
 use crate::react::is_jsx;
-use bun_lint_oxlint::text::{contains_name, is_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -37,7 +37,9 @@ impl Rule for SelfClosingComp {
             };
             // Nothing but blanks with a line break in them is between the tags.
             let between = cx.slice(jsx.opening_span().between(closing));
-            if !between.is_empty() && !(is_whitespace(between) && strings::contains_char(between, b'\n')) {
+            if !between.is_empty()
+                && !(strings::is_all_unicode_whitespace(between) && strings::contains_char(between, b'\n'))
+            {
                 return;
             }
             let is_dom_comp =

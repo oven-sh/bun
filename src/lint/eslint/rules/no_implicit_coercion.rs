@@ -144,7 +144,12 @@ fn type_of_coercion(node: Expr) -> &'static str {
 fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a, NoImplicitCoercion>) {
     let mut report = cx.report(node, IMPLICIT_COERCION).data("recommendation", recommendation.to_vec());
     if cx.language().is_oxlint {
-        report = report.data("type", type_of_coercion(node));
+        let kind = type_of_coercion(node);
+        report = report.data("type", kind).help(match kind {
+            "boolean" => "Use `Boolean(value)` instead",
+            "number" => "Use `Number(value)` instead",
+            _ => "Use `String(value)` instead",
+        });
     }
     // What ESLint suggests is a fix for oxlint.
     let remedy = match remedy {

@@ -210,7 +210,9 @@ pub(crate) mod prefer_mock_promise_shorthand {
             (b"Promise.reject", true) => "mockRejectedValueOnce",
             _ => return,
         };
-        let report = ctx.report(property_span, USE_MOCK_SHORTHAND);
+        let report = ctx
+            .report(property_span, USE_MOCK_SHORTHAND)
+            .data("preferred_name", prefer_name);
         if call_expr.args().len() <= 1 {
             report.fix(|fixer| {
                 let mut content = [prefer_name.as_bytes(), b"(".as_slice()].concat();

@@ -296,7 +296,7 @@ impl<'a> Facts<'a> {
 }
 
 fn json_string(text: &str, out: &mut String) {
-    out.push_str(&host::text(&utils::text::json_stringify(text.as_bytes())));
+    out.push_str(&host::text(&bun_core::printer::json_stringify_alloc(text.as_bytes())));
 }
 
 fn dump(case: Object<'_>) -> String {
@@ -355,20 +355,20 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
     use utils::text;
     let number = text::string_to_number(a);
     let fields: [Vec<u8>; 18] = [
-        text::utf16_len(a).to_string().into(),
-        text::code_point_count(a).to_string().into(),
-        text::trim(a).to_vec(),
-        text::trim_start(a).to_vec(),
-        text::trim_end(a).to_vec(),
+        bun_core::strings::wtf8_len_utf16(a).to_string().into(),
+        bun_core::strings::wtf8_codepoint_count(a).to_string().into(),
+        bun_core::strings::trim_js_whitespace(a).to_vec(),
+        bun_core::strings::trim_js_whitespace_start(a).to_vec(),
+        bun_core::strings::trim_js_whitespace_end(a).to_vec(),
         text::to_lower_case(a).into_owned(),
         text::to_upper_case(a).into_owned(),
         text::upper_case_first(a).into_owned(),
         text::escape_reg_exp(a).into_owned(),
         text::escape_string_regexp(a).into_owned(),
         text::number_to_string(number),
-        text::json_stringify(a),
-        text::lines(a).count().to_string().into(),
-        text::utf16_slice(a, 1, 3).to_vec(),
+        bun_core::printer::json_stringify_alloc(a),
+        bun_core::strings::js_lines(a).count().to_string().into(),
+        bun_core::strings::wtf8_slice_by_utf16(a, 1, 3).to_vec(),
         format!(
             "{} {}",
             text::is_identifier_es5(a),
@@ -377,7 +377,7 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         .into(),
         format!(
             "{:?} {:?}",
-            text::compare(a, b),
+            bun_core::strings::order_utf16(a, b),
             text::natural_compare(a, b)
         )
         .into(),
@@ -399,7 +399,7 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         if i > 0 {
             line.push(',');
         }
-        line.push_str(&host::text(&text::json_stringify(field)));
+        line.push_str(&host::text(&bun_core::printer::json_stringify_alloc(field)));
     }
     line.push(']');
     line

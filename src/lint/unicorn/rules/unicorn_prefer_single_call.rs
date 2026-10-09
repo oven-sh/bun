@@ -51,7 +51,9 @@ impl Rule for PreferSingleCall {
                 let mut fix = Vec::with_capacity(2);
                 if !source.1.args().is_empty() {
                     let target_src = target.0.text();
-                    let before_paren = text::trim_end(target_src.get(..target_src.len().saturating_sub(1)).unwrap_or_default());
+                    let before_paren = strings::trim_js_whitespace_end(
+                        target_src.get(..target_src.len().saturating_sub(1)).unwrap_or_default(),
+                    );
                     let mut arguments = if target.1.args().is_empty() {
                         Vec::new()
                     } else if before_paren.ends_with(b",") {
@@ -68,7 +70,7 @@ impl Rule for PreferSingleCall {
                     fix.push(fixer.replace(Span::new(end.saturating_sub(1), end), arguments));
                 }
                 // The `;` of the second statement stays if the first has none.
-                let has_semi = |it: Stmt<'a>| text::trim_end(it.text()).ends_with(b";");
+                let has_semi = |it: Stmt<'a>| strings::trim_js_whitespace_end(it.text()).ends_with(b";");
                 let needs_semi = !keep_second_call && !has_semi(prev_es) && has_semi(curr_es);
                 fix.push(fixer.replace(removal_span, if needs_semi { ";" } else { "" }));
                 Some(fix)
@@ -177,8 +179,9 @@ fn arg_references_receiver(arg_src: &[u8], receiver: &[u8]) -> bool {
     while let Some(found) = arg_src.get(from..).and_then(|rest| strings::index_of(rest, receiver)) {
         let (start, end) = (from + found, from + found + receiver.len());
         let before = arg_src.get(..start).and_then(text::last_code_point);
-        let after = arg_src.get(end..).and_then(text::first_code_point);
-        if !before.is_some_and(text::is_identifier_part) && !after.is_some_and(text::is_identifier_part) {
+        let after = arg_src.get(end..).and_then(strings::wtf8_first_codepoint);
+        let is_part = |c: u32| bun_core::lexer::is_type_script_identifier_part(c as i32);
+        if !before.is_some_and(is_part) && !after.is_some_and(is_part) {
             return true;
         }
         from = start + 1;

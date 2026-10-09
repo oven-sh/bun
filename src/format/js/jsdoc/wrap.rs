@@ -2,11 +2,14 @@
 
 use super::line_buffer::LineBuffer;
 use super::markers::is_block_marker_token;
-use super::text::{lines, push_spaces, str_width, trim, trim_end_matches, trim_start_matches};
+use super::text::{lines, push_spaces, trim_end_matches, trim_start_matches};
 use bun_core::strings;
 
 fn without_outer_pipes(line: &[u8]) -> &[u8] {
-    trim_end_matches(trim_start_matches(trim(line), |c| c == '|'), |c| c == '|')
+    trim_end_matches(
+        trim_start_matches(strings::trim_unicode_whitespace(line), |c| c == '|'),
+        |c| c == '|',
+    )
 }
 
 /// `| --- | :-: |`
@@ -14,7 +17,7 @@ fn is_table_separator(line: &[u8]) -> bool {
     let inner = without_outer_pipes(line);
     !inner.is_empty()
         && strings::split(inner, b"|").all(|cell| {
-            let cell = trim(cell);
+            let cell = strings::trim_unicode_whitespace(cell);
             !cell.is_empty()
                 && cell.iter().all(|byte| matches!(byte, b'-' | b':' | b' '))
                 && strings::contains_char(cell, b'-')
@@ -23,7 +26,7 @@ fn is_table_separator(line: &[u8]) -> bool {
 
 fn parse_table_cells(line: &[u8]) -> Vec<&[u8]> {
     strings::split(without_outer_pipes(line), b"|")
-        .map(trim)
+        .map(strings::trim_unicode_whitespace)
         .collect()
 }
 
@@ -46,7 +49,7 @@ pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
     let mut widths = vec![3usize; column_count];
     for row in &all_cells {
         for (width, cell) in widths.iter_mut().zip(row) {
-            *width = (*width).max(str_width(cell));
+            *width = (*width).max(strings::element_length_utf8_into_utf16(cell));
         }
     }
     let separator_cells = parse_table_cells(table_lines[separator_index]);
@@ -79,7 +82,10 @@ pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
                 Some(cells) => {
                     let cell = cells.get(column).copied().unwrap_or_default();
                     row.extend_from_slice(cell);
-                    push_spaces(&mut row, width.saturating_sub(str_width(cell)));
+                    push_spaces(
+                        &mut row,
+                        width.saturating_sub(strings::element_length_utf8_into_utf16(cell)),
+                    );
                 }
             }
         }
@@ -183,7 +189,7 @@ pub(super) fn wrap_paragraph(
         out.extend_from_slice(line);
     };
     for word in words {
-        let word_width = str_width(word);
+        let word_width = strings::element_length_utf8_into_utf16(word);
         let tag_count = usize::from(is_inline_tag(word));
         let capacity = if is_first_line {
             first_line_max
@@ -240,20 +246,28 @@ pub(super) fn wrap_plain_paragraphs(text: &[u8], max_width: usize, is_balanced: 
         }
         if is_balanced
             && paragraph.len() > 1
-            && paragraph.iter().all(|line| str_width(line) <= max_width)
+            && paragraph
+                .iter()
+                .all(|line| strings::element_length_utf8_into_utf16(line) <= max_width)
         {
             for line in paragraph.iter() {
                 out.push(line);
             }
         } else {
-            wrap_paragraph(trim(&paragraph.join(&b" "[..])), max_width, 0, 0, out);
+            wrap_paragraph(
+                strings::trim_unicode_whitespace(&paragraph.join(&b" "[..])),
+                max_width,
+                0,
+                0,
+                out,
+            );
         }
         paragraph.clear();
     }
     let mut out = LineBuffer::new();
     let mut paragraph: Vec<&[u8]> = Vec::new();
     for line in lines(text) {
-        let trimmed = trim(line);
+        let trimmed = strings::trim_unicode_whitespace(line);
         if !trimmed.is_empty() {
             paragraph.push(trimmed);
             continue;

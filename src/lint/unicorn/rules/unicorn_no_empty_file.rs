@@ -10,7 +10,7 @@ const NO_EMPTY_FILE: Message = Message::new("", "Empty files are not allowed.");
 
 /// Not a file without an extension, and not one of which only a part is JavaScript.
 fn should_run(path: &[u8]) -> bool {
-    let name = strings::last_index_of_any(path, b"/\\").map_or(path, |at| path.get(at + 1..).unwrap_or_default());
+    let name = bun_lint::paths::file_name(path);
     match strings::last_index_of_char(name, b'.') {
         None | Some(0) => false,
         Some(at) => !matches!(name.get(at + 1..), Some(b"vue" | b"astro" | b"svelte")),

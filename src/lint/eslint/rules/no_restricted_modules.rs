@@ -1,3 +1,4 @@
+use bun_core::strings;
 use super::no_restricted_imports::{IgnoreRules, IgnoreSyntax, ignore_rules};
 use bun_lint::prelude::*;
 
@@ -32,7 +33,7 @@ impl NoRestrictedModules {
             Some(ExprKind::Template(template)) => template.as_static(),
             _ => None,
         };
-        let Some(name) = name.map(|it| text::trim(it.bytes())).filter(|it| !it.is_empty()) else {
+        let Some(name) = name.map(|it| strings::trim_js_whitespace(it.bytes())).filter(|it| !it.is_empty()) else {
             return;
         };
         if let Some((_, message)) = self.paths.iter().rfind(|it| it.0 == name) {

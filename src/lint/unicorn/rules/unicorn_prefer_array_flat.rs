@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{
     as_member_expression, get_inner_expression, get_member_expr, is_method_call, static_property_info,
 };
@@ -88,7 +89,7 @@ fn is_obviously_non_array_flat_map_receiver(object: Expr) -> bool {
         return false;
     };
     is_const_variable_initialized_with_array(object).map_or_else(
-        || text::first_code_point(name.bytes()).and_then(char::from_u32).is_some_and(char::is_uppercase),
+        || strings::wtf8_first_codepoint(name.bytes()).and_then(char::from_u32).is_some_and(char::is_uppercase),
         |is_array| !is_array,
     )
 }

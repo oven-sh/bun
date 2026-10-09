@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 use bun_lint_oxlint::ast_util::{
@@ -121,13 +122,13 @@ fn get_start_with_spaces<'a>(file: &'a File<'a>, token: Span) -> u32 {
     if before.is_some_and(|it| it.kind() == TokenKind::Line) {
         return token.start;
     }
-    text::trim_end(file.slice(Span::before(0, token))).len() as u32
+    strings::trim_js_whitespace_end(file.slice(Span::before(0, token))).len() as u32
 }
 
 /// ESLint's `getEndWithSpaces`: the end of `token` and the whitespace after it.
 fn get_end_with_spaces(file: &File, token: Span) -> u32 {
     let rest = file.slice(Span::new(token.end, file.span().end));
-    token.end + (rest.len() - text::trim_start(rest).len()) as u32
+    token.end + (rest.len() - strings::trim_js_whitespace_start(rest).len()) as u32
 }
 
 /// ESLint's `defineFixer`.

@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{code_point_at, first_code_point, is_js_whitespace, trim, trim_start};
 
 /// Disallow `// tslint:<rule-flag>` comments.
 pub struct BanTslintComment;
@@ -10,7 +9,7 @@ const COMMENT_DETECTED: Message =
 
 /// `/^\s*tslint:(enable|disable)(?:-(line|next-line))?(:|\s|$)/`
 fn is_enable_disable(value: &[u8]) -> bool {
-    let Some(rest) = trim_start(value).strip_prefix(b"tslint:") else {
+    let Some(rest) = strings::trim_js_whitespace_start(value).strip_prefix(b"tslint:") else {
         return false;
     };
     let Some(rest) = rest.strip_prefix(b"enable").or_else(|| rest.strip_prefix(b"disable")) else {
@@ -20,14 +19,14 @@ fn is_enable_disable(value: &[u8]) -> bool {
         .strip_prefix(b"-line")
         .or_else(|| rest.strip_prefix(b"-next-line"))
         .unwrap_or(rest);
-    match first_code_point(rest) {
+    match strings::wtf8_first_codepoint(rest) {
         None => true,
-        Some(c) => c == u32::from(b':') || is_js_whitespace(c),
+        Some(c) => c == u32::from(b':') || strings::is_js_whitespace(c),
     }
 }
 
 fn to_text(comment: Token) -> Vec<u8> {
-    let value = trim(comment.comment_value());
+    let value = strings::trim_js_whitespace(comment.comment_value());
     let mut text = Vec::with_capacity(value.len() + 6);
     if comment.kind() == TokenKind::Line {
         text.extend_from_slice(b"// ");
@@ -65,7 +64,7 @@ impl Rule for BanTslintComment {
                     let has_line_break = cx.text().get(comment.end() as usize) == Some(&b'\n');
                     let full_comment = Span::new(comment.start(), comment.end() + u32::from(has_line_break));
                     cx.report(full_comment, COMMENT_DETECTED)
-                        .data("text", trim(comment.comment_value()))
+                        .data("text", strings::trim_js_whitespace(comment.comment_value()))
                         .fix(|fixer| fixer.remove(full_comment));
                     continue;
                 }
@@ -78,7 +77,7 @@ impl Rule for BanTslintComment {
                     });
                     // With the character after it. One more than the end, also at the end of the text.
                     let range_end = file.offset(end);
-                    let after = code_point_at(file.text(), range_end as usize).1.max(1);
+                    let after = strings::wtf8_codepoint_at(file.text(), range_end as usize).1.max(1);
                     fixer.remove(Span::new(range_start, range_end + after as u32))
                 });
             }

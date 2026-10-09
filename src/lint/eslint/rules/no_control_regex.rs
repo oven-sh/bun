@@ -16,8 +16,8 @@ const CONTROL_CHARACTERS: Message = Message::new("unexpected", "Unexpected contr
 struct Collector<'s> {
     source: &'s [u8],
     control_chars: Vec<u8>,
-    /// Where the first of them is in `source`.
-    first: Option<Span>,
+    /// Where each of them is in `source`.
+    places: Vec<Span>,
     /// Whether a control character that is written as it is counts.
     counts_as_it_is: bool,
 }
@@ -25,7 +25,7 @@ struct Collector<'s> {
 impl Handler for Collector<'_> {
     fn on_pattern_enter(&mut self, _: u32) {
         self.control_chars.clear();
-        self.first = None;
+        self.places.clear();
     }
 
     fn on_character(&mut self, start: u32, end: u32, value: u32) {
@@ -36,7 +36,7 @@ impl Handler for Collector<'_> {
                 || written.starts_with(b"\\u"))
         {
             self.control_chars.push(value as u8);
-            self.first.get_or_insert_with(|| Span::new(start, end));
+            self.places.push(Span::new(start, end));
         }
     }
 }
@@ -55,7 +55,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
     let mut collector = Collector {
         source: pattern,
         control_chars: Vec::new(),
-        first: None,
+        places: Vec::new(),
         counts_as_it_is: !is_oxlint
             || !is_literal && (strings::contains(node.text(), b"\\x") || strings::contains(node.text(), b"\\u")),
     };
@@ -70,20 +70,28 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
         (true, _) => CONTROL_CHARACTERS,
     };
     let mut control_chars = String::new();
-    for c in collector.control_chars {
+    for c in &collector.control_chars {
         if !control_chars.is_empty() {
             control_chars.push_str(", ");
         }
         control_chars.push_str(&format!("\\x{c:02x}"));
     }
-    let place = match collector.first {
-        Some(first) if is_oxlint && is_literal => {
-            let pattern_start = node.span().start + 1;
-            Span::new(pattern_start + first.start, pattern_start + first.end)
-        }
+    let pattern_start = node.span().start + 1;
+    let in_file = |it: &Span| Span::new(pattern_start + it.start, pattern_start + it.end);
+    let place = match collector.places.first() {
+        Some(first) if is_oxlint && is_literal => in_file(first),
         _ => node.span(),
     };
-    cx.report(place, message).data("controlChars", control_chars);
+    cx.report(place, message).data("controlChars", control_chars).labels_with(|labels| {
+        for (i, (c, place)) in collector.control_chars.iter().zip(&collector.places).enumerate() {
+            let text = format!("'U+{c:04X}' is a control character.");
+            match i {
+                0 => labels.first(text),
+                _ if is_literal => labels.push(in_file(place), text),
+                _ => break,
+            }
+        }
+    });
 }
 
 impl Rule for NoControlRegex {

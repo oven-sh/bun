@@ -57,12 +57,16 @@ impl Rule for NoImportingVitestGlobals {
     }
 }
 
+const REMOVE_THIS: &str = "Remove this global vitest import";
+
 fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImportingVitestGlobals>) {
     let is_global = |it: &ImportSpec| !it.is_type_only() && !it.imported().is_string() && it.local().name().is_any(&VITEST_GLOBALS);
     let Some(first_global) = import_decl.named().iter().find(is_global) else {
         return;
     };
-    cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).fix(|fixer| {
+    let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
+    let others = import_decl.named().iter().filter(is_global).skip(1);
+    others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix(|fixer| {
         let others = usize::from(import_decl.default().is_some()) + usize::from(import_decl.namespace().is_some());
         if others == 0 && import_decl.named().iter().all(|it| is_global(&it)) {
             return Some(fixer.remove(node));
@@ -106,7 +110,11 @@ fn check_variable_declaration<'a>(
     };
     // It is reported also if none of the names is that of a global.
     let report = match properties.iter().find(is_global_property) {
-        Some(first_global) => cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS),
+        Some(first_global) => {
+            let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
+            let others = properties.iter().filter(is_global_property).skip(1);
+            others.fold(report, |report, it| report.label(it, REMOVE_THIS))
+        }
         None => cx.report_file(NO_IMPORTING_VITEST_GLOBALS),
     };
     report.fix(|fixer| {

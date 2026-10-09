@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::next_token;
 
@@ -55,7 +56,7 @@ fn is_space<'a>(file: &'a File<'a>, between: Span) -> bool {
     if inside.is_empty() {
         return false;
     }
-    text::trim(inside).len() != inside.len()
+    strings::trim_js_whitespace(inside).len() != inside.len()
         || file.is_space_between(Span::empty(between.start), Span::empty(between.end))
 }
 
@@ -73,7 +74,7 @@ impl ArrayBracketSpacing {
         let bracket = Span::new(brackets.span.end - 1, brackets.span.end);
 
         let after_first = Span::after(first, skip_trivia(source, first.end));
-        if !text::has_line_break(file.slice(after_first)) {
+        if !strings::contains_js_line_break(file.slice(after_first)) {
             let is_spaced = is_space(file, after_first);
             match self.must_be_spaced(brackets.first, brackets.count) {
                 true if !is_spaced => {
@@ -106,7 +107,7 @@ impl ArrayBracketSpacing {
             }
         };
         let before_last = Span::before(penultimate_end, last);
-        if penultimate_end != first.end && !text::has_line_break(file.slice(before_last)) {
+        if penultimate_end != first.end && !strings::contains_js_line_break(file.slice(before_last)) {
             let is_spaced = is_space(file, before_last);
             match self.must_be_spaced(brackets.last, brackets.count) {
                 true if !is_spaced => {

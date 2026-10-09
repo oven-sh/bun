@@ -16,7 +16,7 @@
 //! | upstream | here |
 //! | --- | --- |
 //! | `helpers.ts`: `isNodeOfType`, `isNodeOfTypes`, `isNodeOfTypeWithConditions`, `isTokenOfTypeWithConditions`, `isNotTokenOfTypeWithConditions` | `matches!(x.kind(), ..)`, `token.is_punctuator("..")`, `token.is_keyword("..")` |
-//! | `misc.ts`: `LINEBREAK_MATCHER.exec(s)`, `.test(s)`, `s.split(LINEBREAK_MATCHER)` | `utils::text::{find_line_break, has_line_break, line_break_len, lines}` |
+//! | `misc.ts`: `LINEBREAK_MATCHER.exec(s)`, `.test(s)`, `s.split(LINEBREAK_MATCHER)` | `bun_core::strings::{find_js_line_break, contains_js_line_break, js_line_break_len, js_lines}` |
 //! | `misc.ts`: `isTokenOnSameLine(a, b)` | [`is_token_on_same_line`]`(file, a, b)` |
 //! | `predicates.ts`: `isOptionalChainPunctuator`, `isNonNullAssertionPunctuator`, `isAwaitKeyword`, `isTypeKeyword`, `isImportKeyword` | the same in snake case, on `&Token`, so that `tokens.find(is_await_keyword)` works |
 //! | `isOptionalCallExpression`, `isLogicalOrOperator`, `isTypeAssertion`, `isAwaitExpression` | the same, on `Expr` |

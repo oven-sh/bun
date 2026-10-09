@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require a newline after each call in a method chain.
@@ -43,7 +44,7 @@ impl NewlinePerChainedCall {
 
         let after_object = skip_trivia(cx.text(), object.outer_span().end);
         let written = cx.slice(property);
-        let first_line = text::find_line_break(written).map(|it| &written[..it.0]);
+        let first_line = strings::find_js_line_break(written).map(|it| &written[..it.0]);
         let mut name = Vec::with_capacity(written.len() + 4);
         if callee.is_optional() {
             name.extend_from_slice(b"?.");

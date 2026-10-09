@@ -1,5 +1,5 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text;
 
 /// Disallow empty static blocks.
 pub struct NoEmptyStaticBlock;
@@ -36,7 +36,7 @@ impl Rule for NoEmptyStaticBlock {
             let inside = braces.shrink(1, 1);
             // For oxlint a comment before the `{` fills it too.
             let is_filled = cx.language().is_oxlint && cx.file().comments_in(member.span()).next().is_some();
-            if !is_filled && text::is_blank(cx.slice(inside)) {
+            if !is_filled && strings::is_all_js_whitespace(cx.slice(inside)) {
                 // oxlint points at the `static`, and suggests to remove the block.
                 match cx.language().is_oxlint {
                     true => cx.report(member.span(), UNEXPECTED).fix(|fixer| fixer.remove(member.span())),

@@ -55,7 +55,7 @@ impl Rule for NoMultiStr {
             return Vec::new();
         }
         on.exprs([ExprTag::String], |_, e, cx| {
-            if !ast_utils::has_linebreak(e.text()) {
+            if !strings::contains_js_line_break(e.text()) {
                 return;
             }
             cx.state.push(e.span().start);
@@ -68,7 +68,7 @@ impl Rule for NoMultiStr {
             cx.state.sort_unstable();
             for token in cx.file().tokens() {
                 if token.kind() == TokenKind::String
-                    && ast_utils::has_linebreak(token.text())
+                    && strings::contains_js_line_break(token.text())
                     && cx.state.binary_search(&token.start()).is_err()
                 {
                     cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);

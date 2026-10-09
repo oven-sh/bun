@@ -112,11 +112,9 @@ fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
 }
 
 fn suggestion_of(json: &Json, offsets: &Offsets) -> Option<Suggestion> {
-    let data = json
-        .get(b"data")
-        .and_then(Json::as_object)
-        .unwrap_or_default();
-    let data = data.iter().filter_map(|(key, value)| {
+    let data = json.get(b"data").and_then(Json::as_object);
+    let has_data = data.is_some();
+    let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
         Some((
             Cow::Owned(std::str::from_utf8(key).ok()?.to_owned()),
             value.as_str()?.to_vec(),
@@ -126,6 +124,7 @@ fn suggestion_of(json: &Json, offsets: &Offsets) -> Option<Suggestion> {
         message_id: text_of(json.get(b"messageId")).map_or(Cow::Borrowed(""), Cow::Owned),
         message: json.get(b"desc")?.as_str()?.to_vec(),
         data: data.collect(),
+        has_data,
         fix: fix_of(json.get(b"fix"), offsets)?,
         kind: SuggestionKind::Suggestion,
     })

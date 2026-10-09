@@ -199,7 +199,8 @@ fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
 }
 
 /// How oxlint calls the function.
-fn name_for_oxlint(func: Func) -> Vec<u8> {
+/// With what oxlint calls the function in its `help`.
+fn name_for_oxlint(func: Func) -> (Vec<u8>, &'static [u8]) {
     const FUNCTION: &[u8] = b"function";
     let (kind, name) = match (func.name(), FunctionParent::of(func)) {
         (Some(name), _) if func.is_async() => (&b"async function"[..], Some(name.bytes())),
@@ -222,8 +223,8 @@ fn name_for_oxlint(func: Func) -> Vec<u8> {
         (None, FunctionParent::ObjectProperty(_) | FunctionParent::Other) => (FUNCTION, None),
     };
     match name {
-        Some(name) => [kind, b" `", name, b"`"].concat(),
-        None => FUNCTION.to_vec(),
+        Some(name) => ([kind, b" `", name, b"`"].concat(), kind),
+        None => (FUNCTION.to_vec(), kind),
     }
 }
 
@@ -246,8 +247,14 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
         return;
     }
     let name = ast_utils::get_function_name_with_kind(func);
-    cx.report(body, UNEXPECTED)
-        .data("name", if cx.language().is_oxlint { name_for_oxlint(func) } else { name.clone() })
+    let report = match cx.language().is_oxlint {
+        true => {
+            let (name, fn_kind) = name_for_oxlint(func);
+            cx.report(body, UNEXPECTED).data("name", name).data("fn_kind", fn_kind)
+        }
+        false => cx.report(body, UNEXPECTED).data("name", name.clone()),
+    };
+    report
         .suggest_with(SUGGEST_COMMENT, &[("name", &name[..])], |fixer| {
             fixer.replace(inside, " /* empty */ ")
         });

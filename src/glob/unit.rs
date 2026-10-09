@@ -226,15 +226,6 @@ impl Text {
     }
 }
 
-pub(crate) fn is_line_terminator(unit: u32) -> bool {
-    matches!(unit, 0x0A | 0x0D | 0x2028 | 0x2029)
-}
-
-/// Whether `text` starts with a line terminator.
-pub(crate) fn starts_with_line_terminator(text: &[u8]) -> bool {
-    matches!(text, [b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..])
-}
-
 /// `c` in UTF-8. A half of a pair is written as if it were a character.
 pub(crate) fn push_utf8(out: &mut Vec<u8>, c: u32) {
     let continuation = |shift: u32| 0x80 | ((c >> shift) & 0x3F) as u8;

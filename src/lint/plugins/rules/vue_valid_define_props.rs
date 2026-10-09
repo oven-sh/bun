@@ -26,7 +26,9 @@ impl Rule for ValidDefineProps {
         on.finish(|_, cx| {
             let calls = calls_of(cx.file(), "defineProps");
             for (call_expr, _) in calls.iter().skip(1) {
-                cx.report(call_expr, CALLED_MULTIPLE_TIMES);
+                cx.report(call_expr, CALLED_MULTIPLE_TIMES)
+                    .first_label("`defineProps` is called here")
+                    .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), "`defineProps` is called here too");
             }
             let Some((call_expr, call)) = calls.first() else {
                 return;

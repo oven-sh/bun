@@ -47,6 +47,7 @@ use crate::literal::Literal;
 use crate::options::Options;
 use crate::runner;
 use crate::semantic::Symbol;
+use bun_wyhash::hash_const;
 use smallvec::SmallVec;
 
 /// A message that a rule reports. `{{name}}` in `text` is replaced by what
@@ -58,7 +59,12 @@ pub struct Message {
     pub text: &'static str,
     /// Whether there is a `{{` in `text`.
     pub(crate) may_have_placeholders: bool,
+    /// A hash of `id` and `text`. By it and [`Meta::key`], [`oxlint_help`](crate::oxlint_help) finds what belongs to a message of a
+    /// rule. Both are constants, and so are these.
+    pub(crate) key: u32,
 }
+
+const _: () = assert!(size_of::<Message>() == 5 * size_of::<usize>());
 
 impl Message {
     pub const fn new(id: &'static str, text: &'static str) -> Message {
@@ -71,6 +77,7 @@ impl Message {
             id,
             text,
             may_have_placeholders,
+            key: hash_const(hash_const(0, id.as_bytes()), text.as_bytes()) as u32,
         }
     }
 }
@@ -78,6 +85,8 @@ impl Message {
 /// Who answers for the rules of a plugin in a configuration of ESLint.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum UnderEslint {
+    /// The rules here, and no configuration, whosever it is, has to name the plugin: those of ESLint itself, and Bun's.
+    Always,
     /// The rules here. There is no package that could.
     Here,
     /// The rules here, in place of those of the package of that name, which is loaded for the rules that do not exist
@@ -118,7 +127,7 @@ macro_rules! plugins {
             const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
-                use UnderEslint::{Here, InPlaceOf, Package};
+                use UnderEslint::{Always, Here, InPlaceOf, Package};
                 match self {
                     $(Plugin::$plugin => Names {
                         prefixes: &$prefixes,
@@ -137,7 +146,7 @@ macro_rules! plugins {
 // prefix (`PLUGINS_OF_OXLINT`), and that in which its rules report at one node (`order_fixes_as_oxlint`).
 plugins! {
     /// `no-debugger`
-    Eslint: ["", "eslint"], Here, Whole;
+    Eslint: ["", "eslint"], Always, Whole;
     /// `@typescript-eslint/no-explicit-any`
     TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
@@ -168,6 +177,10 @@ plugins! {
     Jsdoc: ["jsdoc"], Package, Part;
     /// `vue/no-dupe-keys`
     Vue: ["vue"], Package, Part;
+    /// `bun/no-eager-dynamic-import`
+    Bun: ["bun"], Always, Whole;
+    /// `prettier/prettier`
+    Prettier: ["prettier"], Package, Whole;
 }
 
 impl Plugin {
@@ -184,6 +197,12 @@ impl Plugin {
             .prefixes
             .iter()
             .any(|it| it.as_bytes() == prefix)
+    }
+
+    /// Whether its rules can be configured without the plugin being named. A plugin of the project with that name hides
+    /// it.
+    pub fn is_always_there(self) -> bool {
+        self.names().under_eslint == UnderEslint::Always
     }
 
     pub(crate) fn is_whole(self) -> bool {
@@ -219,7 +238,7 @@ impl Plugin {
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
             }
-            UnderEslint::Here | UnderEslint::Package => false,
+            UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => false,
         })
     }
 
@@ -227,7 +246,7 @@ impl Plugin {
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
             UnderEslint::InPlaceOf(_, version) => Some(version),
-            UnderEslint::Here | UnderEslint::Package => None,
+            UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
     }
 
@@ -304,6 +323,11 @@ pub struct Meta {
     /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
     /// the options are oxlint's. It exists only with a configuration of oxlint.
     pub follows_oxlint: bool,
+    /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
+    /// rule of the package is asked.
+    pub hands_back: bool,
+    /// A hash of `name`.
+    pub(crate) key: u32,
 }
 
 impl Meta {
@@ -320,6 +344,8 @@ impl Meta {
             extends_base_rule: None,
             needs_modules: false,
             follows_oxlint: false,
+            hands_back: false,
+            key: hash_const(0, name.as_bytes()) as u32,
         }
     }
 
@@ -370,6 +396,11 @@ impl Meta {
 
     pub const fn needs_modules(mut self) -> Meta {
         self.needs_modules = true;
+        self
+    }
+
+    pub const fn hands_back(mut self) -> Meta {
+        self.hands_back = true;
         self
     }
 

@@ -6,7 +6,6 @@
 //! the lines that nodes and comments are on. This is as much of Babel's tree as that takes: the
 //! `#!` line, the directives and the import declarations that are not in a `declare module`.
 
-use crate::text::utf16_len;
 use bun_lint::ast::{File, Ident, Import, KeyKind, Prop, Stmt, StmtKind, StmtTag};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
@@ -307,7 +306,9 @@ impl<'a> Model<'a> {
             let span = self.comments[index].span;
             let lines = self.lines_of(span);
             let line_start = self.line_starts[lines.start as usize - 1].max(self.text_start());
-            let start_column = utf16_len(&self.text[line_start as usize..span.start as usize]);
+            let start_column = bun_core::strings::wtf8_len_utf16(
+                &self.text[line_start as usize..span.start as usize],
+            );
             let comment = &mut self.comments[index];
             (comment.start_line, comment.end_line, comment.start_column) =
                 (lines.start, lines.end, start_column);

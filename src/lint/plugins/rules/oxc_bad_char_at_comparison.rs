@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{get_member_expr, is_method_call, static_string};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -20,11 +21,18 @@ impl Rule for BadCharAtComparison {
             let ExprKind::Binary { left, right, .. } = e.kind() else {
                 return;
             };
-            if is_bad_char_at_comparison(left, right) {
-                cx.report(left, BAD_CHAR_AT_COMPARISON);
+            let (character_access, compared_string) = if is_bad_char_at_comparison(left, right) {
+                (left, right)
             } else if is_bad_char_at_comparison(right, left) {
-                cx.report(right, BAD_CHAR_AT_COMPARISON);
-            }
+                (right, left)
+            } else {
+                return;
+            };
+            cx.report(character_access, BAD_CHAR_AT_COMPARISON).labels_with(|labels| {
+                let len = static_string(compared_string).map_or(0, |value| strings::wtf8_len_utf16(value.bytes()));
+                labels.first("A single character is accessed here");
+                labels.push(compared_string, format!("And compared with a string of length {len} here"));
+            });
         });
     }
 }
@@ -34,7 +42,7 @@ fn is_bad_char_at_comparison(character_access: Expr, compared_string: Expr) -> b
 }
 
 fn is_invalid_comparison_string(e: Expr) -> bool {
-    static_string(e).is_some_and(|value| text::utf16_len(value.bytes()) > 1)
+    static_string(e).is_some_and(|value| strings::wtf8_len_utf16(value.bytes()) > 1)
 }
 
 fn is_single_character_access(e: Expr) -> bool {

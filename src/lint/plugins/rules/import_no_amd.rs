@@ -31,7 +31,7 @@ impl Rule for NoAmd {
                 && call.args().first().is_some_and(|it| it.tag() == ExprTag::Array && !it.is_parenthesized())
                 && is_in_root_scope(Node::Expr(e), &mut cx.state)
             {
-                cx.report(callee, NO_AMD);
+                cx.report(callee, NO_AMD).data("name", callee.text());
             }
         });
         AncestorMemo::default()

@@ -224,6 +224,8 @@ pub struct File<'a> {
     pub(crate) types: Option<crate::types::Checker<'a>>,
     pub(crate) sink: crate::context::Sink,
     pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
+    pub(crate) formatter: std::cell::Cell<Option<crate::formats::Formatter<'a>>>,
+    pub(crate) handed_back: std::cell::Cell<Option<crate::formats::Reason>>,
     vue_script: std::cell::Cell<VueScript>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
@@ -234,6 +236,7 @@ pub struct File<'a> {
     /// Whether there can be casts that are synthesized from JSDoc comments.
     hides_casts: bool,
     has_parse_errors: bool,
+    may_bind_a_parameter_twice: bool,
 }
 
 impl<'a> File<'a> {
@@ -255,6 +258,7 @@ impl<'a> File<'a> {
             is_flow: hir.is_flow,
             hides_casts: hir.is_js && !hir.jsdoc_comments.is_empty(),
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
+            may_bind_a_parameter_twice: hir.may_bind_a_parameter_twice,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
             atoms,
@@ -262,6 +266,8 @@ impl<'a> File<'a> {
             types,
             sink: crate::context::Sink::default(),
             modules: std::cell::Cell::new(None),
+            formatter: std::cell::Cell::new(None),
+            handed_back: std::cell::Cell::new(None),
             vue_script: std::cell::Cell::default(),
             path,
         }
@@ -304,6 +310,12 @@ impl<'a> File<'a> {
     #[inline]
     pub fn is_javascript(&self) -> bool {
         self.is_js
+    }
+
+    /// `hir::File::may_bind_a_parameter_twice`
+    #[inline]
+    pub(crate) fn may_bind_a_parameter_twice(&self) -> bool {
+        self.may_bind_a_parameter_twice
     }
 
     /// `.d.ts`, `.d.mts`, `.d.cts`

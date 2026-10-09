@@ -126,9 +126,7 @@ fn insert_after_super<'a>(
 
 // ── impl P ───────────────────────────────────────────────────────────────────
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // ── Expression builder helpers ───────────────────────
 
     /// recordUsage + E.Identifier in one call.

@@ -175,8 +175,8 @@ impl<'a> Directives<'a> {
             self.tags = Self::default_tags();
             self.at_next_document = false;
         }
-        let mut parts =
-            strings::split_any(text::trim(line), b" \t").filter(|part| !part.is_empty());
+        let mut parts = strings::split_any(strings::trim_js_whitespace(line), b" \t")
+            .filter(|part| !part.is_empty());
         let name = parts.next().unwrap_or_default();
         let parts: Vec<&[u8]> = parts.collect();
         match name {
@@ -451,7 +451,7 @@ fn single_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
             .get(1..source.len().saturating_sub(1))
             .unwrap_or_default(),
     );
-    if !text::includes(&folded, b"''") {
+    if !strings::contains(&folded, b"''") {
         return folded;
     }
     let mut result = Vec::with_capacity(folded.len());

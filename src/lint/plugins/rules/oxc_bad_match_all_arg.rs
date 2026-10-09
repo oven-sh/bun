@@ -21,8 +21,10 @@ impl Rule for BadMatchAllArg {
             return;
         }
         on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(match_all) = method_called_without_global_flag(e, "matchAll") {
-                cx.report(match_all, BAD_MATCH_ALL_ARG);
+            if let Some((match_all, regex)) = method_called_without_global_flag(e, "matchAll") {
+                cx.report(match_all, BAD_MATCH_ALL_ARG)
+                    .first_label("`matchAll` called here")
+                    .label(regex, "RegExp supplied here");
             }
         });
     }

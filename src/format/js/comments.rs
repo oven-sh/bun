@@ -13,7 +13,6 @@
 
 use super::source_text::SourceText;
 use crate::options::Flavor;
-use crate::text::{trim_end, trim_start};
 use bun_lint::ast::{
     BinOp, Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind,
 };
@@ -564,7 +563,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
     };
     let is_blank = |start: u32, end: u32| {
         text.get(start as usize..end as usize)
-            .is_some_and(|it| trim_start(it).is_empty())
+            .is_some_and(|it| bun_core::strings::trim_js_whitespace_start(it).is_empty())
     };
     let mut has_moved = false;
     // The comment before is on a line of its own, or follows one that is on the same line.
@@ -613,7 +612,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     .map_or(0, |last| last.span.end as usize)..,
             )
             .unwrap_or_default();
-        let after = trim_start(after);
+        let after = bun_core::strings::trim_js_whitespace_start(after);
 
         // The first of its run, after `=`, `= (` or before an assignment operator, or with nothing but
         // an operator between it and the comment before.
@@ -634,9 +633,11 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     | b'!'
             )
         };
-        let mut before = trim_end(text.get(..run_start as usize).unwrap_or_default());
+        let mut before = bun_core::strings::trim_js_whitespace_end(
+            text.get(..run_start as usize).unwrap_or_default(),
+        );
         while let [rest @ .., b'('] = before {
-            before = trim_end(rest);
+            before = bun_core::strings::trim_js_whitespace_end(rest);
         }
         let is_at_assignment_operator =
             starts_with_assignment_operator(after) || before.ends_with(b"=");
@@ -645,7 +646,9 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                 || (!is_own_line
                     && previous.is_some_and(|previous| {
                         let operator = before.get(previous.span.end as usize..).unwrap_or_default();
-                        trim_start(operator).iter().all(is_operator)
+                        bun_core::strings::trim_js_whitespace_start(operator)
+                            .iter()
+                            .all(is_operator)
                     })))
             && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
         {
@@ -660,8 +663,10 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         }
         // A comment before the parentheses of a type cast stays there.
         let is_type_cast = comment.flags & TYPE_CAST != 0
-            && trim_start(text.get(comment.span.end as usize..).unwrap_or_default())
-                .starts_with(b"(");
+            && bun_core::strings::trim_js_whitespace_start(
+                text.get(comment.span.end as usize..).unwrap_or_default(),
+            )
+            .starts_with(b"(");
         if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || is_type_cast {
             continue;
         }
@@ -766,7 +771,7 @@ fn is_indentable_text(content: &[u8]) -> bool {
         return false;
     }
     while let Some(line) = lines.next() {
-        let line = crate::text::trim_start(line);
+        let line = bun_core::strings::trim_js_whitespace_start(line);
         // The last line goes on with the `*` of `*/`.
         if !line.starts_with(b"*") && !(line.is_empty() && lines.peek().is_none()) {
             return false;

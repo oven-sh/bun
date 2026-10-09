@@ -57,6 +57,8 @@ unsafe extern "C" {
         filename_len: usize,
         exception: *mut JSValue,
     ) -> JSValue;
+    /// src/jsc/bindings/LintNodes.cpp
+    safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
 }
 
 fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
@@ -130,7 +132,7 @@ fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 /// Runs the program in the VM of this thread, which is new.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
-    let mut source = b"(function (request, again, decode) {\n\
+    let mut source = b"(function (request, again, decode, native) {\n\
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();
@@ -159,6 +161,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
         JSFunction::create(global, "request", __jsc_host_request, 3, Default::default()),
         JSFunction::create(global, "again", __jsc_host_again, 1, Default::default()),
         JSFunction::create(global, "decode", __jsc_host_decode, 3, Default::default()),
+        Bun__Lint__nodeFunctions(global),
     ];
     match program.call(global, JSValue::UNDEFINED, &functions) {
         Ok(handle) => {
@@ -260,12 +263,6 @@ impl Vm for ThreadVm {
     }
 }
 
-/// With no more VMs than this, cores are left to compile on while the VMs run.
-const FEW_VMS: usize = 4;
-
-/// So many files do not take more than a few VMs.
-const FEW_FILES: usize = 128;
-
 /// What a line of `/proc/self/cgroup` names: a directory, under which other one it is, and the file in it and in those above it
 /// that has a limit. `0::/a/b` with one hierarchy, `9:memory:/a/b` with one for each controller.
 #[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
@@ -311,14 +308,18 @@ fn limit_of_the_groups() -> Option<usize> {
 }
 
 /// What all engines together may take: two thirds of the memory of the machine, or of the container: what is left is for the rest
-/// of this process, and for what they grow by before that is seen. `BUN_LINT_MEMORY`: for tests.
+/// of this process, and for what they grow by before that is seen.
 fn memory_for_engines() -> usize {
+    memory() / 3 * 2
+}
+
+/// The memory of the machine, or of the container. `BUN_LINT_MEMORY`: for tests.
+pub(super) fn memory() -> usize {
     let said = bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY"));
-    let memory = said.and_then(limit_in).unwrap_or_else(|| {
+    said.and_then(limit_in).unwrap_or_else(|| {
         let machine = bun_core::get_total_memory_size();
         limit_of_the_groups().map_or(machine, |it| it.min(machine))
-    });
-    memory / 3 * 2
+    })
 }
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. If it `frees`, and with
@@ -468,6 +469,9 @@ struct Borrowed<'e> {
     desk: Arc<Desk>,
     /// The size of the file that it is borrowed for.
     size: usize,
+    since: std::time::Instant,
+    /// It has not loaded what it needs yet.
+    is_first: bool,
     /// A caller further up has borrowed it, and gives it back.
     is_borrowed_further_up: bool,
 }
@@ -544,7 +548,10 @@ impl Drop for Borrowed<'_> {
             state.idle.push(self.at);
         }
         drop(state);
-        self.engines.demand.note(self.size);
+        if self.size > 0 {
+            let seconds = self.since.elapsed().as_secs_f64();
+            (self.engines.demand).note(self.size, seconds, self.is_first);
+        }
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -668,6 +675,8 @@ impl Engines {
                 at,
                 desk: Arc::clone(&state.all[at].desk),
                 size,
+                since: std::time::Instant::now(),
+                is_first: false,
                 is_borrowed_further_up: true,
             });
         }
@@ -717,6 +726,8 @@ impl Engines {
             at,
             desk: Arc::clone(&state.all[at].desk),
             size,
+            since: std::time::Instant::now(),
+            is_first: !state.all[at].is_loaded(),
             is_borrowed_further_up: false,
         })
     }
@@ -743,12 +754,13 @@ impl Engine for Engines {
         (state.most, state.all.len() - state.count())
     }
 
-    fn expect(&self, files: usize, size: u64, most: usize) {
+    fn expect(&self, _files: usize, size: u64, most: usize) {
         self.demand.expect(size, most);
         // As many as the files are worth.
         let is_enough = |&engines: &usize| !self.demand.is_worth_another(engines);
         let engines = (1..most).find(is_enough).unwrap_or(most);
-        let is_for_few = engines <= FEW_VMS || files <= FEW_FILES;
+        // Cores are left to compile on while the VMs run.
+        let is_for_few = engines <= usize::from(bun_core::get_thread_count()) / 2;
         (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
     }
 }

@@ -22,6 +22,11 @@ const ARIA_LABELLED_BY_VALUE: Message = Message::new("", "Missing value for `ari
 const PREFER_ALT: Message = Message::new("", "ARIA used where native HTML could suffice.");
 /// For `object`, `area` and `input[type="image"]`.
 const MISSING_ALTERNATIVE_TEXT: Message = Message::new("", "Missing alternative text.");
+const OBJECT_HELP: &str =
+    "Embedded <object> elements must have a text alternative through the `alt`, `aria-label`, or `aria-labelledby` prop.";
+const AREA_HELP: &str =
+    "Each area of an image map must have a text alternative through the `alt`, `aria-label`, or `aria-labelledby` prop.";
+const INPUT_TYPE_IMAGE_HELP: &str = "<input> elements with type=\"image\" must have a text alternative through the `alt`, `aria-label`, or `aria-labelledby` prop.";
 
 impl Rule for AltText {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "alt-text", Kind::Problem);
@@ -54,17 +59,23 @@ impl Rule for AltText {
                 custom_tags.as_ref().is_some_and(|custom_tags| *name == *tag || is_custom(custom_tags))
             };
             let is_input = |custom_tags: &Vec<String>| is_input_with_type_image(&name, jsx_el) || is_custom(custom_tags);
-            let message = if is(b"img", &rule.img) {
-                img_rule(jsx_el)
+            // The three with one message are told apart by the help.
+            let (message, help) = if is(b"img", &rule.img) {
+                (img_rule(jsx_el), "")
             } else if is(b"object", &rule.object) {
-                object_rule(cx.file(), jsx_el)
-            } else if is(b"area", &rule.area) || rule.input_type_image.as_ref().is_some_and(is_input) {
-                area_rule(jsx_el)
+                (object_rule(cx.file(), jsx_el), OBJECT_HELP)
+            } else if is(b"area", &rule.area) {
+                (area_rule(jsx_el), AREA_HELP)
+            } else if rule.input_type_image.as_ref().is_some_and(is_input) {
+                (area_rule(jsx_el), INPUT_TYPE_IMAGE_HELP)
             } else {
-                None
+                (None, "")
             };
             if let Some(message) = message {
-                cx.report(jsx_el.opening_span(), message);
+                let report = cx.report(jsx_el.opening_span(), message);
+                if !help.is_empty() {
+                    report.help(help);
+                }
             }
         });
     }

@@ -133,7 +133,7 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB: each has to load the plugins again, and takes memory. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they stay within two thirds of the memory of the machine, or of the container: there are fewer of them if the plugins are large.
+- The rules in JavaScript run on as many threads as still find work when they have loaded the plugins, which each has to do again: one for a small project, one per CPU core for a large one. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they stay within two thirds of the memory of the machine, or of the container: there are fewer of them if the plugins are large.
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 
@@ -278,6 +278,294 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint, 
 - `--report-unused-disable-directives` warns.
 - `--fix` applies the fixes once. ESLint lints again, up to ten times. What is left is reported where it was before the fixes.
 - The `<script>` blocks of `.vue` and `.svelte` files are linted, and the frontmatter and the `<script>` blocks of `.astro` files. Each block is linted by itself. The template is not read, so `no-unused-vars` is off in these files, and `prefer-const` is off in `.vue` and `.svelte` files.
+
+## Bun's own rules
+
+The rules that start with `bun/` exist only in `bun lint`. All of them are off until a configuration file turns them on. No plugin has to be named.
+
+ESLint and oxlint do not know these rules. They refuse a configuration file or a comment that names one.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-eager-dynamic-import": "error",
+    "bun/no-env-at-module-scope": ["warn", { "allow": ["NODE_ENV", "CI"] }]
+  }
+}
+```
+
+Several rules are about code that runs **while a module is evaluated**: everything outside functions, plus functions that are called where they are written, static fields and static blocks. That code runs on every start, whether or not its result is used.
+
+### `bun/no-eager-dynamic-import`
+
+An `import()` outside any function starts to load at once. It looks lazy and is not.
+
+```ts
+const parser = import("./parser"); // ✗
+
+const loadParser = () => import("./parser"); // ✓
+```
+
+### `bun/no-eager-native-addon`
+
+A native addon (`*.node`) that is imported or required outside any function is loaded on every start.
+
+```ts
+const addon = require("./build/Release/addon.node"); // ✗
+
+let addon;
+const getAddon = () => (addon ??= require("./build/Release/addon.node")); // ✓
+```
+
+### `bun/no-env-at-module-scope`
+
+An environment variable that is read while a module is evaluated is fixed before anything can set it, such as a test or a `.env` loader. The rule knows `process.env`, `Bun.env` and `import.meta.env`.
+
+```ts
+const port = process.env.PORT; // ✗
+
+const getPort = () => process.env.PORT; // ✓
+```
+
+| Option  | Default        | Meaning                             |
+| ------- | -------------- | ----------------------------------- |
+| `allow` | `["NODE_ENV"]` | Variables that can be read anywhere |
+
+`NODE_ENV` is allowed by default because bundlers replace it with a constant.
+
+### `bun/no-literal-temp-dir`
+
+`/tmp` does not exist on Windows, and `TMPDIR` can point elsewhere.
+
+```ts
+const file = "/tmp/report.json"; // ✗
+
+const file = join(tmpdir(), "report.json"); // ✓
+```
+
+| Option        | Default                | Meaning                           |
+| ------------- | ---------------------- | --------------------------------- |
+| `directories` | `["/tmp", "/var/tmp"]` | The directories that are reported |
+
+### `bun/no-negative-repeat-count`
+
+`"x".repeat(n)` throws a `RangeError` if `n` is negative. A count that comes out of a subtraction needs a lower bound. The rule suggests one.
+
+```ts
+const padding = " ".repeat(width - label.length); // ✗
+
+const padding = " ".repeat(Math.max(0, width - label.length)); // ✓
+```
+
+### `bun/no-redundant-catch-type`
+
+With `strict` or `useUnknownInCatchVariables`, the variable of a `catch` clause is `unknown` already. `--fix` removes the annotation.
+
+```ts
+try {
+  run();
+} catch (error: unknown) {} // ✗
+```
+
+### `bun/no-useless-spread-fallback`
+
+Spreading `false`, `null` or `undefined` into an object does nothing, so the empty object is allocated for nothing. The rule suggests `&&`.
+
+```ts
+const options = { ...(verbose ? { level: "debug" } : {}) }; // ✗
+
+const options = { ...(verbose && { level: "debug" }) }; // ✓
+```
+
+| Option                     | Default | Meaning                                                                                         |
+| -------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `ignoreConditionsThatCall` | `[]`    | Conditions that call one of these functions are left alone, such as `feature` from `bun:bundle` |
+
+### `bun/no-array-just-to-count`
+
+`.split(",").length` builds an array of all the pieces to count them. The rule reports separators of one character.
+
+```ts
+const columns = row.split(",").length; // ✗
+```
+
+| Option          | Default | Meaning                                                                                                    |
+| --------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `countFunction` | none    | A function `(text, separator) => number` that counts occurrences. `--fix` calls it wherever it is in scope |
+
+### `bun/prefer-builtin-sleep`
+
+A promise that only waits for a timer is [`Bun.sleep()`](/runtime/utils#bun-sleep). The rule suggests it.
+
+```ts
+await new Promise(done => setTimeout(done, 250)); // ✗
+
+await Bun.sleep(250); // ✓
+```
+
+### `bun/react-prefer-updater-function`
+
+State that a callback has captured can be out of date when the setter is called. A function gets the current state.
+
+```tsx
+setRows([...rows, row]); // ✗
+
+setRows(previous => [...previous, row]); // ✓
+```
+
+### `bun/prefer-lazy-schema`
+
+A validation schema that is built outside any function costs time on every start, whether or not something is validated. By default the rule looks at what starts with `z`, as [Zod](https://zod.dev) is usually imported.
+
+```ts
+const User = z.object({ name: z.string() }); // ✗
+
+const getUser = once(() => z.object({ name: z.string() })); // ✓
+```
+
+| Option          | Default | Meaning                                                     |
+| --------------- | ------- | ----------------------------------------------------------- |
+| `roots`         | `["z"]` | The names that a schema starts with                         |
+| `methods`       | `[]`    | Methods that make a schema of another one, such as `extend` |
+| `factorySuffix` | none    | Functions whose name ends like this make a schema           |
+| `lazyWrapper`   | none    | A function of yours that the message recommends             |
+
+### `bun/no-side-effects-on-import`
+
+A statement outside any function that calls something, or assigns to a property, makes `import` do more than define things. Bundlers cannot drop such a module. `module.exports` and `exports` are left alone.
+
+```ts
+connect(); // ✗
+
+export function start() {
+  connect(); // ✓
+}
+```
+
+| Option  | Default | Meaning                                                   |
+| ------- | ------- | --------------------------------------------------------- |
+| `allow` | `[]`    | Calls that are fine, as they are written: `"console.log"` |
+
+### `bun/no-cwd-dependent-path`
+
+What a relative path means to `node:fs`, `path.resolve()`, `Bun.file()` and `Bun.write()` depends on the directory that the process was started in.
+
+```ts
+const text = readFileSync("./schema.sql", "utf8"); // ✗
+
+const text = readFileSync(new URL("./schema.sql", import.meta.url), "utf8"); // ✓
+```
+
+| Option      | Default | Meaning                                       |
+| ----------- | ------- | --------------------------------------------- |
+| `functions` | `[]`    | More functions whose first argument is a path |
+
+### `bun/no-unportable-commands`
+
+The rule looks at the commands that `node:child_process` and `Bun.spawn()` start, where they are written out:
+
+- `npm`, `npx`, `pnpm`, `pnpx` and `yarn` are `.cmd` scripts on Windows, which need a shell.
+- Windows has no `ls`, `grep`, `rm` and so on.
+- `&&`, `|`, `>` and the like are read by a shell, and which shell that is depends on the system.
+- The options of `ps` differ from system to system. This is reported in any string.
+
+```ts
+spawn("npm", ["install"]); // ✗
+execSync("rm -rf dist"); // ✗
+
+await rm("dist", { recursive: true, force: true }); // ✓
+```
+
+| Option      | Default               | Meaning                                          |
+| ----------- | --------------------- | ------------------------------------------------ |
+| `scripts`   | the five above        | Commands that are scripts on Windows             |
+| `posixOnly` | 33 utilities of POSIX | Commands that Windows does not have              |
+| `launchers` | `[]`                  | More functions whose first argument is a command |
+
+### `bun/no-console-window-flash`
+
+A child process gets a console window of its own on Windows, which opens and closes at once. It does not if `windowsHide` is set, or if the child shares a stream with its parent (`"inherit"`).
+
+```ts
+spawn("git", ["status"]); // ✗
+
+spawn("git", ["status"], { windowsHide: true }); // ✓
+```
+
+### `bun/no-unseeded-random-in-property-test`
+
+In a property of [fast-check](https://fast-check.dev), values that come from `fc.sample()` or `Math.random()` are not decided by the seed. A failure cannot be replayed or shrunk.
+
+```ts
+fc.property(fc.nat(), a => check(a, fc.sample(fc.nat(), 1)[0])); // ✗
+
+fc.property(fc.nat(), fc.nat(), (a, b) => check(a, b)); // ✓
+```
+
+### `bun/react-no-namespace-hooks`
+
+`--fix` imports the hook by name.
+
+```tsx
+const [count, setCount] = React.useState(0); // ✗
+
+const [count, setCount] = useState(0); // ✓
+```
+
+### `bun/react-no-latest-value-ref`
+
+React can render a component more than once, or throw a render away, so a ref must not change while it renders. An effect that only copies a value into a ref is what [`useEffectEvent`](https://react.dev/reference/react/useEffectEvent) is for.
+
+```tsx
+function Search({ query }) {
+  const lastQuery = useRef(query);
+  lastQuery.current = query; // ✗
+}
+```
+
+### `bun/jsx-no-forbidden-nesting`
+
+By default the rule knows what HTML rules out: `<a>` and `<button>` inside `<a>` or `<button>`, `<form>` inside `<form>`, `<label>` inside `<label>`.
+
+```tsx
+<a href="/">
+  <button>Home</button> {/* ✗ */}
+</a>
+```
+
+| Option  | Default   | Meaning                                                                        |
+| ------- | --------- | ------------------------------------------------------------------------------ |
+| `pairs` | see above | `{ "outer": "Text", "inner": "View" }`: no `<View>` anywhere inside a `<Text>` |
+
+### `bun/consistent-directive-prefix`
+
+`bun lint` and oxlint read both `eslint-disable` and `oxlint-disable` comments. ESLint reads only its own. `--fix` rewrites the others.
+
+| Option   | Default    | Meaning                  |
+| -------- | ---------- | ------------------------ |
+| `prefix` | `"eslint"` | `"eslint"` or `"oxlint"` |
+
+### `bun/no-restricted-text`
+
+Reports text that matches a regular expression. It looks at text as it is written in the source, not at identifiers.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-restricted-text": [
+      "error",
+      { "patterns": [{ "pattern": "\\bTODO\\b", "message": "Open an issue instead.", "in": ["comments"] }] }
+    ]
+  }
+}
+```
+
+| Of a pattern | Default | Meaning                                                                       |
+| ------------ | ------- | ----------------------------------------------------------------------------- |
+| `pattern`    |         | The regular expression                                                        |
+| `flags`      | `"u"`   | Its flags                                                                     |
+| `message`    |         | What to say                                                                   |
+| `in`         | all     | `"strings"`, `"templates"`, `"jsxText"`, `"comments"`, `"regularExpressions"` |
 
 ## What cannot be linted
 

@@ -19,6 +19,7 @@ pub mod code_path;
 pub mod context;
 pub(crate) mod estree;
 pub mod fix;
+pub mod formats;
 pub mod js_plugin;
 pub mod json;
 pub mod language;
@@ -26,7 +27,9 @@ pub mod linter;
 pub mod literal;
 pub mod modules;
 pub mod options;
+pub mod oxlint_help;
 pub(crate) mod oxlint_messages;
+pub mod paths;
 pub mod regex;
 pub mod rule;
 pub mod runner;
@@ -48,7 +51,7 @@ pub mod estree_for_tests {
 pub mod prelude {
     pub use crate::ast::*;
     pub use crate::code_path::{CodePath, CurrentSegments, Origin, Segment, Traversal};
-    pub use crate::context::{Cx, IntoText, Report};
+    pub use crate::context::{Cx, Details, IntoText, Report};
     pub use crate::fix::{Fix, Fixer};
     pub use crate::language::{Global, LanguageOptions, SourceType};
     pub use crate::literal::Literal;

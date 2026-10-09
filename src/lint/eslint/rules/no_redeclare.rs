@@ -131,7 +131,12 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
     let is_before = is_oxlint && first != DeclarationType::Builtin;
     for (&(_, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
         let message = if declaration_type == first { REDECLARED } else { detail };
-        cx.report(if is_before { previous } else { span }, message).data("id", name);
+        cx.report(if is_before { previous } else { span }, message).data("id", name).labels_with(|labels| {
+            if is_before {
+                labels.first(format!("'{}' is already defined.", bstr::BStr::new(name)));
+                labels.push(span, "It can not be redeclared here.");
+            }
+        });
     }
 }
 

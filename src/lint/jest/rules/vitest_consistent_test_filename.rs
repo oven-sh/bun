@@ -9,6 +9,8 @@ pub struct ConsistentTestFilename {
     all_test_pattern: Matcher,
     /// By default `.*\.test\.[tj]sx?$`
     pattern: Matcher,
+    /// As `help` has it.
+    pattern_source: String,
 }
 
 enum Matcher {
@@ -20,13 +22,17 @@ enum Matcher {
 const CONSISTENT_TEST_FILENAME: Message =
     Message::new("", "The file {{file_path}} is a test file, but its name does not match the expected pattern.");
 
-/// `/pattern/flags`, of which the flags are ignored, or a pattern.
-fn matcher_pattern(configured: Option<&str>) -> Matcher {
-    let Some(pattern) = configured else {
-        return Matcher::Default;
-    };
+/// Of `/pattern/flags`, of which the flags are ignored, the pattern.
+fn source_of(pattern: &str) -> &str {
     let literal = pattern.strip_prefix('/').and_then(|it| it.get(..strings::last_index_of_char(it.as_bytes(), b'/')?));
-    Matcher::Pattern(rust_regex(literal.unwrap_or(pattern), false).map(Box::new))
+    literal.unwrap_or(pattern)
+}
+
+fn matcher_pattern(configured: Option<&str>) -> Matcher {
+    match configured {
+        Some(pattern) => Matcher::Pattern(rust_regex(source_of(pattern), false).map(Box::new)),
+        None => Matcher::Default,
+    }
 }
 
 /// The `test` or `spec` of a path that `\.(test|spec)\.[tj]sx?$` matches.
@@ -46,6 +52,7 @@ impl Rule for ConsistentTestFilename {
         ConsistentTestFilename {
             all_test_pattern: matcher_pattern(config.str("allTestPattern")),
             pattern: matcher_pattern(config.str("pattern")),
+            pattern_source: config.str("pattern").map_or(r".*\.test\.[tj]sx?$", source_of).to_owned(),
         }
     }
 
@@ -56,10 +63,11 @@ impl Rule for ConsistentTestFilename {
             Matcher::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(path)),
         };
         if is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test") {
-            on.finish(|_, cx| {
-                let file_path = cx.file().path();
-                let file_name = strings::last_index_of_any(file_path, b"/\\").and_then(|at| file_path.get(at + 1..));
-                cx.report_file(CONSISTENT_TEST_FILENAME).data("file_path", file_name.unwrap_or(file_path));
+            on.finish(|rule, cx| {
+                let file_name = bun_lint::paths::file_name(cx.file().path());
+                cx.report_file(CONSISTENT_TEST_FILENAME)
+                    .data("file_path", file_name)
+                    .data("pattern", rule.pattern_source.clone());
             });
         }
     }

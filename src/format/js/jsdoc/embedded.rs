@@ -1,6 +1,6 @@
 //! Code and types in comments, which are formatted as what they are.
 
-use super::text::{trim, trim_end, trim_end_matches, trim_start};
+use super::text::trim_end_matches;
 use crate::options::{
     EmbeddedLanguageFormatting, FormatOptions, LineEnding, LineWidth, TrailingCommas,
 };
@@ -40,7 +40,7 @@ fn parse_and_build(path: &[u8], code: &[u8], options: &FormatOptions) -> Option<
     if !format_javascript(path, code, options, &mut out) {
         return None;
     }
-    out.truncate(trim_end(&out).len());
+    out.truncate(strings::trim_unicode_whitespace_end(&out).len());
     Some(out)
 }
 
@@ -97,7 +97,7 @@ pub(super) fn format_embedded_language(
         _ => return None,
     }
     .ok()?;
-    out.truncate(trim_end(&out).len());
+    out.truncate(strings::trim_unicode_whitespace_end(&out).len());
     Some(out)
 }
 
@@ -144,7 +144,7 @@ pub(super) fn format_embedded_js(
     options: &FormatOptions,
 ) -> Option<Vec<u8>> {
     let base_options = embedded_options(options, print_width);
-    let trimmed = trim(code);
+    let trimmed = strings::trim_unicode_whitespace(code);
     if !trimmed.starts_with(b"{") {
         // TSX first: `getItem<number>(..)` is something else in JSX.
         return parse_and_build(TSX, code, &base_options)
@@ -172,7 +172,9 @@ pub(super) fn format_embedded_js(
             return Some(formatted);
         };
         // Something behind the object: it is a call, and the parentheses are not the ones that were added.
-        trim(inner).ends_with(b"}").then(|| inner.to_vec())
+        strings::trim_unicode_whitespace(inner)
+            .ends_with(b"}")
+            .then(|| inner.to_vec())
     };
     format_object(JSX).or_else(|| format_object(TSX))
 }
@@ -188,7 +190,7 @@ pub(super) fn format_type_via_formatter(
     }
     // `...Type` is formatted as `(Type)[]`.
     if let Some(rest) = type_str.strip_prefix(b"...") {
-        let rest = trim_start(rest);
+        let rest = strings::trim_unicode_whitespace_start(rest);
         if rest.is_empty() {
             return None;
         }
@@ -200,9 +202,9 @@ pub(super) fn format_type_via_formatter(
     }
     const START: &[u8] = b"type __t = ";
     let formatted = parse_and_build(TSX, &[START, type_str, b";"].concat(), options)?;
-    let result = trim_start(formatted.get(START.len()..)?);
+    let result = strings::trim_unicode_whitespace_start(formatted.get(START.len()..)?);
     let result = trim_end_matches(result, |c| c == ';' || c == '\n');
-    let result = trim(result.strip_prefix(b"|").unwrap_or(result));
+    let result = strings::trim_unicode_whitespace(result.strip_prefix(b"|").unwrap_or(result));
     (!result.is_empty() && result != type_str).then(|| result.to_vec())
 }
 

@@ -264,9 +264,7 @@ fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
     )
     .into_bytes();
     // No more of them than are shown.
-    let lines: Vec<&[u8]> = bun_lint::utils::text::lines(text)
-        .take(line as usize + 3)
-        .collect();
+    let lines: Vec<&[u8]> = strings::js_lines(text).take(line as usize + 3).collect();
     write_frame(&mut out, &lines[..], line, column);
     out
 }

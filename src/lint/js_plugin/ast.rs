@@ -363,7 +363,7 @@ impl<'a> Writer<'a, '_> {
                 self.offsets.to_utf16(start),
                 self.offsets.to_utf16(start + value.len() as u32),
             ),
-            None if has_surrogate(value) => return self.units(value),
+            None if bun_core::strings::wtf8_has_surrogate(value) => return self.units(value),
             None => {
                 let start = self.extra_units;
                 self.tree.extra.extend_from_slice(value);
@@ -401,18 +401,6 @@ impl<'a> Writer<'a, '_> {
         self.tree.lists[at] = (self.tree.lists.len() - at - 1) as u32;
         word(Tag::Units, at)
     }
-}
-
-/// Whether WTF-8 has a surrogate.
-fn has_surrogate(text: &[u8]) -> bool {
-    let mut rest = text;
-    while let Some(at) = bun_core::strings::index_of_char_usize(rest, 0xED) {
-        if matches!(rest.get(at + 1), Some(0xA0..=0xBF)) {
-            return true;
-        }
-        rest = &rest[at + 1..];
-    }
-    false
 }
 
 /// For each of the selectors: how many nodes match it, then these, in the order of their numbers.

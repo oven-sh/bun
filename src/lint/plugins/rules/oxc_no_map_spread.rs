@@ -56,7 +56,8 @@ impl NoMapSpread {
         if !bun_core::strings::contains(mapper.text(), b"...") {
             return;
         }
-        let mut finder = SpreadFinder { callback, declarations: FxHashMap::default(), lists: Vec::new() };
+        let mut finder =
+            SpreadFinder { callback, declarations: FxHashMap::default(), lists: Vec::new(), return_span: None };
         let mut spreads = finder.spreads_in_returns();
         if spreads.is_empty() {
             return;
@@ -93,11 +94,12 @@ impl NoMapSpread {
                     continue;
                 }
             };
+            let message = if spread.tag() == ExprTag::Object { OBJECT_SPREAD } else { ARRAY_SPREAD };
+            let return_span = finder.return_span;
+            let report = cx.report(map_call_site, message).labels_with(|labels| label(labels, spread, return_span));
             let ExprKind::Object(properties) = spread.kind() else {
-                cx.report(map_call_site, ARRAY_SPREAD);
                 continue;
             };
-            let report = cx.report(map_call_site, OBJECT_SPREAD);
             if properties.len() > 1 && properties.first().is_some_and(|it| it.kind() == PropKind::Spread) {
                 report.suggest(USE_OBJECT_ASSIGN, |fixer| fixer.replace(spread, spread_to_object_assign(properties)));
             }
@@ -203,6 +205,30 @@ struct Group<'a> {
     found: SmallVec<[Found<'a>; 2]>,
 }
 
+/// The call, each `...` of `spread`, and what is returned if `spread` is not in it.
+fn label(labels: &mut Details, spread: Expr, return_span: Option<Span>) {
+    let is_spread = |it: &Prop| it.kind() == PropKind::Spread;
+    let spans: SmallVec<[Span; 4]> = match spread.kind() {
+        ExprKind::Object(properties) => properties.iter().filter(is_spread).map(Prop::span).collect(),
+        ExprKind::Array(elements) => elements.iter().filter(|it| it.tag() == ExprTag::Spread).map(Expr::span).collect(),
+        _ => return,
+    };
+    labels.first(match spread.tag() {
+        ExprTag::Object => "This map call spreads an object",
+        _ => "This map call spreads an array",
+    });
+    for (i, span) in spans.iter().enumerate() {
+        labels.push(*span, match (i, spans.len()) {
+            (0, 1) => "This spread allocates a new value on each iteration",
+            (0, _) => "These spreads allocate new values on each iteration",
+            _ => "",
+        });
+    }
+    if let Some(returned) = return_span.filter(|it| !it.contains(spread.span())) {
+        labels.push(returned, "Map returns the spread here");
+    }
+}
+
 /// oxlint's `SpreadInReturnVisitor`. That looks at the declaration of a variable each time the variable is returned, or is the value
 /// of one that is. Here a declaration is looked at once.
 struct SpreadFinder<'a> {
@@ -210,19 +236,31 @@ struct SpreadFinder<'a> {
     declarations: FxHashMap<VarDecl<'a>, Visit<'a>>,
     /// Each has two elements or more.
     lists: Vec<Vec<Found<'a>>>,
+    /// What the last `return` returns.
+    return_span: Option<Span>,
 }
 
 impl<'a> SpreadFinder<'a> {
     fn spreads_in_returns(&mut self) -> Vec<Found<'a>> {
         let mut pending: SmallVec<[Stmt<'a>; 16]> = match self.callback.body() {
             FnBody::None => return Vec::new(),
-            FnBody::Expr(body) => return self.spreads_in(body).into_iter().collect(),
+            FnBody::Expr(body) => {
+                self.return_span = Some(body.outer_span());
+                return self.spreads_in(body).into_iter().collect();
+            }
             FnBody::Block(statements) => statements.iter().collect(),
         };
         let mut spreads = Vec::new();
+        let mut last_return = 0;
         // Also what the functions and the methods of the classes return that are declared in the callback. No expression is looked
         // into but what is returned.
         while let Some(statement) = pending.pop() {
+            if let StmtKind::Return(argument) = statement.kind()
+                && statement.span().start >= last_return
+            {
+                last_return = statement.span().start;
+                self.return_span = argument.map(Expr::outer_span);
+            }
             match statement.kind() {
                 StmtKind::Return(Some(argument)) => spreads.extend(self.spreads_in(argument)),
                 StmtKind::Block(statements) => pending.extend(statements),

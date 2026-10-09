@@ -41,16 +41,6 @@ enum Quoted {
     Template,
 }
 
-/// How many bytes the character has that starts with `lead`.
-fn utf8_len(lead: u8) -> usize {
-    match lead {
-        0..0xC0 => 1,
-        0xC0..0xE0 => 2,
-        0xE0..0xF0 => 3,
-        _ => 4,
-    }
-}
-
 /// `backslash`: where it is. `character`: what it escapes.
 fn report<'a>(
     backslash: u32,
@@ -102,7 +92,7 @@ fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
             at = index + 1;
             continue;
         }
-        at = index + 1 + utf8_len(escaped);
+        at = index + 1 + usize::from(strings::wtf8_byte_sequence_length(escaped));
         let character = raw.get(index + 1..at).unwrap_or_default();
         let is_valid = match escaped {
             b'\\' | b'n' | b'r' | b'v' | b't' | b'b' | b'f' | b'u' | b'x' | b'\n' | b'\r' => true,
@@ -213,7 +203,8 @@ impl NoUselessEscape {
             };
             let start = character.start() as usize;
             let text = pattern.get(start + 1..start + 1 + escaped).unwrap_or_default();
-            let is_whole = text.first().is_some_and(|&lead| utf8_len(lead) == text.len());
+            let is_whole =
+                text.first().is_some_and(|&lead| usize::from(strings::wtf8_byte_sequence_length(lead)) == text.len());
             report(
                 e.span().start + 1 + character.start(),
                 if is_whole { text } else { "\u{FFFD}".as_bytes() },

@@ -50,6 +50,12 @@ impl NoExtraneousClass {
             return;
         }
         let report = cx.report(place, message);
+        let report = match members.is_empty() && class.decorators().next().is_some() {
+            true => report.help(
+                "Set \"allowWithDecorator\": true in your config to allow empty decorated classes",
+            ),
+            false => report,
+        };
         // oxlint suggests to remove an empty class declaration without decorators, with its `export`.
         if let Node::Stmt(statement) = class.owner()
             && members.is_empty()

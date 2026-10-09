@@ -221,7 +221,10 @@ impl Parser<'_> {
     pub(crate) fn parse_microsyntax(&mut self) -> Parsed<Vec<Part>> {
         let mut bindings = self.parse_template_bindings()?.into_iter().peekable();
         if let Some(Binding::Expression { end, .. }) = bindings.peek()
-            && text::trim(self.input.get(..*end as usize).unwrap_or_default()).is_empty()
+            && bun_core::strings::trim_js_whitespace(
+                self.input.get(..*end as usize).unwrap_or_default(),
+            )
+            .is_empty()
         {
             bindings.next();
         }

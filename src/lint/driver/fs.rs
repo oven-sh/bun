@@ -104,13 +104,8 @@ pub(crate) fn read_start<'a>(path: &[u8], start: &'a mut [u8]) -> &'a [u8] {
 
 pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
     let mut all = Vec::new();
-    let mut buffer = vec![0; 64 * 1024];
-    loop {
-        match bun_sys::read(Fd::stdin(), &mut buffer)? {
-            0 => return Ok(all),
-            count => all.extend_from_slice(&buffer[..count]),
-        }
-    }
+    File::stdin().read_to_end_into(&mut all)?;
+    Ok(all)
 }
 
 pub(crate) struct Entry {

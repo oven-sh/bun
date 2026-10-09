@@ -18,17 +18,18 @@ const DATA_LOWERCASE_REQUIRED: Message =
 const UNKNOWN_PROP: Message = Message::new("", "Unknown property found");
 const USE_STANDARD_NAME: Message = Message::new("", "Use '{{x1}}' instead");
 
-/// The elements that an attribute is for. Sorted, as all the tables are.
+/// The elements that an attribute is for. The attributes are sorted, as all the tables are; the elements are in the order in
+/// which oxlint lists them.
 static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("abbr", &["td", "th"]),
     (
         "align",
         &[
-            "applet", "caption", "col", "colgroup", "hr", "iframe", "img", "table", "tbody", "td", "tfoot", "th",
-            "thead", "tr",
+            "table", "th", "colgroup", "img", "caption", "hr", "tfoot", "thead", "tr", "col", "iframe", "td", "applet",
+            "tbody",
         ],
     ),
-    ("allowFullScreen", &["iframe", "video"]),
+    ("allowFullScreen", &["video", "iframe"]),
     ("as", &["link"]),
     ("autoPictureInPicture", &["video"]),
     ("charset", &["meta"]),
@@ -37,45 +38,25 @@ static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("controls", &["audio", "video"]),
     ("controlsList", &["audio", "video"]),
     ("credentialless", &["iframe"]),
-    ("crossOrigin", &["audio", "image", "img", "link", "script", "video"]),
+    ("crossOrigin", &["audio", "script", "link", "image", "video", "img"]),
     ("disablePictureInPicture", &["video"]),
     ("disableRemotePlayback", &["audio", "video"]),
     ("displaystyle", &["math"]),
     ("download", &["a", "area"]),
-    ("fetchPriority", &["img", "link", "script"]),
+    ("fetchPriority", &["script", "img", "link"]),
     (
         "fill",
         &[
-            "altGlyph",
-            "animate",
-            "animateColor",
-            "animateMotion",
-            "animateTransform",
-            "circle",
-            "ellipse",
-            "g",
-            "line",
-            "marker",
-            "mask",
-            "path",
-            "polygon",
-            "polyline",
-            "rect",
-            "set",
-            "svg",
-            "symbol",
-            "text",
-            "textPath",
-            "tref",
-            "tspan",
-            "use",
+            "tspan", "set", "animateColor", "line", "svg", "path", "text", "ellipse", "use", "marker", "tref", "rect",
+            "polygon", "symbol", "g", "mask", "textPath", "altGlyph", "animateMotion", "polyline", "circle",
+            "animateTransform", "animate",
         ],
     ),
     ("focusable", &["svg"]),
     ("imageSizes", &["link"]),
     ("imageSrcSet", &["link"]),
     ("loop", &["audio", "video"]),
-    ("mozAllowFullScreen", &["iframe", "video"]),
+    ("mozAllowFullScreen", &["video", "iframe"]),
     ("muted", &["audio", "video"]),
     ("noModule", &["script"]),
     ("onAbort", &["audio", "video"]),
@@ -87,8 +68,8 @@ static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("onEmptied", &["audio", "video"]),
     ("onEncrypted", &["audio", "video"]),
     ("onEnded", &["audio", "video"]),
-    ("onError", &["audio", "iframe", "img", "link", "picture", "script", "source", "video"]),
-    ("onLoad", &["body", "iframe", "img", "link", "object", "picture", "script", "source"]),
+    ("onError", &["img", "iframe", "video", "picture", "audio", "link", "source", "script"]),
+    ("onLoad", &["iframe", "link", "body", "script", "source", "object", "img", "picture"]),
     ("onLoadStart", &["audio", "video"]),
     ("onLoadedData", &["audio", "video"]),
     ("onLoadedMetadata", &["audio", "video"]),
@@ -106,8 +87,8 @@ static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("onVolumeChange", &["audio", "video"]),
     ("onWaiting", &["audio", "video"]),
     ("playsInline", &["video"]),
-    ("popoverTarget", &["button", "input"]),
-    ("popoverTargetAction", &["button", "input"]),
+    ("popoverTarget", &["input", "button"]),
+    ("popoverTargetAction", &["input", "button"]),
     ("poster", &["video"]),
     ("precedence", &["link", "style"]),
     ("preload", &["audio", "video"]),
@@ -119,9 +100,9 @@ static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("shadowrootmode", &["template"]),
     ("shadowrootserializable", &["template"]),
     ("transform-origin", &["rect"]),
-    ("valign", &["col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"]),
-    ("viewBox", &["marker", "pattern", "svg", "symbol", "view"]),
-    ("webkitAllowFullScreen", &["iframe", "video"]),
+    ("valign", &["tfoot", "col", "tr", "th", "td", "colgroup", "thead", "tbody"]),
+    ("viewBox", &["symbol", "svg", "marker", "pattern", "view"]),
+    ("webkitAllowFullScreen", &["video", "iframe"]),
     ("webkitDirectory", &["input"]),
 ];
 
@@ -1221,7 +1202,7 @@ fn normalize_attribute_case(name: &[u8]) -> &[u8] {
 }
 
 fn any_char(name: &[u8], is_it: impl Fn(char) -> bool) -> bool {
-    text::code_points(name).filter_map(|it| char::from_u32(it.1)).any(is_it)
+    strings::wtf8_codepoints(name).filter_map(|it| char::from_u32(it.1)).any(is_it)
 }
 
 impl Rule for NoUnknownProperty {
@@ -1259,7 +1240,7 @@ fn check<'a>(rule: &NoUnknownProperty, e: Expr<'a>, cx: &mut Cx<'a, NoUnknownPro
         Some(first) if first.is_ascii() => first.is_ascii_lowercase(),
         _ => {
             strings::contains_char(el_type, b'-')
-                && text::first_code_point(el_type).and_then(char::from_u32).is_some_and(char::is_lowercase)
+                && strings::wtf8_first_codepoint(el_type).and_then(char::from_u32).is_some_and(char::is_lowercase)
         }
     };
     if !starts_with_lowercase || matches!(el_type, b"fbt" | b"fbs") {
@@ -1273,7 +1254,8 @@ fn check<'a>(rule: &NoUnknownProperty, e: Expr<'a>, cx: &mut Cx<'a, NoUnknownPro
         }
         if is_valid_data_attr(actual_name) {
             if rule.require_data_lowercase && any_char(actual_name, char::is_uppercase) {
-                cx.report(key.span(cx.file()), DATA_LOWERCASE_REQUIRED);
+                cx.report(key.span(cx.file()), DATA_LOWERCASE_REQUIRED)
+                    .help_with(|| format!("Use '{}' instead", bstr::BStr::new(&actual_name.to_ascii_lowercase())));
             }
             continue;
         }
@@ -1282,8 +1264,11 @@ fn check<'a>(rule: &NoUnknownProperty, e: Expr<'a>, cx: &mut Cx<'a, NoUnknownPro
         }
         let name = normalize_attribute_case(actual_name);
         if let Some(tags) = get(&ATTRIBUTE_TAGS_MAP, name) {
-            if !contains_name(tags, el_type) {
-                cx.report(key.span(cx.file()), INVALID_PROP_ON_TAG);
+            if !tags.iter().any(|it| it.as_bytes() == el_type) {
+                cx.report(key.span(cx.file()), INVALID_PROP_ON_TAG).help_with(|| {
+                    let prop = bstr::BStr::new(actual_name);
+                    format!("Property '{prop}' is only allowed on: {}", tags.join(", "))
+                });
             }
             continue;
         }
@@ -1292,8 +1277,11 @@ fn check<'a>(rule: &NoUnknownProperty, e: Expr<'a>, cx: &mut Cx<'a, NoUnknownPro
         }
         let span = key.span(cx.file());
         let report = cx.report(span, UNKNOWN_PROP);
-        if let Some(prop) = dom_property_in_other_case(name).or_else(|| get(&DOM_ATTRIBUTES_TO_CAMEL, name)) {
-            report.suggest_with(USE_STANDARD_NAME, &[("x1", prop.as_bytes())], |fixer| fixer.replace(span, prop));
-        }
+        match dom_property_in_other_case(name).or_else(|| get(&DOM_ATTRIBUTES_TO_CAMEL, name)) {
+            Some(prop) => report
+                .help_with(|| format!("Use '{prop}' instead"))
+                .suggest_with(USE_STANDARD_NAME, &[("x1", prop.as_bytes())], |fixer| fixer.replace(span, prop)),
+            None => report.help("Remove unknown property"),
+        };
     }
 }

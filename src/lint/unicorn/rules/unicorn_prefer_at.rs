@@ -1,6 +1,6 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr};
 use bun_lint_oxlint::same_expression::{is_same_expression, is_same_inner_expression};
-use bun_lint_oxlint::text::trim;
 use bun_lint_oxlint::ast_util::{PRECEDENCE_MEMBER, get_precedence};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -23,7 +23,10 @@ impl Rule for PreferAt {
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
-        let functions = options.strings("getLastElementFunctions").into_iter().map(|it| trim(it.as_bytes()));
+        let functions = options
+            .strings("getLastElementFunctions")
+            .into_iter()
+            .map(|it| strings::trim_unicode_whitespace(it.as_bytes()));
         PreferAt {
             check_all_index_access: options.bool_or("checkAllIndexAccess", false),
             get_last_element_functions: functions.filter(|it| !it.is_empty()).map(Box::from).collect(),

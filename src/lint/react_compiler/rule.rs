@@ -92,9 +92,7 @@ pub fn starts<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) -
 /// oxlint's `should_run_react_compiler`
 fn should_run(file: &File) -> bool {
     let path = file.path();
-    let name = strings::last_index_of_any(path, b"/\\")
-        .and_then(|at| path.get(at + 1..))
-        .unwrap_or(path);
+    let name = bun_lint::paths::file_name(path);
     let extension = strings::last_index_of_char(name, b'.')
         .filter(|&at| at > 0)
         .and_then(|at| name.get(at + 1..));

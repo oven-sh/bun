@@ -30,14 +30,16 @@ impl Rule for BadMinMaxFunc {
             // An optional chain is not a call for oxlint.
             let inner_calls = call.args().iter().filter(|it| !it.is_parenthesized() && it.chain() == Chain::No).filter_map(Expr::as_call);
             for inner_min_max in inner_calls.filter_map(min_max) {
-                let is_constant = match (&out_min_max, &inner_min_max) {
-                    (MinMax::Max(max), MinMax::Min(min)) => max > min,
-                    (MinMax::Min(min), MinMax::Max(max)) => min < max,
-                    _ => false,
+                let constant_result = match (&out_min_max, &inner_min_max) {
+                    (MinMax::Max(max), MinMax::Min(min)) if max > min => *max,
+                    (MinMax::Min(min), MinMax::Max(max)) if min < max => *min,
+                    _ => continue,
                 };
-                if is_constant {
-                    cx.report(e, BAD_MIN_MAX_FUNC);
-                }
+                cx.report(e, BAD_MIN_MAX_FUNC).help_with(|| {
+                    format!(
+                        "This evaluates to {constant_result:?} because of the incorrect `Math.min`/`Math.max` combination"
+                    )
+                });
             }
         });
     }

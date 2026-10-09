@@ -5,14 +5,13 @@ use super::js::{self, Hug, SourceType, Syntax};
 use super::parse::collapse_white_space;
 use super::printer::Printer;
 use super::utilities::{
-    dedent_string, html_split, html_trim, html_trim_preserve_indentation, is_script_like_tag,
+    dedent_string, html_split, html_trim_preserve_indentation, is_script_like_tag,
     should_unquote_attribute_value, unescape_quote_entities,
 };
 use super::writer::Attempt;
 use super::{Parser, data};
 use crate::markdown::infer_parser;
 use crate::options::{HtmlRoot, InHtml, LineEnding, LineWidth};
-use crate::text;
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 
@@ -280,7 +279,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         if let Some(parser) = crate::json::Parser::from_name(parser) {
             // To these parsers, a text with nothing in it is a syntax error.
-            return !text::trim(code).is_empty()
+            return !strings::trim_js_whitespace(code).is_empty()
                 && self.write_printed_text(false, |options, out| {
                     crate::json::format(code, parser, options, &mut Default::default(), out)
                 });
@@ -321,7 +320,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
 
     /// HTML in HTML.
     fn print_embedded_html(&mut self, code: &[u8], parser: Parser) -> bool {
-        if text::trim(code).is_empty() {
+        if strings::trim_js_whitespace(code).is_empty() {
             return false;
         }
         let (format, filepath) = (self.options.format, self.options.filepath);
@@ -396,10 +395,12 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         ) else {
             return false;
         };
-        let language = text::trim(&raw[3..first_line_end]);
+        let language = strings::trim_js_whitespace(&raw[3..first_line_end]);
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = text::trim(raw.get(first_line_end..last_line_start).unwrap_or_default());
+        let value = strings::trim_js_whitespace(
+            raw.get(first_line_end..last_line_start).unwrap_or_default(),
+        );
         // There is no formatter for TOML.
         if !(is_yaml || (is_toml && value.is_empty())) {
             return false;
@@ -436,7 +437,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         self.print_opening_tag(id);
         self.out.end_group();
         let mut is_written = true;
-        if !text::trim(content).is_empty() {
+        if !strings::trim_js_whitespace(content).is_empty() {
             self.out.hardline();
             is_written = self.text_to_doc(
                 html_trim_preserve_indentation(content),
@@ -466,7 +467,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let value = match parser {
                 b"markdown" => {
                     // `.replace(/^[^\S\n]*\n/, "")`
-                    let blank = value.len() - text::trim_start(value).len();
+                    let blank = value.len() - strings::trim_js_whitespace_start(value).len();
                     let first_line_end =
                         strings::index_of_char_usize(&value[..blank], b'\n').map_or(0, |at| at + 1);
                     dedented = dedent_string(&value[first_line_end..]);
@@ -685,7 +686,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let max_url_len = candidates
             .iter()
-            .map(|candidate| text::utf16_len(candidate.url) as usize)
+            .map(|candidate| strings::wtf8_len_utf16(candidate.url) as usize)
             .max()
             .unwrap_or(0);
         // Every candidate is made as wide as the widest. Of 140 KB, half of them one address, Prettier makes 800 MB.
@@ -708,7 +709,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 if descriptor.is_empty() {
                     continue;
                 }
-                let alignment = max_url_len - text::utf16_len(candidate.url) as usize
+                let alignment = max_url_len - strings::wtf8_len_utf16(candidate.url) as usize
                     + 1
                     + max_descriptor_left_len
                     - left_len(descriptor);
@@ -748,7 +749,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     fn print_permissions_policy(&mut self, value: &[u8]) -> bool {
         let directives = || {
             strings::split(value, b";")
-                .map(html_trim)
+                .map(<[u8]>::trim_ascii)
                 .filter(|token| !token.is_empty())
         };
         let count = directives().count();

@@ -196,16 +196,27 @@ fn is_for_left(statement: Stmt<'_>) -> bool {
 }
 
 /// ESLint's `joinDeclarations`
-fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, kind: VarKind) -> Option<Vec<Fix>> {
-    previous_declarations(statement, kind)?;
-    let file = fixer.file();
+/// Whether [`join_declarations`] does anything.
+fn can_join(statement: Stmt, kind: VarKind) -> bool {
     // oxlint joins nothing with a `declare`, and nothing that is exported.
     let is_ambient = |it: Stmt| it.flags().contains(Flags::AMBIENT);
-    if file.language().is_oxlint
-        && (is_ambient(statement) || previous_statement(statement).is_some_and(is_ambient) || statement.is_exported())
-    {
+    previous_declarations(statement, kind).is_some()
+        && !(statement.file().language().is_oxlint
+            && (is_ambient(statement)
+                || previous_statement(statement).is_some_and(is_ambient)
+                || statement.is_exported()))
+}
+
+/// oxlint's `help` is what it calls its fix.
+fn name_of_fix(name: &str, is_fixed: bool) -> String {
+    if is_fixed { name.to_owned() } else { String::new() }
+}
+
+fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, kind: VarKind) -> Option<Vec<Fix>> {
+    if !can_join(statement, kind) {
         return None;
     }
+    let file = fixer.file();
     let keyword = file.first_token(statement)?;
     let before_keyword = file.token_before(keyword)?;
     let mut fixes = vec![match before_keyword.is(";") {
@@ -262,9 +273,11 @@ fn split_declarations<'a>(
 }
 
 fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, message: Message) {
-    cx.report(statement.span_without_export(), message)
-        .data("type", kind_text(kind))
-        .fix(|fixer| join_declarations(fixer, statement, kind));
+    let mut report = cx.report(statement.span_without_export(), message).data("type", kind_text(kind));
+    if cx.language().is_oxlint {
+        report = report.help_with(|| name_of_fix("Combine variable declarations", can_join(statement, kind)));
+    }
+    report.fix(|fixer| join_declarations(fixer, statement, kind));
 }
 
 impl OneVar {
@@ -396,9 +409,12 @@ impl OneVar {
             } else {
                 return;
             };
-            cx.report(statement.span_without_export(), message)
-                .data("type", kind_text(kind))
-                .fix(|fixer| split_declarations(fixer, statement, declarations, kind));
+            let mut report = cx.report(statement.span_without_export(), message).data("type", kind_text(kind));
+            if cx.language().is_oxlint {
+                let is_fixed = || ast_utils::is_statement_list_parent(statement.parent());
+                report = report.help_with(|| name_of_fix("Split variable declarations", is_fixed()));
+            }
+            report.fix(|fixer| split_declarations(fixer, statement, declarations, kind));
         }
     }
 }

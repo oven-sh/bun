@@ -68,6 +68,7 @@ fn check_regex<'a>(
     let as_is = OnceCell::new();
     let in_string = OnceCell::new();
     let group_name = OnceCell::new();
+    let unnamed_count = OnceCell::new();
     // Where the last group starts in `pattern`, in bytes and in UTF-16 units, and the offset in
     // bytes that `regex_node` has after as many units. The groups come in the order of their `(`,
     // so that all of them take time in proportion to the texts.
@@ -91,7 +92,14 @@ fn check_regex<'a>(
                 .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
         };
-        let report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
+        let mut report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
+        if cx.language().is_oxlint {
+            let count = *unnamed_count.get_or_init(|| {
+                let groups = ast.capturing_groups();
+                groups.filter(|it| matches!(it.kind(), RegexKind::CapturingGroup { name: None, .. })).count()
+            });
+            report = report.data("unnamed_count", count.to_string()).data("s", if count == 1 { "" } else { "s" });
+        }
         if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
             // After the delimiter and the `(`.
             let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
@@ -104,7 +112,7 @@ fn check_regex<'a>(
     }
 }
 
-/// [`text::utf16_offset_to_byte`] for indices that do not decrease.
+/// [`strings::wtf8_offset_of_utf16_index`] for indices that do not decrease.
 struct Utf16Cursor<'t> {
     text: &'t [u8],
     at: usize,
@@ -123,8 +131,8 @@ impl<'t> Utf16Cursor<'t> {
 
     fn byte_offset(&mut self, index: u32) -> usize {
         loop {
-            let (c, size) = text::code_point_at(self.text, self.at);
-            let units = self.units + text::utf16_width(c);
+            let (c, size) = strings::wtf8_codepoint_at(self.text, self.at);
+            let units = self.units + strings::codepoint_len_utf16(c);
             if size == 0 || units > index {
                 return self.at;
             }

@@ -9,7 +9,6 @@
 //! which are made of regular expressions. Each function here names the expression that it is.
 
 use crate::options::FormatOptions;
-use crate::text::{trim_end, trim_start, utf16_len, white_space_len};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -24,7 +23,9 @@ pub enum BeforeParsing<'t> {
 /// What the pragmas in `text`, which is JavaScript or TypeScript, and the options about them say.
 pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforeParsing<'t> {
     let is_whole_file = options.range_start.unwrap_or(0) == 0
-        && options.range_end.is_none_or(|end| end >= utf16_len(text));
+        && options
+            .range_end
+            .is_none_or(|end| end >= strings::wtf8_len_utf16(text));
     before_parsing_css(text, 0, is_whole_file, options)
 }
 
@@ -166,19 +167,6 @@ pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(parts.rest);
 }
 
-fn count_spaces(text: &[u8]) -> usize {
-    text.iter().take_while(|b| **b == b' ').count()
-}
-
-fn without_spaces_at_end(text: &[u8]) -> &[u8] {
-    &text[..text.len() - text.iter().rev().take_while(|b| **b == b' ').count()]
-}
-
-/// `/^(\r?\n)+/`
-fn without_line_breaks_at_start(text: &[u8]) -> &[u8] {
-    &text[text.iter().take_while(|b| **b == b'\n').count()..]
-}
-
 /// A file taken apart: all of it but the white space before the first comment and the line break
 /// after the shebang.
 struct Parts<'t> {
@@ -213,9 +201,9 @@ impl<'t> Parts<'t> {
                 (&text[..end], &text[after..])
             }
         };
-        match doc_block_len(trim_start(text)) {
+        match doc_block_len(strings::trim_js_whitespace_start(text)) {
             Some(len) => {
-                let (doc_block, rest) = trim_start(text).split_at(len);
+                let (doc_block, rest) = strings::trim_js_whitespace_start(text).split_at(len);
                 Parts {
                     byte_order_mark,
                     shebang,
@@ -268,15 +256,15 @@ struct Property<'t> {
 
 impl<'t> Property<'t> {
     fn of_line(line: &'t [u8]) -> Option<Self> {
-        let after_at = line[count_spaces(line)..].strip_prefix(b"@")?;
+        let after_at = strings::trim_left(line, b" ").strip_prefix(b"@")?;
         let mut name_len = 0;
-        while name_len < after_at.len() && white_space_len(&after_at[name_len..]) == 0 {
+        while name_len < after_at.len() && strings::js_whitespace_len(&after_at[name_len..]) == 0 {
             name_len += 1;
         }
         let (name, rest) = after_at.split_at(name_len);
         (!name.is_empty()).then(|| Property {
             name,
-            value: &rest[count_spaces(rest)..],
+            value: strings::trim_left(rest, b" "),
         })
     }
 
@@ -285,7 +273,7 @@ impl<'t> Property<'t> {
         let value = self.value;
         let mut from = 0;
         while let Some(at) = strings::index_of(&value[from..], b"//").map(|at| from + at) {
-            let before = trim_end(&value[..at]);
+            let before = strings::trim_js_whitespace_end(&value[..at]);
             if at == 0 || before.len() < at {
                 return before;
             }
@@ -325,7 +313,7 @@ impl DocBlock {
         let mut text = Vec::with_capacity(content.len());
         let mut rest = content;
         loop {
-            let after_spaces = &rest[count_spaces(rest)..];
+            let after_spaces = strings::trim_left(rest, b" ");
             if let Some(after_star) = after_spaces.strip_prefix(b"*") {
                 rest = after_star.strip_prefix(b" ").unwrap_or(after_star);
             }
@@ -345,7 +333,7 @@ impl DocBlock {
         while let Some(joined) = join_continuation_lines(&text) {
             text = joined;
         }
-        let text = trim_end(without_line_breaks_at_start(&text));
+        let text = strings::trim_js_whitespace_end(strings::trim_left(&text, b"\n"));
 
         let mut pragmas: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         let mut comments = Vec::new();
@@ -369,13 +357,14 @@ impl DocBlock {
         crate::sort::sort_by_key(&mut pragmas[..], |(name, _)| {
             as_array_index(name).map_or((1, 0), |index| (0, index))
         });
-        let comments = trim_end(without_line_breaks_at_start(&comments)).to_vec();
+        let comments =
+            strings::trim_js_whitespace_end(strings::trim_left(&comments, b"\n")).to_vec();
         DocBlock { pragmas, comments }
     }
 
     /// `print` of `jest-docblock`, with `{ format: "", ...pragmas }` and `comments.trimStart()`.
     fn print_with_format_pragma(&self) -> Vec<u8> {
-        let comments = trim_start(&self.comments);
+        let comments = strings::trim_js_whitespace_start(&self.comments);
         let is_format = |(name, _): &&(Vec<u8>, Vec<u8>)| name == b"format";
         let indexes = self
             .pragmas
@@ -396,9 +385,9 @@ impl DocBlock {
         let write_pragma = |(name, value): &(Vec<u8>, Vec<u8>), out: &mut Vec<u8>| {
             out.push(b'@');
             out.extend_from_slice(name);
-            if !trim_end(value).is_empty() {
+            if !strings::trim_js_whitespace_end(value).is_empty() {
                 out.push(b' ');
-                out.extend_from_slice(trim_end(value));
+                out.extend_from_slice(strings::trim_js_whitespace_end(value));
             }
         };
 
@@ -445,7 +434,7 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
         };
         let matched = (|| {
             let first = &text[line_start..first_end];
-            let first = without_spaces_at_end(&first[count_spaces(first)..]);
+            let first = strings::trim_right(strings::trim_left(first, b" "), b" ");
             if !first.starts_with(b"@") {
                 return None;
             }
@@ -453,16 +442,16 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
             let second_end =
                 second_start + strings::index_of_char_usize(&text[second_start..], b'\n')?;
             let second = &text[second_start..second_end];
-            let second = &second[count_spaces(second)..];
+            let second = strings::trim_left(second, b" ");
             if second.len() < 2
-                || white_space_len(second) != 0
+                || strings::js_whitespace_len(second) != 0
                 || strings::contains_char(second, b'@')
                 || strings::contains(second, b"//")
             {
                 return None;
             }
             // The lazy `+?` takes one character at least, even if that is a space.
-            let second = &second[..without_spaces_at_end(second).len().max(2)];
+            let second = &second[..strings::trim_right(second, b" ").len().max(2)];
             Some((first, second, second_end + 1))
         })();
         match matched {

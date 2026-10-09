@@ -62,7 +62,8 @@ impl Rule for NoSelfCompare {
             };
             if is_comparison && is_same() {
                 // oxlint points at the left side.
-                cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF);
+                cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF)
+                    .labels_with(|labels| labels.push(right.outer_span(), ""));
             }
         });
     }

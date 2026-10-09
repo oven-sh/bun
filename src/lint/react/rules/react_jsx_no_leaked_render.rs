@@ -32,8 +32,8 @@ impl Rule for JsxNoLeakedRender {
         let strategies = if config.has("validStrategies") { &given[..] } else { &["ternary", "coerce"][..] };
         let strategy_of = |it: &&str| if *it == "coerce" { Strategy::Coerce } else { Strategy::Ternary };
         JsxNoLeakedRender {
-            allows_ternary: strategies.iter().any(|it| *it == "ternary"),
-            allows_coerce: strategies.iter().any(|it| *it == "coerce"),
+            allows_ternary: strategies.contains(&"ternary"),
+            allows_coerce: strategies.contains(&"coerce"),
             fix_strategy: strategies.first().map(strategy_of),
             ignore_attributes: config.bool_or("ignoreAttributes", false),
         }
@@ -211,7 +211,7 @@ fn coerced<'a>(reported: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Ve
     {
         let mut last_line = right_text.get(line_break + 1..)?;
         let mut indent = 0usize;
-        while let len @ 1.. = text::white_space_len(last_line) {
+        while let len @ 1.. = strings::js_whitespace_len(last_line) {
             last_line = last_line.get(len..)?;
             indent += 1;
         }

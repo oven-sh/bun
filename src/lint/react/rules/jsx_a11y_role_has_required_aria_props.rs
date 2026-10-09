@@ -1,5 +1,5 @@
+use bun_core::strings;
 use crate::jsx::{as_jsx_element, get_string_literal_prop_value, has_jsx_prop_ignore_case};
-use bun_lint_oxlint::text::split_whitespace;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -36,7 +36,7 @@ impl Rule for RoleHasRequiredAriaProps {
             let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
                 return;
             };
-            for role in get_string_literal_prop_value(attr).into_iter().flat_map(split_whitespace) {
+            for role in get_string_literal_prop_value(attr).into_iter().flat_map(strings::split_unicode_whitespace) {
                 let mut formatted_missing = Vec::new();
                 for prop in required_aria_props(role).iter().filter(|prop| has_jsx_prop_ignore_case(jsx_el, prop).is_none()) {
                     let separator = if formatted_missing.is_empty() { "`" } else { ", `" };

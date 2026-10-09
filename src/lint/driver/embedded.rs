@@ -498,6 +498,7 @@ impl Context<'_, '_> {
             all.messages.append(&mut result.messages);
             all.suppressed.append(&mut result.suppressed);
             all.skipped_rules.append(&mut result.skipped_rules);
+            all.handed_back = all.handed_back.or(result.handed_back);
         }
         all
     }

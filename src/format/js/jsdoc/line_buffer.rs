@@ -1,7 +1,6 @@
 //! Lines in one buffer, with `\n` between them.
 
 use super::markers::list_marker;
-use super::text::trim_start;
 use bun_core::strings;
 
 #[derive(Default)]
@@ -65,7 +64,7 @@ impl LineBuffer {
             }
         };
         list_marker(last).is_some()
-            || trim_start(last).starts_with(b"```")
+            || strings::trim_unicode_whitespace_start(last).starts_with(b"```")
             || last.starts_with(b"    ")
     }
 

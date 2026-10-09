@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
@@ -91,9 +92,9 @@ fn each_self_assigned_property<'a>(left: Prop<'a>, right: Prop<'a>, props: bool,
 /// `text.replace(/\s+/gu, "")`
 fn without_spaces(source: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(source.len());
-    let mut points = text::code_points(source).peekable();
+    let mut points = strings::wtf8_codepoints(source).peekable();
     while let Some((start, c)) = points.next() {
-        if !text::is_js_whitespace(c) {
+        if !strings::is_js_whitespace(c) {
             let end = points.peek().map_or(source.len(), |next| next.0);
             out.extend_from_slice(source.get(start..end).unwrap_or_default());
         }

@@ -3,7 +3,6 @@
   "names: .eslintrc.json is null": "text",
   "names: package.json#eslintConfig is null": "text",
   "programs: -c other.cjs beside .eslintrc.js": "messages",
-  "plugins: sourceCode.getComments(), getJSDocComment(), getTokenOrCommentBefore(), isSpaceBetweenTokens()": "messages",
   "parser: ./parser.js": "messages",
   "parser: ./parser finds parser.js": "messages",
   "parser: a package": "messages",

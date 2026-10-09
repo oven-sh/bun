@@ -44,6 +44,8 @@ impl Rule for BadBitwiseOperator {
 fn report<'a>(e: Expr<'a>, bad_operator: &'static str, suggestion: &'static str, cx: &Cx<'a, BadBitwiseOperator>) {
     let data = [("bad_operator", bad_operator.as_bytes()), ("suggestion", suggestion.as_bytes())];
     cx.report(e, BAD_BITWISE_OPERATOR)
+        .data("bad_operator", bad_operator)
+        .data("suggestion", suggestion)
         .suggest_with(USE_LOGICAL_OPERATOR, &data, |fixer| Some(fixer.replace(e.operator_span()?, suggestion)));
 }
 

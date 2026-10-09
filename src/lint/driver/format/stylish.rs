@@ -9,7 +9,6 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::LintMessage;
 use bun_lint::regex::Regex;
-use bun_lint::utils::text::{trim_end, white_space_len};
 use std::io::Write;
 use std::sync::LazyLock;
 
@@ -90,7 +89,7 @@ fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
             continue;
         }
         let mut second = at + first;
-        while let n @ 1.. = white_space_len(&line[second..]) {
+        while let n @ 1.. = strings::js_whitespace_len(&line[second..]) {
             second += n;
         }
         let second_len = digits(second);
@@ -198,7 +197,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
                 styled(&mut text, color, &DIM, &row.rule);
             }
             pad(&mut text, rules - visible_len(&row.rule));
-            text.truncate(trim_end(&text).len());
+            text.truncate(strings::trim_js_whitespace_end(&text).len());
             if i > 0 {
                 out.push(b'\n');
             }

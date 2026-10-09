@@ -273,7 +273,8 @@ impl NoDupeElseIf {
             }
             if list_to_check.iter().any(|operands| operands.is_empty()) {
                 // oxlint points at the test with which nothing is left.
-                cx.report(if cx.language().is_oxlint { current_test } else { test }, UNEXPECTED);
+                cx.report(if cx.language().is_oxlint { current_test } else { test }, UNEXPECTED)
+                    .labels_with(|labels| labels.push(test, "this branch will never be executed"));
                 return;
             }
             match previous_if(current) {

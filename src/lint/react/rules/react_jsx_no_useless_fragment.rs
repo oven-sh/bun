@@ -1,7 +1,6 @@
 use bun_lint_oxlint::ast_util::{as_call_expression, get_identifier_name};
 use crate::jsx::{Child, children, is_jsx_fragment};
 use crate::react::{is_jsx, is_padding_spaces};
-use bun_lint_oxlint::text::is_whitespace;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -90,14 +89,16 @@ fn can_fix<'a>(file: &'a File<'a>, jsx: Jsx<'a>, parent: Option<Jsx<'a>>) -> boo
     let Some(parent) = parent else {
         // `const a = <></>`, `const a = <>cat {meow}</>`
         let is_whitespace_or_expression = |it: Child| match it {
-            Child::Text(text) => is_whitespace(text),
+            Child::Text(text) => strings::is_all_unicode_whitespace(text),
             _ => matches!(it, Child::ExpressionContainer(_)),
         };
         return !children(file, jsx).all(is_whitespace_or_expression);
     };
     // `Eeee` in `<Eeee><>foo</></Eeee>` may want an element.
     let is_lowercase =
-        |name: Name| text::code_points(name.bytes()).all(|it| char::from_u32(it.1).is_some_and(char::is_lowercase));
+        |name: Name| {
+            strings::wtf8_codepoints(name.bytes()).all(|it| char::from_u32(it.1).is_some_and(char::is_lowercase))
+        };
     parent.is_fragment() || get_identifier_name(parent).is_some_and(is_lowercase) || is_jsx_fragment(parent)
 }
 
@@ -108,7 +109,7 @@ fn is_html_element(jsx: Jsx) -> bool {
         // Without a hyphen it is the name of a variable.
         _ => {
             strings::contains_char(name.bytes(), b'-')
-                && text::first_code_point(name.bytes()).and_then(char::from_u32).is_some_and(char::is_lowercase)
+                && strings::wtf8_first_codepoint(name.bytes()).and_then(char::from_u32).is_some_and(char::is_lowercase)
         }
     })
 }

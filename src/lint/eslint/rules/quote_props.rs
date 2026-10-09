@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::keywords::is_keyword;
 use std::borrow::Cow;
@@ -61,17 +62,17 @@ fn is_import_attributes(object: Expr<'_>) -> bool {
 /// default `ecmaVersion` is 5, there are no characters outside of the BMP and no `\u{..}` in a word.
 fn tokenize_word(raw_key: &[u8]) -> Option<Cow<'_, [u8]>> {
     fn is_start(c: u32) -> bool {
-        c <= 0xFFFF && text::is_identifier_start(c)
+        c <= 0xFFFF && bun_core::lexer::is_identifier_start(c)
     }
     fn is_part(c: u32) -> bool {
-        c <= 0xFFFF && text::is_identifier_part(c)
+        c <= 0xFFFF && bun_core::lexer::is_type_script_identifier_part(c as i32)
     }
-    if !bun_core::strings::contains_char(raw_key, b'\\') {
-        let mut points = text::code_points(raw_key).map(|it| it.1);
+    if !strings::contains_char(raw_key, b'\\') {
+        let mut points = strings::wtf8_codepoints(raw_key).map(|it| it.1);
         return (points.next().is_some_and(is_start) && points.all(is_part)).then_some(Cow::Borrowed(raw_key));
     }
     let mut word = Vec::with_capacity(raw_key.len());
-    let mut points = text::code_points(raw_key);
+    let mut points = strings::wtf8_codepoints(raw_key);
     while let Some((at, c)) = points.next() {
         let is_allowed: fn(u32) -> bool = if at == 0 { is_start } else { is_part };
         if c != u32::from(b'\\') {

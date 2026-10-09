@@ -14,8 +14,7 @@ use crate::options::{
     AttributePosition, FormatOptions, HtmlWhitespaceSensitivity, SvelteOptions, SveltePart as Part,
 };
 use crate::text::{
-    has_newline, has_newline_backwards, is_previous_line_empty, skip_newline, skip_spaces, trim,
-    trim_end,
+    has_newline, has_newline_backwards, is_previous_line_empty, skip_newline, skip_spaces,
 };
 use bun_core::strings;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -359,7 +358,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// Whether `id` is a comment that says `directive`.
     fn is_directive(&self, id: Id, directive: &[u8]) -> bool {
-        matches!(self.tree[id].kind, Kind::Comment { data } if trim(data) == directive)
+        matches!(self.tree[id].kind, Kind::Comment { data } if strings::trim_js_whitespace(data) == directive)
     }
 
     fn is_ignore_directive(&self, id: Id) -> bool {
@@ -708,8 +707,9 @@ impl<'a, 'o> Printer<'a, 'o> {
             // The pattern ends before the `:`.
             Some(annotation) => {
                 let before = &self.text[pattern.span.start as usize..annotation.start as usize];
-                let before = trim_end(before);
-                let before = trim_end(before.strip_suffix(b":").unwrap_or(before));
+                let before = strings::trim_js_whitespace_end(before);
+                let before =
+                    strings::trim_js_whitespace_end(before.strip_suffix(b":").unwrap_or(before));
                 pattern.span.start as usize + before.len()
             }
             None => pattern.span.end as usize,
@@ -953,7 +953,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             .last()
             .is_some_and(|it| self.is_ignore_directive(it.0));
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
-            Some(parser) if !trim(content).is_empty() => {
+            Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {
                 Doc::Code(Box::new(Code::Body { content, parser }))
             }
             Some(_) if content.is_empty() => EMPTY,
@@ -2159,7 +2159,7 @@ fn says_end_of_region(data: &[u8]) -> bool {
     let mut rest = data;
     while let Some(at) = strings::index_of_char_usize(rest, b'#') {
         rest = &rest[at + 1..];
-        let word = crate::text::trim_start(rest);
+        let word = strings::trim_js_whitespace_start(rest);
         if word
             .get(..9)
             .is_some_and(|it| it.eq_ignore_ascii_case(b"endregion"))
@@ -2175,10 +2175,10 @@ fn says_end_of_region(data: &[u8]) -> bool {
 
 /// `hasPragma`: `/^\s*<!--\s*@(format|prettier)\W/`
 pub(crate) fn has_pragma(text: &[u8]) -> bool {
-    let Some(comment) = crate::text::trim_start(text).strip_prefix(b"<!--") else {
+    let Some(comment) = strings::trim_js_whitespace_start(text).strip_prefix(b"<!--") else {
         return false;
     };
-    let Some(word) = crate::text::trim_start(comment).strip_prefix(b"@") else {
+    let Some(word) = strings::trim_js_whitespace_start(comment).strip_prefix(b"@") else {
         return false;
     };
     (word

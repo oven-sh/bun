@@ -26,7 +26,7 @@ impl Rule for NoEqNull {
                 // oxlint's fix takes the place of all that is between the operands.
                 if cx.language().is_oxlint {
                     let operator = if op == BinOp::EqEq { " === " } else { " !== " };
-                    report.fix_dangerously(|fixer| {
+                    report.data("suggested_operator", operator.trim()).fix_dangerously(|fixer| {
                         fixer.replace(left.outer_span().between(right.outer_span()), operator)
                     });
                 }

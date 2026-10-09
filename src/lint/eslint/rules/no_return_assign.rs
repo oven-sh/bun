@@ -38,7 +38,16 @@ impl NoReturnAssign {
         if utils::is_assignment_target(e) {
             return;
         }
-        cx.report(at, if is_arrow { ARROW_ASSIGNMENT } else { RETURN_ASSIGNMENT });
+        let report = cx.report(at, if is_arrow { ARROW_ASSIGNMENT } else { RETURN_ASSIGNMENT });
+        if cx.language().is_oxlint {
+            report.help(match self.is_always {
+                true => "Compute the value in a separate statement before returning it.",
+                false => {
+                    "Compute the value before returning it, or wrap the assignment in parentheses to make the intent \
+                     explicit."
+                }
+            });
+        }
     }
 }
 

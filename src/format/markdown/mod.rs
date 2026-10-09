@@ -19,7 +19,7 @@ use crate::css::doc;
 use crate::front_matter;
 use crate::options::{EmbeddedLanguageFormatting, LineEnding, LineWidth};
 use crate::range::{Offsets, write_with_line_ending};
-use crate::text::{BOM, trim_start};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for Markdown.
@@ -36,10 +36,7 @@ pub fn is_markdown_path(path: &[u8]) -> bool {
         b".ronn",
         b".scd",
     ];
-    let separator = bun_core::strings::last_index_of_char(path, b'/')
-        .max(bun_core::strings::last_index_of_char(path, b'\\'));
-    let name = &path[separator.map_or(0, |at| at + 1)..];
-    let name = name.to_ascii_lowercase();
+    let name = bun_lint::paths::file_name(path).to_ascii_lowercase();
     matches!(&name[..], b"contents.lr" | b"readme")
         || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
         || name.ends_with(b".workbook")
@@ -226,7 +223,7 @@ fn format_embedded(
     let code = code.strip_prefix(BOM).unwrap_or(code);
     // To these parsers, nothing is a syntax error. Only a whole file with nothing in it does not get to them.
     if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql")
-        && trim_start(code).is_empty()
+        && bun_core::strings::trim_js_whitespace_start(code).is_empty()
     {
         return None;
     }
@@ -312,7 +309,7 @@ fn format_embedded(
 /// Whether a comment with `@` and one of `pragmas` is at the start of `text`, behind the front matter.
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let content = &text[front_matter::parse(text).map_or(0, |it| it.end)..];
-    let content = trim_start(content);
+    let content = bun_core::strings::trim_js_whitespace_start(content);
     let strip_pragma = |text: &'_ [u8]| -> Option<usize> {
         let name = text.strip_prefix(b"@")?;
         pragmas
@@ -327,21 +324,21 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
             let Some(after) = rest.strip_prefix(*part) else {
                 return false;
             };
-            rest = trim_start(after);
+            rest = bun_core::strings::trim_js_whitespace_start(after);
         }
         let Some(len) = strip_pragma(rest) else {
             return false;
         };
         rest = &rest[len..];
-        close
-            .iter()
-            .all(|part| match trim_start(rest).strip_prefix(*part) {
+        close.iter().all(|part| {
+            match bun_core::strings::trim_js_whitespace_start(rest).strip_prefix(*part) {
                 Some(after) => {
                     rest = after;
                     true
                 }
                 None => false,
-            })
+            }
+        })
     };
     if is_between(&[b"<!--"], &[b"-->"]) || is_between(&[b"{", b"/*"], &[b"*/", b"}"]) {
         return true;
@@ -353,7 +350,7 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let is_blank = |text: &[u8]| text.iter().all(|byte| byte.is_ascii_whitespace());
     let mut lines = bun_core::strings::split(content, b"\n").skip(1);
     let has_line = lines.any(|line| {
-        let line = trim_start(line);
+        let line = bun_core::strings::trim_js_whitespace_start(line);
         strip_pragma(line).is_some_and(|len| is_blank(&line[len..]))
     });
     has_line && lines.any(|line| bun_core::strings::contains(line, b"-->"))
@@ -461,7 +458,7 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    if trim_start(text).is_empty() {
+    if bun_core::strings::trim_js_whitespace_start(text).is_empty() {
         return Ok(());
     }
 

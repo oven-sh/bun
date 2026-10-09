@@ -84,7 +84,17 @@ impl Rule for AnchorIsValid {
             let prefers_button = has_on_click && rule.prefer_button;
             if !has_href {
                 if !has_spread_attr && rule.no_href && !prefers_button {
-                    cx.report(span, MISSING_HREF_ATTRIBUTE);
+                    cx.report(span, MISSING_HREF_ATTRIBUTE).help_with(|| {
+                        let of_settings = names_of_settings.map(|names| names.iter().filter_map(Json::as_str).collect());
+                        let mut valid_attrs: Vec<&[u8]> = of_settings.unwrap_or_else(|| vec![&b"href"[..]]);
+                        valid_attrs.extend(rule.special_link.iter().map(String::as_bytes));
+                        let list = valid_attrs.join(&b"`, `"[..]);
+                        let list = bstr::BStr::new(&list);
+                        match valid_attrs.len() {
+                            1 => format!("Provide the `{list}` attribute for the `a` element."),
+                            _ => format!("Provide one of these attributes for the `a` element: `{list}`"),
+                        }
+                    });
                 }
                 if !has_spread_attr && prefers_button {
                     cx.report(span, CANT_BE_ANCHOR);

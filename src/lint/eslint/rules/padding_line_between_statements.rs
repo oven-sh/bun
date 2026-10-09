@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
 
@@ -147,12 +148,12 @@ fn is_block_like_statement(node: Node) -> bool {
 /// `/^(?:module\s*\.\s*)?exports(?:\s*\.|\s*\[|$)/u`
 fn is_cjs_export(source: &[u8]) -> bool {
     let after_module = (source.strip_prefix(b"module"))
-        .and_then(|rest| text::trim_start(rest).strip_prefix(b"."))
-        .map(text::trim_start);
+        .and_then(|rest| strings::trim_js_whitespace_start(rest).strip_prefix(b"."))
+        .map(strings::trim_js_whitespace_start);
     let Some(rest) = after_module.unwrap_or(source).strip_prefix(b"exports") else {
         return false;
     };
-    rest.is_empty() || matches!(text::trim_start(rest).first(), Some(b'.' | b'['))
+    rest.is_empty() || matches!(strings::trim_js_whitespace_start(rest).first(), Some(b'.' | b'['))
 }
 
 impl StatementType {

@@ -9,8 +9,9 @@ use crate::ast_util::{
 };
 use bun_lint::prelude::*;
 
-/// Where the name `method` is written, if `e` calls that method with a regular expression that is known not to have the flag `g`.
-pub fn method_called_without_global_flag(e: Expr, method: &str) -> Option<Span> {
+/// Where the name `method` is written, and where the regular expression is, if `e` calls that method with one that is known not to
+/// have the flag `g`.
+pub fn method_called_without_global_flag(e: Expr, method: &str) -> Option<(Span, Span)> {
     let call = e.as_call()?;
     if !is_method_call(call, None, Some(&[method]), Some(1), None) {
         return None;
@@ -20,22 +21,23 @@ pub fn method_called_without_global_flag(e: Expr, method: &str) -> Option<Span> 
         .first()
         .filter(|it| it.tag() != ExprTag::Spread)?;
     let callee = call.callee();
-    if resolve_regex_flags(regexp_argument)?.is_global || callee.is_parenthesized() {
+    let (flags, regex_span) = resolve_regex_flags(regexp_argument)?;
+    if flags.is_global || callee.is_parenthesized() {
         return None;
     }
-    static_property_info(callee).map(|it| it.0)
+    static_property_info(callee).map(|it| (it.0, regex_span))
 }
 
 struct RegExpFlags {
     is_global: bool,
 }
 
-/// The flags of the regular expression that `e` is, or is a variable for. `None` if that is not known.
-fn resolve_regex_flags(e: Expr) -> Option<RegExpFlags> {
+/// The flags of the regular expression that `e` is, or is a variable for, and where it is. `None` if that is not known.
+fn resolve_regex_flags(e: Expr) -> Option<(RegExpFlags, Span)> {
     let mut at = e;
     // Not further than anybody writes it: `const a = b, b = a` goes in a circle, and of `const b = a, c = b ..` each can be asked about.
     for _ in 0..32 {
-        return match at.kind() {
+        let flags = match at.kind() {
             ExprKind::Regex(regex) => Some(RegExpFlags {
                 is_global: bun_core::strings::contains_char(regex.flags(), b'g'),
             }),
@@ -63,6 +65,7 @@ fn resolve_regex_flags(e: Expr) -> Option<RegExpFlags> {
             }
             _ => None,
         };
+        return flags.map(|it| (it, at.span()));
     }
     None
 }

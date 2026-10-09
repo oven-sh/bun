@@ -23,19 +23,19 @@ const MISSING: Message = Message::new("missing", "Missing space between function
 fn whitespace_in(between: &[u8]) -> (bool, bool) {
     let (mut has_whitespace, mut has_newline) = (false, false);
     let mut comment_end = 0;
-    for (at, c) in text::code_points(between) {
+    for (at, c) in strings::wtf8_codepoints(between) {
         if at < comment_end {
             continue;
         }
         if let Some(inside) = between.get(at..).and_then(|rest| rest.strip_prefix(b"/*"))
             && let Some(len) = strings::index_of(inside, b"*/")
-            && !text::has_line_break(&inside[..len])
+            && !strings::contains_js_line_break(&inside[..len])
         {
             comment_end = at + len + 4;
             continue;
         }
-        has_whitespace |= text::is_js_whitespace(c);
-        has_newline |= text::is_line_terminator(c);
+        has_whitespace |= strings::is_js_whitespace(c);
+        has_newline |= strings::is_js_line_terminator(c);
     }
     (has_whitespace, has_newline)
 }

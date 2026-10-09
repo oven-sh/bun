@@ -1888,6 +1888,9 @@ pub struct FileIn<S: Storage> {
     pub decorators: S::Few<(DecoratorOwner, ExprId)>,
     /// `experimentalDecorators`
     pub legacy_decorators: bool,
+    /// Two of the parameters of a function or a signature may bind one name. Only `bun_sema_parser` says so, and it may say
+    /// so of what a speculative parse has given up.
+    pub may_bind_a_parameter_twice: bool,
     /// Diagnostics produced while parsing and lowering the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
@@ -2450,6 +2453,7 @@ macro_rules! file_in_arena {
             ran_out_of_stack: $this.ran_out_of_stack,
             decorators: $few!($this.decorators),
             legacy_decorators: $this.legacy_decorators,
+            may_bind_a_parameter_twice: $this.may_bind_a_parameter_twice,
             diagnostics: $kept!($this.diagnostics),
             has_parse_diagnostics: $this.has_parse_diagnostics,
             syntax_errors: $this.syntax_errors,

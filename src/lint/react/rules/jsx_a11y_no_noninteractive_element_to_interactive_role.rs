@@ -1,6 +1,7 @@
+use bun_core::strings;
 use crate::a11y::{HTML_TAG, NamesByElement, is_interactive_role, is_non_interactive_element};
 use crate::jsx::{as_jsx_element, get_element_type, get_string_literal_prop_value, has_jsx_prop_ignore_case};
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -39,7 +40,9 @@ impl Rule for NoNoninteractiveElementToInteractiveRole {
             let Some(role_attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
                 return;
             };
-            let Some(first_role) = get_string_literal_prop_value(role_attr).and_then(|it| split_whitespace(it).next()) else {
+            let Some(first_role) =
+                get_string_literal_prop_value(role_attr).and_then(|it| strings::split_unicode_whitespace(it).next())
+            else {
                 return;
             };
             let element_type = get_element_type(cx.file(), jsx_el);

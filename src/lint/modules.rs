@@ -13,7 +13,6 @@
 use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind, StmtTag};
 use crate::options::Json;
 use crate::span::Span;
-use crate::utils::text::find_line_break;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -137,6 +136,15 @@ pub struct IndirectExportEntry {
 /// Makes the [`Record`] of a file.
 pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 
+/// A resolver of eslint-plugin-import.
+#[derive(Clone, Debug)]
+pub enum Lookup<'e> {
+    /// eslint-import-resolver-typescript: as [`Modules::resolve`].
+    TypeScript,
+    /// eslint-import-resolver-node, with its `extensions`.
+    Node(SmallVec<[&'e [u8]; 4]>),
+}
+
 pub trait Modules: Sync {
     /// Everything is known. Until then only [`Modules::record`] does something.
     fn is_complete(&self) -> bool;
@@ -174,6 +182,21 @@ pub trait Modules: Sync {
 
     /// The same number for two modules of which each imports values from the other, directly or not.
     fn component(&self, module: ModuleId) -> u32;
+
+    /// The file that `specifier` means in the file at `from`: absolute, separated by `/`. It can be asked at any time.
+    fn resolve_file(
+        &self,
+        from: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        lookup: &Lookup,
+    ) -> Option<Vec<u8>>;
+
+    /// The working directory, in the same form.
+    fn cwd(&self) -> &[u8];
+
+    /// Whether there is a file or a directory at `path`. It can be asked at any time.
+    fn exists(&self, path: &[u8]) -> bool;
 
     /// The `package.json` that is closest to the file at `path`, of those that are an object. It can be asked at any time.
     fn package_json(&self, path: &[u8]) -> Option<&Json>;
@@ -374,7 +397,10 @@ pub fn set_lines(text: &[u8], requests: &mut [Request]) {
     for at in order {
         let offset = requests[at as usize].line as usize;
         // `line_end`: where the line break after `line` ends, once it is found.
-        while let Some((start, len)) = text.get(line_end..offset).and_then(find_line_break) {
+        while let Some((start, len)) = text
+            .get(line_end..offset)
+            .and_then(strings::find_js_line_break)
+        {
             line += 1;
             line_end += start + len;
         }

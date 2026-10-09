@@ -46,13 +46,17 @@ impl Rule for CheckPropertyNames {
                                 parent_name = rest;
                             }
                             if !seen.contains_key(parent_name) {
-                                cx.report(name_part.span, NO_ROOT);
+                                cx.report(name_part.span, NO_ROOT).data("x1", type_name);
                             }
                         }
                         seen.entry(type_name).or_default().push(name_part.span);
                     }
-                    for spans in seen.values().filter(|spans| spans.len() > 1) {
-                        cx.report(first_in_hash_order(spans).unwrap_or_default(), DUPLICATE);
+                    for (type_name, spans) in seen.iter().filter(|it| it.1.len() > 1) {
+                        const DUPLICATED: &str = "Duplicated property";
+                        let spans = in_hash_order(spans);
+                        let first = spans.first().copied().unwrap_or_default();
+                        let report = cx.report(first, DUPLICATE).data("type_name", *type_name).first_label(DUPLICATED);
+                        spans.iter().skip(1).fold(report, |report, span| report.label(*span, DUPLICATED));
                     }
                 }
             });
@@ -61,14 +65,14 @@ impl Rule for CheckPropertyNames {
     }
 }
 
-/// The first of `spans` in the order of a `FxHashSet<Span>` to which they are added one after the other. oxlint has the places of a
-/// report from there.
-fn first_in_hash_order(spans: &[Span]) -> Option<Span> {
+/// `spans` in the order of a `FxHashSet<Span>` to which they are added one after the other. oxlint has the places of a report from
+/// there.
+fn in_hash_order(spans: &[Span]) -> Vec<Span> {
     let mut table = HashOrder::new();
     for &it in spans {
         let mut hasher = FxHasher::default();
         hasher.write_u64(u64::from(it.start) | (u64::from(it.end) << 32));
         table.insert(hasher.finish(), it);
     }
-    table.iter().next()
+    table.iter().collect()
 }

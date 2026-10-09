@@ -1,8 +1,6 @@
 //! The names of tags, emphasis, capital letters, and types.
 
-use super::text::{
-    first_char, last_char, lines, parse_index, push_number, trim, trim_end, trim_start,
-};
+use super::text::{first_char, last_char, lines, parse_index, push_number};
 use crate::options::QuoteStyle;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -172,7 +170,7 @@ fn strip_stars(text: &[u8], separator: u8) -> Vec<u8> {
             continue;
         }
         result.push(separator);
-        let trimmed = trim_start(line);
+        let trimmed = strings::trim_unicode_whitespace_start(line);
         result.extend_from_slice(match trimmed.strip_prefix(b"*") {
             Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
             None => trimmed,
@@ -205,7 +203,7 @@ fn normalize_type_impl(type_str: &[u8], quote_style: Option<QuoteStyle>) -> Byte
         let stripped = strip_stars(type_str, b' ');
         return Cow::Owned(normalize_type_impl(&stripped, quote_style).into_owned());
     }
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     if is_already_normalized(trimmed) {
         return Cow::Borrowed(trimmed);
     }
@@ -296,7 +294,7 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
         true => Cow::Owned(strings::replace_owned(type_str, b"*", b" any ")),
         false => Cow::Borrowed(type_str),
     };
-    let trimmed = trim(&replaced);
+    let trimmed = strings::trim_unicode_whitespace(&replaced);
     if (trimmed.starts_with(b"\"") && trimmed.ends_with(b"\""))
         || (trimmed.starts_with(b"'") && trimmed.ends_with(b"'"))
     {
@@ -304,7 +302,7 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
     }
     // `... type`
     if let Some(stripped) = trimmed.strip_prefix(b"...") {
-        let rest = trim_start(stripped);
+        let rest = strings::trim_unicode_whitespace_start(stripped);
         if rest.is_empty() {
             return trimmed.to_vec();
         }
@@ -316,7 +314,7 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
     }
     // `?Type`
     if let Some(rest) = trimmed.strip_prefix(b"?") {
-        let inner = trim(rest);
+        let inner = strings::trim_unicode_whitespace(rest);
         if !inner.is_empty() {
             return [&normalize_type_core(inner)[..], b" | null"].concat();
         }
@@ -334,12 +332,12 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
 
 /// Arrays, the dots before `<`, white space. Each member of a union by itself.
 fn normalize_type_core(type_str: &[u8]) -> Vec<u8> {
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     let parts = split_at_top_level_pipe(trimmed);
     if parts.len() > 1 {
         let normalized: Vec<Vec<u8>> = parts
             .iter()
-            .map(|part| normalize_type_core(trim(part)))
+            .map(|part| normalize_type_core(strings::trim_unicode_whitespace(part)))
             .collect();
         return normalized.join(&b" | "[..]);
     }
@@ -430,7 +428,7 @@ fn has_optional_suffix(trimmed: &[u8]) -> bool {
 
 /// For `@returns`, `@yields` and `@throws`: `type=` is `type | undefined`.
 pub(super) fn normalize_type_return(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> {
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     if has_optional_suffix(trimmed) && trimmed.len() > 1 {
         let normalized = normalize_type(&trimmed[..trimmed.len() - 1], quote_style);
         return Cow::Owned([&normalized[..], b" | undefined"].concat());
@@ -440,9 +438,9 @@ pub(super) fn normalize_type_return(type_str: &[u8], quote_style: QuoteStyle) ->
 
 /// The type without the `=` at its end, and whether there is one.
 pub(super) fn strip_optional_type_suffix(type_str: &[u8]) -> (&[u8], bool) {
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     if has_optional_suffix(trimmed) {
-        let inner = trim_end(&trimmed[..trimmed.len() - 1]);
+        let inner = strings::trim_unicode_whitespace_end(&trimmed[..trimmed.len() - 1]);
         if !inner.is_empty() {
             return (inner, true);
         }
@@ -617,7 +615,9 @@ fn unquote_object_property_names(type_str: &[u8]) -> Bytes<'_> {
             continue;
         };
         let content = &type_str[start..end];
-        if trim_start(&type_str[i..]).starts_with(b":") && is_valid_js_identifier(content) {
+        if strings::trim_unicode_whitespace_start(&type_str[i..]).starts_with(b":")
+            && is_valid_js_identifier(content)
+        {
             result.extend_from_slice(content);
         } else {
             result.extend_from_slice(&type_str[start - 1..=end]);
@@ -628,7 +628,7 @@ fn unquote_object_property_names(type_str: &[u8]) -> Bytes<'_> {
 
 /// `fixObjectCommas`: in the type of an object, `; x` becomes `, x`.
 fn fix_object_commas(type_str: &[u8]) -> Bytes<'_> {
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     if !trimmed.starts_with(b"{")
         || !trimmed.ends_with(b"}")
         || trimmed.len() < 2
@@ -651,7 +651,7 @@ fn fix_object_commas(type_str: &[u8]) -> Bytes<'_> {
 
 /// One space in the place of any white space, and spaces around `|`, `&` and `=>`.
 pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
-    let trimmed = trim(type_str);
+    let trimmed = strings::trim_unicode_whitespace(type_str);
     let len = trimmed.len();
     let mut result = Vec::with_capacity(len + 8);
     let mut prev_was_space = false;

@@ -1,7 +1,6 @@
 use bun_lint_oxlint::codegen::print_string;
 use crate::jsx::{AttributeValue, get_prop_value};
 use crate::react::is_jsx;
-use bun_lint_oxlint::text::{trim, trim_start};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -159,7 +158,12 @@ impl JsxCurlyBracePresence {
         if cx.file().comments_in(container).len() > 0 {
             return;
         }
-        cx.report(inner, UNNECESSARY).fix(|fixer| match replacement {
+        let report = cx.report(inner, UNNECESSARY);
+        let report = match replacement.is_none() && !parent_is_attribute {
+            true => report.help("remove the curly braces"),
+            false => report,
+        };
+        report.fix(|fixer| match replacement {
             None if parent_is_attribute => vec![fixer.replace(container, inner.text())],
             None => vec![
                 fixer.remove(Span::new(container.start, container.start + 1)),
@@ -186,7 +190,7 @@ fn in_braces(text: &[u8]) -> Vec<u8> {
 
 /// But for `has_adjacent_jsx_expression_containers`.
 fn is_allowed_string_like_in_container(s: &[u8], is_prop: bool) -> bool {
-    let trimmed = trim(s);
+    let trimmed = strings::trim_unicode_whitespace(s);
     !s.is_empty() && trimmed.is_empty()
         || strings::index_of_any(s, b"\n\r").is_some()
         || next_html_entity(s).is_some()
@@ -224,7 +228,7 @@ fn report_missing_curly_for_text_node<'a>(text: Expr<'a>, cx: &Cx<'a, JsxCurlyBr
     let (span, value) = (text.span(), text.text());
     // Nothing but entities and blanks.
     let mut has_text = false;
-    for_each_part(value, |_, part| has_text |= !trim(part).is_empty());
+    for_each_part(value, |_, part| has_text |= !strings::trim_unicode_whitespace(part).is_empty());
     if !has_text {
         return;
     }
@@ -232,7 +236,7 @@ fn report_missing_curly_for_text_node<'a>(text: Expr<'a>, cx: &Cx<'a, JsxCurlyBr
         let mut fixes = Vec::new();
         // From the first character that is not a blank.
         let mut wrap = |start: usize, part: &[u8]| {
-            let part_text = trim_start(part);
+            let part_text = strings::trim_unicode_whitespace_start(part);
             if !part_text.is_empty() {
                 let start = span.start + (start + part.len() - part_text.len()) as u32;
                 fixes.push(fixer.replace(Span::new(start, start + part_text.len() as u32), in_braces(part_text)));

@@ -22,7 +22,7 @@ import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
 import { directoryOf, filesOf, cases as fixCases, flagSets } from "./oracle/plugins/oxlint/fixes";
 import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
 import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
-import { filesOf as filesOfMessages, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
+import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
 import { projects } from "./oracle/plugins/oxlint/projects";
 
@@ -400,6 +400,11 @@ describe.concurrent("bun lint", () => {
         expect(all.map((it, i) => [...it, answers[i]])).toEqual(all.map((it, i) => [...it, expected[i]]));
         expect(exitCode).toBe(0);
       }
+      // A path on another drive that does not start at its root is from the working directory, which is that of the process.
+      const script = `console.log(require("node:path").win32.resolve("C:/proj", "D:a").replaceAll("\\\\", "/"))`;
+      const ofNode = Bun.spawnSync({ cmd: [bunExe(), "-e", script], cwd: String(dir), env });
+      const onOtherDrive = await run(String(dir), ["--run-path-tests", "windows", "resolve", "C:/proj", "D:a"]);
+      expect(onOtherDrive.stdout).toBe(ofNode.stdout.toString());
       const inside = ["c:/proj", "C:/PROJ/a.js", "C:/proj", "C:/project/a.js", "C:/", "c:/a.js"].flatMap((it, i) =>
         i % 2 ? [it] : ["inside", it],
       );
@@ -686,11 +691,19 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
-      // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. It was looked for in the finished
-      // tree, which cost every file more than it may: whoever has the names in hand while the parameters are read is to say it.
-      test.todo.each([
+      // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. The parser, which has the names in
+      // hand, says that a file may have such a list: no other file is looked at.
+      test.each([
         ["a.ts", "export class A {\n  foo(a, a) {}\n}", "a.ts:2:7"],
         ["a.ts", "export {};\nfunction f(b, b) {}", "a.ts:2:12"],
+        ["a.js", '"use strict";\n(function (a, b, a) {});', "a.js:2:12"],
+        ["a.js", '(function (a, b, a) { "use strict"; });', "a.js:1:12"],
+        ["a.js", "(function (a, b, a) {});\nexport {};", "a.js:1:12"],
+        ["a.js", "((a, a) => 1);", "a.js:1:3"],
+        ["a.js", "function f(a, [a]) {}", "a.js:1:12"],
+        ["a.js", "class A { b = function (a, a) {} }", "a.js:1:25"],
+        ["a.ts", "type A = (a: number, a: number) => void;", "a.ts:1:11"],
+        ["a.ts", "declare function f(a: number, a: number): void;\nexport {};", "a.ts:1:20"],
       ])("what OXC refuses is a parsing error: a name that two parameters bind: %s: %j", async (name, code, place) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
         expect(stdout).toContain(`${place}: Parsing error: Identifier`);
@@ -1606,6 +1619,40 @@ describe.concurrent("bun lint", () => {
         // Of several the last is the one that is asked about.
         const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
         expect(said).toEqual(messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`));
+        // A help that is printed is oxlint's. Not all are there yet.
+        const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
+        const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
+        expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
+        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(74);
+      });
+
+      // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.
+      test("every help of oxlint belongs to a message that a rule has", () => {
+        const root = join(import.meta.dir, "../../../src/lint");
+        const unescaped = (text: string) =>
+          text.replace(/\\\n\s*/g, "").replace(/\\(.)/g, (_, it) => ({ n: "\n", t: "\t" })[it as "n"] ?? it);
+        const byId = new Map<string, Set<string>>();
+        for (const file of new Bun.Glob("**/*.rs").scanSync(root)) {
+          const text = readFileSync(join(root, file), "utf8");
+          for (const [, id, plain, , raw] of text.matchAll(
+            /(?:Message::new|\bm)\(\s*"(\w*)",\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\3)/gs,
+          )) {
+            if (!byId.has(id)) byId.set(id, new Set());
+            byId.get(id)!.add(raw ?? unescaped(plain));
+          }
+        }
+        const key = (rule: string, id: string, text: string) => {
+          const low = (hash: number | bigint) => Number(BigInt.asUintN(32, BigInt(hash)));
+          const message = low(Bun.hash.wyhash(text, BigInt(Bun.hash.wyhash(id, 0n))));
+          return (low(Bun.hash.wyhash(rule, 0n)) ^ ((message << 16) | (message >>> 16))) >>> 0;
+        };
+        const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
+        const entries = [...table.matchAll(/^ {4}\(0x([0-9A-F]{8}), .*\), \/\/ (\S+) ?(\w*)$/gm)];
+        expect(entries.length).toBeGreaterThan(700);
+        const lost = entries.filter(
+          ([, hash, rule, id]) => ![...(byId.get(id) ?? [])].some(text => key(rule, id, text) === parseInt(hash, 16)),
+        );
+        expect(lost.map(it => it[0].trim())).toEqual([]);
       });
 
       // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
@@ -3665,6 +3712,28 @@ describe.concurrent("what bun lint takes from Bun", () => {
     ]);
     const lines = raw.split("\n").filter(it => it.endsWith("[Error/no-dupe-keys]"));
     expect(lines.map(it => Number(/:(\d+):\d+: /.exec(it)?.[1]))).toEqual(keys.map((_, i) => i + 1));
+    expect(exitCode).toBe(1);
+  });
+
+  // `a < b` is the order of the UTF-16 code units: "\u{10000}" is "𐀀". The package natural-compare reads digits as `+digits` does.
+  test("strings are ordered as JavaScript does", async () => {
+    const files = {
+      "eslint.config.js": `export default [
+  { files: ["units*.js"], rules: { "sort-keys": "error" } },
+  { files: ["natural*.js"], rules: { "sort-keys": ["error", "asc", { natural: true }] } },
+];\n`,
+      "units.js": 'export default { "\\uD7FF": 1, "\\u{10000}": 2, "\\uDFFF": 3, "\\uE000": 4 };\n',
+      "units-reversed.js": 'export default { "\\uDFFF": 1, "\\u{10000}": 2 };\n',
+      // The two are the same number.
+      "natural.js": "export default { a19007199254740993: 1, a19007199254740992: 2 };\n",
+      "natural-reversed.js": "export default { a19007199254740996: 1, a19007199254740992: 2 };\n",
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "."]);
+    const reported = raw.split("\n").filter(it => it.endsWith("[Error/sort-keys]"));
+    expect(reported.map(it => /([\w-]+\.js):\d+:\d+: /.exec(it)?.[1]).sort()).toEqual([
+      "natural-reversed.js",
+      "units-reversed.js",
+    ]);
     expect(exitCode).toBe(1);
   });
 });

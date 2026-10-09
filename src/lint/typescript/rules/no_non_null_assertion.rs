@@ -51,6 +51,17 @@ impl Rule for NoNonNullAssertion {
                 cx.report(inner, NO_NON_NULL);
             }
             let report = cx.report(e, NO_NON_NULL);
+            let is_in_member = !e.is_parenthesized()
+                && matches!(
+                    e.parent().as_expr().map(Expr::kind),
+                    Some(ExprKind::Dot { .. } | ExprKind::Index { .. })
+                );
+            let report = match cx.language().is_oxlint && is_in_member {
+                true => report.help(
+                    "Consider using the optional chain operator `?.` instead. `x!.y` is equivalent to `x.y` at runtime and will throw if `x` is `null` or `undefined`, but `x?.y` will return `undefined`.",
+                ),
+                false => report,
+            };
             let Some(suggestion) = suggestion(e) else {
                 return;
             };

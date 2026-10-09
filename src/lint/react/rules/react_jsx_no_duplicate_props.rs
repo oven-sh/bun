@@ -36,14 +36,15 @@ impl Rule for JsxNoDuplicateProps {
                 return;
             }
             // Each is reported with the one of the same name before it.
-            let report = |name: Name<'a>, old: Key<'a>| {
-                cx.report(old.span(cx.file()), JSX_NO_DUPLICATE_PROPS).data("prop_name", name);
+            let report = |name: Name<'a>, old: Key<'a>, new: Key<'a>| {
+                let (old, new) = (old.span(cx.file()), new.span(cx.file()));
+                cx.report(old, JSX_NO_DUPLICATE_PROPS).data("prop_name", name).label(new, "");
             };
             if count <= FEW {
                 let names: SmallVec<[(Name<'a>, Key<'a>); FEW]> = attributes.iter().filter_map(identifier).collect();
-                for (i, (name, _)) in names.iter().enumerate() {
+                for (i, (name, key)) in names.iter().enumerate() {
                     if let Some((_, old)) = names.iter().take(i).rev().find(|it| it.0 == *name) {
-                        report(*name, *old);
+                        report(*name, *old, *key);
                     }
                 }
                 return;
@@ -51,7 +52,7 @@ impl Rule for JsxNoDuplicateProps {
             let mut props: FxHashMap<Name<'a>, Key<'a>> = FxHashMap::default();
             for (name, key) in attributes.iter().filter_map(identifier) {
                 if let Some(old) = props.insert(name, key) {
-                    report(name, old);
+                    report(name, old, key);
                 }
             }
         });

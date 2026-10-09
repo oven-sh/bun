@@ -47,7 +47,12 @@ pub(crate) fn infer_types(
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
     );
-    generate(func, env, &mut unifier)?;
+    let generated = generate(func, env, &mut unifier);
+    if let Some(why) = unifier.gave_up() {
+        bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "types over");
+        return Err(why);
+    }
+    generated?;
 
     apply_function(
         func,
@@ -56,10 +61,12 @@ pub(crate) fn infer_types(
         &mut env.types,
         &mut unifier,
     );
-    if !unifier.has_stack() {
-        return Err(crate::lowering::nested_too_deeply());
+    let steps = unifier.steps.get();
+    bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "types {}", steps);
+    match unifier.gave_up() {
+        Some(why) => Err(why),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 // =============================================================================
@@ -1057,6 +1064,9 @@ fn resolve_identifier(
 // Unifier
 // =============================================================================
 
+/// Phis that are made of each other are copied into each other: without this, 400 bytes of source take all the memory.
+const MAX_STEPS: u32 = 1 << 22;
+
 struct Unifier {
     substitutions: HashMap<TypeId, Type>,
     enable_treat_ref_like_identifiers_as_refs: bool,
@@ -1064,6 +1074,8 @@ struct Unifier {
     custom_hook_type: Option<Type>,
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
+    /// How many parts of types were gone into.
+    steps: std::cell::Cell<u32>,
 }
 
 impl Unifier {
@@ -1079,6 +1091,7 @@ impl Unifier {
             custom_hook_type,
             stack: bun_core::StackCheck::init(),
             is_out_of_stack: std::cell::Cell::new(false),
+            steps: std::cell::Cell::new(0),
         }
     }
 
@@ -1088,6 +1101,28 @@ impl Unifier {
             self.is_out_of_stack.set(true);
         }
         !self.is_out_of_stack.get()
+    }
+
+    /// `has_stack`, and within [`MAX_STEPS`], which is the same on every platform.
+    fn may_go_into(&self, parts: usize) -> bool {
+        let steps = self.steps.get().saturating_add(parts as u32);
+        self.steps.set(steps);
+        steps <= MAX_STEPS && self.has_stack()
+    }
+
+    /// Something was left out, and `infer_types` fails.
+    #[inline]
+    fn gave_up(&self) -> Option<CompilerDiagnostic> {
+        (!self.may_go_into(0)).then(|| self.why_it_gave_up())
+    }
+
+    #[cold]
+    fn why_it_gave_up(&self) -> CompilerDiagnostic {
+        if self.steps.get() > MAX_STEPS {
+            crate::lowering::too_complex("Its types are too complex to infer")
+        } else {
+            crate::lowering::nested_too_deeply()
+        }
     }
 
     fn unify(
@@ -1150,8 +1185,8 @@ impl Unifier {
         if type_equals(&t_a, &t_b) {
             return Ok(());
         }
-        if !self.has_stack() {
-            return Err(crate::lowering::nested_too_deeply());
+        if let Some(why) = self.gave_up() {
+            return Err(why);
         }
 
         if let Type::TypeVar { .. } = &t_a {
@@ -1271,7 +1306,7 @@ impl Unifier {
     }
 
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
-        if !self.has_stack() {
+        if !self.may_go_into(1) {
             return None;
         }
         match ty {
@@ -1341,16 +1376,17 @@ impl Unifier {
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.has_stack() && self.occurs_check(v, sub);
+                return self.may_go_into(1) && self.occurs_check(v, sub);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            return self.has_stack() && operands.iter().any(|o| self.occurs_check(v, o));
+            let may_go_on = self.may_go_into(operands.len());
+            return may_go_on && operands.iter().any(|o| self.occurs_check(v, o));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.has_stack() && self.occurs_check(v, return_type);
+            return self.may_go_into(1) && self.occurs_check(v, return_type);
         }
 
         false
@@ -1363,14 +1399,14 @@ impl Unifier {
             ty = sub;
         }
         match ty {
-            Type::Phi { operands } if self.has_stack() => Type::Phi {
+            Type::Phi { operands } if self.may_go_into(operands.len()) => Type::Phi {
                 operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
             },
             Type::Function {
                 is_constructor,
                 shape_id,
                 return_type,
-            } if self.has_stack() => Type::Function {
+            } if self.may_go_into(1) => Type::Function {
                 is_constructor: *is_constructor,
                 shape_id: *shape_id,
                 return_type: Box::new(self.get(return_type)),

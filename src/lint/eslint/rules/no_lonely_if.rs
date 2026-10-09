@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow `if` statements as the only statement in `else` blocks.
@@ -14,8 +15,8 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
     };
     let (outer, inner) = (block.span(), node.span());
     // Comments would be lost.
-    if !text::is_blank(file.slice(Span::before(outer.start + 1, inner)))
-        || !text::is_blank(file.slice(Span::after(inner, outer.end - 1)))
+    if !strings::is_all_js_whitespace(file.slice(Span::before(outer.start + 1, inner)))
+        || !strings::is_all_js_whitespace(file.slice(Span::after(inner, outer.end - 1)))
     {
         return None;
     }

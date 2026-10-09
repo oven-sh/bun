@@ -10,9 +10,12 @@ let typeNames = [];
 const typeIds = new Map();
 // ESLint's `visitorKeys`, for typescript-estree and for espree.
 const visitorKeys = [{}, {}];
-// By dialect and type: how many words a node has, and the function that makes it.
-const fieldCounts = [[], []];
-const constructors = [[], []];
+// By dialect and type: `{ name, fields, leftOut, prototype }`. `leftOut`: a bit for each field that a node does not have at all if
+// there is nothing to say.
+const kinds = [[], []];
+// For `native.nodes`, by dialect and type: what `native.shape` has made, and `leftOut`.
+const shapes = [[], []];
+const leftOutBits = [new Uint32Array(256), new Uint32Array(256)];
 let knownStrings = [];
 
 // The arrays of the file.
@@ -76,31 +79,25 @@ function defineTypes(types, strings) {
     for (const dialect of [0, 1]) {
       const own = fields.filter(([, flags]) => !(flags & (dialect === 0 ? 4 : 2)) && !(flags & 8));
       visitorKeys[dialect][name] = own.filter(([, flags]) => flags & 1).map(([field]) => field);
-      fieldCounts[dialect][id] = own.length;
-      const assignments = own.map(([field], i) => {
-        const read = `value(fields[at + ${i}], start, end)`;
-        const isLeftOut = leftOut.has(`${name}.${field}`) || (dialect === 1 && field === "directive");
-        return isLeftOut ? `if (fields[at + ${i}] !== 0) this.${field} = ${read};` : `this.${field} = ${read};`;
-      });
-      // A class for each type: all nodes of a type have the same shape.
-      constructors[dialect][id] = new Function(
-        "Node",
-        "value",
-        `return class ${name} extends Node {
-          constructor(fields, at, start, end) {
-            super();
-            this.type = ${JSON.stringify(name)};
-            ${assignments.join("\n")}
-            this.start = start;
-            this.end = end;
-            this.range = [start, end];
-            this.parent = null;
-          }
-        }`,
-      )(Node, value);
+      const names = own.map(([field]) => field);
+      const canBeLeftOut = field => leftOut.has(`${name}.${field}`) || (dialect === 1 && field === "directive");
+      const some = names.filter(canBeLeftOut);
+      // All nodes of a type have the same shape, but for these.
+      const kind = { name, fields: names, leftOut: 0, prototype: Object.create(Node.prototype) };
+      for (const field of some) kind.leftOut |= 1 << names.indexOf(field);
+      kinds[dialect][id] = kind;
+      if (native !== undefined) {
+        const shapeWith = which => {
+          const has = field => !some.includes(field) || ((which >> some.indexOf(field)) & 1) === 1;
+          return native.shape(kind.prototype, ["type", ...names.filter(has), "start", "end", "range", "parent"], name);
+        };
+        shapes[dialect][id] =
+          some.length === 0 ? shapeWith(0) : Array.from({ length: 1 << some.length }, (_, it) => shapeWith(it));
+        leftOutBits[dialect][id] = kind.leftOut;
+      }
       if (dialect === 1) continue;
       for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
-        Object.defineProperty(constructors[0][id].prototype, key, {
+        Object.defineProperty(kind.prototype, key, {
           get() {
             return get(this, this);
           },
@@ -221,18 +218,29 @@ function readMatches(words, selectors) {
 // Makes all the nodes of `tree`.
 function makeNodes() {
   const { count, types, starts, ends, parents, fields, dialect } = tree;
-  const counts = fieldCounts[dialect];
-  const classes = constructors[dialect];
+  if (native !== undefined) {
+    nodes = native.nodes(shapes[dialect], leftOutBits[dialect], buffers[AST], text, knownStrings, value);
+    return;
+  }
+  // The same, where that is not there: src/jsc/bindings/LintNodes.cpp.
+  const byType = kinds[dialect];
   // Where the words of each node start.
   const offsets = new Uint32Array(count);
   for (let id = 0, at = 0; id < count; id++) {
     offsets[id] = at;
-    at += counts[types[id]];
+    at += byType[types[id]].fields.length;
   }
   nodes = new Array(count);
   // What is in a node has a higher number.
   for (let id = count - 1; id >= 0; id--) {
-    nodes[id] = new classes[types[id]](fields, offsets[id], starts[id], ends[id]);
+    const kind = byType[types[id]];
+    const [at, start, end] = [offsets[id], starts[id], ends[id]];
+    const node = Object.create(kind.prototype);
+    node.type = kind.name;
+    kind.fields.forEach((field, i) => {
+      if (fields[at + i] !== 0 || ((kind.leftOut >> i) & 1) === 0) node[field] = value(fields[at + i], start, end);
+    });
+    nodes[id] = Object.assign(node, { start, end, range: [start, end], parent: null });
   }
   for (let id = 1; id < count; id++) nodes[id].parent = nodes[parents[id]];
 }

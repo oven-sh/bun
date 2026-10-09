@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{TokenOrText, can_tokens_be_adjacent};
 
@@ -24,7 +25,7 @@ fn is_parse_int(callee: Expr) -> bool {
 /// `+(literalPrefix + text) === parseInt(text, radix)`, for a radix of 2, 8 or 16. The left side is
 /// a number only if `text` is digits of that radix and then whitespace, and then the two agree.
 fn is_same_as_literal(text: &[u8], radix: u32) -> bool {
-    let digits = text::trim_end(text);
+    let digits = strings::trim_js_whitespace_end(text);
     !digits.is_empty() && digits.iter().all(|c| char::from(*c).is_digit(radix))
 }
 

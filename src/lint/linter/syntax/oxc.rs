@@ -8,14 +8,15 @@
 //! which no cheap sign says that there is something to find, or asks for them by kind.
 
 use super::{SyntaxError, espree};
-use crate::ast::{Class, Expr, File, Handle, StmtTag};
+use crate::ast::{Class, Expr, File, Func, Handle, Node, Param, StmtTag};
 use crate::tokens::token_len;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
-    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, PatKind, StmtId, StmtKind,
-    VarKind,
+    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ParamId, PatKind, StmtId,
+    StmtKind, VarKind,
 };
+use smallvec::SmallVec;
 
 fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
     modifier.kind == ModifierKind::Keyword(flag)
@@ -196,6 +197,61 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
     })
 }
 
+/// A name that two parameters of a function or of a signature bind. Only a function that is a declaration or an expression can
+/// have that, where the code is not strict, if each of its parameters is a name and nothing else. The error is at the first.
+fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let hir = &file.hir;
+    // Nearly no file has such a list, or one with a pattern in it.
+    if !file.may_bind_a_parameter_twice() {
+        return None;
+    }
+    let mut first: Option<u32> = None;
+    let mut names: SmallVec<[(Atom, u32); 8]> = SmallVec::new();
+    for (i, raw) in hir.fns.iter().enumerate() {
+        // One parameter binds a name twice only in a pattern, which is not looked for.
+        if raw.params.len < 2 {
+            continue;
+        }
+        let params = hir.params.get(raw.params.range()).unwrap_or_default();
+        names.clear();
+        let mut are_simple = true;
+        for (param, id) in params.iter().zip(raw.params.iter()) {
+            are_simple &= param.default.is_none() && !param.flags.contains(Flags::REST);
+            match hir.pats.get(param.pat.idx()).map(|it| (it.kind, it.pos)) {
+                Some((PatKind::Ident(name), pos)) => names.push((name, pos)),
+                _ => {
+                    are_simple = false;
+                    let id: ParamId = id;
+                    Param::new(file, id).pat().for_each_binding(&mut |it| {
+                        if let Some(PatKind::Ident(name)) = it.try_raw().map(|it| it.kind) {
+                            names.push((name, it.span().start));
+                        }
+                    });
+                }
+            }
+        }
+        let twice = (names.iter().enumerate())
+            .find(|&(i, it)| names[i + 1..].iter().any(|later| later.0 == it.0));
+        let Some((_, &(_, at))) = twice else {
+            continue;
+        };
+        let func = Func::from_raw(file, i as u32);
+        let allows = are_simple
+            && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
+            && !crate::utils::oxlint::is_strict_mode(Node::Func(func).scope(), file);
+        if !allows && func.is_in_tree() && first.is_none_or(|it| at < it) {
+            first = Some(at);
+        }
+    }
+    let at = first?;
+    let name = file.text().get(at as usize..)?;
+    let name = name.get(..token_len(name))?;
+    Some(SyntaxError {
+        at,
+        message: [b"Identifier `", name, b"` has already been declared"].concat(),
+    })
+}
+
 /// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // acorn's checks have these for JavaScript.
@@ -208,7 +264,11 @@ pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             error_of_grammar(file),
         ],
     };
-    let early = [espree::first_error_of_oxc(file), reserved_word(file)];
+    let early = [
+        espree::first_error_of_oxc(file),
+        reserved_word(file),
+        duplicate_parameter(file),
+    ];
     (of_typescript.into_iter().chain(early))
         .flatten()
         .min_by_key(|it| it.at)

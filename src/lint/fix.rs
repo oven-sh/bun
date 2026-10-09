@@ -79,11 +79,19 @@ pub trait IntoFix {
     /// ESLint's `mergeFixes`: one fix that does what all of them do. `None` if there are none, or
     /// if two overlap.
     fn into_fix(self, file: &File) -> Option<Fix>;
+
+    /// The one that was made first.
+    fn first_fix(&self) -> Option<&Fix>;
 }
 
 impl IntoFix for Fix {
     #[inline]
     fn into_fix(self, _: &File) -> Option<Fix> {
+        Some(self)
+    }
+
+    #[inline]
+    fn first_fix(&self) -> Option<&Fix> {
         Some(self)
     }
 }
@@ -93,9 +101,17 @@ impl<T: IntoFix> IntoFix for Option<T> {
     fn into_fix(self, file: &File) -> Option<Fix> {
         self?.into_fix(file)
     }
+
+    #[inline]
+    fn first_fix(&self) -> Option<&Fix> {
+        self.as_ref()?.first_fix()
+    }
 }
 
 impl IntoFix for Vec<Fix> {
+    fn first_fix(&self) -> Option<&Fix> {
+        self[..].first()
+    }
     fn into_fix(mut self, file: &File) -> Option<Fix> {
         if self.len() <= 1 {
             return self.pop();
@@ -120,6 +136,9 @@ impl IntoFix for Vec<Fix> {
 }
 
 impl<const N: usize> IntoFix for [Fix; N] {
+    fn first_fix(&self) -> Option<&Fix> {
+        self[..].first()
+    }
     fn into_fix(self, file: &File) -> Option<Fix> {
         Vec::from(self).into_fix(file)
     }

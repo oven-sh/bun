@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint_oxlint::text::find_next_token_within;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -12,7 +13,7 @@ fn find_empty_braces_in_span<'a>(file: &'a File<'a>, span: Span) -> Option<Span>
     let open_brace = find_next_token_within(file, span, b"{")?;
     let close_brace = find_next_token_within(file, Span::new(open_brace + 1, span.end), b"}")?;
     let between = file.slice(Span::new(open_brace + 1, close_brace));
-    text::trim(between).is_empty().then(|| Span::new(open_brace, close_brace + 1))
+    strings::trim_js_whitespace(between).is_empty().then(|| Span::new(open_brace, close_brace + 1))
 }
 
 impl Rule for RequireModuleSpecifiers {

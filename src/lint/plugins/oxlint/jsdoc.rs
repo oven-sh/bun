@@ -400,31 +400,51 @@ impl<'a> JSDocPluginSettings<'a> {
             .is_some_and(|it| Self::replacement(it).is_none())
     }
 
+    /// The name that JSDoc prefers.
+    fn default_alias(original_name: &[u8]) -> Option<&'static str> {
+        Some(match original_name {
+            b"virtual" => "abstract",
+            b"extends" => "augments",
+            b"constructor" => "class",
+            b"const" => "constant",
+            b"defaultvalue" => "default",
+            b"desc" => "description",
+            b"host" => "external",
+            b"fileoverview" | b"overview" => "file",
+            b"emits" => "fires",
+            b"func" | b"method" => "function",
+            b"var" => "member",
+            b"arg" | b"argument" => "param",
+            b"prop" => "property",
+            b"return" => "returns",
+            b"exception" => "throws",
+            b"yield" => "yields",
+            _ => return None,
+        })
+    }
+
     /// The configuration, or JSDoc, has another name for the tag.
     pub(crate) fn has_preferred_tag_name(&self, original_name: &[u8]) -> bool {
-        self.preference(original_name).is_some()
-            || matches!(
-                original_name,
-                b"virtual"
-                    | b"extends"
-                    | b"constructor"
-                    | b"const"
-                    | b"defaultvalue"
-                    | b"desc"
-                    | b"host"
-                    | b"fileoverview"
-                    | b"overview"
-                    | b"emits"
-                    | b"func"
-                    | b"method"
-                    | b"var"
-                    | b"arg"
-                    | b"argument"
-                    | b"prop"
-                    | b"return"
-                    | b"exception"
-                    | b"yield"
-            )
+        self.preference(original_name).is_some() || Self::default_alias(original_name).is_some()
+    }
+
+    /// What oxlint says against a tag that [is blocked](Self::is_blocked_tag_name) or
+    /// [has another name](Self::has_preferred_tag_name).
+    pub(crate) fn reason_against_tag_name(&self, tag_name: &[u8]) -> Option<String> {
+        let name = bstr::BStr::new(tag_name);
+        let replace_with = |preferred: &[u8]| {
+            let preferred = bstr::BStr::new(preferred);
+            format!("Replace tag `@{name}` with `@{preferred}`.")
+        };
+        let Some(preference) = self.preference(tag_name) else {
+            return Self::default_alias(tag_name).map(|it| replace_with(it.as_bytes()));
+        };
+        let message = preference.get(b"message").and_then(Json::as_str);
+        Some(match (message, preference.as_str()) {
+            (Some(message), _) => bstr::BStr::new(message).to_string(),
+            (None, Some(preferred)) => replace_with(preferred),
+            (None, None) => format!("Unexpected tag `@{name}`."),
+        })
     }
 
     /// `list_user_defined_tag_names().contains(tag_name)`

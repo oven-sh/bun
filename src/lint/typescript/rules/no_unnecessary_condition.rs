@@ -369,6 +369,15 @@ fn option_chain_contains_option_array_index<'a>(node: Expr<'a>, known: &mut FxHa
     answer
 }
 
+/// tsgolint 7.0 takes the constraint of a type parameter only. A conditional type that is not resolved, `Awaited<T>`,
+/// stays what it is, and nothing is said of it.
+fn tsgolint_is_undecided(e: Expr) -> bool {
+    e.file().language().is_oxlint
+        && union_constituents(e.ty())
+            .iter()
+            .any(|part| part.has_flags(TypeFlags::CONDITIONAL | TypeFlags::SUBSTITUTION))
+}
+
 /// Reports `expression` if its type is always truthy or always falsy.
 fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     let mut node = expression;
@@ -409,9 +418,8 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     if is_conditional_always_necessary(ty) {
         return;
     }
-    // tsgolint 7.0 says nothing of a conditional type that is not resolved: `Awaited<T>`.
     let is_oxlint = cx.language().is_oxlint;
-    if is_oxlint && union_constituents(ty).iter().any(|part| part.has_flags(TypeFlags::CONDITIONAL)) {
+    if tsgolint_is_undecided(expression) {
         return;
     }
     let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
@@ -480,6 +488,9 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
     operator: BinOp,
     cx: &Context<'a>,
 ) {
+    if tsgolint_is_undecided(left) || tsgolint_is_undecided(right) {
+        return;
+    }
     let left_type = get_constrained_type_at_location(left);
     let right_type = get_constrained_type_at_location(right);
 

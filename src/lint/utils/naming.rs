@@ -1,6 +1,5 @@
 //! ESLint's `lib/shared/naming.js`.
 
-use super::text::has_line_break;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -36,7 +35,7 @@ pub fn normalize_package_name<'t>(name: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]
     match rest {
         Some(rest) if !rest.is_empty() && rest != prefix => {
             let package = &rest[..strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len())];
-            if has_prefix(package, prefix) || has_line_break(rest) {
+            if has_prefix(package, prefix) || strings::contains_js_line_break(rest) {
                 return name;
             }
             Cow::Owned([scope, b"/", prefix, b"-", rest].concat())
@@ -61,7 +60,7 @@ pub fn get_shorthand_name<'t>(fullname: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]
     let scope = &fullname[..slash];
     match fullname[slash + 1..].strip_prefix(prefix) {
         Some([]) => Cow::Borrowed(scope),
-        Some([b'-', rest @ ..]) if !rest.is_empty() && !has_line_break(rest) => {
+        Some([b'-', rest @ ..]) if !rest.is_empty() && !strings::contains_js_line_break(rest) => {
             Cow::Owned([scope, b"/", rest].concat())
         }
         _ => Cow::Borrowed(fullname),
@@ -73,7 +72,7 @@ pub fn get_namespace_from_term(term: &[u8]) -> &[u8] {
     if term.first() != Some(&b'@') {
         return &[];
     }
-    let line = super::text::lines(term).next().unwrap_or_default();
+    let line = strings::js_lines(term).next().unwrap_or_default();
     match strings::last_index_of_char(line, b'/') {
         Some(slash) => &term[..=slash],
         None => &[],

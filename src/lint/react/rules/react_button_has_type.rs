@@ -52,7 +52,7 @@ impl Rule for ButtonHasType {
                         None => false,
                     };
                     if !is_valid {
-                        cx.report(button_type_prop, INVALID_TYPE_PROP);
+                        cx.report(button_type_prop, INVALID_TYPE_PROP).data("allowed_types", rule.allowed_types_message());
                     }
                 }
             }
@@ -81,7 +81,7 @@ impl Rule for ButtonHasType {
                 None => drop(cx.report(object, MISSING_TYPE_PROP)),
                 Some(type_prop) => {
                     if !type_prop.value().is_some_and(|it| rule.is_valid_button_type_prop_expression(it)) {
-                        cx.report(type_prop, INVALID_TYPE_PROP);
+                        cx.report(type_prop, INVALID_TYPE_PROP).data("allowed_types", rule.allowed_types_message());
                     }
                 }
             }
@@ -90,6 +90,19 @@ impl Rule for ButtonHasType {
 }
 
 impl ButtonHasType {
+    fn allowed_types_message(&self) -> &'static str {
+        match (self.button, self.submit, self.reset) {
+            (true, true, true) => "`button`, `submit`, or `reset`",
+            (true, true, false) => "`button` or `submit`",
+            (true, false, true) => "`button` or `reset`",
+            (false, true, true) => "`submit` or `reset`",
+            (true, false, false) => "`button`",
+            (false, true, false) => "`submit`",
+            (false, false, true) => "`reset`",
+            (false, false, false) => "",
+        }
+    }
+
     /// A valid string, or `a ? b : c` of which both are.
     fn is_valid_button_type_prop_expression(&self, expr: Expr) -> bool {
         let mut pending: SmallVec<[Expr; 4]> = smallvec![expr];

@@ -30,7 +30,7 @@ fn is_default_fallthrough_comment(value: &[u8]) -> bool {
         rest = rest.get(at..).unwrap_or_default();
         if let Some(after) = text::strip_prefix_ignoring_case(rest, b"fall") {
             let after = text::strip_prefix_ignoring_case(after, b"s").unwrap_or(after);
-            let after = after.get(text::white_space_len(after)..).unwrap_or_default();
+            let after = after.get(strings::js_whitespace_len(after)..).unwrap_or_default();
             if text::strip_prefix_ignoring_case(after, b"through").is_some() {
                 return true;
             }
@@ -46,7 +46,7 @@ impl NoFallthrough {
         comment.filter(|comment| {
             let value = comment.comment_value();
             if is_oxlint {
-                let value = text::trim(value);
+                let value = strings::trim_js_whitespace(value);
                 return match &self.pattern_of_oxlint {
                     Some(pattern) => {
                         pattern.test(value) && !value.starts_with(b"oxlint-") && !value.starts_with(b"eslint-")
@@ -58,7 +58,7 @@ impl NoFallthrough {
                 Some(pattern) => pattern.test(value),
                 None => is_default_fallthrough_comment(value),
             };
-            is_fallthrough_comment && match_directives_pattern(text::trim(value)).is_none()
+            is_fallthrough_comment && match_directives_pattern(strings::trim_js_whitespace(value)).is_none()
         })
     }
 

@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use bun_lint_oxlint::ast_util::static_string;
+use bun_lint_oxlint::ast_util::{static_property_info, static_string};
 use rustc_hash::FxHashMap;
 
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
@@ -109,8 +109,23 @@ fn check_reduce_usage<'a>(spread: Node<'a>, pat: Pat<'a>, cx: &Cx<'a, NoAccumula
         .ancestors()
         .take_while(|it| *it != Node::Func(callback))
         .any(|it| matches!(it, Node::Func(func) if is_function(func)));
-    if !is_in_inner_function && Node::Func(callback).ancestors().any(is_call_of_reduce) {
-        cx.report(spread, REDUCE_SPREAD);
+    if !is_in_inner_function && let Some(call) = Node::Func(callback).ancestors().find(|it| is_call_of_reduce(*it)) {
+        let initial = call.as_expr().and_then(Expr::as_call).and_then(|it| it.args().get(1));
+        let callee = call.as_expr().and_then(Expr::callee);
+        let reduce_span = callee.and_then(|it| static_property_info(it.skip_type_wrappers())).map(|it| it.0);
+        let report = cx.report(spread, REDUCE_SPREAD).first_label("From this spread");
+        let report = report.label(reduce_span.unwrap_or_default(), "For this reduce");
+        report.help(match initial.map(|it| it.skip_type_wrappers().tag()) {
+            Some(ExprTag::Object) => {
+                "It looks like you're spreading an `Object`. Consider using the `Object.assign` or assignment \
+                 operators to mutate the accumulator instead."
+            }
+            Some(ExprTag::Array) => {
+                "It looks like you're spreading an `Array`. Consider using the `Array.push` or `Array.concat` \
+                 methods to mutate the accumulator instead."
+            }
+            _ => "Consider using `Object.assign()` or `Array.prototype.push()` to mutate the accumulator instead.",
+        });
     }
 }
 
@@ -155,7 +170,16 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
             _ => 3,
         };
         let start = stmt.span().start;
-        // The labels of oxlint: the accumulator, the spread, and the loop, which is the primary one.
-        cx.report(pat, LOOP_SPREAD).comments_apply_at(Span::new(start, start + keyword));
+        // The loop is the primary one.
+        let loop_span = Span::new(start, start + keyword);
+        let report = cx
+            .report(pat, LOOP_SPREAD)
+            .first_label("From this accumulator")
+            .label(spread.span(), "From this spread")
+            .label(loop_span, "For this loop");
+        report.comments_apply_at(loop_span).help(match value.tag() {
+            ExprTag::Array => "Consider using `Array.prototype.push()` to mutate the accumulator instead.",
+            _ => "Consider using `Object.assign()` to mutate the accumulator instead.",
+        });
     }
 }

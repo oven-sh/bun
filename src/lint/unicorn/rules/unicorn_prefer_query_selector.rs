@@ -1,5 +1,5 @@
+use bun_core::strings;
 use bun_lint_oxlint::ast_util::{as_member_expression, plain};
-use bun_lint_oxlint::text::{split_whitespace, trim};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -48,8 +48,8 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         .data("bad_method", property_name);
     let literal_value = match plain(argument_expr).map(Expr::kind) {
         Some(ExprKind::Null) => Some(&b""[..]),
-        Some(ExprKind::String(value)) => Some(trim(value.bytes())),
-        Some(ExprKind::Template(literal)) => literal.as_static().map(|it| trim(it.bytes())),
+        Some(ExprKind::String(value)) => Some(strings::trim_unicode_whitespace(value.bytes())),
+        Some(ExprKind::Template(literal)) => literal.as_static().map(|it| strings::trim_unicode_whitespace(it.bytes())),
         // `getElementById(id)` is `` querySelector(`#${id}`) ``.
         Some(ExprKind::Ident(_)) if property_name == b"getElementById" => {
             report.fix(|fixer| {
@@ -71,7 +71,7 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         let argument = match property_name {
             b"getElementById" => [b"#", literal_value].concat(),
             // All of the classes.
-            b"getElementsByClassName" => split_whitespace(literal_value).fold(Vec::new(), |mut all, class| {
+            b"getElementsByClassName" => strings::split_unicode_whitespace(literal_value).fold(Vec::new(), |mut all, class| {
                 all.push(b'.');
                 all.extend_from_slice(class);
                 all

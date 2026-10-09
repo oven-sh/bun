@@ -2,7 +2,6 @@
 //! suppress, and which of these comments do nothing.
 
 use super::message::{LintMessage, RuleId, Suppression};
-use super::space::{space_len, space_len_back};
 use crate::ast::File;
 use crate::context::Severity;
 use crate::fix::Fix;
@@ -97,14 +96,14 @@ impl Input<'_, '_> {
                 end += 1;
             }
             let back_over_space = |mut i: usize| {
-                while space_len_back(&list[..i]) > 0 {
-                    i -= space_len_back(&list[..i]);
+                while strings::js_whitespace_len_back(&list[..i]) > 0 {
+                    i -= strings::js_whitespace_len_back(&list[..i]);
                 }
                 i
             };
             let over_space = |mut i: usize| {
-                while space_len(&list[i..]) > 0 {
-                    i += space_len(&list[i..]);
+                while strings::js_whitespace_len(&list[i..]) > 0 {
+                    i += strings::js_whitespace_len(&list[i..]);
                 }
                 i
             };
@@ -245,6 +244,7 @@ impl Input<'_, '_> {
             suppressions: Vec::new(),
             comments_apply_at: None,
             details: None,
+            constant_help: None,
         }
     }
 

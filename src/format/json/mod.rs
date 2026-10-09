@@ -49,12 +49,7 @@ impl Parser {
 
 /// The parser that Prettier infers from the name of a file. `None` if it is not JSON.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
-    use bun_core::strings::last_index_of_char;
-    let separator = last_index_of_char(path, b'/').max(last_index_of_char(path, b'\\'));
-    let basename = path
-        .get(separator.map_or(0, |at| at + 1)..)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let basename = bun_lint::paths::file_name(path).to_ascii_lowercase();
     let basename = &basename[..];
     if matches!(
         basename,

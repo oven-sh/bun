@@ -22,7 +22,10 @@ impl Rule for BadComparisonSequence {
             if let Some(comparison_result) = bad_comparison_sequence(e)
                 && cx.state.find(Node::Expr(e), has_no_bad_comparison_in_parent) == Some(true)
             {
-                cx.report(comparison_result, BAD_COMPARISON_SEQUENCE);
+                let compared_against = e.right().map(Expr::outer_span).unwrap_or_default();
+                cx.report(comparison_result, BAD_COMPARISON_SEQUENCE)
+                    .first_label("This comparison expression produces a boolean")
+                    .label(compared_against, "That boolean is then compared with this operand");
             }
         });
         AncestorMemo::default()

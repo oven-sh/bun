@@ -150,30 +150,6 @@ impl<'a> Writer<'a, '_> {
     }
 
     fn string(&mut self, value: &[u8]) {
-        self.out.push(b'"');
-        let mut rest = value;
-        while let Some((&byte, after)) = rest.split_first() {
-            match byte {
-                b'"' => self.out.extend_from_slice(b"\\\""),
-                b'\\' => self.out.extend_from_slice(b"\\\\"),
-                b'\n' => self.out.extend_from_slice(b"\\n"),
-                b'\r' => self.out.extend_from_slice(b"\\r"),
-                b'\t' => self.out.extend_from_slice(b"\\t"),
-                0..0x20 => {
-                    let _ = write!(self.out, "\\u{byte:04x}");
-                }
-                // A surrogate, which is not valid in UTF-8.
-                0xED if matches!(after, [0xA0..=0xBF, 0x80..=0xBF, ..]) => {
-                    let unit =
-                        0xD000 | u32::from(after[0] & 0x3F) << 6 | u32::from(after[1] & 0x3F);
-                    let _ = write!(self.out, "\\u{unit:04x}");
-                    rest = &after[2..];
-                    continue;
-                }
-                _ => self.out.push(byte),
-            }
-            rest = after;
-        }
-        self.out.push(b'"');
+        bun_core::printer::json_stringify(value, self.out);
     }
 }

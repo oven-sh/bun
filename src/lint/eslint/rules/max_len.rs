@@ -28,18 +28,18 @@ const MAX_COMMENT: Message = Message::new(
 /// The length of a line in code points, where a tab reaches to the next tab stop.
 fn compute_line_length(line: &[u8], tab_width: usize) -> usize {
     if !strings::contains_char(line, b'\t') {
-        return text::code_point_count(line);
+        return strings::wtf8_codepoint_count(line);
     }
     let tab_width = tab_width as i64;
     // Upstream counts the offset of a tab in UTF-16 code units.
     let (mut offset, mut code_points, mut extra_character_count) = (0i64, 0i64, 0i64);
-    for (_, c) in text::code_points(line) {
+    for (_, c) in strings::wtf8_codepoints(line) {
         if c == u32::from(b'\t') {
             let total_offset = offset + extra_character_count;
             let previous_tab_stop_offset = if tab_width != 0 { total_offset % tab_width } else { 0 };
             extra_character_count += tab_width - previous_tab_stop_offset - 1;
         }
-        offset += i64::from(text::utf16_width(c));
+        offset += i64::from(strings::codepoint_len_utf16(c));
         code_points += 1;
     }
     (code_points + extra_character_count).max(0) as usize
@@ -133,13 +133,13 @@ fn is_trailing_comment(line: Span, end: u32, comment: Span) -> bool {
 
 /// Whether there is nothing but `comment`, which does not start after it, on `line`.
 fn is_full_line_comment(file: &File, line: Span, comment: Span) -> bool {
-    (comment.start < line.start || text::is_blank(file.slice(Span::new(line.start, comment.start))))
+    (comment.start < line.start || strings::is_all_js_whitespace(file.slice(Span::new(line.start, comment.start))))
         && comment.end >= line.end
 }
 
 /// Where `line` ends without `comment` and the whitespace before it.
 fn strip_trailing_comment(file: &File, line: Span, comment: Span) -> u32 {
-    line.start + text::trim_end(file.slice(Span::new(line.start, comment.start))).len() as u32
+    line.start + strings::trim_js_whitespace_end(file.slice(Span::new(line.start, comment.start))).len() as u32
 }
 
 /// Whether the `JsxText` `token` is the value of an attribute, not text between tags.

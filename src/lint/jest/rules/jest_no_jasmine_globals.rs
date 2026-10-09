@@ -9,9 +9,14 @@ pub struct NoJasmineGlobals;
 /// oxlint has the quotes.
 const ILLEGAL_USAGE: Message = Message::new("", "\"Illegal usage of {{what}}\"");
 
-/// With what the message says of each.
-const NON_JASMINE_PROPERTY_NAMES: [(&str, &str); 4] =
-    [("spyOn", "global spyOn"), ("spyOnProperty", "global spyOnProperty"), ("fail", "`fail`"), ("pending", "`pending`,")];
+/// With what the message and the `help` say of each.
+const NON_JASMINE_PROPERTY_NAMES: [(&str, &str, &str); 4] = [
+    ("spyOn", "global spyOn", "\"prefer use Jest own API `jest.spyOn`\""),
+    ("spyOnProperty", "global spyOnProperty", "\"prefer use Jest own API `jest.spyOn`\""),
+    ("fail", "`fail`", "\"prefer throwing an error, or the `done.fail` callback\""),
+    ("pending", "`pending`,", "\"prefer explicitly skipping a test using `test.skip`\""),
+];
+const COMMON_HELP_TEXT: &str = "\"prefer using Jest's own API\"";
 
 impl Rule for NoJasmineGlobals {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-jasmine-globals", Kind::Suggestion).fixable(Fixable::Code);
@@ -24,9 +29,9 @@ impl Rule for NoJasmineGlobals {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if NON_JASMINE_PROPERTY_NAMES.iter().any(|it| file.mentions(it.0)) {
             on.finish(|_, cx| {
-                for (name, what) in NON_JASMINE_PROPERTY_NAMES.into_iter().filter(|it| cx.file().mentions(it.0)) {
+                for (name, what, help) in NON_JASMINE_PROPERTY_NAMES.into_iter().filter(|it| cx.file().mentions(it.0)) {
                     for reference in cx.file().unresolved_references_to(name.as_bytes()) {
-                        cx.report(reference.span(), ILLEGAL_USAGE).data("what", what);
+                        cx.report(reference.span(), ILLEGAL_USAGE).data("what", what).help(help);
                     }
                 }
             });
@@ -39,7 +44,7 @@ impl Rule for NoJasmineGlobals {
                 && let Some((span, property_name)) = get_jasmine_property_name(target)
                 && !expr.is_assignment_target()
             {
-                let report = cx.report(span, ILLEGAL_USAGE).data("what", "jasmine global");
+                let report = cx.report(span, ILLEGAL_USAGE).data("what", "jasmine global").help(COMMON_HELP_TEXT);
                 // `jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000` is `jest.setTimeout(5000)`.
                 if property_name.is("DEFAULT_TIMEOUT_INTERVAL")
                     && let ExprKind::Number(number) = value.kind()
@@ -59,12 +64,15 @@ impl Rule for NoJasmineGlobals {
                     // `expect` has them too.
                     b"any" | b"anything" | b"arrayContaining" | b"objectContaining" | b"stringMatching" => {
                         (report.data("what", [b"`".as_slice(), property_name.bytes(), b"`".as_slice()].concat()))
+                            .data("api", [b"expect.".as_slice(), property_name.bytes()].concat())
                             .fix(|fixer| fixer.replace(object, "expect"))
                     }
                     b"addMatchers" | b"createSpy" => {
-                        report.data("what", [b"`".as_slice(), property_name.bytes(), b"`".as_slice()].concat())
+                        report
+                            .data("what", [b"`".as_slice(), property_name.bytes(), b"`".as_slice()].concat())
+                            .data("api", if property_name.is("createSpy") { "jest.fn" } else { "expect.extend" })
                     }
-                    _ => report.data("what", "jasmine global"),
+                    _ => report.data("what", "jasmine global").help(COMMON_HELP_TEXT),
                 };
             }
         });

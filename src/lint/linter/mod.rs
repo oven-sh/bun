@@ -39,7 +39,6 @@ mod per_file;
 mod registry;
 mod resolved;
 mod schema;
-mod space;
 mod syntax;
 
 pub use config::{
@@ -54,7 +53,7 @@ pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
     Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
-    write_json, write_json_string,
+    write_json,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
@@ -62,7 +61,6 @@ pub use registry::{
     plugin_of_oxlint,
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
-pub(crate) use space::trim as trim_js_space;
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, not_in_a_project, parse_error, refusal_of_oxfmt,
     refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
@@ -101,6 +99,8 @@ pub struct LintOptions<'o> {
     pub report_unused_disable_directives: Option<Severity>,
     /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`].
     pub wants_fixes: bool,
+    /// Whether anything reads [`LintMessage::help`].
+    pub wants_help: bool,
     /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
     /// them, not one for each comment that is in effect: n comments that disable and n messages make n² of them.
     pub wants_suppressions: bool,
@@ -133,6 +133,7 @@ impl Default for LintOptions<'_> {
             allow_inline_config: true,
             report_unused_disable_directives: None,
             wants_fixes: true,
+            wants_help: true,
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
@@ -153,6 +154,8 @@ pub struct LintResult {
     /// Rules that comments of the file name, and that belong to a plugin that is configured but
     /// not implemented here. They are skipped.
     pub skipped_rules: Vec<Box<[u8]>>,
+    /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
+    pub handed_back: Option<crate::formats::Reason>,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
     /// nothing else in the result then.
@@ -170,6 +173,8 @@ struct Running<'r> {
     reported_as: &'static Meta,
     /// [`ConfiguredRule::name`]
     name: Option<&'r Arc<[u8]>>,
+    /// [`ConfiguredRule::or_else`]
+    or_else: Option<&'r ConfiguredJsRule>,
     severity: Severity,
     rule: RuleRef<'r>,
     /// [`ConfiguredRule::refusal`]
@@ -337,6 +342,7 @@ impl Linter {
                     entry: rule.entry,
                     reported_as: rule.reported_as(),
                     name: rule.name(),
+                    or_else: rule.or_else(),
                     severity: rule.severity,
                     rule: RuleRef::Shared(instance),
                     refusal: rule.refusal().map(Cow::Borrowed),
@@ -542,6 +548,7 @@ impl Linter {
             })
             .collect();
         let of_js = problems.len() - before_js;
+        file.sink.wants_help.set(options.wants_help);
         let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         problems.reserve(diagnostics.len());
         // What becomes of what the last rule and `messageId` change that change something.
@@ -574,6 +581,53 @@ impl Linter {
                 }
             }
             problems.push(message);
+        }
+        // The rule of the package looks at a file that the rule here cannot answer for as it would.
+        if let Some(reason) = file.handed_back() {
+            result.handed_back = Some(reason);
+            let back: Vec<RunningJs> = (running.iter())
+                .filter(|it| it.entry.meta.hands_back && it.severity != Severity::Off)
+                .filter_map(|it| {
+                    Some(RunningJs {
+                        severity: it.severity,
+                        configured: Cow::Borrowed(&it.or_else?.configured),
+                    })
+                })
+                .collect();
+            let enabled: Vec<&js_plugin::Configured> =
+                back.iter().map(|it| &**it.configured).collect();
+            let reports = match (options.js_plugins, &config.js_settings) {
+                (Some(host), Some(settings)) if !enabled.is_empty() => host.run_on_block(
+                    file,
+                    settings,
+                    &enabled,
+                    options.wants_fixes,
+                    options.physical_path_len,
+                ),
+                // Nothing here runs JavaScript.
+                _ => Ok(Vec::new()),
+            };
+            match reports {
+                Ok(reports) => {
+                    let of_rule = |it: js_plugin::Report| {
+                        let rule = back.get(it.rule as usize)?;
+                        Some(js_message(it, rule))
+                    };
+                    problems.extend(reports.into_iter().filter_map(of_rule));
+                }
+                Err(failure) => {
+                    let rule = failure.rule.and_then(|it| back.get(it as usize));
+                    match js_failure(&failure, rule, file.path(), config) {
+                        Ok(problem) => problems.push(problem),
+                        Err(thrown) => {
+                            return LintResult {
+                                thrown: Some(thrown),
+                                ..LintResult::default()
+                            };
+                        }
+                    }
+                }
+            }
         }
         // oxlint runs its own rules first: at one place they are first.
         if file.language().is_oxlint {
@@ -784,6 +838,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
             message_id: Cow::Borrowed(""),
             message: message.message.clone(),
             data: Vec::new(),
+            has_data: false,
             fix,
             kind,
         };
@@ -792,7 +847,8 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
 }
 
 fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) -> LintMessage {
-    let (line, column) = match diagnostic.start_position {
+    let details = diagnostic.details.as_deref();
+    let (line, column) = match details.and_then(|it| it.start_position) {
         Some(start) => (start.line, start.column.wrapping_add(1)),
         None => locator.position(diagnostic.span.start),
     };
@@ -803,7 +859,7 @@ fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) ->
         message_id: Some(Cow::Borrowed(diagnostic.message_id)),
         line,
         column,
-        end: (!diagnostic.has_no_end).then(|| match diagnostic.end_position {
+        end: (!diagnostic.has_no_end).then(|| match details.and_then(|it| it.end_position) {
             // A column of -1, which ESLint has, is `u32::MAX`.
             Some(end) => (end.line, end.column.wrapping_add(1)),
             None => locator.position(diagnostic.span.end),
@@ -812,7 +868,7 @@ fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) ->
         fix: diagnostic.fix,
         suggestions: (diagnostic.suggestions.into_iter().map(Into::into)).collect(),
         suppressions: Vec::new(),
-        comments_apply_at: (diagnostic.comments_apply_at)
+        comments_apply_at: (details.and_then(|it| it.comments_apply_at))
             .map(|it| (locator.position(it.start), locator.position(it.end))),
         details: diagnostic.details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
@@ -826,6 +882,7 @@ fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) ->
                 note: it.note,
             })
         }),
+        constant_help: diagnostic.constant_help,
     }
 }
 
@@ -845,6 +902,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
         suppressions: Vec::new(),
         comments_apply_at: None,
         details: None,
+        constant_help: None,
     }
 }
 
@@ -888,6 +946,7 @@ fn js_failure(
         suppressions: Vec::new(),
         comments_apply_at: None,
         details: None,
+        constant_help: None,
     })
 }
 
@@ -1047,7 +1106,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     b"Inline configuration for rule \"",
                     &id,
                     b"\" is invalid:\n\t",
-                    space::trim(&full[colon + 1..]),
+                    bun_core::strings::trim_js_whitespace(&full[colon + 1..]),
                     b" You passed \"",
                     &passed,
                     b"\".\n",
@@ -1091,7 +1150,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     b"Inline configuration for rule \"",
                     &id,
                     b"\" is invalid:\n\t",
-                    space::trim(lines),
+                    bun_core::strings::trim_js_whitespace(lines),
                     b"\n",
                 ]);
                 self.error(comment, Some(rule.id()), message);
@@ -1156,6 +1215,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 entry,
                 reported_as: existing.map_or(entry.meta, ConfiguredRule::reported_as),
                 name,
+                or_else: existing.and_then(ConfiguredRule::or_else),
                 severity,
                 rule,
                 refusal,

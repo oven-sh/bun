@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce consistent line breaks after opening and before closing braces.
@@ -65,7 +66,7 @@ fn check<'a>(
     annotation: Option<Span>,
 ) -> Option<()> {
     let file = cx.file();
-    if count < options.min_properties && !text::has_line_break(file.slice(node)) {
+    if count < options.min_properties && !strings::contains_js_line_break(file.slice(node)) {
         return None;
     }
     let open_brace = file.tokens_in(node).find(|token| token.is("{"))?;

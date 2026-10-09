@@ -1,6 +1,6 @@
 // What a process for JavaScript plugins is started with: see `processes.rs`. Messages are read from the file descriptor 3 and
 // written to 4. The program itself is too long for a command line: it is the first message.
-const { readSync, writeSync } = require("node:fs");
+const { readSync, unlinkSync, writeFileSync, writeSync } = require("node:fs");
 
 const PROGRAM = 100;
 const RESULT = 100;
@@ -52,7 +52,18 @@ if (header[1] !== PROGRAM) throw new Error("The first message is not the program
 const program = Buffer.allocUnsafe(header[0]);
 receive(program, header[0]);
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
-const handle = new Function("require", "load", "request", "again", "decode", program.toString())(
+// It is the body of a function. As a module, for as long as it takes to load it.
+const file = require("node:path").join(require("node:os").tmpdir(), `bun-lint-program-${process.pid}.cjs`);
+writeFileSync(file, `module.exports = function (require, load, request, again, decode, native) {\n${program}\n};\n`);
+let start;
+try {
+  start = require(file);
+} finally {
+  unlinkSync(file);
+  // What is loaded is counted.
+  delete require.cache[file];
+}
+const handle = start(
   require,
   specifier => import(specifier),
   request,

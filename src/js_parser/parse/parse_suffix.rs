@@ -5,7 +5,6 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
-use crate::sema::Mark;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
@@ -20,27 +19,15 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
-            let kind = if p.lexer.identifier == b"as" {
-                Mark::As
-            } else {
-                Mark::Satisfies
-            };
-            p.lexer.next_token()?;
+            p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
-            p.note_token_full_start(&mut left.loc, Mark::End);
-            if kind == Mark::As && p.is_saved_type_parenthesized() {
-                p.note_flag(&mut left.loc, Mark::ParenthesizedType);
-            }
-            p.note_type(&mut left.loc, kind);
 
             // These tokens are not allowed to follow a cast expression. This isn't
             // an outright error because it may be on a new line, in which case it's
@@ -60,12 +47,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.forbid_suffix_after_as_loc = p.lexer.loc();
                     return Ok(Continuation::Done);
                 }
-                // `parseBinaryExpressionRest`: no binary operator. The transpiler goes on with a
-                // property access, as esbuild does.
-                T::TDot if SEMA => {
-                    p.forbid_suffix_after_as_loc = p.lexer.loc();
-                    return Ok(Continuation::Done);
-                }
                 _ => {}
             }
 
@@ -73,52 +54,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.forbid_suffix_after_as_loc = p.lexer.loc();
                 return Ok(Continuation::Done);
             }
-            if p.is_tolerant() && Self::sfx_operator_cannot_follow_cast(p, level, left) {
-                return Ok(Continuation::Done);
-            }
-            return Ok(Continuation::Next);
-        }
-        if p.lexer.token == T::TEscapedKeyword
-            && (p.lexer.is_keyword(T::TIn) || p.lexer.is_keyword(T::TInstanceof))
-        {
             return Ok(Continuation::Next);
         }
         Ok(Continuation::Done)
-    }
-
-    /// `parseBinaryExpressionRest`, after `a ## b as T`: an operator that binds tighter than `##`
-    /// is not consumed, because `as T` could not be erased before it. `left` is `a ## b`, `level`
-    /// is the level of the suffix loop.
-    #[cold]
-    #[inline(never)]
-    fn sfx_operator_cannot_follow_cast(p: &mut Self, level: Level, left: &Expr) -> bool {
-        let ExprData::EBinary(binary) = &left.data else {
-            return false;
-        };
-        // `GetBinaryOperatorPrecedence`. `##` binds at least as tightly as `as`.
-        let next = match p.lexer.token {
-            T::TLessThanLessThan
-            | T::TGreaterThanGreaterThan
-            | T::TGreaterThanGreaterThanGreaterThan => Level::Shift,
-            T::TPlus | T::TMinus => Level::Add,
-            T::TAsterisk | T::TSlash | T::TPercent => Level::Multiply,
-            T::TAsteriskAsterisk => Level::Exponentiation,
-            _ => return false,
-        };
-        if next.lte(bun_ast::op::TABLE.get_ptr_const(binary.op).level) {
-            return false;
-        }
-        // `(a ## b)` is not a binary expression.
-        if p.noted(left.loc, Mark::Paren).is_some() {
-            return false;
-        }
-        // The operand of an operator is returned to `parseBinaryExpressionRest`, which continues.
-        // Nothing above an assignment expression consumes an operator, as after the body of an
-        // arrow function.
-        if level.lt(Level::NullishCoalescing) {
-            p.after_arrow_body_loc = p.lexer.loc();
-        }
-        true
     }
 
     fn sfx_t_dot(
@@ -127,45 +65,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        let after_dot = bun_ast::usize2loc(p.lexer.end);
         p.lexer.next()?;
         let target = *left;
 
-        if (p.lexer.has_newline_before || !p.lexer.is_identifier_or_keyword())
-            && p.is_tolerant()
-            && Self::sfx_name_after_dot_is_missing(p, after_dot, false)?
-        {
-            let loc = left.loc;
-            *left = p.new_expr(
-                E::Dot {
-                    target,
-                    name: E::Str::EMPTY,
-                    name_loc: after_dot,
-                    optional_chain: old_optional_chain,
-                    ..Default::default()
-                },
-                loc,
-            );
-        } else if p.lexer.token == T::TPrivateIdentifier
-            // `parseRightSideOfDot` accepts a private name anywhere. The checker reports 18013,
-            // 18016 or 2339.
-            && (p.allow_private_identifiers || p.is_tolerant())
-        {
+        if p.lexer.token == T::TPrivateIdentifier && p.allow_private_identifiers {
             // "a.#b"
             // "a?.b.#c"
-            if matches!(left.data, ExprData::ESuper(_)) && !p.is_tolerant() {
+            if matches!(left.data, ExprData::ESuper(_)) {
                 p.lexer.expected(T::TIdentifier)?;
             }
 
             let name = p.lexer.identifier;
-            let name_range = p.lexer.range();
-            let name_loc = name_range.loc;
+            let name_loc = p.lexer.loc();
             p.lexer.next()?;
-            // `parsePropertyAccessExpressionRest`: a private name is not allowed in an optional
-            // chain.
-            if old_optional_chain.is_some() && p.is_tolerant() {
-                p.lexer.ts_error(name_range, 18030);
-            }
             let ref_ = p.store_name_in_ref(name);
             let loc = left.loc;
             let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
@@ -207,67 +119,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    /// `parseRightSideOfDot`, at the token after a `.` or `?.` that ends at `after_dot`. Returns
-    /// whether the name is missing, which is reported (1003). Nothing is consumed.
-    #[cold]
-    #[inline(never)]
-    fn sfx_name_after_dot_is_missing(
-        p: &mut Self,
-        after_dot: bun_ast::Loc,
-        is_optional: bool,
-    ) -> Result<bool, Error> {
-        // `tokenIsIdentifierOrKeyword`
-        let is_name = p.lexer.is_identifier_or_keyword() || p.lexer.token == T::TPrivateIdentifier;
-        // A word on a new line that is followed by another word on the same line starts a different
-        // construct.
-        if is_name
-            && !(p.lexer.has_newline_before
-                && !p.is_ecmascript()
-                && p.next_token_matches(|p| {
-                    !p.lexer.has_newline_before
-                        && (p.lexer.is_identifier_or_keyword()
-                            || p.lexer.token == T::TPrivateIdentifier)
-                }))
-        {
-            return Ok(false);
-        }
-        if p.lexer.is_log_disabled {
-            return Err(Error::Backtrack);
-        }
-        // `createIdentifierWithDiagnostic`: at the end of the file, the error is at the end of the
-        // last token. `parseCallExpressionRest` reports a `?.` with nothing after it at the current
-        // token.
-        let range = if is_name || (p.lexer.token == T::TEndOfFile && !is_optional) {
-            bun_ast::Range {
-                loc: after_dot,
-                len: 0,
-            }
-        } else {
-            p.lexer.range()
-        };
-        p.lexer.ts_error(range, 1003);
-        Ok(true)
-    }
-
     fn sfx_t_question_dot(
         p: &mut Self,
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        // `parseNewExpressionOrNewDotTarget`: the callee of `new` cannot contain `?.`. The `new`
-        // expression ends here, without arguments, and the chain continues from its result. Only
-        // `new` parses at this level.
-        if level.eql(Level::Member) && p.is_tolerant() {
-            let range = p.lexer.range();
-            let created = p.source.contents();
-            let created = created
-                .get(p.real_loc(left.loc).to_usize()..p.lexer.full_start().to_usize())
-                .unwrap_or_default();
-            p.lexer.ts_error_about(range, 1209, created);
-            return Ok(Continuation::Done);
-        }
-        let after_dot = bun_ast::usize2loc(p.lexer.end);
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -280,36 +137,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        // `tryParseTypeArgumentsInExpression`. If there are none, the name is missing at the "<".
-        let less_than = p.lexer.loc();
-        let has_type_arguments = p.is_tolerant()
-            && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
-            && !p.lexer.is_javascript_file()
-            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(true)?;
-        let token = if has_type_arguments {
-            T::TLessThan
-        } else {
-            p.lexer.token
-        };
-
-        match token {
+        match p.lexer.token {
             T::TOpenBracket => {
                 // "a?.[b]"
-                let after_bracket = bun_ast::usize2loc(p.lexer.end);
                 p.lexer.next()?;
 
                 // allow "in" inside the brackets;
                 let old_allow_in = p.allow_in;
                 p.allow_in = true;
 
-                let index = if p.lexer.token == T::TCloseBracket
-                    && p.is_tolerant()
-                    && !p.lexer.is_log_disabled
-                {
-                    Self::sfx_missing_index(p, after_bracket)
-                } else {
-                    p.parse_expr(Level::Lowest)?
-                };
+                let index = p.parse_expr(Level::Lowest)?;
 
                 p.allow_in = old_allow_in;
 
@@ -347,26 +184,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     loc,
                 );
             }
-            T::TLessThan | T::TLessThanLessThan
-                if !p.lexer.is_javascript_file() && (has_type_arguments || !p.is_tolerant()) =>
-            'call: {
+            T::TLessThan | T::TLessThanLessThan => {
                 // "a?.<T>()"
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.expected(T::TIdentifier)?;
                     return Err(crate::Error::SyntaxError);
                 }
 
-                if !has_type_arguments {
-                    let _ = p.skip_type_script_type_arguments::<false, false>()?;
-                } else if matches!(
-                    p.lexer.token,
-                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
-                ) {
-                    // "a?.<T>`b`": the suffix that parses the template takes the type arguments.
-                    p.note_type_arguments(left, less_than);
-                    break 'call;
-                }
-                let type_arguments = p.saved_type_arguments();
+                let _ = p.skip_type_script_type_arguments::<false, false>()?;
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -375,10 +200,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     return Ok(Continuation::Done);
                 }
 
-                let mut list_loc = p.parse_call_args()?;
-                if let Some(type_arguments) = type_arguments {
-                    p.note(&mut list_loc.loc, Mark::TypeArguments, type_arguments);
-                }
+                let list_loc = p.parse_call_args()?;
                 let loc = left.loc;
                 let target = *left;
                 *left = p.new_expr(
@@ -392,44 +214,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     loc,
                 );
             }
-            // "a?.`b`": `parseTaggedTemplateRest` accepts it. The suffix that parses the template
-            // reports it.
-            T::TNoSubstitutionTemplateLiteral | T::TTemplateHead if p.lexer.tolerant => {}
             _ => {
-                if (p.lexer.has_newline_before || !p.lexer.is_identifier_or_keyword())
-                    && p.is_tolerant()
-                    && Self::sfx_name_after_dot_is_missing(p, after_dot, true)?
-                {
-                    let loc = left.loc;
-                    let target = *left;
-                    *left = p.new_expr(
-                        E::Dot {
-                            target,
-                            name: E::Str::EMPTY,
-                            name_loc: after_dot,
-                            optional_chain: optional_start,
-                            ..Default::default()
-                        },
-                        loc,
-                    );
-                    // `parseCallExpressionRest` ends after the missing name: no access and no
-                    // assertion continues it.
-                    if matches!(p.lexer.token, T::TDot | T::TQuestionDot | T::TExclamation) {
-                        p.forbid_suffix_after_as_loc = p.lexer.loc();
-                    }
-                } else if p.lexer.token == T::TPrivateIdentifier
-                    && (p.allow_private_identifiers || p.is_tolerant())
-                {
+                if p.lexer.token == T::TPrivateIdentifier && p.allow_private_identifiers {
                     // "a?.#b"
                     let name = p.lexer.identifier;
-                    let name_range = p.lexer.range();
-                    let name_loc = name_range.loc;
+                    let name_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    // `parsePropertyAccessExpressionRest`: a private name is not allowed in an
-                    // optional chain.
-                    if p.is_tolerant() {
-                        p.lexer.ts_error(name_range, 18030);
-                    }
                     let ref_ = p.store_name_in_ref(name);
                     let loc = left.loc;
                     let target = *left;
@@ -479,24 +269,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn sfx_t_no_substitution_template_literal(
         p: &mut Self,
         _level: Level,
-        optional_chain: &mut Option<OptionalChain>,
+        _optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        let type_arguments = p.take_type_arguments();
-        if Self::sfx_tag_is_optional_chain(p, old_optional_chain, left) {
+        if old_optional_chain.is_some() {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
                 b"Template literals cannot have an optional chain as a tag",
             );
-            Self::sfx_chain_after_tagged_template(p, optional_chain, old_optional_chain);
         }
-        // `hasCorrectArity`: a call with an unterminated template is incomplete.
-        let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == p.lexer.start;
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        let backtick = p.lexer.loc();
-        let head = p.tagged_template_contents();
+        let head = E::Str::new(p.lexer.raw_template_contents());
         p.lexer.next()?;
 
         let loc = left.loc;
@@ -504,52 +289,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head,
+                head: E::TemplateContents::Raw(head),
                 parts: E::Template::empty_parts(),
             },
             loc,
         );
-        p.note_tagged_template(left, backtick, type_arguments, is_incomplete);
         Ok(Continuation::Next)
     }
 
     fn sfx_t_template_head(
         p: &mut Self,
         _level: Level,
-        optional_chain: &mut Option<OptionalChain>,
+        _optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        if old_optional_chain.is_some() && !p.is_tolerant() {
+        if old_optional_chain.is_some() {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
                 b"Template literals cannot have an optional chain as a tag",
             );
         }
-        let type_arguments = p.take_type_arguments();
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        let backtick = p.lexer.loc();
-        let head = p.tagged_template_contents();
-        let (parts, tail_loc) = p.parse_template_parts(true)?;
-        if p.is_tolerant() && Self::sfx_tag_is_optional_chain(p, old_optional_chain, left) {
-            // `checkGrammarTaggedTemplateChain`: said of `node.Template`.
-            p.lexer.ts_grammar_error(p.lexer.range_from(backtick), 1358);
-            Self::sfx_chain_after_tagged_template(p, optional_chain, old_optional_chain);
-        }
-        // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
-        let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == tail_loc.start as usize;
+        let head = E::Str::new(p.lexer.raw_template_contents());
+        let (parts, _tail_loc) = p.parse_template_parts(true)?;
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head,
+                head: E::TemplateContents::Raw(head),
                 parts,
             },
             loc,
         );
-        p.note_tagged_template(left, backtick, type_arguments, is_incomplete);
         Ok(Continuation::Next)
     }
 
@@ -572,19 +346,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return Ok(Continuation::Done);
         }
 
-        let after_bracket = bun_ast::usize2loc(p.lexer.end);
         p.lexer.next()?;
 
         // Allow "in" inside the brackets
         let old_allow_in = p.allow_in;
         p.allow_in = true;
 
-        let index =
-            if p.lexer.token == T::TCloseBracket && p.is_tolerant() && !p.lexer.is_log_disabled {
-                Self::sfx_missing_index(p, after_bracket)
-            } else {
-                p.parse_expr(Level::Lowest)?
-            };
+        let index = p.parse_expr(Level::Lowest)?;
 
         p.allow_in = old_allow_in;
 
@@ -605,21 +373,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    /// `parseElementAccessExpressionRest`, at the `]` of `a[]`: 1011 and a missing argument, both
-    /// at the end of the `[`.
-    #[cold]
-    #[inline(never)]
-    fn sfx_missing_index(p: &mut Self, after_bracket: bun_ast::Loc) -> Expr {
-        p.lexer.ts_error(
-            bun_ast::Range {
-                loc: after_bracket,
-                len: 0,
-            },
-            1011,
-        );
-        p.new_expr(E::Missing {}, after_bracket)
-    }
-
     fn sfx_t_open_paren(
         p: &mut Self,
         level: Level,
@@ -631,11 +384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return Ok(Continuation::Done);
         }
 
-        let type_arguments = p.take_type_arguments();
-        let mut list_loc = p.parse_call_args()?;
-        if let Some(type_arguments) = type_arguments {
-            p.note(&mut list_loc.loc, Mark::TypeArguments, type_arguments);
-        }
+        let list_loc = p.parse_call_args()?;
         let loc = left.loc;
         let target = *left;
         *left = p.new_expr(
@@ -662,7 +411,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if level.gte(Level::Conditional) {
             return Ok(Continuation::Done);
         }
-        let question = p.lexer.loc();
         p.lexer.next()?;
 
         // Stop now if we're parsing one of these:
@@ -670,31 +418,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // "(a?: b) => {}"
         // "(a?, b?) => {}"
         if Self::IS_TYPESCRIPT_ENABLED
-            && p.real_loc(left.loc).start == p.latest_arrow_arg_loc.start
+            && left.loc.start == p.latest_arrow_arg_loc.start
             && (p.lexer.token == T::TColon
                 || p.lexer.token == T::TCloseParen
-                || p.lexer.token == T::TComma
-                // "(a?=": `nextIsParenthesizedArrowFunctionExpression`. The checker reports 1015.
-                || (p.lexer.token == T::TEquals && p.is_tolerant()))
+                || p.lexer.token == T::TComma)
         {
-            if let Some(errors) = errors {
-                errors.invalid_expr_after_question = Some(p.lexer.range());
-                p.note_loc(&mut left.loc, Mark::Optional, question);
-                return Ok(Continuation::Done);
-            }
-            // `parseConditionalExpressionRest`: an ordinary conditional expression, with nothing
-            // after its `?`.
-            if !p.is_tolerant() {
+            let Some(errors) = errors else {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
-            }
+            };
+            errors.invalid_expr_after_question = Some(p.lexer.range());
+            return Ok(Continuation::Done);
         }
 
         let loc = left.loc;
         let prev = *left;
         // The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
-        let mut ternary = p.new_expr(
+        let ternary = p.new_expr(
             E::If {
                 test: prev,
                 yes: Expr::EMPTY,
@@ -722,15 +463,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         // condition ? yes : no
         //                 ^
-        if p.lexer.token != T::TColon && p.is_tolerant() {
-            // `parseConditionalExpressionRest`: without the colon, the expression after it is
-            // missing as well.
-            p.lexer.expect(T::TColon)?;
-            e_if.no = p.new_expr(E::Missing {}, p.lexer.loc());
-            p.finish_expr(&mut ternary);
-            *left = ternary;
-            return Ok(Continuation::Next);
-        }
         p.lexer.expect(T::TColon)?;
 
         // condition ? yes : no
@@ -745,7 +477,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         // condition ? yes : no
         //                     ^
-        p.finish_expr(&mut ternary);
 
         *left = ternary;
         Ok(Continuation::Next)
@@ -755,7 +486,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -769,8 +499,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
-        p.note_token_full_start(&mut left.loc, Mark::End);
-        p.note_flag(&mut left.loc, Mark::NonNull);
 
         Ok(Continuation::Next)
     }
@@ -791,10 +519,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             },
             loc,
         );
-        if p.is_tolerant() && Self::cannot_follow_update(p) {
-            p.forbid_suffix_after_as_loc = p.lexer.loc();
-            return Ok(Continuation::Done);
-        }
         Ok(Continuation::Next)
     }
 
@@ -814,29 +538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             },
             loc,
         );
-        if p.is_tolerant() && Self::cannot_follow_update(p) {
-            p.forbid_suffix_after_as_loc = p.lexer.loc();
-            return Ok(Continuation::Done);
-        }
         Ok(Continuation::Next)
-    }
-
-    /// `parseUpdateExpression`: `a++` and `++a` are not a LeftHandSideExpression. Whether the
-    /// current token is one that only continues a LeftHandSideExpression. Assignment operators are
-    /// rejected by `sfx_takes_no_assignment`.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn cannot_follow_update(p: &Self) -> bool {
-        match p.lexer.token {
-            T::TPlusPlus | T::TMinusMinus | T::TExclamation => !p.lexer.has_newline_before,
-            T::TDot
-            | T::TQuestionDot
-            | T::TOpenBracket
-            | T::TOpenParen
-            | T::TNoSubstitutionTemplateLiteral
-            | T::TTemplateHead => true,
-            _ => false,
-        }
     }
 
     fn sfx_t_comma(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
@@ -881,29 +583,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    /// The right side of an assignment. `parseAssignmentExpressionOrHigherWorker`: it is between
-    /// the same `?` and `:` as the assignment is, so that the `(c) : d => e` of `a ? b = (c) : d =>
-    /// e` is not an arrow function.
-    #[inline]
-    fn sfx_right_of_assignment(p: &mut Self, flags: EFlags) -> Result<Expr, Error> {
-        let flags = if flags == EFlags::AfterQuestionAndBeforeColon && p.is_tolerant() {
-            flags
-        } else {
-            EFlags::None
-        };
-        let mut right = Expr::EMPTY;
-        p.parse_expr_with_flags(Level::Assign.sub(1), flags, &mut right)?;
-        Ok(right)
-    }
-
-    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinAddAssign,
@@ -934,14 +621,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinSubAssign,
@@ -991,19 +678,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_asterisk_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_asterisk_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinPowAssign,
@@ -1015,19 +697,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinMulAssign,
@@ -1058,14 +735,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinRemAssign,
@@ -1096,14 +773,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinDivAssign,
@@ -1191,52 +868,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    /// Whether `token`, which follows type arguments, starts the call or tagged template they
-    /// belong to: `parseCallExpressionRest` and `parseMemberExpressionRest` move the type arguments
-    /// of an ExpressionWithTypeArguments to the call or the tagged template that follows.
-    #[inline]
-    fn sfx_takes_type_arguments(token: T) -> bool {
-        matches!(
-            token,
-            T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
-        )
-    }
-
-    /// The optional chain that continues after `e<T>`, where `e` was in `chain`.
-    /// `tryReparseOptionalChain`: an instantiation expression is not part of a chain. The call or
-    /// the tagged template that receives the type arguments is.
-    #[inline]
-    fn sfx_chain_after_type_arguments(
-        p: &Self,
-        chain: Option<OptionalChain>,
-    ) -> Option<OptionalChain> {
-        if chain.is_some() && p.is_tolerant() && !Self::sfx_takes_type_arguments(p.lexer.token) {
-            return None;
-        }
-        chain
-    }
-
-    /// `parseTaggedTemplateRest`: whether the tag `left`, which was parsed in `chain`, has
-    /// `NodeFlagsOptionalChain`. `x!` only gets it before an access or a call
-    /// (`tryReparseOptionalChain`).
-    #[inline]
-    fn sfx_tag_is_optional_chain(p: &Self, chain: Option<OptionalChain>, left: &Expr) -> bool {
-        chain.is_some() && !(p.is_tolerant() && p.last_cast(left) == Some(Mark::NonNull))
-    }
-
-    /// `parseTaggedTemplateRest`: a tagged template whose tag has `NodeFlagsOptionalChain` has it
-    /// too, so that `tryReparseOptionalChain` keeps what follows it in `chain`.
-    #[inline]
-    fn sfx_chain_after_tagged_template(
-        p: &Self,
-        optional_chain: &mut Option<OptionalChain>,
-        chain: Option<OptionalChain>,
-    ) {
-        if p.is_tolerant() {
-            *optional_chain = chain;
-        }
-    }
-
     fn sfx_t_less_than(
         p: &mut Self,
         level: Level,
@@ -1247,35 +878,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        let less_than = p.lexer.loc();
-        let is_optional_chain = Self::sfx_tag_is_optional_chain(p, old_optional_chain, left);
         if Self::IS_TYPESCRIPT_ENABLED
-            // `tryParseTypeArgumentsInExpression`
-            && !p.lexer.is_javascript_file()
-            // Only `parseMemberExpressionRest` and `parseCallExpressionRest` call it.
-            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
-            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
-            *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
-            // `parseSuperExpression`: type arguments after `super` are reported starting at the end
-            // of the keyword. Not after the callee of `new`, which is a primary expression. A
-            // template drops them.
-            if matches!(left.data, ExprData::ESuper(_))
-                && level.lt(Level::Member)
-                && p.is_tolerant()
-            {
-                let after_super = bun_ast::Loc {
-                    start: p.real_loc(left.loc).start + 5,
-                };
-                p.lexer.ts_error(p.lexer.range_from(after_super), 2754);
-                if matches!(
-                    p.lexer.token,
-                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
-                ) {
-                    return Ok(Continuation::Next);
-                }
-            }
-            p.note_type_arguments(left, less_than);
+            *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
 
@@ -1364,21 +970,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        let less_than = p.lexer.loc();
-        let is_optional_chain = Self::sfx_tag_is_optional_chain(p, old_optional_chain, left);
-        // `parseUpdateExpression` returns a JSX element as it is: `parseMemberExpressionRest`, which
-        // tries type arguments, does not see it.
-        let is_jsx_element = p.is_tolerant()
-            && matches!(left.data, ExprData::EJsxElement(_))
-            && p.noted(left.loc, Mark::Paren).is_none();
         if Self::IS_TYPESCRIPT_ENABLED
-            && !p.lexer.is_javascript_file()
-            && !is_jsx_element
-            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
-            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
-            *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
-            p.note_type_arguments(left, less_than);
+            *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
 
@@ -1400,19 +995,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_less_than_less_than_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_less_than_less_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinShlAssign,
@@ -1443,29 +1033,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    /// `reScanGreaterThanToken` in `parseBinaryExpressionRest`, at a `>>=` or `>>>=` that the
-    /// expression parsed at `level` does not take.
-    #[inline]
-    fn sfx_rescan_greater_than_token(p: &mut Self, level: Level) {
-        if p.is_tolerant() && level.lt(Level::Prefix) {
-            p.lexer.rescanned_greater_than_at = p.lexer.start;
-        }
-    }
-
     fn sfx_t_greater_than_greater_than_equals(
         p: &mut Self,
         level: Level,
         left: &mut Expr,
-        flags: EFlags,
     ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
-            Self::sfx_rescan_greater_than_token(p, level);
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinShrAssign,
@@ -1504,16 +1083,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p: &mut Self,
         level: Level,
         left: &mut Expr,
-        flags: EFlags,
     ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
-            Self::sfx_rescan_greater_than_token(p, level);
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinUShrAssign,
@@ -1544,19 +1121,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_question_question_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_question_question_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinNullishCoalescingAssign,
@@ -1575,10 +1147,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         // Prevent "||" inside "??" from the right
         if level.eql(Level::NullishCoalescing) {
-            if p.is_tolerant() {
-                // `GetBinaryOperatorPrecedence`: "??" has the precedence of "||". The checker reports 5076.
-                return Ok(Continuation::Done);
-            }
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -1599,7 +1167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if level.lt(Level::NullishCoalescing) {
             p.parse_suffix(left, Level::NullishCoalescing.add_f(1), None, flags)?;
 
-            if p.lexer.token == T::TQuestionQuestion && !p.is_tolerant() {
+            if p.lexer.token == T::TQuestionQuestion {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -1607,14 +1175,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinLogicalOrAssign,
@@ -1637,8 +1205,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         // Prevent "&&" inside "??" from the right
-        // TypeScript's parser takes it, since "&&" binds tighter. The checker reports 5076.
-        if level.eql(Level::NullishCoalescing) && !p.is_tolerant() {
+        if level.eql(Level::NullishCoalescing) {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -1660,7 +1227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if level.lt(Level::NullishCoalescing) {
             p.parse_suffix(left, Level::NullishCoalescing.add_f(1), None, flags)?;
 
-            if p.lexer.token == T::TQuestionQuestion && !p.is_tolerant() {
+            if p.lexer.token == T::TQuestionQuestion {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -1668,19 +1235,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_ampersand_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_ampersand_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinLogicalAndAssign,
@@ -1711,14 +1273,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseOrAssign,
@@ -1749,19 +1311,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_equals(
-        p: &mut Self,
-        level: Level,
-        left: &mut Expr,
-        flags: EFlags,
-    ) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseAndAssign,
@@ -1792,14 +1349,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseXorAssign,
@@ -1811,14 +1368,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
-        if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+        if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = Self::sfx_right_of_assignment(p, flags)?;
+        let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinAssign,
@@ -1828,60 +1385,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             loc,
         );
         Ok(Continuation::Next)
-    }
-
-    /// `parseAssignmentExpressionOrHigherWorker`: an assignment operator is only consumed after a
-    /// LeftHandSideExpression.
-    /// After anything else the expression ends.
-    #[inline]
-    fn sfx_takes_no_assignment(p: &Self, left: &Expr) -> bool {
-        p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left)
-    }
-
-    /// `isLeftHandSideExpressionKind`, negated. `left` was just parsed.
-    #[cold]
-    #[inline(never)]
-    fn sfx_is_not_left_hand_side(p: &Self, left: &Expr) -> bool {
-        if p.lexer.is_log_disabled {
-            return false;
-        }
-        // Parentheses, `!`, type arguments and type assertions each have their own node kind.
-        if let Some(kind) = p.last_cast(left) {
-            return matches!(kind, Mark::As | Mark::AsTypeParameter | Mark::Satisfies);
-        }
-        matches!(
-            left.data,
-            ExprData::EUnary(_)
-                | ExprData::EBinary(_)
-                | ExprData::EIf(_)
-                | ExprData::EAwait(_)
-                | ExprData::EYield(_)
-                | ExprData::EArrow(_)
-        )
-    }
-
-    /// Whether the syntax of `left` ends with a closing token. At a token that is forbidden as a
-    /// suffix, that token is missing, and the expression the suffix is forbidden after is inside
-    /// `left`: `parseMemberExpressionRest` and `parseCallExpressionRest` go on after `left`.
-    #[cold]
-    #[inline(never)]
-    fn sfx_ends_with_closing_token(p: &Self, left: &Expr) -> bool {
-        if let Some(kind) = p.last_cast(left) {
-            return kind == Mark::Paren;
-        }
-        match &left.data {
-            ExprData::EIndex(access) => {
-                !matches!(access.index.data, ExprData::EPrivateIdentifier(_))
-            }
-            ExprData::EObject(_)
-            | ExprData::EArray(_)
-            | ExprData::ETemplate(_)
-            | ExprData::EClass(_)
-            | ExprData::ECall(_)
-            | ExprData::ENew(_)
-            | ExprData::EImport(_) => true,
-            _ => false,
-        }
     }
 
     fn sfx_t_in(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
@@ -1897,7 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        p.lexer.next_token()?;
+        p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
@@ -1927,7 +1430,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
         }
-        p.lexer.next_token()?;
+        p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
@@ -1953,12 +1456,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
-            if p.lexer.loc().start == p.after_arrow_body_loc.start
-                // Once an error has been reported at this token, the arrow function has already
-                // ended the expression. The next parser (`parseParenthesizedExpression`, the next
-                // statement) consumes the operator, as `parseBinaryExpressionRest` does.
-                && !(p.is_tolerant() && p.lexer.prev_error_loc.eql(p.lexer.loc()))
-            {
+            if p.lexer.loc().start == p.after_arrow_body_loc.start {
                 // Plain loop re-reading `p.lexer.token` each iteration.
                 loop {
                     match p.lexer.token {
@@ -1993,10 +1491,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // Stop now if this token is forbidden to follow a TypeScript "as" cast
                 if p.forbid_suffix_after_as_loc.start > -1
                     && p.lexer.loc().start == p.forbid_suffix_after_as_loc.start
-                    // An operand that is missing at this token starts another expression, which
-                    // the operator continues (`parseBinaryExpressionRest`).
-                    && !(matches!(left.data, ExprData::EMissing(_)) && p.is_tolerant())
-                    && !(p.is_tolerant() && Self::sfx_ends_with_closing_token(p, left))
                 {
                     break;
                 }
@@ -2012,22 +1506,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let continuation = match p.lexer.token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
                 T::TAmpersandAmpersandEquals => {
-                    Self::sfx_t_ampersand_ampersand_equals(p, level, left, flags)
+                    Self::sfx_t_ampersand_ampersand_equals(p, level, left)
                 }
-                T::TAmpersandEquals => Self::sfx_t_ampersand_equals(p, level, left, flags),
+                T::TAmpersandEquals => Self::sfx_t_ampersand_equals(p, level, left),
                 T::TAsterisk => Self::sfx_t_asterisk(p, level, left),
                 T::TAsteriskAsterisk => Self::sfx_t_asterisk_asterisk(p, level, left),
-                T::TAsteriskAsteriskEquals => {
-                    Self::sfx_t_asterisk_asterisk_equals(p, level, left, flags)
-                }
-                T::TAsteriskEquals => Self::sfx_t_asterisk_equals(p, level, left, flags),
+                T::TAsteriskAsteriskEquals => Self::sfx_t_asterisk_asterisk_equals(p, level, left),
+                T::TAsteriskEquals => Self::sfx_t_asterisk_equals(p, level, left),
                 T::TBar => Self::sfx_t_bar(p, level, left),
-                T::TBarBarEquals => Self::sfx_t_bar_bar_equals(p, level, left, flags),
-                T::TBarEquals => Self::sfx_t_bar_equals(p, level, left, flags),
+                T::TBarBarEquals => Self::sfx_t_bar_bar_equals(p, level, left),
+                T::TBarEquals => Self::sfx_t_bar_equals(p, level, left),
                 T::TCaret => Self::sfx_t_caret(p, level, left),
-                T::TCaretEquals => Self::sfx_t_caret_equals(p, level, left, flags),
+                T::TCaretEquals => Self::sfx_t_caret_equals(p, level, left),
                 T::TComma => Self::sfx_t_comma(p, level, left),
-                T::TEquals => Self::sfx_t_equals(p, level, left, flags),
+                T::TEquals => Self::sfx_t_equals(p, level, left),
                 T::TEqualsEquals => Self::sfx_t_equals_equals(p, level, left),
                 T::TEqualsEqualsEquals => Self::sfx_t_equals_equals_equals(p, level, left),
                 T::TExclamationEquals => Self::sfx_t_exclamation_equals(p, level, left),
@@ -2038,36 +1530,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 T::TGreaterThanEquals => Self::sfx_t_greater_than_equals(p, level, left),
                 T::TGreaterThanGreaterThan => Self::sfx_t_greater_than_greater_than(p, level, left),
                 T::TGreaterThanGreaterThanEquals => {
-                    Self::sfx_t_greater_than_greater_than_equals(p, level, left, flags)
+                    Self::sfx_t_greater_than_greater_than_equals(p, level, left)
                 }
                 T::TGreaterThanGreaterThanGreaterThan => {
                     Self::sfx_t_greater_than_greater_than_greater_than(p, level, left)
                 }
                 T::TGreaterThanGreaterThanGreaterThanEquals => {
-                    Self::sfx_t_greater_than_greater_than_greater_than_equals(p, level, left, flags)
+                    Self::sfx_t_greater_than_greater_than_greater_than_equals(p, level, left)
                 }
                 T::TIn => Self::sfx_t_in(p, level, left),
                 T::TInstanceof => Self::sfx_t_instanceof(p, level, left),
                 T::TLessThanEquals => Self::sfx_t_less_than_equals(p, level, left),
                 T::TLessThanLessThanEquals => {
-                    Self::sfx_t_less_than_less_than_equals(p, level, left, flags)
+                    Self::sfx_t_less_than_less_than_equals(p, level, left)
                 }
                 T::TMinus => Self::sfx_t_minus(p, level, left),
-                T::TMinusEquals => Self::sfx_t_minus_equals(p, level, left, flags),
+                T::TMinusEquals => Self::sfx_t_minus_equals(p, level, left),
                 T::TMinusMinus => Self::sfx_t_minus_minus(p, level, left),
                 T::TPercent => Self::sfx_t_percent(p, level, left),
-                T::TPercentEquals => Self::sfx_t_percent_equals(p, level, left, flags),
+                T::TPercentEquals => Self::sfx_t_percent_equals(p, level, left),
                 T::TPlus => Self::sfx_t_plus(p, level, left),
-                T::TPlusEquals => Self::sfx_t_plus_equals(p, level, left, flags),
+                T::TPlusEquals => Self::sfx_t_plus_equals(p, level, left),
                 T::TPlusPlus => Self::sfx_t_plus_plus(p, level, left),
                 T::TQuestionQuestion => Self::sfx_t_question_question(p, level, left),
-                T::TQuestionQuestionEquals => {
-                    Self::sfx_t_question_question_equals(p, level, left, flags)
-                }
+                T::TQuestionQuestionEquals => Self::sfx_t_question_question_equals(p, level, left),
                 T::TSlash => Self::sfx_t_slash(p, level, left),
-                T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left, flags),
+                T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
                 T::TExclamation => {
-                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain, left)
+                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
                 }
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
@@ -2108,7 +1598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     old_optional_chain,
                     left,
                 ),
-                _ => Self::sfx_handle_typescript_as(p, level, left),
+                _ => Self::sfx_handle_typescript_as(p, level),
             };
 
             match continuation? {

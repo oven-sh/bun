@@ -1,6 +1,5 @@
 //! `@param` tags are put in the order of the parameters of the function behind the comment.
 
-use super::text::trim_start;
 use bun_lint::ast::jsdoc::JSDocTag;
 use bun_lint::ast::{
     Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, List, MemberKind, Modifier, Name,
@@ -60,7 +59,8 @@ const MAX_DEPTH: usize = 256;
 /// The function whose head starts with what follows the comment that ends at `comment_end`.
 fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
     let after = file.text().get(comment_end as usize..)?;
-    let start = comment_end + (after.len() - trim_start(after).len()) as u32;
+    let start = comment_end
+        + (after.len() - bun_core::strings::trim_unicode_whitespace_start(after).len()) as u32;
     let mut node = Node::File(file);
     for _ in 0..MAX_DEPTH {
         let mut child_at_start = None;

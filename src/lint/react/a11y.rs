@@ -9,7 +9,7 @@ use crate::jsx::{
     to_boolean,
 };
 use bun_lint::prelude::*;
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use std::borrow::Cow;
 
 /// `cow_to_ascii_lowercase`
@@ -965,7 +965,11 @@ pub(crate) fn search_for_accessible_label<'a>(
     }
     let parent = match node {
         Child::ExpressionContainer(_) => return true,
-        Child::Text(text) => return split_whitespace(text).next().is_some(),
+        Child::Text(text) => {
+            return bun_core::strings::split_unicode_whitespace(text)
+                .next()
+                .is_some();
+        }
         Child::Spread => return false,
         Child::Fragment(fragment) => fragment,
         Child::Element(element) => {

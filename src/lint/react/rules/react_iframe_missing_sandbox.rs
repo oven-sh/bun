@@ -1,7 +1,6 @@
 use bun_lint_oxlint::ast_util::static_name;
 use crate::jsx::{get_prop_value, has_jsx_prop_ignore_case};
 use crate::react::is_create_element_call;
-use bun_lint_oxlint::text::trim;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -99,7 +98,7 @@ impl Rule for IframeMissingSandbox {
 
 fn validate_sandbox_value<'a>(value: &'a [u8], span: Span, cx: &Cx<'a, IframeMissingSandbox>) {
     let (mut has_allow_same_origin, mut has_allow_scripts) = (false, false);
-    for trimmed_atr in strings::split(value, b" ").map(trim) {
+    for trimmed_atr in strings::split(value, b" ").map(strings::trim_unicode_whitespace) {
         if !trimmed_atr.is_empty() && !ALLOWED_VALUES.contains(&trimmed_atr) {
             cx.report(span, INVALID_SANDBOX_PROP).data("value", trimmed_atr);
         }

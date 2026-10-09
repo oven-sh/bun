@@ -343,7 +343,7 @@ impl Writer<'_, '_> {
 /// `JSON.stringify` of the value of the template `source`, which has no substitutions.
 #[cold]
 fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
-    use bun_lint::utils::text::{json_stringify, push_code_point};
+    use bun_core::printer::json_stringify;
     let raw = source
         .get(1..source.len().saturating_sub(1))
         .unwrap_or_default();
@@ -376,25 +376,25 @@ fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
             b'\n' => {}
             b'x' => {
                 if let Some(value) = rest.get(..2).and_then(hex) {
-                    push_code_point(&mut cooked, value);
+                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
                     rest = &rest[2..];
                 }
             }
             b'u' if rest.first() == Some(&b'{') => {
                 let len = rest.iter().take_while(|b| **b != b'}').count();
                 if let Some(value) = rest.get(1..len).and_then(hex) {
-                    push_code_point(&mut cooked, value);
+                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
                 }
                 rest = rest.get(len + 1..).unwrap_or_default();
             }
             b'u' => {
                 if let Some(value) = rest.get(..4).and_then(hex) {
-                    push_code_point(&mut cooked, value);
+                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
                     rest = &rest[4..];
                 }
             }
             _ => cooked.push(escaped),
         }
     }
-    out.extend_from_slice(&json_stringify(&cooked));
+    json_stringify(&cooked, out);
 }

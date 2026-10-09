@@ -811,6 +811,7 @@ pub struct Run<'u> {
     /// Programs run at the same time.
     overlaps: bool,
     parses: AtomicUsize,
+    bytes: AtomicUsize,
 }
 
 impl<'u> Run<'u> {
@@ -823,7 +824,21 @@ impl<'u> Run<'u> {
             is_of_build: false,
             overlaps: false,
             parses: AtomicUsize::new(0),
+            bytes: AtomicUsize::new(0),
         }
+    }
+
+    /// Its programs run at the same time.
+    pub fn overlapping(self) -> Run<'u> {
+        Run {
+            overlaps: true,
+            ..self
+        }
+    }
+
+    /// The bytes that what is parsed takes.
+    pub fn bytes(&self) -> usize {
+        self.bytes.load(Ordering::Relaxed)
     }
 
     /// For the projects of a build.
@@ -890,6 +905,8 @@ impl<'u> Run<'u> {
         }
         self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
+        // Only this thread allocates in it.
+        let before = arena.allocated_bytes();
         let (mut hir, bound) = Files::parse_and_bind(
             arena,
             host,
@@ -912,6 +929,8 @@ impl<'u> Run<'u> {
             is_renamed: true,
         });
         of_path.push((key, parse));
+        let more = arena.allocated_bytes().saturating_sub(before);
+        self.bytes.fetch_add(more, Ordering::Relaxed);
         parse
     }
 
@@ -4339,6 +4358,8 @@ impl<'s> Files<'s> {
         host: &dyn Host,
         options: Options,
         roots: &[Vec<u8>],
+        // Called when all files are read, and no thread allocates in `session` but this one.
+        files_are_found: &dyn Fn(),
     ) -> Files<'s> {
         let arena = session.arena();
         // Nothing drops `Files`.
@@ -4573,6 +4594,7 @@ impl<'s> Files<'s> {
                 true => Default::default(),
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
+        files_are_found();
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -7925,6 +7947,9 @@ impl<'s> Files<'s> {
                 }
                 _ => {}
             }
+        }
+        if self.options.forbids_synthetic_default_imports {
+            return None;
         }
         let can = if !is_file || self.hir(module.file).kind == FileKind::Declaration {
             // A module that is only declared may have a synthetic default, unless it declares its

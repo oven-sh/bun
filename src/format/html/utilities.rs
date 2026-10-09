@@ -4,45 +4,10 @@ use super::ast::{Attribute, Flags, Id, Kind, Node, Span, Tree};
 use super::data::{self, Display};
 use super::{Options, Parser};
 use crate::options::HtmlWhitespaceSensitivity;
-use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 
 // ───────────────────────────── `htmlWhitespace` ─────────────────────────────
-
-#[inline]
-pub(crate) fn is_html_whitespace(byte: u8) -> bool {
-    matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')
-}
-
-pub(crate) fn leading_whitespace_count(text: &[u8]) -> usize {
-    text.iter()
-        .take_while(|&&byte| is_html_whitespace(byte))
-        .count()
-}
-
-pub(crate) fn trailing_whitespace_count(text: &[u8]) -> usize {
-    text.iter()
-        .rev()
-        .take_while(|&&byte| is_html_whitespace(byte))
-        .count()
-}
-
-pub(crate) fn html_trim_start(text: &[u8]) -> &[u8] {
-    &text[leading_whitespace_count(text)..]
-}
-
-pub(crate) fn html_trim_end(text: &[u8]) -> &[u8] {
-    &text[..text.len() - trailing_whitespace_count(text)]
-}
-
-pub(crate) fn html_trim(text: &[u8]) -> &[u8] {
-    html_trim_end(html_trim_start(text))
-}
-
-pub(crate) fn has_html_whitespace(text: &[u8]) -> bool {
-    text.iter().any(|&byte| is_html_whitespace(byte))
-}
 
 /// `htmlWhitespace.split(text)`: with an empty string where the text starts or ends with white space.
 pub(crate) fn html_split(text: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -51,10 +16,10 @@ pub(crate) fn html_split(text: &[u8]) -> impl Iterator<Item = &[u8]> {
         let text = rest?;
         let len = text
             .iter()
-            .take_while(|&&byte| !is_html_whitespace(byte))
+            .take_while(|byte| !byte.is_ascii_whitespace())
             .count();
         let after = &text[len..];
-        rest = (!after.is_empty()).then(|| html_trim_start(after));
+        rest = (!after.is_empty()).then(|| after.trim_ascii_start());
         Some(&text[..len])
     })
 }
@@ -66,7 +31,7 @@ pub(crate) fn min_indentation(text: &[u8]) -> usize {
         if line.is_empty() {
             continue;
         }
-        let indentation = leading_whitespace_count(line);
+        let indentation = line.len() - line.trim_ascii_start().len();
         if indentation == 0 {
             return 0;
         }
@@ -100,7 +65,7 @@ pub(crate) fn dedent_string(text: &[u8]) -> Cow<'_, [u8]> {
 /// `htmlTrimPreserveIndentation`
 pub(crate) fn html_trim_preserve_indentation(text: &[u8]) -> &[u8] {
     // `.replaceAll(/^[\t\f\r ]*\n/g, "")`: without the `m` flag, it is one line at most.
-    let text = html_trim_end(text);
+    let text = text.trim_ascii_end();
     let blanks = text
         .iter()
         .take_while(|byte| matches!(byte, b'\t' | 0x0C | b'\r' | b' '))
@@ -149,7 +114,7 @@ pub(crate) fn is_script_like_tag(node: &Node<'_>, options: &Options<'_>) -> bool
 
 /// `isPrettierIgnore`
 fn is_prettier_ignore(node: &Node<'_>) -> bool {
-    node.kind == Kind::Comment && text::trim(&node.value) == b"prettier-ignore"
+    node.kind == Kind::Comment && strings::trim_js_whitespace(&node.value) == b"prettier-ignore"
 }
 
 /// `unescapeQuoteEntities`
@@ -500,9 +465,9 @@ impl<'a> Tree<'a> {
         let node = &self[id];
         // `<!-- display: block -->`: `/^\s*display:\s*([a-z]+)\s*$/`
         if let Some(prev) = self.prev_of(id).filter(|prev| prev.kind == Kind::Comment)
-            && let Some(value) = text::trim(&prev.value)
+            && let Some(value) = strings::trim_js_whitespace(&prev.value)
                 .strip_prefix(b"display:")
-                .map(text::trim_start)
+                .map(strings::trim_js_whitespace_start)
             && !value.is_empty()
             && value.iter().all(u8::is_ascii_lowercase)
         {

@@ -3,8 +3,7 @@
 
 use super::builtins::Builtin;
 use super::js_number::string_to_number;
-use super::js_string;
-use crate::utils::text::{number_to_string, trim};
+use crate::utils::text::number_to_string;
 use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -406,7 +405,7 @@ impl<'a> StaticValue<'a> {
     pub(super) fn compare(&self, other: &StaticValue<'a>) -> Eval<Option<Ordering>> {
         use StaticValue::*;
         Ok(match (self.to_primitive()?, other.to_primitive()?) {
-            (String(a), String(b)) => Some(js_string::compare(&a, &b)),
+            (String(a), String(b)) => Some(bun_core::strings::order_utf16(&a, &b)),
             (BigInt(a), String(b)) => string_to_bigint(&b)?.map(|b| a.cmp(&b)),
             (String(a), BigInt(b)) => string_to_bigint(&a)?.map(|a| a.cmp(&b)),
             (BigInt(a), BigInt(b)) => Some(a.cmp(&b)),
@@ -463,7 +462,7 @@ pub(super) fn parse_bigint_digits(text: &[u8]) -> Eval<Option<i128>> {
 
 /// `StringToBigInt`. `Ok(None)` is its `undefined`.
 pub(super) fn string_to_bigint(text: &[u8]) -> Eval<Option<i128>> {
-    match trim(text) {
+    match strings::trim_js_whitespace(text) {
         [] => Ok(Some(0)),
         [b'-', digits @ ..]
             if digits.first().is_some_and(u8::is_ascii_digit) && !is_prefixed(digits) =>
@@ -492,10 +491,10 @@ pub(super) fn join<'a>(items: &[StaticValue<'a>], separator: &[u8]) -> Eval<Cow<
     let mut text = Vec::new();
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
-            js_string::push_str(&mut text, separator);
+            strings::push_wtf8(&mut text, separator);
         }
         if !item.is_nullish() {
-            js_string::push_str(&mut text, &item.to_string()?);
+            strings::push_wtf8(&mut text, &item.to_string()?);
         }
         if text.len() > MAX_LEN {
             return Err(Stop::Abort);

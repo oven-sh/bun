@@ -33,6 +33,8 @@ const EXPECTED_NO_RETURN_VALUE: Message = Message::new(
     "expectedNoReturnValue",
     "{{arrayMethodName}}() expects no useless return value from {{name}}.",
 );
+/// oxlint's `help` with `allowVoid`.
+const EXPECTED_VOID: &str = "Expected the return expression to be started with `void`";
 const WRAP_BRACES: Message = Message::new("wrapBraces", "Wrap the expression in `{}`.");
 const PREPEND_VOID: Message = Message::new("prependVoid", "Prepend `void` to the expression.");
 
@@ -253,7 +255,12 @@ impl ArrayCallbackReturn {
             false => func.body_span(),
         };
         if let Some(place) = place {
-            Self::report(cx, place, message, func, method);
+            // The end of oxlint's `help`.
+            let value_requirement = match self.allow_implicit {
+                true => "",
+                false => "\nReturn a value on each path (or enable `allowImplicit` to allow `return;`).",
+            };
+            Self::report(cx, place, message, func, method).data("value_requirement", value_requirement);
         }
     }
 
@@ -275,7 +282,10 @@ impl ArrayCallbackReturn {
                 continue;
             }
             let place = place_of_oxlint.unwrap_or_else(|| statement.span());
-            let report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach");
+            let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach");
+            if self.allow_void && place_of_oxlint.is_some() {
+                report = report.help(EXPECTED_VOID);
+            }
             if self.allow_void {
                 let start = statement.span().start;
                 let keyword = Span::new(start, start + "return".len() as u32);
@@ -292,8 +302,11 @@ impl ArrayCallbackReturn {
             return;
         }
         let head = place_of_oxlint.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
-        let report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
+        let mut report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
             .suggest(WRAP_BRACES, |fixer| curly_wrap_fixer(fixer, func));
+        if self.allow_void && place_of_oxlint.is_some() {
+            report = report.help(EXPECTED_VOID);
+        }
         if self.allow_void {
             report.suggest(PREPEND_VOID, |fixer| {
                 Some(void_prepend_fixer(fixer, body, func.arrow_span()?, false))

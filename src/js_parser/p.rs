@@ -42,7 +42,7 @@ type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 
-/// Erases `P<'a, TS, SCAN, SEMA>`'s const-generics so helpers like `JSXTag::parse`
+/// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
 /// can take any instantiation. Only the surface those helpers actually
 /// touch is exposed.
 pub(crate) trait ParserLike<'a> {
@@ -55,9 +55,7 @@ pub(crate) trait ParserLike<'a> {
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
-impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> ParserLike<'a>
-    for P<'a, TS, SCAN, SEMA>
-{
+impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
         &mut self.lexer
@@ -192,10 +190,6 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
-    await_was_refused: bool,
-    reparses_rest_of_file: bool,
-    stray_decorators_len: usize,
-    noted: crate::sema::notes::Checkpoint,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -245,7 +239,7 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool = false> {
+pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
     /// parameter; demoted to a field because JSX only affects a handful of
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
@@ -269,22 +263,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
-    /// Tolerant mode: a list rejected `await` as an identifier in the top-level statement being
-    /// parsed.
-    pub(crate) await_was_refused: bool,
-    /// Tolerant mode: the loop of `reparseTopLevelAwait` continues to the end of the file.
-    pub(crate) reparses_rest_of_file: bool,
-    /// Tolerant mode: see `is_start_of_declaration`.
-    pub(crate) declaration_scan: Option<crate::parse::lists::DeclarationScan>,
-    /// Tolerant mode: an `await` in the top-level statement being parsed was read outside the
-    /// [Await] context, as an identifier.
-    pub(crate) await_read_as_identifier: bool,
-    /// Tolerant mode: the top-level statements that have one and that `reparseTopLevelAwait`
-    /// parses again. Those listed before the parse starts are parsed that way.
-    pub(crate) statements_with_await_in_names: Vec<bun_ast::Loc>,
-    /// Tolerant mode: the decorators saved by `note_stray_decorators`, until the statement list
-    /// being parsed takes them.
-    pub(crate) stray_decorators: Vec<Expr>,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -405,18 +383,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
-    /// Records the type syntax that the parser skips, when a consumer requests it. See
-    /// `crate::sema`.
-    pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax<'a>>>,
-    /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
-    pub(crate) jsx_parent_tag: Option<&'a [u8]>,
-    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child parsed and its
-    /// parent adopts, with its start and end positions.
-    pub(crate) jsx_adopted_close: Option<(crate::parser::JSXTag<'a>, bun_ast::Loc, bun_ast::Loc)>,
-    /// Tolerant mode only. The children of a JSX element extended to the end of the file
-    /// (`parseJsxChild`). The JSX text among them is not trivia, so a node that ends there ends at
-    /// the end of the file.
-    pub(crate) jsx_children_met_end_of_file: bool,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -431,9 +397,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     /// (found by fuzzing). Kept sorted for binary search; stays empty (no allocation)
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
-    /// See `try_skip_type_script_type_arguments_in_chain_with_backtracking`: the position of a "<",
-    /// shifted left by one, and whether it is in an optional chain. Sorted.
-    pub(crate) ts_type_argument_backtracks: Vec<u32>,
 
     /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
     /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
@@ -444,9 +407,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     /// once for real, which is exponential in the nesting depth. Kept sorted for
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
-    /// See `is_unambiguously_start_of_function_type`: the position of a "(", shifted left by one,
-    /// with the answer in the lowest bit. Sorted.
-    pub(crate) function_type_starts: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -770,9 +730,7 @@ pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool> Drop
-    for P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn drop(&mut self) {
         // Arena-allocated structs never run Drop; free their global-heap maps here.
         for mut scope in self.ts_namespace_scopes.drain(..) {
@@ -784,9 +742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool> Drop
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
 
@@ -889,14 +845,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.module_scope
     }
 
-    /// `finishNode`: `expr` ends at the end of the previous token.
-    #[inline]
-    pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
-        if self.preserves_type_syntax() {
-            self.note_expr_end(expr, self.lexer.full_start());
-        }
-    }
-
     #[inline]
     pub(crate) fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
@@ -904,9 +852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     {
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
-        let loc = self.real_loc(loc);
-        let mut expr = Expr::init(t, loc);
-        self.finish_expr(&mut expr);
+        let expr = Expr::init(t, loc);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
@@ -932,7 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     where
         T: js_ast::stmt::StatementData,
     {
-        Stmt::alloc(t, self.real_loc(loc))
+        Stmt::alloc(t, loc)
     }
 
     pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
@@ -954,9 +900,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
@@ -1999,20 +1943,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     where
         T: js_ast::binding::BindingAlloc,
     {
-        Binding::alloc(self.arena, t, self.real_loc(loc))
-    }
-
-    /// `b` for the name that the identifier `expr` turned out to be. It is the same node: the
-    /// notes of the expression are the notes of the binding.
-    #[inline]
-    fn binding_of_expr(&mut self, name: B::Identifier, expr: &Expr) -> Binding {
-        let mut binding = Binding::alloc(self.arena, name, expr.loc);
-        // The range of the declaration is about to be recorded in the entry that holds the end of
-        // the expression.
-        if let Some(end) = self.noted_end(expr.loc) {
-            self.note_loc(&mut binding.loc, crate::sema::Mark::PatternEnd, end);
-        }
-        binding
+        Binding::alloc(self.arena, t, loc)
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
@@ -2020,7 +1951,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
                 let ident = ident.get();
-                let name: &'a [u8] = self.load_name_from_ref(ident.r#ref);
+                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize]
+                    .original_name
+                    .slice();
                 self.record_export(binding.loc, name, ident.r#ref)
                     .expect("unreachable");
             }
@@ -3387,13 +3321,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -4070,7 +4004,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.binding_of_expr(B::Identifier { r#ref: ex.ref_ }, &expr));
+                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {
@@ -4082,10 +4016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self
-                            .source
-                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
-                            .loc,
+                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4140,10 +4071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self
-                            .source
-                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
-                            .loc,
+                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4157,7 +4085,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         || item.kind == js_ast::g::PropertyKind::Set
                     {
                         invalid_loc.push(InvalidLoc {
-                            loc: self.real_loc(item.key.expect("infallible: prop has key").loc),
+                            loc: item.key.expect("infallible: prop has key").loc,
                             kind: if item.flags.contains(Flags::Property::IsMethod) {
                                 crate::parser::InvalidLocTag::Method
                             } else if item.kind == js_ast::g::PropertyKind::Get {
@@ -4203,7 +4131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             _ => {
                 invalid_loc.push(InvalidLoc {
-                    loc: self.real_loc(expr.loc),
+                    loc: expr.loc,
                     kind: crate::parser::InvalidLocTag::Unknown,
                 });
                 return None;
@@ -4231,9 +4159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
         if let Some(initial) = initializer {
-            let equals_range = self
-                .source
-                .range_of_operator_before(self.real_loc(initial.loc), b"=");
+            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {
                 self.log().add_range_error(
                     Some(self.source),
@@ -4272,10 +4198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
-        // `parseObjectLiteralElement` accepts `{ a = 1 }`. The checker reports 1312.
-        if let Some(r) = errors.invalid_expr_default_value
-            && !self.is_tolerant()
-        {
+        if let Some(r) = errors.invalid_expr_default_value {
             self.log()
                 .add_range_error(Some(self.source), r, b"Unexpected \"=\"");
         }
@@ -4323,10 +4246,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
-        // The type checker has the saved source syntax (`keep_import`).
-        if self.preserves_type_syntax() {
-            return Ok(self.s(S::TypeScript::default(), loc));
-        }
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
@@ -4424,9 +4343,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
             // Return empty statement - the import is completely removed
-            if self.preserves_type_syntax() {
-                return Ok(self.s(S::TypeScript::default(), loc));
-            }
             return Ok(self.s(S::Empty {}, loc));
         }
 
@@ -4862,7 +4778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 exported_members.put(
                     name,
                     js_ast::TSNamespaceMember {
-                        loc: self.real_loc(binding.loc),
+                        loc: binding.loc,
                         data: js_ast::ts::Data::Property,
                     },
                 )?;
@@ -4900,7 +4816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                     self.log().add_error_fmt(
                         Some(self.source),
-                        self.real_loc(value.loc),
+                        value.loc,
                         format_args!(
                             "for-{} loop variables cannot have an initializer",
                             loop_type
@@ -4911,7 +4827,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             _ => {
                 self.log().add_error_fmt(
                     Some(self.source),
-                    self.real_loc(decls[0].binding.loc),
+                    decls[0].binding.loc,
                     format_args!("for-{} loops must have a single declaration", loop_type),
                 );
             }
@@ -4935,12 +4851,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if decl.value.is_none() {
                 match &decl.binding.data {
                     js_ast::b::B::BIdentifier(ident) => {
-                        let r = js_lexer::range_of_identifier(
-                            self.source,
-                            self.real_loc(decl.binding.loc),
-                        );
+                        let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
                         let ident_ref = ident.r#ref;
-                        let name = self.load_name_from_ref(ident_ref);
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let name = self.symbols[ident_ref.inner_index() as usize]
+                            .original_name
+                            .slice();
                         self.log().add_range_error_fmt(
                             Some(self.source),
                             r,
@@ -4953,13 +4869,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // return;/
                     }
                     _ => {
-                        // `checkGrammarVariableDeclaration`: a pattern after `using` gets 1492 and nothing else.
-                        if self.is_tolerant() && !matches!(KIND, js_ast::s::Kind::KConst) {
-                            continue;
-                        }
                         self.log().add_error_fmt(
                             Some(self.source),
-                            self.real_loc(decl.binding.loc),
+                            decl.binding.loc,
                             format_args!("This {} must be initialized", what),
                         );
                     }
@@ -5275,11 +5187,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             )?;
         }
 
-        // The type checker does its own binding.
-        if self.preserves_type_syntax() {
-            return Ok(self.store_name_in_ref(name));
-        }
-
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
@@ -5367,7 +5274,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
-            let original_name: &[u8] = self.load_name_from_ref(name.ref_);
+            // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
+            let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
+                .original_name
+                .slice();
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log().add_range_error(
@@ -5398,7 +5308,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
-                        self.real_loc(binding.loc),
+                        binding.loc,
                         self.load_name_from_ref(bind.r#ref),
                     )?;
                 }
@@ -7450,9 +7360,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -8427,7 +8335,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);
-        self.lexer.trials += 1;
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
@@ -8456,30 +8363,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
-            await_was_refused: self.await_was_refused,
-            reparses_rest_of_file: self.reparses_rest_of_file,
-            stray_decorators_len: self.stray_decorators.len(),
-            noted: self.type_syntax_checkpoint(),
-        }
-    }
-
-    /// The speculative parse since [`Self::parser_snapshot`] succeeded.
-    #[inline]
-    pub(crate) fn release_parser_snapshot(&mut self, snapshot: &ParserSnapshot<'a>) {
-        self.release_type_syntax_checkpoint(&snapshot.noted);
-        self.lexer.trials = self.lexer.trials.saturating_sub(1);
-        if self.log().msgs.len() > snapshot.log_msgs_len {
-            self.lexer
-                .stop_after_syntax_error_since(snapshot.log_msgs_len);
         }
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
-        self.lexer.trials = self.lexer.trials.saturating_sub(1);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
-        self.rewind_type_syntax(&snapshot.noted);
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);
@@ -8530,10 +8420,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
-        self.await_was_refused = snapshot.await_was_refused;
-        self.reparses_rest_of_file = snapshot.reparses_rest_of_file;
-        self.stray_decorators
-            .truncate(snapshot.stray_decorators_len);
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
@@ -9046,9 +8932,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -9103,7 +8987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -9113,7 +8997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Re-run for the last part.
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -9149,7 +9033,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, false>(
+                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
                         self,
                         part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
@@ -9789,9 +9673,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 // The Binding2ExprWrapper self-referential helpers are
 // seeded with arena-unit placeholders inside the struct literal; the real `*P`
 // back-pointer is wired lazily by the call sites.
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Construct a `P` in place at `out`.
     ///
     /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
@@ -9824,11 +9706,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // at zero capacity and reserved one identifier reference at a time. A
         // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
         // the vast majority of real files in a single allocation.
-        let estimated_symbol_count = if opts.tolerant {
-            0
-        } else {
-            source.contents.len() / 16
-        };
+        let estimated_symbol_count = source.contents.len() / 16;
 
         // ~one scope per 64 source bytes covers most files without regrowth.
         let mut scope_order =
@@ -9931,15 +9809,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
-            type_syntax: None,
-            jsx_parent_tag: None,
-            jsx_adopted_close: None,
-            jsx_children_met_end_of_file: false,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
-            ts_type_argument_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
-            function_type_starts: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),
@@ -9965,12 +9837,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
-            await_was_refused: false,
-            reparses_rest_of_file: false,
-            declaration_scan: None,
-            await_read_as_identifier: false,
-            statements_with_await_in_names: Vec::new(),
-            stray_decorators: Vec::new(),
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
@@ -10110,8 +9976,8 @@ pub(crate) struct LowerUsingDeclarationsContext {
 }
 
 impl LowerUsingDeclarationsContext {
-    pub(crate) fn init<'a, const T: bool, const S_: bool, const SEMA: bool>(
-        p: &mut P<'a, T, S_, SEMA>,
+    pub(crate) fn init<'a, const T: bool, const S_: bool>(
+        p: &mut P<'a, T, S_>,
     ) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
@@ -10120,9 +9986,9 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool, const SEMA: bool>(
+    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, S_, SEMA>,
+        p: &mut P<'a, T, S_>,
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
@@ -10185,9 +10051,9 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub(crate) fn finalize<'a, const T: bool, const S_: bool, const SEMA: bool>(
+    pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, S_, SEMA>,
+        p: &mut P<'a, T, S_>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

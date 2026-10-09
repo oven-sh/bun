@@ -223,7 +223,8 @@ pub(crate) mod no_alias_methods {
             // What is between the quotes.
             let quotes = u32::from(matcher.element.is_string_literal());
             (ctx.report(matcher.span, NO_ALIAS_METHODS)
-                .data("name", alias))
+                .data("name", alias)
+                .data("canonical_name", *canonical_name))
             .fix(|fixer| fixer.replace(matcher.span.shrink(quotes, quotes), *canonical_name));
         }
     }
@@ -235,7 +236,8 @@ pub(crate) mod no_restricted_matchers {
     const RESTRICTED_CHAIN: Message = Message::new("", "Use of `{{chain_call}}` is disallowed");
 
     pub(crate) struct NoRestrictedMatchersConfig {
-        restricted_matchers: Vec<Vec<u8>>,
+        /// Each with the message of the configuration.
+        restricted_matchers: Vec<(Vec<u8>, Vec<u8>)>,
     }
 
     impl NoRestrictedMatchersConfig {
@@ -244,7 +246,7 @@ pub(crate) mod no_restricted_matchers {
                 .object(0)
                 .entries()
                 .iter()
-                .map(|it| it.0.clone())
+                .map(|it| (it.0.clone(), it.1.as_str().unwrap_or_default().to_owned()))
                 .collect();
             NoRestrictedMatchersConfig {
                 restricted_matchers,
@@ -271,10 +273,11 @@ pub(crate) mod no_restricted_matchers {
                 .collect();
             let chain_call = names.join(b".".as_slice());
             let span = Span::new(first.span.start, last.span.end);
-            for restriction in &self.restricted_matchers {
+            for (restriction, message) in &self.restricted_matchers {
                 if check_restriction(&chain_call, restriction) {
                     ctx.report(span, RESTRICTED_CHAIN)
-                        .data("chain_call", chain_call.clone());
+                        .data("chain_call", chain_call.clone())
+                        .data("message", message.clone());
                 }
             }
         }
@@ -320,6 +323,7 @@ pub(crate) mod prefer_called_with {
             _ => return,
         };
         ctx.report(matcher_property.span, USE_CALLED_WITH)
+            .data("replacement", replacement)
             .fix(|fixer| fixer.replace(matcher_property.span, replacement));
     }
 }
@@ -878,6 +882,7 @@ pub(crate) mod prefer_comparison_matcher {
         };
         let call_expr = possible_jest_node.node;
         ctx.report(comparison.matcher_span, USE_TO_BE_COMPARISON)
+            .data("preferred_method", prefer_matcher_name)
             .fix(|fixer| {
                 fixer.replace(
                     call_expr,
@@ -965,6 +970,19 @@ pub(crate) mod no_large_snapshots {
 
     const TOO_LONG_SNAPSHOT: Message = Message::new("", "Snapshot is too long.");
 
+    /// `no_snapshot`, `too_long_snapshot`
+    fn help(is_none_expected: bool, line_limit: u32, line_count: u32) -> String {
+        match is_none_expected {
+            true => format!(
+                "Expected to not encounter a Jest or Vitest snapshot but one was found that is {line_count} lines long"
+            ),
+            false => format!(
+                "Expected Jest or Vitest snapshot to be no longer than {line_limit} lines but it was {line_count} \
+                 lines long"
+            ),
+        }
+    }
+
     enum AllowedSnapshotMatcher {
         Pattern(Box<Regex>),
         Exact(String),
@@ -1020,9 +1038,13 @@ pub(crate) mod no_large_snapshots {
                             .iter()
                             .any(|it| member.is_name_equal(it))
                     })
-                    && get_line_count(first_arg_expr.outer_span(), ctx.file) > self.inline_max_size
                 {
-                    ctx.report(snapshot_matcher.span, TOO_LONG_SNAPSHOT);
+                    let line_count = get_line_count(first_arg_expr.outer_span(), ctx.file);
+                    if line_count > self.inline_max_size {
+                        let is_none_expected = self.inline_max_size == 0;
+                        ctx.report(snapshot_matcher.span, TOO_LONG_SNAPSHOT)
+                            .help_with(|| help(is_none_expected, self.inline_max_size, line_count));
+                    }
                 }
             }
         }
@@ -1045,8 +1067,10 @@ pub(crate) mod no_large_snapshots {
                 },
                 None => false,
             };
-            if !allowed && get_line_count(expr_stmt.span(), ctx.file) > self.max_size {
-                ctx.report(expr_stmt, TOO_LONG_SNAPSHOT);
+            let line_count = get_line_count(expr_stmt.span(), ctx.file);
+            if !allowed && line_count > self.max_size {
+                ctx.report(expr_stmt, TOO_LONG_SNAPSHOT)
+                    .help_with(|| help(line_count == 0, self.max_size, line_count));
             }
         }
 

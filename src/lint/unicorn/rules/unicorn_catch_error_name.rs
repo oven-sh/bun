@@ -45,9 +45,15 @@ impl CatchErrorName {
         if name.bytes().starts_with(b"_") && references().next().is_none() {
             return;
         }
+        let caught = std::str::from_utf8(name.bytes()).unwrap_or_default();
         cx.report(pat, CATCH_ERROR_NAME)
             .data("caught_ident", name)
             .data("expected_name", self.name.clone())
+            // Of one replacement oxlint says what it says of any.
+            .help_with(|| match references().next() {
+                Some(_) => format!("Rename `{caught}` to `{}`", self.name),
+                None => String::new(),
+            })
             .fix(|fixer| {
                 let places = std::iter::once(pat.span()).chain(references().map(Reference::span));
                 places.map(|it| fixer.replace(it, self.name.as_str())).collect::<Vec<_>>()

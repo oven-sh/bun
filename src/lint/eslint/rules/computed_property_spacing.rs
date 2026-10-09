@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce consistent spacing inside computed property brackets.
@@ -27,8 +28,8 @@ impl ComputedPropertySpacing {
     /// `open` and `close`: where the `[` and the `]` are.
     fn check_brackets<'a>(&self, open: u32, close: u32, cx: &Cx<'a, Self>) {
         let inside = cx.slice(Span::new(open + 1, close));
-        let leading = (inside.len() - text::trim_start(inside).len()) as u32;
-        let trailing = (inside.len() - text::trim_end(inside).len()) as u32;
+        let leading = (inside.len() - strings::trim_js_whitespace_start(inside).len()) as u32;
+        let trailing = (inside.len() - strings::trim_js_whitespace_end(inside).len()) as u32;
 
         let after_open = Span::new(open + 1, open + 1 + leading);
         if self.is_always && leading == 0 {
@@ -36,7 +37,7 @@ impl ComputedPropertySpacing {
             cx.report(bracket, MISSING_SPACE_AFTER)
                 .data("tokenValue", "[")
                 .fix(|fixer| fixer.insert_after(bracket, " "));
-        } else if !self.is_always && leading > 0 && !text::has_line_break(cx.slice(after_open)) {
+        } else if !self.is_always && leading > 0 && !strings::contains_js_line_break(cx.slice(after_open)) {
             cx.report(after_open, UNEXPECTED_SPACE_AFTER)
                 .data("tokenValue", "[")
                 .fix(|fixer| fixer.remove(after_open));
@@ -48,7 +49,7 @@ impl ComputedPropertySpacing {
             cx.report(bracket, MISSING_SPACE_BEFORE)
                 .data("tokenValue", "]")
                 .fix(|fixer| fixer.insert_before(bracket, " "));
-        } else if !self.is_always && trailing > 0 && !text::has_line_break(cx.slice(before_close)) {
+        } else if !self.is_always && trailing > 0 && !strings::contains_js_line_break(cx.slice(before_close)) {
             cx.report(before_close, UNEXPECTED_SPACE_BEFORE)
                 .data("tokenValue", "]")
                 .fix(|fixer| fixer.remove(before_close));

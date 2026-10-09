@@ -200,13 +200,18 @@ fn write_pretty_problem<'r>(
         }),
     };
     let mut notes = Vec::new();
-    if let Some(details) = &message.details {
-        let said = |text: &str| bun_ast::Data {
-            text: text.as_bytes().to_vec().into(),
-            location: None,
-        };
-        let texts = [&details.first_label, &details.help, &details.note];
-        notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
+    let said = |text: &str| bun_ast::Data {
+        text: text.as_bytes().to_vec().into(),
+        location: None,
+    };
+    let details = message.details.as_deref();
+    let texts = [
+        details.map_or("", |it| &*it.first_label),
+        message.help(),
+        details.map_or("", |it| &*it.note),
+    ];
+    notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
+    if let Some(details) = details {
         for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
             let shown = result
                 .text
@@ -399,10 +404,11 @@ fn write_agent_problem<'r>(
                 );
             }
         }
-        for (tag, text) in [("help", &details.help), ("note", &details.note)] {
-            if !text.is_empty() {
-                let _ = writeln!(out, "<{tag}>{text}</{tag}>");
-            }
+    }
+    let note = message.details.as_deref().map_or("", |it| &*it.note);
+    for (tag, text) in [("help", message.help()), ("note", note)] {
+        if !text.is_empty() {
+            let _ = writeln!(out, "<{tag}>{text}</{tag}>");
         }
     }
     for suggestion in &message.suggestions {

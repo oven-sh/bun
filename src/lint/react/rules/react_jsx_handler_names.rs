@@ -1,5 +1,5 @@
 use crate::jsx::{AttributeValue, get_prop_value};
-use bun_lint_oxlint::text::{glob_match, trim};
+use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -42,7 +42,11 @@ impl Rule for JsxHandlerNames {
                 Some(value) => value.as_str().unwrap_or(default.as_bytes()),
                 None => default.as_bytes(),
             };
-            strings::split(prefixes, b"|").map(trim).filter(|it| !it.is_empty()).map(Box::from).collect()
+            strings::split(prefixes, b"|")
+                .map(strings::trim_unicode_whitespace)
+                .filter(|it| !it.is_empty())
+                .map(Box::from)
+                .collect()
         };
         let event_handler_prop_prefixes = prefixes("eventHandlerPropPrefix", "on");
         JsxHandlerNames {
@@ -106,7 +110,7 @@ impl JsxHandlerNames {
             {
                 continue;
             }
-            match (prop_is_event_handler, handler_name) {
+            let report = match (prop_is_event_handler, handler_name) {
                 (true, HandlerName::Name(name)) => {
                     cx.report(handler_span, INVALID_HANDLER_NAME).data("handler_name", name)
                 }
@@ -116,6 +120,23 @@ impl JsxHandlerNames {
                 (true, HandlerName::None) => cx.report(handler_span, BAD_HANDLER_NAME),
                 (false, _) => cx.report(key.span(cx.file()), INVALID_HANDLER_PROP_NAME).data("prop_key", prop_key),
             };
+            report.help_with(|| {
+                let text = |it: &[u8]| bstr::BStr::new(it).to_string();
+                let prefixes = |it: &[Box<[u8]>]| text(&it.join(&b"|"[..]));
+                if prop_is_event_handler {
+                    return format!(
+                        "Handler function for {} prop key must be a camelCase name beginning with '{}' only",
+                        text(prop_key),
+                        prefixes(&self.event_handler_prefixes),
+                    );
+                }
+                let prop_value = match handler_name {
+                    HandlerName::None => String::new(),
+                    HandlerName::Name(name) => format!(" for {}", text(name)),
+                    HandlerName::Text(span) => format!(" for {}", text(&normalize_handler_name(cx.slice(span)))),
+                };
+                format!("Prop key{prop_value} must begin with '{}'", prefixes(&self.event_handler_prop_prefixes))
+            });
         }
     }
 
@@ -250,7 +271,7 @@ impl JsxHandlerNames {
         let end_with = |prefix: &[u8]| {
             let (mut at, mut prefix) = (from, prefix);
             loop {
-                let (c, size) = text::code_point_at(text, at);
+                let (c, size) = strings::wtf8_codepoint_at(text, at);
                 let character = text.get(at..at + size).filter(|it| !it.is_empty())?;
                 at += size;
                 if char::from_u32(c).is_some_and(char::is_whitespace) {

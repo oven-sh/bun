@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Require `default` cases in `switch` statements.
@@ -22,7 +23,7 @@ impl DefaultCase {
             return;
         }
         let is_excused = cx.file().comments_after(last_case).next_back().is_some_and(|comment| {
-            let value = text::trim(comment.comment_value());
+            let value = strings::trim_js_whitespace(comment.comment_value());
             let is_oxlint = cx.language().is_oxlint;
             match if is_oxlint { &self.oxlint_comment_pattern } else { &self.comment_pattern } {
                 Some(pattern) => pattern.test(value),

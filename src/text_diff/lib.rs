@@ -27,7 +27,7 @@ use bun_wyhash::hash as hash_bytes;
 /// (pure insertion / pure deletion) but not both. A list of hunks is sorted,
 /// non-overlapping, and everything between consecutive hunks is equal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Hunk {
+pub struct Hunk {
     pub a_lo: usize,
     pub a_hi: usize,
     pub b_lo: usize,
@@ -36,18 +36,18 @@ pub(crate) struct Hunk {
 
 impl Hunk {
     #[inline]
-    pub(crate) fn deleted(&self) -> usize {
+    pub fn deleted(&self) -> usize {
         self.a_hi - self.a_lo
     }
     #[inline]
-    pub(crate) fn inserted(&self) -> usize {
+    pub fn inserted(&self) -> usize {
         self.b_hi - self.b_lo
     }
 }
 
 // ───────────────────────────── element types ─────────────────────────────
 
-pub(crate) trait Elem: Copy + Eq {
+pub trait Elem: Copy + Eq {
     /// Whether the unique-token anchor split applies (line ids only), and
     /// the element as a dense index for it.
     const ANCHORED: bool = false;
@@ -56,6 +56,29 @@ pub(crate) trait Elem: Copy + Eq {
     }
     fn is_newline(self) -> bool {
         false
+    }
+    /// Whether the element goes on with a character that an earlier element began. No hunk starts or ends before it.
+    fn continues_character(self) -> bool {
+        false
+    }
+    /// The first place of `needle` in `hay`. What the search costs is taken from `budget`; with none left it finds
+    /// nothing.
+    fn find(hay: &[Self], needle: &[Self], budget: &mut isize) -> Option<usize> {
+        let (first, rest) = needle.split_first()?;
+        let last = hay.len().checked_sub(needle.len())?;
+        let mut at = 0;
+        while at <= last && *budget > 0 {
+            *budget -= 1;
+            if hay[at] == *first {
+                let same = Self::common_prefix(&hay[at + 1..], rest);
+                *budget -= same as isize + 1;
+                if same == rest.len() {
+                    return Some(at);
+                }
+            }
+            at += 1;
+        }
+        None
     }
     fn common_prefix(a: &[Self], b: &[Self]) -> usize {
         let n = a.len().min(b.len());
@@ -83,10 +106,30 @@ impl Elem for u32 {
     }
 }
 
+/// A code unit of UTF-16.
+impl Elem for u16 {
+    #[inline]
+    fn continues_character(self) -> bool {
+        (self & 0xFC00) == 0xDC00
+    }
+}
+
 impl Elem for u8 {
     #[inline]
     fn is_newline(self) -> bool {
         self == b'\n'
+    }
+    #[inline]
+    fn continues_character(self) -> bool {
+        (self & 0xC0) == 0x80
+    }
+    fn find(hay: &[u8], needle: &[u8], budget: &mut isize) -> Option<usize> {
+        if *budget <= 0 {
+            return None;
+        }
+        let found = index_of(hay, needle);
+        *budget -= found.map_or(hay.len(), |at| at + needle.len()) as isize;
+        found
     }
     #[inline]
     fn common_prefix(a: &[u8], b: &[u8]) -> usize {
@@ -164,6 +207,10 @@ pub(crate) struct Policy {
     /// Total steps for the whole diff; once spent, unsolved boxes are emitted
     /// as wholesale replacements.
     pub work: usize,
+    /// Not 0: before a box is searched it is cut as fast-diff cuts it (see
+    /// `CharDiff::diff_as_fast_diff`), which may spend this many steps per
+    /// element of the whole input, and `HALF_MATCH_FLOOR` more.
+    pub half_match: usize,
 }
 
 struct Myers<'a, 's, T: Elem> {
@@ -175,6 +222,8 @@ struct Myers<'a, 's, T: Elem> {
     policy: Policy,
     /// Steps left out of `policy.work`.
     work_left: isize,
+    /// Steps left for `policy.half_match`.
+    half_left: isize,
     /// Scratch for the unique-token anchor split; sized by the largest id
     /// and only allocated if some box ever needs it.
     anchors: Option<Anchors>,
@@ -252,6 +301,10 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             stack,
             policy,
             work_left: policy.work as isize,
+            half_left: match policy.half_match {
+                0 => 0,
+                per_element => (per_element * (a.len() + b.len()) + HALF_MATCH_FLOOR) as isize,
+            },
             anchors: None,
         }
     }
@@ -321,6 +374,27 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                     None => changed_b[blo] = true,
                 }
                 continue;
+            }
+            if self.policy.half_match > 0 {
+                let (a, b) = (&self.a[alo..ahi], &self.b[blo..bhi]);
+                if a.len() > b.len() {
+                    if let Some(at) = T::find(a, b, &mut self.half_left) {
+                        changed_a[alo..alo + at].fill(true);
+                        changed_a[alo + at + b.len()..ahi].fill(true);
+                        continue;
+                    }
+                } else if let Some(at) = T::find(b, a, &mut self.half_left) {
+                    changed_b[blo..blo + at].fill(true);
+                    changed_b[blo + at + a.len()..bhi].fill(true);
+                    continue;
+                }
+                if let Some((in_a, in_b)) = half_match(a, b, &mut self.half_left) {
+                    let before = (alo + in_a.start, blo + in_b.start);
+                    let after = (alo + in_a.end, blo + in_b.end);
+                    stack.push(Job::new((alo, blo), before, probe, exhaustive));
+                    stack.push(Job::new(after, (ahi, bhi), probe, exhaustive));
+                    continue;
+                }
             }
             if self.work_left <= 0 {
                 changed_a[alo..ahi].fill(true);
@@ -687,6 +761,57 @@ fn diag_range(d: i32, n: i32, m: i32) -> (i32, i32) {
     (lo, hi)
 }
 
+/// fast-diff's `diff_halfMatch_`: a run that `a` and `b` share and that is at least
+/// half as long as the longer of them, as its place in each. It is looked for
+/// around two quarters of the longer one, so it is not always found, and what is
+/// left on its two sides is not always a minimal diff.
+fn half_match<T: Elem>(
+    a: &[T],
+    b: &[T],
+    budget: &mut isize,
+) -> Option<(Range<usize>, Range<usize>)> {
+    let a_is_longer = a.len() > b.len();
+    let (long, short) = if a_is_longer { (a, b) } else { (b, a) };
+    if long.len() < 4 || short.len() * 2 < long.len() {
+        return None;
+    }
+    let second_quarter = half_match_around(long, short, long.len().div_ceil(4), budget);
+    let third_quarter = half_match_around(long, short, long.len().div_ceil(2), budget);
+    let (in_long, in_short) = match (second_quarter, third_quarter) {
+        (Some(one), Some(other)) if one.0.len() <= other.0.len() => other,
+        (one, other) => one.or(other)?,
+    };
+    Some(if a_is_longer {
+        (in_long, in_short)
+    } else {
+        (in_short, in_long)
+    })
+}
+
+/// The longest run that `long` and `short` share and that has the quarter of
+/// `long` from `at` on in it, if it is at least half of `long`: its place in each.
+fn half_match_around<T: Elem>(
+    long: &[T],
+    short: &[T],
+    at: usize,
+    budget: &mut isize,
+) -> Option<(Range<usize>, Range<usize>)> {
+    let seed = &long[at..at + long.len() / 4];
+    let mut best = (0..0, 0..0);
+    let mut from = 0;
+    while let Some(found) = T::find(&short[from..], seed, budget) {
+        let found = from + found;
+        let after = T::common_prefix(&long[at..], &short[found..]);
+        let before = T::common_suffix(&long[..at], &short[..found]);
+        *budget -= (before + after) as isize;
+        if best.0.len() < before + after {
+            best = (at - before..at + after, found - before..found + after);
+        }
+        from = found + 1;
+    }
+    (best.0.len() * 2 >= long.len()).then_some(best)
+}
+
 /// Collects maximal runs of changed elements into hunks. `changed_a` and
 /// `changed_b` must have the same number of unchanged elements.
 fn hunks_from_changed<T: Elem>(
@@ -820,7 +945,7 @@ fn line_ends(text: &[u8], base: usize, out: &mut Vec<u32>) {
 
 /// Line-level diff. Returned hunks are byte offsets into `a` and `b`, always
 /// falling on line boundaries.
-pub(crate) fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
+pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
     // Byte-wise common prefix/suffix, snapped back to line boundaries, so the
     // (typically large) unchanged head and tail are never tokenized.
     let p = u8::common_prefix(a, b);
@@ -1092,6 +1217,7 @@ const LINES: Policy = Policy {
     exhaustive_per_elem: 2048,
     exhaustive_quota: 60_000_000,
     work: 24_000_000,
+    half_match: 0,
 };
 const LINE_WORK_PER_TOKEN: usize = 32;
 const CHARS: Policy = Policy {
@@ -1100,14 +1226,23 @@ const CHARS: Policy = Policy {
     exhaustive_per_elem: 1024,
     exhaustive_quota: 40_000_000,
     work: 4_000_000,
+    half_match: 0,
 };
 const CHAR_WORK_PER_BYTE: usize = 2;
+/// Of 7,566 pairs of a source file and the same file formatted, half spend 3 steps
+/// per element on fast-diff's shortcuts, one in a thousand 30. Long runs of one
+/// character would spend as many as they have elements.
+const AS_FAST_DIFF: Policy = Policy {
+    half_match: 64,
+    ..CHARS
+};
+const HALF_MATCH_FLOOR: usize = 64 << 10;
 
 // ───────────────────────────── character mode ─────────────────────────────
 
 /// Character-level differ with reusable scratch space.
 #[derive(Default)]
-pub(crate) struct CharDiff {
+pub struct CharDiff {
     hunks: Vec<Hunk>,
     scratch: Vec<Hunk>,
     myers: MyersScratch,
@@ -1120,11 +1255,70 @@ impl CharDiff {
     /// Character-level diff with diff-match-patch's semantic cleanup applied,
     /// for highlighting within a modified line/block. Hunks are byte offsets
     /// and fall on UTF-8 sequence boundaries if the inputs are valid UTF-8.
-    pub(crate) fn diff(&mut self, a: &[u8], b: &[u8]) -> &[Hunk] {
+    pub fn diff(&mut self, a: &[u8], b: &[u8]) -> &[Hunk] {
         self.hunks.clear();
         self.whole(a, b);
         self.finish(a, b);
         &self.hunks
+    }
+
+    /// The diff that `diff(a, b)` of the package fast-diff 1.3.0 gives, for output
+    /// that has to be cut where that cuts it: of several equal elements it takes
+    /// the same one. The search is the same as in [`Self::diff`] and chooses alike;
+    /// fast-diff first looks in every box whether the shorter side is in the longer
+    /// one, and for a run that is half of the longer one. No semantic cleanup.
+    ///
+    /// fast-diff compares code units of UTF-16: for the same result `a` and `b` are
+    /// such, or bytes of ASCII. Two hunks can touch.
+    ///
+    /// It differs from fast-diff where the work is bounded here (texts that are far
+    /// apart, on which fast-diff is quadratic), and in 2 of 10,902 pairs of a file
+    /// and the same file formatted, because fast-diff merges after every box.
+    pub fn diff_as_fast_diff<T: Elem>(&mut self, a: &[T], b: &[T]) -> &[Hunk] {
+        let hunks = &mut self.hunks;
+        hunks.clear();
+        let p = T::common_prefix(a, b);
+        let s = T::common_suffix(&a[p..], &b[p..]);
+        let (ma, mb) = (&a[p..a.len() - s], &b[p..b.len() - s]);
+        if a.len().max(b.len()) >= MAX_LEN {
+            push_nonempty(
+                hunks,
+                Hunk {
+                    a_lo: 0,
+                    a_hi: ma.len(),
+                    b_lo: 0,
+                    b_hi: mb.len(),
+                },
+            );
+        } else {
+            let (changed_a, changed_b) = (&mut self.changed_a, &mut self.changed_b);
+            changed_a.clear();
+            changed_a.resize(ma.len(), false);
+            changed_b.clear();
+            changed_b.resize(mb.len(), false);
+            let policy = Policy {
+                work: AS_FAST_DIFF.work + (ma.len() + mb.len()) * CHAR_WORK_PER_BYTE,
+                ..AS_FAST_DIFF
+            };
+            Myers::new(ma, mb, &mut self.myers, policy).run(
+                0..ma.len(),
+                0..mb.len(),
+                changed_a,
+                changed_b,
+            );
+            hunks_from_changed(ma, mb, changed_a, changed_b, hunks);
+        }
+        for h in hunks.iter_mut() {
+            *h = Hunk {
+                a_lo: h.a_lo + p,
+                a_hi: h.a_hi + p,
+                b_lo: h.b_lo + p,
+                b_hi: h.b_hi + p,
+            };
+        }
+        cleanup_merge(hunks, a, b);
+        align_to_characters(hunks, a);
+        hunks
     }
 
     fn finish(&mut self, a: &[u8], b: &[u8]) {
@@ -1132,9 +1326,9 @@ impl CharDiff {
         // Semantic cleanup reasons about edit *lengths*, so it should see
         // whole characters; it can itself split a sequence again (common
         // prefix of `é`/`è` is a lead byte), hence the second pass.
-        align_to_utf8(&mut self.hunks, a);
+        align_to_characters(&mut self.hunks, a);
         cleanup_semantic(&mut self.hunks, &mut self.scratch, a, b, &mut self.kmp);
-        align_to_utf8(&mut self.hunks, a);
+        align_to_characters(&mut self.hunks, a);
     }
 
     /// Raw hunks for `a` vs `b`, before cleanup. If the work cap is hit the
@@ -1536,16 +1730,17 @@ fn common_overlap(x: &[u8], y: &[u8], fail: &mut Vec<u32>) -> usize {
 const OVERLAP_MAX: usize = 64 << 10;
 
 /// Whether `s[i]` exists and is a UTF-8 continuation byte.
-pub(crate) fn is_utf8_cont(s: &[u8], i: usize) -> bool {
+pub fn is_utf8_cont(s: &[u8], i: usize) -> bool {
     i < s.len() && (s[i] & 0xC0) == 0x80
 }
 
-/// Widens each hunk so that no edge falls inside a UTF-8 sequence. Edges only
+/// Widens each hunk so that no edge falls inside a UTF-8 sequence or a surrogate
+/// pair. Edges only
 /// ever move outward through the neighbouring equality (whose bytes are the
 /// same on both sides), so the diff stays valid; a hunk just gains a shared
 /// lead byte or two, and hunks whose separating equality is consumed merge.
-fn align_to_utf8(hunks: &mut Vec<Hunk>, a: &[u8]) {
-    let is_cont = is_utf8_cont;
+fn align_to_characters<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T]) {
+    let is_cont = |a: &[T], i: usize| a.get(i).is_some_and(|it| it.continues_character());
     let mut w = 0;
     let mut r = 0;
     while r < hunks.len() {
@@ -1622,6 +1817,7 @@ mod tests {
                 exhaustive_per_elem: 0,
                 exhaustive_quota: 0,
                 work: usize::MAX >> 2,
+                half_match: 0,
             },
         );
         myers.run(p..ahi, p..bhi, &mut changed_a, &mut changed_b);
@@ -1816,6 +2012,61 @@ mod tests {
             ),
             "Line 3: <del>Привет</del><ins>Здравствуйте</ins>"
         );
+    }
+
+    /// What fast-diff 1.3.0 gives. Without its shortcuts the search cuts each of the first three elsewhere.
+    #[test]
+    fn as_fast_diff() {
+        for (a, b, expected) in [
+            (
+                "aab ;;;b a;",
+                "ab ;;ba;",
+                "<del>a</del>ab ;;<del>;</del>b<del> </del>a;",
+            ),
+            (
+                ",aba aa;a;",
+                ",aa a;ba;",
+                ",a<del>b</del>a a<del>a</del>;<ins>b</ins>a;",
+            ),
+            (
+                "b   ,,,,  ",
+                "    ,,,  ",
+                "<del>b</del>   <del>,</del><ins> </ins>,,,  ",
+            ),
+            ("  x\n", "    x\n", "<ins>  </ins>  x\n"),
+            ("abc", "abc", "abc"),
+            ("", "abc", "<ins>abc</ins>"),
+        ] {
+            let (a, b) = (a.as_bytes(), b.as_bytes());
+            assert_eq!(
+                render(a, b, CharDiff::default().diff_as_fast_diff(a, b)),
+                expected
+            );
+        }
+        let units = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+        let hunk = |a_lo, a_hi, b_lo, b_hi| Hunk {
+            a_lo,
+            a_hi,
+            b_lo,
+            b_hi,
+        };
+        assert_eq!(
+            CharDiff::default().diff_as_fast_diff(&units("é  = 1"), &units("é = 1;")),
+            [hunk(2, 3, 2, 2), hunk(6, 6, 5, 6)]
+        );
+        // The two differ in the second half of a surrogate pair.
+        assert_eq!(
+            CharDiff::default().diff_as_fast_diff(&units("a = 😀;"), &units("a = 😁;")),
+            [hunk(4, 6, 4, 6)]
+        );
+        // Quadratic for fast-diff.
+        let blanks = |first: usize, second: usize| {
+            [" ".repeat(first), " ".repeat(second)]
+                .join("x")
+                .into_bytes()
+        };
+        let (a, b) = (blanks(300_000, 300_000), blanks(299_993, 300_005));
+        check_script(&a, &b, CharDiff::default().diff_as_fast_diff(&a, &b));
     }
 
     #[test]

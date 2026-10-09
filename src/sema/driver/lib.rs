@@ -123,6 +123,18 @@ pub fn for_each_parallel_in_runs(
     run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
+    for_each_parallel_in_turns(caches, threads, count, run, None, work);
+}
+
+/// The same. `turns`: each thread takes one before it works, and gives it back.
+pub(crate) fn for_each_parallel_in_turns(
+    caches: &ThreadCaches,
+    threads: usize,
+    count: usize,
+    run: usize,
+    turns: Option<&bun_threading::Semaphore>,
+    work: &(dyn Fn(usize) + Sync),
+) {
     if count == 0 {
         return;
     }
@@ -134,12 +146,19 @@ pub fn for_each_parallel_in_runs(
         run,
         work,
     };
-    // A thread of a pool that waited here for the others could wait for ever: they may all be waiting like it.
+    // A thread of a pool that waited here for the others could wait for ever: they may all be waiting like it. It has its turn.
     if !bun_threading::thread_pool::Thread::current().is_null() {
         return region.work_off();
     }
     let mut runners = vec![(); region.threads];
-    pool_of_regions().each((), |(), (), _| region.work_off(), &mut runners);
+    pool_of_regions().each(
+        (),
+        |(), (), _| {
+            let _turn = turns.map(Turn::take);
+            region.work_off();
+        },
+        &mut runners,
+    );
 }
 
 static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
@@ -162,6 +181,22 @@ fn pool_of_regions() -> &'static bun_threading::ThreadPool {
     OWN_POOL
         .get()
         .unwrap_or_else(|| bun_threading::WorkPool::get())
+}
+
+/// One of the turns of [`for_each_parallel_in_turns`], until it is dropped.
+struct Turn<'a>(&'a bun_threading::Semaphore);
+
+impl Turn<'_> {
+    fn take(turns: &bun_threading::Semaphore) -> Turn<'_> {
+        turns.wait();
+        Turn(turns)
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.0.post();
+    }
 }
 
 /// What the threads of [`for_each_parallel_in_runs`] share.
@@ -274,7 +309,11 @@ pub struct PlanOptions {
     /// The `lib.*.d.ts` of a program are those of the `typescript` that is installed for it: of the first
     /// `node_modules/typescript` from the directory of the configuration file upwards, if that has the files that `lib` and
     /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
+    /// And what its configuration file does not say is what that compiler takes for it: `resolve::AS_BEFORE_6`.
     pub prefers_the_library_of_the_project: bool,
+    /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
+    /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
+    pub memory: usize,
 }
 
 impl Default for PlanOptions {
@@ -303,6 +342,7 @@ impl Default for PlanOptions {
             only_in_a_project_that_includes: false,
             refuses_broken_configurations: false,
             prefers_the_library_of_the_project: false,
+            memory: 0,
         }
     }
 }
@@ -749,6 +789,31 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
                 .then(|| (b"noEmit".to_vec(), Json::Bool(true))),
         )
         .collect()
+}
+
+/// The `node_modules/typescript` that is nearest to the configuration file at `config`.
+fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
+    ancestors(dirname::<Posix>(config))
+        .map(|directory| inside(directory, b"node_modules/typescript"))
+        .find(|package| host.is_dir(package))
+}
+
+/// `resolve::AS_BEFORE_6` for the configuration file at `config`: `PlanOptions::prefers_the_library_of_the_project`.
+fn defaults_of_the_installed_typescript(
+    host: &dyn Host,
+    request: &Request,
+    config: &[u8],
+) -> Option<(Vec<u8>, Json)> {
+    if !request.plan_options.prefers_the_library_of_the_project {
+        return None;
+    }
+    let package = installed_typescript(host, config)?;
+    let text = host.read(&inside(&package, b"package.json"))?;
+    let fields = host.parse_package_json(Session::new().arena(), &text)?;
+    let version = fields.get(b"version")?.as_str()?;
+    let major = &version[..strings::index_of_char_usize(version, b'.')?];
+    let major: u32 = std::str::from_utf8(major).ok()?.parse().ok()?;
+    (major < 6).then(|| (bun_sema::resolve::AS_BEFORE_6.to_vec(), Json::Bool(true)))
 }
 
 /// The version of TypeScript that the type checker is a port of.
@@ -1433,7 +1498,9 @@ impl Projects {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
         config::load_overriding(disk, &Session::new(), config, &|_| {
-            overriding_options(request, false)
+            let mut options = overriding_options(request, false);
+            options.extend(defaults_of_the_installed_typescript(disk, request, config));
+            options
         })
     }
 
@@ -1751,8 +1818,11 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     named: None,
                     elsewhere: None,
                     run: None,
+                    builds: None,
+                    place: None,
                 };
-                return check_project_of(disk, request, &mut projects, of, report, started);
+                let projects = Guarded::new(projects);
+                return check_project_of(disk, request, &projects, of, report, started);
             }
             None => {
                 // `tsc` prints its help. Which of them is meant is not for a guess: they are
@@ -1883,24 +1953,81 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         .map(Vec::as_slice)
         .collect();
     // Declared before the session of any program, so it is dropped after them.
-    let of_run = Session::new();
-    let run = (!is_one).then(|| Run::new(&of_run, disk.provided_paths().cloned().collect()));
-    for ((config, extent, files), paths) in by_project.iter().zip(&paths_by_project) {
-        let own: FxHashSet<&[u8]> = paths.iter().map(Vec::as_slice).collect();
-        let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
-        let of = OfProject {
-            config: config.as_deref(),
-            named: Some((*extent, files.as_slice())),
-            elsewhere: (!is_one).then_some(&elsewhere),
-            run: run.as_ref(),
+    let (of_run, of_builds) = (Session::new(), Session::new());
+    let at_once = match request.plan_options.memory {
+        0 => 1,
+        _ => disk.threads().min(by_project.len()),
+    };
+    let run = (!is_one).then(|| {
+        let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
+        match at_once > 1 {
+            true => run.overlapping(),
+            false => run,
+        }
+    });
+    let builds = (!is_one).then(|| Run::of_build(&of_builds));
+    let projects = Guarded::new(projects);
+    let in_common = || {
+        [&run, &builds]
+            .map(|it| it.as_ref().map_or(0, Run::bytes))
+            .iter()
+            .sum::<usize>()
+    };
+    let room = Room::new(request.plan_options.memory, &in_common);
+    if at_once > 1 {
+        disk.take_turns();
+    }
+    let next = AtomicUsize::new(0);
+    let reports: Vec<Guarded<Option<Report>>> =
+        by_project.iter().map(|_| Guarded::new(None)).collect();
+    // In the order of the list, each when there is room for it.
+    let check_the_next_ones = || {
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some((config, extent, files)) = by_project.get(index) else {
+                break;
+            };
+            let own: FxHashSet<&[u8]> = (paths_by_project[index].iter())
+                .map(Vec::as_slice)
+                .collect();
+            let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
+            let place = room.enter();
+            let of = OfProject {
+                config: config.as_deref(),
+                named: Some((*extent, files.as_slice())),
+                elsewhere: (!is_one).then_some(&elsewhere),
+                run: run.as_ref(),
+                builds: builds.as_ref(),
+                place: (at_once > 1).then_some(&place),
+            };
+            let (so_far, began) = (Report::default(), Instant::now());
+            let checked = check_project_of(disk, request, &projects, of, so_far, began);
+            *reports[index].lock() = Some(checked);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..at_once {
+            // Without the thread, the others check its share.
+            let _ = std::thread::Builder::new()
+                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                .spawn_scoped(scope, || {
+                    // As a thread of the pool does when it starts: the parsers check the stack.
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
+                    check_the_next_ones();
+                });
+        }
+        check_the_next_ones();
+    });
+    for mut checked in reports {
+        let Some(checked) = checked.get_mut().take() else {
+            continue;
         };
-        let (so_far, began) = (Report::default(), Instant::now());
-        let checked = check_project_of(disk, request, &mut projects, of, so_far, began);
         report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
+    report.files_parsed_for_all += builds.as_ref().map_or(0, Run::parses);
     if !is_one {
         sort_as_one_project(&mut report);
     }
@@ -1929,18 +2056,155 @@ struct OfProject<'a, 'u> {
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
     /// Of the request, if it has more than one project.
     run: Option<&'a Run<'u>>,
+    /// The same for those of its projects that are builds: `Run::of_build`.
+    builds: Option<&'a Run<'u>>,
+    /// Among the programs that run at the same time.
+    place: Option<&'a Place<'a>>,
+}
+
+/// How many programs of a request run at the same time: as many as there is memory for. What a program takes is not known
+/// before its files are found. Until then it counts for as much as the largest so far has taken, and it is the only one of
+/// which that is so: files are found for one program at a time anyway (`WAITS_ACROSS_POOLS`). From then on it counts for what
+/// it has, and for what the check has added at the most so far. One that turns out larger than there is room for goes on when
+/// others have ended. The first one runs alone to its end, as the first measure.
+struct Room<'a> {
+    /// For the programs and for what they have in common.
+    bytes: usize,
+    /// The bytes of what they have in common, which grows.
+    in_common: &'a (dyn Fn() -> usize + Sync),
+    taken: Guarded<Taken>,
+    has_changed: bun_threading::Condvar,
+}
+
+#[derive(Default)]
+struct Taken {
+    bytes: usize,
+    programs: usize,
+    /// The files of one are not found yet.
+    is_one_unknown: bool,
+    /// Those whose files are found, and that go on.
+    going_on: usize,
+    /// One has ended, so the two below are measures.
+    has_one_ended: bool,
+    /// The most that one has taken in the end.
+    largest: usize,
+    /// The most that one has taken in the end, above what it had when its files were found.
+    most_added: usize,
+}
+
+/// Of a program in a `Room`, until it is dropped.
+struct Place<'a> {
+    room: &'a Room<'a>,
+    bytes: AtomicUsize,
+    /// What it had when its files were found.
+    found: AtomicUsize,
+    goes_on: std::sync::atomic::AtomicBool,
+}
+
+impl<'a> Room<'a> {
+    /// `memory`: `PlanOptions::memory`
+    fn new(memory: usize, in_common: &'a (dyn Fn() -> usize + Sync)) -> Room<'a> {
+        Room {
+            bytes: (memory / 4).max(1 << 30),
+            in_common,
+            taken: Guarded::new(Taken::default()),
+            has_changed: bun_threading::Condvar::new(),
+        }
+    }
+
+    fn for_programs(&self) -> usize {
+        self.bytes.saturating_sub((self.in_common)())
+    }
+
+    /// Waits until there is room for one more, or nothing else runs.
+    fn enter(&self) -> Place<'_> {
+        let mut taken = self.taken.lock();
+        loop {
+            let room = self.for_programs();
+            let fits =
+                taken.has_one_ended && !taken.is_one_unknown && taken.bytes + taken.largest <= room;
+            if taken.programs == 0 || fits {
+                let bytes = match taken.has_one_ended {
+                    true => taken.largest,
+                    false => room,
+                };
+                taken.programs += 1;
+                taken.bytes += bytes;
+                taken.is_one_unknown = true;
+                return Place {
+                    room: self,
+                    bytes: AtomicUsize::new(bytes),
+                    found: AtomicUsize::new(0),
+                    goes_on: std::sync::atomic::AtomicBool::new(false),
+                };
+            }
+            self.has_changed.wait_guarded(&mut taken);
+        }
+    }
+}
+
+impl Place<'_> {
+    fn counts_for(&self, taken: &mut Taken, bytes: usize) {
+        taken.bytes = taken
+            .bytes
+            .saturating_sub(self.bytes.swap(bytes, Ordering::Relaxed))
+            + bytes;
+    }
+
+    /// The files of the program are found, and it has `bytes`. Waits until there is room for what it is expected to take, or no
+    /// other goes on.
+    fn has_found_its_files(&self, bytes: usize) {
+        let mut taken = self.room.taken.lock();
+        self.found.store(bytes, Ordering::Relaxed);
+        if !taken.has_one_ended {
+            return;
+        }
+        let expected = bytes + taken.most_added;
+        self.counts_for(&mut taken, expected);
+        taken.is_one_unknown = false;
+        self.room.has_changed.notify_all();
+        while taken.going_on > 0 && taken.bytes > self.room.for_programs() {
+            self.room.has_changed.wait_guarded(&mut taken);
+        }
+        taken.going_on += 1;
+        self.goes_on.store(true, Ordering::Relaxed);
+    }
+
+    /// It has taken `bytes` in the end.
+    fn has_taken(&self, bytes: usize) {
+        let mut taken = self.room.taken.lock();
+        taken.has_one_ended = true;
+        taken.largest = taken.largest.max(bytes);
+        let added = bytes.saturating_sub(self.found.load(Ordering::Relaxed));
+        taken.most_added = taken.most_added.max(added);
+        self.counts_for(&mut taken, bytes);
+    }
+}
+
+impl Drop for Place<'_> {
+    fn drop(&mut self) {
+        let mut taken = self.room.taken.lock();
+        taken.bytes = taken.bytes.saturating_sub(*self.bytes.get_mut());
+        taken.programs -= 1;
+        match *self.goes_on.get_mut() {
+            true => taken.going_on -= 1,
+            false => taken.is_one_unknown = false,
+        }
+        drop(taken);
+        self.room.has_changed.notify_all();
+    }
 }
 
 fn check_project_of(
     disk: &host::Disk,
     request: &Request,
-    projects: &mut Projects,
+    projects: &Guarded<Projects>,
     of: OfProject<'_, '_>,
     mut report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
-        Some(config) => match projects.take(disk, request, config) {
+        Some(config) => match projects.lock().take(disk, request, config) {
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
@@ -2022,6 +2286,8 @@ fn check_project_of(
             named,
             of.elsewhere,
             of.run,
+            of.builds,
+            of.place,
         )
     } else {
         // All of its files: the project, with what no file imports.
@@ -2040,6 +2306,7 @@ fn check_project_of(
             of.elsewhere,
             None,
             of.run,
+            of.place,
         )
     }
 }
@@ -2060,6 +2327,7 @@ struct Graph<'h> {
     host: &'h dyn Host,
     /// For `config::load_overriding`.
     session: &'h Session,
+    request: &'h Request<'h>,
     overrides: Vec<(Vec<u8>, Json)>,
     /// `tasks`, until `setup_build_task` takes them: `config` and `resolved`, by the `tspath.Path`
     /// of the configuration file.
@@ -2097,7 +2365,13 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let over = |_: bool| self.overrides.clone();
+            let over = |_: bool| {
+                let mut options = self.overrides.clone();
+                let defaults =
+                    defaults_of_the_installed_typescript(self.host, self.request, &config);
+                options.extend(defaults);
+                options
+            };
             let resolved = match self.host.is_file(&config) {
                 true => config::load_overriding(self.host, self.session, &config, &over).ok(),
                 false => None,
@@ -2396,6 +2670,8 @@ fn check_with_references(
     named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
     run: Option<&Run<'_>>,
+    builds: Option<&Run<'_>>,
+    place: Option<&Place<'_>>,
 ) -> Report {
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
@@ -2406,6 +2682,7 @@ fn check_with_references(
     let mut graph = Graph {
         host,
         session: &configuration,
+        request,
         // The command line is for the projects that are reported: that of a plain `tsc`, for the
         // one that it is given.
         overrides: match reports_references {
@@ -2478,7 +2755,7 @@ fn check_with_references(
     // another reads, and several run at the same time.
     let is_one_program = reads_sources && !reports_references;
     let of_build = Session::new();
-    let of_build = (!is_one_program).then(|| Run::of_build(&of_build));
+    let of_build = (!is_one_program && builds.is_none()).then(|| Run::of_build(&of_build));
     // Nothing waits for what is not emitted.
     let up_stream: Vec<Vec<usize>> = (projects.iter())
         .map(|p| match reads_sources {
@@ -2687,7 +2964,7 @@ fn check_with_references(
             }
             _ => None,
         };
-        let check = |run: Option<&Run<'_>>| {
+        let check = |run: Option<&Run<'_>>, place: Option<&Place<'_>>| {
             check_named_files(
                 &host,
                 project,
@@ -2698,11 +2975,13 @@ fn check_with_references(
                 Some(&owned_elsewhere),
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
+                place,
             )
         };
-        let mut checked = match is_one_program {
-            true => check(run),
-            false => check(of_build.as_ref()),
+        let mut checked = match (is_one_program, builds) {
+            (true, _) => check(run, place),
+            (false, Some(builds)) => check(Some(builds), None),
+            (false, None) => check(of_build.as_ref(), None),
         };
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
@@ -2946,7 +3225,7 @@ pub fn check_project(
     started: Instant,
 ) -> Report {
     check_named_files(
-        host, project, request, report, started, None, None, None, None,
+        host, project, request, report, started, None, None, None, None, None,
     )
 }
 
@@ -2965,6 +3244,7 @@ fn check_named_files(
     // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
     run: Option<&Run<'_>>,
+    in_room: Option<&Place<'_>>,
 ) -> Report {
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
@@ -3016,9 +3296,7 @@ fn check_named_files(
         Libs::Directory(dir) => host::from_native(dir),
     };
     if request.plan_options.prefers_the_library_of_the_project && !config_path.is_empty() {
-        let installed = ancestors(dirname::<Posix>(&config_path))
-            .map(|directory| inside(directory, b"node_modules/typescript"))
-            .find(|package| host.is_dir(package));
+        let installed = installed_typescript(host, &config_path);
         // By its real path: the packages of a workspace have links to one.
         let own = installed.map(|package| inside(&host.realpath(&package), b"lib"));
         if let Some(own) = own.filter(|own| has_libraries(host, &project.options, own)) {
@@ -3051,7 +3329,19 @@ fn check_named_files(
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
     let session = Session::new();
-    let files = Files::load(&session, run, host, project.options, &project.files);
+    let files_are_found = || {
+        if let Some(place) = in_room {
+            place.has_found_its_files(session.allocated_bytes());
+        }
+    };
+    let files = Files::load(
+        &session,
+        run,
+        host,
+        project.options,
+        &project.files,
+        &files_are_found,
+    );
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
@@ -3835,6 +4125,9 @@ fn check_named_files(
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(program);
+    }
+    if let Some(place) = in_room {
+        place.has_taken(session.allocated_bytes());
     }
     root.release();
     report

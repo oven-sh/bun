@@ -1,3 +1,4 @@
+use bun_core::strings;
 use super::function_paren_newline::is_on_one_line;
 use bun_lint::prelude::*;
 
@@ -40,8 +41,8 @@ const SAME_LINE_CLOSE: Message = Message::new(
 /// Whether the token before the one at `at` ends on the line that `at` is on.
 fn is_token_before_on_same_line<'a>(file: &'a File<'a>, at: u32) -> bool {
     let before = file.text().get(..at as usize).unwrap_or_default();
-    let end = text::trim_end(before).len();
-    if end == 0 || text::has_line_break(&before[end..]) {
+    let end = strings::trim_js_whitespace_end(before).len();
+    if end == 0 || strings::contains_js_line_break(&before[end..]) {
         return false;
     }
     // What is before a token on its line is a token too, or a block comment.
@@ -55,7 +56,7 @@ fn is_token_before_on_same_line<'a>(file: &'a File<'a>, at: u32) -> bool {
 /// ESLint's `removeNewlineBetween`, for what is between the two tokens.
 /// There is no fix if a comment is between them.
 fn remove_newline_between(fixer: Fixer<'_>, between: Span) -> Option<Fix> {
-    text::is_blank(fixer.file().slice(between)).then(|| fixer.replace(between, " "))
+    strings::is_all_js_whitespace(fixer.file().slice(between)).then(|| fixer.replace(between, " "))
 }
 
 impl BraceStyle {
@@ -81,7 +82,7 @@ impl BraceStyle {
         if is_empty || is_single_line_exception {
             return;
         }
-        if !text::has_line_break(file.slice(Span::after(opening, after_opening))) {
+        if !strings::contains_js_line_break(file.slice(Span::after(opening, after_opening))) {
             cx.report(opening, BLOCK_SAME_LINE).fix(|fixer| fixer.insert_after(opening, "\n"));
         }
         if is_token_before_on_same_line(file, close) {
@@ -98,7 +99,7 @@ impl BraceStyle {
         let end = block.span().end;
         let curly = Span::new(end.saturating_sub(1), end);
         let before_keyword = Span::after(curly, skip_trivia(cx.text(), end));
-        let is_on_same_line = !text::has_line_break(cx.slice(before_keyword));
+        let is_on_same_line = !strings::contains_js_line_break(cx.slice(before_keyword));
         if self.style == Style::OneTbs && !is_on_same_line {
             cx.report(curly, NEXT_LINE_CLOSE).fix(|fixer| remove_newline_between(fixer, before_keyword));
         }

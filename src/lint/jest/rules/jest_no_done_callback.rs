@@ -48,6 +48,9 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, NoDoneCallback>
         && func.params().len() == 1 + usize::from(is_jest_each)
         && let Some(first_parameter) = func.params().first()
     {
-        cx.report(first_parameter, NO_DONE_CALLBACK);
+        cx.report(first_parameter, NO_DONE_CALLBACK).help(match func.is_async() {
+            true => "Use await instead of callback in async functions",
+            false => "Return a Promise instead of relying on callback parameter",
+        });
     }
 }

@@ -53,7 +53,9 @@ impl Rule for ConsistentAssert {
                         },
                         _ => continue,
                     };
-                    cx.report(ident, INCONSISTENT_ASSERT_USAGE).fix(|fixer| fixer.insert_after(ident, ".ok"));
+                    cx.report(ident, INCONSISTENT_ASSERT_USAGE)
+                        .data("assert_identifier", ident.text())
+                        .fix(|fixer| fixer.insert_after(ident, ".ok"));
                 }
             }
         });

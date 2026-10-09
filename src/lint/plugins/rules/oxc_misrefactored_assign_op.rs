@@ -33,6 +33,7 @@ impl Rule for MisrefactoredAssignOp {
             let report = |operand: Expr<'a>| {
                 let suggestion = [target.text(), assign_op_text(Some(op)).as_bytes(), cx.slice(operand.outer_span())].join(&b' ');
                 cx.report(e, MISREFACTORED_ASSIGN_OP)
+                    .data("suggestion", suggestion.clone())
                     .suggest_with(DID_YOU_MEAN, &[("suggestion", &suggestion[..])], |fixer| fixer.replace(e, &suggestion[..]));
             };
             if assignment_target_eq_expr(target, left) {

@@ -7,29 +7,20 @@
 
 use bun_core::strings;
 
-pub(crate) use bun_lint::utils::text::{
-    ends_with_ignore_ascii_case, is_blank, to_lower_case, trim, trim_end, trim_start, utf16_len,
-    white_space_len,
-};
+pub(crate) use bun_lint::utils::text::{ends_with_ignore_ascii_case, to_lower_case};
 
 pub(crate) const BOM: &[u8] = &strings::BOM::UTF8_BYTES;
 
 /// `/^\s/.test(text)`
 #[inline]
 pub(crate) fn starts_with_white_space(text: &[u8]) -> bool {
-    white_space_len(text) > 0
+    strings::js_whitespace_len(text) > 0
 }
 
 /// The number of bytes of `text` that are before its first character that `\s` does not match.
 #[inline]
 pub(crate) fn leading_white_space_len(text: &[u8]) -> usize {
-    text.len() - trim_start(text).len()
-}
-
-/// `a.toLowerCase() === b`, where `b` is ASCII in lower case.
-#[inline]
-pub(crate) fn eq_lower_case(a: &[u8], b: &[u8]) -> bool {
-    a.eq_ignore_ascii_case(b)
+    text.len() - strings::trim_js_whitespace_start(text).len()
 }
 
 /// `\w`
@@ -61,18 +52,6 @@ impl ByteSet {
             .position(|&byte| self.0[byte as usize])
             .map(|at| from + at)
     }
-}
-
-/// `text.includes(part)`
-#[inline]
-pub(crate) fn includes(text: &[u8], part: &[u8]) -> bool {
-    strings::contains(text, part)
-}
-
-/// `text.indexOf(byte, from)`
-#[inline]
-pub(crate) fn index_of_char_from(text: &[u8], byte: u8, from: usize) -> Option<usize> {
-    strings::index_of_char_usize(text.get(from..)?, byte).map(|at| at + from)
 }
 
 /// `text.indexOf(part, from)`
@@ -224,13 +203,13 @@ pub(crate) fn make_string(content: &[u8], quote: u8, out: &mut Vec<u8>) {
 pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     fn without_blanks(mut text: &[u8]) -> &[u8] {
         while !text.starts_with(b"\n")
-            && let len @ 1.. = white_space_len(text)
+            && let len @ 1.. = strings::js_whitespace_len(text)
         {
             text = &text[len..];
         }
         text
     }
-    let Some(comment) = trim_start(text).strip_prefix(b"#") else {
+    let Some(comment) = strings::trim_js_whitespace_start(text).strip_prefix(b"#") else {
         return false;
     };
     let Some(name) = without_blanks(comment).strip_prefix(b"@") else {

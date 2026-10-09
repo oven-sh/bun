@@ -1,6 +1,7 @@
+use bun_core::strings;
 use crate::a11y::{HTML_TAG, is_null_literal, is_valid_aria_role};
 use crate::jsx::{AttributeValue, as_jsx_element, get_element_type, get_prop_value, has_jsx_prop, is_undefined};
-use bun_lint_oxlint::text::{contains_name, split_whitespace};
+use bun_lint_oxlint::text::contains_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -11,6 +12,7 @@ pub struct AriaRole {
 }
 
 const ARIA_ROLE: Message = Message::new("", "Elements with ARIA roles must use a valid, non-abstract ARIA role.");
+const HELP: &str = "Set a valid, non-abstract ARIA role for element with ARIA";
 
 impl Rule for AriaRole {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-role", Kind::Problem);
@@ -41,20 +43,24 @@ impl Rule for AriaRole {
             match get_prop_value(attr) {
                 Some(AttributeValue::ExpressionContainer(jsexp)) => {
                     if is_null_literal(jsexp) || is_undefined(jsexp) {
-                        cx.report(attr, ARIA_ROLE);
+                        cx.report(attr, ARIA_ROLE).help(HELP);
                     }
                 }
                 Some(AttributeValue::StringLiteral(literal)) => {
                     let is_valid = |word: &[u8]| {
                         is_valid_aria_role(word) || rule.allowed_invalid_roles.iter().any(|it| it.as_bytes() == word)
                     };
-                    let mut words = split_whitespace(literal.value).peekable();
-                    if words.peek().is_none() || !words.all(is_valid) {
-                        cx.report(literal.span, ARIA_ROLE);
+                    let mut words = strings::split_unicode_whitespace(literal.value).peekable();
+                    if words.peek().is_none() {
+                        cx.report(literal.span, ARIA_ROLE).help(HELP);
+                    } else if let Some(error_prop) = words.find(|word| !is_valid(word)) {
+                        cx.report(literal.span, ARIA_ROLE).help_with(|| {
+                            format!("{HELP}, `{}` is an invalid aria role", bstr::BStr::new(error_prop))
+                        });
                     }
                 }
                 _ => {
-                    cx.report(attr, ARIA_ROLE);
+                    cx.report(attr, ARIA_ROLE).help(HELP);
                 }
             }
         });

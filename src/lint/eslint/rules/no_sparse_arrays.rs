@@ -32,24 +32,35 @@ impl Rule for NoSparseArrays {
             let count = elements.iter().filter(|it| it.is_missing()).count();
             if is_oxlint && count >= 10 {
                 let span = array.span();
-                cx.report(if span.len() < 50 { span } else { Span::empty(span.start) }, UNEXPECTED_COMMAS)
-                    .data("count", count);
+                let (place, label) = match span.len() < 50 {
+                    true => (span, "the array here"),
+                    false => (Span::empty(span.start), "the array starting here"),
+                };
+                cx.report(place, UNEXPECTED_COMMAS).data("count", count).first_label(label);
                 return;
             }
             let text = cx.text();
             // After the `[` or the previous comma.
             let mut at = array.span().start + 1;
-            for element in elements {
+            let mut commas_of_holes = elements.iter().filter_map(|element| {
                 let is_hole = element.is_missing();
                 let comma = skip_trivia(text, if is_hole { at } else { element.outer_span().end });
-                if is_hole {
-                    if is_oxlint {
-                        cx.report(Span::empty(comma), UNEXPECTED_COMMA);
-                        return;
-                    }
-                    cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY);
-                }
                 at = comma + 1;
+                is_hole.then_some(comma)
+            });
+            if is_oxlint {
+                if let Some(first) = commas_of_holes.next() {
+                    cx.report(Span::empty(first), UNEXPECTED_COMMA).labels_with(|labels| {
+                        labels.first("unexpected comma");
+                        for comma in commas_of_holes {
+                            labels.push(Span::empty(comma), "unexpected comma");
+                        }
+                    });
+                }
+                return;
+            }
+            for comma in commas_of_holes {
+                cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY);
             }
         });
     }

@@ -51,16 +51,16 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
 
 /// `/^\s*[^:/?#\s]+:\/\/[^?#]/u`, for the value of a comment without its asterisks.
 fn is_maybe_url(value: &[u8]) -> bool {
-    let mut rest = text::code_points(value)
+    let mut rest = strings::wtf8_codepoints(value)
         .map(|(_, c)| c)
         .filter(|&c| c != u32::from(b'*'))
-        .skip_while(|&c| text::is_js_whitespace(c));
+        .skip_while(|&c| strings::is_js_whitespace(c));
     let mut scheme_len = 0;
     let after_scheme = loop {
         match rest.next() {
             Some(c)
                 if matches!(u8::try_from(c), Ok(b':' | b'/' | b'?' | b'#'))
-                    || text::is_js_whitespace(c) =>
+                    || strings::is_js_whitespace(c) =>
             {
                 break c;
             }
@@ -100,13 +100,13 @@ fn oxlint_is_directive(comment: Token) -> bool {
         b"oxfmt-ignore",
     ];
     let value = comment.comment_value();
-    let rest = text::trim_start(value);
+    let rest = strings::trim_js_whitespace_start(value);
     if DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
         return true;
     }
     let mut lines = strings::split(value, b"\n").map(|line| {
-        let line = text::trim_start(line);
-        text::trim_start(line.strip_prefix(b"*").unwrap_or(line))
+        let line = strings::trim_js_whitespace_start(line);
+        strings::trim_js_whitespace_start(line.strip_prefix(b"*").unwrap_or(line))
     });
     comment.kind() == TokenKind::Block && lines.find(|it| !it.is_empty()).is_some_and(oxlint_is_url)
 }
@@ -133,7 +133,7 @@ impl CapitalizedComments {
         };
         let value = comment.comment_value();
         let mut word_chars =
-            text::code_points(value).filter(|&(_, c)| c != u32::from(b'*') && !text::is_js_whitespace(c));
+            strings::wtf8_codepoints(value).filter(|&(_, c)| c != u32::from(b'*') && !strings::is_js_whitespace(c));
         let Some((at, first)) = word_chars.next() else {
             return;
         };

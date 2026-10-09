@@ -1,6 +1,6 @@
 //! Characters and strings as micromark sees them.
 
-use super::unicode_tables::{PUNCTUATION_OR_SYMBOL, SPACE_SEPARATOR};
+use super::unicode_tables::PUNCTUATION_OR_SYMBOL;
 
 pub(crate) fn is_in(table: &[(u32, u32)], c: u32) -> bool {
     let after = table.partition_point(|range| range.0 <= c);
@@ -26,14 +26,6 @@ pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
     }
 }
 
-/// `\s` of a regular expression
-pub(crate) fn is_unicode_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' ' | '\u{FEFF}' | '\u{2028}' | '\u{2029}'
-    ) || is_in(SPACE_SEPARATOR, c as u32)
-}
-
 pub(crate) fn is_unicode_punctuation(c: char) -> bool {
     match c.is_ascii() {
         true => c.is_ascii_punctuation(),
@@ -52,14 +44,10 @@ pub(crate) enum CharacterClass {
 pub(crate) fn classify(c: Option<char>) -> CharacterClass {
     match c {
         None => CharacterClass::Whitespace,
-        Some(c) if is_unicode_whitespace(c) => CharacterClass::Whitespace,
+        Some(c) if bun_core::strings::is_js_whitespace(c as u32) => CharacterClass::Whitespace,
         Some(c) if is_unicode_punctuation(c) => CharacterClass::Punctuation,
         Some(_) => CharacterClass::Other,
     }
-}
-
-fn push_char(c: char, out: &mut Vec<u8>) {
-    out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
 }
 
 /// micromark's `decodeNumericCharacterReference`
@@ -96,7 +84,7 @@ pub(crate) fn character_reference(text: &[u8], out: Option<&mut Vec<u8>>) -> Opt
             let code = digits[..count].iter().fold(0u32, |code, &digit| {
                 code * radix + (digit as char).to_digit(radix).unwrap_or(0)
             });
-            push_char(numeric_character(code), out);
+            bun_core::strings::push_codepoint_wtf8(out, numeric_character(code) as u32);
         }
         return Some(prefix + count + 1);
     }

@@ -100,6 +100,8 @@ members = [
   "src/uws",
   "src/wyhash",
   "src/yarr",
+  "src/node_path",
+  "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
@@ -464,6 +466,8 @@ bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_yarr = { path = "src/yarr" }
+bun_node_path = { path = "src/node_path" }
+bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }

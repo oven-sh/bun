@@ -559,7 +559,7 @@ describe.concurrent("bun lint with languages", () => {
             { files: ["plain/*.vue"], plugins: { own }, languageOptions: { parser }, rules: { "own/seen": "error" } },
           ];`,
       };
-      // 6 MB, which three engines are for.
+      // 6 MB, which is work for several engines.
       const text = Buffer.alloc(250_000, "<!-- comment -->\n").toString();
       for (let i = 0; i < 24; i++) files[`typed/${i}.vue`] = files[`plain/${i}.vue`] = text;
       const realms = async (directory: string) => {

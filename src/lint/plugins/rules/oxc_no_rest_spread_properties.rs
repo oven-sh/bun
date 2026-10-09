@@ -34,7 +34,8 @@ impl Rule for NoRestSpreadProperties {
                     false => {
                         cx.report(property, NO_REST_SPREAD_PROPERTIES)
                             .data("kind", "object spread property")
-                            .data("message_suffix", rule.object_spread_message.clone());
+                            .data("message_suffix", rule.object_spread_message.clone())
+                            .help("Use `Object.assign()` to combine objects instead of object spread syntax.");
                     }
                 }
             }
@@ -53,6 +54,7 @@ impl NoRestSpreadProperties {
     fn report_rest(&self, span: Span, cx: &Cx<Self>) {
         cx.report(span, NO_REST_SPREAD_PROPERTIES)
             .data("kind", "object rest property")
-            .data("message_suffix", self.object_rest_message.clone());
+            .data("message_suffix", self.object_rest_message.clone())
+            .help("List the properties you need explicitly instead of using object rest syntax.");
     }
 }

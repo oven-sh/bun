@@ -3,7 +3,7 @@
 use crate::class::Class;
 use crate::linear::{self, Tok, Tokens};
 use crate::sets;
-use crate::unit::{Subject, Text, Unit, push_utf8, starts_with_line_terminator};
+use crate::unit::{Subject, Text, Unit, push_utf8};
 use bun_core::strings;
 
 // ───────────────────────────── assertions ─────────────────────────────
@@ -73,7 +73,7 @@ impl Assertion {
             Assertion::NotDot => !is_dot,
             Assertion::SomeUnit => {
                 let rest = subject.bytes.get(at..).unwrap_or_default();
-                here.is_some() && !starts_with_line_terminator(rest)
+                here.is_some() && !bun_core::lexer::starts_with_line_break(rest)
             }
             Assertion::NotDots => !dots_at(subject, at),
             Assertion::NotDotOrEmpty => {

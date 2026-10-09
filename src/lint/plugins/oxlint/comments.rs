@@ -92,21 +92,22 @@ pub(crate) fn leading_comments<'a>(file: &'a File<'a>) -> Vec<(Token<'a>, u32)> 
             all.iter_mut().skip(pending).for_each(|it| it.1 = next);
             pending = all.len();
             let before = text.get(..start as usize).unwrap_or_default();
-            let token = text::trim_end(before);
+            let token = strings::trim_js_whitespace_end(before);
             saw_newline = token.is_empty()
-                || text::has_line_break(before.get(token.len()..).unwrap_or_default());
+                || strings::contains_js_line_break(before.get(token.len()..).unwrap_or_default());
             follows_eq_or_paren = ends_with_eq_or_paren(token);
         }
         let after = text.get(end as usize..).unwrap_or_default();
         let white_space = after
-            .get(..after.len() - text::trim_start(after).len())
+            .get(..after.len() - strings::trim_js_whitespace_start(after).len())
             .unwrap_or_default();
         next = end + white_space.len() as u32;
         all.push((comment, 0));
         let is_trailing = if comment.kind() == TokenKind::Line {
             !std::mem::replace(&mut saw_newline, true) && !follows_eq_or_paren
         } else {
-            text::has_line_break(white_space) && !std::mem::replace(&mut saw_newline, true)
+            strings::contains_js_line_break(white_space)
+                && !std::mem::replace(&mut saw_newline, true)
         };
         if is_trailing && !should_stay_leading(comment) {
             all.truncate(pending);

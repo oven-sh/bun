@@ -1,485 +1,874 @@
 {
-  "src/ast/lexer_tables.rs": {
-    "is_identifier_continue": 1
-  },
-  "src/ast/scope.rs": {
-    "hash": 1
-  },
-  "src/clap_macros/lib.rs": {
-    "trim": 1,
-    "trim_left": 1
-  },
-  "src/format/conformance/lib.rs": {
-    "utf16_len": 1
-  },
-  "src/format/conformance/prettier.rs": {
-    "unescape": 1
-  },
-  "src/format/css/doc.rs": {
-    "string_width": 1
-  },
-  "src/format/css/memo.rs": {
-    "hash": 1
-  },
-  "src/format/cursor.rs": {
-    "resolve": 1
-  },
-  "src/format/graphql/embed.rs": {
-    "lines": 1
-  },
-  "src/format/graphql/printer.rs": {
-    "lines": 1
-  },
-  "src/format/handlebars/printer.rs": {
-    "trim_end": 1,
-    "trim_start": 1
-  },
-  "src/format/handlebars/tokenizer.rs": {
-    "is_space": 1
-  },
-  "src/format/html/angular.rs": {
-    "is_blank": 1
-  },
-  "src/format/html/angular/lexer.rs": {
-    "is_identifier_part": 1,
-    "is_identifier_start": 1
-  },
-  "src/format/html/js.rs": {
-    "write_string": 1
-  },
-  "src/format/html/lexer.rs": {
-    "is_digit": 1,
-    "is_whitespace": 1
-  },
-  "src/format/ir/width.rs": {
-    "string_width": 1
-  },
-  "src/format/js/comments.rs": {
-    "lines": 1
-  },
-  "src/format/js/jsdoc/text.rs": {
-    "is_blank": 1,
-    "lines": 1,
-    "split_lines": 1,
-    "trim": 1,
-    "trim_end": 1,
-    "trim_start": 1
-  },
-  "src/format/js/sort_imports/babel.rs": {
-    "skip_whitespace": 1
-  },
-  "src/format/js/sort_imports/compare.rs": {
-    "locale_compare": 1
-  },
-  "src/format/js/sort_imports/layout.rs": {
-    "skip_blanks": 1
-  },
-  "src/format/js/source_text.rs": {
-    "white_space_len": 1
-  },
-  "src/format/js/utils/call_expression.rs": {
-    "skip_spaces": 1
-  },
-  "src/format/js/utils/jsx.rs": {
-    "has_line_break": 1
-  },
-  "src/format/js/utils/object.rs": {
-    "quoted": 1
-  },
-  "src/format/json/sort_package_json.rs": {
-    "write_string": 1
-  },
-  "src/format/markdown/parse.rs": {
-    "is_space": 1
-  },
-  "src/format/markdown/spans.rs": {
-    "is_space": 1,
-    "skip_spaces": 1
-  },
-  "src/format/markdown/strings.rs": {
-    "unescape": 1
-  },
-  "src/format/tailwind.rs": {
-    "is_white_space": 1
-  },
-  "src/format/text.rs": {
-    "skip_spaces": 1
-  },
-  "src/format/verify/comments.rs": {
-    "lines": 1
-  },
-  "src/hash/adler32.rs": {
-    "hash": 1
-  },
-  "src/hash/cityhash.rs": {
-    "hash": 2,
-    "hash_with_seed": 1
-  },
-  "src/hash/murmur.rs": {
-    "hash_with_seed": 3
-  },
-  "src/hash/xxhash.rs": {
-    "hash": 1
-  },
-  "src/install/PackageManager/patchPackage.rs": {
-    "string_hash": 1
-  },
-  "src/install/migration.rs": {
-    "string_hash": 1
-  },
-  "src/install/npm.rs": {
-    "hash": 1
-  },
-  "src/install/prune.rs": {
-    "join": 1
-  },
-  "src/install/resolvers/folder_resolver.rs": {
-    "hash": 1,
-    "normalize": 1
-  },
-  "src/install/yarn.rs": {
-    "string_hash": 1
-  },
-  "src/js_parser/lexer.rs": {
-    "is_identifier_continue": 1,
-    "is_identifier_start": 1
-  },
-  "src/js_parser/sema/comments.rs": {
-    "skip_blanks": 1
-  },
-  "src/js_parser/sema/reparse.rs": {
-    "is_valid_identifier": 1
-  },
-  "src/js_printer/lib.rs": {
-    "write_json_string": 1
-  },
-  "src/jsc/ConsoleObject.rs": {
-    "write_json_string": 1
-  },
-  "src/jsc/RuntimeTranspilerCache.rs": {
-    "hash": 1
-  },
-  "src/lint/ast/entities.rs": {
-    "push_code_point": 1,
-    "unescape": 1
-  },
-  "src/lint/ast/jsdoc.rs": {
-    "trim": 1
-  },
-  "src/lint/driver/embedded.rs": {
-    "is_space": 1
-  },
-  "src/lint/driver/format/excerpt.rs": {
-    "lines": 1
-  },
-  "src/lint/driver/format/oxlint_gitlab_sarif.rs": {
-    "hash": 1
-  },
-  "src/lint/driver/fs.rs": {
-    "replace": 1
-  },
-  "src/lint/driver/paths.rs": {
-    "ancestors": 1,
-    "basename": 1,
-    "dirname": 1,
-    "is_absolute": 1,
-    "join": 1,
-    "relative": 1,
-    "resolve": 1
-  },
-  "src/lint/driver/processor.rs": {
-    "extname": 1
-  },
-  "src/lint/eslint/rules/dot_notation.rs": {
-    "is_valid_identifier": 1
-  },
-  "src/lint/eslint/rules/keyword_spacing.rs": {
-    "is_blank": 1
-  },
-  "src/lint/eslint/rules/multiline_comment_style.rs": {
-    "join": 1
-  },
-  "src/lint/eslint/rules/no_useless_escape.rs": {
-    "utf8_len": 1
-  },
-  "src/lint/jest/jest_expect.rs": {
-    "replace_all": 1
-  },
-  "src/lint/jest/rules/vitest_prefer_importing_vitest_globals.rs": {
-    "trim_end": 1
-  },
-  "src/lint/linter/config/eslintrc.rs": {
-    "is_absolute": 1
-  },
-  "src/lint/linter/config/path.rs": {
-    "dirname": 1,
-    "is_absolute": 1,
-    "relative": 1,
-    "resolve": 1
-  },
-  "src/lint/linter/config/presets.rs": {
-    "kebab_case": 1
-  },
-  "src/lint/linter/levn.rs": {
-    "to_number": 1
-  },
-  "src/lint/linter/message.rs": {
-    "write_json_string": 1
-  },
-  "src/lint/linter/space.rs": {
-    "trim": 1,
-    "trim_end": 1,
-    "trim_start": 1
-  },
-  "src/lint/oxlint/text.rs": {
-    "file_name": 1,
-    "is_whitespace": 1,
-    "trim": 1,
-    "trim_start": 1
-  },
-  "src/lint/plugins/n/es_syntax.rs": {
-    "camel_case": 1
-  },
-  "src/lint/plugins/oxlint/vue.rs": {
-    "camel_case": 1,
-    "kebab_case": 1,
-    "pascal_case": 1
-  },
-  "src/lint/react/jsx.rs": {
-    "is_identifier": 1
-  },
-  "src/lint/regex/validator.rs": {
-    "is_hex_digit": 1,
-    "is_id_continue": 1,
-    "is_line_terminator": 1
-  },
-  "src/lint/regex/wtf8.rs": {
-    "byte_offset": 1,
-    "code_point_at": 1,
-    "push_code_point": 1,
-    "utf16_index": 1
-  },
-  "src/lint/selector/parse.rs": {
-    "utf8_len": 1
-  },
-  "src/lint/source.rs": {
-    "line_starts": 1,
-    "utf16_len": 1
-  },
-  "src/lint/standalone/code_frame_cmd.rs": {
-    "unhex": 1
-  },
-  "src/lint/standalone/code_path_cmd.rs": {
-    "compare": 1
-  },
-  "src/lint/standalone/format_cmd/letters.rs": {
-    "push_code_point": 1,
-    "white_space_len": 1
-  },
-  "src/lint/standalone/format_cmd/verify.rs": {
-    "compare": 1
-  },
-  "src/lint/standalone/regex_cmd.rs": {
-    "quote": 1
-  },
-  "src/lint/standalone/selector_cmd.rs": {
-    "quoted": 1
-  },
-  "src/lint/standalone/types_cmd.rs": {
-    "json_string": 1
-  },
-  "src/lint/standalone/utils_core_cmd.rs": {
-    "json_string": 1
-  },
-  "src/lint/standalone/utils_eslint_cmd.rs": {
-    "quote": 1
-  },
-  "src/lint/standalone/utils_small_cmd.rs": {
-    "unhex": 1
-  },
-  "src/lint/standalone/utils_ts_cmd.rs": {
-    "unhex": 1
-  },
-  "src/lint/standalone/utils_tsscope_cmd.rs": {
-    "write_string": 1
-  },
-  "src/lint/tokens/mod.rs": {
-    "is_whitespace": 1
-  },
-  "src/lint/tokens/scan.rs": {
-    "hash": 1
-  },
-  "src/lint/typescript/rules/member_ordering.rs": {
-    "natural_compare": 1
-  },
-  "src/lint/typescript/rules/switch_exhaustiveness_check.rs": {
-    "locale_compare": 1
-  },
-  "src/lint/unicorn/rules/unicorn_filename_case.rs": {
-    "is_digit": 1
-  },
-  "src/lint/unicorn/rules/unicorn_relative_url_style.rs": {
-    "trim_end": 1
-  },
-  "src/lint/utils/collation.rs": {
-    "locale_compare": 1
-  },
-  "src/lint/utils/eslint_utils/calls.rs": {
-    "escape": 1,
-    "hex_value": 1,
-    "unescape": 1
-  },
-  "src/lint/utils/eslint_utils/js_number.rs": {
-    "parse_float": 1,
-    "parse_int": 1
-  },
-  "src/lint/utils/eslint_utils/js_string.rs": {
-    "compare": 1,
-    "from_utf16": 1,
-    "index_of": 1,
-    "last_index_of": 1,
-    "push_code_point": 1,
-    "to_utf16": 1
-  },
-  "src/lint/utils/text.rs": {
-    "code_point_at": 1,
-    "compare": 1,
-    "escape_reg_exp": 1,
-    "has_line_break": 1,
-    "is_blank": 1,
-    "is_identifier_name": 1,
-    "is_identifier_part": 1,
-    "is_identifier_start": 1,
-    "is_line_terminator": 1,
-    "lines": 1,
-    "natural_compare": 1,
-    "push_code_point": 1,
-    "trim": 1,
-    "trim_end": 1,
-    "trim_start": 1,
-    "utf16_len": 1,
-    "white_space_len": 1
-  },
-  "src/md/ansi_renderer.rs": {
-    "visible_width": 1
-  },
-  "src/md/helpers.rs": {
-    "encode_utf8": 1,
-    "is_blank": 1,
-    "is_digit": 1,
-    "is_whitespace": 1
-  },
-  "src/parsers/json.rs": {
-    "write_json_string": 1
-  },
-  "src/parsers/json_reader.rs": {
-    "is_identifier_continue": 1,
-    "is_identifier_start": 1,
-    "push_codepoint": 1
-  },
-  "src/parsers/json_stage2.rs": {
-    "is_identifier_continue": 1,
-    "is_identifier_start": 1,
-    "push_codepoint": 1
-  },
-  "src/parsers/yaml.rs": {
-    "bom_len": 3
-  },
-  "src/react_compiler/lowering/build_hir/function.rs": {
-    "is_identifier": 1
-  },
-  "src/react_compiler/optimization/constant_propagation.rs": {
-    "is_id_continue": 1,
-    "is_id_start": 1,
-    "is_valid_identifier": 1
-  },
-  "src/resolver/resolver.rs": {
-    "dirname": 1
-  },
-  "src/runtime/cli/pm_diff_normalize.rs": {
-    "normalize": 1
-  },
-  "src/runtime/cli/pm_licenses_command.rs": {
-    "json_string": 1
-  },
-  "src/runtime/crypto/CryptoHasher.rs": {
-    "hash": 2
-  },
-  "src/runtime/crypto/PasswordObject.rs": {
-    "hash": 1
-  },
-  "src/runtime/server/DevErrorPage.rs": {
-    "write_string": 1
-  },
-  "src/runtime/server/DirectoryRoute.rs": {
-    "resolve": 1
-  },
-  "src/runtime/test_runner/diff/text_diff.rs": {
-    "contains": 1,
-    "split_lines": 1
-  },
-  "src/sema/baselines/lib.rs": {
-    "contains": 1,
-    "file_name": 1,
-    "lines": 1,
-    "replace": 1,
-    "split": 1,
-    "trim": 1
-  },
-  "src/sema/check/print.rs": {
-    "quoted": 1
-  },
-  "src/sema/check/spans.rs": {
-    "is_identifier_part": 1,
-    "is_identifier_start": 1,
-    "white_space_len": 1
-  },
-  "src/sema/config.rs": {
-    "to_lower": 1
-  },
-  "src/sema/driver/host.rs": {
-    "split": 1
-  },
-  "src/sema/driver/lib.rs": {
-    "utf16_len": 1
-  },
-  "src/sema/parser/lexer.rs": {
-    "is_identifier_part": 1,
-    "is_identifier_start": 1,
-    "is_line_break": 1,
-    "push_code_point": 1
-  },
-  "src/sema/parser/parser/jsdoc.rs": {
-    "has_line_break": 1,
-    "is_blank": 1
-  },
-  "src/sema/parser/parser/reparse.rs": {
-    "is_valid_identifier": 1
-  },
-  "src/sema/parser/pragmas.rs": {
-    "skip_blanks": 1
-  },
-  "src/sema/resolve.rs": {
-    "ancestors": 1,
-    "join": 1
-  },
-  "src/sema/standalone/host.rs": {
-    "contains": 1,
-    "lines": 1,
-    "replace": 1,
-    "split": 1,
-    "split_once": 1
-  },
-  "src/sema/standalone/symbol_writer.rs": {
-    "utf16_length": 1
-  },
-  "src/semver/lib.rs": {
-    "string_hash": 1
-  },
-  "src/sha_hmac/sha.rs": {
-    "hash": 2
-  },
-  "src/url/lib.rs": {
-    "join": 2
+  "reserved": [
+    "ancestors",
+    "array_index",
+    "as_array_index",
+    "base64_decode",
+    "base64_encode",
+    "basename",
+    "bom_len",
+    "byte_offset",
+    "camel_case",
+    "capitalize",
+    "char_len",
+    "char_width",
+    "cmp_ascii_case_insensitive",
+    "cmp_ignore_case",
+    "code_point_at",
+    "code_point_len",
+    "code_point_width",
+    "code_points",
+    "code_points_of",
+    "collate_base_numeric",
+    "collation_key",
+    "collator_compare",
+    "combine_surrogate_pair",
+    "compare",
+    "contains",
+    "count",
+    "count_line_breaks",
+    "count_new_lines",
+    "count_units",
+    "cow_to_ascii_lowercase",
+    "damerau_levenshtein",
+    "decimal_digits",
+    "decimal_literal_len",
+    "decode_code_point",
+    "decode_last",
+    "decode_uri",
+    "decode_uri_component",
+    "device_len",
+    "digit_to_int",
+    "directory_of",
+    "dirname",
+    "display_path",
+    "display_width",
+    "edit_distance",
+    "encode_code_point",
+    "encode_uri",
+    "encode_uri_component",
+    "encode_utf8",
+    "ends_with",
+    "ends_with_white_space",
+    "eq_ignore_ascii_case",
+    "eq_ignore_case",
+    "eq_lower_case",
+    "eql_ignore_case",
+    "equals_ignore_case",
+    "escape",
+    "escape_html",
+    "escape_reg_exp",
+    "escape_regex",
+    "escape_regex_source",
+    "escape_source",
+    "escaped_source",
+    "extension",
+    "extension_of_path",
+    "extname",
+    "file_extension",
+    "file_name",
+    "find_line_break",
+    "first_char",
+    "from_native",
+    "from_utf16",
+    "has_html_white_space",
+    "has_html_whitespace",
+    "has_line_break",
+    "has_line_terminator",
+    "has_linebreak",
+    "has_newline",
+    "has_surrogate",
+    "has_white_space",
+    "hash",
+    "hash_bytes",
+    "hash_of",
+    "hash_of_str",
+    "hash_string",
+    "hash_with_seed",
+    "hex4",
+    "hex_code",
+    "hex_decode",
+    "hex_digit",
+    "hex_encode",
+    "hex_value",
+    "html_trim",
+    "html_trim_end",
+    "html_trim_start",
+    "ident_hash",
+    "includes",
+    "index_from",
+    "index_of",
+    "index_of_char_from",
+    "index_of_from",
+    "is_absolute",
+    "is_array_index",
+    "is_blank",
+    "is_digit",
+    "is_es5_identifier_name",
+    "is_file_path",
+    "is_hex_digit",
+    "is_html_white_space",
+    "is_html_whitespace",
+    "is_id_continue",
+    "is_id_start",
+    "is_identifier",
+    "is_identifier_byte",
+    "is_identifier_continue",
+    "is_identifier_name",
+    "is_identifier_part",
+    "is_identifier_start",
+    "is_jsx_whitespace",
+    "is_lead_surrogate",
+    "is_less_than",
+    "is_line_break",
+    "is_line_terminator",
+    "is_lower_case",
+    "is_name_byte",
+    "is_regex_word",
+    "is_regex_word_byte",
+    "is_space",
+    "is_space_or_tab",
+    "is_surrogate_pair",
+    "is_trail_surrogate",
+    "is_unicode_blank",
+    "is_unicode_whitespace",
+    "is_upper_case",
+    "is_valid_identifier",
+    "is_valid_js_identifier",
+    "is_white_space",
+    "is_white_space_like",
+    "is_whitespace",
+    "is_word_character",
+    "join",
+    "json_string",
+    "json_stringify",
+    "kebab_case",
+    "last_char",
+    "last_index_of",
+    "lead_surrogate",
+    "leading_blanks",
+    "leading_white_space_len",
+    "leading_whitespace_count",
+    "len_utf16",
+    "levenshtein",
+    "line_break_len",
+    "line_breaks",
+    "line_end",
+    "line_start",
+    "line_starts",
+    "line_terminator_len",
+    "line_terminator_len_back",
+    "lines",
+    "locale_compare",
+    "lowercase",
+    "min_edit_distance",
+    "multibyte_at",
+    "natord",
+    "natural_compare",
+    "natural_sort",
+    "normalize",
+    "normalize_end_of_line",
+    "normalize_line_breaks",
+    "number_to_string",
+    "offset_of_utf16_index",
+    "order",
+    "parent",
+    "parse_decimal",
+    "parse_float",
+    "parse_index",
+    "parse_int",
+    "parse_integer",
+    "parse_number",
+    "pascal_case",
+    "percent_decode",
+    "percent_encode",
+    "primary_weight",
+    "push_char",
+    "push_code_point",
+    "push_codepoint",
+    "push_escaped",
+    "push_hex",
+    "push_lowercase",
+    "push_utf16",
+    "push_well_formed",
+    "push_with_normalized_newlines",
+    "quote",
+    "quoted",
+    "relative",
+    "remove_spaces",
+    "replace",
+    "replace_all",
+    "resolve",
+    "skip_blanks",
+    "skip_newline",
+    "skip_newline_backwards",
+    "skip_spaces",
+    "skip_white_space",
+    "skip_whitespace",
+    "snake_case",
+    "space_len",
+    "space_len_back",
+    "split",
+    "split_lines",
+    "split_once",
+    "split_whitespace",
+    "starts_with",
+    "starts_with_upper",
+    "starts_with_upper_case",
+    "starts_with_uppercase",
+    "starts_with_white_space",
+    "str_width",
+    "string_hash",
+    "string_to_number",
+    "string_width",
+    "strip_bom",
+    "strip_prefix",
+    "strip_suffix",
+    "to_lower",
+    "to_lower_case",
+    "to_lowercase",
+    "to_native",
+    "to_number",
+    "to_precision",
+    "to_upper",
+    "to_upper_case",
+    "to_uppercase",
+    "to_utf16",
+    "to_utf8",
+    "to_well_formed",
+    "trail_surrogate",
+    "trailing_whitespace_count",
+    "trim",
+    "trim_bytes",
+    "trim_end",
+    "trim_html_whitespace_end",
+    "trim_html_whitespace_start",
+    "trim_left",
+    "trim_right",
+    "trim_start",
+    "unescape",
+    "unhex",
+    "units_to_bytes",
+    "url_decode",
+    "url_encode",
+    "utf16_index",
+    "utf16_len",
+    "utf16_length",
+    "utf16_offset_to_byte",
+    "utf8_len",
+    "utf8_length",
+    "visible_width",
+    "white_space_len",
+    "white_space_len_back",
+    "white_space_run",
+    "without_blanks",
+    "without_bom",
+    "without_line_break",
+    "without_spaces",
+    "without_unicode_escapes",
+    "write_escaped",
+    "write_f64",
+    "write_json_string",
+    "write_string",
+    "write_xml_escaped"
+  ],
+  "files": {
+    "src/ast/lexer_tables.rs": {
+      "is_identifier_continue": 1
+    },
+    "src/clap_macros/lib.rs": {
+      "trim": 1,
+      "trim_left": 1
+    },
+    "src/css/css_parser.rs": {
+      "len_utf16": 1
+    },
+    "src/format/conformance/prettier.rs": {
+      "unescape": 1
+    },
+    "src/format/css/doc.rs": {
+      "string_width": 1
+    },
+    "src/format/css/memo.rs": {
+      "hash": 1
+    },
+    "src/format/css/mod.rs": {
+      "normalize_end_of_line": 1
+    },
+    "src/format/cursor.rs": {
+      "resolve": 1,
+      "units_to_bytes": 1
+    },
+    "src/format/graphql/embed.rs": {
+      "lines": 1
+    },
+    "src/format/graphql/printer.rs": {
+      "leading_blanks": 1,
+      "lines": 1
+    },
+    "src/format/handlebars/lexer.rs": {
+      "white_space_run": 1
+    },
+    "src/format/handlebars/printer.rs": {
+      "has_html_white_space": 1,
+      "starts_with_upper_case": 1
+    },
+    "src/format/handlebars/tokenizer.rs": {
+      "is_space": 1
+    },
+    "src/format/html/angular.rs": {
+      "is_blank": 1
+    },
+    "src/format/html/angular/lexer.rs": {
+      "is_identifier_part": 1,
+      "is_identifier_start": 1
+    },
+    "src/format/html/js.rs": {
+      "write_string": 1
+    },
+    "src/format/html/lexer.rs": {
+      "is_digit": 1,
+      "is_whitespace": 1
+    },
+    "src/format/ir/width.rs": {
+      "string_width": 1
+    },
+    "src/format/js/comments.rs": {
+      "lines": 1
+    },
+    "src/format/js/jsdoc/imports.rs": {
+      "cmp_ascii_case_insensitive": 1
+    },
+    "src/format/js/jsdoc/normalize.rs": {
+      "is_valid_js_identifier": 1
+    },
+    "src/format/js/jsdoc/param_order.rs": {
+      "is_identifier_byte": 1
+    },
+    "src/format/js/jsdoc/text.rs": {
+      "first_char": 1,
+      "last_char": 1,
+      "lines": 1,
+      "parse_index": 1
+    },
+    "src/format/js/print/jsx/child_list.rs": {
+      "count_line_breaks": 1
+    },
+    "src/format/js/sort_imports/babel.rs": {
+      "skip_whitespace": 1
+    },
+    "src/format/js/sort_imports/compare.rs": {
+      "collate_base_numeric": 1,
+      "locale_compare": 1,
+      "lowercase": 1,
+      "natord": 1,
+      "natural_sort": 1
+    },
+    "src/format/js/source_text.rs": {
+      "has_line_terminator": 1,
+      "line_terminator_len": 1,
+      "line_terminator_len_back": 1,
+      "white_space_len": 1,
+      "white_space_len_back": 1
+    },
+    "src/format/js/trivia.rs": {
+      "without_blanks": 1,
+      "without_line_break": 1
+    },
+    "src/format/js/utils/call_expression.rs": {
+      "skip_newline": 1,
+      "skip_spaces": 1
+    },
+    "src/format/js/utils/jsx.rs": {
+      "has_line_break": 1,
+      "is_jsx_whitespace": 1
+    },
+    "src/format/js/utils/object.rs": {
+      "quoted": 1
+    },
+    "src/format/js/utils/string.rs": {
+      "is_es5_identifier_name": 1,
+      "push_with_normalized_newlines": 1
+    },
+    "src/format/js/utils/tailwindcss.rs": {
+      "ends_with_white_space": 1,
+      "has_white_space": 1,
+      "starts_with_white_space": 1
+    },
+    "src/format/json/mod.rs": {
+      "normalize_line_breaks": 1
+    },
+    "src/format/markdown/embed.rs": {
+      "write_escaped": 1
+    },
+    "src/format/markdown/parse.rs": {
+      "is_space": 1
+    },
+    "src/format/markdown/spans.rs": {
+      "is_space": 1,
+      "skip_spaces": 1
+    },
+    "src/format/markdown/strings.rs": {
+      "first_char": 1,
+      "last_char": 1,
+      "push_lowercase": 1,
+      "unescape": 1
+    },
+    "src/format/pragma.rs": {
+      "as_array_index": 1
+    },
+    "src/format/range.rs": {
+      "offset_of_utf16_index": 1
+    },
+    "src/format/svelte/parser.rs": {
+      "code_points": 1
+    },
+    "src/format/svelte/print.rs": {
+      "ends_with_white_space": 1,
+      "starts_with_white_space": 1
+    },
+    "src/format/text.rs": {
+      "has_newline": 1,
+      "index_of_from": 1,
+      "is_word_character": 1,
+      "leading_white_space_len": 1,
+      "skip_newline": 1,
+      "skip_newline_backwards": 1,
+      "skip_spaces": 1,
+      "starts_with_white_space": 1,
+      "without_blanks": 1
+    },
+    "src/format/verify.rs": {
+      "without_unicode_escapes": 1
+    },
+    "src/format/verify/comments.rs": {
+      "lines": 1
+    },
+    "src/format/yaml/compose.rs": {
+      "decode_uri_component": 1
+    },
+    "src/glob/braces.rs": {
+      "parse_integer": 1
+    },
+    "src/glob/pattern.rs": {
+      "has_line_terminator": 1
+    },
+    "src/glob/read_picomatch.rs": {
+      "count": 1,
+      "escape_regex": 1,
+      "trim": 1
+    },
+    "src/glob/unit.rs": {
+      "code_point_at": 1
+    },
+    "src/install/PackageManager/patchPackage.rs": {
+      "string_hash": 1
+    },
+    "src/install/migration.rs": {
+      "string_hash": 1
+    },
+    "src/install/prune.rs": {
+      "join": 1
+    },
+    "src/install/resolvers/folder_resolver.rs": {
+      "hash": 1,
+      "normalize": 1
+    },
+    "src/install/yarn.rs": {
+      "string_hash": 1
+    },
+    "src/js_parser/lexer.rs": {
+      "is_identifier_continue": 1,
+      "is_identifier_start": 1
+    },
+    "src/js_printer/lib.rs": {
+      "write_json_string": 1
+    },
+    "src/jsc/ConsoleObject.rs": {
+      "write_json_string": 1
+    },
+    "src/jsc/RuntimeTranspilerCache.rs": {
+      "hash": 1
+    },
+    "src/lint/ast/decl.rs": {
+      "decimal_digits": 1
+    },
+    "src/lint/ast/entities.rs": {
+      "unescape": 1
+    },
+    "src/lint/driver/embedded.rs": {
+      "is_space": 1
+    },
+    "src/lint/driver/fmt/files.rs": {
+      "collation_key": 1
+    },
+    "src/lint/driver/format/excerpt.rs": {
+      "display_path": 1,
+      "lines": 1
+    },
+    "src/lint/driver/format/github.rs": {
+      "write_escaped": 1
+    },
+    "src/lint/driver/format/oxlint_gitlab_sarif.rs": {
+      "hash": 1
+    },
+    "src/lint/driver/format/xml.rs": {
+      "write_xml_escaped": 1
+    },
+    "src/lint/driver/fs.rs": {
+      "replace": 1
+    },
+    "src/lint/eslint/rules/dot_notation.rs": {
+      "is_valid_identifier": 1
+    },
+    "src/lint/eslint/rules/keyword_spacing.rs": {
+      "is_blank": 1
+    },
+    "src/lint/eslint/rules/multiline_comment_style.rs": {
+      "join": 1
+    },
+    "src/lint/eslint/rules/newline_before_return.rs": {
+      "line_breaks": 1
+    },
+    "src/lint/eslint/rules/no_self_assign.rs": {
+      "without_spaces": 1
+    },
+    "src/lint/eslint/rules/spaced_comment.rs": {
+      "is_space_or_tab": 1
+    },
+    "src/lint/graph/lib.rs": {
+      "directory_of": 1
+    },
+    "src/lint/jest/jest.rs": {
+      "ident_hash": 1
+    },
+    "src/lint/jest/jest_tests.rs": {
+      "is_regex_word_byte": 1
+    },
+    "src/lint/linter/comment.rs": {
+      "is_name_byte": 1
+    },
+    "src/lint/linter/config/eslintrc.rs": {
+      "is_file_path": 1
+    },
+    "src/lint/linter/config/presets.rs": {
+      "kebab_case": 1
+    },
+    "src/lint/linter/json_v8.rs": {
+      "push_utf16": 1
+    },
+    "src/lint/linter/levn.rs": {
+      "to_number": 1
+    },
+    "src/lint/linter/syntax/espree.rs": {
+      "is_identifier_byte": 1
+    },
+    "src/lint/oxlint/hash_order.rs": {
+      "hash_of_str": 1
+    },
+    "src/lint/oxlint/text.rs": {
+      "file_extension": 1,
+      "file_name": 1
+    },
+    "src/lint/paths.rs": {
+      "ancestors": 1,
+      "basename": 1,
+      "dirname": 1,
+      "extname": 1,
+      "file_name": 1,
+      "from_native": 1,
+      "is_absolute": 1,
+      "join": 1,
+      "relative": 1,
+      "resolve": 1
+    },
+    "src/lint/plugins/n/es_syntax.rs": {
+      "camel_case": 1
+    },
+    "src/lint/plugins/oxlint/vue.rs": {
+      "camel_case": 1,
+      "has_white_space": 1,
+      "is_regex_word": 1,
+      "kebab_case": 1,
+      "pascal_case": 1
+    },
+    "src/lint/plugins/rules/import_extensions.rs": {
+      "extension_of_path": 1
+    },
+    "src/lint/react/a11y.rs": {
+      "cow_to_ascii_lowercase": 1
+    },
+    "src/lint/react/jsx.rs": {
+      "is_identifier": 1,
+      "parse_number": 1
+    },
+    "src/lint/react/rules/nextjs_no_async_client_component.rs": {
+      "starts_with_uppercase": 1
+    },
+    "src/lint/react/rules/react_jsx_handler_names.rs": {
+      "starts_with_upper": 1
+    },
+    "src/lint/regex/validator.rs": {
+      "combine_surrogate_pair": 1,
+      "digit_to_int": 1,
+      "is_hex_digit": 1,
+      "is_id_continue": 1,
+      "is_lead_surrogate": 1,
+      "is_trail_surrogate": 1,
+      "push_char": 1
+    },
+    "src/lint/regex/wtf8.rs": {
+      "byte_offset": 1,
+      "code_point_at": 1,
+      "lead_surrogate": 1,
+      "trail_surrogate": 1,
+      "utf16_index": 1
+    },
+    "src/lint/selector/parse.rs": {
+      "push_escaped": 1
+    },
+    "src/lint/selector/program.rs": {
+      "array_index": 1
+    },
+    "src/lint/source.rs": {
+      "line_starts": 1,
+      "utf16_len": 1
+    },
+    "src/lint/standalone/code_frame_cmd.rs": {
+      "unhex": 1
+    },
+    "src/lint/standalone/code_path_cmd.rs": {
+      "compare": 1
+    },
+    "src/lint/standalone/format_cmd/letters.rs": {
+      "push_code_point": 1,
+      "without_unicode_escapes": 1
+    },
+    "src/lint/standalone/format_cmd/verify.rs": {
+      "compare": 1
+    },
+    "src/lint/standalone/regex_cmd.rs": {
+      "quote": 1
+    },
+    "src/lint/standalone/selector_cmd.rs": {
+      "quoted": 1
+    },
+    "src/lint/standalone/types_cmd.rs": {
+      "json_string": 1
+    },
+    "src/lint/standalone/utils_core_cmd.rs": {
+      "json_string": 1
+    },
+    "src/lint/standalone/utils_eslint_cmd.rs": {
+      "quote": 1
+    },
+    "src/lint/standalone/utils_small_cmd.rs": {
+      "unhex": 1
+    },
+    "src/lint/standalone/utils_ts_cmd.rs": {
+      "unhex": 1
+    },
+    "src/lint/standalone/utils_tsscope_cmd.rs": {
+      "write_string": 1
+    },
+    "src/lint/tokens/mod.rs": {
+      "code_points": 1,
+      "is_whitespace": 1
+    },
+    "src/lint/tokens/scan.rs": {
+      "line_end": 1
+    },
+    "src/lint/types/tsutils.rs": {
+      "is_array_index": 1
+    },
+    "src/lint/typescript/rules/naming_convention.rs": {
+      "is_lower_case": 1,
+      "is_upper_case": 1
+    },
+    "src/lint/typescript/rules/no_invalid_void_type.rs": {
+      "without_spaces": 1
+    },
+    "src/lint/typescript/rules/no_restricted_types.rs": {
+      "remove_spaces": 1
+    },
+    "src/lint/typescript/rules/sort_type_constituents.rs": {
+      "collator_compare": 1
+    },
+    "src/lint/typescript/rules/switch_exhaustiveness_check.rs": {
+      "locale_compare": 1,
+      "primary_weight": 1
+    },
+    "src/lint/unicorn/rules/unicorn_filename_case.rs": {
+      "is_digit": 1
+    },
+    "src/lint/unicorn/rules/unicorn_relative_url_style.rs": {
+      "trim_end": 1
+    },
+    "src/lint/utils/ast_utils.rs": {
+      "starts_with_upper_case": 1
+    },
+    "src/lint/utils/collation.rs": {
+      "locale_compare": 1,
+      "primary_weight": 1
+    },
+    "src/lint/utils/eslint_utils/calls.rs": {
+      "decode_uri": 1,
+      "encode_uri": 1,
+      "escape": 1,
+      "hex_value": 1,
+      "unescape": 1
+    },
+    "src/lint/utils/eslint_utils/get_static_value.rs": {
+      "normalize_line_breaks": 1
+    },
+    "src/lint/utils/eslint_utils/js_number.rs": {
+      "decimal_literal_len": 1,
+      "parse_float": 1,
+      "parse_int": 1,
+      "string_to_number": 1
+    },
+    "src/lint/utils/eslint_utils/js_string.rs": {
+      "code_points_of": 1,
+      "index_of": 1,
+      "last_index_of": 1
+    },
+    "src/lint/utils/text.rs": {
+      "escape_reg_exp": 1,
+      "is_identifier_name": 1,
+      "is_lower_case": 1,
+      "is_upper_case": 1,
+      "natural_compare": 1,
+      "string_to_number": 1,
+      "to_lower_case": 1,
+      "to_upper_case": 1
+    },
+    "src/lint/utils/unicode.rs": {
+      "is_surrogate_pair": 1
+    },
+    "src/md/ansi_renderer.rs": {
+      "visible_width": 1
+    },
+    "src/md/helpers.rs": {
+      "encode_utf8": 1,
+      "is_blank": 1,
+      "is_digit": 1,
+      "is_unicode_whitespace": 1,
+      "is_whitespace": 1
+    },
+    "src/parsers/json.rs": {
+      "write_json_string": 1
+    },
+    "src/parsers/json_reader.rs": {
+      "is_identifier_continue": 1,
+      "is_identifier_start": 1,
+      "push_codepoint": 1
+    },
+    "src/parsers/json_stage2.rs": {
+      "is_identifier_continue": 1,
+      "is_identifier_start": 1,
+      "push_codepoint": 1
+    },
+    "src/react_compiler/lowering/build_hir/function.rs": {
+      "is_identifier": 1
+    },
+    "src/react_compiler/optimization/constant_propagation.rs": {
+      "is_id_continue": 1,
+      "is_id_start": 1,
+      "is_valid_identifier": 1
+    },
+    "src/runtime/cli/pm_diff_normalize.rs": {
+      "normalize": 1
+    },
+    "src/runtime/cli/pm_licenses_command.rs": {
+      "json_string": 1
+    },
+    "src/runtime/server/DevErrorPage.rs": {
+      "write_string": 1
+    },
+    "src/runtime/server/DirectoryRoute.rs": {
+      "resolve": 1
+    },
+    "src/s3_signing/credentials.rs": {
+      "encode_uri_component": 1
+    },
+    "src/sema/atom.rs": {
+      "hash_of": 1,
+      "parse_number": 1
+    },
+    "src/sema/baselines/lib.rs": {
+      "contains": 1,
+      "file_name": 1,
+      "lines": 1,
+      "replace": 1,
+      "split": 1,
+      "trim": 1
+    },
+    "src/sema/check/print.rs": {
+      "quoted": 1
+    },
+    "src/sema/check/spans.rs": {
+      "is_identifier_part": 1,
+      "is_identifier_start": 1,
+      "line_break_len": 1,
+      "line_end": 1,
+      "white_space_len": 1
+    },
+    "src/sema/config.rs": {
+      "to_lower": 1
+    },
+    "src/sema/config_options.rs": {
+      "is_file_path": 1
+    },
+    "src/sema/driver/format.rs": {
+      "display_path": 1
+    },
+    "src/sema/driver/host.rs": {
+      "from_native": 1,
+      "split": 1,
+      "to_native": 1
+    },
+    "src/sema/driver/lib.rs": {
+      "utf16_len": 1
+    },
+    "src/sema/parser/lexer.rs": {
+      "decimal_digits": 1,
+      "decode_last": 1,
+      "is_identifier_part": 1,
+      "is_identifier_start": 1,
+      "is_line_break": 1,
+      "is_name_byte": 1,
+      "is_unicode_blank": 1,
+      "is_white_space_like": 1
+    },
+    "src/sema/parser/names.rs": {
+      "hash_of": 1
+    },
+    "src/sema/parser/parser/jsdoc.rs": {
+      "has_line_break": 1,
+      "is_blank": 1
+    },
+    "src/sema/parser/parser/reparse.rs": {
+      "is_valid_identifier": 1
+    },
+    "src/sema/parser/pragmas.rs": {
+      "skip_blanks": 1
+    },
+    "src/sema/resolve.rs": {
+      "ancestors": 1,
+      "join": 1
+    },
+    "src/sema/standalone/host.rs": {
+      "contains": 1,
+      "lines": 1,
+      "replace": 1,
+      "split": 1,
+      "split_once": 1
+    },
+    "src/sema/standalone/symbol_writer.rs": {
+      "utf16_length": 1
+    },
+    "src/url/lib.rs": {
+      "join": 2
+    }
   }
 }

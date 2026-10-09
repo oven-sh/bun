@@ -21,8 +21,10 @@ impl Rule for BadReplaceAllArg {
             return;
         }
         on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(replace_all) = method_called_without_global_flag(e, "replaceAll") {
-                cx.report(replace_all, BAD_REPLACE_ALL_ARG);
+            if let Some((replace_all, regex)) = method_called_without_global_flag(e, "replaceAll") {
+                cx.report(replace_all, BAD_REPLACE_ALL_ARG)
+                    .first_label("`replaceAll` called here")
+                    .label(regex, "RegExp supplied here");
             }
         });
     }

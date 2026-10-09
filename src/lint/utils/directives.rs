@@ -1,6 +1,5 @@
 //! ESLint's `lib/shared/directives.js`.
 
-use super::text::is_js_whitespace;
 use bun_core::lexer::char_and_size;
 
 /// Longer ones before their prefixes.
@@ -27,7 +26,7 @@ pub fn match_directives_pattern(text: &[u8]) -> Option<&'static str> {
         text.starts_with(directive.as_bytes())
             && match char_and_size(text, directive.len()) {
                 (_, 0) => true,
-                (c, _) => is_js_whitespace(c as u32),
+                (c, _) => bun_core::strings::is_js_whitespace(c as u32),
             }
     })
 }

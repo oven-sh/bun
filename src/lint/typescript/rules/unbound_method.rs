@@ -397,6 +397,11 @@ impl UnboundMethod {
                 if cx.language().is_oxlint {
                     let symbol = node.ts_symbol();
                     if let Some(message) = symbol.and_then(|it| check_if_method(it, self.ignore_static)) {
+                        // It takes the first parameter of a function that is the value of a property of a class for `this`.
+                        let declaration = symbol.and_then(|it| it.value_declaration());
+                        let is_property =
+                            declaration.is_some_and(|it| it.kind() == SyntaxKind::PropertyDeclaration);
+                        let message = if is_property { UNBOUND } else { message };
                         cx.report(name.span(), message).comments_apply_at(node);
                     }
                     return;

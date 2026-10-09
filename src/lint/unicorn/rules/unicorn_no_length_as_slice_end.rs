@@ -40,7 +40,10 @@ impl Rule for NoLengthAsSliceEnd {
                 && is_same_expression(object, object_of_length)
             {
                 let span = Span::new(first.outer_span().end, second.outer_span().end);
-                cx.report(call_span, NO_LENGTH_AS_SLICE_END).fix(|fixer| fixer.remove(span));
+                cx.report(call_span, NO_LENGTH_AS_SLICE_END)
+                    .first_label("`.slice` called here.")
+                    .label(second_argument, "Invalid argument here")
+                    .fix(|fixer| fixer.remove(span));
             }
         });
     }

@@ -251,8 +251,8 @@ fn is_wrapped_in_parenthesis(statement: &[u8], argument: &[u8]) -> bool {
     };
     let without_argument = [&statement[..at], &statement[at + argument.len()..]].concat();
     (without_argument.strip_prefix(b"return"))
-        .and_then(|rest| text::trim_start(rest).strip_prefix(b"("))
-        .is_some_and(|rest| text::trim_start(rest).starts_with(b")"))
+        .and_then(|rest| strings::trim_js_whitespace_start(rest).strip_prefix(b"("))
+        .is_some_and(|rest| strings::trim_js_whitespace_start(rest).starts_with(b")"))
 }
 
 impl IndentLegacy {
@@ -403,7 +403,7 @@ impl IndentLegacy {
             return;
         };
         let start = last_token.start();
-        if !text::is_blank(text_before_on_line(file, start)) {
+        if !strings::is_all_js_whitespace(text_before_on_line(file, start)) {
             return;
         }
         let end_indent = get_node_indent(file, start);

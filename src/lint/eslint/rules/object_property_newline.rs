@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
 
@@ -19,14 +20,14 @@ const PROPERTIES_ON_NEWLINE: Message = Message::new(
 fn are_on_same_line<'a>(file: &'a File<'a>, first: Prop<'a>, last: Prop<'a>) -> bool {
     let (start, end) = (first.span().start, last.span().end);
     let first_token_end = start + token_len(file.slice(Span::new(start, end))) as u32;
-    if !text::has_line_break(file.slice(Span::new(first_token_end, end))) {
+    if !strings::contains_js_line_break(file.slice(Span::new(first_token_end, end))) {
         return true;
     }
     // Only a string and a template can have a line break in them.
     let last_byte = end.checked_sub(1).and_then(|at| file.text().get(at as usize));
     matches!(last_byte, Some(b'`' | b'\'' | b'"'))
         && file.last_token(last).is_some_and(|token| {
-            !text::has_line_break(file.slice(Span::new(first_token_end, token.start())))
+            !strings::contains_js_line_break(file.slice(Span::new(first_token_end, token.start())))
         })
 }
 
@@ -53,7 +54,7 @@ impl ObjectPropertyNewline {
         for current in properties.iter().skip(1) {
             let between = previous.span().between(current.span());
             previous = current;
-            if text::has_line_break(file.slice(between)) {
+            if strings::contains_js_line_break(file.slice(between)) {
                 continue;
             }
             let Some(first_token) = file.first_token(current) else {
@@ -67,7 +68,7 @@ impl ObjectPropertyNewline {
                 let comma = file.token_before(first_token)?;
                 let after_comma = comma.span().between(first_token.span());
                 // Not if there is a comment between the comma and the property.
-                text::is_blank(file.slice(after_comma)).then(|| fixer.replace(after_comma, "\n"))
+                strings::is_all_js_whitespace(file.slice(after_comma)).then(|| fixer.replace(after_comma, "\n"))
             });
         }
     }

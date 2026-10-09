@@ -1,5 +1,5 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{has_line_break, trim_end, trim_start};
 
 /// Require or disallow spacing around embedded expressions of template strings.
 pub struct TemplateCurlySpacing {
@@ -17,7 +17,7 @@ impl TemplateCurlySpacing {
     /// `open`: the end of a `${`. `inner`: what is between it and its `}`, without whitespace and
     /// comments.
     fn check<'a>(&self, open: u32, inner: Span, cx: &mut Cx<'a, Self>) {
-        let next = inner.start - trim_start(cx.slice(Span::before(open, inner))).len() as u32;
+        let next = inner.start - strings::trim_js_whitespace_start(cx.slice(Span::before(open, inner))).len() as u32;
         self.check_gap(
             Span::new(open, next),
             Span::new(open.saturating_sub(2), open),
@@ -27,7 +27,7 @@ impl TemplateCurlySpacing {
         );
 
         let close = skip_trivia(cx.text(), inner.end);
-        let previous = inner.end + trim_end(cx.slice(Span::after(inner, close))).len() as u32;
+        let previous = inner.end + strings::trim_js_whitespace_end(cx.slice(Span::after(inner, close))).len() as u32;
         self.check_gap(
             Span::new(previous, close),
             Span::new(close, close + 1),
@@ -48,7 +48,7 @@ impl TemplateCurlySpacing {
     ) {
         if self.always && gap.is_empty() {
             cx.report(delimiter, expected).fix(|fixer| fixer.insert_before(gap, " "));
-        } else if !self.always && !gap.is_empty() && !has_line_break(cx.slice(gap)) {
+        } else if !self.always && !gap.is_empty() && !strings::contains_js_line_break(cx.slice(gap)) {
             cx.report(gap, unexpected).fix(|fixer| fixer.remove(gap));
         }
     }

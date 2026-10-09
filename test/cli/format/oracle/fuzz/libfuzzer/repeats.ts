@@ -59,7 +59,7 @@ const ENDINGS: Record<string, Record<string, number>> = {
   js: { js: 0, jsx: 1, ts: 2, tsx: 3, mjs: 4, cjs: 5, mts: 6, cts: 7, "d.ts": 8 },
   lint: { js: 0, cjs: 2, jsx: 3, ts: 4, tsx: 5, "d.ts": 6, cts: 7, mts: 8, mjs: 11 },
   parser: { ts: 0, tsx: 1, js: 2, jsx: 3, "d.ts": 4, mts: 5, cts: 6, mjs: 7, cjs: 8 },
-  html: { html: 0, vue: 1, "component.html": 2, mjml: 4 },
+  html: { html: 0, vue: 1, "component.html": 2, mjml: 4, svelte: 18 },
   css: { css: 0, scss: 1, less: 2 },
   markdown: { md: 0, mdx: 1 },
   md: { md: 0 },

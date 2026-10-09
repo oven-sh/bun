@@ -8,7 +8,6 @@ use super::compare::{collate_base_numeric, natural_sort_case_sensitive};
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
-use crate::text::{trim, trim_end, trim_start};
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
 use std::cmp::Ordering;
@@ -107,9 +106,9 @@ impl Options {
 
 /// `hasIgnoreNextNode`
 fn has_ignore_next_node(model: &Model, comments: &[CommentId]) -> bool {
-    comments
-        .iter()
-        .any(|comment| trim(model.comment_value(*comment)) == b"prettier-ignore")
+    comments.iter().any(|comment| {
+        bun_core::strings::trim_js_whitespace(model.comment_value(*comment)) == b"prettier-ignore"
+    })
 }
 
 fn has_kind(model: &Model, declaration: &Declaration, kind: SpecifierKind) -> bool {
@@ -723,7 +722,7 @@ pub(super) fn preprocess(
         let mut kept = &text[at as usize..to as usize];
         let mut at = at;
         if out.len() == header_end {
-            let trimmed = kept.len() - trim_start(kept).len();
+            let trimmed = kept.len() - bun_core::strings::trim_js_whitespace_start(kept).len();
             (kept, at) = (&kept[trimmed..], at + trimmed as u32);
         }
         while let Some((id, comment)) = comments.next_if(|it| it.1.span.start < to) {
@@ -760,7 +759,7 @@ pub(super) fn preprocess(
         return None;
     }
     out.extend_from_slice(&text[rest_start as usize..]);
-    let trimmed = header_end + trim_end(&out[header_end..]).len();
+    let trimmed = header_end + bun_core::strings::trim_js_whitespace_end(&out[header_end..]).len();
     out.truncate(trimmed);
     Some(out)
 }

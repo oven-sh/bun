@@ -20,7 +20,7 @@ use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
 use crate::syntax_error::{Message, Refusal, Refused};
-use crate::text::{self, BOM};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
@@ -113,7 +113,7 @@ pub fn format(
         return Ok(());
     }
     let is_range = start > 0 || end < text.len();
-    if !is_range && text::trim(text).is_empty() {
+    if !is_range && bun_core::strings::trim_js_whitespace(text).is_empty() {
         out.extend_from_slice(&original[..first]);
         return Ok(());
     }

@@ -178,7 +178,7 @@ impl LanguageOptions {
                 return Err(b"Key \"globals\": Expected an object.".to_vec());
             };
             for (name, value) in globals.iter().filter(|it| it.0 != b"__proto__") {
-                if crate::linter::trim_js_space(name) != &name[..] {
+                if bun_core::strings::trim_js_whitespace(name) != &name[..] {
                     return Err([
                         b"Key \"globals\": Global \"",
                         &name[..],

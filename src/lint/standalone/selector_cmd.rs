@@ -29,7 +29,7 @@ pub(crate) fn run(args: &[String]) {
 }
 
 fn quoted(text: &[u8]) -> String {
-    host::text(&text::json_stringify(text))
+    host::text(&bun_core::printer::json_stringify_alloc(text))
 }
 
 fn parse(path: &str) {

@@ -919,7 +919,18 @@ fn report_missing<'a, R: Rule>(
         .comments_apply_at(array)
         .data("hook", hook)
         .data("dependencies", names)
-        .data("mutable", mutable);
+        .data("mutable", mutable)
+        .labels_with(|labels| {
+            // Many texts are noise.
+            if let [(_, name)] = missing {
+                let (hook, name) = (bstr::BStr::new(hook.bytes()), bstr::BStr::new(name));
+                labels.first(format!("{hook} uses `{name}` here"));
+            }
+            for (span, _) in missing.iter().skip(1) {
+                labels.push(*span, "");
+            }
+            labels.push(array, "");
+        });
     if let Some((array, is_first)) = appended_to {
         report.suggest_dangerously(INCLUDE_OR_REMOVE, |fixer| {
             replace_array(fixer, array, &print_array(array, None, missing), is_first)
@@ -1306,6 +1317,17 @@ pub(crate) fn run<'a, R: Rule>(
         cx.report(dependency.span, CHANGES_EVERY_RENDER)
             .data("hook", hook)
             .data("dependency", dependency.name)
+            .labels_with(|labels| {
+                let declaration = dependency.symbol.and_then(|it| it.declarations().next());
+                let name = bstr::BStr::new(dependency.name.bytes());
+                labels.first("it will always cause this hook to re-evaluate");
+                labels.push(
+                    declaration
+                        .and_then(Declaration::name_span)
+                        .unwrap_or_default(),
+                    format!("`{name}` is declared here"),
+                );
+            })
             .suggest_dangerously(MEMOIZE, |fixer| {
                 let text = print_array(array, Some(dependency.span), &[]);
                 replace_array(fixer, array, &text, first_changing == Some(at))

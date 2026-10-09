@@ -179,14 +179,14 @@ impl RequireParam {
         }
         let mut shallow_tags = tags_to_check.iter().filter(|it| !strings::contains_char(it.0, b'.'));
         let is_skipped = |param: &ParamInfo| !self.check_rest_property && param.is_rest;
-        let mut first_violation: Option<Span> = None;
+        let mut violations: Vec<Span> = Vec::new();
         for param in &params_to_check {
             // The n-th tag without a `.` is about the n-th parameter.
             let matched_param_tag = shallow_tags.next();
             match param {
                 ParamKind::Single(param) => {
                     if !is_skipped(param) && !names.contains(&*param.name) {
-                        first_violation = first_violation.or(Some(param.span));
+                        violations.push(param.span);
                     }
                 }
                 ParamKind::Nested(params) => {
@@ -210,14 +210,14 @@ impl RequireParam {
                         }
                         let is_in_unchecked = not_checking_names.has_start_of(&full_param_name);
                         if !is_in_unchecked && tags.is_none() {
-                            first_violation = first_violation.or(Some(param.span));
+                            violations.push(param.span);
                         }
                     }
                 }
             }
         }
-        if let Some(span) = first_violation {
-            cx.report(span, REQUIRE_PARAM);
+        if let Some((first, others)) = violations.split_first() {
+            others.iter().fold(cx.report(*first, REQUIRE_PARAM), |report, span| report.label(*span, ""));
         }
     }
 }

@@ -147,11 +147,17 @@ impl ConsistentFunctionScoping {
         // oxlint has the name of a function expression in the scope of the function itself.
         let parent_scope_span = match expression.filter(|_| binding.is_none()) {
             Some(e) if is_value_of_assignment_or_property(e) => get_short_span_for_fn_scope(parent_scope),
-            Some(_) => Some(reporter_span),
+            Some(_) => Some((reporter_span, "function")),
             None => get_short_span_for_fn_scope(symbol_scope),
         };
         let report = match parent_scope_span {
-            Some(parent) => cx.report(parent, CONSISTENT_FUNCTION_SCOPING).comments_apply_at(reporter_span),
+            Some((parent, kind)) => {
+                cx.report(parent, CONSISTENT_FUNCTION_SCOPING).comments_apply_at(reporter_span).labels_with(|labels| {
+                    labels.first("Outer scope where this function is defined");
+                    let text = ["This function does not use any variables from the parent ", kind].concat();
+                    labels.push(reporter_span, text);
+                })
+            }
             None => cx.report(reporter_span, CONSISTENT_FUNCTION_SCOPING),
         };
         report.data("name", name);
@@ -620,29 +626,32 @@ fn arrows_with_lexical_capture<'a>(file: &'a File<'a>) -> FxHashSet<Func<'a>> {
     found
 }
 
-/// A short place that stands for `scope`: the name of the function or the class, the keyword of the statement.
-fn get_short_span_for_fn_scope(scope: Scope) -> Option<Span> {
+/// A short place that stands for `scope`: the name of the function or the class, the keyword of the statement. And what
+/// oxlint calls it.
+fn get_short_span_for_fn_scope(scope: Scope) -> Option<(Span, &'static str)> {
     // oxlint has no scope for the initializer of a field.
     let scope = if scope.kind() == ScopeKind::ClassFieldInitializer { scope.parent()? } else { scope };
     let keyword = |len: u32| Some(Span::new(scope.span().start, scope.span().start + len));
-    match (scope.kind(), scope.node()) {
+    let (span, kind) = match (scope.kind(), scope.node()) {
         (ScopeKind::Function, Node::Func(func)) if func.is_arrow() => {
             let Node::Expr(arrow) = func.owner() else {
                 return None;
             };
-            match arrow.parent() {
+            let span = match arrow.parent() {
                 _ if arrow.is_parenthesized() => None,
                 Node::VarDecl(declarator) => Some(declarator.pat().span()),
                 Node::Expr(parent) if parent.tag() == ExprTag::Assign && !parent.is_assignment_target() => {
                     parent.left().map(Expr::span)
                 }
                 _ => None,
-            }
+            };
+            (span, "arrow function")
         }
-        (ScopeKind::Function, Node::Func(func)) => func.name().map(Ident::span),
-        (ScopeKind::Class, Node::Class(class)) => class.name().map(Ident::span),
-        (ScopeKind::For, _) => keyword(3),
-        (ScopeKind::Switch, _) => keyword(6),
-        _ => None,
-    }
+        (ScopeKind::Function, Node::Func(func)) => (func.name().map(Ident::span), "function"),
+        (ScopeKind::Class, Node::Class(class)) => (class.name().map(Ident::span), "class"),
+        (ScopeKind::For, _) => (keyword(3), "for loop"),
+        (ScopeKind::Switch, _) => (keyword(6), "switch statement"),
+        _ => return None,
+    };
+    Some((span?, kind))
 }

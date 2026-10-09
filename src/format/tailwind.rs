@@ -119,12 +119,6 @@ impl Ends {
     };
 }
 
-/// `/[\t\r\f\n ]/`
-#[inline]
-fn is_white_space(byte: u8) -> bool {
-    byte.is_ascii_whitespace()
-}
-
 /// What stands for the classes that follow.
 fn is_rest(class: &[u8]) -> bool {
     class == b"..." || class == "…".as_bytes()
@@ -142,8 +136,7 @@ impl Tailwind {
     /// `params`, which are behind `@apply`, with the classes sorted. `None`: there are none. A port of oxfmt's
     /// `write_apply_prelude`, which follows the plugin's `transformCss`.
     pub fn sorted_to_apply(&self, params: &[u8]) -> Option<Vec<u8>> {
-        use crate::text::{trim, trim_end};
-        let params = trim(params);
+        let params = strings::trim_js_whitespace(params);
         // `~"a b"` of Less
         let escaped = (*b"\"'").into_iter().find_map(|quote| {
             let inner = params.strip_prefix(&[b'~', quote])?;
@@ -151,14 +144,15 @@ impl Tailwind {
         });
         let important = IMPORTANT.into_iter().find_map(|tail| {
             let classes = params.strip_suffix(tail)?;
-            (trim_end(classes).len() < classes.len()).then_some((classes, tail))
+            (strings::trim_js_whitespace_end(classes).len() < classes.len())
+                .then_some((classes, tail))
         });
         let (classes, tail) = match (escaped, important) {
             (Some((_, inner)), _) => (inner, None),
             (None, Some((classes, tail))) => (classes, Some(tail)),
             (None, None) => (params, None),
         };
-        let classes = trim(classes);
+        let classes = strings::trim_js_whitespace(classes);
         if classes.is_empty() {
             return None;
         }
@@ -205,7 +199,7 @@ impl Tailwind {
             return Cow::Borrowed(text);
         }
         let collapses_whitespace = tidies.collapses_white_space;
-        if collapses_whitespace && text.iter().all(|&byte| is_white_space(byte)) {
+        if collapses_whitespace && text.iter().all(u8::is_ascii_whitespace) {
             return Cow::Borrowed(&b" "[..]);
         }
         // `text.split(/([\t\r\f\n ]+)/)`: a class, white space, a class, and so on. The first and the last class can be
@@ -215,7 +209,7 @@ impl Tailwind {
         loop {
             let len = rest
                 .iter()
-                .take_while(|&&byte| !is_white_space(byte))
+                .take_while(|byte| !byte.is_ascii_whitespace())
                 .count();
             let (class, behind) = rest.split_at(len);
             classes.push(class);
@@ -224,7 +218,7 @@ impl Tailwind {
             }
             let len = behind
                 .iter()
-                .take_while(|&&byte| is_white_space(byte))
+                .take_while(|byte| byte.is_ascii_whitespace())
                 .count();
             let (blanks, behind) = behind.split_at(len);
             white_space.push(if collapses_whitespace {
@@ -298,22 +292,22 @@ impl Tailwind {
             return Cow::Owned([prefix, result, suffix].concat());
         }
         // Of the white space at an end a blank stays, or nothing.
-        use crate::text::{trim, trim_end, trim_start};
-        let mut sorted = trim_end(&prefix).to_vec();
+        let mut sorted = strings::trim_js_whitespace_end(&prefix).to_vec();
         if sorted.len() < prefix.len() {
             sorted.push(b' ');
         }
-        if !ends.collapses_start && trim_start(&result).len() < result.len() {
+        if !ends.collapses_start && strings::trim_js_whitespace_start(&result).len() < result.len()
+        {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(trim(&result));
-        if !ends.collapses_end && trim_end(&result).len() < result.len() {
+        sorted.extend_from_slice(strings::trim_js_whitespace(&result));
+        if !ends.collapses_end && strings::trim_js_whitespace_end(&result).len() < result.len() {
             sorted.push(b' ');
         }
-        if trim_start(&suffix).len() < suffix.len() {
+        if strings::trim_js_whitespace_start(&suffix).len() < suffix.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(trim_start(&suffix));
+        sorted.extend_from_slice(strings::trim_js_whitespace_start(&suffix));
         Cow::Owned(sorted)
     }
 }

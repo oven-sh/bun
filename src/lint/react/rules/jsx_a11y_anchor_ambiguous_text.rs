@@ -32,9 +32,9 @@ impl Rule for AnchorAmbiguousText {
         on.exprs([ExprTag::Jsx], |rule, e, cx| {
             if let Some(jsx_el) = as_jsx_element(e)
                 && *get_element_type(cx.file(), jsx_el) == *b"a"
-                && rule.has_ambiguous_text(cx.file(), jsx_el, &mut cx.state)
+                && let Some(text) = rule.ambiguous_text(cx.file(), jsx_el, &mut cx.state)
             {
-                cx.report(e, ANCHOR_HAS_AMBIGUOUS_TEXT);
+                cx.report(e, ANCHOR_HAS_AMBIGUOUS_TEXT).data("text", text);
             }
         });
         Texts::default()
@@ -109,7 +109,8 @@ impl Normalized {
 }
 
 impl AnchorAmbiguousText {
-    fn has_ambiguous_text<'a>(&self, file: &'a File<'a>, anchor: Jsx<'a>, texts: &mut Texts) -> bool {
+    /// The text of `anchor`, if it is one of the words.
+    fn ambiguous_text<'a>(&self, file: &'a File<'a>, anchor: Jsx<'a>, texts: &mut Texts) -> Option<String> {
         let longest = self.words.iter().map(String::len).max().unwrap_or(0);
         let normalized = match get_accessible_text(file, anchor) {
             AccessibleText::Of(text) => {
@@ -120,7 +121,7 @@ impl AnchorAmbiguousText {
             AccessibleText::OfChildren => text_of_children(file, anchor, longest, texts),
             AccessibleText::None => None,
         };
-        normalized.is_some_and(|it| it.has_text && self.words.contains(&it.text))
+        normalized.filter(|it| it.has_text && self.words.contains(&it.text)).map(|it| it.text)
     }
 }
 

@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::type_node_requires_parentheses;
 use std::cmp::Ordering;
@@ -121,13 +122,13 @@ fn collation_element(text: &[u8], mut at: usize) -> Option<((u32, usize, &[u8]),
             }
             b'a'..=b'z' | b'A'..=b'Z' => digits_weight + 1 + u32::from(byte.to_ascii_lowercase() - b'a'),
             0x80.. => {
-                let mut code_points = text::code_points(&text[at..]);
+                let mut code_points = strings::wtf8_codepoints(&text[at..]);
                 let (_, c) = code_points.next()?;
                 let lower = char::from_u32(c).and_then(|c| c.to_lowercase().next()).map_or(c, u32::from);
                 let next = code_points.next().map_or(text.len(), |(offset, _)| at + offset);
                 return Some(((0x100 + lower, 0, NO_DIGITS), next));
             }
-            _ => match bun_core::strings::index_of_char_usize(BEFORE_DIGITS, byte) {
+            _ => match strings::index_of_char_usize(BEFORE_DIGITS, byte) {
                 Some(index) => index as u32,
                 // The other control characters are ignored.
                 None => {
@@ -169,8 +170,8 @@ impl SortTypeConstituents {
         self.position(a).cmp(&self.position(b)).then_with(|| {
             let (a, b) = (a.text(), b.text());
             match self.is_case_sensitive {
-                true => text::compare(a, b),
-                false => collator_compare(a, b).then_with(|| text::compare(a, b)),
+                true => strings::order_utf16(a, b),
+                false => collator_compare(a, b).then_with(|| strings::order_utf16(a, b)),
             }
         })
     }

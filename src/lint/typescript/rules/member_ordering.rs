@@ -1,9 +1,11 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::get_static_string_value;
-use bun_lint::utils::text::{code_points, to_lower_case};
+use bun_lint::utils::text::{natural_compare, to_lower_case};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 
 /// Require a consistent member declaration order.
 pub struct MemberOrdering {
@@ -552,95 +554,19 @@ fn get_lowest_rank<'t>(ranks: &[i32], target: i32, types: &'t MemberTypes) -> &'
 
 // ───────────────────────────── comparing names ─────────────────────────────
 
-/// The UTF-16 code units of `text`, which JavaScript compares strings by.
-fn utf16(text: &[u8]) -> impl Iterator<Item = u16> + '_ {
-    code_points(text).flat_map(|(_, c)| {
-        let (first, second) = match c.checked_sub(0x10000) {
-            Some(c) => (0xD800 + (c >> 10), Some(0xDC00 + (c & 0x3FF))),
-            None => (c, None),
-        };
-        std::iter::once(first as u16).chain(second.map(|it| it as u16))
-    })
-}
-
-/// `a < b` for strings.
-fn is_less_than(a: &[u8], b: &[u8]) -> bool {
-    match a.is_ascii() && b.is_ascii() {
-        true => a < b,
-        false => utf16(a).lt(utf16(b)),
-    }
-}
-
-/// The package `natural-compare`.
-fn natural_compare(a: &[u8], b: &[u8]) -> i32 {
-    fn get_code(text: &[u16], pos: usize) -> u32 {
-        let code = text.get(pos).copied().map_or(0, u32::from);
-        match code {
-            0..=44 | 128.. => code,
-            45 => 65,
-            46..=47 => code - 1,
-            48..=57 => code + 18,
-            58..=64 => code - 11,
-            65..=90 => code + 11,
-            91..=96 => code - 37,
-            97..=122 => code + 5,
-            123..=127 => code - 63,
-        }
-    }
-    /// The number whose second digit would be at `pos`, and where it ends.
-    fn get_number(text: &[u16], pos: usize) -> (f64, usize) {
-        let mut end = pos;
-        while matches!(get_code(text, end), 66..=75) {
-            end += 1;
-        }
-        let digits = text.get(pos - 1..end).unwrap_or_default();
-        let value = match digits.len() {
-            ..=15 => digits.iter().fold(0u64, |value, &c| value * 10 + u64::from(c - 48)) as f64,
-            _ => {
-                let digits: String = digits.iter().map(|&c| char::from(c as u8)).collect();
-                digits.parse().unwrap_or(f64::INFINITY)
-            }
-        };
-        (value, end)
-    }
-
-    if a == b {
-        return 0;
-    }
-    let a: SmallVec<[u16; 32]> = utf16(a).collect();
-    let b: SmallVec<[u16; 32]> = utf16(b).collect();
-    let (mut pos_a, mut pos_b) = (0, 0);
-    loop {
-        let (code_a, code_b) = (get_code(&a, pos_a), get_code(&b, pos_b));
-        pos_a += 1;
-        pos_b += 1;
-        let (mut value_a, mut value_b) = (f64::from(code_a), f64::from(code_b));
-        if matches!(code_a, 67..=75) && matches!(code_b, 67..=75) {
-            (value_a, pos_a) = get_number(&a, pos_a);
-            (value_b, pos_b) = get_number(&b, pos_b);
-        }
-        if value_a != value_b {
-            return if value_a < value_b { -1 } else { 1 };
-        }
-        if value_b == 0.0 {
-            return 0;
-        }
-    }
-}
-
 /// Upstream's `naturalOutOfOrder`.
 fn natural_out_of_order(name: &[u8], previous_name: &[u8], order: Order) -> bool {
     if name == previous_name {
         return false;
     }
     match order {
-        Order::Alphabetically => is_less_than(name, previous_name),
+        Order::Alphabetically => strings::order_utf16(name, previous_name) == Ordering::Less,
         Order::AlphabeticallyCaseInsensitive => {
-            is_less_than(&to_lower_case(name), &to_lower_case(previous_name))
+            strings::order_utf16(&to_lower_case(name), &to_lower_case(previous_name)) == Ordering::Less
         }
-        Order::Natural => natural_compare(name, previous_name) != 1,
+        Order::Natural => natural_compare(name, previous_name) != Ordering::Greater,
         Order::NaturalCaseInsensitive => {
-            natural_compare(&to_lower_case(name), &to_lower_case(previous_name)) != 1
+            natural_compare(&to_lower_case(name), &to_lower_case(previous_name)) != Ordering::Greater
         }
     }
 }

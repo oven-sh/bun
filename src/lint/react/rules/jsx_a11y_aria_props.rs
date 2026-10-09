@@ -34,7 +34,14 @@ impl Rule for AriaProps {
                     continue;
                 }
                 let suggestion = get_common_aria_prop_typo(&name);
-                cx.report(attr, ARIA_PROPS).data("prop_name", name).fix(|fixer| {
+                let report = cx.report(attr, ARIA_PROPS).data("prop_name", name);
+                let report = match suggestion {
+                    Some(suggestion) => report.help_with(|| format!("Did you mean '{suggestion}'?")),
+                    None => report.help(
+                        "You can find a list of valid ARIA attributes at https://www.w3.org/TR/wai-aria-1.1/#state_prop_def",
+                    ),
+                };
+                report.fix(|fixer| {
                     Some(fixer.replace(attr.key()?.span(fixer.file()), suggestion?))
                 });
             }

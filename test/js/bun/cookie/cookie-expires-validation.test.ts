@@ -90,7 +90,7 @@ describe("Bun.Cookie expires validation", () => {
     test("throws RangeError for out-of-range Number via setter", () => {
       const cookie = new Bun.Cookie("name", "value");
       expect(() => {
-        cookie.expires = 1e16;
+        cookie.expires = 1e16 as any;
       }).toThrow(RangeError);
     });
 
@@ -124,9 +124,37 @@ describe("Bun.Cookie expires validation", () => {
       }).toThrowErrorMatchingInlineSnapshot(`"Invalid cookie expiration date"`);
     });
 
-    test("accepts string that parses to epoch (0 ms)", () => {
-      const cookie = new Bun.Cookie("name", "value", { expires: "Thu, 01 Jan 1970 00:00:00 GMT" });
-      expect(cookie.expires).toEqual(new Date(0));
+    describe("accepts a string that parses to the epoch (0 ms)", () => {
+      // The date that a handler writes to delete a cookie. `new Date(0).toUTCString()` returns it.
+      const epoch = "Thu, 01 Jan 1970 00:00:00 GMT";
+      const serialized = `sid=; Path=/; Expires=${epoch}; SameSite=Lax`;
+
+      test("new Bun.Cookie(name, value, options)", () => {
+        const cookie = new Bun.Cookie("sid", "", { expires: epoch });
+        expect(cookie.expires).toEqual(new Date(0));
+        expect(cookie.isExpired()).toBe(true);
+        expect(cookie.toString()).toBe(serialized);
+      });
+
+      test("new Bun.Cookie(options)", () => {
+        expect(new Bun.Cookie({ name: "sid", value: "", expires: epoch }).toString()).toBe(serialized);
+      });
+
+      test("Bun.Cookie.from", () => {
+        expect(Bun.Cookie.from("sid", "", { expires: epoch }).toString()).toBe(serialized);
+      });
+
+      test("expires setter", () => {
+        const cookie = new Bun.Cookie("sid", "");
+        cookie.expires = epoch as any;
+        expect(cookie.toString()).toBe(serialized);
+      });
+
+      test("CookieMap.set", () => {
+        const map = new Bun.CookieMap();
+        map.set("sid", "", { expires: epoch });
+        expect(map.toSetCookieHeaders()).toEqual([serialized]);
+      });
     });
 
     test("throws for string with out-of-range year", () => {
@@ -208,10 +236,10 @@ describe("Bun.Cookie expires validation", () => {
 
     test("getter returns a fresh Date when the cached one was mutated to NaN", () => {
       const cookie = new Bun.Cookie("name", "value", { expires: 1000 });
-      const first = cookie.expires;
+      const first = cookie.expires!;
       expect(first.getTime()).toBe(1000 * 1000);
       first.setTime(NaN);
-      const second = cookie.expires;
+      const second = cookie.expires!;
       expect(second.getTime()).toBe(1000 * 1000);
       expect(second).not.toBe(first);
     });

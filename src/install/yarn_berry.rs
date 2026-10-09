@@ -1617,7 +1617,8 @@ fn registry_for(
     yarnrc: &YarnRc,
     name: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let configured: &[u8] = manager.scope_for_package_name(name).url.href();
+    let configured = registry_without_auth(manager.scope_for_package_name(name).url.href());
+    let configured: &[u8] = &configured;
     let from_yarn: Option<&[u8]> = if name.first() == Some(&b'@') {
         let scope = npm::registry::Scope::get_name(name);
         match yarnrc.scope_registries.get(scope) {
@@ -1650,10 +1651,11 @@ fn registry_for(
     };
     // yarn's default registry serves the same packages as the npm registry
     let canonical = |url: &'_ [u8]| -> Vec<u8> {
-        if same(url, b"https://registry.yarnpkg.com") {
+        let url = registry_without_auth(url);
+        if same(&url, b"https://registry.yarnpkg.com") {
             npm::Registry::DEFAULT_URL.as_bytes().to_vec()
         } else {
-            url.to_vec()
+            url
         }
     };
     if same(&canonical(url), &canonical(configured)) {
@@ -1669,6 +1671,18 @@ fn registry_for(
             bun_core::fmt::redacted_npm_url(configured),
         ),
     ))
+}
+
+/// A registry href can carry `user:password@` (one that comes from an environment
+/// variable keeps it). The tarball URLs built on it are written to bun.lock,
+/// which is committed, so they are built on the href without it.
+pub(crate) fn registry_without_auth(href: &[u8]) -> Vec<u8> {
+    let url = bun_url::URL::parse(href);
+    if url.username.is_empty() && url.password.is_empty() {
+        href.to_vec()
+    } else {
+        url.href_without_auth().into_vec()
+    }
 }
 
 /// yarn always locks git dependencies with `#commit=<sha>`; the prefixes cover

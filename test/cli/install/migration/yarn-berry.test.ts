@@ -1284,6 +1284,24 @@ catalogs:
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("credentials in bun's registry URL are not written to bun.lock", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: cleanProject(),
+    });
+    // a registry that comes from an environment variable keeps its `user:password@`
+    const bunfig = join(dir, "bunfig.toml");
+    await Bun.write(bunfig, (await Bun.file(bunfig).text()).replace(verdaccio.registryUrl(), "$BERRY_TEST_REGISTRY"));
+    const registry = `http://builder:hunter2secret@localhost:${verdaccio.port}/`;
+
+    const { stderr, exitCode } = await runWithEnv(dir, { BERRY_TEST_REGISTRY: registry }, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-`);
+    expect(bunLock).not.toContain("hunter2secret");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("yarn's registry from YARN_NPM_REGISTRY_SERVER", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

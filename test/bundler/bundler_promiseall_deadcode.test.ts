@@ -449,4 +449,34 @@ describe("bundler", () => {
     outfile: "/out.js",
     run: { stdout: "entry t+s" },
   });
+
+  // The import() wraps w.js and what it imports. u.js runs once t.js has started, and does not wait for it.
+  itBundled("bundler/wrapper starts an async import before a later sync one", {
+    files: {
+      "/entry.js": `import "./w.js"; console.log("entry"); globalThis.later = () => import("./w.js");`,
+      "/w.js": `import "./t.js"; import "./u.js"; console.log("w");`,
+      "/t.js": `console.log("t start"); await 0; console.log("t end");`,
+      "/u.js": `console.log("u");`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "t start\nu\nt end\nw\nentry" },
+  });
+
+  // The require() wraps lib.js, which reads what setup.cjs sets. f.js names setup.cjs first.
+  for (const [name, reexport] of Object.entries({
+    "import": `import { lib } from "./lib.js"; export { lib };`,
+    "export star": `export * from "./lib.js";`,
+  })) {
+    itBundled(`bundler/wrapper calls a CommonJS import before a later ${name}`, {
+      files: {
+        "/entry.js": `import { lib } from "./f.js"; console.log("entry", lib); globalThis.later = () => require("./lib.js");`,
+        "/f.js": `import "./setup.cjs"; ${reexport}`,
+        "/setup.cjs": `globalThis.SETUP = "done";`,
+        "/lib.js": `export const lib = "lib sees " + globalThis.SETUP;`,
+      },
+      outfile: "/out.js",
+      target: "node",
+      run: { stdout: "entry lib sees done" },
+    });
+  }
 });

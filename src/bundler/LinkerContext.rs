@@ -5299,43 +5299,54 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
+/// The statements that the imports of a file print, in source order. Every `init_x()` starts before anything is awaited:
+/// a file of an import cycle that calls back into this wrapper after an `await` would wait for it forever.
 pub struct InsideWrapperPrefix {
+    /// With `async_calls`, the last statement awaits them.
     pub(crate) stmts: Vec<Stmt>,
-    pub(crate) sync_dependencies_end: usize,
-    // if true it will exist at `sync_dependencies_end`
-    pub(crate) has_async_dependency: bool,
+    /// The `init_x()` calls of async files. `__esm` keeps the promise, so a second call returns it.
+    async_calls: Vec<Expr>,
+    /// How many of `async_calls` have a statement of their own, ahead of a later statement.
+    started_async_calls: usize,
 }
 
 impl InsideWrapperPrefix {
     fn init() -> Self {
         Self {
             stmts: Vec::new(),
-            sync_dependencies_end: 0,
-            has_async_dependency: false,
+            async_calls: Vec::new(),
+            started_async_calls: 0,
         }
     }
 
-    // deinit → Drop (Vec frees automatically); reset is explicit
-
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.sync_dependencies_end = 0;
-        self.has_async_dependency = false;
+        self.async_calls.clear();
+        self.started_async_calls = 0;
     }
-}
 
-impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+        let Some(await_stmt) = self.pop_await() else {
+            self.stmts.push(stmt);
+            return Ok(());
+        };
+        for &call in &self.async_calls[self.started_async_calls..] {
+            self.stmts.push(expr_stmt(call));
+        }
+        self.started_async_calls = self.async_calls.len();
         self.stmts.push(stmt);
+        self.stmts.push(await_stmt);
         Ok(())
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
-        self.stmts.extend_from_slice(stmts);
+        for &stmt in stmts {
+            self.append_non_dependency(stmt)?;
+        }
         Ok(())
     }
 
-    /// `init_x()` of a wrapped ES module. The sync calls go ahead of the awaited ones: a sync file depends on no async one.
+    /// `init_x()` of a wrapped ES module.
     pub(crate) fn append_init_call(
         &mut self,
         wrapper_ref: Ref,
@@ -5350,129 +5361,52 @@ impl InsideWrapperPrefix {
             },
             loc,
         );
-        if is_async {
-            self.append_async_dependency(init_call, promise_all_ref)
-        } else {
-            self.append_sync_dependency(init_call)
+        if !is_async {
+            return self.append_non_dependency(expr_stmt(init_call));
         }
-    }
-
-    fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
-        self.stmts.insert(
-            self.sync_dependencies_end,
-            Stmt::alloc(
-                S::SExpr {
-                    value: call_expr,
-                    ..Default::default()
-                },
-                call_expr.loc,
-            ),
-        );
-        self.sync_dependencies_end += 1;
-        Ok(())
-    }
-
-    fn append_async_dependency(
-        &mut self,
-        call_expr: Expr,
-        promise_all_ref: Ref,
-    ) -> Result<(), AllocError> {
-        if !self.has_async_dependency {
-            self.has_async_dependency = true;
-            self.stmts.insert(
-                self.sync_dependencies_end,
-                Stmt::alloc(
-                    S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ),
-            );
-            return Ok(());
-        }
-
-        // Note: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
-        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` panics on
-        // shape mismatch.
-        let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
-            .data
-            .s_expr_mut()
-            .unwrap()
-            .value
-            .data
-            .e_await_mut()
-            .expect("infallible: variant checked")
-            .value;
-        let call = first_dep_call_expr
-            .data
-            .e_call_mut()
-            .expect("infallible: variant checked");
-
-        if call
-            .target
-            .data
-            .e_identifier()
-            .expect("infallible: variant checked")
-            .ref_
-            .eql(promise_all_ref)
-        {
-            // `await __promiseAll` already in place, append to the array argument
-            call.args
-                .mut_(0)
-                .data
-                .e_array_mut()
-                .expect("infallible: variant checked")
-                .items
-                .push(call_expr);
-        } else {
-            // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
-
-            let promise_all = Expr::init(
-                E::Identifier {
-                    ref_: promise_all_ref,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-
-            let mut items = bun_ast::ExprNodeList::init_capacity(2);
-            items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
-
-            let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(Expr::init(
-                E::Array {
-                    items,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            ));
-
-            let promise_all_call = Expr::init(
+        self.pop_await();
+        self.async_calls.push(init_call);
+        // `await init_x()`, or `await __promiseAll([init_x(), init_y()])`
+        let awaited = match self.async_calls.as_slice() {
+            &[call] => call,
+            calls => Expr::init(
                 E::Call {
-                    target: promise_all,
-                    args,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-
-            // replace the `await init_` expr with `await __promiseAll`
-            self.stmts[self.sync_dependencies_end] = Stmt::alloc(
-                S::SExpr {
-                    value: Expr::init(
-                        E::Await {
-                            value: promise_all_call,
+                    target: Expr::init_identifier(promise_all_ref, Loc::EMPTY),
+                    args: bun_ast::ExprNodeList::from_slice(&[Expr::init(
+                        E::Array {
+                            items: bun_ast::ExprNodeList::from_slice(calls),
+                            ..Default::default()
                         },
                         Loc::EMPTY,
-                    ),
+                    )]),
                     ..Default::default()
                 },
                 Loc::EMPTY,
-            );
-        }
+            ),
+        };
+        self.stmts.push(expr_stmt(Expr::init(
+            E::Await { value: awaited },
+            Loc::EMPTY,
+        )));
         Ok(())
     }
+
+    fn pop_await(&mut self) -> Option<Stmt> {
+        if self.async_calls.is_empty() {
+            return None;
+        }
+        self.stmts.pop()
+    }
+}
+
+fn expr_stmt(value: Expr) -> Stmt {
+    Stmt::alloc(
+        S::SExpr {
+            value,
+            ..Default::default()
+        },
+        value.loc,
+    )
 }
 
 impl StmtList {

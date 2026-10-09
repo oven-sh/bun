@@ -71,6 +71,46 @@ pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<
     validate_by_id(&RuleId::Known(meta).to_vec(), options)
 }
 
+/// The names in the `properties` of `schema` and of all that is in it.
+fn property_names<'s>(schema: &'s Json, names: &mut Vec<&'s [u8]>) {
+    match schema {
+        Json::Object(entries) => {
+            for (key, value) in entries {
+                if key == b"properties" {
+                    let properties = value.as_object().unwrap_or_default();
+                    names.extend(properties.iter().map(|it| &it.0[..]));
+                }
+                property_names(value, names);
+            }
+        }
+        Json::Array(items) => items.iter().for_each(|it| property_names(it, names)),
+        _ => {}
+    }
+}
+
+/// The same without the properties of the options that the schema does not name anywhere.
+pub(crate) fn validate_known_properties(
+    meta: &'static Meta,
+    options: &[Json],
+) -> Result<(), Vec<u8>> {
+    let id = RuleId::Known(meta).to_vec();
+    let found = find(&id);
+    let mut names = Vec::new();
+    if let Some(schema) = found.as_ref().and_then(|it| it.as_array()?.first()) {
+        property_names(schema, &mut names);
+    }
+    let known: Vec<Json> = (options.iter())
+        .map(|option| match option {
+            Json::Object(entries) => {
+                let is_known = |it: &&(Vec<u8>, Json)| names.contains(&&it.0[..]);
+                Json::Object(entries.iter().filter(is_known).cloned().collect())
+            }
+            other => other.clone(),
+        })
+        .collect();
+    validate_by_id(&id, &known)
+}
+
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     let found = find(id);

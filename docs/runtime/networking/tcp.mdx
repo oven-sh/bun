@@ -137,7 +137,7 @@ const socket = await Bun.connect({
 });
 ```
 
-To require TLS, specify `tls: true`.
+To require TLS, specify `tls: true`. A `tls` options object also enables TLS. An object that sets no option, such as `{}`, is the same as `tls: true`.
 
 ```ts
 // The client

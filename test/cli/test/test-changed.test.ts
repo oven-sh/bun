@@ -450,7 +450,10 @@ describe.concurrent("bun test --changed", () => {
         "packages/app/a.test.ts": importsOne("lib"),
       },
       ["packages", "lib", "index.ts"],
-      [["packages", "lib"], ["node_modules", "lib"]],
+      [
+        ["packages", "lib"],
+        ["node_modules", "lib"],
+      ],
     ],
     [
       // git names the file under the real directory.
@@ -464,20 +467,23 @@ describe.concurrent("bun test --changed", () => {
       ["shared", "util.ts"],
       [["shared"], ["linked"]],
     ],
-  ] as const)("a change behind a bare specifier selects the importing test (%s)", async (_label, files, edited, link) => {
-    using dir = tempDir("test-changed-bare", {
-      ...files,
-      "other.test.ts": unrelated,
-      ".gitignore": "node_modules\nlinked\n",
-    });
-    if (link) linkDirectory(join(String(dir), ...link[0]), join(String(dir), ...link[1]));
-    initRepo(String(dir));
-    writeFileSync(join(String(dir), ...edited), `export const one = 2;\n`);
+  ] as const)(
+    "a change behind a bare specifier selects the importing test (%s)",
+    async (_label, files, edited, link) => {
+      using dir = tempDir("test-changed-bare", {
+        ...files,
+        "other.test.ts": unrelated,
+        ".gitignore": "node_modules\nlinked\n",
+      });
+      if (link) linkDirectory(join(String(dir), ...link[0]), join(String(dir), ...link[1]));
+      initRepo(String(dir));
+      writeFileSync(join(String(dir), ...edited), `export const one = 2;\n`);
 
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["a.test.ts", "other.test.ts"])).toEqual(["a.test.ts"]);
-    expect(exitCode).toBe(1);
-  });
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, ["a.test.ts", "other.test.ts"])).toEqual(["a.test.ts"]);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   // https://github.com/oven-sh/bun/issues/44162
   test("package.json imports and a workspace package's exports are followed from a package directory", async () => {

@@ -5980,13 +5980,13 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_next_stream_id(
         this: &Self,
-        _global_object: &JSGlobalObject,
+        global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments();
-        debug_assert!(args_list.len() >= 1);
-        let stream_id_arg = args_list[0];
-        debug_assert!(stream_id_arg.is_number());
+        let stream_id_arg = callframe.argument(0);
+        if !stream_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
+        }
         // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
         // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
         // so the subtraction saturates to the initial state instead of wrapping.

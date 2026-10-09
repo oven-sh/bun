@@ -469,20 +469,20 @@ impl PostgresSQLQuery {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices.
-        let arguments = callframe.arguments();
         // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
-        // is on-stack (rooted by `arguments[0]`) so GC cannot finalize it for the
+        // is on-stack (rooted by the call frame) so GC cannot finalize it for the
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(callframe.argument(0))
+        else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
         };
         let connection: &PostgresSQLConnection = &connection;
 
-        let query = arguments[1];
+        let query = callframe.argument(1);
 
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));

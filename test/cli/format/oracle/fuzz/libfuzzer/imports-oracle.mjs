@@ -93,7 +93,7 @@ function parse(how) {
   return tools[tool] && { tool, options };
 }
 
-const words = text => new Set(text.match(/[\w$\u0080-￿]+/g) ?? []);
+const words = text => new Set(text.match(/[\w$\u0080-\uffff]+/g) ?? []);
 const log = { error: console.error, warn: console.warn };
 async function ask(tool, text, options, isPlain) {
   console.error = console.warn = () => {};

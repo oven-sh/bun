@@ -162,8 +162,9 @@ fn read(file: &hir::File<'_>, atoms: &dyn Intern, text: &[u8]) -> Program {
         program.rest.extend(without_white_space(between));
         at = at.max(span.end);
     }
-    // What is left of a statement that was cut, and what `semi: false` puts before the next.
-    program.rest.retain(|&it| it != b';');
+    // What is left of a statement that was cut, what `semi: false` puts before the next, and the comma after the last of a list
+    // that is broken because a comment in it has become longer.
+    program.rest.retain(|&it| !matches!(it, b';' | b','));
     program
 }
 

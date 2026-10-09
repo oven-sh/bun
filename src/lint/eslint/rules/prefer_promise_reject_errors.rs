@@ -10,12 +10,19 @@ const REJECT_AN_ERROR: Message = Message::new(
     "Expected the Promise rejection reason to be an Error.",
 );
 
+/// Whether `promise`, which is called `Promise`, is taken for the global. oxlint does not ask what it refers to.
+fn is_promise(promise: Expr) -> bool {
+    promise.file().language().is_oxlint || ast_utils::is_global_reference(promise)
+}
+
 impl PreferPromiseRejectErrors {
     /// Reports the call `e` of `reject` or of `Promise.reject` if its argument cannot be an `Error`.
     fn check_reject_call<'a>(&self, e: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         let is_rejected_with_error = match call.args().first() {
             None => self.allow_empty_reject,
             Some(reason) => {
+                // oxlint sees through what only concerns types: `reject(e as Error)`.
+                let reason = if cx.language().is_oxlint { reason.skip_type_wrappers() } else { reason };
                 ast_utils::could_be_error(reason)
                     && !(reason.is_ident("undefined") && ast_utils::is_global_reference(reason))
             }
@@ -32,7 +39,7 @@ impl PreferPromiseRejectErrors {
         };
         let callee = call.callee();
         if ast_utils::is_specific_member_access(callee, Some("Promise"), Some("reject"))
-            && ast_utils::member_object(callee).is_some_and(ast_utils::is_global_reference)
+            && ast_utils::member_object(callee).is_some_and(is_promise)
         {
             self.check_reject_call(e, call, cx);
         }
@@ -59,7 +66,7 @@ impl PreferPromiseRejectErrors {
         let Some(name) = reject.pat().as_ident() else {
             return;
         };
-        if !ast_utils::is_global_reference(callee) {
+        if !is_promise(callee) {
             return;
         }
         // The first of that name: if the function has the name too, that is the function.

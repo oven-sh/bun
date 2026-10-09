@@ -169,6 +169,33 @@ Unlike unix domain sockets, abstract namespace sockets are not bound to the file
 
 ---
 
+## Inherited sockets
+
+To serve on a socket that another process bound, pass the number of its file descriptor as `fd`. A service manager such as systemd binds the socket and starts the server with the socket open. This is called socket activation.
+
+```ts
+Bun.serve({
+  fd: 3, // systemd passes the first socket as file descriptor 3
+  fetch(req) {
+    return new Response("Hello from an inherited socket");
+  },
+});
+```
+
+The socket can be a TCP socket or a unix domain socket.
+
+- For a TCP socket, `server.port` is the bound port. `server.hostname` and `server.url` use the bound IP address, or `localhost` when the socket is bound to `0.0.0.0` or `::`.
+- For a unix domain socket, `server.port` and `server.hostname` are `undefined`, and `server.url` is `unix://` followed by the path.
+- Bun closes the file descriptor when the server stops. Bun never closes file descriptors 0, 1 and 2. When `Bun.serve` throws, the file descriptor stays open.
+- Bun does not remove the file of a unix domain socket. The file belongs to the process that bound the socket.
+- `fd` wins over `port`. `reusePort` and `ipv6Only` have no effect on a socket that is already bound.
+- `Bun.serve` throws when you set `fd` together with `hostname`, `unix` or `http3`.
+- With `bun --hot`, a reload that calls `Bun.serve({ fd })` again reuses the running server. `bun --watch` restarts the process and closes the socket.
+
+<Note>`fd` is not supported on Windows. `Bun.serve` throws.</Note>
+
+---
+
 ## HTTP/3 (QUIC)
 
 <Note>HTTP/3 support in `Bun.serve` is **experimental** and may change in future releases.</Note>

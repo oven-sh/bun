@@ -260,7 +260,7 @@ impl Parser<'_> {
                 && n_parents == self.n_containers
             {
                 let setext_result = self.is_setext_underline(off);
-                if setext_result.is_setext {
+                if setext_result.is_setext && !self.current_block_is_only_ref_defs() {
                     line.r#type = LineType::Setextunderline;
                     line.data = setext_result.level;
                     break;
@@ -926,6 +926,39 @@ impl Parser<'_> {
             self.current_block = None;
         }
         Ok(())
+    }
+
+    /// Whether nothing of the current block is left once its reference
+    /// definitions are taken away: then there is nothing for a line under it to
+    /// make a heading of.
+    fn current_block_is_only_ref_defs(&mut self) -> bool {
+        let Some(first) = self.current_block_lines.first() else {
+            return false;
+        };
+        if self.ch(first.beg) != b'[' {
+            return false;
+        }
+        self.buffer.clear();
+        for vline in &self.current_block_lines {
+            if !self.buffer.is_empty() {
+                self.buffer.push(b'\n');
+            }
+            self.buffer
+                .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
+        }
+        let merged = core::mem::take(&mut self.buffer);
+        let mut pos: usize = 0;
+        while pos < merged.len() {
+            match self.parse_ref_def(&merged, pos) {
+                Some(result) if !self.normalize_label(result.label).is_empty() => {
+                    pos = result.end_pos;
+                }
+                _ => break,
+            }
+        }
+        let is_only_ref_defs = pos >= merged.len();
+        self.buffer = merged;
+        is_only_ref_defs
     }
 
     pub(crate) fn consume_ref_defs_from_current_block(&mut self) {

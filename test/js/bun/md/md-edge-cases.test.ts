@@ -1900,3 +1900,9 @@ describe("brackets behind the text of a link", () => {
     expect(Markdown.html("![a [b](c]) d](e)\n")).toBe('<p><img src="e" alt="a b d" /></p>\n');
   });
 });
+
+describe("a line of dashes under reference definitions", () => {
+  test("is a thematic break: there is nothing to make a heading of", () => {
+    expect(Markdown.html("[ref]: /uri\n---\n")).toBe("<hr />\n");
+  });
+});

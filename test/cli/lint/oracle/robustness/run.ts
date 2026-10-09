@@ -16,7 +16,10 @@ export function configOf(it: Case): [string, string] {
     return ["eslint.config.js", `export default [${JSON.stringify(config)}];\n`];
   }
   const plugins = ["typescript", "node", "react", "import", "oxc"];
-  return [".oxlintrc.json", JSON.stringify({ plugins, categories: { correctness: "off" }, rules: it.rules, options: unused })];
+  return [
+    ".oxlintrc.json",
+    JSON.stringify({ plugins, categories: { correctness: "off" }, rules: it.rules, options: unused }),
+  ];
 }
 
 /** The plugins that oxlint calls otherwise than the names of their rules begin for ESLint. */
@@ -51,16 +54,20 @@ export function verdict(
     if (count !== it.keeps[1]) return `the file matches ${it.keeps[0]} ${count} times, not ${it.keeps[1]}`;
   }
   if (it.length !== undefined) {
-    const [found, wanted] = [Buffer.byteLength(text), it.length === "as before" ? Buffer.byteLength(it.text()) : it.length];
+    const [found, wanted] = [
+      Buffer.byteLength(text),
+      it.length === "as before" ? Buffer.byteLength(it.text()) : it.length,
+    ];
     if (found !== wanted) return `the file has ${found} bytes, not ${wanted}`;
     if (it.length === "as before" && text !== it.text()) return "the file has changed";
   }
-  if (it.lacks?.test(stdout)) return `the output matches ${it.lacks} (${stdout.match(new RegExp(it.lacks, "g"))?.length} times)`;
+  if (it.lacks?.test(stdout))
+    return `the output matches ${it.lacks} (${stdout.match(new RegExp(it.lacks, "g"))?.length} times)`;
   if (it.reports) {
     const sorted = (counts: Record<string, number>) => JSON.stringify(Object.entries(counts).sort());
     const [found, wanted] = [sorted(countByRule(stdout)), sorted(it.reports)];
     if (found !== wanted) return `reported ${found}, not ${wanted} (exit code ${exitCode})`;
   }
   if (it.matches && !it.matches.test(stdout)) return `the output does not match ${it.matches} (exit code ${exitCode})`;
-  return exitCode === it.exitCode ? null : `exit code ${exitCode}, not ${it.exitCode}`;
+  return [it.exitCode].flat().includes(exitCode) ? null : `exit code ${exitCode}, not ${it.exitCode}`;
 }

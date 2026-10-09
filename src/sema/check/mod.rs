@@ -1926,9 +1926,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
     ///
     /// After a refusal no query in flight is cacheable. Every later query about a part of the same
-    /// expression would descend the same chain and be refused again, which costs depth^3 for nested
-    /// calls. So the outermost expression in flight is recorded, and until the end of `check_file`
-    /// every query about an expression inside it is refused immediately.
+    /// expression or type node would descend the same chain and be refused again, which costs depth^3
+    /// for nested calls. So the outermost one in flight is recorded, and until the end of `check_file`
+    /// every query about an expression or a type node inside it is refused immediately.
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
@@ -1948,6 +1948,10 @@ impl<'p, 's> Checker<'p, 's> {
             Query::Expr(file, e) | Query::Call(file, e) => {
                 Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
             }
+            Query::TypeNode(file, node) => {
+                let node = &c.hir(file)[node];
+                Some((file, node.pos, node.end.max(node.pos)))
+            }
             _ => None,
         };
         let is_refused = |c: &Self, (file, start, end): (FileId, u32, u32)| {
@@ -1958,11 +1962,16 @@ impl<'p, 's> Checker<'p, 's> {
         let queried = span_of(self, q);
         let is_low = self.is_stack_low();
         if is_low {
-            let outermost = self.stack.iter().find_map(|&q| span_of(self, q));
-            if let Some(outermost) = outermost.or(queried)
-                && !is_refused(self, outermost)
+            let mut in_flight = self.stack.iter().chain([&q]);
+            let outermost = in_flight.find_map(|&q| Some((q, span_of(self, q)?)));
+            if let Some((outermost, span)) = outermost
+                && !is_refused(self, span)
             {
-                self.refused_expressions.push(outermost);
+                let span = match outermost {
+                    Query::TypeNode(..) => self.span_of_statement_around(span),
+                    _ => span,
+                };
+                self.refused_expressions.push(span);
             }
         }
         // Every later `enter` takes this path.
@@ -1977,6 +1986,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Refused;
         self.bailed_out();
         true
+    }
+
+    /// `checkSourceElement` is no query, and asks for the type of a type node after it has visited what is in the node. So
+    /// the outermost type node in flight is the one that it has come back to, and the next one it comes back to is around
+    /// that: it would descend to what is refused, be cut short, and the one around it in turn, which costs depth^2 and,
+    /// with the search in `stack`, more. What is refused is the statement of the file that `span` is in.
+    fn span_of_statement_around(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
+        let hir = self.hir(span.0);
+        let mut statements = hir.ids(hir.body).map(|s| hir[s].loc);
+        match statements.find(|loc| (loc.pos..loc.end).contains(&span.1)) {
+            Some(loc) => (span.0, loc.pos, loc.end.max(span.2)),
+            None => span,
+        }
     }
 
     /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.

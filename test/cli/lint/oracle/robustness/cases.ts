@@ -33,7 +33,8 @@ export type Case = {
   keeps?: [RegExp, number];
   /** How many bytes the file has when the command has run. `"as before"`: it is also the same text. */
   length?: number | "as before";
-  exitCode: number;
+  /** Several: any of them, where the size of the stack decides how the run ends. */
+  exitCode: number | number[];
   /** It takes hundreds of megabytes, or more than three seconds in a debug build: not for a debug build or one with a sanitizer. */
   isHeavy?: boolean;
   /** It takes more than half a second in a release build: for check.ts alone. */
@@ -201,7 +202,9 @@ export const cases: Case[] = [
     const disabled = "a == b; // eslint-disable-line eqeqeq\n";
     // Each line has 4,000 array types in each other, whose messages quote them: 30 MB. 16 lines have fewer than 65,536 reports.
     const arrays = `let a: T${rep("[]", 4_000)}; // eslint-disable-line @typescript-eslint/array-type\n`;
-    const arrayType = { [eslint ? "@typescript-eslint/array-type" : "typescript/array-type"]: ["error", { default: "generic" }] };
+    const arrayType = {
+      [eslint ? "@typescript-eslint/array-type" : "typescript/array-type"]: ["error", { default: "generic" }],
+    };
     const common = { eslint, reportsUnusedDirectives: true, lacks: /Unused eslint-disable/ };
     return [
       {
@@ -242,7 +245,8 @@ export const cases: Case[] = [
         name: `${flavor}: that reports are missing is said if those that are kept are all in a part in which the rule is disabled`,
         isHeavy: eslint,
         file: "a.js",
-        text: () => `/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}/* eslint-enable eqeqeq */\n${rep("c == d;\n", 10)}`,
+        text: () =>
+          `/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}/* eslint-enable eqeqeq */\n${rep("c == d;\n", 10)}`,
         rules: { eqeqeq: "error" },
         reports: { eqeqeq: 1 },
         matches: /This rule reported more than 65,536 problems/,
@@ -521,16 +525,25 @@ export const cases: Case[] = [
     // Each of the three is reported, if `b` and `p` have their types.
     const three = "await b;\nx = b as number;\np;\n";
     const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
-    const warning = /This file is too large for control flow analysis\. What rules that need types say about it may be wrong or incomplete\./;
+    const warning =
+      /This file is too large for control flow analysis\. What rules that need types say about it may be wrong or incomplete\./;
     const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
     const common = {
       file: "a.ts",
-      rules: { [`typescript/${awaited}`]: "error", [`typescript/${asserted}`]: "error", [`typescript/${floating}`]: "error" },
+      rules: {
+        [`typescript/${awaited}`]: "error",
+        [`typescript/${asserted}`]: "error",
+        [`typescript/${floating}`]: "error",
+      },
       args: typed,
       // With the stack frames of a debug build the type checker overflows the stack from about 800 such statements on, in `bun check` too.
       isHeavy: true,
     };
-    const all = { [`@typescript-eslint/${awaited}`]: 1, [`@typescript-eslint/${asserted}`]: 1, [`@typescript-eslint/${floating}`]: 1 };
+    const all = {
+      [`@typescript-eslint/${awaited}`]: 1,
+      [`@typescript-eslint/${asserted}`]: 1,
+      [`@typescript-eslint/${floating}`]: 1,
+    };
     return [
       {
         ...common,
@@ -586,7 +599,9 @@ export const cases: Case[] = [
       isSlow: true,
       args: ["--type-aware", "--fix", "-f", "unix"],
       // That the rules with types report shows that these are the passes with types.
-      matches: isLeft ? /Fixes would grow this file from 690 KB to more than 64 MB\. It is left as it is\./ : /await-thenable/,
+      matches: isLeft
+        ? /Fixes would grow this file from 690 KB to more than 64 MB\. It is left as it is\./
+        : /await-thenable/,
       keeps: [/b as number/g, isLeft ? 1 : 0],
       length: isLeft ? "as before" : 61_714_750,
       exitCode: 1,
@@ -611,7 +626,11 @@ export const cases: Case[] = [
     file: "a.ts",
     text: () =>
       "interface T0 { m(): void }\n" +
-      seq(60, i => `interface A${i} extends T${i} {}\ninterface B${i} extends T${i} {}\ninterface T${i + 1} extends A${i}, B${i} {}\n`) +
+      seq(
+        60,
+        i =>
+          `interface A${i} extends T${i} {}\ninterface B${i} extends T${i} {}\ninterface T${i + 1} extends A${i}, B${i} {}\n`,
+      ) +
       "declare const o: T60;\no;\no.m;\nfunction f() { throw o; }\nfunction g() { return o; }\nPromise.reject(o);\n",
     rules: {
       "typescript/no-floating-promises": "error",
@@ -635,13 +654,29 @@ export const cases: Case[] = [
     isHeavy: true,
     file: "a.ts",
     text: () =>
-      ["Promise<number>", "Error"].map((base, k) =>
-        `interface T${k}_0 extends ${base} {}\n` +
-        seq(40, i => `interface A${k}_${i} extends T${k}_${i} {}\ninterface B${k}_${i} extends T${k}_${i} {}\ninterface T${k}_${i + 1} extends A${k}_${i}, B${k}_${i} {}\n`) +
-        `declare const o${k}: T${k}_40;\no${k};\nfunction f${k}() { throw o${k}; }\nfunction g${k}() { return o${k}; }\n`).join(""),
-    rules: { "typescript/no-floating-promises": "error", "typescript/only-throw-error": "error", "typescript/promise-function-async": "error" },
+      ["Promise<number>", "Error"]
+        .map(
+          (base, k) =>
+            `interface T${k}_0 extends ${base} {}\n` +
+            seq(
+              40,
+              i =>
+                `interface A${k}_${i} extends T${k}_${i} {}\ninterface B${k}_${i} extends T${k}_${i} {}\ninterface T${k}_${i + 1} extends A${k}_${i}, B${k}_${i} {}\n`,
+            ) +
+            `declare const o${k}: T${k}_40;\no${k};\nfunction f${k}() { throw o${k}; }\nfunction g${k}() { return o${k}; }\n`,
+        )
+        .join(""),
+    rules: {
+      "typescript/no-floating-promises": "error",
+      "typescript/only-throw-error": "error",
+      "typescript/promise-function-async": "error",
+    },
     args: typed,
-    reports: { "@typescript-eslint/no-floating-promises": 1, "@typescript-eslint/only-throw-error": 1, "@typescript-eslint/promise-function-async": 1 },
+    reports: {
+      "@typescript-eslint/no-floating-promises": 1,
+      "@typescript-eslint/only-throw-error": 1,
+      "@typescript-eslint/promise-function-async": 1,
+    },
     exitCode: 1,
   },
   {
@@ -672,7 +707,9 @@ export const cases: Case[] = [
     isHeavy: true,
     file: "a.ts",
     text: () =>
-      "type T0 = {} | string;\n" + seq(40, i => `type T${i + 1} = [T${i}, T${i}];\n`) + "declare const o: T40;\n`${o}`;\no.join();\n",
+      "type T0 = {} | string;\n" +
+      seq(40, i => `type T${i + 1} = [T${i}, T${i}];\n`) +
+      "declare const o: T40;\n`${o}`;\no.join();\n",
     rules: { "typescript/no-base-to-string": "error" },
     args: typed,
     reports: { "@typescript-eslint/no-base-to-string": 2 },
@@ -685,7 +722,8 @@ export const cases: Case[] = [
     // With the larger stack frames of a debug build the rule gives up on a chain of this length, and reports nothing.
     isHeavy: true,
     file: "a.ts",
-    text: () => `type R = () => R;\ndeclare const a: R;\nexport const x = a${rep("()", 8_000)} && a${rep("()", 8_000)}();\n`,
+    text: () =>
+      `type R = () => R;\ndeclare const a: R;\nexport const x = a${rep("()", 8_000)} && a${rep("()", 8_000)}();\n`,
     rules: { "typescript/prefer-optional-chain": "error" },
     args: typed,
     reports: { "@typescript-eslint/prefer-optional-chain": 1 },
@@ -707,7 +745,8 @@ export const cases: Case[] = [
     name: "a union of 30,000 template literal types, and one of object types",
     isHeavy: true,
     file: "a.ts",
-    text: () => `export type A = ${seq(30_000, i => "`a${number}b" + i + "`", " | ")};\nexport type B = ${seq(30_000, i => `{a: ${i}}`, " | ")};\n`,
+    text: () =>
+      `export type A = ${seq(30_000, i => "`a${number}b" + i + "`", " | ")};\nexport type B = ${seq(30_000, i => `{a: ${i}}`, " | ")};\n`,
     rules: { "typescript/no-duplicate-type-constituents": "error" },
     args: typed,
     reports: {},
@@ -717,7 +756,8 @@ export const cases: Case[] = [
     name: "a class with 30,000 async methods that an interface declares as void",
     isSlow: true,
     file: "a.ts",
-    text: () => `interface I {${seq(30_000, i => `m${i}(): void`, "; ")}}\nexport class A implements I {\n${seq(30_000, i => `async m${i}() {}\n`)}}\n`,
+    text: () =>
+      `interface I {${seq(30_000, i => `m${i}(): void`, "; ")}}\nexport class A implements I {\n${seq(30_000, i => `async m${i}() {}\n`)}}\n`,
     rules: { "typescript/no-misused-promises": "error" },
     args: typed,
     reports: { "@typescript-eslint/no-misused-promises": 30_000 },
@@ -727,7 +767,8 @@ export const cases: Case[] = [
     name: "60,000 properties of one object, each before a ??",
     isSlow: true,
     file: "a.ts",
-    text: () => `declare const o: {${seq(60_000, i => `p${i}: string`, "; ")}};\n${seq(60_000, i => `o.p${i} ?? 1;\n`)}`,
+    text: () =>
+      `declare const o: {${seq(60_000, i => `p${i}: string`, "; ")}};\n${seq(60_000, i => `o.p${i} ?? 1;\n`)}`,
     rules: { "typescript/no-unnecessary-condition": "error" },
     args: typed,
     reports: { "@typescript-eslint/no-unnecessary-condition": 60_000 },
@@ -737,7 +778,8 @@ export const cases: Case[] = [
     name: "a predicate that returns a union of 100,000",
     isHeavy: true,
     file: "a.ts",
-    text: () => `type U = ${seq(100_000, i => `"s${i}"`, " | ")};\ndeclare const a: U[];\n${rep("a.filter(x => x);\n", 16)}`,
+    text: () =>
+      `type U = ${seq(100_000, i => `"s${i}"`, " | ")};\ndeclare const a: U[];\n${rep("a.filter(x => x);\n", 16)}`,
     rules: { "typescript/strict-boolean-expressions": "error" },
     args: typed,
     reports: {},
@@ -757,7 +799,8 @@ export const cases: Case[] = [
     name: "assertions to a union of 8,000",
     isHeavy: true,
     file: "a.ts",
-    text: () => `type U = ${seq(8_000, i => `"s${i}"`, " | ")};\ndeclare const u: U | null, s: string;\n${rep("u as U; u!; s as U;\n", 500)}`,
+    text: () =>
+      `type U = ${seq(8_000, i => `"s${i}"`, " | ")};\ndeclare const u: U | null, s: string;\n${rep("u as U; u!; s as U;\n", 500)}`,
     rules: { "typescript/no-unnecessary-type-assertion": "error" },
     args: typed,
     reports: {},
@@ -767,7 +810,8 @@ export const cases: Case[] = [
     name: "a callback with 200,000 parameters that have defaults",
     isSlow: true,
     file: "a.ts",
-    text: () => `declare function g(cb: (${seq(200_000, i => `p${i}: string`, ", ")}) => void): void;\ng((${seq(200_000, i => `p${i} = ''`, ", ")}) => {});\n`,
+    text: () =>
+      `declare function g(cb: (${seq(200_000, i => `p${i}: string`, ", ")}) => void): void;\ng((${seq(200_000, i => `p${i} = ''`, ", ")}) => {});\n`,
     rules: { "typescript/no-useless-default-assignment": "error" },
     args: typed,
     matches: /no-useless-default-assignment/,
@@ -777,7 +821,8 @@ export const cases: Case[] = [
     name: "a switch over an enum of 12,000 members",
     isSlow: true,
     file: "a.ts",
-    text: () => `enum E {${seq(12_000, i => `M${i}`, ", ")}}\ndeclare const u: E;\nswitch (u) {\n${seq(12_000, i => `case E.M${i}: break;\n`)}}\n`,
+    text: () =>
+      `enum E {${seq(12_000, i => `M${i}`, ", ")}}\ndeclare const u: E;\nswitch (u) {\n${seq(12_000, i => `case E.M${i}: break;\n`)}}\n`,
     rules: { "typescript/no-unsafe-enum-comparison": "error" },
     args: typed,
     reports: {},
@@ -860,16 +905,44 @@ export const cases: Case[] = [
     reports: {},
     exitCode: 0,
   },
-  {
-    name: "type arguments 7,000 deep, six times",
-    isHeavy: true,
-    file: "a.ts",
-    text: () => seq(6, i => `export type A${i} = ${rep("Array<", 7_000)}string${rep(">", 7_000)};\n`),
-    rules: { "typescript/no-deprecated": "error" },
-    args: typed,
-    reports: {},
-    exitCode: 0,
-  },
+  // Up to some depth the types are computed, beyond another the parser refuses the file. Between the two the checker runs
+  // out of stack, and where that is depends on the platform and the build: so every depth, and either end.
+  ...[2_000, 3_000, 4_000, 5_000, 6_000, 6_500, 7_000, 7_500, 8_000].map(
+    (depth): Case => ({
+      name: `type arguments ${depth} deep, six times`,
+      isHeavy: true,
+      file: "a.ts",
+      text: () => seq(6, i => `export type A${i} = ${rep("Array<", depth)}string${rep(">", depth)};\n`),
+      rules: { "typescript/no-deprecated": "error" },
+      args: typed,
+      reports: {},
+      exitCode: [0, 1],
+    }),
+  ),
+  ...[5_000, 6_000, 6_500, 7_000, 7_500].map(
+    (depth): Case => ({
+      name: `tuple types ${depth} deep`,
+      isHeavy: true,
+      file: "a.ts",
+      text: () => `export type A = ${rep("[", depth)}string${rep("]", depth)};\n`,
+      rules: { "typescript/no-deprecated": "error" },
+      args: typed,
+      reports: {},
+      exitCode: [0, 1],
+    }),
+  ),
+  ...[4_000, 8_000, 12_000, 20_000, 40_000].map(
+    (depth): Case => ({
+      name: `${depth} indexed access types in a row`,
+      isHeavy: true,
+      file: "a.ts",
+      text: () => `export type A = string${rep('["length"]', depth)};\n`,
+      rules: { "typescript/no-deprecated": "error" },
+      args: typed,
+      reports: {},
+      exitCode: [0, 1],
+    }),
+  ),
   {
     name: "a regular expression in a variable that 30,000 functions match with",
     isHeavy: true,

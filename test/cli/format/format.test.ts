@@ -454,6 +454,25 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
+    const files = {
+      ".prettierignore": "readme.md\nSUB/\n",
+      ".gitignore": "*.JS\n",
+      "README.md": "#   a\n",
+      "sub/b.md": "#   b\n",
+      "c.js": ugly,
+      "other.md": "#   c\n",
+    };
+    expect(await different(files, [])).toEqual(["other.md"]);
+    // oxfmt does.
+    expect(await different({ ...files, ".oxfmtrc.json": "{}\n" }, [])).toEqual([
+      "README.md",
+      "c.js",
+      "other.md",
+      "sub/b.md",
+    ]);
+  });
+
   describe("a parser that Prettier does not have", () => {
     const files = {
       "a.svelte": '<p   class="a">hi</p>\n',

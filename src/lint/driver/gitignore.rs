@@ -205,11 +205,13 @@ pub(crate) struct Ignores {
     by_extension: FxHashMap<Vec<u8>, Vec<u32>>,
     /// Where the others are.
     others: Vec<u32>,
+    /// Upper and lower case are the same. The patterns are in lower case.
+    ignores_case: bool,
     above: Option<Arc<Ignores>>,
 }
 
 impl Ignores {
-    fn new(directory: &[u8], patterns: Vec<Pattern>, above: Chain) -> Ignores {
+    fn new(directory: &[u8], patterns: Vec<Pattern>, ignores_case: bool, above: Chain) -> Ignores {
         let mut ignores = Ignores {
             directory: directory.to_vec(),
             patterns: Vec::new(),
@@ -217,6 +219,7 @@ impl Ignores {
             by_path: FxHashMap::default(),
             by_extension: FxHashMap::default(),
             others: Vec::new(),
+            ignores_case,
             above,
         };
         for (at, pattern) in patterns.iter().enumerate() {
@@ -293,19 +296,18 @@ fn expand_braces(pattern: &[u8], into: &mut Vec<Vec<u8>>) {
     }
 }
 
-/// `chain` and the patterns in `text`, which are relative to `directory`. `expands_braces`: `{a,b}`
-/// is `a` or `b`, as for oxlint and oxfmt. Git and Prettier take the braces as they are.
-pub(crate) fn with_text(
-    chain: Chain,
-    directory: &[u8],
-    text: &[u8],
-    expands_braces: bool,
-) -> Chain {
+/// `chain` and the patterns in `text`, which are relative to `directory`.
+///
+/// `is_for_oxc`: as oxlint and oxfmt read them: `{a,b}` is `a` or `b`. Otherwise as Prettier does, with the package
+/// `ignore`: the braces are taken as they are, and `readme.md` is `README.md` too.
+pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
     let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
     let mut patterns: Vec<Pattern> = Vec::new();
     for line in lines.filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#")) {
         // The last pattern that matches decides, so one after the other is one or the other.
-        if expands_braces && strings::contains_char(line, b'{') {
+        if !is_for_oxc {
+            patterns.push(Pattern::new(&line.to_ascii_lowercase()));
+        } else if strings::contains_char(line, b'{') {
             let mut expanded = Vec::new();
             expand_braces(line, &mut expanded);
             patterns.extend(expanded.iter().map(|it| Pattern::new(it)));
@@ -316,18 +318,18 @@ pub(crate) fn with_text(
     if patterns.is_empty() {
         return chain;
     }
-    Some(Arc::new(Ignores::new(directory, patterns, chain)))
+    Some(Arc::new(Ignores::new(
+        directory,
+        patterns,
+        !is_for_oxc,
+        chain,
+    )))
 }
 
 /// `chain` and `file`, whose patterns are relative to `directory`.
-pub(crate) fn with_file(
-    chain: Chain,
-    directory: &[u8],
-    file: &[u8],
-    expands_braces: bool,
-) -> Chain {
+pub(crate) fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> Chain {
     match fs::read(file) {
-        Ok(text) => with_text(chain, directory, &text, expands_braces),
+        Ok(text) => with_text(chain, directory, &text, is_for_oxc),
         Err(_) => chain,
     }
 }
@@ -364,23 +366,36 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
     let mut next = chain.as_ref();
     let name = paths::basename(path);
     while let Some(ignores) = next {
-        if let Some(pattern) = paths::inside(&ignores.directory, path)
-            .and_then(|inside| ignores.last_match(inside, name, is_directory))
-        {
-            return !pattern.is_negated;
+        if let Some(inside) = paths::inside(&ignores.directory, path) {
+            let in_lower_case;
+            let (inside, name) =
+                match ignores.ignores_case && inside.iter().any(u8::is_ascii_uppercase) {
+                    true => {
+                        in_lower_case = inside.to_ascii_lowercase();
+                        (&in_lower_case[..], paths::basename(&in_lower_case))
+                    }
+                    false => (inside, name),
+                };
+            if let Some(pattern) = ignores.last_match(inside, name, is_directory) {
+                return !pattern.is_negated;
+            }
         }
         next = ignores.above.as_ref();
     }
     false
 }
 
-/// Whether the file at `path` is ignored, or a directory that it is in: for a file that was not
-/// come to by way of its directories.
-pub(crate) fn is_file_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
-    let directories: Vec<&[u8]> = paths::ancestors(paths::dirname(path)).collect();
+/// Whether the directory at `path` is ignored, or one that it is in.
+pub(crate) fn is_directory_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
+    let directories: Vec<&[u8]> = paths::ancestors(path).collect();
     directories
         .iter()
         .rev()
         .any(|directory| is_ignored(chain, directory, true))
-        || is_ignored(chain, path, false)
+}
+
+/// Whether the file at `path` is ignored, or a directory that it is in: for a file that was not
+/// come to by way of its directories.
+pub(crate) fn is_file_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
+    is_directory_ignored_anywhere(chain, paths::dirname(path)) || is_ignored(chain, path, false)
 }

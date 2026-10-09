@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isASAN, isMacOS, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Duplex, Readable, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 // Aborting a fetch whose request body stream is still uploading must also
 // settle the response side. The failure callback used to return right after
@@ -209,6 +210,137 @@ test.concurrent("abort() errors a fully-buffered fetch response body", async () 
     ac.abort(reason);
     await expect(reader.read()).rejects.toBe(reason);
   }
+});
+
+// Readable.fromWeb() takes the native source away from `res.body` and pulls from it on demand. Over a
+// fully-buffered body that source is a ByteBlobLoader. abort() dropped its bytes, and the next pull then
+// reported a clean end: a truncated download that looked complete.
+//
+// Each test reads `res` after the abort: the abort reaches the body only while its Response is alive.
+describe("abort() fails a Readable.fromWeb(res.body) that still has buffered bytes to read", () => {
+  // Sends the whole body, then closes the connection.
+  async function bufferedBodyServer(size: number) {
+    const sockets = new Set<net.Socket>();
+    const taken = Promise.withResolvers<void>();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.once("data", request => {
+        if (request.toString().startsWith("GET /flush")) {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          return;
+        }
+        socket.on("close", () => taken.resolve());
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${size}\r\nConnection: close\r\n\r\n`);
+        socket.end(Buffer.alloc(size, "x"));
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const origin = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    return {
+      url: `${origin}/body`,
+      // Resolves once the Response holds every byte. A body that is still arriving is a ByteStream instead.
+      async received() {
+        // The client closed the connection, so it has read the whole body.
+        await taken.promise;
+        // Responses leave the HTTP thread in order: this later one arrives after the last chunk of the first.
+        await (await fetch(`${origin}/flush`)).arrayBuffer();
+      },
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  const holders: Record<string, (body: ReadableStream) => Readable> = {
+    "Readable.fromWeb(res.body)": body => Readable.fromWeb(body as any),
+    "Duplex.from(res.body)": body => Duplex.from(body as any),
+  };
+
+  test.concurrent.each(Object.keys(holders))(
+    "%s that has not read yet fails with signal.reason, not 'end'",
+    async name => {
+      using server = await bufferedBodyServer(1024);
+      const controller = new AbortController();
+      const res = await fetch(server.url, { signal: controller.signal });
+      await server.received();
+      const readable = holders[name](res.body!);
+      const settled = new Promise<unknown>(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
+      controller.abort();
+      readable.resume();
+      expect(await settled).toBe(controller.signal.reason);
+      expect(res.status).toBe(200);
+    },
+  );
+
+  test.concurrent("a Readable that is mid-read fails with signal.reason after the bytes it already took", async () => {
+    // More than the first read takes, less than the 256 KiB at which an unread body stops arriving.
+    const size = 128 * 1024;
+    using server = await bufferedBodyServer(size);
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    await server.received();
+    const readable = Readable.fromWeb(res.body as any);
+    let received = 0;
+    await new Promise<void>((resolve, reject) =>
+      readable
+        .once("data", chunk => {
+          readable.pause();
+          received += chunk.length;
+          resolve();
+        })
+        .once("error", reject)
+        .once("end", () => reject(new Error("ended before the first chunk"))),
+    );
+    controller.abort();
+    const outcome = await (async () => {
+      for await (const chunk of readable) received += chunk.length;
+      return "ended";
+    })().catch(error => error);
+    expect(outcome).toBe(controller.signal.reason);
+    expect(received).toBeLessThan(size);
+    expect(res.status).toBe(200);
+  });
+
+  test.concurrent("pipeline() from the Readable rejects", async () => {
+    using server = await bufferedBodyServer(1024);
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    await server.received();
+    const readable = Readable.fromWeb(res.body as any);
+    controller.abort();
+    let written = 0;
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        written += chunk.length;
+        callback();
+      },
+    });
+    const outcome = await pipeline(readable, sink).then(
+      () => "resolved",
+      error => error,
+    );
+    expect(outcome).toBe(controller.signal.reason);
+    expect(written).toBe(0);
+    expect(res.status).toBe(200);
+  });
+
+  // No byte is lost here, so nothing fails: the Readable pulled the whole body before the abort.
+  test.concurrent("a Readable that already holds the whole body still delivers it and ends", async () => {
+    using server = await bufferedBodyServer(1024);
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    await server.received();
+    const readable = Readable.fromWeb(res.body as any);
+    readable.read(0);
+    expect(readable.readableLength).toBe(1024);
+    controller.abort();
+    let received = 0;
+    for await (const chunk of readable) received += chunk.length;
+    expect(received).toBe(1024);
+    expect(res.status).toBe(200);
+  });
 });
 
 // Fetch spec "abort a fetch" step 4 errors the body with the signal's abort reason, so every

@@ -1,0 +1,25 @@
+{
+  "_id": "@binlink-scope/test-native-binlink",
+  "name": "@binlink-scope/test-native-binlink",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "@binlink-scope/test-native-binlink",
+      "version": "1.0.0",
+      "_id": "@binlink-scope/test-native-binlink@1.0.0",
+      "bin": {
+        "test-binlink-scoped-cmd": "./bin/main.js"
+      },
+      "optionalDependencies": {
+        "test-native-binlink-scoped-target": "1.0.0"
+      },
+      "dist": {
+        "integrity": "sha512-t1IJYVu3SueyzsG4Ne3oNdjGjOdIV6aquSvSggCT6iVBPk3bk3Bia/rOVC1cHs+FKsqAIWbBVF68xSgQWp1Yrw==",
+        "shasum": "bef5bdbdb53886720dd44627040d3374c6e94b38",
+        "tarball": "http://localhost:4873/@binlink-scope/test-native-binlink/-/test-native-binlink-1.0.0.tgz"
+      }
+    }
+  }
+}

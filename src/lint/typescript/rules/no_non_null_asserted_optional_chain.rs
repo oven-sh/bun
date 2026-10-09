@@ -10,6 +10,31 @@ const NO_NON_NULL_OPTIONAL_CHAIN: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "You should remove the non-null assertion.");
 
+/// What oxlint 1.80 does: each `!` is reported by itself, where it is, and what only concerns types is seen through, so
+/// that `(a?.b as T)!` is reported too.
+fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNullAssertedOptionalChain>) {
+    let mut inner = operand;
+    while !inner.is_chain_root()
+        && let ExprKind::As { expr, .. }
+        | ExprKind::AsConst(expr)
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::NonNull(expr)
+        | ExprKind::Instantiation { expr, .. } = inner.kind()
+    {
+        inner = expr;
+    }
+    let is_whole_chain = inner.is_chain_root();
+    if !is_whole_chain && inner.chain() == Chain::No {
+        return;
+    }
+    // In `a?.b!.c` the assertion is about `a?.b` where there is an `a`.
+    let last = (is_whole_chain || e.is_chain_root()).then(|| e.span());
+    for assertion in e.inner_non_null_spans().chain(last) {
+        let mark = Span::new(assertion.end.saturating_sub(1), assertion.end);
+        cx.report(mark, NO_NON_NULL_OPTIONAL_CHAIN).suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(mark));
+    }
+}
+
 impl Rule for NoNonNullAssertedOptionalChain {
     const META: Meta = Meta::typescript("no-non-null-asserted-optional-chain", Kind::Problem)
         .has_suggestions()
@@ -25,6 +50,9 @@ impl Rule for NoNonNullAssertedOptionalChain {
             let ExprKind::NonNull(operand) = e.kind() else {
                 return;
             };
+            if cx.file().language().is_oxlint {
+                return check_as_oxlint(e, operand, cx);
+            }
             let remove_assertion = |at: Expr<'a>, assertion: Span| {
                 let end = assertion.end;
                 cx.report(at, NO_NON_NULL_OPTIONAL_CHAIN)

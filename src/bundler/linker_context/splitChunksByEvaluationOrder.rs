@@ -21,7 +21,7 @@ struct Group {
     last_file_entry_id: u32,
     /// How many runs of files every order has back to back, in the same order.
     runs_len: u32,
-    has_import_cycle: bool,
+    stays_whole: bool,
 }
 
 /// Files share a chunk when the same entry points load them, and run them back to back in the same order:
@@ -96,7 +96,7 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
             last_file: NONE,
             last_file_entry_id: NONE,
             runs_len: 0,
-            has_import_cycle: false,
+            stays_whole: false,
         });
     }
     if groups.is_empty() {
@@ -140,13 +140,23 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         }
     }
 
-    // A chunk imports another for the bindings that it uses. In an import cycle that is not the order in
-    // which the files run, so the files of such a group stay together.
+    // A chunk imports another for the bindings that it uses, not for every `import` of its files. In an import
+    // cycle that is not the order in which the files run. And a chunk does not wait for the top-level await of
+    // a chunk that it does not import.
     let is_cyclic = find_cyclic_files(c);
+    let flags = c.graph.meta.items_flags();
     let mut entries_to_compare = AutoBitSet::init_empty(entry_points_len)?;
+    let mut inits: Vec<u32> = Vec::new();
     for (id, &group) in group_of_file.iter().enumerate() {
-        if is_tracked[id] && is_cyclic[id] {
-            groups[group as usize].has_import_cycle = true;
+        if !is_tracked[id] {
+            continue;
+        }
+        // The `import` of a wrapped file is a call where the `import` is, ahead of the files that the next
+        // `import` runs. The `import` of a chunk runs ahead of all the code of a chunk.
+        inits.clear();
+        c.top_level_inits(id as IndexInt, &mut inits);
+        if is_cyclic[id] || flags[id].is_async_or_has_async_dependency || !inits.is_empty() {
+            groups[group as usize].stays_whole = true;
         }
     }
     // The chunk of an entry point whose file is in another chunk imports its chunks in the order of that file.
@@ -155,10 +165,10 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         let mut entry_ids = file_entry_bits[group.source_index as usize].iterator::<true, true>();
         while let Some(entry_id) = entry_ids.next() {
             let id = entry_points[entry_id] as usize;
-            group.has_import_cycle |= is_cyclic[id] && file_entry_bits[id].count() >= 2;
+            group.stays_whole |= is_cyclic[id] && file_entry_bits[id].count() >= 2;
         }
     }
-    for group in groups.iter().filter(|group| !group.has_import_cycle) {
+    for group in groups.iter().filter(|group| !group.stays_whole) {
         entries_to_compare.set_union(&group.load_class);
     }
 
@@ -197,7 +207,7 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         for &source_index in &order.files {
             let id = source_index as usize;
             let group = &mut groups[group_of_file[id] as usize];
-            if group.has_import_cycle || !group.load_class.is_set(order.entry_id as usize) {
+            if group.stays_whole || !group.load_class.is_set(order.entry_id as usize) {
                 continue;
             }
             if group.last_file_entry_id != order.entry_id {
@@ -217,7 +227,7 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
     for order in &orders {
         for &source_index in &order.files {
             let group = &mut groups[group_of_file[source_index as usize] as usize];
-            if group.reference_entry_id == order.entry_id && !group.has_import_cycle {
+            if group.reference_entry_id == order.entry_id && !group.stays_whole {
                 group.runs_len += !follows_previous[source_index as usize] as u32;
             }
         }

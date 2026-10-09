@@ -2555,6 +2555,43 @@ describe("bundler", () => {
     ],
   });
 
+  // five.js imports seven.js and uses nothing from it, so a chunk of five.js would not import a chunk of seven.js,
+  // and would not wait for its await. The files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersTopLevelAwait", {
+    files: {
+      "/a.js": `import "./six.js"; import "./five.js"; console.log("a");`,
+      "/b.js": `import "./five.js"; import "./six.js"; console.log("b");`,
+      "/five.js": `import "./seven.js"; console.log("five");`,
+      "/six.js": `console.log("six");`,
+      "/seven.js": `await null; console.log("seven");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(3);
+    },
+    run: { file: "/out/a.js", stdout: "six\nseven\nfive\na" },
+  });
+
+  // m1.js runs five.cjs where it imports it, ahead of six.js. A chunk of m1.js would import a chunk of six.js
+  // ahead of all its code. The files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersImportOfWrappedFile", {
+    files: {
+      "/m0.js": `import "./four.js"; import "./m1.js"; console.log("m0");`,
+      "/m1.js": `import five from "./five.cjs"; import "./six.js"; import "./four.js"; console.log("m1", five);`,
+      "/four.js": `console.log("four");`,
+      "/five.cjs": `console.log("five"); module.exports = 5;`,
+      "/six.js": `console.log("six");`,
+    },
+    entryPoints: ["/m0.js", "/m1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/m0.js", stdout: "four\nfive\nsix\nm1 5\nm0" },
+  });
+
   // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
   itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
     files: {

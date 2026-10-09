@@ -580,7 +580,7 @@ import "./a.ts";
 
 </CodeGroup>
 
-When `a.ts` and `b.ts` have side effects, Bun writes them to separate chunks, and each entrypoint imports the chunks in its own order. Modules that every entrypoint runs one after the other, in the same order, still share a chunk. So do modules that only declare, whatever the order of the imports, and modules in an import cycle.
+When `a.ts` and `b.ts` have side effects, Bun writes them to separate chunks, and each entrypoint imports the chunks in its own order. Modules that every entrypoint runs one after the other, in the same order, still share a chunk. So do modules that only declare, whatever the order of the imports, modules in an import cycle, modules that reach a top-level `await`, and modules that import a CommonJS module.
 
 The same applies to two `import()` targets: the target that loads first decides the order, as it does when the source runs unbundled. When both calls are in flight at once, the host decides which target evaluates first. If the order matters, `await` the first `import()` before you start the second.
 

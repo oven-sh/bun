@@ -67,11 +67,15 @@ impl ValidTypeof {
             }
             ExprKind::Ident(name) if name.is("undefined") && ast_utils::is_global_reference(sibling) => {
                 let message = if self.require_string_literals { NOT_STRING } else { INVALID_VALUE };
-                cx.report(sibling, message).suggest_with(
-                    SUGGEST_STRING,
-                    &[("type", "undefined".as_bytes())],
-                    |fixer| fixer.replace(sibling, "\"undefined\""),
-                );
+                let report = cx.report(sibling, message);
+                // What ESLint suggests is a fix in oxlint.
+                if cx.language().is_oxlint {
+                    report.fix(|fixer| fixer.replace(sibling, "\"undefined\""));
+                    return;
+                }
+                report.suggest_with(SUGGEST_STRING, &[("type", "undefined".as_bytes())], |fixer| {
+                    fixer.replace(sibling, "\"undefined\"")
+                });
             }
             _ => {
                 if self.require_string_literals && !is_typeof_expression(sibling) {

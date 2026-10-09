@@ -45,12 +45,17 @@ fn check_annotation<'a>(value: impl FnOnce() -> Option<Expr<'a>>, ty: Option<Typ
         && let Some(value) = value()
         && is_same_literal(value, ty)
     {
-        cx.report(ty, VARIABLE_CONST_ASSERTION).suggest(VARIABLE_SUGGEST, |fixer| {
+        let fix = |fixer: Fixer<'a>| {
             [
                 fixer.remove(ty.annotation_span()),
                 fixer.insert_after(value, " as const"),
             ]
-        });
+        };
+        // What typescript-eslint suggests is a fix in oxlint.
+        match cx.language().is_oxlint {
+            true => cx.report(ty, VARIABLE_CONST_ASSERTION).fix(fix),
+            false => cx.report(ty, VARIABLE_CONST_ASSERTION).suggest(VARIABLE_SUGGEST, fix),
+        };
     }
 }
 

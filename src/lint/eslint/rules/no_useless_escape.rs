@@ -64,10 +64,13 @@ fn report<'a>(
         true => REMOVE_ESCAPE_DO_NOT_KEEP_SEMANTICS,
         false => REMOVE_ESCAPE,
     };
-    let report = cx
-        .report(range, UNNECESSARY_ESCAPE)
-        .data("character", character)
-        .suggest(remove, |fixer| fixer.remove(range));
+    let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character);
+    // What ESLint suggests is a fix in oxlint.
+    if cx.language().is_oxlint {
+        report.fix(|fixer| fixer.remove(range));
+        return;
+    }
+    let report = report.suggest(remove, |fixer| fixer.remove(range));
     if suggests_escaping_backslash {
         report.suggest(ESCAPE_BACKSLASH, |fixer| fixer.insert_before(range, "\\"));
     }

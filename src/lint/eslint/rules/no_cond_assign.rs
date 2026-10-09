@@ -30,6 +30,14 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     }
 }
 
+/// oxlint points at the operator.
+fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
+    match assignment.operator_span() {
+        Some(operator) if cx.language().is_oxlint => operator,
+        _ => assignment.span(),
+    }
+}
+
 impl NoCondAssign {
     /// `"always"`: an assignment anywhere in a test.
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -44,7 +52,7 @@ impl NoCondAssign {
         if let Some(Some(kind)) = kind
             && !utils::is_assignment_target(e)
         {
-            cx.report(e, UNEXPECTED).data("type", kind);
+            cx.report(place(e, cx), UNEXPECTED).data("type", kind);
         }
     }
 
@@ -58,9 +66,14 @@ impl NoCondAssign {
         }
         // ESLint wants two pairs around every test but that of a `for`. One of them is part of an
         // `if`, a `while` and a `do`, and none is part of a conditional expression.
-        let needed = if matches!(node, Node::Expr(_)) { 2 } else { 1 };
+        let needed = match node {
+            // oxlint sees through the parentheses there.
+            Node::Expr(_) if cx.language().is_oxlint => usize::MAX,
+            Node::Expr(_) => 2,
+            _ => 1,
+        };
         if test.parens().len() < needed {
-            cx.report(test, MISSING);
+            cx.report(place(test, cx), MISSING);
         }
     }
 }

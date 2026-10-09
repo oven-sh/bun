@@ -92,7 +92,25 @@ const OPTIONS: [&[u8]; 28] = [
     b"vueIndentScriptAndStyle",
 ];
 
-/// Options by name, with their values as they are written in JSON, a string without its quotes.
+/// Those of [`OPTIONS`] whose value is a string.
+const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
+    b"parser",
+    b"endOfLine",
+    b"quoteProps",
+    b"trailingComma",
+    b"arrowParens",
+    b"objectWrap",
+    b"experimentalOperatorPosition",
+    b"embeddedLanguageFormatting",
+    b"proseWrap",
+    b"htmlWhitespaceSensitivity",
+];
+
+/// What else there is at the top of a configuration file of Prettier.
+const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
+
+/// Options by name, with their values as they are written in JSON, a string without its quotes. The string of an option
+/// that takes none has them, so that `"80"` is not 80.
 type Settings = Vec<(Vec<u8>, Vec<u8>)>;
 
 struct Pattern {
@@ -116,6 +134,8 @@ pub(crate) struct Config {
     overrides: Vec<Override>,
     /// It is oxfmt's, whose lines are 100 wide unless it says otherwise.
     is_oxfmt: bool,
+    /// It names a plugin that is not built in, whose options are not known here.
+    names_other_plugins: bool,
     /// `ignorePatterns` of oxfmt.
     pub(crate) ignores: Chain,
 }
@@ -178,6 +198,10 @@ pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports"
 }
 
+fn is_built_in(plugin: &Json) -> bool {
+    plugin.as_str().is_some_and(is_built_in_plugin)
+}
+
 /// `value` as Prettier shows it in a warning: `["a", 1]`, `{ a: true }`.
 fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
     let separate = |out: &mut Vec<u8>, index: usize| {
@@ -228,11 +252,17 @@ fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
     text
 }
 
-fn settings(json: &Json) -> Settings {
+fn settings(json: &Json, is_oxfmt: bool) -> Settings {
     let mut settings = Vec::new();
     for (name, value) in json.as_object().unwrap_or_default() {
+        let is_option = OPTIONS.contains(&&name[..]);
         let text = match value {
+            Json::String(text) if is_option && !OPTIONS_WITH_STRINGS.contains(&&name[..]) => {
+                [b"\"", &text[..], b"\""].concat()
+            }
             Json::String(text) => text.clone(),
+            // For oxfmt it is as good as not there.
+            Json::Null if is_option && !is_oxfmt => b"null".to_vec(),
             Json::Bool(value) => if *value { &b"true"[..] } else { b"false" }.to_vec(),
             // `Infinity` is not JSON. A YAML file can have it.
             Json::Number(number) if *number >= 65535.0 => b"65535".to_vec(),
@@ -279,7 +309,13 @@ fn settings(json: &Json) -> Settings {
                 continue;
             }
             // A feature of oxfmt that is configured, and so is on.
-            Json::Object(_) => b"true".to_vec(),
+            Json::Object(_) if is_oxfmt => b"true".to_vec(),
+            // To be shown in a warning.
+            Json::Array(_) | Json::Object(_) if !is_oxfmt && !OTHER_KEYS.contains(&&name[..]) => {
+                let mut text = Vec::new();
+                write_json(&mut text, value);
+                text
+            }
             _ => continue,
         };
         settings.push((name.clone(), text));
@@ -338,16 +374,20 @@ impl Config {
         .collect();
         Config {
             path: path.to_vec(),
-            settings: settings(json),
+            settings: settings(json, is_oxfmt),
             overrides: (overrides.iter())
                 .map(|it| Override {
                     files: patterns(it.get(b"files"), is_oxfmt),
                     excluded: patterns(it.get(b"excludeFiles"), is_oxfmt),
-                    settings: it.get(b"options").map(settings).unwrap_or_default(),
+                    settings: (it.get(b"options"))
+                        .map(|it| settings(it, is_oxfmt))
+                        .unwrap_or_default(),
                     is_oxfmt,
                 })
                 .collect(),
             is_oxfmt,
+            names_other_plugins: (json.get(b"plugins").and_then(Json::as_array))
+                .is_some_and(|it| !it.iter().all(is_built_in)),
             ignores: gitignore::with_text(None, paths::dirname(path), &ignored.join(&b'\n'), true),
         }
     }
@@ -604,7 +644,26 @@ impl<'c> Configs<'c> {
         if matches!(json, Json::Null) {
             return Ok(None);
         }
-        let is_built_in = |it: &Json| it.as_str().is_some_and(is_built_in_plugin);
+        if json
+            .get(b"plugins")
+            .is_some_and(|it| it.as_array().is_none())
+        {
+            return Err(fail(b"\"plugins\" is not an array."));
+        }
+        let is_override = |it: &Json| match it.get(b"files") {
+            Some(Json::String(_)) => true,
+            Some(files) => (files.as_array())
+                .is_some_and(|it| it.iter().all(|it| matches!(it, Json::String(_)))),
+            None => false,
+        };
+        if json
+            .get(b"overrides")
+            .is_some_and(|it| !it.as_array().is_some_and(|it| it.iter().all(is_override)))
+        {
+            return Err(fail(
+                b"\"overrides\" is not an array of objects with \"files\", a pattern or an array of patterns.",
+            ));
+        }
         if json
             .get(b"plugins")
             .and_then(Json::as_array)
@@ -854,6 +913,11 @@ impl<'c> Configs<'c> {
             let _ = resolved.options.set(b"sortPackageJson", b"true");
         }
         let mut sort_imports: Option<Vec<u8>> = None;
+        // Prettier knows the options of the plugins that it has loaded.
+        let knows_all_options = self.flavor == Flavor::Prettier
+            && !config.is_some_and(|it| it.names_other_plugins)
+            && (self.options.plugins.iter()).all(|it| is_built_in_plugin(it));
+        let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         for (name, value) in all {
             match name {
                 // An override of oxfmt changes the keys that it has. `experimentalSortImports` is the old name.
@@ -896,13 +960,19 @@ impl<'c> Configs<'c> {
                         [b"Invalid ", name, b" value: ", value, b"."].concat(),
                     ));
                 }
+                name if knows_all_options
+                    && !OPTIONS.contains(&name)
+                    && !OTHER_KEYS.contains(&name) =>
+                {
+                    unknown.push((name, value));
+                }
                 _ => {}
             }
         }
         for name in &self.options.plugins {
             sort.add_plugin(name);
         }
-        for (name, value) in sort.of_plugins_not_named() {
+        for (name, value) in sort.of_plugins_not_named().chain(unknown) {
             // A string and what else there is in JSON are told apart by their looks here.
             let json = json::parse(value).filter(|it| !matches!(it, Json::String(_)));
             let mut shown = Vec::new();

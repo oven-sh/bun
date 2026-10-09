@@ -492,6 +492,47 @@ describe.concurrent("bun format", () => {
     }
   });
 
+  test.each([
+    ['{ "semi": null }', "Invalid semi value: null."],
+    ['{ "semi": "true" }', 'Invalid semi value: "true".'],
+    ['{ "printWidth": "80" }', 'Invalid printWidth value: "80".'],
+    ['{ "endOfLine": null }', "Invalid endOfLine value: null."],
+    ['{ "plugins": "x" }', '"plugins" is not an array.'],
+    ['{ "overrides": 1 }', '"overrides" is not an array of objects with "files"'],
+    ['{ "overrides": [{ "options": {} }] }', '"overrides" is not an array of objects with "files"'],
+    ['{ "overrides": [{ "files": 1 }] }', '"overrides" is not an array of objects with "files"'],
+  ])("a .prettierrc that Prettier cannot use is an error: %s", async (config, message) => {
+    const result = await format({ ".prettierrc": config, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(ugly);
+    expect(result.stderr).toContain(message);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("an option that Prettier does not know is ignored with its warning, unless a plugin may know it", async () => {
+    const unknown = '"nonsense": 1, "other": [1, "a"], "tailwindConfig": "x", "$schema": "y"';
+    const result = await format({ ".prettierrc": `{ ${unknown} }`, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(formatted);
+    expect(result.stderr).toContain("[warn] Ignored unknown option { nonsense: 1 }.");
+    expect(result.stderr).toContain('[warn] Ignored unknown option { other: [1, "a"] }.');
+    expect(result.stderr).toContain('[warn] Ignored unknown option { tailwindConfig: "x" }.');
+    expect(result.stderr).not.toContain("$schema");
+    expect(result.exitCode).toBe(0);
+    const withPlugin = await format(
+      { ".prettierrc": `{ "plugins": ["prettier-plugin-tailwindcss"], ${unknown} }`, "a.js": ugly },
+      ["a.js"],
+      { reads: ["a.js"] },
+    );
+    expect(withPlugin.files["a.js"]).toBe(formatted);
+    expect(withPlugin.stderr).not.toContain("Ignored unknown option");
+    // oxfmt says nothing about keys that it does not know, and null is as good as nothing.
+    const oxfmt = await format({ ".oxfmtrc.json": '{ "semi": null, "nonsense": 1 }\n', "a.js": ugly }, ["a.js"], {
+      reads: ["a.js"],
+    });
+    expect(oxfmt.files["a.js"]).toBe(formatted);
+    expect(oxfmt.stderr).not.toContain("nonsense");
+    expect(oxfmt.exitCode).toBe(0);
+  });
+
   describe("a parser that Prettier does not have", () => {
     const files = {
       "a.svelte": '<p   class="a">hi</p>\n',

@@ -308,4 +308,29 @@ describe("SQLite URL Parsing Matrix", () => {
       expect(sql.options.adapter).toBe("postgres");
     });
   });
+
+  describe("a URL of another implementation", () => {
+    function foreignURL(input: string) {
+      const { href, protocol, hostname, pathname } = new URL(input);
+      return { href, protocol, hostname, pathname } as URL;
+    }
+
+    test.each([
+      ["new SQL(url)", (url: URL) => new SQL(url)],
+      ["new SQL({ url })", (url: URL) => new SQL({ url })],
+    ])("%s", async (_, connect) => {
+      await using postgres = connect(foreignURL("postgres://user:pass@example.com:1234/db"));
+      const { adapter, hostname, port, username, database } = postgres.options as Bun.SQL.PostgresOrMySQLOptions;
+      expect({ adapter, hostname, port, username, database }).toEqual({
+        adapter: "postgres",
+        hostname: "example.com",
+        port: 1234,
+        username: "user",
+        database: "db",
+      });
+
+      await using sqlite = connect(foreignURL("sqlite:///tmp/test.db?mode=memory"));
+      expect(sqlite.options.adapter).toBe("sqlite");
+    });
+  });
 });

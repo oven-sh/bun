@@ -1,7 +1,6 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
@@ -146,13 +145,11 @@ impl Collection {
 
     pub(crate) fn run_one_completed(
         &mut self,
-        global_this: &JSGlobalObject,
+        _: &JSGlobalObject,
         _: Option<JSValue>,
         data: &RefDataValue,
     ) -> JsResult<()> {
         let _g = group::begin();
-
-        let _formatter = make_formatter(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
             RefDataValue::Collection { active_scope } => *active_scope,
@@ -186,8 +183,6 @@ impl Collection {
         if !matches!(data, RefDataValue::Start) {
             this.run_one_completed(global_this, None, data)?;
         }
-
-        let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
@@ -255,8 +250,10 @@ impl Collection {
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
-        if !matches!(data, RefDataValue::Collection { .. }) {
-            // Not of the describe() callback that happens to be running.
+        // Not of the describe() callback that happens to be running, or no such callback is running.
+        if !matches!(data, RefDataValue::Collection { .. })
+            || core::ptr::eq(self.active_scope.as_ptr(), &raw const *self.root_scope)
+        {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         }
         self.active_scope_mut().failed = true;

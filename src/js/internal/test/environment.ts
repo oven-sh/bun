@@ -147,9 +147,9 @@ function catchWindowErrors(win: any, properties: Properties) {
     return addEventListener.$apply(this, args);
   });
   properties.$get("removeEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
-    if (args[0] === "error") {
-      if (listenersOfFile) listenersOfFile--;
-      else if (listenersOfPreloads) listenersOfPreloads--;
+    if (args[0] === "error" && listenersOfPreloads + listenersOfFile > 0) {
+      if (isInPreload()) listenersOfPreloads--;
+      else listenersOfFile--;
     }
     return removeEventListener.$apply(this, args);
   });

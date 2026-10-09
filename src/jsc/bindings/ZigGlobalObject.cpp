@@ -2990,6 +2990,40 @@ JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
     return uncheckedDowncast<JSFunction>(result);
 }
 
+// `@natives`: what `Blob`, `URL`, `navigator`, ... are in src/js (nativeGlobals in src/codegen/replacements.ts), whatever script made of globalThis's.
+class NativeGlobals final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence;
+
+    DECLARE_INFO;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NativeGlobals, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static NativeGlobals* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* object = new (NotNull, JSC::allocateCell<NativeGlobals>(vm)) NativeGlobals(vm, structure);
+        object->finishCreation(vm);
+        // A Structure per property would be one per global object, and each would invalidate the code optimized for the one before.
+        object->convertToDictionary(vm);
+        return object;
+    }
+
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+
+private:
+    NativeGlobals(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3038,6 +3072,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), NativeGlobals::create(vm, this), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     addStaticGlobals(staticGlobals.mutableSpan());
 
     // TODO: most/all of these private properties can be made as static globals.
@@ -4820,6 +4855,34 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
+
+const JSC::ClassInfo NativeGlobals::s_info = { "NativeGlobals"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NativeGlobals) };
+
+bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObject* lexicalGlobalObject, JSC::PropertyName propertyName, JSC::PropertySlot& slot)
+{
+    if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
+        return true;
+
+    const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
+    if (!entry)
+        return false;
+
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::JSGlobalObject* globalObject = object->globalObject();
+    char* fields = std::bit_cast<char*>(globalObject);
+    JSValue value;
+    if (entry->attributes() & PropertyAttribute::CellProperty)
+        value = std::bit_cast<JSC::LazyCellProperty*>(fields + entry->lazyCellPropertyOffset())->get(globalObject);
+    else if (entry->attributes() & PropertyAttribute::ClassStructure)
+        value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);
+    else if (entry->attributes() & PropertyAttribute::PropertyCallback)
+        value = entry->lazyPropertyCallback()(vm, globalObject);
+    if (!value)
+        return false;
+
+    object->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    return Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot);
+}
 
 } // namespace Zig
 

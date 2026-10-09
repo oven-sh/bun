@@ -711,6 +711,8 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// Until `TestCommand::run` starts the runner: the module of the file may still register tests.
+    pub(crate) is_loading: bool,
     /// Has no callback, and runs after everything of the file: see `defer_to_file_end`.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
@@ -751,6 +753,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
         }
@@ -1712,8 +1715,8 @@ impl RunTestsTask {
         let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
-        // Ticked beneath script, as by `Bun.build()` for a plugin's `setup()`: the results stay queued for `TestCommand::run`'s loop.
-        if this.global_this.vm().is_entered() {
+        // Ticked beneath script, as by `Bun.build()` for a plugin's `setup()`, or while the file loads: the results stay queued for `TestCommand::run`.
+        if this.global_this.vm().is_entered() || strong.get().is_loading {
             return Ok(());
         }
         if let Err(e) = BunTest::run(&strong, &this.global_this) {

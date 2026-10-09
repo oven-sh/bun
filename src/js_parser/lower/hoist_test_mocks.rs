@@ -39,6 +39,25 @@ pub(crate) enum MockHoistOrder {
     InPlace,
 }
 
+/// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`.
+pub(crate) fn drop_namespace_of_lowered_callee(symbols: &[js_ast::Symbol], callee: &mut Expr) {
+    let ExprData::EImportIdentifier(import) = callee.data else {
+        return;
+    };
+    let symbol = &symbols[import.ref_.inner_index() as usize];
+    // A name of another block of a TypeScript namespace has an alias too, and keeps its `this`.
+    if import.was_originally_identifier()
+        && symbol.kind == js_ast::symbol::Kind::Import
+        && symbol.namespace_alias.is_some()
+    {
+        *callee = Expr {
+            data: crate::prefill::data::ZERO,
+            loc: callee.loc,
+        }
+        .join_with_comma(*callee);
+    }
+}
+
 impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEMA> {
     fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
@@ -305,25 +324,6 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             },
             loc,
         )
-    }
-
-    /// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`.
-    pub(crate) fn drop_namespace_of_lowered_callee(&self, callee: &mut Expr) {
-        let ExprData::EImportIdentifier(import) = callee.data else {
-            return;
-        };
-        let symbol = &self.symbols[import.ref_.inner_index() as usize];
-        // A name of another block of a TypeScript namespace has an alias too, and keeps its `this`.
-        if import.was_originally_identifier()
-            && symbol.kind == js_ast::symbol::Kind::Import
-            && symbol.namespace_alias.is_some()
-        {
-            *callee = Expr {
-                data: crate::prefill::data::ZERO,
-                loc: callee.loc,
-            }
-            .join_with_comma(*callee);
-        }
     }
 
     /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Returns whether it visited the first argument.

@@ -183,3 +183,16 @@ test("a URL of another implementation is a URL", async () => {
   expect(request.path).toBe("/path?query");
   request.destroy();
 });
+
+test("does not read URL from globalThis", async () => {
+  const { URL } = globalThis;
+  globalThis.URL = class {} as typeof URL;
+  try {
+    await withEchoServer(async (http, origin) => {
+      const [response] = await once(http.get(origin + "/path?query"), "response");
+      expect(await text(response)).toBe("/path?query  abab");
+    });
+  } finally {
+    globalThis.URL = URL;
+  }
+});

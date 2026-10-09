@@ -1,8 +1,8 @@
 //! `// @vitest-environment jsdom`, `[test] environment`, `--environment`; src/js/internal/test/environment.ts makes the window.
 
 use super::jest::Jest;
-use bun_core::Output;
 use bun_core::lexer::{self, end_of_run};
+use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings::{self, CodePoint};
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
@@ -271,12 +271,21 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
             };
             let _protected = result.protected();
             promise.set_handled(global.vm());
-            let waited = vm
-                .event_loop_ref()
-                .wait_at_top_level(|| promise.status() != js_promise::Status::Pending);
+            // As long as a hook has. Looked at whenever the loop wakes up: nothing is armed for it.
+            let timeout = Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
+            let deadline = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout.into());
+            let waited = vm.event_loop_ref().wait_at_top_level(|| {
+                promise.status() != js_promise::Status::Pending
+                    || (timeout != 0
+                        && Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline))
+            });
             if let Err(nothing_left @ TopLevelWaitError::NothingLeft) = waited {
                 global.create_error_instance(format_args!(
                     "The test environment never finished closing\nnote: {nothing_left}"
+                ))
+            } else if waited.is_ok() && promise.status() == js_promise::Status::Pending {
+                global.create_error_instance(format_args!(
+                    "The test environment did not finish closing within {timeout}ms"
                 ))
             } else if promise.status() == js_promise::Status::Rejected {
                 promise.result(global.vm())

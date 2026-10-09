@@ -1338,12 +1338,18 @@ pub trait SysErrorJsc {
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
+    #[cold]
+    #[inline(never)]
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
+    #[cold]
+    #[inline(never)]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
     }
+    #[cold]
+    #[inline(never)]
     fn throw(&self, global: &JSGlobalObject) -> JsError {
         global.throw_value(<Self as SysErrorJsc>::to_js(self, global))
     }

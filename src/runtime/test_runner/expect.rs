@@ -1610,7 +1610,7 @@ impl Expect {
         silent: bool,
     ) -> JsResult<bool> {
         // call the custom matcher implementation
-        let mut result = Pass::once(global_this, Asked::Matcher, &mut || {
+        let mut result = Pass::once_inline(global_this, Asked::Matcher, || {
             matcher_fn.call(global_this, ExpectMatcherContext { flags, parent: parent.cloned() }.to_js(global_this), args)
         })?;
         // support for async matcher results

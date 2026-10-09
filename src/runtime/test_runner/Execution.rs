@@ -176,6 +176,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) pending_matchers: u32,
     /// The active entry waits for `pending_matchers` only.
     pub(crate) callback_done: bool,
+    /// The names that `Snapshots::add_count` has counted for this run of the entries, if another one may follow.
+    pub(crate) counted_snapshots: Vec<Box<[u8]>>,
 }
 
 impl ExecutionSequence {
@@ -202,6 +204,7 @@ impl ExecutionSequence {
             context: None,
             pending_matchers: 0,
             callback_done: false,
+            counted_snapshots: Vec::new(),
         }
     }
 
@@ -884,6 +887,14 @@ impl Execution {
             }
         }
 
+        // Snapshot counters are keyed by full test name and incremented on every
+        // toMatchSnapshot() call. Without this, retries / repeats would
+        // increment the counter to N on attempt N and look for a key that does
+        // not exist (https://github.com/oven-sh/bun/issues/23705).
+        if let Some(runner) = super::jest::Jest::runner() {
+            runner.snapshots.undo_counts(&sequence.counted_snapshots);
+        }
+
         // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence {
             attempt: sequence.attempt.wrapping_add(1),
@@ -895,17 +906,6 @@ impl Execution {
                 sequence.remaining_repeat_count,
             )
         };
-
-        // Snapshot counters are keyed by full test name and incremented on every
-        // toMatchSnapshot() call. Without this reset, retries / repeats would
-        // increment the counter to N on attempt N and look for a key that does
-        // not exist (https://github.com/oven-sh/bun/issues/23705).
-        // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
-        // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.rs.
-        if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.reset_counts();
-        }
     }
 
     pub(crate) fn handle_uncaught_exception(

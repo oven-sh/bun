@@ -257,14 +257,29 @@ pub(crate) enum Asked {
     Poll,
 }
 
-/// One run of the body of a matcher. It lives on the stack of the call that runs the body, where the collector sees `journal`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Role {
+    /// Of the call that runs the body of a matcher.
+    Matcher,
+    /// Around the call that runs a matcher again.
+    Replaying,
+    /// Of a function that returns to user code what it finds, so that it cannot wait for a promise.
+    Barrier,
+}
+
+/// One run of the body of a matcher. It lives on the stack of the call that runs the body, where the collector sees its values.
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
-    /// An array of what the body has asked for so far, two elements each: `Asked` and whether it was thrown, and the
-    /// value. Empty before the first. Of `replaying()`: the `ExpectDeferred`. Of `barrier()`: null.
-    journal: Cell<JSValue>,
-    /// How many elements of `journal` the body has come by.
+    role: Role,
+    /// How many answers the body has come by.
     cursor: Cell<u32>,
+    /// Four bits for each of `recent`: `Asked`, and whether it was thrown.
+    recent_kinds: Cell<u32>,
+    /// `Role::Matcher`: an array of the answers so far, two elements each: as in `recent_kinds`, and the value. Empty
+    /// until the matcher has to wait or `recent` is full: most matchers never wait. `Role::Replaying`: the `ExpectDeferred`.
+    journal: Cell<JSValue>,
+    /// The answers so far, while there is no `journal`.
+    recent: [Cell<JSValue>; Pass::RECENT],
 }
 
 /// Until it is dropped, its `Pass` is the one that [`Pass::once`] records for.
@@ -278,28 +293,31 @@ impl Drop for EnteredPass<'_> {
 }
 
 impl Pass {
+    const RECENT: usize = 4;
+
     #[inline]
-    fn with_journal(journal: JSValue) -> Pass {
+    fn new(role: Role, journal: JSValue) -> Pass {
         Pass {
             outer: Cell::new(core::ptr::null()),
-            journal: Cell::new(journal),
+            role,
             cursor: Cell::new(0),
+            recent_kinds: Cell::new(0),
+            journal: Cell::new(journal),
+            recent: [const { Cell::new(JSValue::ZERO) }; Self::RECENT],
         }
     }
 
     #[inline]
     fn of_matcher() -> Pass {
-        Self::with_journal(JSValue::ZERO)
+        Self::new(Role::Matcher, JSValue::ZERO)
     }
 
-    /// Around the call that runs the matcher of `deferred` again.
     fn replaying(deferred: JSValue) -> Pass {
-        Self::with_journal(deferred)
+        Self::new(Role::Replaying, deferred)
     }
 
-    /// Of a function that returns to user code what it finds, so that it cannot wait for a promise.
     pub(crate) fn barrier() -> Pass {
-        Self::with_journal(JSValue::NULL)
+        Self::new(Role::Barrier, JSValue::ZERO)
     }
 
     #[inline]
@@ -315,73 +333,126 @@ impl Pass {
     }
 
     /// The pass of the matcher whose body is running. `None`: what is running cannot wait.
+    #[inline]
     fn current<'a>() -> Option<&'a Pass> {
         // SAFETY: an `EnteredPass` borrows what `innermost()` points to, on a frame below this one.
-        unsafe { Self::innermost().get().as_ref() }.filter(|pass| !pass.journal.get().is_null())
+        unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
     }
 
     /// The `ExpectDeferred` whose matcher this pass runs again.
+    #[inline]
     fn replayed(&self) -> Option<JSValue> {
         // SAFETY: as in `current`.
-        let deferred = unsafe { self.outer.get().as_ref() }?.journal.get();
-        ExpectDeferred::from_js(deferred).map(|_| deferred)
-    }
-
-    fn journal(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.journal.get().is_empty() {
-            let recorded = self.replayed().and_then(js::journal_get_cached);
-            self.journal.set(match recorded {
-                Some(journal) => journal,
-                None => JSValue::create_empty_array(global, 0)?,
-            });
-        }
-        Ok(self.journal.get())
+        unsafe { self.outer.get().as_ref() }
+            .filter(|outer| outer.role == Role::Replaying)
+            .map(|outer| outer.journal.get())
     }
 
     /// What `ask()`, which runs user code, returns or throws. It is called once per call of a matcher, however often
     /// the body of the matcher runs.
-    #[cold]
     #[inline(never)]
     pub(crate) fn once(
         global: &JSGlobalObject,
         asked: Asked,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
+        Self::once_inline(global, asked, ask)
+    }
+
+    /// `once()`, for where it counts: a custom matcher.
+    #[inline(always)]
+    pub(crate) fn once_inline(
+        global: &JSGlobalObject,
+        asked: Asked,
+        mut ask: impl FnMut() -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
         let Some(pass) = Self::current() else {
             return ask();
         };
-        let journal = pass.journal(global)?;
         let at = pass.cursor.get();
-        pass.cursor.set(at + 2);
-        if u64::from(at) < journal.get_length(global)? {
-            let kind = journal.get_index(global, at)?.to_int32();
-            let value = journal.get_index(global, at + 1)?;
+        pass.cursor.set(at + 1);
+        if at == 0
+            && let Some(journal) = pass.replayed().and_then(js::journal_get_cached)
+        {
+            pass.journal.set(journal);
+        }
+        let Some(recent) = pass.recent.get(at as usize).filter(|_| pass.journal.get().is_empty())
+        else {
+            return pass.once_in_journal(global, at, asked, &mut ask);
+        };
+        let answer = ask();
+        let (threw, value) = Self::returned_or_thrown(global, answer)?;
+        recent.set(value);
+        pass.recent_kinds
+            .set(pass.recent_kinds.get() | ((asked as u32) << 1 | u32::from(threw)) << (at * 4));
+        Self::return_or_throw(global, threw, value)
+    }
+
+    #[inline]
+    fn returned_or_thrown(
+        global: &JSGlobalObject,
+        answer: JsResult<JSValue>,
+    ) -> JsResult<(bool, JSValue)> {
+        match answer {
+            Ok(value) => Ok((false, value)),
+            Err(JsError::Thrown) if !global.has_pending_termination_exception() => {
+                Ok((true, global.take_exception(JsError::Thrown)))
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[inline]
+    fn return_or_throw(global: &JSGlobalObject, threw: bool, value: JSValue) -> JsResult<JSValue> {
+        if threw {
+            Err(global.throw_value(value))
+        } else {
+            Ok(value)
+        }
+    }
+
+    /// `journal`, which `recorded` of `recent` go into if it does not exist yet.
+    #[cold]
+    fn journal(&self, global: &JSGlobalObject, recorded: u32) -> JsResult<JSValue> {
+        if self.journal.get().is_empty() {
+            let journal = JSValue::create_empty_array(global, 0)?;
+            for (index, recent) in (0..recorded).zip(&self.recent) {
+                let kind = (self.recent_kinds.get() >> (index * 4)) & 0xF;
+                journal.put_index(global, index * 2, JSValue::js_number_from_int32(kind as i32))?;
+                journal.put_index(global, index * 2 + 1, recent.get())?;
+            }
+            self.journal.set(journal);
+        }
+        Ok(self.journal.get())
+    }
+
+    /// `once()` of a matcher that runs again, or that has asked for more than `recent` holds.
+    #[cold]
+    #[inline(never)]
+    fn once_in_journal(
+        &self,
+        global: &JSGlobalObject,
+        at: u32,
+        asked: Asked,
+        ask: &mut dyn FnMut() -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
+        let journal = self.journal(global, at)?;
+        if u64::from(at * 2) < journal.get_length(global)? {
+            let kind = journal.get_index(global, at * 2)?.to_int32();
+            let value = journal.get_index(global, at * 2 + 1)?;
             if kind >> 1 != asked as i32 {
                 return Err(global.throw(format_args!(
                     "A matcher ran again once the promise it waited for had settled, and took another path: what it compares has changed in the meantime"
                 )));
             }
-            return if kind & 1 == 0 {
-                Ok(value)
-            } else {
-                Err(global.throw_value(value))
-            };
+            return Self::return_or_throw(global, kind & 1 != 0, value);
         }
         let answer = ask();
-        let (threw, value) = match answer {
-            Ok(value) => (0, value),
-            Err(JsError::Thrown) if !global.has_pending_termination_exception() => {
-                (1, global.take_exception(JsError::Thrown))
-            }
-            Err(err) => return Err(err),
-        };
-        journal.put_index(global, at, JSValue::js_number_from_int32((asked as i32) << 1 | threw))?;
-        journal.put_index(global, at + 1, value)?;
-        if threw == 0 {
-            Ok(value)
-        } else {
-            Err(global.throw_value(value))
-        }
+        let (threw, value) = Self::returned_or_thrown(global, answer)?;
+        let kind = (asked as i32) << 1 | i32::from(threw);
+        journal.put_index(global, at * 2, JSValue::js_number_from_int32(kind))?;
+        journal.put_index(global, at * 2 + 1, value)?;
+        Self::return_or_throw(global, threw, value)
     }
 
     /// `once()`, of a promise: it has settled when it is returned. `None`: `ask()` returned something else.
@@ -408,11 +479,15 @@ impl Pass {
                 "An asynchronous matcher can only be waited for by a matcher of expect(), which then returns a promise: await expect(received).toEqual(expected)"
             ));
         };
+        let journal = match pass.journal(global, pass.cursor.get()) {
+            Ok(journal) => journal,
+            Err(err) => return err,
+        };
         let deferred = pass
             .replayed()
             .unwrap_or_else(|| ExpectDeferred::waiting(global));
         js::awaited_set_cached(deferred, global, promise.as_value());
-        js::journal_set_cached(deferred, global, pass.journal.get());
+        js::journal_set_cached(deferred, global, journal);
         global.throw_value(deferred)
     }
 }
@@ -749,8 +824,21 @@ impl Expect {
         let pass = Pass::of_matcher();
         let _entered = pass.enter();
         match matcher(self, global, frame) {
-            Err(JsError::Thrown) => self.matcher_threw(global, frame),
-            result => result,
+            Ok(value) => Ok(value),
+            Err(error) => self.matcher_failed(global, frame, error),
+        }
+    }
+
+    #[cold]
+    fn matcher_failed(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        error: JsError,
+    ) -> JsResult<JSValue> {
+        match error {
+            JsError::Thrown => self.matcher_threw(global, frame),
+            error => Err(error),
         }
     }
 

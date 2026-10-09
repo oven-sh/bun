@@ -2913,3 +2913,63 @@ describe.concurrent("the next test does not start beneath the call that ends a t
     });
   });
 });
+
+describe.concurrent("an error that arrives while a test file loads", () => {
+  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
+  // The file goes on one turn of the event loop after the error.
+  const file = (error: string) => `
+    import { describe, test } from "bun:test";
+    test("registered before", () => {});
+    await new Promise(resolve => {
+      setTimeout(() => {
+        setTimeout(resolve);
+        ${error}
+      });
+    });
+    test("registered after", () => {});
+    test("fails", () => {
+      throw new Error("of the test");
+    });
+    describe("block", () => {
+      test("test", () => {});
+    });
+  `;
+  const all = ["(pass) registered before", "(pass) registered after", "(fail) fails", "(pass) block > test"];
+
+  test.each(
+    Object.entries({
+      "an unhandled rejection": `Promise.reject(new Error("stray"));`,
+      "an uncaught exception": `throw new Error("stray");`,
+      "reportError()": `reportError(new Error("stray"));`,
+    }),
+  )("%s is reported, and the tests of the file run", async (_, error) => {
+    const { stderr, errors, exitCode } = await runFiles({ "a.test.ts": file(error) });
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: all,
+      errors: ["error: stray", "error: of the test"],
+      exitCode: 1,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+  });
+
+  test("what the file before it has left behind", async () => {
+    const { stderr, errors, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("leaves a function", () => {
+            globalThis.left = () => Promise.reject(new Error("stray"));
+          });
+        `,
+        "b.test.ts": file(`globalThis.left();`),
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: ["(pass) leaves a function", ...all],
+      errors: ["error: stray", "error: of the test"],
+      exitCode: 1,
+    });
+  });
+});

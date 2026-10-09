@@ -1718,6 +1718,10 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
                 mock->originalCommonJSExports.clear();
         }
     }
+#if ASSERT_ENABLED
+    for (auto& key : plugins.modulesToEvictOnceLoaded)
+        ASSERT(loading.contains(key));
+#endif
 
     // The importers come after what they import, and have loaded when that has.
     if (outermost.isNull() || outermost == plugins.moduleAwaitedToEvict)

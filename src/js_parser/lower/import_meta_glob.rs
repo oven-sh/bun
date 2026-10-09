@@ -804,6 +804,20 @@ fn is_import_meta_glob(expr: Expr) -> bool {
     )
 }
 
+/// `Object.keys(import.meta.glob(...))` imports nothing. After `call.target` is visited.
+pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
+    let ExprData::EDot(dot) = call.target.data else {
+        return false;
+    };
+    let ExprData::EIdentifier(object) = dot.target.data else {
+        return false;
+    };
+    let object = &symbols[object.ref_.inner_index() as usize];
+    dot.name == b"keys"
+        && object.kind == js_ast::symbol::Kind::Unbound
+        && object.original_name.slice() == b"Object"
+}
+
 fn dot(target: Expr, name: &[u8]) -> Expr {
     Expr::init(
         E::Dot {
@@ -862,20 +876,6 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             && !self.is_revisit_for_substitution
             && call.optional_chain.is_none()
             && is_import_meta_glob(call.target)
-    }
-
-    /// `Object.keys(import.meta.glob(...))` imports nothing. After `call.target` is visited.
-    pub(crate) fn is_object_keys_call(&self, call: &E::Call) -> bool {
-        let ExprData::EDot(dot) = call.target.data else {
-            return false;
-        };
-        let ExprData::EIdentifier(object) = dot.target.data else {
-            return false;
-        };
-        let object = &self.symbols[object.ref_.inner_index() as usize];
-        dot.name == b"keys"
-            && object.kind == js_ast::symbol::Kind::Unbound
-            && object.original_name.slice() == b"Object"
     }
 
     fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr {

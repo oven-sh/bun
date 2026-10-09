@@ -1686,6 +1686,12 @@ function ensureUrlHasProtocol<T extends string | URL>(
   return `${protocol}://${url}` as never;
 }
 
+/** What follows asks `instanceof URL`: a URL of another implementation (jsdom's) goes on as a string. */
+function textOfForeignURL<T>(value: T): T | string {
+  if (typeof value !== "object" || value === null || value instanceof URL) return value;
+  return require("internal/url").isURL(value) ? value.href : value;
+}
+
 function hasProtocol(url: string | URL): boolean {
   if (url instanceof URL) {
     return true;
@@ -1711,6 +1717,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   let sslMode: SSLMode | null = null;
   let adapter: Bun.SQL.__internal.Adapter | null = null;
 
+  stringOrUrlOrOptions = textOfForeignURL(stringOrUrlOrOptions);
   if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
     stringOrUrl = stringOrUrlOrOptions;
     options = definitelyOptionsButMaybeEmpty;
@@ -1744,6 +1751,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
       resolvedUrl = optionsUrl;
     }
   }
+  resolvedUrl = textOfForeignURL(resolvedUrl);
 
   if (options.adapter === "sqlite") {
     return [resolvedUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];

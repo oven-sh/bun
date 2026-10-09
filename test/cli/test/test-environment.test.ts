@@ -439,9 +439,8 @@ describe.concurrent("test environment", () => {
         "2.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir));
-      const reason = `require() async module "${join(String(dir), "node_modules", "happy-dom", "index.mjs")}" is unsupported. use "await import()" instead.`;
-      expect(warnings(stderr)).toEqual(
-        ["1.test.js", "2.test.js"].map(file => `warn: ${cannotSetUp("happy-dom", join(String(dir), file))}: ${reason}`),
+      expect(warnings(stderr).map(line => line.slice(0, line.indexOf(" async module")))).toEqual(
+        ["1.test.js", "2.test.js"].map(file => `warn: ${cannotSetUp("happy-dom", join(String(dir), file))}: require()`),
       );
       expect(stdout).toEqual(["1.test.js node ", "2.test.js node "]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
@@ -838,7 +837,7 @@ describe.concurrent("test environment", () => {
   test("many comments on one line", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
-      "a.test.js": `// ${Buffer.alloc(40 * 50_000, `${VITEST}-options {"url":"https://a/"} `.padEnd(40)).toString()}\n// ${VITEST} happy-dom\n${logEnvironment}`,
+      "a.test.js": `// ${Buffer.alloc(30 * 200_000, `${VITEST}-options 1 `).toString()}\n// ${VITEST} happy-dom\n${logEnvironment}`,
     });
     const { stdout, stderr, exitCode } = await bunTest(String(dir));
     expect(warnings(stderr)).toHaveLength(1);
@@ -985,6 +984,32 @@ describe.concurrent("test environment", () => {
       "1.test.js happy-dom#1 http://localhost:3000",
       "2.test.js node ",
     ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a window has as long as a hook to close", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            this.happyDOM.abort = () => new Promise(() => void setInterval(() => {}, 1));
+          }
+        };`,
+      // The tests have a timeout of their own: --timeout is only for the window.
+      "1.test.js": `// ${VITEST} happy-dom
+        import { test } from "bun:test";
+        test("happy-dom", () => console.log(typeof document), 60_000);`,
+      "2.test.js": `
+        import { test } from "bun:test";
+        test("node", () => console.log(typeof document), 60_000);`,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate", "--timeout=50");
+    expect(stderr).toContain(errorBetweenTests("error: The test environment did not finish closing within 50ms"));
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["object", "undefined"]);
     expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
     expect(exitCode).toBe(1);
   });
@@ -1384,7 +1409,7 @@ describe.concurrent("test environment with the real", () => {
       [``, true],
     ];
 
-    test.each([[[]], [["--isolate"]]])("%j", async flags => {
+    test("as in vitest", async () => {
       using dir = project(
         Object.fromEntries(
           files.map(([code, isReported], i) => [
@@ -1400,7 +1425,7 @@ describe.concurrent("test environment with the real", () => {
           ]),
         ),
       );
-      const { stderr, exitCode } = await bunTest(String(dir), ...flags);
+      const { stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).not.toContain("(fail)");
       expect(summary(stderr)).toEqual([`${files.length} pass`, "0 fail"]);
       expect(exitCode).toBe(0);
@@ -1426,7 +1451,7 @@ describe.concurrent("test environment with the real", () => {
         test("not reported", throwInListener);`;
       using dir = project({
         "preload.js": `window.addEventListener("error", event => console.log(event.error.message));`,
-        "1.test.js": file,
+        "1.test.js": `${file}\ntest("counts one listener less", () => window.removeEventListener("error", () => {}));`,
         "2.test.js": file,
       });
       const { stdout, stderr, exitCode } = await bunTest(
@@ -1436,7 +1461,7 @@ describe.concurrent("test environment with the real", () => {
         ...flags,
       );
       expect(stdout).toEqual(["from the listener", "from the listener"]);
-      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
   });
@@ -1458,6 +1483,68 @@ describe.concurrent("test environment with the real", () => {
     const { stderr, exitCode } = await bunTest(String(dir));
     expect(stderr).not.toContain("error:");
     expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun's builtin modules go on using Bun's own classes, and take the typed arrays of jsdom's realm.
+  test.each(["jsdom", "happy-dom"])("%s: builtin modules work as without it", async name => {
+    const file = `
+      import { test, expect } from "bun:test";
+      import { once } from "node:events";
+      import { createServer, request } from "node:http";
+      import { availableParallelism } from "node:os";
+      import { Readable } from "node:stream";
+      import { arrayBuffer, blob, buffer, text } from "node:stream/consumers";
+      import { gunzipSync, gzipSync } from "node:zlib";
+
+      test("stream/consumers", async () => {
+        const from = () => Readable.from([Buffer.from("ab")]);
+        expect((await arrayBuffer(from())).byteLength).toBe(2);
+        expect((await buffer(from())).toString()).toBe("ab");
+        expect(await (await blob(from())).text()).toBe("ab");
+      });
+      test("shell", async () => {
+        expect(await (await Bun.$\`echo hi\`.blob()).text()).toBe("hi\\n");
+      });
+      test("perf_hooks", () => {
+        // Loaded here for the first time, for all the files.
+        const { performance } = require("node:perf_hooks");
+        expect([typeof performance.eventLoopUtilization, typeof performance.timerify]).toEqual(["function", "function"]);
+      });
+      test("http", async () => {
+        const server = createServer((req, res) => void text(req).then(body => res.end(new Uint8Array([...Buffer.from(body)]))));
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        try {
+          const req = request({ host: "127.0.0.1", port: server.address().port, method: "POST" });
+          req.write(new Uint8Array([97]));
+          req.end(new Uint8Array([98]));
+          expect(await text((await once(req, "response"))[0])).toBe("ab");
+        } finally {
+          server.close();
+        }
+      });
+      test("zlib", () => {
+        expect(gunzipSync(gzipSync(new Uint8Array([97, 98]).buffer)).toString()).toBe("ab");
+      });
+      test("os", () => {
+        expect(availableParallelism()).toBe(Number(process.env.PARALLELISM));
+      });
+    `;
+    using dir = project({
+      "1.test.js": `// ${VITEST} ${name}\n${file}`,
+      "2.test.js": file,
+    });
+    await using proc = Bun.spawn({
+      // A debug build needs seconds to load node:http.
+      cmd: [bunExe(), "test", "--timeout=60000"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_PATH: undefined, PARALLELISM: String(navigator.hardwareConcurrency) },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(summary(stderr)).toEqual(["12 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 });

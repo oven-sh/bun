@@ -3092,6 +3092,7 @@ impl TestCommand {
                     break 'blk;
                 };
                 let buntest = buntest_strong.get();
+                buntest.is_loading = false;
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {

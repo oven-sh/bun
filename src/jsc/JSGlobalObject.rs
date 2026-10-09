@@ -341,6 +341,8 @@ impl JSGlobalObject {
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)
@@ -362,7 +364,8 @@ impl JSGlobalObject {
         crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
     }
 
-    #[inline]
+    #[cold]
+    #[inline(never)]
     pub fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
         match arg_names.len() {
             0 => unreachable!("requires at least one argument"),
@@ -561,10 +564,22 @@ impl JSGlobalObject {
     /// "The {argname} argument must be of type {typename}. Received {value}"
     ///
     /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    #[inline]
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsError {
+        self.throw_invalid_argument_type_value_bytes(argname.as_ref(), typename.as_ref(), value)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn throw_invalid_argument_type_value_bytes(
+        &self,
+        argname: &[u8],
+        typename: &[u8],
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -575,8 +590,8 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
+                bstr::BStr::new(argname),
+                bstr::BStr::new(typename),
                 actual_string_value
             ),
         )
@@ -608,6 +623,8 @@ impl JSGlobalObject {
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
+    #[cold]
+    #[inline(never)]
     pub(crate) fn throw_invalid_property_type(
         &self,
         name: impl AsRef<[u8]>,
@@ -835,6 +852,8 @@ impl JSGlobalObject {
     ///
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
+    #[cold]
+    #[inline(never)]
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_error_instance(args);
         if instance.is_empty() {
@@ -899,6 +918,8 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_value(&self, value: JSValue) -> JsError {
         // A termination exception (e.g. stack overflow) may already be
         // pending. Don't try to override it — that would hit
@@ -909,6 +930,8 @@ impl JSGlobalObject {
         self.vm().throw_error(self, value)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_type_error(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_type_error_instance(args);
         self.throw_value(instance)
@@ -1007,6 +1030,8 @@ impl JSGlobalObject {
 
     /// Clears the current exception and returns that value. Requires compile-time
     /// proof of an exception via `JsError`.
+    #[cold]
+    #[inline(never)]
     pub fn take_exception(&self, proof: JsError) -> JSValue {
         match proof {
             JsError::Thrown => {}
@@ -1034,6 +1059,8 @@ impl JSGlobalObject {
 
     /// The taken exception as an error value; the VM's termination comes back as its (inert) cell —
     /// every reporter recognises and drops it.
+    #[cold]
+    #[inline(never)]
     pub fn take_error(&self, proof: JsError) -> JSValue {
         let exception = self.take_exception(proof);
         if exception.is_termination_exception() {

@@ -317,6 +317,15 @@ impl Snapshots {
         }
     }
 
+    /// Takes back one `add_count` per name: the run of the test that asked for them does not count.
+    pub(crate) fn undo_counts(&mut self, names: &[Box<[u8]>]) {
+        for name in names {
+            if let Some(count) = self.counts.get_mut(&**name) {
+                *count = count.saturating_sub(1);
+            }
+        }
+    }
+
     /// The name the snapshots of the running test have in a file of `format`, and which of them this one is.
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
@@ -333,6 +342,13 @@ impl Snapshots {
             *gop.value_ptr = 1;
         }
         let count = *gop.value_ptr;
+        if let Some(parent) = expect.parent.as_ref()
+            && let Some(buntest) = parent.bun_test()
+            && let Some(sequence) = parent.phase.sequence(buntest.get())
+            && (sequence.remaining_retry_count > 0 || sequence.remaining_repeat_count > 0)
+        {
+            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
+        }
         Ok((snapshot_name, count))
     }
 

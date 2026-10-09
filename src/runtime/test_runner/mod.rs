@@ -262,7 +262,8 @@ pub(crate) mod expect {
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
-    #[inline]
+    #[cold]
+    #[inline(never)]
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;

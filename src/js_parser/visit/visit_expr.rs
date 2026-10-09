@@ -6,6 +6,8 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
+use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
@@ -664,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.template_tag = tag.data;
             p.visit_expr(tag);
             if p.options.features.inject_jest_globals {
-                p.drop_namespace_of_lowered_callee(tag);
+                drop_namespace_of_lowered_callee(&p.symbols, tag);
             }
         }
 
@@ -1957,7 +1959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         if p.options.features.inject_jest_globals {
-            p.drop_namespace_of_lowered_callee(&mut e_.target);
+            drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target);
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
@@ -2145,7 +2147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
             );
             let mut arg_in = ExprIn {
-                is_object_keys_argument: p.has_import_meta && p.is_object_keys_call(&e_),
+                is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
                 ..Default::default()
             };
             for arg in &mut e_.args.slice_mut()[visited_args..] {

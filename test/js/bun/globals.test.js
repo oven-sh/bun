@@ -273,3 +273,142 @@ describe("globalThis.gc", () => {
     });
   });
 });
+
+describe.concurrent("builtin modules read the native classes and objects, not the properties of globalThis", () => {
+  async function run(script) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it("every one loads with all of them replaced, and exports the native ones", async () => {
+    const result = await run(`
+      const ecmascript = new Set(require("node:vm").runInNewContext("Object.getOwnPropertyNames(globalThis)"));
+      const names = Object.getOwnPropertyNames(globalThis).filter(name =>
+        ecmascript.has(name)
+          ? /.Array$|ArrayBuffer$/.test(name)
+          : name !== "Bun" && /^[A-Z]|^(crypto|navigator|performance)$/.test(name),
+      );
+      const natives = {};
+      for (const name of names) natives[name] = globalThis[name];
+      for (const name of names) {
+        globalThis[name] = class {
+          constructor() {
+            throw new Error(name + " was read from globalThis");
+          }
+        };
+      }
+      const ofTheirOwn = ["cluster.Worker", "worker_threads.Worker", "perf_hooks.PerformanceObserver", "ws.WebSocket"];
+      const exported = [];
+      const replaced = [];
+      for (const id of require("node:module").builtinModules) {
+        if (/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)) continue;
+        const exports = require(id);
+        for (const name of names) {
+          if (!Object.hasOwn(exports, name) || ofTheirOwn.includes(id + "." + name)) continue;
+          (exports[name] === natives[name] ? exported : replaced).push(id + "." + name);
+        }
+      }
+      console.log(JSON.stringify({ names, exported, replaced }));
+    `);
+    expect(result.replaced).toEqual([]);
+    expect(result.names).toContain("Blob");
+    expect(result.names).toContain("Uint8Array");
+    expect(result.names).toContain("navigator");
+    expect(result.exported).toContain("buffer.Blob");
+    expect(result.exported).toContain("http.WebSocket");
+    expect(result.exported).toContain("perf_hooks.Performance");
+    expect(result.exported).toContain("stream/web.TextDecoderStream");
+    expect(result.exported).toContain("url.URL");
+    expect(result.exported).toContain("util.TextDecoder");
+    expect(result.exported).toContain("worker_threads.MessageChannel");
+  });
+
+  it("each realm has its own", async () => {
+    expect(
+      await run(`
+        const NativeURL = URL;
+        globalThis.URL = class {};
+        const { pathToFileURL } = require("node:url");
+        const inRealm = \`
+          const NativeURL = URL;
+          globalThis.URL = class {};
+          const check = url => url.URL === NativeURL && url.pathToFileURL("/x") instanceof NativeURL;
+        \`;
+        const worker = new (require("node:worker_threads").Worker)(
+          inRealm + 'require("node:worker_threads").parentPort.postMessage(check(require("node:url")))',
+          { eval: true },
+        );
+        Promise.all([
+          require("node:vm").runInNewContext("pathToFileURL('/x')", { pathToFileURL }) instanceof NativeURL,
+          new Promise(new ShadowRealm().evaluate("resolve => {" + inRealm + 'import("node:url").then(url => resolve(check(url))) }')),
+          new Promise((resolve, reject) => worker.on("message", resolve).on("error", reject)),
+        ]).then(([calledFromContext, inShadowRealm, inWorker]) =>
+          console.log(JSON.stringify({ calledFromContext, inShadowRealm, inWorker })),
+        );
+      `),
+    ).toEqual({ calledFromContext: true, inShadowRealm: true, inWorker: true });
+  });
+
+  it("without creating what nothing has used", async () => {
+    expect(
+      await run(`
+        for (const id of ["fs", "path", "events", "os", "timers"]) require("node:" + id);
+        const { objectTypeCounts } = require("bun:jsc").heapStats();
+        const classes = ["AbortController", "Blob", "Event", "Headers", "Performance", "Response", "TextDecoder", "URL"];
+        const before = classes.filter(name => objectTypeCounts[name]);
+        require("node:url").pathToFileURL("/x");
+        console.log(JSON.stringify({ before, after: classes.filter(name => require("bun:jsc").heapStats().objectTypeCounts[name]) }));
+      `),
+    ).toEqual({ before: [], after: ["URL"] });
+  });
+
+  it("from an object that script cannot get hold of", async () => {
+    expect(
+      await run(`
+        // This script is in process.execArgv.
+        const className = "Native" + "Globals";
+        const receivers = [];
+        for (const name of ["natives", "@natives", "Blob", "URL", "TextDecoder", "performance", "navigator"]) {
+          Object.defineProperty(Object.prototype, name, {
+            get() {
+              receivers.push(this);
+            },
+            set() {
+              receivers.push(this);
+            },
+          });
+        }
+        for (const Class of [URL, Blob, TextDecoder]) {
+          Object.defineProperty(Class, Symbol.hasInstance, {
+            value() {
+              receivers.push(this);
+              return false;
+            },
+          });
+        }
+        const { blob, text } = require("node:stream/consumers");
+        const { Readable } = require("node:stream");
+        Promise.all([blob(Readable.from([Buffer.from("a")])), text(Readable.from([Buffer.from("a")]))]).then(() => {
+          require("node:url").pathToFileURL("/x");
+          try {
+            require("node:url").fileURLToPath({});
+          } catch {}
+          require("node:os").availableParallelism();
+          require("node:perf_hooks").performance.timerify(() => {})();
+          console.log(
+            JSON.stringify({
+              objects: require("bun:jsc").heapStats().objectTypeCounts[className],
+              isKey: Reflect.ownKeys(globalThis).some(key => String(key.description ?? key).includes("natives")),
+              isPrinted: Bun.inspect(globalThis, { showHidden: true, depth: 1 }).includes(className),
+              isReceiver: receivers.some(receiver => Object.getPrototypeOf(Object(receiver)) === null),
+              receivers: receivers.map(receiver => receiver.name),
+            }),
+          );
+        });
+      `),
+    ).toEqual({ objects: 1, isKey: false, isPrinted: false, isReceiver: false, receivers: ["URL"] });
+  });
+});

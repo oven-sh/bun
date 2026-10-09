@@ -364,3 +364,40 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
 });
+
+test("does not read performance and its classes from globalThis", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const natives = { performance, Performance, PerformanceEntry, PerformanceMark, PerformanceObserver };
+       for (const name in natives) globalThis[name] = class {};
+       const perf = require("node:perf_hooks");
+       console.log(JSON.stringify({
+         performance: perf.performance === natives.performance,
+         Performance: perf.Performance === natives.Performance,
+         PerformanceEntry: perf.PerformanceEntry === natives.PerformanceEntry,
+         PerformanceMark: perf.PerformanceMark === natives.PerformanceMark,
+         PerformanceObserver: Object.getPrototypeOf(perf.PerformanceObserver) === natives.PerformanceObserver,
+         nodeTiming: perf.performance.nodeTiming instanceof natives.PerformanceEntry,
+         eventLoopUtilization: typeof perf.performance.eventLoopUtilization,
+         timerified: perf.performance.timerify(() => 1)(),
+       }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    performance: true,
+    Performance: true,
+    PerformanceEntry: true,
+    PerformanceMark: true,
+    PerformanceObserver: true,
+    nodeTiming: true,
+    eventLoopUtilization: "function",
+    timerified: 1,
+  });
+  expect(exitCode).toBe(0);
+});

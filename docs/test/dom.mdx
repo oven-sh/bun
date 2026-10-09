@@ -33,7 +33,7 @@ test("dom test", () => {
 });
 ```
 
-`@jest-environment` means the same, and both work in a `//` or a `/** */` comment. `// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, are not supported.
+Bun looks for each comment where its own runner does: `@vitest-environment` anywhere in the file, in a `//` or a `/** */` comment, and `@jest-environment`, which means the same, in a `/** */` comment at the very top of the file. `// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, are not supported.
 
 If Bun cannot follow a comment, because the package is not installed or the environment is not supported, it prints a warning and runs the file without a DOM. If it cannot set up the environment from `bunfig.toml` or `--environment`, the file fails.
 
@@ -55,6 +55,8 @@ Test files share one global object and one module registry by default, so files 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library: a shared module stays bound to the first window it saw.
 
 Preload scripts run in the project's environment. Under `--isolate` they run again for each file, in that file's environment.
+
+With jsdom, an error thrown in an event listener or a timer fails the running test, as in Vitest and Jest, unless the file (or a preload script) has added an `error` listener to `window`.
 
 <Note>
   jsdom 30.1 and later do not run on Bun yet ([#43671](https://github.com/oven-sh/bun/issues/43671)). With jsdom 27 to

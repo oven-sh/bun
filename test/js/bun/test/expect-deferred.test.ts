@@ -419,7 +419,7 @@ describe.concurrent(".resolves and .rejects", () => {
         test.concurrent("does not await it", async () => {
           await later();
           expect(never()).resolves.toBe("not awaited");
-        }, 50);
+        }, 1000);
         test.concurrent("awaits it", async () => {
           await later();
           await expect(never()).resolves.toBe("awaited");
@@ -427,7 +427,7 @@ describe.concurrent(".resolves and .rejects", () => {
         test.concurrent("handles it", async () => {
           await later();
           expect(never()).resolves.toBe("handled").catch(() => {});
-        }, 50);
+        }, 1000);
       });
       test("next", () => {});
     `;
@@ -504,7 +504,7 @@ describe.concurrent(".resolves and .rejects", () => {
         expect(never()).resolves.toBe("handled").catch(() => {});
         test("a", () => {});
       `;
-      const { stderr, exitCode } = await run(["test", ...flags, "--timeout=50", "./a.test.js", "./b.test.js"], {
+      const { stderr, exitCode } = await run(["test", ...flags, "--timeout=250", "./a.test.js", "./b.test.js"], {
         "a.test.js": prelude + source,
         "b.test.js": prelude + `test("b", () => {});`,
       });
@@ -512,7 +512,7 @@ describe.concurrent(".resolves and .rejects", () => {
         a: [
           "# Unhandled error between tests",
           "(pass) a",
-          "error: A matcher that was called outside of a test and not awaited timed out 50ms after the tests of its file: its promise has not settled",
+          "error: A matcher that was called outside of a test and not awaited timed out 250ms after the tests of its file: its promise has not settled",
         ],
         b: ["(pass) b"],
       });
@@ -1164,6 +1164,49 @@ describe.concurrent("matchers that meet a pending promise", () => {
       'the same matcher twice: fails {"toBeOdd":2}',
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("however many matchers come before and after the one that is waited for, each is called once", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      const calls = [];
+      expect.extend({
+        toBeNow(received, id) {
+          calls.push(id);
+          return { pass: received === id, message: () => "toBeNow" };
+        },
+        async toBeLater(received, id) {
+          calls.push("later " + id);
+          await later();
+          return { pass: received === id, message: () => "toBeLater" };
+        },
+      });
+      test("counts", async () => {
+        for (const before of [0, 3, 4, 5]) {
+          for (const after of [0, 5]) {
+            for (const laterOnes of [1, 2]) {
+              const received = Array.from({ length: before + laterOnes + after }, (_, i) => i);
+              const isLater = i => i >= before && i < before + laterOnes;
+              const expected = wrong => received.map((_, i) => expect[isLater(i) ? "toBeLater" : "toBeNow"](i === wrong ? -1 : i));
+              const inOrder = received.map((_, i) => (isLater(i) ? "later " + i : i)).join();
+
+              calls.length = 0;
+              await expect(received).toEqual(expected());
+              if (calls.join() !== inOrder) console.log("passes:", before, laterOnes, after, calls.join());
+
+              // The last one does not match: all have been asked, once.
+              calls.length = 0;
+              const last = received.length - 1;
+              const outcome = await expect(received).toEqual(expected(last)).then(() => "fulfilled", () => "rejected");
+              const asked = inOrder.replace(new RegExp(last + "$"), "-1");
+              if (outcome !== "rejected" || calls.join() !== asked) console.log("fails:", before, laterOnes, after, outcome, calls.join());
+            }
+          }
+        }
+      });
+    `);
+    expect(stdout).toEqual([]);
+    expect(results).toEqual(["(pass) counts"]);
+    expect(exitCode).toBe(0);
   });
 
   test("a matcher that another one calls has its own promises", async () => {

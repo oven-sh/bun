@@ -60,6 +60,8 @@ pub struct App<const SSL: bool> {
 /// the call.
 macro_rules! uws_app_route_methods {
     ($($name:ident => $cfn:ident),* $(,)?) => {$(
+        // The C++ side is always_inline: without this every caller gets its own copy of the registration.
+        #[inline(never)]
         pub fn $name(
             &mut self,
             pattern: &[u8],
@@ -403,6 +405,7 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
+    #[inline(never)]
     pub fn ws(
         &mut self,
         pattern: &[u8],

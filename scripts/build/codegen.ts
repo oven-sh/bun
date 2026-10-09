@@ -796,6 +796,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
   // internal-module-registry-scanner.ts reads the native module ids from it.
   const nativeModuleListInput = resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h");
+  // replacements.ts reads the names of the native globals from it.
+  const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -826,7 +828,15 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [...outputs, ...types],
     rule: "codegen_bun",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, nativeModuleListInput],
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      extraInput,
+      errorCodeInput,
+      nativeModuleListInput,
+      globalObjectTableInput,
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

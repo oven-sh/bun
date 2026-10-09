@@ -204,6 +204,63 @@ test("toMatchSnapshot() counter is reset between per-test retry / repeats", asyn
   expect(exitCode).toBe(0);
 });
 
+test("a retry takes back the toMatchSnapshot() counts of its own attempt only", async () => {
+  using dir = tempDir("test-retry-snapshot-own", {
+    "snap.test.ts": `
+      import { test, expect } from "bun:test";
+      import { test as vitestTest } from "vitest";
+      test("same name", () => {
+        expect("first 1").toMatchSnapshot();
+        expect("first 2").toMatchSnapshot();
+      });
+      let attempts = 0;
+      test("same name", () => {
+        expect("second 1").toMatchSnapshot();
+        expect("hinted").toMatchSnapshot("hint");
+        if (++attempts < 3) throw new Error("retry me");
+        expect("second 2").toMatchSnapshot();
+      }, { retry: 3 });
+
+      const retried = Promise.withResolvers();
+      let isRetry = false;
+      vitestTest.concurrent("retries", { retry: 1 }, async ({ expect }) => {
+        expect("retries 1").toMatchSnapshot();
+        if (isRetry) return retried.resolve();
+        isRetry = true;
+        throw new Error("retry me");
+      });
+      vitestTest.concurrent("beside it", async ({ expect }) => {
+        expect("beside 1").toMatchSnapshot();
+        await retried.promise;
+        expect("beside 2").toMatchSnapshot();
+      });
+    `,
+    "__snapshots__/snap.test.ts.snap":
+      "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
+      '\nexports[`same name 1`] = `"first 1"`;\n' +
+      '\nexports[`same name 2`] = `"first 2"`;\n' +
+      '\nexports[`same name 3`] = `"second 1"`;\n' +
+      '\nexports[`same name: hint 1`] = `"hinted"`;\n' +
+      '\nexports[`same name 4`] = `"second 2"`;\n' +
+      '\nexports[`retries 1`] = `"retries 1"`;\n' +
+      '\nexports[`beside it 1`] = `"beside 1"`;\n' +
+      '\nexports[`beside it 2`] = `"beside 2"`;\n',
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "snap.test.ts"],
+    env: { ...bunEnv, CI: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = (stdout + stderr).match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
+  expect(results?.toSorted()).toEqual(["(pass) beside it", "(pass) retries", "(pass) same name", "(pass) same name"]);
+  expect(exitCode).toBe(0);
+});
+
 test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   using dir = tempDir("test-rerun-each-dír-ñ", {
     "counter.test.ts": `

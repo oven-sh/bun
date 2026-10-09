@@ -1673,17 +1673,23 @@ impl VirtualMachine {
     #[inline]
     pub fn rare_data(&mut self) -> &mut RareData {
         if self.rare_data.is_none() {
-            let rd = Box::new(RareData::default());
-            // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
-            // Registering the allocation as a root region lets LSAN trace
-            // `RareData → group.head_sockets → us_socket_t`.
-            bun_core::asan::register_root_region(
-                core::ptr::from_ref::<RareData>(&*rd).cast(),
-                core::mem::size_of::<RareData>(),
-            );
-            self.rare_data = Some(rd);
+            self.init_rare_data();
         }
         self.rare_data.as_mut().unwrap()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init_rare_data(&mut self) {
+        let rd = Box::new(RareData::default());
+        // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
+        // Registering the allocation as a root region lets LSAN trace
+        // `RareData → group.head_sockets → us_socket_t`.
+        bun_core::asan::register_root_region(
+            core::ptr::from_ref::<RareData>(&*rd).cast(),
+            core::mem::size_of::<RareData>(),
+        );
+        self.rare_data = Some(rd);
     }
 
     /// Raw projection to the lazily-allocated `RareData`, for callers holding a borrow into it across re-entry (never forms `&mut RareData`).

@@ -5214,7 +5214,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
+NEVER_INLINE bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 {
     JSC::Exception* exception = dynamicDowncast<JSC::Exception>(JSC::JSValue::decode(JSValue0));
     if (exception == nullptr)

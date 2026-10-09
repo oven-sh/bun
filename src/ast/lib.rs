@@ -2364,7 +2364,7 @@ macro_rules! add_warning_pretty {
     };
 }
 
-#[inline]
+#[inline(never)]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.

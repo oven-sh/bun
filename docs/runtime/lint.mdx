@@ -132,7 +132,20 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 | `oxlint -f json`           | `bun lint -f json`           |
 | `oxlint --rules`           | `bun lint --rules`           |
 
-The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that does not exist is skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
+The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted). Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
+
+## What cannot be linted
+
+A configuration can ask for more than `bun lint` can do: a rule of oxlint that is not built in, or files in a language other than JavaScript and TypeScript. `bun lint` lints everything else, prints the report, and then fails with exit code `2` and an error that names what it left out. It never reports less than the tool it replaces without saying so.
+
+```txt
+error: The configuration asks for what cannot be done yet. All else was linted.
+  2 rules of the plugin "unicorn" did not run: unicorn/no-null, unicorn/prefer-at
+  3 files were not linted, only JavaScript and TypeScript can be (2 *.css, 1 *.json): a.css, b.css, package.json
+  --allow-unsupported makes this a warning.
+```
+
+With `--allow-unsupported` these lines are warnings, and the exit code is that of the report.
 
 ## Which configuration file
 
@@ -336,7 +349,7 @@ When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `ag
 These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
-- **Custom parsers, languages, and custom formatters do not load.** Files that need them, such as `.vue` files with `vue-eslint-parser` or JSON files with `@eslint/json`, are skipped. The rules and the processors of plugins run.
+- **Custom parsers, languages, and custom formatters do not load.** Files that need them, such as `.vue` files with `vue-eslint-parser` or JSON files with `@eslint/json`, [cannot be linted](#what-cannot-be-linted). The rules and the processors of plugins run.
 - **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
 - **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.
@@ -383,6 +396,7 @@ bun lint [flags] [...files, directories or patterns]
 | `--no-error-on-unmatched-pattern`          | Do not fail if an argument matches no file                                          |
 | `--pass-on-no-patterns`                    | Exit with `0` if there are no arguments                                             |
 | `--exit-on-fatal-error`                    | Exit with `2` if a file cannot be parsed                                            |
+| `--allow-unsupported`                      | Only warn about [what cannot be linted](#what-cannot-be-linted)                     |
 | `--print-config <path>`                    | Print the configuration of a file, and lint nothing                                 |
 | `--type-aware`, `--no-type-aware`          | Run or skip the rules that need types                                               |
 | `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                                   |

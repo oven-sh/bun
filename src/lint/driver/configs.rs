@@ -116,6 +116,9 @@ pub(crate) struct Loader<'l> {
     by_file: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Found>>>>,
     /// For the user, in the order in which they came up.
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
+    /// What a configuration asks for and cannot be done, a line for each: rules that do not exist here, files in a language that
+    /// is not read here. To do less than the tool that is replaced, and find no problems, is worse than to fail.
+    pub(crate) unsupported: Guarded<Vec<Vec<u8>>>,
     /// [`Loader::tool`]
     tool: OnceLock<Option<Flavor>>,
 }
@@ -290,6 +293,7 @@ impl<'l> Loader<'l> {
             by_directory: Guarded::new(FxHashMap::default()),
             by_file: Guarded::new(FxHashMap::default()),
             warnings: Guarded::new(Vec::new()),
+            unsupported: Guarded::new(Vec::new()),
             tool: OnceLock::new(),
         }
     }
@@ -299,6 +303,15 @@ impl<'l> Loader<'l> {
         let mut warnings = self.warnings.lock();
         if !warnings.contains(&warning) {
             warnings.push(warning);
+        }
+    }
+
+    /// Adds to [`Loader::unsupported`].
+    pub(crate) fn cannot_do(&self, parts: &[&[u8]]) {
+        let line = parts.concat();
+        let mut unsupported = self.unsupported.lock();
+        if !unsupported.contains(&line) {
+            unsupported.push(line);
         }
     }
 
@@ -671,7 +684,7 @@ impl<'l> Loader<'l> {
         }))
     }
 
-    /// One line for each plugin that has rules which are configured and do not exist here.
+    /// One line for each plugin that has rules which are configured and do not exist here, with all of them.
     fn warn_about_unknown_rules(&self, config: &Config) {
         let mut by_plugin: Vec<(&[u8], Vec<&[u8]>)> = Vec::new();
         for id in config.unknown_rules() {
@@ -690,20 +703,17 @@ impl<'l> Loader<'l> {
                 }
                 plugin => [b"the plugin \"", plugin, b"\""].concat(),
             };
-            match rules[..] {
-                [only] => self.warn(&[
-                    b"1 rule of ",
-                    &of,
-                    b" is not supported yet and was skipped: ",
-                    only,
-                ]),
-                _ => self.warn(&[
-                    &count,
-                    b" rules of ",
-                    &of,
-                    b" are not supported yet and were skipped",
-                ]),
-            }
+            let noun: &[u8] = match rules.len() {
+                1 => b" rule of ",
+                _ => b" rules of ",
+            };
+            self.cannot_do(&[
+                &count,
+                noun,
+                &of,
+                b" did not run: ",
+                &rules.join(&b", "[..]),
+            ]);
         }
     }
 

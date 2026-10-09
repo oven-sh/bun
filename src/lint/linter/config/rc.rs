@@ -9,7 +9,7 @@ use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::{Registry, oxlint_rule_key, plugin_of_oxlint};
+use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
 use crate::linter::resolved::find_js_rule;
 use crate::linter::space::trim_end;
 use crate::options::Json;
@@ -661,6 +661,14 @@ impl Config {
                 (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
             }
             rc.reader.objects = objects;
+            let is_off = |id: &[u8]| {
+                let plugin = parse_rule_id(id).0;
+                PLUGIN_NAMES.contains(&plugin)
+                    && !(rc.plugins.iter()).any(|it| plugin_of_oxlint(it) == plugin)
+            };
+            let mut unknown_rules = std::mem::take(&mut rc.reader.unknown_rules);
+            unknown_rules.retain(|id| !is_off(id));
+            rc.reader.unknown_rules = unknown_rules;
             let mut by_kind_of_file = rc.rules_by_kind_of_file();
             rc.reader.objects.append(&mut by_kind_of_file);
         }

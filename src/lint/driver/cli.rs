@@ -85,6 +85,9 @@ pub const PARAMS: &[Param] = &[
     ),
     clap::param!("--exit-on-fatal-error           Exit with 2 if a file cannot be parsed"),
     clap::param!(
+        "--allow-unsupported             Only warn about rules and files of the configuration that cannot be linted yet"
+    ),
+    clap::param!(
         "--print-config <path>           Print the configuration of a file, and lint nothing"
     ),
     clap::param!(
@@ -234,6 +237,8 @@ pub struct Options {
     pub silent: bool,
     pub ignore_path: Option<Vec<u8>>,
     pub disable_nested_config: bool,
+    /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
+    pub allow_unsupported: bool,
 }
 
 impl Default for Options {
@@ -295,6 +300,7 @@ impl Default for Options {
             silent: false,
             ignore_path: None,
             disable_nested_config: false,
+            allow_unsupported: false,
         }
     }
 }
@@ -461,6 +467,7 @@ impl Options {
             b"silent" => self.silent = is_on,
             b"ignore-path" => self.ignore_path = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
+            b"allow-unsupported" => self.allow_unsupported = is_on,
             b"fix-suggestions" => (self.fix, self.fix_suggestions) = (is_on, is_on),
             // No fix here is marked as dangerous.
             b"fix-dangerously" => self.fix = is_on,

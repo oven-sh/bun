@@ -10,6 +10,7 @@ use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
+use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Engine, Host, Loading, Route};
 use bun_lint::linter::{FileConfig, Linter, Registry};
@@ -521,10 +522,33 @@ impl Run<'_> {
             } else {
                 b" files were"
             };
-            loader.warn(&[
+            // By what they are called, the most frequent first, and the first few.
+            let mut kinds: Vec<(&[u8], usize)> = Vec::new();
+            for target in &unsupported {
+                let name = paths::basename(&target.path);
+                let dot = strings::last_index_of_char(name, b'.').unwrap_or(0);
+                match kinds.iter_mut().find(|it| it.0 == &name[dot..]) {
+                    Some(kind) => kind.1 += 1,
+                    None => kinds.push((&name[dot..], 1)),
+                }
+            }
+            kinds.sort_by_key(|it| std::cmp::Reverse(it.1));
+            let kinds: Vec<Vec<u8>> = (kinds.iter())
+                .map(|it| [format!("{} *", it.1).as_bytes(), it.0].concat())
+                .collect();
+            let first = unsupported.iter().take(3);
+            let first: Vec<Vec<u8>> = first
+                .map(|it| paths::relative(&self.environment.cwd, &it.path))
+                .collect();
+            let more: &[u8] = if unsupported.len() > 3 { b", .." } else { b"" };
+            loader.cannot_do(&[
                 &count,
                 noun,
-                b" skipped: only JavaScript and TypeScript can be linted.",
+                b" not linted, only JavaScript and TypeScript can be (",
+                &kinds.join(&b", "[..]),
+                b"): ",
+                &first.join(&b", "[..]),
+                more,
             ]);
         }
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
@@ -742,6 +766,12 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *loader.warnings.lock()) {
             self.warn(&warning);
         }
+        let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
+        if options.allow_unsupported {
+            for line in unsupported.drain(..) {
+                self.warn(&line);
+            }
+        }
         let Linted {
             mut results,
             files,
@@ -934,6 +964,18 @@ impl Run<'_> {
             self.error(
                 b"There are suppressions left that do not occur anymore. To resolve this, re-run the command with `--prune-suppressions` to remove unused suppressions. To ignore unused suppressions, use `--pass-on-unpruned-suppressions`.",
             );
+            self.out.exit_code = 2;
+            return self.out;
+        }
+        if !unsupported.is_empty() {
+            let mut text =
+                b"The configuration asks for what cannot be done yet. All else was linted."
+                    .to_vec();
+            for line in &unsupported {
+                text.extend_from_slice(&[b"\n  ", &line[..]].concat());
+            }
+            text.extend_from_slice(b"\n  --allow-unsupported makes this a warning.");
+            self.error(&text);
             self.out.exit_code = 2;
             return self.out;
         }

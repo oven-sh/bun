@@ -312,3 +312,56 @@ describe.concurrent("whose configuration files count", () => {
     expect(problems).toEqual(["one/a.js:1:1 no-var", "three/c.js:2:13 no-debugger", "two/b.js:2:7 eqeqeq"]);
   });
 });
+
+describe.concurrent("what the configuration asks for and cannot be done", () => {
+  const files = {
+    ".eslintrc.json": rc({
+      rules: { "no-var": "error", "no-such-rule": "warn", "no-other-rule": "error", "no-rule-that-is-off": "off" },
+    }),
+    "a.js": code,
+  };
+
+  test("a rule that does not exist: the rest is linted, and the run fails", async () => {
+    const { problems, stderr, exitCode } = await lint(files);
+    expect(problems).toEqual(["a.js:1:1 no-var"]);
+    expect(stderr).toContain("2 rules of ESLint did not run: no-such-rule, no-other-rule");
+    expect(stderr).not.toContain("no-rule-that-is-off");
+    expect(stderr).toContain("--allow-unsupported makes this a warning.");
+    expect(exitCode).toBe(2);
+  });
+
+  test("it fails where nothing else is wrong, too", async () => {
+    const { problems, exitCode } = await lint({ ...files, "a.js": "let x = 1;\nx;\n" });
+    expect(problems).toEqual([]);
+    expect(exitCode).toBe(2);
+  });
+
+  test("--allow-unsupported makes it a warning", async () => {
+    const { problems, stderr, exitCode } = await lint(files, ["--allow-unsupported", "."]);
+    expect(problems).toEqual(["a.js:1:1 no-var"]);
+    expect(stderr).toContain("warn: 2 rules of ESLint did not run: no-such-rule, no-other-rule");
+    expect(exitCode).toBe(1);
+    expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
+  });
+
+  test("files in a language that is not read here", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [
+        { rules: { "no-var": "error" } },
+        { files: ["**/*.one", "**/*.two"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
+      ];`,
+      "a.js": code,
+      "b.one": "",
+      "c.one": "",
+      "d.one": "",
+      "e.two": "",
+    };
+    const { problems, stderr, exitCode } = await lint(files);
+    expect(problems).toEqual(["a.js:1:1 no-var"]);
+    expect(stderr).toContain(
+      "4 files were not linted, only JavaScript and TypeScript can be (3 *.one, 1 *.two): b.one, c.one, d.one, ..",
+    );
+    expect(exitCode).toBe(2);
+    expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
+  });
+});

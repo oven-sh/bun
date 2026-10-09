@@ -167,8 +167,106 @@ function describedOnce(prefix, plugin) {
   return describe(prefix, plugin);
 }
 
-function serializeConfigObject(config, index) {
-  if (config === null || typeof config !== "object") return serialize(config) ?? null;
+// ───────────── `FlatCompat` ─────────────
+//
+// `FlatCompat` of `@eslint/eslintrc` makes a function in `files` of the `files` and `excludedFiles` of each of the `overrides` of
+// what it is given, and one function in `ignores` of all `ignorePatterns`. What they are made of is found by calling them once.
+
+// Calls `matcher`, and returns the `OverrideTester`s that it asks and the configurations that it has computed.
+function probe(matcher) {
+  const seen = { testers: [], configs: [] };
+  const undo = [];
+  for (const { exports } of Object.values(require.cache)) {
+    let legacy;
+    try {
+      legacy = exports?.Legacy;
+    } catch {}
+    const tester = legacy?.OverrideTester?.prototype;
+    const array = legacy?.ConfigArray?.prototype;
+    if (typeof tester?.test !== "function" || typeof array?.extractConfig !== "function") continue;
+    if (undo.some(it => it.tester === tester)) continue;
+    const { test } = tester;
+    const { extractConfig } = array;
+    undo.push({ tester, test, array, extractConfig });
+    // To compute a configuration asks testers too.
+    let isInside = false;
+    tester.test = function (...args) {
+      if (!isInside) seen.testers.push(this);
+      return Reflect.apply(test, this, args);
+    };
+    array.extractConfig = function (...args) {
+      isInside = true;
+      try {
+        const config = Reflect.apply(extractConfig, this, args);
+        seen.configs.push(config);
+        return config;
+      } finally {
+        isInside = false;
+      }
+    };
+  }
+  try {
+    matcher(resolve(path, "..", "__placeholder__.js"));
+  } catch {
+  } finally {
+    for (const { tester, test, array, extractConfig } of undo) {
+      tester.test = test;
+      array.extractConfig = extractConfig;
+    }
+  }
+  return seen;
+}
+
+// `convertIgnorePatternToMinimatch` of `@eslint/compat`.
+function ignorePatternToMinimatch(pattern) {
+  const negation = pattern.startsWith("!") ? "!" : "";
+  const tested = pattern.slice(negation.length).trimEnd();
+  if (["", "**", "/**", "**/"].includes(tested)) return negation + tested;
+  const slash = tested.indexOf("/");
+  const everywhere = slash < 0 || slash === tested.length - 1 ? "**/" : "";
+  const escaped = (slash === 0 ? tested.slice(1) : tested).replaceAll(/(?=((?:\\.|[^{(])*))\1([{(])/guy, "$1\\$2");
+  return negation + everywhere + escaped + (tested.endsWith("/**") ? "/*" : "");
+}
+
+// `config` without the functions of `FlatCompat` in `files` and `ignores`. Any other function stays.
+function withoutMatchers(config) {
+  const isMatcher = it => typeof it === "function";
+  const { files, ignores } = config;
+  if (Array.isArray(files) && files.length === 1 && isMatcher(files[0]) && ignores === undefined) {
+    const { testers, configs } = probe(files[0]);
+    if (testers.length !== 1 || configs.length !== 0 || config.basePath !== undefined) return config;
+    // minimatch's `matchBase`
+    const glob = ({ pattern, options }) => (options.matchBase && !pattern.includes("/") ? `**/${pattern}` : pattern);
+    // Of each of the overrides that this is in, one has to match.
+    let all = [[]];
+    const excluded = [];
+    for (const { includes, excludes } of testers[0].patterns) {
+      if (includes) all = all.flatMap(before => includes.map(it => [...before, glob(it)]));
+      if (excludes) excluded.push(...excludes.map(glob));
+    }
+    if (all.some(it => it.length === 0)) return config;
+    const recovered = {
+      ...config,
+      basePath: testers[0].basePath,
+      files: all.map(it => (it.length === 1 ? it[0] : it)),
+    };
+    if (excluded.length > 0) recovered.ignores = excluded;
+    return recovered;
+  }
+  if (Array.isArray(ignores) && ignores.length === 1 && isMatcher(ignores[0]) && Object.keys(config).length === 1) {
+    const { configs } = probe(ignores[0]);
+    const predicate = configs.length === 1 ? configs[0]?.ignores : undefined;
+    if (typeof predicate?.basePath !== "string" || !Array.isArray(predicate.patterns)) return config;
+    // `DotPatterns`, which it ignores besides.
+    const patterns = [".*", "!.eslintrc.*", ...predicate.patterns];
+    return { basePath: predicate.basePath, ignores: patterns.map(ignorePatternToMinimatch) };
+  }
+  return config;
+}
+
+function serializeConfigObject(given, index) {
+  if (given === null || typeof given !== "object") return serialize(given) ?? null;
+  const config = withoutMatchers(given);
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
   // Which object this is of what the file exports: a worker takes from there what JSON cannot say.

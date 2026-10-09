@@ -46,6 +46,38 @@ const code = "var x = 1;\nif (x == 2) debugger;\n";
 const rc = (config: object) => JSON.stringify({ root: true, ...config });
 const noVar = { rules: { "no-var": "error" } };
 
+// The parts of @eslint/eslintrc that the functions of its `FlatCompat` are made of, in the shape that they have there.
+const eslintrc = `
+  const matchers = patterns => [patterns].flat().map(it =>
+    it.startsWith("./") ? { pattern: it.slice(2), options: { matchBase: false } } : { pattern: it, options: { matchBase: true } });
+  class OverrideTester {
+    constructor(patterns, basePath) { Object.assign(this, { patterns, basePath }); }
+    test() { return false; }
+  }
+  class ConfigArray extends Array {
+    extractConfig() {
+      const patterns = this.flatMap(it => it.ignorePatterns ?? []);
+      return { ignores: Object.assign(() => false, { basePath: this.basePath, patterns }) };
+    }
+  }
+  class FlatCompat {
+    constructor({ baseDirectory }) { this.baseDirectory = baseDirectory; }
+    config(config) {
+      const elements = Object.assign(new ConfigArray(), { basePath: this.baseDirectory });
+      const add = ({ files, excludedFiles, overrides = [], ...rest }, outer) => {
+        const own = files ? [{ includes: matchers(files), excludes: excludedFiles ? matchers(excludedFiles) : null }] : [];
+        const patterns = [...outer, ...own];
+        elements.push({ ...rest, criteria: patterns.length > 0 ? new OverrideTester(patterns, this.baseDirectory) : null });
+        for (const it of overrides) add(it, patterns);
+      };
+      add(config, []);
+      const flat = elements.map(({ criteria, rules }) => ({ rules, ...(criteria && { files: [path => criteria.test(path)] }) }));
+      if (elements.some(it => it.ignorePatterns)) flat.unshift({ ignores: [path => elements.extractConfig(path).ignores(path)] });
+      return flat;
+    }
+  }
+  module.exports = { FlatCompat, Legacy: { OverrideTester, ConfigArray } };`;
+
 describe.concurrent("a function in an eslint.config.js", () => {
   test.each(["files", "ignores"])("in `%s` is an error", async key => {
     const { problems, stderr, exitCode } = await lint({
@@ -56,6 +88,44 @@ describe.concurrent("a function in an eslint.config.js", () => {
     expect(problems).toEqual([]);
     expect(stderr).toContain(`Config "mine": Key "${key}": A function is not supported, at user-defined index 1.`);
     expect(exitCode).toBe(2);
+  });
+
+  test("those of `FlatCompat` are the patterns that they are made of", async () => {
+    const { problems, stderr, exitCode } = await lint({
+      "node_modules/@eslint/eslintrc/index.js": eslintrc,
+      "eslint.config.mjs": `
+        import { FlatCompat } from "@eslint/eslintrc";
+        export default new FlatCompat({ baseDirectory: import.meta.dirname }).config({
+          ignorePatterns: ["ignored.js", "/build"],
+          rules: { "no-var": "error" },
+          overrides: [
+            { files: ["*.ts", "*.mts"], excludedFiles: "*.d.ts", rules: { "no-debugger": "error" } },
+            { files: "src/**/*.js", rules: { eqeqeq: "error" }, overrides: [{ files: "./src/only.js", rules: { "no-var": "off" } }] },
+          ],
+        });`,
+      "a.js": code,
+      "b.ts": code,
+      "c.d.ts": code,
+      "ignored.js": code,
+      "build/d.js": code,
+      ".hidden.js": code,
+      "src/e.js": code,
+      "src/only.js": code,
+      "src/deep/only.js": code,
+      "src/ignored.js": code,
+    });
+    expect(stderr).not.toContain("function");
+    expect(problems).toEqual([
+      "a.js:1:1 no-var",
+      "b.ts:1:1 no-var",
+      "b.ts:2:13 no-debugger",
+      "src/deep/only.js:1:1 no-var",
+      "src/deep/only.js:2:7 eqeqeq",
+      "src/e.js:1:1 no-var",
+      "src/e.js:2:7 eqeqeq",
+      "src/only.js:2:7 eqeqeq",
+    ]);
+    expect(exitCode).toBe(1);
   });
 });
 

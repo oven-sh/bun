@@ -664,26 +664,30 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
 describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
-  // TODO: fails on every build on the three Linux aarch64 CI lanes and nowhere else (it passes on the CI's own
-  // Linux aarch64 build under emulation, and on macOS arm64). What holds the graph there is not established: the
-  // fixture is a child process and prints no heap snapshot.
+  // TODO: failed on every build on the three Linux aarch64 CI lanes (not on the CI's own Linux aarch64 build under
+  // emulation, nor on macOS arm64) while it went by finalization alone. Not tried there since it asks the heap.
   test.todoIf(isLinux && isArm64)("a dropped graph whose module keeps a FileHandle open is collected", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
+          import { generateHeapSnapshotForDebugging, jscDescribe } from "bun:jsc";
+          ${Heap}
           // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
           process.on("uncaughtException", () => {});
           let collected = false;
+          let address;
           const registry = new FinalizationRegistry(() => { collected = true; });
           await (async () => {
             const graph = new Bun.ModuleGraph({ onError() {} });
             registry.register(graph, "graph");
+            address = BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(graph))[0]);
             await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
           })();
           for (let i = 0; i < 200 && !collected; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
-          console.log(JSON.stringify({ collected }));
+          const keptBy = collected ? undefined : await new Promise(resolve => setTimeout(() => resolve(new Heap().pathTo(address)), 0));
+          console.log(JSON.stringify({ keptBy: keptBy ?? null }));
           process.exit(0);
           `,
       ],
@@ -692,7 +696,7 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(`{"collected":true}`);
+    expect(stdout.trim()).toBe(`{"keptBy":null}`);
     expect(exitCode).toBe(0);
   });
 });

@@ -14,8 +14,6 @@ struct Problem<'a> {
     /// `eslint(no-debugger)`, or nothing.
     code: Vec<u8>,
     is_error: bool,
-    /// oxlint's `checkstyle` calls an error without a place a warning.
-    is_error_in_checkstyle: bool,
 }
 
 /// The problems of a file, printed.
@@ -63,8 +61,7 @@ fn group(
                     column: info.start.column,
                     message: info.message,
                     code: info.code.unwrap_or_default(),
-                    is_error: is_error(message),
-                    is_error_in_checkstyle: info.is_error,
+                    is_error: info.is_error,
                 };
                 add(info.filename, &problem);
             }
@@ -77,7 +74,6 @@ fn group(
                     message: &message.message,
                     code: code(message).unwrap_or_default(),
                     is_error: is_error(message),
-                    is_error_in_checkstyle: is_error(message),
                 };
                 add(&name, &problem);
             }
@@ -118,11 +114,7 @@ pub(super) fn write_checkstyle(
     is_oxlint: bool,
 ) {
     let files = group(results, meta, is_oxlint, &|out, problem| {
-        let severity = if problem.is_error_in_checkstyle {
-            "error"
-        } else {
-            "warning"
-        };
+        let severity = if problem.is_error { "error" } else { "warning" };
         let _ = write!(
             out,
             "<error line=\"{}\" column=\"{}\" severity=\"{severity}\" message=\"",

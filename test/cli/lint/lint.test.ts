@@ -993,6 +993,44 @@ describe.concurrent("bun lint", () => {
         );
       });
 
+      test("what has no place has its text and its severity", async () => {
+        const stale = { "oxlint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) };
+        const text = "There are suppressions that do not occur anymore.";
+        const print = async (format: string) => (await lint({ ...files, ...stale }, ["--quiet", "-f", format])).raw;
+        expect(await print("unix")).toBe(`:0:0: ${text} [Error]\n\n1 problem\n`);
+        expect(await print("checkstyle")).toContain(
+          `<error line="0" column="0" severity="error" message="${text}" source="" />`,
+        );
+        expect(await print("junit")).toContain(`<error message="${text}">line 0, column 0, ${text}</error>`);
+      });
+
+      // As oxlint 1.87. For ESLint the mark is in no column.
+      test("what a rule says about the file is before a byte order mark, all else after it", async () => {
+        const project = {
+          ".oxlintrc.json": rc({
+            plugins: ["unicorn", "import", "react"],
+            rules: {
+              "no-debugger": "error",
+              "unicode-bom": "error",
+              "unicorn/filename-case": "error",
+              "import/unambiguous": "error",
+              "react/jsx-filename-extension": ["error", { allow: "as-needed" }],
+            },
+          }),
+          "Bad_Name.jsx": "\uFEFFdebugger;\n",
+        };
+        const { diagnostics } = JSON.parse((await lint(project, ["-f", "json"])).raw);
+        expect(
+          Object.fromEntries(diagnostics.map((it: any) => [it.code, Object.values(it.labels[0].span).join(" ")])),
+        ).toEqual({
+          "eslint(no-debugger)": "3 9 1 4",
+          "eslint(unicode-bom)": "0 0 1 1",
+          "import(unambiguous)": "0 0 1 1",
+          "react(jsx-filename-extension)": "0 0 1 1",
+          "unicorn(filename-case)": "0 0 1 1",
+        });
+      });
+
       test("number_of_rules has what an override turns on, not what needs types, and is null with a nested configuration", async () => {
         const count = async (more: Record<string, string>, ...flags: string[]) =>
           JSON.parse((await lint({ ...files, ...more }, ["-f", "json", ...flags])).raw).number_of_rules;
@@ -1042,13 +1080,13 @@ describe.concurrent("bun lint", () => {
           "error: There are suppressions that do not occur anymore.\n\n" +
             "note: Run `oxlint --prune-suppressions` to remove unused suppressions.\n\nLinted 2 files",
         );
-        // oxlint has nothing but the rule of what has no place. The fingerprint is Rust's `DefaultHasher` of that.
+        // oxlint has neither the text nor the severity of what has no place. The fingerprint is Rust's `DefaultHasher` of all of it.
         expect(JSON.parse(results.unprunedForGitlab.raw)).toEqual([
           {
-            description: "",
+            description: "There are suppressions that do not occur anymore.",
             check_name: "",
-            fingerprint: "498befe408aeb3ad",
-            severity: "major",
+            fingerprint: "a19b313047657a87",
+            severity: "critical",
             location: { path: "", lines: { begin: 0, end: 0 } },
           },
         ]);

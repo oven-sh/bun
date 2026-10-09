@@ -93,7 +93,7 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
     }
     let report = match first_span {
         Some(span) => cx.report(span, PREFER_IMPORTING_VITEST_GLOBALS),
-        None => cx.report_at(0, PREFER_IMPORTING_VITEST_GLOBALS),
+        None => cx.report_file(PREFER_IMPORTING_VITEST_GLOBALS),
     };
     report.fix(|fixer| {
         // oxlint prints them in the order of an `FxHashSet`.

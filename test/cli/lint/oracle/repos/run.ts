@@ -500,6 +500,8 @@ async function lint(entry: Entry, run: Run) {
     const judged = judgeReport && b ? compare(judgeReport, b) : null;
     judge = {
       version: JUDGES[run.tool as "eslint"],
+      // A mixed judge has to show at a glance.
+      tsgolint: run.tool === "oxlint" ? `${WITH_JUDGES["oxlint-tsgolint"]} ${judgeEnv(run).OXLINT_TSGOLINT_PATH}` : undefined,
       ...summary(it),
       comparison: judged && cut(judged),
       verdict: !judgeReport ? "cannot run: theirs" : !b ? "cannot run: ours" : verdictOf(judged!, it.code),
@@ -510,6 +512,8 @@ async function lint(entry: Entry, run: Run) {
     ...run,
     version,
     installed: their.installed,
+    /** The tsgolint that THEIR oxlint finds: the project's. */
+    tsgolint: run.tool === "oxlint" ? (parse<{ version: string }>(join(cloneOf(entry.repo), "node_modules", "oxlint-tsgolint", "package.json"))?.version ?? null) : undefined,
     theirs: summary(theirs),
     ours: summary(ours),
     warnings: warnings(read(ours.stderr)),

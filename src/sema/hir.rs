@@ -242,7 +242,9 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
 
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
-    type List<T>: DerefMut<Target = [T]>;
+    type List<T: 'static>: DerefMut<Target = [T]>;
+    /// A list that a program adds to when the file is loaded.
+    type Growing<T>: DerefMut<Target = [T]>;
     /// A list of nodes of a `FileIn`.
     type Nodes<T: 'static>: DerefMut<Target = [T]>;
     /// A list that is empty in most files.
@@ -262,7 +264,8 @@ pub trait Storage {
 pub struct Growable;
 
 impl Storage for Growable {
-    type List<T> = Vec<T>;
+    type List<T: 'static> = Vec<T>;
+    type Growing<T> = Vec<T>;
     type Nodes<T: 'static> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
@@ -277,7 +280,8 @@ impl Storage for Growable {
 pub struct InArena<'s>(PhantomData<&'s Arena>);
 
 impl<'s> Storage for InArena<'s> {
-    type List<T> = ArenaVec<'s, T>;
+    type List<T: 'static> = Fixed<'s, T>;
+    type Growing<T> = ArenaVec<'s, T>;
     type Nodes<T: 'static> = Fixed<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
@@ -317,6 +321,19 @@ impl<'s, T: Copy> Fixed<'s, T> {
 
     fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
+    }
+
+    /// For one who is about to write into it: a list that others have too becomes a copy in `arena`.
+    pub(crate) fn make_own_in(&mut self, arena: &'s Arena) {
+        if let FixedIn::Shared(list) = self.0 {
+            *self = Fixed::copied_in(arena, list);
+        }
+    }
+}
+
+impl<'s, T> Fixed<'s, T> {
+    pub(crate) fn shared(list: &'s [T]) -> Self {
+        Fixed(FixedIn::Shared(list))
     }
 }
 
@@ -390,19 +407,9 @@ static CELLS_OF_NO_NODES: LazyCells = LazyCells {
 };
 
 /// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
-pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
-    let mut exact = ArenaVec::new_in(arena);
-    exact.reserve_exact(list.len());
-    exact.extend_from_slice(list);
+pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+    let exact = Fixed::copied_in(arena, list);
     list.clear();
-    exact
-}
-
-/// The same for elements that are not `Copy`.
-pub(crate) fn move_to_arena<'s, T>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
-    let mut exact = ArenaVec::new_in(arena);
-    exact.reserve_exact(list.len());
-    exact.extend(list.drain(..));
     exact
 }
 
@@ -2608,7 +2615,7 @@ impl File<'_> {
     pub fn share<'s>(&'s self, arena: &'s Arena, session: &'s Session) -> File<'s> {
         macro_rules! shared {
             ($list:expr) => {
-                Fixed(FixedIn::Shared(&$list[..]))
+                Fixed::shared(&$list[..])
             };
         }
         macro_rules! few {

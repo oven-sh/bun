@@ -578,6 +578,7 @@ These differences are intentional:
 - **Types come from the type checker of `bun check`**, not from `oxlint-tsgolint`. Both follow TypeScript 7. `bun lint` says nothing about a `tsconfig.json` that cannot be loaded.
 - **In a file with a byte order mark, what needs types is reported where it is.** oxlint places it 3 bytes too far to the left.
 - **`checkstyle`, `junit`, and `github` escape the names of files and rules.** oxlint prints them as they are, so a name with `"` or `<` breaks its report.
+- **A problem that is at no place in a file keeps its message and its severity** in `unix`, `github`, `gitlab`, `junit`, and `checkstyle`. oxlint prints an empty message there, and calls an error a warning.
 - **`--init` leaves an `.oxlintrc.json` that exists as it is.** oxlint writes over it.
 - **`--ignore-path ./file` works.** Without an argument, or with `.`, oxlint reads the file only if it is named without a directory.
 - **More is accepted:** an argument with `..` in it, `--max-warnings -1`, and a configuration file that starts with a byte order mark. oxlint refuses them.

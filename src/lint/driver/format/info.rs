@@ -6,7 +6,6 @@ use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
-use bun_lint::rule::Plugin;
 
 /// A line, and a column in bytes, both from 1.
 #[derive(Copy, Clone, Default)]
@@ -15,8 +14,7 @@ pub(super) struct Position {
     pub(super) column: usize,
 }
 
-/// Of a problem without a place only `code` and `filename` are known: the positions are 0, the message is empty, and it is
-/// a warning.
+/// The positions of a problem without a place are 0. oxlint has no message for it either, and calls it a warning.
 pub(super) struct Info<'s> {
     pub(super) start: Position,
     /// After the last byte.
@@ -33,7 +31,7 @@ pub(super) struct Source<'r> {
     /// [`Info::filename`]
     pub(super) name: Vec<u8>,
     text: &'r [u8],
-    pub(super) offsets: Offsets<'r>,
+    offsets: Offsets<'r>,
     /// Where each line starts. Only `\n`, `\r\n` and `\r` end a line.
     lines: Vec<usize>,
 }
@@ -74,44 +72,46 @@ impl<'r> Source<'r> {
         }
     }
 
+    /// Where what goes from the line and column `start` to `end` starts and ends, in bytes from the start of the file.
+    fn between(&self, start: (u32, u32), end: (u32, u32)) -> (usize, usize) {
+        let start = self.offsets.at(start.0, start.1).0;
+        (start, self.offsets.at(end.0, end.1).0.max(start))
+    }
+
+    /// The same for a label of a rule that is built in. One at the first character that has no length is about the file:
+    /// oxlint has it at 0, before a byte order mark, where ESLint has no column.
+    pub(super) fn label(&self, start: (u32, u32), end: (u32, u32)) -> (usize, usize) {
+        match (start, end) == ((1, 1), (1, 1)) {
+            true => (0, 0),
+            false => self.between(start, end),
+        }
+    }
+
     /// Where the problem starts and where it ends, in bytes from the start of the file. `None`: it has no place.
     pub(super) fn span(&self, message: &LintMessage) -> Option<(usize, usize)> {
         if message.line == 0 {
             return None;
         }
-        // This rule alone points before a byte order mark, where ESLint has no column.
-        if matches!(
-            &message.rule_id,
-            Some(RuleId::Known(rule)) if rule.plugin == Plugin::Eslint && rule.name == "unicode-bom"
-        ) {
-            return Some((0, 0));
-        }
-        let start = self.offsets.at(message.line, message.column).0;
-        let end = message
-            .end
-            .map_or(start, |(line, column)| self.offsets.at(line, column).0);
-        Some((start, end.max(start)))
+        let start = (message.line, message.column);
+        let end = message.end.unwrap_or(start);
+        Some(match message.rule_id {
+            Some(RuleId::Known(_)) => self.label(start, end),
+            // A plugin in JavaScript does not see the mark: its 0 is after it.
+            Some(RuleId::Js(_) | RuleId::Unknown(_)) | None => self.between(start, end),
+        })
     }
 
     pub(super) fn info<'s>(&'s self, message: &'s LintMessage) -> Info<'s> {
-        let code = code(message);
-        let Some((start, end)) = self.span(message) else {
-            return Info {
-                start: Position::default(),
-                end: Position::default(),
-                filename: &self.name,
-                message: b"",
-                is_error: false,
-                code,
-            };
-        };
+        let (start, end) = self.span(message).map_or_else(Default::default, |it| {
+            (self.position(it.0), self.position(it.1))
+        });
         Info {
-            start: self.position(start),
-            end: self.position(end),
+            start,
+            end,
             filename: &self.name,
             message: &message.message,
             is_error: is_error(message),
-            code,
+            code: code(message),
         }
     }
 }

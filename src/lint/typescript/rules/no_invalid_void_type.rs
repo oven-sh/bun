@@ -199,6 +199,8 @@ impl NoInvalidVoidType {
             ),
             Node::Class(_) => as_type_argument,
             Node::Expr(e) => match e.kind() {
+                // For oxlint `a<void>` has no type arguments of a generic type.
+                ExprKind::Instantiation { .. } if e.file().language().is_oxlint => false,
                 ExprKind::New(_)
                 | ExprKind::TaggedTemplate(_)
                 | ExprKind::Instantiation { .. }

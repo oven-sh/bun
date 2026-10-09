@@ -849,7 +849,7 @@ pub struct Redeclaration {
 pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
-    pub symbols: S::List<SymbolIn<S>>,
+    pub symbols: S::Growing<SymbolIn<S>>,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
     pub tables: S::List<(u32, u32)>,
@@ -1953,7 +1953,7 @@ impl BoundBuilder {
                 );
                 exact
             },
-            scopes: move_to_arena(&mut self.scopes, arena),
+            scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
             large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
@@ -2079,9 +2079,9 @@ impl BoundBuilder {
 }
 
 impl Bound<'_> {
-    /// The same in `arena`, for a program that has the file in common with others: it writes into the symbols, and its
-    /// lists have its lifetime.
-    pub fn copy_in<'s>(&self, arena: &'s Arena) -> Bound<'s> {
+    /// The same for a program that has the file in common with others. The long lists stay where they are. The program
+    /// writes into the symbols: they are copied, like what else there is, to `arena`.
+    pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             symbols: {
@@ -2097,12 +2097,12 @@ impl Bound<'_> {
                 };
                 vec_from_iter_in(self.symbols.iter().map(copy), arena)
             },
-            scopes: vec_from_iter_in(self.scopes.iter().cloned(), arena),
-            tables: vec_from_iter_in(self.tables.iter().cloned(), arena),
-            entries: vec_from_iter_in(self.entries.iter().cloned(), arena),
+            scopes: Fixed::shared(&self.scopes),
+            tables: Fixed::shared(&self.tables),
+            entries: Fixed::shared(&self.entries),
             large_tables: copy_of_map(&self.large_tables, arena),
-            nested_names: vec_from_iter_in(self.nested_names.iter().cloned(), arena),
-            ids: vec_from_iter_in(self.ids.iter().cloned(), arena),
+            nested_names: Fixed::shared(&self.nested_names),
+            ids: Fixed::shared(&self.ids),
             file_symbol: self.file_symbol,
             export_stars: ArenaFew::from_iter_in(self.export_stars.iter().cloned(), arena),
             ambient_modules: ArenaFew::from_iter_in(self.ambient_modules.iter().cloned(), arena),
@@ -2116,7 +2116,7 @@ impl Bound<'_> {
             ),
             redeclarations: ArenaFew::from_iter_in(self.redeclarations.iter().cloned(), arena),
             umd_globals: ArenaFew::from_iter_in(self.umd_globals.iter().cloned(), arena),
-            specifiers: vec_from_iter_in(self.specifiers.iter().cloned(), arena),
+            specifiers: Fixed::shared(&self.specifiers),
             module_augmentations: ArenaFew::from_iter_in(
                 self.module_augmentations.iter().cloned(),
                 arena,
@@ -2127,43 +2127,37 @@ impl Bound<'_> {
             ),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: vec_from_iter_in(self.expr_symbol.iter().cloned(), arena),
-            expr_parent: vec_from_iter_in(self.expr_parent.iter().cloned(), arena),
-            expr_flow: vec_from_iter_in(self.expr_flow.iter().cloned(), arena),
-            stmt_parent: vec_from_iter_in(self.stmt_parent.iter().cloned(), arena),
-            stmt_scope: vec_from_iter_in(self.stmt_scope.iter().cloned(), arena),
-            type_scope: vec_from_iter_in(self.type_scope.iter().cloned(), arena),
-            type_by_alias: vec_from_iter_in(self.type_by_alias.iter().cloned(), arena),
+            expr_symbol: Fixed::shared(&self.expr_symbol),
+            expr_parent: Fixed::shared(&self.expr_parent),
+            expr_flow: Fixed::shared(&self.expr_flow),
+            stmt_parent: Fixed::shared(&self.stmt_parent),
+            stmt_scope: Fixed::shared(&self.stmt_scope),
+            type_scope: Fixed::shared(&self.type_scope),
+            type_by_alias: Fixed::shared(&self.type_by_alias),
             this_in_type_literal: copy_of_set(&self.this_in_type_literal, arena),
-            pat_parent: vec_from_iter_in(self.pat_parent.iter().cloned(), arena),
-            pat_symbol: vec_from_iter_in(self.pat_symbol.iter().cloned(), arena),
-            prop_owner: vec_from_iter_in(self.prop_owner.iter().cloned(), arena),
-            member_symbol: vec_from_iter_in(self.member_symbol.iter().cloned(), arena),
+            pat_parent: Fixed::shared(&self.pat_parent),
+            pat_symbol: Fixed::shared(&self.pat_symbol),
+            prop_owner: Fixed::shared(&self.prop_owner),
+            member_symbol: Fixed::shared(&self.member_symbol),
             property_symbol: copy_of_map(&self.property_symbol, arena),
-            member_owner: vec_from_iter_in(self.member_owner.iter().cloned(), arena),
-            member_scope: vec_from_iter_in(self.member_scope.iter().cloned(), arena),
-            param_fn: vec_from_iter_in(self.param_fn.iter().cloned(), arena),
-            type_param_symbol: vec_from_iter_in(self.type_param_symbol.iter().cloned(), arena),
-            type_param_scope: vec_from_iter_in(self.type_param_scope.iter().cloned(), arena),
-            fns: vec_from_iter_in(self.fns.iter().cloned(), arena),
-            requires_scope_change: vec_from_iter_in(
-                self.requires_scope_change.iter().cloned(),
-                arena,
-            ),
-            fn_symbol: vec_from_iter_in(self.fn_symbol.iter().cloned(), arena),
-            class_symbol: vec_from_iter_in(self.class_symbol.iter().cloned(), arena),
-            class_owner: vec_from_iter_in(self.class_owner.iter().cloned(), arena),
-            class_scope: vec_from_iter_in(self.class_scope.iter().cloned(), arena),
-            interface_symbol: vec_from_iter_in(self.interface_symbol.iter().cloned(), arena),
-            interface_scope: vec_from_iter_in(self.interface_scope.iter().cloned(), arena),
-            interface_contains_this: vec_from_iter_in(
-                self.interface_contains_this.iter().cloned(),
-                arena,
-            ),
+            member_owner: Fixed::shared(&self.member_owner),
+            member_scope: Fixed::shared(&self.member_scope),
+            param_fn: Fixed::shared(&self.param_fn),
+            type_param_symbol: Fixed::shared(&self.type_param_symbol),
+            type_param_scope: Fixed::shared(&self.type_param_scope),
+            fns: Fixed::shared(&self.fns),
+            requires_scope_change: Fixed::shared(&self.requires_scope_change),
+            fn_symbol: Fixed::shared(&self.fn_symbol),
+            class_symbol: Fixed::shared(&self.class_symbol),
+            class_owner: Fixed::shared(&self.class_owner),
+            class_scope: Fixed::shared(&self.class_scope),
+            interface_symbol: Fixed::shared(&self.interface_symbol),
+            interface_scope: Fixed::shared(&self.interface_scope),
+            interface_contains_this: Fixed::shared(&self.interface_contains_this),
             enum_scope: ArenaFew::from_iter_in(self.enum_scope.iter().cloned(), arena),
             module_scope: ArenaFew::from_iter_in(self.module_scope.iter().cloned(), arena),
-            alias_symbol: vec_from_iter_in(self.alias_symbol.iter().cloned(), arena),
-            alias_scope: vec_from_iter_in(self.alias_scope.iter().cloned(), arena),
+            alias_symbol: Fixed::shared(&self.alias_symbol),
+            alias_scope: Fixed::shared(&self.alias_scope),
             enum_symbol: ArenaFew::from_iter_in(self.enum_symbol.iter().cloned(), arena),
             enum_member_symbol: ArenaFew::from_iter_in(
                 self.enum_member_symbol.iter().cloned(),
@@ -2178,8 +2172,8 @@ impl Bound<'_> {
                 self.module_instance_state.iter().cloned(),
                 arena,
             ),
-            var_stmt: vec_from_iter_in(self.var_stmt.iter().cloned(), arena),
-            assignments: vec_from_iter_in(self.assignments.iter().cloned(), arena),
+            var_stmt: Fixed::shared(&self.var_stmt),
+            assignments: Fixed::shared(&self.assignments),
             unchecked_assignment_targets: ArenaFew::from_iter_in(
                 self.unchecked_assignment_targets.iter().cloned(),
                 arena,
@@ -2196,21 +2190,21 @@ impl Bound<'_> {
                 arena,
             ),
             computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
-            case_stmt: vec_from_iter_in(self.case_stmt.iter().cloned(), arena),
-            stmt_flow: vec_from_iter_in(self.stmt_flow.iter().cloned(), arena),
-            case_fallthrough: vec_from_iter_in(self.case_fallthrough.iter().cloned(), arena),
+            case_stmt: Fixed::shared(&self.case_stmt),
+            stmt_flow: Fixed::shared(&self.stmt_flow),
+            case_fallthrough: Fixed::shared(&self.case_fallthrough),
             hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
             refused_decorators: ArenaFew::from_iter_in(
                 self.refused_decorators.iter().cloned(),
                 arena,
             ),
             unused_labels: ArenaFew::from_iter_in(self.unused_labels.iter().cloned(), arena),
-            import_scope: vec_from_iter_in(self.import_scope.iter().cloned(), arena),
+            import_scope: Fixed::shared(&self.import_scope),
             import_equals_scope: ArenaFew::from_iter_in(
                 self.import_equals_scope.iter().cloned(),
                 arena,
             ),
-            export_scope: vec_from_iter_in(self.export_scope.iter().cloned(), arena),
+            export_scope: Fixed::shared(&self.export_scope),
             expr_scope: copy_of_map(&self.expr_scope, arena),
             private_class: copy_of_map(&self.private_class, arena),
             private_names_outside_class_bodies: ArenaFew::from_iter_in(
@@ -2221,8 +2215,8 @@ impl Bound<'_> {
                 self.classes_of_private_names.iter().cloned(),
                 arena,
             ),
-            free_idents: vec_from_iter_in(self.free_idents.iter().cloned(), arena),
-            alias_idents: vec_from_iter_in(self.alias_idents.iter().cloned(), arena),
+            free_idents: Fixed::shared(&self.free_idents),
+            alias_idents: Fixed::shared(&self.alias_idents),
             arguments_objects: ArenaFew::from_iter_in(
                 self.arguments_objects.iter().cloned(),
                 arena,
@@ -2239,12 +2233,12 @@ impl Bound<'_> {
                 self.names_resolved_for_arguments.iter().cloned(),
                 arena,
             ),
-            flow: vec_from_iter_in(self.flow.iter().cloned(), arena),
-            flow_edges: vec_from_iter_in(self.flow_edges.iter().cloned(), arena),
-            flow_shared: vec_from_iter_in(self.flow_shared.iter().cloned(), arena),
+            flow: Fixed::shared(&self.flow),
+            flow_edges: Fixed::shared(&self.flow_edges),
+            flow_shared: Fixed::shared(&self.flow_shared),
             flow_places: self.flow_places,
-            expr_kinds: vec_from_iter_in(self.expr_kinds.iter().cloned(), arena),
-            expr_kind_counts: vec_from_iter_in(self.expr_kind_counts.iter().cloned(), arena),
+            expr_kinds: Fixed::shared(&self.expr_kinds),
+            expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
         }
     }
 }

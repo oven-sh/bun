@@ -52,8 +52,10 @@ impl<'a> Owner<'a> {
             }
             Node::Param(param)
                 if param.default() == Some(rhs)
-                    && !param.is_parameter_property()
-                    && param.func().is_some_and(|func| !func.is_arrow() && func.has_body()) =>
+                    // oxlint looks at every parameter.
+                    && (rhs.file().language().is_oxlint
+                        || !param.is_parameter_property()
+                            && param.func().is_some_and(|func| !func.is_arrow() && func.has_body())) =>
             {
                 Some(Owner::Param(param))
             }
@@ -103,6 +105,10 @@ impl ConsistentGenericConstructors {
         let Some(callee_name) = callee.as_ident() else {
             return;
         };
+        // For oxlint `(A)` is no name.
+        if callee.is_parenthesized() && cx.language().is_oxlint {
+            return;
+        }
         let rhs_type_args = call.type_args().angle_brackets_span();
         if rhs_type_args.is_some() != self.prefers_type_annotation {
             return;

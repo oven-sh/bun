@@ -72,10 +72,9 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
     if let Some(first) = source.span(message) {
         let text = details.map_or("", |it| &*it.first_label);
         write_label(out, source, first, text);
-        let offset = |(line, column): (u32, u32)| source.offsets.at(line, column).0;
         for (start, end, text) in details.into_iter().flat_map(|it| &it.labels) {
             out.push(b',');
-            write_label(out, source, (offset(*start), offset(*end)), text);
+            write_label(out, source, source.label(*start, *end), text);
         }
     }
     out.extend_from_slice(b"]}");

@@ -216,7 +216,9 @@ impl<'a> Recurser<'_, 'a> {
             return self.is_type_readonly_object(ty, depth);
         }
 
+        // tsgolint 7.0 does not look into one: it is no object, so it is readonly.
         if is_conditional_type(ty)
+            && !ty.file().language().is_oxlint
             && let Some(branches) = branches_of_conditional_type(ty)
         {
             return readonly_if(

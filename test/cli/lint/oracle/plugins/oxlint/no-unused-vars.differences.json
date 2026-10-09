@@ -17,28 +17,6 @@
   ]
  },
  {
-  "cause": "what is not exported in a declared namespace or module",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\ndeclare namespace Foo {\n  function bar(line: string, index: number | null, tabSize: number): number;\n  var baz: string;\n}\nconsole.log(Foo);\n    ",
-  "oxlint": [
-   "4:7"
-  ],
-  "ours": []
- },
- {
-  "cause": "what is not exported in a declared namespace or module",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n    }\n  }\n}\n    ",
-  "oxlint": [
-   "6:15"
-  ],
-  "ours": []
- },
- {
   "cause": "reportUsedIgnorePattern",
   "suite": "typescript-eslint",
   "options": [
@@ -72,32 +50,6 @@
   ]
  },
  {
-  "cause": "what is not exported in a declared namespace or module",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
-  "oxlint": [
-   "6:15"
-  ],
-  "ours": [
-   "5:17"
-  ]
- },
- {
-  "cause": "what is not exported in a declared namespace or module",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\ndeclare module 'foo' {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
-  "oxlint": [
-   "6:15"
-  ],
-  "ours": [
-   "5:17"
-  ]
- },
- {
   "cause": "?",
   "suite": "oxc",
   "options": [],
@@ -118,20 +70,6 @@
    "2:15"
   ],
   "ours": []
- },
- {
-  "cause": "what is not exported in a declared namespace or module",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "declare module 'bun:test' { class MyClass<T> {} }",
-  "oxlint": [
-   "1:35",
-   "1:43"
-  ],
-  "ours": [
-   "1:43"
-  ]
  },
  {
   "cause": "?",

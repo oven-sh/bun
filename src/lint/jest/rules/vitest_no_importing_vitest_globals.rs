@@ -107,7 +107,7 @@ fn check_variable_declaration<'a>(
     // It is reported also if none of the names is that of a global.
     let report = match properties.iter().find(is_global_property) {
         Some(first_global) => cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS),
-        None => cx.report_at(0, NO_IMPORTING_VITEST_GLOBALS),
+        None => cx.report_file(NO_IMPORTING_VITEST_GLOBALS),
     };
     report.fix(|fixer| {
         let variable_modifier = match declarations.first()?.var_kind() {

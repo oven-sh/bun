@@ -558,6 +558,10 @@ fn is_in_generic_context(node: Expr) -> bool {
     let mut seen_function = false;
     for current in Node::Expr(node).ancestors() {
         match current {
+            // For tsgolint a method is no function expression: it looks further out.
+            Node::Func(func)
+                if !matches!(func.kind(), FnKind::Arrow | FnKind::Expr | FnKind::Decl)
+                    && node.file().language().is_oxlint => {}
             Node::Func(func) if func.has_body() && func.kind() != FnKind::StaticBlock => {
                 if seen_function || !matches!(func.body(), FnBody::Expr(_)) {
                     return false;

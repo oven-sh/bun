@@ -175,6 +175,7 @@ interface Diagnostic {
   message: string;
   code?: string;
   help?: string;
+  note?: string;
   filename: string;
   labels: { label?: string; span: { offset: number; length: number } }[];
 }
@@ -275,7 +276,7 @@ function record(rule: Listed) {
             ...at,
             fix: null,
             suggestions: [],
-            oxlint: { labels, help: it.help ?? null },
+            oxlint: { labels, help: it.help ?? null, ...(it.note === undefined ? {} : { note: it.note }) },
           };
         })
         .sort((a, b) => a.line - b.line || a.column - b.column);

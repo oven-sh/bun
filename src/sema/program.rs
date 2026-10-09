@@ -5515,7 +5515,7 @@ impl<'s> Files<'s> {
                                     let parse = run.parse(host, path, key, Some(text));
                                     Parse {
                                         hir: parse.hir.share(arena, session),
-                                        bound: parse.bound.copy_in(arena),
+                                        bound: parse.bound.share(arena),
                                         is_renamed: true,
                                     }
                                 }
@@ -5743,7 +5743,7 @@ impl<'s> Files<'s> {
                     specifies_esm,
                 };
                 let parse = run.parse(host, path, key, text);
-                (parse.hir.share(arena, session), parse.bound.copy_in(arena))
+                (parse.hir.share(arena, session), parse.bound.share(arena))
             }
             None => {
                 let (mut hir, bound) = Self::parse_and_bind(
@@ -6463,6 +6463,8 @@ impl<'s> Files<'s> {
                 }
             };
             let bound = &mut self.modules[of_file[0].0.file.idx()].bound;
+            bound.expr_symbol.make_own_in(self.arena);
+            bound.entries.make_own_in(self.arena);
             bound.expr_symbol.iter_mut().for_each(is_placeholder);
             bound
                 .entries

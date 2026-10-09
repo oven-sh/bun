@@ -14,8 +14,11 @@
 //   labels, and what is computed from them (the fingerprint of `gitlab`) are taken out. `--exact` leaves them in. A case that is
 //   `exact` reports with a plugin in JavaScript, which says the same to both.
 //
+// - oxlint has neither the message nor the severity of a problem without a place in `unix`, `github`, `gitlab`, `junit` and
+//   `checkstyle`. `bun lint` prints them. Both are taken out of such a problem.
+//
 // `--record` writes each project, and what oxlint prints for it, below a directory, and compares nothing.
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -177,6 +180,20 @@ const cases = [
   },
   { name: "a byte order mark", exact: true, files: marked({ "a.js": "\u{FEFF}⟦debugger;⟧ ⟪x⟫;\n⟦y⟧;\n", "zero.js": "\u{FEFF}⟦⟧x;\n", "only.js": "\u{FEFF}⟪⟫" }) },
   { name: "a byte order mark, rules of oxlint", files: { ".oxlintrc.json": rc({ "no-debugger": "error", "unicode-bom": "warn" }), "a.js": "\u{FEFF}debugger;\ndebugger;\n" } },
+  {
+    name: "a byte order mark, what rules say about the file",
+    files: {
+      ".oxlintrc.json": rc(
+        { "no-debugger": "error", "unicorn/filename-case": "error", "import/unambiguous": "warn", "react/jsx-filename-extension": ["error", { allow: "as-needed" }], "oxc/no-barrel-file": ["warn", { threshold: 0 }] },
+        { plugins: ["unicorn", "import", "react", "oxc"] },
+      ),
+      "Bad_Name.js": "\u{FEFF}debugger;\n",
+      "plain.jsx": "\u{FEFF}const a = 1;\n",
+      "barrel.js": '\u{FEFF}export * from "./x";\nexport * from "./y";\n',
+      "x.js": "export const x = 1;\n",
+      "y.js": "export const y = 1;\n",
+    },
+  },
   { name: "tabs", exact: true, files: marked({ "a.js": "\t⟦debugger;⟧\n\t\tif (a)\t⟪{\t}⟫\n⟦\t⟧\n" }) },
   {
     name: "CRLF",
@@ -396,13 +413,16 @@ function write(root, files) {
   }
 }
 
-function run(command, root, test, format) {
+async function run(command, root, test, format) {
   write(root, test.files);
   const args = [...(format === null ? [] : [`--format=${format}`]), ...(test.args ?? []).map(it => it.replace("{root}", root))];
   // Nothing of the environment of whoever runs this: both choose a format and colors by it.
   const env = { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: "1", ...test.env };
-  const result = spawnSync(command[0], [...command.slice(1), ...args], { cwd: path.join(root, test.cwd ?? "."), env, encoding: "utf8", maxBuffer: 1 << 28, timeout: 120_000 });
-  return { args, stdout: result.stdout, stderr: result.stderr, status: result.status };
+  const options = { cwd: path.join(root, test.cwd ?? "."), env, encoding: "utf8", maxBuffer: 1 << 28, timeout: 120_000 };
+  const { promise, resolve } = Promise.withResolvers();
+  const done = (error, stdout, stderr) => resolve({ args, stdout, stderr, status: error ? error.code : 0 });
+  execFile(command[0], [...command.slice(1), ...args], options, done).stdin.end();
+  return promise;
 }
 
 // ───────────── blocks ─────────────
@@ -443,6 +463,20 @@ function pretty(text) {
 }
 
 const string = String.raw`"(?:[^"\\]|\\.)*"`;
+
+/** By format: what it has printed without what oxlint does not know of a problem without a place. */
+const withoutTheLost = {
+  unix: text => text.replace(/^(.*?:0:0: )[^]*?( \[)\w+((?:\/[^\]\n]*)?\])$/gm, "$1lost$2lost$3"),
+  github: text => text.replace(/^::\w+( file=.*?,line=0,endLine=0,col=0,endColumn=0,title=.*?::.*?:0:0: ).*$/gm, "::lost$1lost"),
+  checkstyle: text => text.replace(/(<error line="0" column="0" severity=")\w+(" message=")[^"]*/g, "$1lost$2lost"),
+  junit: text => text.replace(/(<(error|failure) message=")[^"]*(">line 0, column 0, )[^]*?(<\/\2>)/g, "$1lost$3lost$4"),
+  gitlab(text) {
+    const value = pretty(text);
+    if (!Array.isArray(value)) return text;
+    for (const it of value) if (it.location?.lines?.begin === 0) Object.assign(it, { description: "lost", fingerprint: "lost", severity: "lost" });
+    return JSON.stringify(value, null, 2);
+  },
+};
 
 /** By format: what it has printed without the words of rules, which have no line breaks. */
 const masked = {
@@ -529,7 +563,8 @@ function comparable(result, format, test) {
   const name = test.as ?? format;
   const whether = text => (text === "" ? "nothing" : "something");
   if (test.loose || !normal[name]) return { "exit code": result.status, stdout: whether(result.stdout), stderr: whether(result.stderr) };
-  const stdout = test.exact || everythingIsExact ? result.stdout : masked[name](result.stdout);
+  const known = withoutTheLost[name]?.(result.stdout) ?? result.stdout;
+  const stdout = test.exact || everythingIsExact ? known : masked[name](known);
   return { "exit code": result.status, stdout: normal[name](stdout), stderr: result.stderr };
 }
 
@@ -552,7 +587,7 @@ if (record) {
     fs.rmSync(directory, { recursive: true, force: true });
     const commands = [];
     for (const format of formatsOf(test)) {
-      const result = run(oxlint, path.join(directory, "project"), test, format);
+      const result = await run(oxlint, path.join(directory, "project"), test, format);
       const name = path.join(directory, format ?? "no-format");
       fs.writeFileSync(`${name}.stdout`, result.stdout);
       fs.writeFileSync(`${name}.stderr`, result.stderr);
@@ -568,26 +603,34 @@ if (record) {
   process.exit(0);
 }
 
-// Both run in the same directory, one after the other: paths are part of the output.
-const root = path.join(path.resolve(flag("scratch")), "oxlint-formats");
+// Both run in the same directory, one after the other: paths are part of the output. Eight directories at a time.
+const jobs = chosen.flatMap(test => formatsOf(test).map(format => ({ test, format })));
+let next = 0;
+async function work(_, lane) {
+  const root = path.join(path.resolve(flag("scratch")), `oxlint-formats-${lane}`);
+  for (let job; (job = jobs[next++]); ) {
+    job.expected = comparable(await run(oxlint, root, job.test, job.format), job.format, job.test);
+    job.actual = comparable(await run(bin, root, job.test, job.format), job.format, job.test);
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+}
+await Promise.all(Array.from({ length: 8 }, work));
+
 const table = {};
 let failed = 0;
-for (const test of chosen) {
-  for (const format of formatsOf(test)) {
-    const expected = comparable(run(oxlint, root, test, format), format, test);
-    const actual = comparable(run(bin, root, test, format), format, test);
-    const row = (table[format ?? "(none)"] ??= { inputs: 0, "the same": 0, differ: 0 });
-    row.inputs++;
-    const differences = Object.keys(expected).filter(key => expected[key] !== actual[key]);
-    if (differences.length === 0) {
-      row["the same"]++;
-      continue;
-    }
-    row.differ++;
-    failed++;
-    console.log(`FAIL ${format ?? "(none)"}: ${test.name}: ${differences.join(", ")}`);
-    if (show) for (const key of differences) console.log(`${key}\n${difference(expected[key], actual[key])}`);
+for (const { test, format, expected, actual } of jobs) {
+  const row = (table[format ?? "(none)"] ??= { inputs: 0, "the same": 0, differ: 0 });
+  row.inputs++;
+  const differences = Object.keys(expected).filter(key => expected[key] !== actual[key]);
+  if (differences.length === 0) {
+    row["the same"]++;
+    continue;
   }
+  row.differ++;
+  failed++;
+  console.log(`FAIL ${format ?? "(none)"}: ${test.name}: ${differences.join(", ")}`);
+  if (show) for (const key of differences) console.log(`${key}\n${difference(expected[key], actual[key])}`);
 }
 console.table(table);
+console.log(`oxlint formats: ${jobs.length - failed} of ${jobs.length} agree`);
 process.exit(failed ? 1 : 0);

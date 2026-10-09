@@ -3,11 +3,8 @@
 use super::*;
 use crate::util::SharedSort;
 
-fn filled<T: Copy>(arena: &Arena, len: usize, value: T) -> ArenaVec<'_, T> {
-    let mut list = ArenaVec::new_in(arena);
-    list.reserve_exact(len);
-    list.extend(std::iter::repeat_n(value, len));
-    list
+fn filled<T: Copy>(arena: &Arena, len: usize, value: T) -> Fixed<'_, T> {
+    Fixed::filled_in(arena, len, value)
 }
 
 fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {

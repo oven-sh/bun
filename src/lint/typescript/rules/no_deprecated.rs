@@ -4,7 +4,9 @@ use bun_lint::types::utils::{
     StaticallyNamed, TypeOrValueSpecifier, parse_type_or_value_specifiers, type_matches_some_specifier,
     value_matches_some_specifier,
 };
-use bun_lint::types::{Literal as LiteralValue, NameOf, Signature, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type};
+use bun_lint::types::{
+    CheckFlags, Literal as LiteralValue, NameOf, Signature, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type,
+};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
@@ -481,7 +483,12 @@ impl NoDeprecated {
                     _ => continue,
                 },
             };
-            let reason = cx.state.of_symbol(expected.get_property(name));
+            // `checker.isDeprecatedSymbol`: of a union or an intersection all that have it have to be deprecated.
+            let symbol = expected.get_property(name).filter(|it| {
+                !it.check_flags().intersects(CheckFlags::SYNTHETIC)
+                    || it.declarations().all(|declaration| declaration.deprecation().is_some())
+            });
+            let reason = cx.state.of_symbol(symbol);
             self.report(IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name), reason, cx);
         }
     }

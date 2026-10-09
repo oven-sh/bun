@@ -3,11 +3,14 @@
 // tests expect is not used.
 //
 //   export ESLINT_DIR=<eslint, installed>      # for `globals`, which says what an `env` of a case declares
-//   bun extract-oxlint.ts --oxc <oxc checkout> --oxlint <oxlint> --out <dir> [--jobs <n>] [<plugin>/<rule>..]
+//   bun extract-oxlint.ts --oxc <oxc checkout> --oxlint <oxlint> --out <dir> [--more <dir>] [--jobs <n>] [<plugin>/<rule>..]
 //
 // A plugin is called what oxlint calls it in `--rules`, with `-` for `_`. Without names: every rule that is not in `eslint` or
 // `typescript`.
 //
+// - Some tests build their cases with functions and macros, which the scanner of `extract-oxc.ts` cannot read. These cases were
+//   written out: `--more <dir>` adds the cases of `<dir>/<plugin>/<rule>.json`, a fixture, to those of the source. `oxlint/` of the
+//   bundle, extracted, is such a directory.
 // - A message is where the first label of the diagnostic is, which is where oxlint prints it. It has no id.
 // - oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
 //   and `outputDangerously` after these and `--fix-dangerously`, each `null` if it is the code before it in this list.
@@ -24,12 +27,14 @@ import { MAX_CODE_LENGTH, writeJson } from "./shared.ts";
 let oxc = "";
 let oxlint = "";
 let out = "";
+let more = "";
 let jobs = Math.min(16, availableParallelism());
 const wanted: string[] = [];
 for (let argv = process.argv.slice(2), i = 0; i < argv.length; i++) {
   if (argv[i] === "--oxc") oxc = resolve(argv[++i]);
   else if (argv[i] === "--oxlint") oxlint = resolve(argv[++i]);
   else if (argv[i] === "--out") out = resolve(argv[++i]);
+  else if (argv[i] === "--more") more = resolve(argv[++i]);
   else if (argv[i] === "--jobs") jobs = Number(argv[++i]);
   else wanted.push(argv[i]);
 }
@@ -108,11 +113,19 @@ function rawCasesOf(rule: Listed): { cases: Raw[]; unparsed: number } {
       const isTest = plugins.includes("jest") || plugins.includes("vitest");
       // `Tester::run`
       let filename = harness?.path ?? `${stem}.${harness?.extension ?? "tsx"}`;
-      const explicit = it.filename !== undefined && it.filename !== `file.${harness?.extension}`;
       if (plugins.includes("import")) filename = harness?.path ?? filename;
-      else if (explicit) filename = it.filename!;
+      else if (it.path !== undefined) filename = it.path;
       else if (isTest) filename = filename.replace(/\.\w+$/, ".test.tsx");
       cases.push({ ...it, valid: / pass$/.test(it.name), filename, plugins, inImportProject: plugins.includes("import") || rule.scope === "import" });
+    }
+  }
+  const written = join(more, dash(rule.scope), `${rule.value}.json`);
+  if (more && existsSync(written)) {
+    for (const it of JSON.parse(readFileSync(written, "utf8")).cases) {
+      const oxlintrc = it.oxlintrc ?? (it.settings && Object.keys(it.settings).length > 0 ? { settings: it.settings } : undefined);
+      const { valid, name, code, filename, settings } = it;
+      const options = it.options.length > 0 ? it.options : undefined;
+      cases.push({ valid, name, code, options, filename, settings, oxlintrc, plugins: it.plugins ?? [], inImportProject: rule.scope === "import" });
     }
   }
   const seen = new Set<string>();
@@ -241,7 +254,7 @@ function record(rule: Listed) {
         plugins: raw.plugins.length > 0 ? raw.plugins : undefined,
         typeAware: false,
         tsconfig: null,
-        skip: fatal ? `fatal: ${fatal.message}` : null,
+        skip: /^[A-Za-z]:\\/.test(raw.filename) ? "a path of Windows" : fatal ? `fatal: ${fatal.message}` : null,
         messages,
         output,
         outputWithSuggestions,
@@ -269,7 +282,7 @@ if (process.env.EXTRACT_OXLINT_WORKER) {
   // A process for each share of the rules.
   const shares: string[][] = Array.from({ length: Math.max(1, Math.min(jobs, rules.length)) }, () => []);
   rules.forEach((rule, i) => shares[i % shares.length].push(`${dash(rule.scope)}/${rule.value}`));
-  const flags = ["--oxc", oxc, "--oxlint", oxlint, "--out", out];
+  const flags = ["--oxc", oxc, "--oxlint", oxlint, "--out", out, ...(more ? ["--more", more] : [])];
   const workers = shares.map(share =>
     Bun.spawn(["bun", import.meta.path, ...flags, ...share], {
       env: { ...process.env, EXTRACT_OXLINT_WORKER: "1" },

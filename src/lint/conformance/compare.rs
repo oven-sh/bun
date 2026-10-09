@@ -226,7 +226,7 @@ pub(crate) fn problem_of_oxlint(
         let mut fixes: Vec<&Fix> = (messages.iter())
             .filter_map(|it| {
                 let suggested = it.suggestions.first().filter(|it| kinds.contains(&it.kind));
-                it.fix.as_ref().or(suggested.map(|it| &it.fix))
+                it.fix.as_ref().or_else(|| suggested.map(|it| &it.fix))
             })
             .collect();
         let actual = bun_lint::fix::apply_fixes(code, &mut fixes).unwrap_or_else(|| code.to_vec());

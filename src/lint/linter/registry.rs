@@ -250,8 +250,12 @@ impl Registry {
         let found = self.get(plugin, name).or_else(|| match plugin {
             // oxlint has them in one plugin.
             Plugin::React if prefers_typescript => self.get(Plugin::ReactHooks, name),
-            // oxlint has rules in `node` that ESLint has given up: `no-sync`, `global-require`.
-            Plugin::Node if prefers_typescript && is_in_oxlint(plugin, name) => {
+            // oxlint has rules in other plugins that ESLint has given up: `no-sync`, `no-process-exit`.
+            Plugin::Node | Plugin::Unicorn
+                if prefers_typescript
+                    && is_in_oxlint(plugin, name)
+                    && !is_in_oxlint(Plugin::Eslint, name) =>
+            {
                 self.get(Plugin::Eslint, name)
             }
             _ => None,

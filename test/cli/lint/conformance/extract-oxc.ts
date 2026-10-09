@@ -257,6 +257,8 @@ export interface Case {
   settings?: Record<string, unknown>;
   /** The part of an `.oxlintrc.json` that the case is linted with, as it is written. */
   oxlintrc?: Record<string, unknown>;
+  /** The path of the file as it is written, whatever its extension. */
+  path?: string;
 }
 
 interface Stats {
@@ -382,6 +384,7 @@ export function casesOfFile(
           const language: Record<string, unknown> = { ...languageOptionsIn(comment?.text) };
           if (defaultName) made.filename = defaultName;
           for (const other of others) {
+            if (typeof other === "string") made.path = other;
             if (typeof other === "string" && EXTENSIONS.test(other)) made.filename = other;
             if (!isObject(other)) continue;
             made.oxlintrc = other;
@@ -458,6 +461,7 @@ if (import.meta.main) {
       const kept = cases.filter(it => {
         if (seen.has(key(it.code, it.options))) return (stats.upstream++, false);
         delete it.oxlintrc;
+        delete it.path;
         const full = JSON.stringify({ ...it, name: undefined });
         if (own.has(full)) return (stats.duplicates++, false);
         own.add(full);

@@ -4,10 +4,10 @@ use bun_lint::prelude::*;
 /// Disallow irregular whitespace.
 pub struct NoIrregularWhitespace {
     skip_comments: bool,
-    skip_jsx_text: bool,
-    skip_reg_exps: bool,
+    skip_jsx_text: Option<bool>,
+    skip_reg_exps: Option<bool>,
     skip_strings: bool,
-    skip_templates: bool,
+    skip_templates: Option<bool>,
 }
 
 const NO_IRREGULAR_WHITESPACE: Message =
@@ -41,6 +41,16 @@ fn irregular_at(text: &[u8]) -> Option<(Irregular, usize)> {
     })
 }
 
+/// What `skipJSXText`, `skipRegExps` and `skipTemplates` are where the options do not say: on in oxlint 1.80.
+fn skips_by_default(file: &File) -> bool {
+    file.language().is_oxlint
+}
+
+/// oxlint reports each character, and not each run of them.
+fn oxlint_reports_each_character(file: &File) -> bool {
+    file.language().is_oxlint
+}
+
 /// The token or the comment that `offset` is in.
 // TODO(api): replace by tokens::File::token_or_comment_around
 fn token_or_comment_around<'a>(file: &'a File<'a>, offset: u32) -> Option<Token<'a>> {
@@ -61,12 +71,12 @@ impl NoIrregularWhitespace {
         };
         match token.kind() {
             TokenKind::String => self.skip_strings,
-            TokenKind::RegularExpression => self.skip_reg_exps,
-            TokenKind::Template => self.skip_templates,
+            TokenKind::RegularExpression => self.skip_reg_exps.unwrap_or_else(|| skips_by_default(file)),
+            TokenKind::Template => self.skip_templates.unwrap_or_else(|| skips_by_default(file)),
             // The value of an attribute is a string `Literal`.
             TokenKind::JsxText => match file.token_before(token) {
                 Some(before) if before.is_punctuator("=") => self.skip_strings,
-                _ => self.skip_jsx_text,
+                _ => self.skip_jsx_text.unwrap_or_else(|| skips_by_default(file)),
             },
             TokenKind::Line | TokenKind::Block | TokenKind::Shebang => self.skip_comments,
             _ => false,
@@ -94,7 +104,7 @@ impl NoIrregularWhitespace {
                 continue;
             };
             at = start + len;
-            if kind == Irregular::Whitespace {
+            if kind == Irregular::Whitespace && !oxlint_reports_each_character(cx.file()) {
                 while let Some((Irregular::Whitespace, len)) = irregular_at(rest_from(at)) {
                     at += len;
                 }
@@ -114,10 +124,10 @@ impl Rule for NoIrregularWhitespace {
         let options = options.object(0);
         NoIrregularWhitespace {
             skip_comments: options.bool_or("skipComments", false),
-            skip_jsx_text: options.bool_or("skipJSXText", false),
-            skip_reg_exps: options.bool_or("skipRegExps", false),
+            skip_jsx_text: options.bool("skipJSXText"),
+            skip_reg_exps: options.bool("skipRegExps"),
             skip_strings: options.bool_or("skipStrings", true),
-            skip_templates: options.bool_or("skipTemplates", false),
+            skip_templates: options.bool("skipTemplates"),
         }
     }
 

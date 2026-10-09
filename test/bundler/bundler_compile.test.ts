@@ -252,7 +252,7 @@ describe("bundler", () => {
     },
     {
       // The import() puts async-mod.ts behind a wrapper, so the top-level await of
-      // the entry is one the linker makes: \`await init_async_mod()\`.
+      // the entry is one the linker makes: `await __esmWait(init_async_mod)`.
       name: "StaticImportOfWrappedTLA",
       files: {
         "/entry.ts": `

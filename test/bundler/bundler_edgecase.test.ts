@@ -2547,7 +2547,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await init_async()");
+      expect(out).toContain("__esmWait(init_async)");
       expect(out).toContain("init_sync()");
     },
   });
@@ -3708,6 +3708,21 @@ describe("bundler", () => {
       "/d.js": `export const d = await Promise.resolve("d");`,
     },
     run: { stdout: "a2 na1 d\nentry" },
+  });
+  // The require() puts x.js in a wrapper. Tree shaking drops index.js, which is all that entry.js imports.
+  itBundled("edgecase/EsmWrapperBehindBarrel", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "p";
+        console.log(x);
+        export const later = () => require("p/x.js");
+      `,
+      "/node_modules/p/package.json": `{ "name": "p", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/p/index.js": `export * from "./x.js";`,
+      "/node_modules/p/x.js": `export const x = [1];`,
+    },
+    target: "bun",
+    run: { stdout: "[ 1 ]" },
   });
   // t.js has started when boom.js throws, so x.js never gets to wait for it. Its rejection is
   // not reported on its own: x.js has failed already, as from source.

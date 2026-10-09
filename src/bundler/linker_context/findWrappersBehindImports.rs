@@ -4,29 +4,29 @@ use bun_ast::ImportKind;
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
 use crate::linker_context_mod::TreeShakeWork;
-use crate::options::Loader;
+use crate::options::{Format, Loader};
 use crate::{Index, IndexInt, LinkerContext, WrapKind};
 
 /// The files that one walk has seen. `clear` is O(1).
-pub(crate) struct VisitedFiles {
+struct VisitedFiles {
     epoch_of_file: Vec<u32>,
     epoch: u32,
 }
 
 impl VisitedFiles {
-    pub(crate) fn new(files_len: usize) -> VisitedFiles {
+    fn new(files_len: usize) -> VisitedFiles {
         VisitedFiles {
             epoch_of_file: vec![0; files_len],
             epoch: 1,
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    fn clear(&mut self) {
         self.epoch += 1;
     }
 
     /// Whether this is the first time.
-    pub(crate) fn insert(&mut self, source_index: IndexInt) -> bool {
+    fn insert(&mut self, source_index: IndexInt) -> bool {
         core::mem::replace(&mut self.epoch_of_file[source_index as usize], self.epoch) != self.epoch
     }
 }
@@ -41,7 +41,7 @@ impl LinkerContext<'_> {
 
     /// The files that an `import` of `target` in `importer` runs, in order: `target`, or when
     /// that does not run with `importer`, what the `import` statements of `target` run.
-    pub(crate) fn for_each_file_run_by_import(
+    fn for_each_file_run_by_import(
         &self,
         importer: IndexInt,
         target: IndexInt,
@@ -73,10 +73,12 @@ impl LinkerContext<'_> {
 /// not run (a `"sideEffects": false` barrel), and one whose `import` tree shaking dropped.
 pub(crate) fn find_wrappers_behind_imports(c: &mut LinkerContext) -> Result<(), AllocError> {
     let flags = c.graph.meta.items_flags();
-    if !c.graph.reachable_files.iter().any(|source_index| {
-        flags[source_index.get() as usize].wrap == WrapKind::Esm
-            && c.graph.files_live.is_set(source_index.get() as usize)
-    }) {
+    if c.options.output_format == Format::InternalBakeDev
+        || !c.graph.reachable_files.iter().any(|source_index| {
+            flags[source_index.get() as usize].wrap == WrapKind::Esm
+                && c.graph.files_live.is_set(source_index.get() as usize)
+        })
+    {
         return Ok(());
     }
 
@@ -152,9 +154,35 @@ pub(crate) fn find_wrappers_behind_imports(c: &mut LinkerContext) -> Result<(), 
             }
         }
     }
-    if worklist.is_empty() {
-        return Ok(());
-    }
+    let has_new_calls = !worklist.is_empty();
     c.mark_live(worklist);
-    c.compute_entry_bits()
+
+    // A file outside of a wrapper prints `await __esmWait(init_x)` for the async wrappers that it imports.
+    for i in 0..c.graph.reachable_files.len() {
+        let source_index = c.graph.reachable_files[i].get();
+        let id = source_index as usize;
+        let flags = c.graph.meta.items_flags()[id];
+        if flags.wrap != WrapKind::None
+            || !flags.is_async_or_has_async_dependency
+            || !c.graph.files_live.is_set(id)
+            || c.async_wrappers_called_by(source_index).is_empty()
+        {
+            continue;
+        }
+        let part_index = c.graph.parts_live[id]
+            .find_first_set()
+            .expect("a live file has a live part");
+        c.graph.generate_symbol_import_and_use(
+            source_index,
+            part_index as u32,
+            c.esm_wait_runtime_ref,
+            1,
+            Index::RUNTIME,
+        )?;
+    }
+
+    if has_new_calls {
+        c.compute_entry_bits()?;
+    }
+    Ok(())
 }

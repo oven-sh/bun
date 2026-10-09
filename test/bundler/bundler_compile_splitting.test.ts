@@ -794,7 +794,7 @@ describe("bundler", () => {
     });
 
     // With --bytecode the bundler makes the module record of each chunk, and the record says whether the chunk has a
-    // top-level await. t.js is a wrapper, so the only one in main.js is the \`await init_t()\` that the linker makes.
+    // top-level await. t.js is a wrapper, so the only one in main.js is the `await __esmWait(init_t)` that the linker makes.
     test.concurrent("the await of a wrapper is in the module record of the importer", async () => {
       using dir = tempDir("compile-splitting-order-conflict-await", {
         "main.js": `import "./p.js"; import { x } from "./t.js"; console.log("main", x);`,
@@ -806,7 +806,7 @@ describe("bundler", () => {
       expect(await buildAndRun(String(dir), args, "app")).toEqual({ stdout: "p\nmain 1\n", stderr: "", exitCode: 0 });
     });
 
-    // d.js is a wrapper and an \`import()\` target, so its own chunk ends with \`await init_d()\`.
+    // d.js is a wrapper and an `import()` target, so its own chunk ends with `await __esmWait(init_d)`.
     test.concurrent("the await of a wrapper is in the module record of its entry chunk", async () => {
       using dir = tempDir("compile-splitting-order-conflict-entry-await", {
         "main.js": `const m = await import("./d.js"); console.log("main", m.x);`,

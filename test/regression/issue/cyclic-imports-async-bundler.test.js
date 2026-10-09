@@ -91,50 +91,166 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   const bundled = await Bun.file(bundledPath).text();
 
   expect(bundled).toMatchInlineSnapshot(`
-    "var __esm = (fn, res, err) => () => {
-      if (fn)
-        try {
-          res = fn(fn = 0);
-        } catch (e) {
-          err = [e];
+    "var __esmEvaluator = /* @__PURE__ */ (() => {
+      var stack = [], index = 0, order = 0, importer;
+      var executeAsync = (module) => {
+        module.body().then(() => {
+          if (module.status == 3)
+            return;
+          module.order = -1;
+          module.status = 3;
+          var ready = [];
+          gather(module, ready);
+          execute(ready.sort((a, b) => a.order - b.order), 0);
+        }, (error) => reject(module, error));
+      };
+      var gather = (module, ready) => {
+        for (var parent of module.parents)
+          if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
+            ready.push(parent);
+            if (!parent.hasTLA)
+              gather(parent, ready);
+          }
+      };
+      var execute = (ready, i) => {
+        for (;i < ready.length; i++) {
+          var module = ready[i];
+          if (module.status == 3)
+            continue;
+          if (module.resolve) {
+            module.status = 3;
+            module.resolve();
+            Promise.resolve().then(() => execute(ready, i + 1));
+            return;
+          }
+          if (module.hasTLA)
+            executeAsync(module);
+          else
+            try {
+              module.body();
+              module.order = -1;
+              module.status = 3;
+            } catch (error) {
+              reject(module, error);
+            }
         }
-      if (err)
-        throw err[0];
-      return res;
-    };
-    var __promiseAll = (args) => Promise.all(args);
+      };
+      var reject = (module, error) => {
+        if (module.status == 3)
+          return;
+        module.error = [error];
+        module.order = -1;
+        module.status = 3;
+        for (var parent of module.parents)
+          reject(parent, error);
+        if (module.reject)
+          module.reject(error);
+      };
+      var evaluateInner = (module) => {
+        var parent = importer;
+        module.status = 1;
+        module.index = module.ancestor = index++;
+        stack.push(module);
+        importer = module;
+        module.imports();
+        importer = parent;
+        if (module.pending || module.hasTLA) {
+          module.order = order++;
+          if (!module.pending)
+            executeAsync(module);
+        } else
+          module.body();
+        if (module.ancestor == module.index)
+          do {
+            var member = stack.pop();
+            member.status = member.order === undefined ? 3 : 2;
+            member.root = module;
+          } while (member != module);
+      };
+      var evaluate = (module, parent) => {
+        if (!module.status) {
+          if (stack.length)
+            evaluateInner(module);
+          else
+            try {
+              evaluateInner(module);
+            } catch (error) {
+              for (var failed of stack) {
+                failed.status = 3;
+                failed.error = [error];
+                failed.root = failed;
+              }
+              stack = [];
+              importer = undefined;
+              throw error;
+            }
+        }
+        if (!parent)
+          return;
+        var required = module;
+        if (module.status == 1)
+          parent.ancestor = Math.min(parent.ancestor, module.ancestor);
+        else if ((required = module.root).error)
+          throw required.error[0];
+        if (required.order >= 0) {
+          parent.pending++;
+          required.parents.push(parent);
+        }
+      };
+      return [
+        (imports, body, hasTLA) => {
+          var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [] };
+          return (parent = importer) => evaluate(module, parent);
+        },
+        (...wrappers) => {
+          var waiter = { hasTLA: 1, status: 2, pending: 0, parents: [] };
+          waiter.root = waiter;
+          for (var wrapper of wrappers)
+            wrapper(waiter);
+          if (waiter.pending) {
+            waiter.order = order++;
+            return new Promise((resolve, reject) => {
+              waiter.resolve = resolve;
+              waiter.reject = reject;
+            });
+          }
+        }
+      ];
+    })();
+    var __esmAsync = /* @__PURE__ */ (() => __esmEvaluator[0])();
+    var __esmWait = /* @__PURE__ */ (() => __esmEvaluator[1])();
 
     // src/RecursiveDependencies/StoreDependencyAsync.ts
     var somePromise;
-    var init_StoreDependencyAsync = __esm(async () => {
+    var init_StoreDependencyAsync = __esmAsync(() => {}, async () => {
       somePromise = await Promise.resolve("Hello World");
-    });
+    }, 1);
 
     // src/RecursiveDependencies/StoreDependency.ts
     function StoreDependency() {
       return "A string from StoreFunc" + somePromise;
     }
-    var init_StoreDependency = __esm(async () => {
-      await init_StoreDependencyAsync();
-    });
+    var init_StoreDependency = __esmAsync(() => {
+      init_StoreDependencyAsync();
+    }, () => {});
 
     // src/RecursiveDependencies/SecondElementImport.ts
     function SecondElementImport() {
       console.log("SecondElementImport called", formValue.key);
       return formValue.key;
     }
-    var init_SecondElementImport = __esm(async () => {
-      await init_BaseElement();
-    });
+    var init_SecondElementImport = __esmAsync(() => {
+      init_BaseElement();
+    }, () => {});
 
     // src/RecursiveDependencies/BaseElementImport.ts
     function BaseElementImport() {
       console.log("BaseElementImport called", SecondElementImport());
       return SecondElementImport();
     }
-    var init_BaseElementImport = __esm(async () => {
-      await init_SecondElementImport();
-    });
+    var init_BaseElementImport = __esmAsync(() => {
+      init_SecondElementImport();
+    }, () => {});
 
     // src/RecursiveDependencies/BaseElement.ts
     function BaseElement() {
@@ -142,11 +258,10 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       return BaseElementImport();
     }
     var depValue, formValue, listValue;
-    var init_BaseElement = __esm(async () => {
-      await __promiseAll([
-        init_StoreDependency(),
-        init_BaseElementImport()
-      ]);
+    var init_BaseElement = __esmAsync(() => {
+      init_StoreDependency();
+      init_BaseElementImport();
+    }, () => {
       depValue = StoreDependency();
       formValue = {
         key: depValue
@@ -158,7 +273,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
     async function AsyncEntryPoint() {
-      await init_BaseElement();
+      await Promise.resolve().then(() => __esmWait(init_BaseElement));
       console.log("Launching AsyncEntryPoint", BaseElement());
     }
 
@@ -166,7 +281,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     await Promise.resolve();
     AsyncEntryPoint();
 
-    //# debugId=5B573DC06E466ACE64756E2164756E21
+    //# debugId=690E697483DE0A6064756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

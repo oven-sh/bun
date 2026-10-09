@@ -2579,25 +2579,156 @@ describe("bundler", () => {
     ],
   });
 
-  // The wrapper of each file of the cycle is an async function, n.js too.
+  // n.js and a1.js reach the await of d.js only through the cycle, so they run before it is done.
   itBundled("splitting/SharedChunkOrderConflictAsyncImportCycle", {
     files: {
       "/index.js": `import "./p.js"; import "./a2.js"; console.log("index");`,
       "/worker.js": `import "./a2.js"; import "./p.js"; console.log("worker");`,
       "/p.js": `console.log("p");`,
-      // a2 -> a1 -> n -> a1, a1 -> a2, and a2 -> d, which has the await.
-      "/a2.js": `import { n } from "./a1.js"; import { d } from "./d.js"; console.log("a2", n(), d);`,
-      "/a1.js": `import { n } from "./n.js"; import "./a2.js"; export const a1 = "a1"; export { n };`,
-      "/n.js": `import { a1 } from "./a1.js"; export const n = () => "n" + a1;`,
-      "/d.js": `export const d = await Promise.resolve("d");`,
+      "/a2.js": `import "./a1.js"; import "./d.js"; console.log("a2");`,
+      "/a1.js": `import "./n.js"; import "./a2.js"; console.log("a1");`,
+      "/n.js": `import "./a1.js"; console.log("n");`,
+      "/d.js": `await 0; console.log("d");`,
     },
     entryPoints: ["/index.js", "/worker.js"],
     splitting: true,
     outdir: "/out",
     format: "esm",
     run: [
-      { file: "/out/index.js", stdout: "p\na2 na1 d\nindex" },
-      { file: "/out/worker.js", stdout: "p\na2 na1 d\nworker" },
+      { file: "/out/index.js", stdout: "p\nn\na1\nd\na2\nindex" },
+      { file: "/out/worker.js", stdout: "n\na1\np\nd\na2\nworker" },
+    ],
+  });
+
+  // user.js imports member.js, which is done. It waits for root.js all the same: they are one cycle.
+  itBundled("splitting/SharedChunkOrderConflictAsyncImportCycleRoot", {
+    files: {
+      "/a.js": `import "./root.js"; import "./user.js"; console.log("a");`,
+      "/b.js": `import "./user.js"; import "./root.js"; console.log("b");`,
+      "/root.js": /* js */ `
+        import { helper } from "./member.js";
+        export const cfg = await Promise.resolve({ ok: 1 });
+        console.log("root", typeof helper);
+      `,
+      "/member.js": `import { cfg } from "./root.js"; export function helper() { return cfg.ok; } console.log("member");`,
+      "/user.js": `import { helper } from "./member.js"; console.log("user", helper());`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "member\nroot function\nuser 1\na" },
+      { file: "/out/b.js", stdout: "root function\nmember\nuser 1\nb" },
+    ],
+  });
+
+  // t.js is in the chunk of a.js alone. Printed in place, its await would hold up the calls of x.js and y.js.
+  itBundled("splitting/SharedChunkOrderConflictAsyncFileInEntryChunk", {
+    files: {
+      "/a.js": `import "./t.js"; import "./x.js"; import "./y.js"; console.log("a");`,
+      "/b.js": `import "./y.js"; import "./x.js"; console.log("b");`,
+      "/t.js": `console.log("t starts"); await 0; console.log("t ends");`,
+      "/x.js": `console.log("x");`,
+      "/y.js": `console.log("y");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "t starts\nx\ny\nt ends\na" },
+      { file: "/out/b.js", stdout: "y\nx\nb" },
+    ],
+  });
+
+  // a.js prints in two pieces around own.js. It waits once, after the last of its imports.
+  itBundled("splitting/SharedChunkOrderConflictFileBetweenAsyncImports", {
+    files: {
+      "/a.js": `import "./w1.js"; import "./own.js"; import "./w2.js"; console.log("a");`,
+      "/b.js": `import "./w2.js"; import "./w1.js"; console.log("b");`,
+      "/w1.js": `console.log("w1 starts"); await 0; console.log("w1 ends");`,
+      "/w2.js": `console.log("w2 starts"); await 0; console.log("w2 ends");`,
+      "/own.js": `console.log("own");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "w1 starts\nown\nw2 starts\nw1 ends\nw2 ends\na" },
+      { file: "/out/b.js", stdout: "w2 starts\nw1 starts\nw2 ends\nw1 ends\nb" },
+    ],
+  });
+
+  // Tree shaking drops index.js, so the `import` of each entry point names a file that does not run.
+  // x.js is behind it, and comes after s1.js and s2.js, so it is a wrapper.
+  itBundled("splitting/SharedChunkOrderConflictWrapperBehindBarrel", {
+    files: {
+      "/a.js": `import "./s1.js"; import "./s2.js"; import { get } from "p"; console.log("a", get("k"));`,
+      "/b.js": `import "./s2.js"; import "./s1.js"; import * as p from "p"; console.log("b", p.get("k"));`,
+      "/c.js": `export * from "p";`,
+      "/run-c.js": `import("./c.js").then(ns => console.log("c", ns.get("k")));`,
+      "/s1.js": `console.log("s1");`,
+      "/s2.js": `console.log("s2");`,
+      "/node_modules/p/package.json": `{ "name": "p", "main": "index.js", "sideEffects": ["./x.js"] }`,
+      "/node_modules/p/index.js": `export * from "./mid.js";`,
+      "/node_modules/p/mid.js": `export * from "./x.js";`,
+      "/node_modules/p/x.js": /* js */ `
+        console.log("x");
+        export const registry = new Map([["k", 1]]);
+        export function get(k) { return registry.get(k); }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/run-c.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "s1\ns2\nx\na 1" },
+      { file: "/out/b.js", stdout: "s2\ns1\nx\nb 1" },
+      { file: "/out/run-c.js", stdout: "x\nc 1" },
+    ],
+  });
+
+  // Tree shaking drops the `import "p"` of a.js. index.js runs for a.js anyway, for u.js, and runs there first.
+  itBundled("splitting/SharedChunkOrderConflictDroppedImport", {
+    files: {
+      "/a.js": `import "p"; import "./x.js"; import "./u.js"; console.log("a");`,
+      "/b.js": `import "./u.js"; import "./x.js"; console.log("b");`,
+      "/u.js": `import { p } from "p"; console.log("u", p);`,
+      "/x.js": `console.log("x");`,
+      "/y.js": `console.log("y");`,
+      "/node_modules/p/package.json": `{ "name": "p", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/p/index.js": `import "../../y.js"; export const p = "p";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "y\nx\nu p\na" },
+      { file: "/out/b.js", stdout: "y\nu p\nx\nb" },
+    ],
+  });
+
+  // f2.cjs has started when it requires f1.js, so f1.js comes after a wrapper and is one.
+  itBundled("splitting/SharedChunkOrderConflictRequireAtLoad", {
+    files: {
+      "/a.js": `import c2 from "./f2.cjs"; import "./s.js"; import { v1 } from "./f1.js"; console.log("a", c2.v, v1);`,
+      "/b.js": `import { v1 } from "./f1.js"; import "./s.js"; import c2 from "./f2.cjs"; console.log("b", c2.v, v1);`,
+      "/f1.js": `console.log("f1"); export const v1 = 1;`,
+      "/f2.cjs": `console.log("f2 starts"); const f1 = require("./f1.js"); console.log("f2 ends", f1.v1); exports.v = 2;`,
+      "/s.js": `console.log("s");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "f2 starts\nf1\nf2 ends 1\ns\na 2 1" },
+      { file: "/out/b.js", stdout: "f1\ns\nf2 starts\nf2 ends 1\nb 2 1" },
     ],
   });
 

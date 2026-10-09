@@ -342,7 +342,144 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
-export var __promiseAll = args => Promise.all(args);
+// `__esm` for a module that reaches a top-level await. It runs when the specification says: see
+// InnerModuleEvaluation, AsyncModuleExecutionFulfilled and GatherAvailableAncestors in ECMA-262.
+var __esmEvaluator = /* @__PURE__ */ (() => {
+  // status: 0 new, 1 evaluating, 2 evaluating-async, 3 evaluated. order: undefined unset, -1 done.
+  var stack = [],
+    index = 0,
+    order = 0,
+    importer;
+
+  var executeAsync = module => {
+    module.body().then(
+      () => {
+        if (module.status == 3) return;
+        module.order = -1;
+        module.status = 3;
+        var ready = [];
+        gather(module, ready);
+        execute(
+          ready.sort((a, b) => a.order - b.order),
+          0,
+        );
+      },
+      error => reject(module, error),
+    );
+  };
+
+  var gather = (module, ready) => {
+    for (var parent of module.parents)
+      if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
+        ready.push(parent);
+        if (!parent.hasTLA) gather(parent, ready);
+      }
+  };
+
+  var execute = (ready, i) => {
+    for (; i < ready.length; i++) {
+      var module = ready[i];
+      if (module.status == 3) continue;
+      if (module.resolve) {
+        // The code that waits continues in a job of its own, and the rest comes after it.
+        module.status = 3;
+        module.resolve();
+        Promise.resolve().then(() => execute(ready, i + 1));
+        return;
+      }
+      if (module.hasTLA) executeAsync(module);
+      else
+        try {
+          module.body();
+          module.order = -1;
+          module.status = 3;
+        } catch (error) {
+          reject(module, error);
+        }
+    }
+  };
+
+  var reject = (module, error) => {
+    if (module.status == 3) return;
+    module.error = [error];
+    module.order = -1;
+    module.status = 3;
+    for (var parent of module.parents) reject(parent, error);
+    if (module.reject) module.reject(error);
+  };
+
+  var evaluateInner = module => {
+    var parent = importer;
+    module.status = 1;
+    module.index = module.ancestor = index++;
+    stack.push(module);
+    importer = module;
+    module.imports();
+    importer = parent;
+    if (module.pending || module.hasTLA) {
+      module.order = order++;
+      if (!module.pending) executeAsync(module);
+    } else module.body();
+    if (module.ancestor == module.index)
+      do {
+        var member = stack.pop();
+        member.status = member.order === undefined ? 3 : 2;
+        member.root = module;
+      } while (member != module);
+  };
+
+  var evaluate = (module, parent) => {
+    if (!module.status) {
+      if (stack.length) evaluateInner(module);
+      else
+        try {
+          evaluateInner(module);
+        } catch (error) {
+          for (var failed of stack) {
+            failed.status = 3;
+            failed.error = [error];
+            failed.root = failed;
+          }
+          stack = [];
+          importer = undefined;
+          throw error;
+        }
+    }
+    if (!parent) return;
+    var required = module;
+    if (module.status == 1) parent.ancestor = Math.min(parent.ancestor, module.ancestor);
+    else if ((required = module.root).error) throw required.error[0];
+    if (required.order >= 0) {
+      parent.pending++;
+      required.parents.push(parent);
+    }
+  };
+
+  return [
+    (imports, body, hasTLA) => {
+      var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [] };
+      return (parent = importer) => evaluate(module, parent);
+    },
+    (...wrappers) => {
+      var waiter = { hasTLA: 1, status: 2, pending: 0, parents: [] };
+      waiter.root = waiter;
+      for (var wrapper of wrappers) wrapper(waiter);
+      if (waiter.pending) {
+        waiter.order = order++;
+        return new Promise((resolve, reject) => {
+          waiter.resolve = resolve;
+          waiter.reject = reject;
+        });
+      }
+    },
+  ];
+})();
+
+// `var init_x = __esmAsync(() => { imports }, () => { body }, hasTLA)`. `init_x()` starts the module.
+export var __esmAsync = /* @__PURE__ */ (() => __esmEvaluator[0])();
+
+// For code outside of a wrapper: `await __esmWait(init_x, init_y)` starts the modules and waits for them.
+export var __esmWait = /* @__PURE__ */ (() => __esmEvaluator[1])();
 
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");

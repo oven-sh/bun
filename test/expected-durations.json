@@ -352,6 +352,13 @@
     "windows": 240,
     "windows-aarch64": 360
   },
+  "bundler/bundler_esm_async_wrapper.test.ts": {
+    "default": 201,
+    "asan": 1137,
+    "musl": 202,
+    "windows": 304,
+    "windows-aarch64": 359
+  },
   "bundler/bundler_feature_flag.test.ts": {
     "default": 290,
     "asan": 4320,
@@ -442,13 +449,6 @@
     "musl": 220,
     "windows": 670,
     "windows-aarch64": 1320
-  },
-  "bundler/bundler_promiseall_deadcode.test.ts": {
-    "default": 201,
-    "asan": 1137,
-    "musl": 202,
-    "windows": 304,
-    "windows-aarch64": 359
   },
   "bundler/bundler_regressions.test.ts": {
     "default": 120,

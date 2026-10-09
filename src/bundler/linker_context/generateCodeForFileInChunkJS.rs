@@ -514,20 +514,36 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
     }
 
+    if flags.wrap == WrapKind::None
+        && flags.is_async_or_has_async_dependency
+        && is_range_after_imports(c, chunk, part_range)
+    {
+        let wrappers = c.async_wrappers_called_by(source_index as u32);
+        if !wrappers.is_empty() {
+            append_wait_for_wrappers(c, &mut stmts.inside_wrapper_prefix.stmts, &wrappers);
+            if let Some(module_info) = module_info.as_deref_mut() {
+                module_info.flags.has_tla = true;
+            }
+        }
+    }
+
+    // "__esmAsync" takes what the imports run apart from the rest of the file.
+    let is_async_wrapper = needs_wrapper
+        && flags.wrap == WrapKind::Esm
+        && flags.is_async_or_has_async_dependency
+        && c.options.output_format != OutputFormat::InternalBakeDev;
+    if is_async_wrapper && c.options.minify_syntax {
+        merge_adjacent_local_stmts(&mut stmts.inside_wrapper_prefix.stmts, temp_arena);
+        merge_adjacent_local_stmts(&mut stmts.inside_wrapper_suffix, temp_arena);
+    }
+    let prefix_len = stmts.inside_wrapper_prefix.stmts.len();
+
     // Hoist all import statements before any normal statements. ES6 imports
     // are different than CommonJS imports. All modules imported via ES6 import
     // statements are evaluated before the module doing the importing is
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    let has_await = stmts
-        .inside_wrapper_prefix
-        .append_async_await(c.promise_all_runtime_ref);
-    if has_await && flags.wrap == WrapKind::None {
-        if let Some(module_info) = module_info.as_deref_mut() {
-            module_info.flags.has_tla = true;
-        }
-    }
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
@@ -540,7 +556,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
-    if c.options.minify_syntax {
+    if c.options.minify_syntax && !is_async_wrapper {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
@@ -748,11 +764,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
+                let mut imports_len: usize = 0;
                 {
                     let mut end: usize = 0;
                     // Iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
                     'hoist: for i in 0..stmts.all_stmts.len() {
+                        if i == prefix_len {
+                            imports_len = end;
+                        }
                         let stmt = stmts.all_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
@@ -843,6 +863,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         end += 1;
                     }
                     inner_stmts.truncate(end);
+                    if prefix_len >= stmts.all_stmts.len() {
+                        imports_len = end;
+                    }
                 }
 
                 if !hoist.decls.is_empty() {
@@ -867,23 +890,49 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // is sometimes not generated.
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
-                    // "__esm(() => { ... })"
-                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
-                        E::Arrow {
-                            is_async,
-                            body: G::FnBody {
-                                stmts: inner_stmts,
-                                loc: bun_ast::Loc::EMPTY,
+                    let arrow = |stmts: bun_ast::StoreSlice<Stmt>, is_async: bool| {
+                        Expr::init(
+                            E::Arrow {
+                                is_async,
+                                body: G::FnBody {
+                                    stmts,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )]);
+                            bun_ast::Loc::EMPTY,
+                        )
+                    };
+                    let esm_args = if is_async_wrapper {
+                        // "__esmAsync(() => { imports }, async () => { ... }, 1)"
+                        let (imports, body) = inner_stmts.slice_mut().split_at_mut(imports_len);
+                        let has_tla = !c.parse_graph().ast.items_top_level_await_keyword()
+                            [source_index]
+                            .is_empty();
+                        let mut args = Vec::<Expr>::from_slice(&[
+                            arrow(bun_ast::StoreSlice::new_mut(imports), false),
+                            arrow(bun_ast::StoreSlice::new_mut(body), has_tla),
+                        ]);
+                        if has_tla {
+                            args.push(Expr::init(E::Number::new(1.0), bun_ast::Loc::EMPTY));
+                        }
+                        args
+                    } else {
+                        // "__esm(() => { ... })"
+                        Vec::<Expr>::from_slice(&[arrow(inner_stmts, is_async)])
+                    };
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
+                            target: Expr::init_identifier(
+                                if is_async_wrapper {
+                                    c.esm_async_runtime_ref
+                                } else {
+                                    c.esm_runtime_ref
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },
@@ -1059,3 +1108,70 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 // Type aliases / re-imports for readability of match arms.
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
+
+/// Whether this is where a file outside of a wrapper waits for the async wrappers that it imports:
+/// the first of its ranges that ends after the last of its `import` statements, or else its last range.
+fn is_range_after_imports(c: &LinkerContext, chunk: &Chunk, part_range: PartRange) -> bool {
+    let source_index = part_range.source_index.get() as usize;
+    let records = c.graph.ast.items_import_records()[source_index].as_slice();
+    let last_import = c.graph.ast.items_parts()[source_index]
+        .as_slice()
+        .iter()
+        .rposition(|part| {
+            part.import_record_indices
+                .iter()
+                .any(|&index| records[index as usize].kind == bun_ast::ImportKind::Stmt)
+        })
+        .unwrap_or(0) as u32;
+    let mut ranges = chunk
+        .content
+        .javascript()
+        .parts_in_chunk_in_order
+        .iter()
+        .filter(|range| range.source_index == part_range.source_index);
+    let begin = match ranges
+        .clone()
+        .find(|range| range.part_index_end > last_import)
+    {
+        Some(range) => range.part_index_begin,
+        None => ranges.next_back().map_or(0, |range| range.part_index_begin),
+    };
+    begin == part_range.part_index_begin
+}
+
+/// `await __esmWait(init_a, init_b)`. It starts the wrappers too, so the calls that it follows go.
+fn append_wait_for_wrappers(c: &LinkerContext, prefix: &mut Vec<Stmt>, wrappers: &[Ref]) {
+    while let Some(StmtData::SExpr(stmt)) = prefix.last().map(|stmt| stmt.data)
+        && let ExprData::ECall(call) = stmt.value.data
+        && let ExprData::EIdentifier(target) = call.target.data
+        && wrappers.contains(&target.ref_)
+    {
+        prefix.pop();
+    }
+    let mut args = bun_ast::ExprNodeList::init_capacity(wrappers.len());
+    for &wrapper in wrappers {
+        args.append_assume_capacity(Expr::init_identifier(wrapper, bun_ast::Loc::EMPTY));
+    }
+    prefix.push(Stmt::alloc(
+        S::SExpr {
+            value: Expr::init(
+                E::Await {
+                    value: Expr::init(
+                        E::Call {
+                            target: Expr::init_identifier(
+                                c.esm_wait_runtime_ref,
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            args,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
+                },
+                bun_ast::Loc::EMPTY,
+            ),
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    ));
+}

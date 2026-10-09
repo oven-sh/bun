@@ -1,22 +1,16 @@
 use crate::mal_prelude::*;
-use bun_collections::{AutoBitSet, StringHashMap};
+use bun_alloc::AllocError;
+use bun_collections::{AutoBitSet, StringHashMap, VecExt};
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
-use crate::linker_context::merge_small_chunks::EntryLoadGraph;
+use crate::linker_context::merge_small_chunks::{EntryLoadGraph, stmt_only_declares};
+use crate::linker_context_mod::TreeShakeWork;
 use crate::options::Loader;
 use crate::{Index, IndexInt, LinkerContext, WrapKind};
 
-/// A chunk is one module, so its files run in the one order in which they print. The files
-/// of a chunk load under the same conditions, but the entry point that loads them first is
-/// not always the same one: two user entry points are two programs, and either of two
-/// `import()` targets can come first. Each evaluates the files in the order of its own imports.
-///
-/// Where those orders differ, no printed order is right for every loader. The files become
-/// `__esm` wrappers, which run nothing when the chunk loads, and each importer calls the
-/// wrappers of what it imports, where it imports it.
-///
-/// An `import` of a chunk runs ahead of the code that makes those calls. So what a loader
-/// evaluates after a file that is wrapped here, and from another chunk than its own, is wrapped too.
+/// Entry points that can each be the first to load a chunk may evaluate its files in different
+/// orders, and a chunk prints one. Those files become `__esm` wrappers, which each importer calls
+/// where it imports them. `README.md` has the rules.
 pub(crate) fn resolve_chunk_order_conflicts(c: &mut LinkerContext) -> crate::Result<()> {
     let _trace = bun_core::perf::trace("Bundler.resolveChunkOrderConflicts");
     if !c.graph.code_splitting || c.graph.entry_points.len() < 2 {
@@ -25,15 +19,13 @@ pub(crate) fn resolve_chunk_order_conflicts(c: &mut LinkerContext) -> crate::Res
     let mut already_wrapped = AutoBitSet::init_empty(c.graph.files.len())?;
     while let Some(files) = find_files_to_wrap(c, &already_wrapped)? {
         c.wrap_files_as_esm(&files)?;
-        c.compute_entry_bits()?;
-        // An `import` of a `"sideEffects": false` file loaded nothing, and the call of its wrapper
-        // does. That changes who loads what, so look again.
+        // The `import` of a `"sideEffects": false` file loaded nothing, and the call of its wrapper loads it.
         let mut iter = files.iterator::<true, true>();
-        let mut entry_bits_changed = false;
+        let mut loads_changed = false;
         while let Some(id) = iter.next() {
-            entry_bits_changed |= c.file_has_no_side_effects(id as IndexInt);
+            loads_changed |= c.file_has_no_side_effects(id as IndexInt);
         }
-        if !entry_bits_changed {
+        if !loads_changed {
             break;
         }
         already_wrapped.set_union(&files);
@@ -41,47 +33,45 @@ pub(crate) fn resolve_chunk_order_conflicts(c: &mut LinkerContext) -> crate::Res
     Ok(())
 }
 
-/// The files with one load class, outside of the chunk of an entry point.
+/// The files with one load class, outside of the chunk of an entry point. Or the async files of that chunk.
 struct LoadGroup {
     /// The entry points that can be the first to load the files (`EntryLoadGraph::load_class`).
     load_class: AutoBitSet,
-    /// The lowest id in `load_class`.
-    reference_entry_id: u32,
-    /// The effects of the group, in the order in which `reference_entry_id` evaluates them.
-    reference_order: Vec<IndexInt>,
-    /// How much of `reference_order` the order of `cursor_entry_id` has matched.
-    cursor: usize,
-    cursor_entry_id: u32,
-    /// The other entry points of `load_class` whose order is `reference_order`.
-    matching_entry_count: usize,
+    loader_count: usize,
     /// The files are wrappers, or become wrappers.
     is_lazy: bool,
     /// The files cannot become wrappers.
     is_pinned: bool,
+    /// A file reaches a top-level await.
+    has_async_file: bool,
+    /// The files print in the chunk of the one entry point that loads them, where it imports them.
+    is_in_entry_chunk: bool,
 }
 
 const NO_GROUP: u32 = u32::MAX;
 
-/// `None`: there is nothing to wrap.
-fn find_files_to_wrap(
-    c: &LinkerContext,
-    already_wrapped: &AutoBitSet,
-) -> crate::Result<Option<AutoBitSet>> {
-    let entry_points = c.graph.entry_points.items_source_index();
-    let files_len = c.graph.files.len();
+struct LoadGroups {
+    groups: Vec<LoadGroup>,
+    group_of_file: Vec<u32>,
+    /// (file, group), sorted: loading the group runs the file. A wrapped file runs where a file
+    /// of the group calls it, so it can be in several groups.
+    effects: Vec<(IndexInt, u32)>,
+}
+
+fn group_files(c: &LinkerContext, already_wrapped: &AutoBitSet) -> crate::Result<LoadGroups> {
+    let entry_points_len = c.graph.entry_points.len();
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let flags = c.graph.meta.items_flags();
     let wrapper_refs = c.graph.ast.items_wrapper_ref();
     let loaders = c.parse_graph().input_files.items_loader();
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
 
     let mut load_graph = EntryLoadGraph::new(c)?;
     let mut groups: Vec<LoadGroup> = Vec::new();
     let mut group_of_key: StringHashMap<u32> = StringHashMap::default();
     let mut group_of_class: StringHashMap<u32> = StringHashMap::default();
-    let mut group_of_file: Vec<u32> = vec![NO_GROUP; files_len];
-    // (file, group): loading the group runs the file. A wrapped file runs where a file of the
-    // group calls it, so it can be in several groups.
+    let mut group_of_file: Vec<u32> = vec![NO_GROUP; c.graph.files.len()];
     let mut effects: Vec<(IndexInt, u32)> = Vec::new();
     let mut inits: Vec<u32> = Vec::new();
     for source_index in c.graph.reachable_files.iter() {
@@ -92,50 +82,48 @@ fn find_files_to_wrap(
             || css[id].is_some()
             || loaders[id] == Loader::Html
             || (flags[id].wrap != WrapKind::None && !already_wrapped.is_set(id))
-            || file_entry_bits[id].count() < 2
         {
             continue;
         }
-        let key = file_entry_bits[id].bytes(entry_points.len());
-        let group = match group_of_key.get(key) {
-            Some(&group) => group,
-            None => {
-                let load_class = load_graph.load_class(&file_entry_bits[id])?;
-                let class_key = load_class.bytes(entry_points.len());
-                let group = match group_of_class.get(class_key) {
-                    Some(&group) => group,
-                    None => {
-                        let group = groups.len() as u32;
-                        group_of_class.put(class_key, group)?;
-                        groups.push(LoadGroup {
-                            reference_entry_id: load_class.find_first_set().expect("not empty")
-                                as u32,
-                            load_class,
-                            reference_order: Vec::new(),
-                            cursor: 0,
-                            cursor_entry_id: u32::MAX,
-                            matching_entry_count: 0,
-                            is_lazy: false,
-                            is_pinned: false,
-                        });
-                        group
-                    }
-                };
-                group_of_key.put(key, group)?;
-                group
-            }
-        };
-        group_of_file[id] = group;
-        // An AST that the parser did not make (`AstBuilder`) has no symbol for a wrapper.
-        if !wrapper_refs[id].is_valid() {
-            groups[group as usize].is_pinned = true;
+        let is_in_entry_chunk = file_entry_bits[id].count() < 2;
+        if is_in_entry_chunk
+            && (!flags[id].is_async_or_has_async_dependency
+                || entry_point_kinds[id].is_entry_point())
+        {
+            continue;
         }
+        let by_key = group_of_key.get_or_put(file_entry_bits[id].bytes(entry_points_len))?;
+        if !by_key.found_existing {
+            let load_class = load_graph.load_class(&file_entry_bits[id])?;
+            let new_group = groups.len() as u32;
+            *by_key.value_ptr = if is_in_entry_chunk {
+                new_group
+            } else {
+                *group_of_class.get_or_put_value(load_class.bytes(entry_points_len), new_group)?
+            };
+            if *by_key.value_ptr == new_group {
+                groups.push(LoadGroup {
+                    loader_count: load_class.count(),
+                    load_class,
+                    is_lazy: false,
+                    is_pinned: false,
+                    has_async_file: false,
+                    is_in_entry_chunk,
+                });
+            }
+        }
+        let group_index = *by_key.value_ptr;
+        group_of_file[id] = group_index;
+        let group = &mut groups[group_index as usize];
+        group.has_async_file |= flags[id].is_async_or_has_async_dependency;
+        // An AST that the parser did not make (`AstBuilder`) has no symbol for a wrapper.
+        group.is_pinned |= !wrapper_refs[id].is_valid();
         if already_wrapped.is_set(id) {
-            groups[group as usize].is_lazy = true;
+            group.is_lazy = true;
             continue;
         }
         // One loader has one order.
-        if groups[group as usize].load_class.count() < 2 {
+        if group.loader_count < 2 {
             continue;
         }
 
@@ -143,19 +131,19 @@ fn find_files_to_wrap(
         if !c.loading_file_side_effects(source_index, Some(&mut inits)) {
             inits.clear();
             c.top_level_inits(source_index, &mut inits);
-            effects.push((source_index, group));
+            effects.push((source_index, group_index));
         }
-        effects.extend(inits.iter().map(|&wrapped| (wrapped, group)));
+        effects.extend(inits.iter().map(|&wrapped| (wrapped, group_index)));
     }
     // A file comes after what it imports whoever loads it, so an initializer without side effects
     // is in place for its readers. Not in an import cycle, where the file entered first runs last.
-    if groups.iter().any(|group| group.load_class.count() >= 2) {
+    if groups.iter().any(|group| group.loader_count >= 2) {
         let is_cyclic = find_cyclic_files(c);
         for (id, &group) in group_of_file.iter().enumerate() {
             if group != NO_GROUP
                 && is_cyclic[id]
                 && !already_wrapped.is_set(id)
-                && groups[group as usize].load_class.count() >= 2
+                && groups[group as usize].loader_count >= 2
                 && has_top_level_initializer(c, id as IndexInt)
             {
                 effects.push((id as IndexInt, group));
@@ -172,12 +160,38 @@ fn find_files_to_wrap(
     }
     effects.retain(|&(_, group)| effect_counts[group as usize] >= 2);
 
-    let mut orders = EvaluationOrders::new(c, &group_of_file, &effects);
-    let mut entries_to_compare = AutoBitSet::init_empty(entry_points.len())?;
-    for &(_, group) in &effects {
-        entries_to_compare.set_union(&groups[group as usize].load_class);
+    Ok(LoadGroups {
+        groups,
+        group_of_file,
+        effects,
+    })
+}
+
+/// Per group: whether two of its loaders evaluate its effects in different orders.
+fn find_order_conflicts(load_groups: &LoadGroups, orders: &EvaluationOrders) -> Vec<bool> {
+    struct Comparison {
+        /// The lowest id in `load_class`, and the order in which it evaluates the effects of the group.
+        reference_entry_id: Option<usize>,
+        reference_order: Vec<IndexInt>,
+        /// How much of `reference_order` the order of `cursor_entry_id` has matched.
+        cursor: usize,
+        cursor_entry_id: u32,
+        /// The other loaders whose order is `reference_order`.
+        matching_entry_count: usize,
     }
-    orders.compute(c, &entries_to_compare);
+    let LoadGroups {
+        groups, effects, ..
+    } = load_groups;
+    let mut comparisons: Vec<Comparison> = groups
+        .iter()
+        .map(|group| Comparison {
+            reference_entry_id: group.load_class.find_first_set(),
+            reference_order: Vec::new(),
+            cursor: 0,
+            cursor_entry_id: u32::MAX,
+            matching_entry_count: 0,
+        })
+        .collect();
     // By ascending entry point id, so the reference of a group comes first.
     for order in orders.by_entry_id.iter().flatten() {
         for &source_index in &order.files {
@@ -186,45 +200,129 @@ fn find_files_to_wrap(
                 .iter()
                 .take_while(|&&(other, _)| other == source_index)
             {
-                let group = &mut groups[group as usize];
-                if !group.load_class.is_set(order.entry_id as usize) {
+                if !groups[group as usize]
+                    .load_class
+                    .is_set(order.entry_id as usize)
+                {
                     continue;
                 }
-                if group.reference_entry_id == order.entry_id {
-                    group.reference_order.push(source_index);
+                let comparison = &mut comparisons[group as usize];
+                if comparison.reference_entry_id == Some(order.entry_id as usize) {
+                    comparison.reference_order.push(source_index);
                     continue;
                 }
-                if group.cursor_entry_id != order.entry_id {
-                    group.cursor_entry_id = order.entry_id;
-                    group.cursor = 0;
+                if comparison.cursor_entry_id != order.entry_id {
+                    comparison.cursor_entry_id = order.entry_id;
+                    comparison.cursor = 0;
                 }
                 // A mismatch leaves the cursor short of the end.
-                if group.reference_order.get(group.cursor) == Some(&source_index) {
-                    group.cursor += 1;
-                    group.matching_entry_count +=
-                        (group.cursor == group.reference_order.len()) as usize;
+                if comparison.reference_order.get(comparison.cursor) == Some(&source_index) {
+                    comparison.cursor += 1;
+                    if comparison.cursor == comparison.reference_order.len() {
+                        comparison.matching_entry_count += 1;
+                    }
                 }
             }
         }
     }
-    let has_conflict: Vec<bool> = groups
+    groups
         .iter()
-        .map(|group| {
-            !group.reference_order.is_empty()
-                && group.matching_entry_count + 1 != group.load_class.count()
+        .zip(&comparisons)
+        .map(|(group, comparison)| {
+            !comparison.reference_order.is_empty()
+                && comparison.matching_entry_count + 1 != group.loader_count
         })
-        .collect();
+        .collect()
+}
+
+/// What comes after a wrapper, from another chunk, has to be one: the `import` of a chunk runs ahead
+/// of the calls. What is async and comes before a wrapper has to be one: its `await` holds them up.
+fn spread_lazy_groups(groups: &mut [LoadGroup], group_orders: &[Vec<u32>]) {
+    loop {
+        let mut changed = false;
+        for group_order in group_orders {
+            let mut is_after_lazy = false;
+            for &group in group_order {
+                let group = &mut groups[group as usize];
+                if is_after_lazy && !group.is_lazy && !group.is_pinned && !group.is_in_entry_chunk {
+                    group.is_lazy = true;
+                    changed = true;
+                }
+                is_after_lazy |= group.is_lazy;
+            }
+            let mut is_before_lazy = false;
+            for &group in group_order.iter().rev() {
+                let group = &mut groups[group as usize];
+                if is_before_lazy && !group.is_lazy && !group.is_pinned && group.has_async_file {
+                    group.is_lazy = true;
+                    changed = true;
+                }
+                is_before_lazy |= group.is_lazy;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// The reverse of `spread_lazy_groups`: what comes before a pinned file is pinned, and what comes
+/// after a pinned async file.
+fn spread_pinned_groups(groups: &mut [LoadGroup], group_orders: &[Vec<u32>]) {
+    loop {
+        let mut changed = false;
+        for group_order in group_orders {
+            let mut is_pinned = false;
+            for &group in group_order.iter().rev() {
+                let group = &mut groups[group as usize];
+                changed |= is_pinned && !group.is_pinned;
+                group.is_pinned |= is_pinned;
+                is_pinned = group.is_pinned;
+            }
+            let mut is_pinned = false;
+            for &group in group_order {
+                let group = &mut groups[group as usize];
+                changed |= is_pinned && !group.is_pinned;
+                group.is_pinned |= is_pinned;
+                is_pinned |= group.is_pinned && group.has_async_file;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// The unwrapped files that have to become wrappers, if any.
+fn find_files_to_wrap(
+    c: &LinkerContext,
+    already_wrapped: &AutoBitSet,
+) -> crate::Result<Option<AutoBitSet>> {
+    let entry_points_len = c.graph.entry_points.len();
+    let mut load_groups = group_files(c, already_wrapped)?;
+
+    let mut orders = EvaluationOrders::new(c, &load_groups);
+    let mut entries_to_compare = AutoBitSet::init_empty(entry_points_len)?;
+    for &(_, group) in &load_groups.effects {
+        entries_to_compare.set_union(&load_groups.groups[group as usize].load_class);
+    }
+    orders.compute(c, &entries_to_compare);
+    let has_conflict = find_order_conflicts(&load_groups, &orders);
+    let LoadGroups {
+        groups,
+        group_of_file,
+        ..
+    } = &mut load_groups;
     if !groups.iter().any(|group| group.is_lazy) && !has_conflict.contains(&true) {
         return Ok(None);
     }
 
-    let mut all_loaders = AutoBitSet::init_empty(entry_points.len())?;
-    for group in &groups {
+    let mut all_loaders = AutoBitSet::init_empty(entry_points_len)?;
+    for group in groups.iter() {
         all_loaders.set_union(&group.load_class);
     }
     orders.compute(c, &all_loaders);
-    // Per entry point: the group of each file, in evaluation order. Without the groups that
-    // another entry point has always loaded by the time this one loads.
+    // Per entry point: the groups that it can be the first to load, in evaluation order.
     let group_orders: Vec<Vec<u32>> = orders
         .by_entry_id
         .iter()
@@ -247,6 +345,7 @@ fn find_files_to_wrap(
         .collect();
 
     // An HTML file prints nothing for a `<script src>`, so it cannot call a wrapper.
+    let loaders = c.parse_graph().input_files.items_loader();
     for source_index in c.graph.reachable_files.iter() {
         let id = source_index.get() as usize;
         if loaders[id] != Loader::Html || !c.graph.files_live.is_set(id) {
@@ -254,62 +353,150 @@ fn find_files_to_wrap(
         }
         for record in c.graph.ast.items_import_records()[id].as_slice() {
             if record.source_index.is_valid()
-                && group_of_file[record.source_index.get() as usize] != NO_GROUP
+                && let group = group_of_file[record.source_index.get() as usize]
+                && group != NO_GROUP
             {
-                groups[group_of_file[record.source_index.get() as usize] as usize].is_pinned = true;
+                groups[group as usize].is_pinned = true;
             }
         }
     }
-    // What comes after a wrapper has to be one. So what comes before a pinned file is pinned.
-    while groups.iter().any(|group| group.is_pinned) {
-        let mut changed = false;
-        for group_order in &group_orders {
-            let mut seen_pinned = false;
-            for &group in group_order.iter().rev() {
-                let group = &mut groups[group as usize];
-                changed |= seen_pinned && !group.is_pinned;
-                group.is_pinned |= seen_pinned;
-                seen_pinned = group.is_pinned;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    spread_pinned_groups(groups, &group_orders);
     for (group, has_conflict) in groups.iter_mut().zip(has_conflict) {
         group.is_lazy |= has_conflict && !group.is_pinned;
     }
-    loop {
-        let mut changed = false;
-        for group_order in &group_orders {
-            let mut seen_lazy = false;
-            for &group in group_order {
-                let group = &mut groups[group as usize];
-                if seen_lazy && !group.is_lazy && !group.is_pinned {
-                    group.is_lazy = true;
-                    changed = true;
+    spread_lazy_groups(groups, &group_orders);
+
+    let mut files = AutoBitSet::init_empty(group_of_file.len())?;
+    for (id, &group) in group_of_file.iter().enumerate() {
+        if group != NO_GROUP
+            && !already_wrapped.is_set(id)
+            && groups[group as usize].is_lazy
+            && !groups[group as usize].is_pinned
+        {
+            files.set(id);
+        }
+    }
+    Ok(files.find_first_set().is_some().then_some(files))
+}
+
+impl LinkerContext<'_> {
+    /// Wraps files that tree shaking saw unwrapped: each becomes `var init_x = __esm(() => { ... })`,
+    /// and every `import` of it a call. Does for them what `scan_imports_and_exports` does for a
+    /// file that is wrapped from the start.
+    fn wrap_files_as_esm(&mut self, files: &AutoBitSet) -> Result<(), AllocError> {
+        let mut worklist: Vec<TreeShakeWork> = Vec::new();
+
+        let mut iter = files.iterator::<true, true>();
+        while let Some(id) = iter.next() {
+            let source_index = id as IndexInt;
+            self.graph.meta.items_flags_mut()[id].wrap = WrapKind::Esm;
+
+            let wrapper_ref = self.graph.ast.items_wrapper_ref()[id];
+            debug_assert!(wrapper_ref.is_valid());
+            let mut wrapper_part_index = Index::default();
+            self.create_wrapper_for_file(
+                WrapKind::Esm,
+                wrapper_ref,
+                &mut wrapper_part_index,
+                source_index,
+            );
+            self.graph.meta.items_wrapper_part_index_mut()[id] = wrapper_part_index;
+
+            // Use "init_*" for ESM wrappers instead of "require_*"
+            let name = {
+                use std::io::Write as _;
+                let source = self.get_source(id);
+                let mut name: Vec<u8> = b"init_".to_vec();
+                if !source.identifier_name.is_empty() {
+                    name.extend_from_slice(&source.identifier_name);
+                } else {
+                    write!(&mut name, "{}", source.fmt_identifier())
+                        .expect("infallible: in-memory write");
                 }
-                seen_lazy |= group.is_lazy;
+                self.graph.arena().alloc_slice_copy(&name)
+            };
+            // SAFETY: the caller passes files that have a wrapper ref; no other borrow
+            // into `self.graph.symbols` is live across this write.
+            unsafe { self.graph.symbol_mut(wrapper_ref) }.original_name =
+                bun_ast::StoreStr::new(name);
+
+            let mut parts_live = AutoBitSet::init_empty(self.graph.ast.items_parts()[id].len())?;
+            self.graph.parts_live[id].for_each(&mut parts_live, AutoBitSet::set);
+            self.graph.parts_live[id] = parts_live;
+
+            worklist.push(TreeShakeWork::Part {
+                part_index: wrapper_part_index.get(),
+                source_index,
+            });
+        }
+
+        for i in 0..self.graph.reachable_files.len() {
+            let source_index = self.graph.reachable_files.slice()[i].get();
+            let id = source_index as usize;
+            if self.graph.ast.items_css()[id].is_some() {
+                continue;
+            }
+            for part_index in 0..self.graph.ast.items_parts()[id].len() {
+                let (mut to_esm_uses, mut to_common_js_uses) = (0, 0);
+                let mut changed = false;
+                let records_len = self.graph.ast.items_parts()[id].as_slice()[part_index]
+                    .import_record_indices
+                    .len();
+                for n in 0..records_len {
+                    let import_record_index = self.graph.ast.items_parts()[id].as_slice()
+                        [part_index]
+                        .import_record_indices
+                        .slice()[n];
+                    let record = &self.graph.ast.items_import_records()[id].as_slice()
+                        [import_record_index as usize];
+                    if !record.source_index.is_valid()
+                        || self.is_external_dynamic_import(record, source_index)
+                        || !files.is_set(record.source_index.get() as usize)
+                    {
+                        continue;
+                    }
+                    changed = true;
+                    self.add_wrapper_dependency(
+                        source_index,
+                        part_index as u32,
+                        import_record_index,
+                        &mut to_esm_uses,
+                        &mut to_common_js_uses,
+                    )?;
+                }
+                if !changed {
+                    continue;
+                }
+                let part = Index::part(part_index as u32);
+                for (name, uses) in [
+                    (&b"__toESM"[..], to_esm_uses),
+                    (b"__toCommonJS", to_common_js_uses),
+                ] {
+                    self.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        part,
+                        name,
+                        uses,
+                    )?;
+                }
+                if self.graph.parts_live[id].is_set(part_index) {
+                    for dependency in self.graph.ast.items_parts()[id].as_slice()[part_index]
+                        .dependencies
+                        .iter()
+                    {
+                        worklist.push(TreeShakeWork::Part {
+                            part_index: dependency.part_index,
+                            source_index: dependency.source_index.get(),
+                        });
+                    }
+                }
             }
         }
-        if !changed {
-            break;
-        }
-    }
 
-    let mut files = AutoBitSet::init_empty(files_len)?;
-    let mut found = false;
-    for (id, &group) in group_of_file.iter().enumerate() {
-        if group == NO_GROUP || already_wrapped.is_set(id) {
-            continue;
-        }
-        let group = &groups[group as usize];
-        if group.is_lazy && !group.is_pinned {
-            files.set(id);
-            found = true;
-        }
+        self.mark_live(worklist);
+        // The wrappers use `__esm` from the runtime.
+        self.compute_entry_bits()
     }
-    Ok(found.then_some(files))
 }
 
 /// The evaluation order of each entry point, computed on demand.
@@ -320,16 +507,13 @@ struct EvaluationOrders {
 }
 
 impl EvaluationOrders {
-    fn new(
-        c: &LinkerContext,
-        group_of_file: &[u32],
-        effects: &[(IndexInt, u32)],
-    ) -> EvaluationOrders {
-        let mut is_tracked: Vec<bool> = group_of_file
+    fn new(c: &LinkerContext, load_groups: &LoadGroups) -> EvaluationOrders {
+        let mut is_tracked: Vec<bool> = load_groups
+            .group_of_file
             .iter()
             .map(|&group| group != NO_GROUP)
             .collect();
-        for &(source_index, _) in effects {
+        for &(source_index, _) in &load_groups.effects {
             is_tracked[source_index as usize] = true;
         }
         let mut by_entry_id = Vec::new();
@@ -369,27 +553,15 @@ impl EvaluationOrders {
     }
 }
 
-/// A live part holds more than `import`s, `export`s and function declarations, which are in place before any file runs.
+/// Whether a live part holds more than declarations.
 fn has_top_level_initializer(c: &LinkerContext, source_index: IndexInt) -> bool {
-    use bun_ast::StmtData;
     let parts_live = &c.graph.parts_live[source_index as usize];
     c.graph.ast.items_parts()[source_index as usize]
         .as_slice()
         .iter()
         .enumerate()
         .any(|(part_index, part)| {
-            parts_live.is_set(part_index)
-                && part.stmts.slice().iter().any(|stmt| {
-                    !matches!(
-                        stmt.data,
-                        StmtData::SImport(_)
-                            | StmtData::SExportStar(_)
-                            | StmtData::SExportFrom(_)
-                            | StmtData::SExportClause(_)
-                            | StmtData::SFunction(_)
-                            | StmtData::SEmpty(_)
-                    )
-                })
+            parts_live.is_set(part_index) && !part.stmts.slice().iter().all(stmt_only_declares)
         })
 }
 

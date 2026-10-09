@@ -97,8 +97,9 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
 
-    /// We may need to refer to the "__promiseAll" runtime symbol
-    pub(crate) promise_all_runtime_ref: Ref,
+    /// "__esmAsync" and "__esmWait": "__esm" for a file that reaches a top-level await
+    pub(crate) esm_async_runtime_ref: Ref,
+    pub(crate) esm_wait_runtime_ref: Ref,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -165,7 +166,8 @@ impl<'a> Default for LinkerContext<'a> {
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
-            promise_all_runtime_ref: Ref::NONE,
+            esm_async_runtime_ref: Ref::NONE,
+            esm_wait_runtime_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
@@ -602,8 +604,12 @@ impl<'a> LinkerContext<'a> {
             .get(b"__commonJS")
             .expect("infallible: runtime export")
             .ref_;
-        self.promise_all_runtime_ref = runtime_named_exports
-            .get(b"__promiseAll")
+        self.esm_async_runtime_ref = runtime_named_exports
+            .get(b"__esmAsync")
+            .expect("infallible: runtime export")
+            .ref_;
+        self.esm_wait_runtime_ref = runtime_named_exports
+            .get(b"__esmWait")
             .expect("infallible: runtime export")
             .ref_;
         // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
@@ -946,6 +952,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         scan_imports_and_exports(self)?;
+        self.validate_async_imports_of_commonjs_files();
 
         // Stop now if there were errors
         if self.log().has_errors() {
@@ -1100,148 +1107,6 @@ impl<'a> LinkerContext<'a> {
         for (i, &entry_point) in entry_points.iter().enumerate() {
             self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i);
         }
-        Ok(())
-    }
-
-    /// Wraps files that tree shaking saw unwrapped: each becomes `var init_x = __esm(() => { ... })`,
-    /// and every `import` of it a call. Does for them what `scan_imports_and_exports` does for a
-    /// file that is wrapped from the start. `compute_entry_bits` has to run again afterwards.
-    pub(crate) fn wrap_files_as_esm(&mut self, files: &AutoBitSet) -> Result<(), AllocError> {
-        let mut worklist: Vec<TreeShakeWork> = Vec::new();
-
-        let mut iter = files.iterator::<true, true>();
-        while let Some(id) = iter.next() {
-            let source_index = id as crate::IndexInt;
-            debug_assert!(self.graph.meta.items_flags()[id].wrap == WrapKind::None);
-            debug_assert!(self.graph.files_live.is_set(id));
-            self.graph.meta.items_flags_mut()[id].wrap = WrapKind::Esm;
-
-            let wrapper_ref = self.graph.ast.items_wrapper_ref()[id];
-            debug_assert!(wrapper_ref.is_valid());
-            let mut wrapper_part_index = crate::Index::default();
-            self.create_wrapper_for_file(
-                WrapKind::Esm,
-                wrapper_ref,
-                &mut wrapper_part_index,
-                source_index,
-            );
-            self.graph.meta.items_wrapper_part_index_mut()[id] = wrapper_part_index;
-
-            // Use "init_*" for ESM wrappers instead of "require_*"
-            let name = {
-                use std::io::Write as _;
-                let source = self.get_source(id);
-                let mut name: Vec<u8> = b"init_".to_vec();
-                if !source.identifier_name.is_empty() {
-                    name.extend_from_slice(&source.identifier_name);
-                } else {
-                    let _ = write!(&mut name, "{}", source.fmt_identifier());
-                }
-                self.graph.arena().alloc_slice_copy(&name)
-            };
-            // SAFETY: the caller passes files that have a wrapper ref; no other borrow
-            // into `self.graph.symbols` is live across this write.
-            unsafe { self.graph.symbol_mut(wrapper_ref) }.original_name =
-                bun_ast::StoreStr::new(name);
-
-            let mut parts_live = AutoBitSet::init_empty(self.graph.ast.items_parts()[id].len())?;
-            let mut live = self.graph.parts_live[id].iterator::<true, true>();
-            while let Some(part_index) = live.next() {
-                parts_live.set(part_index);
-            }
-            self.graph.parts_live[id] = parts_live;
-
-            worklist.push(TreeShakeWork::Part {
-                part_index: wrapper_part_index.get(),
-                source_index,
-            });
-        }
-
-        for i in 0..self.graph.reachable_files.len() {
-            let source_index = self.graph.reachable_files.slice()[i].get();
-            let id = source_index as usize;
-            if id >= self.graph.ast.items_import_records().len()
-                || self.graph.ast.items_css()[id].is_some()
-            {
-                continue;
-            }
-            // `InsideWrapperPrefix` joins the awaits of two async wrappers with `__promiseAll`.
-            // `create_wrapper_for_file` depends on it for a wrapped importer.
-            let flags = self.graph.meta.items_flags();
-            let is_async_esm_import = |record: &ImportRecord| {
-                record.kind == ImportKind::Stmt
-                    && record.source_index.is_valid()
-                    && flags[record.source_index.get() as usize].wrap == WrapKind::Esm
-                    && flags[record.source_index.get() as usize].is_async_or_has_async_dependency
-            };
-            let needs_promise_all = flags[id].wrap == WrapKind::None
-                && self.graph.ast.items_import_records()[id]
-                    .as_slice()
-                    .iter()
-                    .filter(|record| is_async_esm_import(record))
-                    .count()
-                    >= 2;
-            for part_index in 0..self.graph.ast.items_parts()[id].len() {
-                let (mut to_esm_uses, mut to_common_js_uses, mut promise_all_uses) = (0, 0, 0);
-                let mut changed = false;
-                let records_len = self.graph.ast.items_parts()[id].as_slice()[part_index]
-                    .import_record_indices
-                    .len();
-                for n in 0..records_len {
-                    let import_record_index = self.graph.ast.items_parts()[id].as_slice()
-                        [part_index]
-                        .import_record_indices
-                        .slice()[n];
-                    let record = &self.graph.ast.items_import_records()[id].as_slice()
-                        [import_record_index as usize];
-                    if !record.source_index.is_valid()
-                        || self.is_external_dynamic_import(record, source_index)
-                    {
-                        continue;
-                    }
-                    if files.is_set(record.source_index.get() as usize) {
-                        changed = true;
-                        promise_all_uses += needs_promise_all as u32;
-                        self.add_wrapper_dependency(
-                            source_index,
-                            part_index as u32,
-                            import_record_index,
-                            &mut to_esm_uses,
-                            &mut to_common_js_uses,
-                        )?;
-                    }
-                }
-                if !changed {
-                    continue;
-                }
-                let part = crate::Index::part(part_index as u32);
-                for (name, uses) in [
-                    (&b"__toESM"[..], to_esm_uses),
-                    (b"__toCommonJS", to_common_js_uses),
-                    (b"__promiseAll", promise_all_uses),
-                ] {
-                    self.graph.generate_runtime_symbol_import_and_use(
-                        source_index,
-                        part,
-                        name,
-                        uses,
-                    )?;
-                }
-                if self.graph.parts_live[id].is_set(part_index) {
-                    for dependency in self.graph.ast.items_parts()[id].as_slice()[part_index]
-                        .dependencies
-                        .iter()
-                    {
-                        worklist.push(TreeShakeWork::Part {
-                            part_index: dependency.part_index,
-                            source_index: dependency.source_index.get(),
-                        });
-                    }
-                }
-            }
-        }
-
-        self.mark_live(worklist);
         Ok(())
     }
 
@@ -2395,6 +2260,41 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// A `__commonJS` wrapper returns `module.exports` at once, so it cannot wait for what it imports.
+    fn validate_async_imports_of_commonjs_files(&mut self) {
+        let flags = self.graph.meta.items_flags();
+        let tla_keywords = self.parse_graph().ast.items_top_level_await_keyword();
+        let input_files = self.parse_graph().input_files.items_source();
+        for source_index in self.graph.reachable_files.iter() {
+            let id = source_index.get() as usize;
+            if flags[id].wrap != WrapKind::Cjs || !flags[id].is_async_or_has_async_dependency {
+                continue;
+            }
+            for record in self.graph.ast.items_import_records()[id].as_slice() {
+                if record.kind != ImportKind::Stmt
+                    || !record.source_index.is_valid()
+                    || !flags[record.source_index.get() as usize].is_async_or_has_async_dependency
+                {
+                    continue;
+                }
+                let other = record.source_index.get() as usize;
+                self.log_disjoint().add_range_error_fmt(
+                    Some(&input_files[id]),
+                    record.range,
+                    format_args!(
+                        "This import is not allowed in a CommonJS module because the imported file \"{}\" {} a top-level await",
+                        bstr::BStr::new(&input_files[other].path.pretty),
+                        if tla_keywords[other].is_empty() {
+                            "depends on"
+                        } else {
+                            "contains"
+                        },
+                    ),
+                );
+            }
+        }
+    }
+
     pub(crate) fn should_remove_import_export_stmt(
         &mut self,
         stmts: &mut StmtList,
@@ -2527,22 +2427,66 @@ impl<'a> LinkerContext<'a> {
         if wrapper_ref.is_empty() {
             return;
         }
-        let init_call = Expr::init(
-            E::Call {
-                target: Expr::init_identifier(wrapper_ref, loc),
+        stmts.inside_wrapper_prefix.stmts.push(Stmt::alloc(
+            S::SExpr {
+                value: Expr::init(
+                    E::Call {
+                        target: Expr::init_identifier(wrapper_ref, loc),
+                        ..Default::default()
+                    },
+                    loc,
+                ),
                 ..Default::default()
             },
             loc,
-        );
-        if self.graph.meta.items_flags()[source_index as usize].is_async_or_has_async_dependency {
-            stmts
-                .inside_wrapper_prefix
-                .append_async_dependency(init_call);
-        } else {
-            stmts
-                .inside_wrapper_prefix
-                .append_sync_dependency(init_call);
+        ));
+    }
+
+    /// The async wrappers that the `import` statements of a file call, in order.
+    pub(crate) fn async_wrappers_called_by(&self, source_index: crate::IndexInt) -> Vec<Ref> {
+        let flags = self.graph.meta.items_flags();
+        let wrapper_refs = self.graph.ast.items_wrapper_ref();
+        let records = self.graph.ast.items_import_records()[source_index as usize].as_slice();
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        let mut wrappers: Vec<Ref> = Vec::new();
+        let mut add = |other: crate::IndexInt| {
+            let other = other as usize;
+            if flags[other].wrap == WrapKind::Esm
+                && flags[other].is_async_or_has_async_dependency
+                && self.graph.files_live.is_set(other)
+                && wrapper_refs[other].is_valid()
+                && !wrappers.contains(&wrapper_refs[other])
+            {
+                wrappers.push(wrapper_refs[other]);
+            }
+        };
+        for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &import_record_index in part.import_record_indices.iter() {
+                let record = &records[import_record_index as usize];
+                if record.kind != ImportKind::Stmt
+                    || !record.source_index.is_valid()
+                    || record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+                {
+                    continue;
+                }
+                match self
+                    .graph
+                    .wrappers_behind_import
+                    .get(&(source_index, import_record_index))
+                {
+                    Some(behind) => behind.iter().copied().for_each(&mut add),
+                    None => add(record.source_index.get()),
+                }
+            }
         }
+        wrappers
     }
 
     /// Whether the `import` has such wrappers (`find_wrappers_behind_imports`).
@@ -2646,6 +2590,7 @@ impl<'a> LinkerContext<'a> {
             has_run_symbol_renamer: true,
 
             to_esm_ref,
+            esm_wait_ref: self.esm_wait_runtime_ref,
             to_commonjs_ref,
             module_preload_ref: if self.module_preload() {
                 self.preload_runtime_ref
@@ -3730,60 +3675,31 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // Count async dependencies to determine if we need __promiseAll
-                let mut async_import_count: usize = 0;
-                {
-                    let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
-                    let meta_flags = self.graph.meta.items_flags();
+                let has_runtime_wrapper =
+                    wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev;
+                let is_async = self.graph.meta.items_flags()[source_index as usize]
+                    .is_async_or_has_async_dependency;
+                let runtime_ref = if is_async {
+                    self.esm_async_runtime_ref
+                } else {
+                    self.esm_runtime_ref
+                };
+                // What is outside of an async wrapper waits for it with "__esmWait".
+                let runtime_refs: &[Ref] = match (has_runtime_wrapper, is_async) {
+                    (false, _) => &[],
+                    (true, false) => &[runtime_ref],
+                    (true, true) => &[runtime_ref, self.esm_wait_runtime_ref],
+                };
 
-                    for record in import_records {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        let other_flags = meta_flags[record.source_index.get() as usize];
-                        if other_flags.is_async_or_has_async_dependency {
-                            async_import_count += 1;
-                            if async_import_count >= 2 {
-                                break;
-                            }
-                        }
+                // generate a dummy part that depends on the runtime symbols
+                let mut dependencies = DependencyList::init_capacity(runtime_refs.len());
+                for &runtime_ref in runtime_refs {
+                    for &part in self.top_level_symbols_to_parts_for_runtime(runtime_ref) {
+                        dependencies.push(Dependency {
+                            part_index: part,
+                            source_index: bun_ast::Index::RUNTIME,
+                        });
                     }
-                }
-
-                let needs_promise_all = async_import_count >= 2;
-
-                let esm_parts: &[u32] = if wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
-                for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
-                }
-                for &part in promise_all_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
@@ -3808,29 +3724,16 @@ impl<'a> LinkerContext<'a> {
                     .expect("unreachable");
                 debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
                 *wrapper_part_index = crate::Index::part(part_index);
-                if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
+                if has_runtime_wrapper {
                     self.graph
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            self.esm_runtime_ref,
+                            runtime_ref,
                             1,
                             crate::Index::RUNTIME,
                         )
                         .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
                 }
             }
             WrapKind::None => {}
@@ -3881,6 +3784,22 @@ impl<'a> LinkerContext<'a> {
         {
             insert_flags.insert(bun_ast::ImportRecordFlags::WRAP_WITH_TO_ESM);
             *to_esm_uses += 1;
+        }
+
+        // "import()" waits for an async wrapper from outside of it.
+        if kind == ImportKind::Dynamic
+            && other_flags.wrap == WrapKind::Esm
+            && other_flags.is_async_or_has_async_dependency
+            && wrapper_ref.is_valid()
+            && self.options.output_format != Format::InternalBakeDev
+        {
+            self.graph.generate_symbol_import_and_use(
+                source_index,
+                part_index,
+                self.esm_wait_runtime_ref,
+                1,
+                Index::RUNTIME,
+            )?;
         }
 
         // If this is an ESM wrapper, also depend on the exports object
@@ -5456,27 +5375,17 @@ pub struct StmtList {
 /// What the `import` statements of a file run, in source order.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
-    /// The `init_x()` calls that return a promise, with where each is in `stmts`.
-    async_dependencies: Vec<(usize, Expr)>,
 }
 
 impl InsideWrapperPrefix {
     fn init() -> Self {
-        Self {
-            stmts: Vec::new(),
-            async_dependencies: Vec::new(),
-        }
+        Self { stmts: Vec::new() }
     }
-
-    // deinit → Drop (Vec frees automatically); reset is explicit
 
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.async_dependencies.clear();
     }
-}
 
-impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
@@ -5485,107 +5394,6 @@ impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
-    }
-
-    fn append_sync_dependency(&mut self, call_expr: Expr) {
-        self.stmts.push(Stmt::alloc(
-            S::SExpr {
-                value: call_expr,
-                ..Default::default()
-            },
-            call_expr.loc,
-        ));
-    }
-
-    /// The call starts the dependency. What comes after it in the source does not wait for it.
-    fn append_async_dependency(&mut self, call_expr: Expr) {
-        self.async_dependencies.push((self.stmts.len(), call_expr));
-        self.append_sync_dependency(call_expr)
-    }
-
-    /// Ends the prefix: the file itself waits for its async dependencies. A wrapper returns the same promise each time.
-    /// Returns whether there is an `await`.
-    pub(crate) fn append_async_await(&mut self, promise_all_ref: Ref) -> bool {
-        // The `await` makes the calls that nothing comes after.
-        for &(index, _) in self.async_dependencies.iter().rev() {
-            if index + 1 != self.stmts.len() {
-                break;
-            }
-            self.stmts.pop();
-        }
-        // An import after one of the others can throw, and then the `await` is not reached. The promise
-        // keeps a handler: `init_x()?.catch(() => {})`. A wrapper that is called while it starts returns undefined.
-        for &(index, call_expr) in &self.async_dependencies {
-            let Some(stmt) = self.stmts.get_mut(index) else {
-                break;
-            };
-            let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
-            *stmt = Stmt::alloc(
-                S::SExpr {
-                    value: Expr::init(
-                        E::Call {
-                            target: Expr::init(
-                                E::Dot {
-                                    target: call_expr,
-                                    name: bun_ast::StoreStr::new(b"catch"),
-                                    name_loc: Loc::EMPTY,
-                                    optional_chain: Some(bun_ast::OptionalChain::Start),
-                                    ..Default::default()
-                                },
-                                Loc::EMPTY,
-                            ),
-                            args,
-                            optional_chain: Some(bun_ast::OptionalChain::Continuation),
-                            ..Default::default()
-                        },
-                        Loc::EMPTY,
-                    ),
-                    ..Default::default()
-                },
-                call_expr.loc,
-            );
-        }
-        let promise = match self.async_dependencies.as_slice() {
-            [] => return false,
-            &[(_, call_expr)] => call_expr,
-            calls => {
-                let mut items = bun_ast::ExprNodeList::init_capacity(calls.len());
-                for &(_, call_expr) in calls {
-                    items.append_assume_capacity(call_expr);
-                }
-                let mut args = bun_ast::ExprNodeList::init_capacity(1);
-                args.append_assume_capacity(Expr::init(
-                    E::Array {
-                        items,
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ));
-                Expr::init(
-                    E::Call {
-                        target: Expr::init(
-                            E::Identifier {
-                                ref_: promise_all_ref,
-                                ..Default::default()
-                            },
-                            Loc::EMPTY,
-                        ),
-                        args,
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                )
-            }
-        };
-        self.stmts.push(Stmt::alloc(
-            S::SExpr {
-                value: Expr::init(E::Await { value: promise }, Loc::EMPTY),
-                ..Default::default()
-            },
-            Loc::EMPTY,
-        ));
-        true
     }
 }
 

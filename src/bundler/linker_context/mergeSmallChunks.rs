@@ -15,18 +15,26 @@ bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 /// `export * from` / `export {} from` (the re-exports are tracked separately),
 /// the linker's empty entry-point part, and a text loader's `export default "…"`.
 pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
-    use bun_ast::StmtData;
     part.can_be_removed_if_unused
-        || part.stmts.slice().iter().all(|stmt| match &stmt.data {
-            StmtData::SImport(_)
+        || part.stmts.slice().iter().all(|stmt| {
+            stmt_only_declares(stmt)
+                || matches!(&stmt.data, bun_ast::StmtData::SLazyExport(expr)
+                    if bun_ast::expr::Tag::is_primitive_literal(expr.tag()))
+        })
+}
+
+/// What the statement declares is in place before any file runs.
+pub(crate) fn stmt_only_declares(stmt: &bun_ast::Stmt) -> bool {
+    use bun_ast::StmtData;
+    matches!(
+        stmt.data,
+        StmtData::SImport(_)
             | StmtData::SExportStar(_)
             | StmtData::SExportFrom(_)
             | StmtData::SExportClause(_)
             | StmtData::SFunction(_)
-            | StmtData::SEmpty(_) => true,
-            StmtData::SLazyExport(expr) => bun_ast::expr::Tag::is_primitive_literal(expr.tag()),
-            _ => false,
-        })
+            | StmtData::SEmpty(_)
+    )
 }
 
 impl LinkerContext<'_> {
@@ -961,7 +969,7 @@ impl EntryLoadGraph {
 ///
 /// 1. An `import()` entry point `D` is redundant in a key when, whichever way
 ///    `D` gets loaded, some other entry in that key has already been loaded
-///    (`load_class` below: no importer of `D` can be reached from a process
+///    (`EntryLoadGraph::load_class`: no importer of `D` can be reached from a process
 ///    root without passing through the key). Keys that are equal
 ///    after dropping their redundant entries describe chunks that are always
 ///    loaded together: with one user entry `main` and a lazy `import("./x")`
@@ -1265,6 +1273,7 @@ pub(crate) fn merge_small_chunks(
         }
         for entry_id in 0..entry_points_len {
             let mut up = load_graph.idom[entry_id];
+            // The root of the dominator tree stands for the process. It comes after the entry points.
             while up != UNREACHED && up as usize != entry_points_len {
                 dominated[up as usize].set(entry_id);
                 up = load_graph.idom[up as usize];

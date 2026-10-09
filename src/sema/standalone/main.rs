@@ -122,7 +122,7 @@ fn run(args: &[String]) {
                         let arena = session.arena();
                         let mut file = disk.parse(arena, path.as_bytes(), &text, &atoms, &options);
                         if keeps_text {
-                            file.text = text.clone();
+                            file.text.clone_from(&text);
                         }
                         let bound = bun_sema::bind::bind(&file, bind_options, &atoms, arena);
                         let shared = bun_sema::portable::SharedFile::new(&file, &bound, &atoms);

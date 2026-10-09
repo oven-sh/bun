@@ -11,8 +11,11 @@ use crate::bind::{
     Bound, BoundBuilder, BoundIn, DeclsIn, SymbolIn, large_table_places, nested_names_of,
 };
 use crate::hir::{
-    ArenaFew, ExprKind, File, FileBuilder, FileIn, ImportEqualsTarget, JsxPragmas, Lazy,
-    ModuleName, PatKind, PropKey, StmtKind, Storage, TypeNodeKind,
+    Alias, ArenaFew, Call, Class, Enum, EnumMember, Export, ExportSpec, Expr, ExprKind, File,
+    FileBuilder, FileIn, Func, Import, ImportEquals, ImportEqualsTarget, ImportSpec, Interface,
+    JsxPragmas, Lazy, Member, Module, ModuleName, Name, Pat, PatKind, PatProp, Prop, PropKey,
+    ReferenceKind, ResolutionMode, SpecifierUse, Stmt, StmtKind, Storage, TupleElem, TypeNode,
+    TypeNodeKind, TypeParam,
 };
 use crate::session::{Arena, ArenaVec};
 use crate::util::{FxBuild, FxHashMap};
@@ -137,7 +140,10 @@ impl SharedFile {
                 atoms.intern(text)
             })
             .collect();
-        let mut name = |atom: Atom| names[(atom.0 - FIXED) as usize];
+        let mut name = |atom: Atom| {
+            let name = names.get((atom.0 - FIXED) as usize);
+            name.copied().unwrap_or(atom)
+        };
         let mut file = file_in_arena(&self.file, arena, atoms);
         each_atom_of_file(&mut file, &mut name);
         let mut bound = bound_in_arena(&self.bound, arena);
@@ -304,8 +310,79 @@ fn each_atom_of_bound<S: Storage>(bound: &mut BoundIn<S>, f: &mut dyn FnMut(Atom
     }
 }
 
+/// A tagged template with substitutions and its `Call::template` have one list.
+fn without_duplicates(mut texts: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+    texts.sort_unstable();
+    texts.dedup();
+    texts
+}
+
+/// The lists of a `FileIn` that have atoms, wherever they are stored.
+struct ListsWithAtoms<'a> {
+    jsx_pragmas: &'a mut JsxPragmas,
+    calls: &'a [Call],
+    references: &'a mut [(ReferenceKind, Atom, u32, ResolutionMode)],
+    specifier_uses: &'a mut [SpecifierUse],
+    exprs: &'a mut [Expr],
+    stmts: &'a mut [Stmt],
+    types: &'a mut [TypeNode],
+    pats: &'a mut [Pat],
+    pat_props: &'a mut [PatProp],
+    members: &'a mut [Member],
+    props: &'a mut [Prop],
+    fns: &'a mut [Func],
+    type_params: &'a mut [TypeParam],
+    classes: &'a mut [Class],
+    interfaces: &'a mut [Interface],
+    aliases: &'a mut [Alias],
+    enums: &'a mut [Enum],
+    enum_members: &'a mut [EnumMember],
+    modules: &'a mut [Module],
+    imports: &'a mut [Import],
+    import_specs: &'a mut [ImportSpec],
+    import_equals: &'a mut [ImportEquals],
+    exports: &'a mut [Export],
+    export_specs: &'a mut [ExportSpec],
+    tuple_elems: &'a mut [TupleElem],
+    names: &'a mut [Name],
+    ids: &'a mut [u32],
+}
+
 /// The same for `file`.
 fn each_atom_of_file<S: Storage>(file: &mut FileIn<S>, f: &mut dyn FnMut(Atom) -> Atom) {
+    let mut lists = ListsWithAtoms {
+        jsx_pragmas: &mut file.jsx_pragmas,
+        calls: &file.calls,
+        references: &mut file.references,
+        specifier_uses: &mut file.specifier_uses,
+        exprs: &mut file.exprs,
+        stmts: &mut file.stmts,
+        types: &mut file.types,
+        pats: &mut file.pats,
+        pat_props: &mut file.pat_props,
+        members: &mut file.members,
+        props: &mut file.props,
+        fns: &mut file.fns,
+        type_params: &mut file.type_params,
+        classes: &mut file.classes,
+        interfaces: &mut file.interfaces,
+        aliases: &mut file.aliases,
+        enums: &mut file.enums,
+        enum_members: &mut file.enum_members,
+        modules: &mut file.modules,
+        imports: &mut file.imports,
+        import_specs: &mut file.import_specs,
+        import_equals: &mut file.import_equals,
+        exports: &mut file.exports,
+        export_specs: &mut file.export_specs,
+        tuple_elems: &mut file.tuple_elems,
+        names: &mut file.names,
+        ids: &mut file.ids,
+    };
+    each_atom_of_lists(&mut lists, f);
+}
+
+fn each_atom_of_lists(file: &mut ListsWithAtoms, f: &mut dyn FnMut(Atom) -> Atom) {
     let key = |key: &mut PropKey, f: &mut dyn FnMut(Atom) -> Atom| match key {
         PropKey::Name(name) | PropKey::Private(name) => replace_in(name, f),
         PropKey::None | PropKey::Computed(_) => {}
@@ -323,7 +400,7 @@ fn each_atom_of_file<S: Storage>(file: &mut FileIn<S>, f: &mut dyn FnMut(Atom) -
         factory,
         fragment_factory,
         import_source,
-    } = &mut file.jsx_pragmas;
+    } = &mut *file.jsx_pragmas;
     replace_in(factory, f);
     replace_in(fragment_factory, f);
     replace_in(import_source, f);
@@ -439,10 +516,7 @@ fn each_atom_of_file<S: Storage>(file: &mut FileIn<S>, f: &mut dyn FnMut(Atom) -
     for it in file.names.iter_mut() {
         replace_in(&mut it.text, f);
     }
-    // A tagged template with substitutions and its `Call::template` have one list.
-    texts.sort_unstable();
-    texts.dedup();
-    for (start, len) in texts {
+    for (start, len) in without_duplicates(texts) {
         for id in &mut file.ids[start as usize..(start + len) as usize] {
             let mut atom = Atom(*id);
             replace_in(&mut atom, f);

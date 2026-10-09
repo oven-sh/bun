@@ -288,13 +288,21 @@ pub(crate) fn compute_chunks(
         Vec::new()
     };
     if !run_of_file.is_empty() {
+        let file_entry_bits = this.graph.files.items_entry_bits();
+        let mut loads_split_off_chunk = AutoBitSet::init_empty(this.graph.entry_points.len())?;
+        for (source_index, _) in run_of_file.iter().enumerate().filter(|(_, run)| **run != 0) {
+            loads_split_off_chunk.set_union(&file_entry_bits[source_index]);
+        }
         let entry_source_indices = this.graph.entry_points.items_source_index();
         for (entry_id, &source_index) in entry_source_indices.iter().enumerate() {
             let chunk_index = entry_point_to_js_chunk_idx[entry_id];
-            if run_of_file[source_index as usize] != 0 && chunk_index != u32::MAX {
+            if loads_split_off_chunk.is_set(entry_id)
+                && file_entry_bits[source_index as usize].count() >= 2
+                && chunk_index != u32::MAX
+            {
                 js_chunks.values_mut()[chunk_index as usize]
                     .flags
-                    .insert(chunk::Flags::ENTRY_POINT_FILE_IS_SPLIT_OFF);
+                    .insert(chunk::Flags::RANKS_IMPORTS_FROM_ENTRY_POINT_FILE);
             }
         }
     }

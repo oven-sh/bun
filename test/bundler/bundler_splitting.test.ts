@@ -2534,6 +2534,27 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "four six\nmain six" },
   });
 
+  // m2.js imports m0.js, so m0.js is in a chunk of its own, and the chunk of the entry point only imports chunks.
+  // It imports them in the order of m0.js: four.js and six.js come before the chunk of m0.js.
+  itBundled("splitting/SharedFilesInTwoOrdersEntryPointInAnotherChunk", {
+    files: {
+      "/m0.js": `import "./four.js"; import "./six.js"; export const v0 = "v0"; console.log("m0");`,
+      "/m1.js": `import "./six.js"; import "./four.js"; console.log("m1");`,
+      "/m2.js": `import * as m0 from "./m0.js"; console.log("m2", Object.keys(m0));`,
+      "/four.js": `console.log("four");`,
+      "/six.js": `console.log("six");`,
+    },
+    entryPoints: ["/m0.js", "/m1.js", "/m2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/m0.js", stdout: "four\nsix\nm0" },
+      { file: "/out/m1.js", stdout: "six\nfour\nm1" },
+      { file: "/out/m2.js", stdout: `four\nsix\nm0\nm2 [ "v0" ]` },
+    ],
+  });
+
   // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
   itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
     files: {

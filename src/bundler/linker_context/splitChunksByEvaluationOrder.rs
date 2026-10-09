@@ -10,6 +10,8 @@ const NONE: u32 = u32::MAX;
 
 /// The files with one `File.entry_bits` that several entry points load.
 struct Group {
+    /// One of the files.
+    source_index: IndexInt,
     /// The entry points that can be the first to load the files (`EntryLoadGraph::load_class`).
     load_class: AutoBitSet,
     /// The lowest id in `load_class`. The other orders are compared with its order.
@@ -88,6 +90,7 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         }
         group_of_key[key] = groups.len() as u32;
         groups.push(Group {
+            source_index,
             load_class,
             reference_entry_id: reference_entry_id as u32,
             last_file: NONE,
@@ -144,6 +147,15 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
     for (id, &group) in group_of_file.iter().enumerate() {
         if is_tracked[id] && is_cyclic[id] {
             groups[group as usize].has_import_cycle = true;
+        }
+    }
+    // The chunk of an entry point whose file is in another chunk imports its chunks in the order of that file.
+    let entry_points = c.graph.entry_points.items_source_index();
+    for group in &mut groups {
+        let mut entry_ids = file_entry_bits[group.source_index as usize].iterator::<true, true>();
+        while let Some(entry_id) = entry_ids.next() {
+            let id = entry_points[entry_id] as usize;
+            group.has_import_cycle |= is_cyclic[id] && file_entry_bits[id].count() >= 2;
         }
     }
     for group in groups.iter().filter(|group| !group.has_import_cycle) {

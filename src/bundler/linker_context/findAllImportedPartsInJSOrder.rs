@@ -859,7 +859,7 @@ fn reached_chunks_in_order(
     // The load enters at the file of the entry point, which is in another chunk.
     if chunk
         .flags
-        .contains(chunk::Flags::ENTRY_POINT_FILE_IS_SPLIT_OFF)
+        .contains(chunk::Flags::RANKS_IMPORTS_FROM_ENTRY_POINT_FILE)
     {
         roots.insert(0, chunk.entry_point.source_index());
     }

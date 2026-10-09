@@ -239,8 +239,8 @@ const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
 const MAX_HEADER_TABLE_SIZE_F64: f64 = MAX_HEADER_TABLE_SIZE as f64;
 const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 // writeStream() return-value flag (bitwise-OR'd with the settled stream state, which is < 8):
-// the data was flushed without queueing, so no onStreamWriteDone follows and the JS caller
-// (Http2Stream._write/_writev) completes its write asynchronously. Mirrored in
+// the data was handed to the socket without queueing, so no onStreamWriteDone follows and the
+// JS caller (Http2Stream._write/_writev) completes its write asynchronously. Mirrored in
 // src/js/node/http2.ts (kWriteFlushed).
 const WRITE_FLUSHED: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
@@ -915,8 +915,10 @@ struct SendDataOptions {
     close: bool,
     /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
     suppress_half_closed_local_dispatch: bool,
-    /// A JS write: if any of it is queued, onStreamWriteDone reports when the last frame is written.
-    completes_write: bool,
+    /// The JS writers of this payload: a mask that http2.ts chooses, 0 when no JS write waits
+    /// for it. If any of the payload is queued, onStreamWriteDone names the writers once its
+    /// last frame has left the queue.
+    writers: u8,
 }
 
 struct DispatchGuard<'a>(&'a Cell<u32>);
@@ -1432,9 +1434,10 @@ struct PendingFrame {
     len: u32,         // actually payload size
     offset: u32,      // offset into the buffer (if partial flush due to flow control)
     buffer: Vec<u8>,  // allocated buffer if len > 0
-    /// The last frame of a JS write: onStreamWriteDone is dispatched once it is fully written.
-    /// A frame that is dropped reports nothing, the JS stream fails that write when it is destroyed.
-    completes_write: bool,
+    /// The JS writers whose write ends in this frame (see `SendDataOptions::writers`).
+    /// onStreamWriteDone names them once the whole frame has left the queue for the socket.
+    /// A frame that is dropped reports nothing: the JS stream fails that write when it is destroyed.
+    writers: u8,
 }
 
 impl PendingFrame {
@@ -1648,10 +1651,11 @@ impl Stream {
                 .outbound_queue_size
                 .set(client.outbound_queue_size.get() - 1);
 
-            if _frame.completes_write {
-                client.dispatch(
+            if _frame.writers != 0 {
+                client.dispatch_with_extra(
                     JSH2FrameParser::Gc::onStreamWriteDone,
                     self.get_identifier(),
+                    JSValue::js_number(_frame.writers as f64),
                 );
             }
             if self.data_frame_queue.is_empty() {
@@ -1685,13 +1689,13 @@ impl Stream {
         }
     }
 
-    /// `completes_write`: `bytes` end a JS write. A stream has one write in flight at a time,
-    /// so a frame that takes the bytes of a later write can carry only that write's flag.
+    /// `writers`: the JS writers whose write ends with `bytes`, 0 for bytes in the middle of a
+    /// write. A frame that also takes the end of another writer's write names both.
     pub(crate) fn queue_frame(
         &mut self,
         client: &H2FrameParser,
         bytes: &[u8],
-        completes_write: bool,
+        writers: u8,
         end_stream: bool,
     ) {
         let global_this = client.global_this;
@@ -1700,7 +1704,7 @@ impl Stream {
             if bytes.is_empty() {
                 // just merge the end_stream
                 last_frame.end_stream = end_stream;
-                last_frame.completes_write |= completes_write;
+                last_frame.writers |= writers;
                 return;
             }
             if last_frame.len == 0 {
@@ -1724,11 +1728,11 @@ impl Stream {
                 let more_data = &bytes[consumed_len..];
                 if more_data.is_empty() {
                     last_frame.end_stream = end_stream;
-                    last_frame.completes_write |= completes_write;
+                    last_frame.writers |= writers;
                     return;
                 }
                 // the rest of the bytes end the write in a frame of their own
-                return self.queue_frame(client, more_data, completes_write, end_stream);
+                return self.queue_frame(client, more_data, writers, end_stream);
             }
         }
         bun_output::scoped_log!(
@@ -1756,7 +1760,7 @@ impl Stream {
                 buffer.extend_from_slice(bytes);
                 buffer
             },
-            completes_write,
+            writers,
         };
         if !bytes.is_empty() {
             global_this.vm().deprecated_report_extra_memory(bytes.len());
@@ -1850,7 +1854,7 @@ impl Stream {
         self.js_context.deinit();
     }
 
-    /// Frees the queued frames and enters no JS: a frame that was not written has nothing to report.
+    /// Frees the queued frames and enters no JS: a frame that did not leave has nothing to report.
     fn clean_queue(&mut self, client: &H2FrameParser) {
         bun_output::scoped_log!(
             H2FrameParser,
@@ -4135,10 +4139,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(old_state as f64),
             );
         } else {
-            self.dispatch_with_extra(
+            // The third argument says that the inbound side reset the stream: the peer's
+            // RST_STREAM, or a stream error the engine raised. emit_error_to_all_streams
+            // dispatches the same event without it.
+            self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamError,
                 stream_ctx,
                 JSValue::js_number(code as f64),
+                JSValue::TRUE,
             );
         }
         // The reset closes the stream; free the legacy slot (queueing the engine eviction)
@@ -5052,8 +5060,8 @@ impl H2FrameParser {
     }
 
     /// Returns `(settled_state, flushed)`: the state the close tail settled on (5 =
-    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether the whole payload was written
-    /// with nothing queued.
+    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether the whole payload went to the
+    /// socket with nothing queued.
     fn send_data(
         &self,
         stream: &mut Stream,
@@ -5063,7 +5071,7 @@ impl H2FrameParser {
         let SendDataOptions {
             close,
             suppress_half_closed_local_dispatch,
-            completes_write,
+            writers,
         } = options;
         bun_output::scoped_log!(
             H2FrameParser,
@@ -5097,7 +5105,7 @@ impl H2FrameParser {
             };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
                 enqueued = true;
-                stream.queue_frame(self, b"", completes_write, close);
+                stream.queue_frame(self, b"", writers, close);
             } else {
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
@@ -5142,11 +5150,11 @@ impl H2FrameParser {
                     self.flush_batch_buffer();
                     enqueued = true;
                     // write the full frame in memory and queue the frame
-                    // the write is reported only after the last frame is sended
+                    // the writers are named only after the last frame is sended
                     stream.queue_frame(
                         self,
                         slice,
-                        offset >= payload.len() && completes_write,
+                        if offset >= payload.len() { writers } else { 0 },
                         offset >= payload.len() && close,
                     );
                 } else {
@@ -5320,7 +5328,7 @@ impl H2FrameParser {
             SendDataOptions {
                 close: true,
                 suppress_half_closed_local_dispatch: false,
-                completes_write: false,
+                writers: 0,
             },
         );
         Ok(JSValue::UNDEFINED)
@@ -5783,12 +5791,17 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_undef::<4>();
-        let [stream_arg, data_arg, encoding_arg, close_arg] = args.ptr;
+        let args = callframe.arguments_undef::<5>();
+        let [stream_arg, data_arg, encoding_arg, close_arg, writer_arg] = args.ptr;
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
         }
+        if !writer_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected writer to be a number")));
+        }
+        // Opaque here: which JS writer this call is for. onStreamWriteDone hands it back.
+        let writers = writer_arg.to_u32() as u8;
 
         let stream_id = stream_arg.to_u32();
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
@@ -5848,16 +5861,16 @@ impl H2FrameParser {
             SendDataOptions {
                 close,
                 suppress_half_closed_local_dispatch: true,
-                completes_write: true,
+                writers,
             },
         );
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.
         // WRITE_FLUSHED: the data was handed to the socket synchronously, the JS caller completes
-        // its write. Without the bit the write is queued and onStreamWriteDone reports it once the
-        // last frame is written. A stream that cannot send returned `false` above: nothing was
-        // taken and nothing is reported.
+        // its write. Without the bit the write is queued and onStreamWriteDone names its writer
+        // once the last frame has left the queue. A stream that cannot send returned `false`
+        // above: nothing was taken and nothing is reported.
         let mut result = settled_state as u32;
         if flushed {
             result |= WRITE_FLUSHED;

@@ -1891,7 +1891,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     None
 }
 
-pub(crate) fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
+fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     let z = zname(name);
     let z = ZStr::from_slice_with_nul(&z);
     let result = sys::unlinkat(dir.fd(), z);

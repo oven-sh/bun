@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -678,24 +678,29 @@ describe("isolated workspaces", () => {
   });
 });
 
-// A lifecycle script that appends `id` to $SCRIPT_RUNS and fails unless $SCRIPT_PASS is set.
-const countedScripts = { postinstall: `${bunExe()} postinstall.js` };
-function countedScript(id: string) {
-  return `require("fs").appendFileSync(process.env.SCRIPT_RUNS, ${JSON.stringify(id + "\n")});
-if (!process.env.SCRIPT_PASS) process.exit(1);
-`;
-}
+// A lifecycle script that appends `id` to $SCRIPT_RUNS, then exits with $SCRIPT_EXIT.
+const countedScript = (id: string, script: "preinstall" | "postinstall" = "postinstall") => ({
+  [script]: `echo ${id} >> "$SCRIPT_RUNS" && exit $SCRIPT_EXIT`,
+});
 
 function scriptRuns(packageDir: string): string[] {
   const runs = join(packageDir, "runs.txt");
-  return existsSync(runs) ? readFileSync(runs, "utf8").split("\n").filter(Boolean).sort() : [];
+  return existsSync(runs) ? readFileSync(runs, "utf8").split(/\s+/).filter(Boolean).sort() : [];
 }
 
-async function installWithScripts(packageDir: string, env: NodeJS.Dict<string>, ...args: string[]) {
+// `bun install` in packageDir. The counted scripts fail unless `pass` is set.
+async function installCounted(
+  packageDir: string,
+  opts: { args?: string[]; pass?: boolean; env?: NodeJS.Dict<string>; argv0?: string[] } = {},
+) {
   await using proc = spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [...(opts.argv0 ?? []), bunExe(), "install", ...(opts.args ?? [])],
     cwd: packageDir,
-    env: { ...env, SCRIPT_RUNS: join(packageDir, "runs.txt") },
+    env: {
+      ...(opts.env ?? bunEnv),
+      SCRIPT_RUNS: join(packageDir, "runs.txt"),
+      SCRIPT_EXIT: opts.pass ? "0" : "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -703,77 +708,95 @@ async function installWithScripts(packageDir: string, env: NodeJS.Dict<string>, 
   return { stdout, stderr, exitCode };
 }
 
-// When a lifecycle script of an optional dependency fails, bun removes what it placed for the
-// package (its copy, or the hoisted link to it) so the next install tries again. It never removes
-// the folder a workspace or `link:` dependency points to.
+// When a lifecycle script of an optional dependency fails, the install goes on without the
+// package: bun removes what it placed for it (its copy, or the hoisted link to it) and the next
+// install tries again. It never removes the folder a workspace or `link:` dependency points to.
 describe.each(["isolated", "hoisted"] as const)("failed script of an optional dependency (%s)", linker => {
-  const workspaceFiles = {
+  // `--filter y` does not select x, so only the optional edge of y reaches x. Exit 0 for the
+  // failed member is what main does in that case; these tests keep it, they do not decide it.
+  const workspaceFiles = (script: "preinstall" | "postinstall" = "postinstall") => ({
     "package.json": JSON.stringify({
       name: "monorepo-optional-workspace",
       workspaces: ["packages/*"],
     }),
-    "packages/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: countedScripts }),
-    "packages/x/postinstall.js": countedScript("x"),
+    "packages/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: countedScript("x", script) }),
     "packages/x/src.txt": "keep me",
     "packages/y/package.json": JSON.stringify({
       name: "y",
       version: "1.0.0",
       optionalDependencies: { x: "workspace:*" },
     }),
-  };
+  });
+  const workspaceState = async (packageDir: string) => ({
+    runs: scriptRuns(packageDir),
+    packages: await readdirSorted(join(packageDir, "packages")),
+    src: await file(join(packageDir, "packages", "x", "src.txt")).text(),
+    // Only the hoisted linker places a link for x in the root node_modules.
+    rootLink: lstatSync(join(packageDir, "node_modules", "x"), { throwIfNoEntry: false }) !== undefined,
+  });
+  const kept = { packages: ["x", "y"], src: "keep me", rootLink: false };
 
   test.concurrent("workspace: the folder stays and later installs run the script again", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles });
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles() });
     const verb = linker === "hoisted" ? "deleting" : "skipping";
 
-    // Only y is selected, so x is linked through the optional edge alone and its failure is tolerated.
     for (const [runs, args] of [
       [["x"], []],
       [["x", "x"], ["--verbose"]],
     ] as const) {
-      const { stderr, exitCode } = await installWithScripts(packageDir, bunEnv, "--filter", "y", ...args);
+      const { stderr, exitCode } = await installCounted(packageDir, { args: ["--filter", "y", ...args] });
       expect(stderr).not.toContain("error:");
       if (args.length === 0) expect(stderr).not.toContain("warn:");
       else expect(stderr).toContain(`${verb} optional dependency 'x' due to failed 'postinstall' script`);
-      expect({
-        runs: scriptRuns(packageDir),
-        packages: await readdirSorted(join(packageDir, "packages")),
-        src: await file(join(packageDir, "packages", "x", "src.txt")).text(),
-      }).toEqual({ runs: [...runs], packages: ["x", "y"], src: "keep me" });
-      // The link to a failed optional dependency is what the hoisted linker placed. It removes it.
-      if (linker === "hoisted") {
-        expect(lstatSync(join(packageDir, "node_modules", "x"), { throwIfNoEntry: false })).toBeUndefined();
-      }
+      expect(await workspaceState(packageDir)).toEqual({ runs: [...runs], ...kept });
       expect(exitCode).toBe(0);
     }
 
     // Without the filter the root's workspace edge to x is required.
-    const { stderr, exitCode } = await installWithScripts(packageDir, bunEnv);
+    const { stderr, exitCode } = await installCounted(packageDir);
     expect(stderr).toContain('postinstall script from "x" exited with 1');
     expect(scriptRuns(packageDir)).toEqual(["x", "x", "x"]);
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("workspace: a corrected script runs on the next install", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles });
+  test.concurrent.each(["preinstall", "postinstall"] as const)(
+    "workspace: a corrected %s script runs on the next install",
+    async script => {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles(script) });
 
-    const failed = await installWithScripts(packageDir, bunEnv, "--filter", "y");
-    expect(failed.stderr).not.toContain("error:");
-    expect(scriptRuns(packageDir)).toEqual(["x"]);
-    expect(failed.exitCode).toBe(0);
+      const failed = await installCounted(packageDir, { args: ["--filter", "y"] });
+      expect(failed.stderr).not.toContain("error:");
+      expect(await workspaceState(packageDir)).toEqual({ runs: ["x"], ...kept });
+      expect(failed.exitCode).toBe(0);
 
-    const corrected = await installWithScripts(packageDir, { ...bunEnv, SCRIPT_PASS: "1" });
-    expect(corrected.stderr).not.toContain("error:");
-    const link =
-      linker === "isolated"
-        ? join(packageDir, "packages", "y", "node_modules", "x")
-        : join(packageDir, "node_modules", "x");
-    expect({
-      runs: scriptRuns(packageDir),
-      link: lstatSync(link).isSymbolicLink(),
-      src: await file(join(link, "src.txt")).text(),
-    }).toEqual({ runs: ["x", "x"], link: true, src: "keep me" });
-    expect(corrected.exitCode).toBe(0);
+      const corrected = await installCounted(packageDir, { pass: true });
+      expect(corrected.stderr).not.toContain("error:");
+      const link =
+        linker === "isolated"
+          ? join(packageDir, "packages", "y", "node_modules", "x")
+          : join(packageDir, "node_modules", "x");
+      expect({
+        runs: scriptRuns(packageDir),
+        link: lstatSync(link).isSymbolicLink(),
+        src: await file(join(link, "src.txt")).text(),
+      }).toEqual({ runs: ["x", "x"], link: true, src: "keep me" });
+      expect(corrected.exitCode).toBe(0);
+    },
+  );
+
+  // With SIGCHLD ignored the kernel reaps the script itself and bun cannot wait for it. Bun then
+  // treats a script that exited 0 as failed, through a second exit path.
+  test.concurrent.skipIf(isWindows)("workspace: the folder stays when bun cannot wait for the script", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles() });
+
+    const { stderr, exitCode } = await installCounted(packageDir, {
+      argv0: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"'],
+      args: ["--filter", "y"],
+      pass: true,
+    });
+    expect(stderr).not.toContain("error:");
+    expect(await workspaceState(packageDir)).toEqual({ runs: ["x"], ...kept });
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("file: folder: the copy is removed, also in a workspace's node_modules", async () => {
@@ -793,11 +816,13 @@ describe.each(["isolated", "hoisted"] as const)("failed script of an optional de
           version: "1.0.0",
           optionalDependencies: { q: "file:../../q-nested" },
         }),
-        "f/package.json": JSON.stringify({ name: "f", version: "1.0.0", scripts: countedScripts }),
-        "f/postinstall.js": countedScript("f"),
+        "f/package.json": JSON.stringify({ name: "f", version: "1.0.0", scripts: countedScript("f") }),
         "q-root/package.json": JSON.stringify({ name: "q", version: "1.0.0" }),
-        "q-nested/package.json": JSON.stringify({ name: "q", version: "2.0.0", scripts: countedScripts }),
-        "q-nested/postinstall.js": countedScript("q"),
+        "q-nested/package.json": JSON.stringify({
+          name: "q",
+          version: "2.0.0",
+          scripts: countedScript("q", "preinstall"),
+        }),
       },
     });
     const version = async (...dir: string[]) => {
@@ -816,14 +841,14 @@ describe.each(["isolated", "hoisted"] as const)("failed script of an optional de
       ["f", "q"],
       ["f", "f", "q", "q"],
     ]) {
-      const { stderr, exitCode } = await installWithScripts(packageDir, bunEnv);
+      const { stderr, exitCode } = await installCounted(packageDir);
       expect(stderr).not.toContain("error:");
       expect(stderr).not.toContain("warn:");
       expect(await state()).toEqual({ runs, f: null, rootQ: "1.0.0", nestedQ: null, sources: ["1.0.0", "2.0.0"] });
       expect(exitCode).toBe(0);
     }
 
-    const { stderr, exitCode } = await installWithScripts(packageDir, { ...bunEnv, SCRIPT_PASS: "1" });
+    const { stderr, exitCode } = await installCounted(packageDir, { pass: true });
     expect(stderr).not.toContain("error:");
     expect(await state()).toEqual({
       runs: ["f", "f", "f", "q", "q", "q"],
@@ -834,6 +859,90 @@ describe.each(["isolated", "hoisted"] as const)("failed script of an optional de
     });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("local tarball: the copy is removed and installed again", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-tarball-dep",
+          optionalDependencies: { lt: "file:./lt-1.0.0.tgz" },
+          trustedDependencies: ["lt"],
+        }),
+        "lt/package.json": JSON.stringify({ name: "lt", version: "1.0.0", scripts: countedScript("lt") }),
+      },
+    });
+    await pack(join(packageDir, "lt"), bunEnv, "--destination", packageDir);
+    const installed = () => existsSync(join(packageDir, "node_modules", "lt", "package.json"));
+
+    for (const runs of [["lt"], ["lt", "lt"]]) {
+      const { stderr, exitCode } = await installCounted(packageDir);
+      expect(stderr).not.toContain("error:");
+      expect({ runs: scriptRuns(packageDir), installed: installed() }).toEqual({ runs, installed: false });
+      expect(exitCode).toBe(0);
+    }
+
+    const { stderr, exitCode } = await installCounted(packageDir, { pass: true });
+    expect(stderr).not.toContain("error:");
+    expect({ runs: scriptRuns(packageDir), installed: installed() }).toEqual({
+      runs: ["lt", "lt", "lt"],
+      installed: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("registry package: the copy is removed and the next install tries again", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-registry-dep",
+          optionalDependencies: { "lifecycle-fail": "1.1.1" },
+          trustedDependencies: ["lifecycle-fail"],
+        }),
+      },
+    });
+
+    for (let install = 0; install < 2; install++) {
+      const { stderr, exitCode } = await installCounted(packageDir, { args: ["--verbose"] });
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("deleting optional dependency 'lifecycle-fail' due to failed 'preinstall' script");
+      expect(existsSync(join(packageDir, "node_modules", "lifecycle-fail", "package.json"))).toBe(false);
+      expect(exitCode).toBe(0);
+    }
+  });
+});
+
+// With one script at a time, the hoisted linker starts the second script from another call site.
+test.concurrent("failed scripts of two optional workspaces, one script at a time (hoisted)", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: {
+      "package.json": JSON.stringify({ name: "two-optional-workspaces", workspaces: ["packages/*"] }),
+      "packages/x1/package.json": JSON.stringify({ name: "x1", version: "1.0.0", scripts: countedScript("x1") }),
+      "packages/x1/src.txt": "keep me",
+      "packages/x2/package.json": JSON.stringify({ name: "x2", version: "1.0.0", scripts: countedScript("x2") }),
+      "packages/x2/src.txt": "keep me",
+      "packages/y/package.json": JSON.stringify({
+        name: "y",
+        version: "1.0.0",
+        optionalDependencies: { x1: "workspace:*", x2: "workspace:*" },
+      }),
+    },
+  });
+
+  const { stderr, exitCode } = await installCounted(packageDir, {
+    args: ["--filter", "y", "--concurrent-scripts", "1"],
+  });
+  expect(stderr).not.toContain("error:");
+  expect({
+    runs: scriptRuns(packageDir),
+    links: ["x1", "x2"].map(
+      x => lstatSync(join(packageDir, "node_modules", x), { throwIfNoEntry: false }) !== undefined,
+    ),
+    sources: await Promise.all(["x1", "x2"].map(x => file(join(packageDir, "packages", x, "src.txt")).text())),
+  }).toEqual({ runs: ["x1", "x2"], links: [false, false], sources: ["keep me", "keep me"] });
+  expect(exitCode).toBe(0);
 });
 
 // The isolated linker does not run the scripts of a `link:` package, so only the hoisted linker is covered.
@@ -848,8 +957,7 @@ test.concurrent(
           optionalDependencies: { x: "link:x" },
           trustedDependencies: ["x"],
         }),
-        "linked/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: countedScripts }),
-        "linked/x/postinstall.js": countedScript("x"),
+        "linked/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: countedScript("x") }),
         "linked/x/src.txt": "keep me",
       },
     });
@@ -885,13 +993,13 @@ test.concurrent(
     const kept = { target: "keep me", globalLink: true, throughGlobalLink: "keep me" };
 
     for (const runs of [["x"], ["x", "x"]]) {
-      const { stderr, exitCode } = await installWithScripts(packageDir, env);
+      const { stderr, exitCode } = await installCounted(packageDir, { env });
       expect(stderr).not.toContain("error:");
       expect(await state()).toEqual({ runs, projectLink: null, ...kept });
       expect(exitCode).toBe(0);
     }
 
-    const { stderr, exitCode } = await installWithScripts(packageDir, { ...env, SCRIPT_PASS: "1" });
+    const { stderr, exitCode } = await installCounted(packageDir, { env, pass: true });
     expect(stderr).not.toContain("error:");
     expect(await state()).toEqual({ runs: ["x", "x", "x"], projectLink: true, ...kept });
     expect(exitCode).toBe(0);

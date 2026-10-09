@@ -405,16 +405,32 @@ impl<'a> Installer<'a> {
         }
 
         // attempt deleting the package so the next install will install it again
-        if Self::is_store_copy(pkg_res.tag) {
-            let mut store_path = AutoRelPath::init();
+        match pkg_res.tag {
+            ResolutionTag::Uninitialized
+            | ResolutionTag::SingleFileModule
+            | ResolutionTag::Root
+            | ResolutionTag::Workspace
+            | ResolutionTag::Symlink => {}
 
-            // OOM/capacity: fire-and-forget
-            let _ = store_path.append_fmt(format_args!(
-                "node_modules/{}",
-                store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-            ));
+            // to be safe make sure we only delete packages in the store
+            ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::Folder => {
+                let mut store_path = AutoRelPath::init();
 
-            let _ = sys::unlink(store_path.slice_z());
+                // OOM/capacity: fire-and-forget
+                let _ = store_path.append_fmt(format_args!(
+                    "node_modules/{}",
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+                ));
+
+                let _ = sys::unlink(store_path.slice_z());
+            }
+
+            _ => {}
         }
 
         if self.manager().options.enable.fail_early() {
@@ -427,8 +443,7 @@ impl<'a> Installer<'a> {
         self.resume_unblocked_tasks(entry_id);
     }
 
-    /// To be safe, only these are deleted: the entry is a copy bun made in the
-    /// store. A root, workspace or `link:` entry is the user's own folder.
+    /// A root, workspace or `link:` entry is the user's own folder, not a store copy.
     fn is_store_copy(tag: ResolutionTag) -> bool {
         matches!(
             tag,
@@ -441,10 +456,7 @@ impl<'a> Installer<'a> {
         )
     }
 
-    /// Called from main thread. A lifecycle script of an optional dependency
-    /// failed: the entry is done and its dependents resume, then its store
-    /// copy is removed so the next install installs it again. Returns false
-    /// when the entry has no store copy.
+    /// Called from main thread. Returns false when the entry has no store copy.
     pub(crate) fn on_optional_scripts_failed(&mut self, entry_id: StoreEntryId) -> bool {
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Release);

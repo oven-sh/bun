@@ -284,23 +284,16 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-/// The linker that placed the package. It removes its own entry when an
-/// optional script fails; the runner never deletes `scripts.cwd`.
+/// The linker that placed the package; it discards its own entry when an optional script fails.
 pub enum InstallCtx<'a> {
     Isolated {
         entry_id: entry::Id,
-        /// Raw `*mut` for the same reason as
-        /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-        /// mutate Installer state from inside an exit-handler callback.
+        /// Raw `*mut`: `on_task_complete`/`start_task` mutate Installer state from an exit-handler callback.
         installer: *mut Installer<'a>,
     },
-    /// `node_modules/<package_name>` of `tree_id`. Every hoisted script exits
-    /// inside `install_hoisted_packages`, which leaves `lockfile.buffers.trees`
-    /// unchanged, so the id still names that directory at exit.
+    /// `node_modules/<package_name>` of `tree_id`; hoisted scripts exit before `lockfile.buffers.trees` changes.
     Hoisted {
         tree_id: crate::lockfile_real::tree::Id,
-        /// The entry is a link to a folder bun did not create.
-        link: bool,
     },
 }
 
@@ -315,14 +308,15 @@ impl<'a> InstallCtx<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn isolated(&self) -> Option<(entry::Id, &mut Installer<'a>)> {
-        match *self {
-            // SAFETY: see fn doc.
-            Self::Isolated {
-                entry_id,
-                installer,
-            } => Some((entry_id, unsafe { &mut *installer })),
-            Self::Hoisted { .. } => None,
-        }
+        let Self::Isolated {
+            entry_id,
+            installer,
+        } = *self
+        else {
+            return None;
+        };
+        // SAFETY: see fn doc.
+        Some((entry_id, unsafe { &mut *installer }))
     }
 }
 
@@ -1049,19 +1043,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// A script of an optional dependency failed and the install goes on
-    /// without the package. The linker that placed it removes what it placed.
-    /// Frees `self`.
+    /// A script of an optional dependency failed; the linker that placed the package discards it. Frees `self`.
     fn discard_failed_optional(&mut self) {
         let removed =
             if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated) {
                 installer.on_optional_scripts_failed(entry_id)
-            } else if let Some(&InstallCtx::Hoisted { tree_id, link }) = self.ctx.as_ref() {
+            } else if let Some(&InstallCtx::Hoisted { tree_id }) = self.ctx.as_ref() {
                 package_installer::discard_failed_optional(
                     &self.manager().lockfile,
                     tree_id,
                     &self.package_name,
-                    link,
                 );
                 true
             } else {

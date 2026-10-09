@@ -2173,6 +2173,8 @@ fn append_manifest_dependencies(
     let mut dev_ranges: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
     // name -> its range in the first group that lists it
     let mut declared: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
+    // names devDependencies lists first
+    let mut dev_first: StringArrayHashMap<()> = StringArrayHashMap::new();
     for (group, behavior) in [
         (b"dependencies".as_slice(), Behavior::PROD),
         (b"devDependencies".as_slice(), Behavior::DEV),
@@ -2203,18 +2205,26 @@ fn append_manifest_dependencies(
             } else {
                 let e = seen.get_or_put(name)?;
                 if e.found_existing {
-                    // an optionalDependencies entry replaces the dependencies one (as in
-                    // `Package::parse`); a dev duplicate is dropped
-                    if !behavior.is_optional() {
-                        if declared.get(name).is_none_or(|first| *first != spec) {
-                            dev_ranges.put(name, spec)?;
+                    // As in `Package::parse`: an optionalDependencies entry replaces the
+                    // first one, and a devDependencies duplicate is an edge of its own.
+                    // For yarn the devDependencies range is the one a workspace installs.
+                    let first = declared.get(name).copied();
+                    if behavior.is_optional() {
+                        if let Some(first) =
+                            first.filter(|f| dev_first.contains(name) && *f != spec)
+                        {
+                            dev_ranges.put(name, first)?;
                         }
-                        continue;
+                        replaces = Some(*e.value_ptr);
+                    } else if first != Some(spec) {
+                        dev_ranges.put(name, spec)?;
                     }
-                    replaces = Some(*e.value_ptr);
                 } else {
                     *e.value_ptr = this.buffers.dependencies.len();
                     declared.put(name, spec)?;
+                    if behavior.is_dev() {
+                        dev_first.put(name, ())?;
+                    }
                 }
             }
             // Ranges only yarn understands: depend on what bun can read instead;

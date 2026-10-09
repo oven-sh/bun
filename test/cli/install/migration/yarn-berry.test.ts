@@ -1565,11 +1565,16 @@ catalogs:
         "one-fixed-dep@1.0.0",
         "one-range-dep@1.0.0",
       ]);
+      // both edges, as bun reads the package.json itself, so the next install has nothing to add
       expect(bunLock).toContain(`"a-dep": "^1.0.1 || ^2.0.0",`);
+      expect(bunLock).toContain(`"devDependencies": {\n        "a-dep": "~1.0.2",\n      },`);
       expect(bunLock).toContain(
         `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" } }`,
       );
       await expectFrozenInstall(dir);
+      const again = await run(dir, "install");
+      expect(again.stderr).not.toContain("Saved lockfile");
+      expect(await bunLockOf(dir)).toBe(bunLock);
     },
   );
 

@@ -705,7 +705,7 @@ fn entries_loaded_mid_evaluation(
 }
 
 /// Which entry points can be the first to load a chunk.
-pub(crate) struct LoadClasses {
+pub(crate) struct EntryLoadGraph {
     /// Which entries statically contain a live `import()` of each dynamic entry.
     importer_bits: Vec<AutoBitSet>,
     /// Dynamic entries some live split `require()` loads. The call
@@ -728,8 +728,8 @@ pub(crate) struct LoadClasses {
     worklist: Vec<usize>,
 }
 
-impl LoadClasses {
-    pub(crate) fn new(this: &LinkerContext) -> crate::Result<LoadClasses> {
+impl EntryLoadGraph {
+    pub(crate) fn new(this: &LinkerContext) -> crate::Result<EntryLoadGraph> {
         let entry_points_len = this.graph.entry_points.len();
         let entry_source_indices = this.graph.entry_points.items_source_index();
         let kinds = this.graph.files.items_entry_point_kind();
@@ -878,7 +878,7 @@ impl LoadClasses {
             },
         );
 
-        Ok(LoadClasses {
+        Ok(EntryLoadGraph {
             importer_bits,
             required_sync,
             sync_calls,
@@ -896,7 +896,7 @@ impl LoadClasses {
     /// chunk was loaded first. (An importer cycle no root reaches never loads,
     /// so it does not count either.) A key whose every entry is redundant is
     /// never loaded and left alone.
-    pub(crate) fn class_of(&mut self, key: &AutoBitSet) -> crate::Result<AutoBitSet> {
+    pub(crate) fn load_class(&mut self, key: &AutoBitSet) -> crate::Result<AutoBitSet> {
         let vroot = self.importer_bits.len();
         let mut class = key.clone()?;
         let mut dropped = false;
@@ -962,7 +962,7 @@ impl LoadClasses {
 ///
 /// 1. An `import()` entry point `D` is redundant in a key when, whichever way
 ///    `D` gets loaded, some other entry in that key has already been loaded
-///    (`LoadClasses::class_of`: no importer of `D` can be reached from a process
+///    (`EntryLoadGraph::load_class`: no importer of `D` can be reached from a process
 ///    root without passing through the key). Keys that are equal
 ///    after dropping their redundant entries describe chunks that are always
 ///    loaded together: with one user entry `main` and a lazy `import("./x")`
@@ -1025,7 +1025,7 @@ pub(crate) fn merge_small_chunks(
         this.graph.files_live.is_set(source_index as usize)
             && css_asts[source_index as usize].is_none()
     };
-    let mut load_classes = LoadClasses::new(this)?;
+    let mut load_classes = EntryLoadGraph::new(this)?;
 
     // Group the live JS files by their chunk key, and the groups by their
     // load-condition class (the key with redundant dynamic entries removed).
@@ -1097,7 +1097,7 @@ pub(crate) fn merge_small_chunks(
         let group = match entry {
             MapEntry::Occupied(entry) => entry.into_mut(),
             MapEntry::Vacant(entry) => {
-                let class = load_classes.class_of(bits)?;
+                let class = load_classes.load_class(bits)?;
                 match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
                     MapEntry::Occupied(e) => e.into_mut().1.push(group_index),
                     MapEntry::Vacant(e) => {

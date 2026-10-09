@@ -399,7 +399,7 @@ describe("bundler", () => {
   });
 
   // entry.js has no wrapper of its own, and awaits the wrappers of a.js and b.js at once.
-  itBundled("bundler/__promiseAll is included when an unwrapped file imports two async wrapped files", {
+  itBundled("bundler/__promiseAll is kept for an unwrapped importer", {
     files: {
       "/entry.js": `import "./a.js"; import "./b.js"; import("./a.js"); import("./b.js"); console.log("entry");`,
       "/a.js": `await 0; console.log("a");`,
@@ -411,7 +411,7 @@ describe("bundler", () => {
 
   // m3.js imports its way to m0.js, which is async only because of m4.js. The search for async files comes to m3.js
   // from m0.js, through m5.js, m6.js, m7.js and m1.js, before it comes to m4.js.
-  itBundled("bundler/a wrapper that awaits a file of its own import cycle is async", {
+  itBundled("bundler/async wrapper in an import cycle", {
     files: {
       "/entry.js": `import("./m0.js").then(() => console.log("done"));`,
       "/m0.js": `import "./m5.js"; import "./m4.js";`,
@@ -424,5 +424,16 @@ describe("bundler", () => {
     },
     outfile: "/out.js",
     run: { stdout: "done" },
+  });
+
+  // The import() wraps index.js and a.js. The wrapper of index.js has to await the one of a.js.
+  itBundled("bundler/async export star", {
+    files: {
+      "/entry.js": `import { a } from "./index.js"; console.log("entry", a); globalThis.later = () => import("./index.js");`,
+      "/index.js": `export * from "./a.js";`,
+      "/a.js": `for (let i = 0; i < 5; i++) await 0; export const a = String("A");`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "entry A" },
   });
 });

@@ -1520,7 +1520,7 @@ describe("bundler", () => {
       },
     },
   })) {
-    itBundled("splitting/CycleEnteredAtTwoFiles" + name, {
+    itBundled("splitting/ContestedCycle" + name, {
       files: cycleEnteredAtTwoFiles,
       entryPoints: ["/index.js", "/worker.js"],
       splitting: true,
@@ -1536,7 +1536,7 @@ describe("bundler", () => {
   }
 
   // Without flag.js, worker.js throws unbundled too. index.js still loads.
-  itBundled("splitting/CycleEnteredAtTwoFilesOneOfWhichThrows", {
+  itBundled("splitting/ContestedCycleThrowingEntry", {
     files: {
       ...cycleEnteredAtTwoFiles,
       "/worker.js": `import "./m6.js"; console.log("worker");`,
@@ -1550,7 +1550,7 @@ describe("bundler", () => {
   });
 
   // Every file of the cycle awaits, so worker.js awaits two wrapped files at once.
-  itBundled("splitting/CycleEnteredAtTwoFilesTopLevelAwait", {
+  itBundled("splitting/ContestedCycleTopLevelAwait", {
     files: {
       ...cycleEnteredAtTwoFiles,
       "/worker.js": `import "./flag.js"; import "./m6.js"; import "./m2.js"; console.log("worker", globalThis.w5);`,
@@ -1571,7 +1571,7 @@ describe("bundler", () => {
   // through u1.js and u2.js, which they share and import in opposite orders. tail.js runs after the cycle under
   // both, and so does after.js, which is in a chunk of its own because of the import(). pure.js comes after the cycle
   // too, and has no side effects, so it needs no wrapper.
-  itBundled("splitting/CycleEnteredThroughSharedFilesInOppositeOrders", {
+  itBundled("splitting/ContestedCycleSharedImporters", {
     files: {
       "/e1.js": /* js */ `
         import "./set1.js"; import "./u1.js"; import "./u2.js"; import "./after.js"; import "./tail.js";
@@ -1601,6 +1601,8 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("init_pure");
+      // An entry point in a chunk of its own calls the wrappers from its top level.
+      for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("init_e1");
     },
     run: [
       { file: "/out/e1.js", stdout: "u1 a+b\nu2 b\nafter\ntail\ne1 pure" },
@@ -1609,7 +1611,7 @@ describe("bundler", () => {
   });
 
   // The cycle goes through e1.js, which e2.js loads as well.
-  itBundled("splitting/CycleThroughEntryPointEnteredAtTwoFiles", {
+  itBundled("splitting/ContestedCycleThroughEntryPoint", {
     files: {
       "/e1.js": /* js */ `
         import { a } from "./a.js";
@@ -1632,25 +1634,22 @@ describe("bundler", () => {
 
   // e1.js reads a from a.js through index.js, which it does not load: no import statement that prints names a.js.
   // Tree shaking drops index.js, except in the case where e2.js holds an import() of it.
-  for (const [name, [barrel, read, lazy = ""]] of Object.entries({
+  for (const [name, [barrel, read, lazy = "", wait = ""]] of Object.entries({
     ExportStar: [`export * from "./a.js";`, `import { a } from "pkg";`],
-    ExportStarOfLiveBarrel: [
-      `export * from "./a.js";`,
-      `import { a } from "pkg";`,
-      `globalThis.lazy = () => import("pkg");`,
-    ],
+    ExportStarTopLevelAwait: [`export * from "./a.js";`, `import { a } from "pkg";`, "", "await 0;"],
+    ExportStarLive: [`export * from "./a.js";`, `import { a } from "pkg";`, `globalThis.lazy = () => import("pkg");`],
     NestedExportStar: [`export * from "./inner.js";`, `import { a } from "pkg";`],
     NamespaceMember: [`export * from "./a.js";`, `import * as ns from "pkg"; const a = ns.a;`],
     ExportFrom: [`export { a } from "./a.js";`, `import { a } from "pkg";`],
     ImportThenExport: [`import { a } from "./a.js"; export { a };`, `import { a } from "pkg";`],
   })) {
-    itBundled("splitting/CycleEnteredThroughDroppedBarrel" + name, {
+    itBundled("splitting/ContestedCycleBarrel" + name, {
       files: {
         "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
         "/node_modules/pkg/index.js": barrel,
         "/node_modules/pkg/inner.js": `export * from "./other.js"; export * from "./a.js";`,
         "/node_modules/pkg/other.js": `export const other = 1;`,
-        "/node_modules/pkg/a.js": `import { b } from "./b.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+        "/node_modules/pkg/a.js": `import { b } from "./b.js"; ${wait} export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
         "/node_modules/pkg/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
         "/e1.js": `import "./set1.js"; ${read} console.log("e1", a);`,
         "/e2.js": `import "./set2.js"; import { b } from "pkg/b.js"; console.log("e2", b); ${lazy}`,
@@ -1672,8 +1671,169 @@ describe("bundler", () => {
     });
   }
 
+  // A file without side effects, in the chunk of e1.js alone, imports a.js and gets a wrapper. local.js, which it imports
+  // next, has to run after a.js: from that wrapper.
+  for (const [name, pure] of Object.entries({ EntryPoint: "e1.js", Importer: "h.js" })) {
+    itBundled("splitting/ContestedCyclePure" + name, {
+      files: {
+        "/package.json": JSON.stringify({
+          name: "app",
+          sideEffects: ["e1.js", "h.js", "a.js", "b.js", "local.js", "e2.js", "set1.js", "set2.js"]
+            .filter(file => file !== pure)
+            .map(file => "./" + file),
+        }),
+        "/e1.js":
+          pure === "e1.js"
+            ? `import "./set1.js"; import { a } from "./a.js"; import "./local.js"; console.log("e1", a);`
+            : `import "./set1.js"; import { h } from "./h.js"; console.log("e1", h);`,
+        "/h.js": `import { a } from "./a.js"; import "./local.js"; export const h = a;`,
+        "/a.js": /* js */ `
+          import { b } from "./b.js";
+          globalThis.A_RAN = true;
+          export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";
+        `,
+        "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+        "/local.js": `console.log("local", globalThis.A_RAN);`,
+        "/e2.js": `import "./set2.js"; import { b } from "./b.js"; console.log("e2", b);`,
+        "/set1.js": `globalThis.ENTRY = "e1";`,
+        "/set2.js": `globalThis.ENTRY = "e2";`,
+      },
+      entryPoints: ["/e1.js", "/e2.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/e1.js", stdout: "local true\ne1 a+b" },
+        { file: "/out/e2.js", stdout: "e2 b+a" },
+      ],
+    });
+  }
+
+  // e1.js loads a.js ahead of lazy.js, so lazy.js is never the first to load the cycle. y.js still gets a wrapper, and
+  // z.js, in the chunk of lazy.js as well, has to run after it.
+  itBundled("splitting/ContestedCycleLazyEntryOwnFiles", {
+    files: {
+      "/e1.js": `import "./set1.js"; import { a } from "./a.js"; console.log("e1", a); import("./lazy.js");`,
+      "/e2.js": `import "./set2.js"; import { b } from "./b.js"; console.log("e2", b);`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/a.js": `import { b } from "./b.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/lazy.js": `import "./x.js"; console.log("lazy");`,
+      "/x.js": `import "./y.js"; import "./z.js"; console.log("x");`,
+      "/y.js": `import { a } from "./a.js"; console.log("y", a);`,
+      "/z.js": `console.log("z");`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 a+b\ny a+b\nz\nx\nlazy" },
+      { file: "/out/e2.js", stdout: "e2 b+a" },
+    ],
+  });
+
+  // Nothing uses what five.js imports from pkg, which has no side effects. Under e1.js that import is still the first
+  // one that leads to six.js, so six.js runs ahead of five.js.
+  itBundled("splitting/ContestedCycleUnusedImport", {
+    files: {
+      "/e1.js": `import "./set1.js"; import "./zero.js"; console.log("e1");`,
+      "/e2.js": `import "./set2.js"; import { six } from "./six.js"; console.log("e2", six);`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/zero.js": /* js */ `
+        import "./five.js";
+        import { six } from "./six.js";
+        export const zero = "zero";
+        console.log("zero", globalThis.ENTRY === "e1" ? six : "-");
+      `,
+      "/five.js": `import { unused } from "pkg"; console.log("five");`,
+      "/six.js": /* js */ `
+        import { zero } from "./zero.js";
+        export const six = globalThis.ENTRY === "e2" ? "six+" + zero : "six";
+        console.log("six");
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `export * from "./two.js";`,
+      "/node_modules/pkg/two.js": `import { six } from "../../six.js"; export const unused = () => six;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "six\nfive\nzero six\ne1" },
+      { file: "/out/e2.js", stdout: "five\nzero -\nsix\ne2 six+zero" },
+    ],
+  });
+
+  // Only the import() loads pkg/index.js, which gets a wrapper because of first.js. second.js runs nothing itself, and
+  // effect.js, which it imports, has to wait for a.js.
+  itBundled("splitting/ContestedCycleLazyBarrel", {
+    files: {
+      "/e1.js": `import "./set1.js"; import { a } from "./a.js"; console.log("e1", a);`,
+      "/e2.js": `import "./set2.js"; import { b } from "./b.js"; console.log("e2", b);`,
+      "/e3.js": `const pkg = await import("pkg"); console.log("e3", pkg.first(), pkg.second);`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/a.js": /* js */ `
+        import { b } from "./b.js";
+        globalThis.A_RAN = true;
+        export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";
+      `,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/effect.js": `console.log("effect", globalThis.A_RAN);`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `export * from "./first.js"; export * from "./second.js";`,
+      "/node_modules/pkg/first.js": `import { a } from "../../a.js"; export const first = () => a;`,
+      "/node_modules/pkg/second.js": `import "../../effect.js"; export const second = String("second");`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 a+b" },
+      { file: "/out/e2.js", stdout: "e2 b+a" },
+      { file: "/out/e3.js", stdout: "effect true\ne3 a second" },
+    ],
+  });
+
+  // pure/index.js has no side effects of its own, and calls the wrapper of q.js when it loads. It comes after the cycle.
+  itBundled("splitting/ContestedCyclePureFollowerWithWrappedImport", {
+    files: {
+      "/e1.js": `import "./set1.js"; import { a } from "./a.js"; import { p } from "pure"; console.log("e1", a, p, globalThis.Q);`,
+      "/e2.js": /* js */ `
+        import "./set2.js"; import { b } from "./b.js"; import { p } from "pure";
+        console.log("e2", b, p, globalThis.Q);
+        globalThis.later = () => require("./q.js");
+      `,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/a.js": /* js */ `
+        import { b } from "./b.js";
+        globalThis.READY = true;
+        export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";
+      `,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/node_modules/pure/package.json": JSON.stringify({ name: "pure", main: "index.js", sideEffects: false }),
+      "/node_modules/pure/index.js": `import "../../q.js"; export const p = String("p");`,
+      "/q.js": `export const q = 1; globalThis.Q = globalThis.READY ? "ready" : "not ready";`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "node",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 a+b p ready" },
+      { file: "/out/e2.js", stdout: "e2 b+a p ready" },
+    ],
+  });
+
   // store.js reads api.js only through a function that it calls at load.
-  itBundled("splitting/CycleEnteredAtTwoFilesReadThroughFunction", {
+  itBundled("splitting/ContestedCycleIndirectRead", {
     files: {
       "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
       "/worker.js": `import "./flag.js"; import { api } from "./api.js"; console.log("worker", api.name, api.store());`,
@@ -2550,7 +2710,7 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
   });
 
-  const cycleSharedByTwoImportCalls = {
+  const lazyCycleFiles = {
     "/a.js": /* js */ `
       export * as A from "./a.js";
       import { B } from "./b.js";
@@ -2568,9 +2728,9 @@ describe("bundler", () => {
 
   // The import() of late2.js comes first in the source, and the one of late1.js runs first. It enters the cycle at B,
   // so a.js runs ahead of b.js.
-  itBundled("splitting/CycleFollowsTheImportCallThatRunsFirstAtRunTime", {
+  itBundled("splitting/ContestedCycleImportCallOrder", {
     files: {
-      ...cycleSharedByTwoImportCalls,
+      ...lazyCycleFiles,
       "/first.js": `globalThis.loadLate2 = () => import("./late2.js");`,
       "/entry.js": /* js */ `
         import "./first.js";
@@ -2587,9 +2747,9 @@ describe("bundler", () => {
   });
 
   // Both import() calls are in flight at once, and the runtime picks which of the two runs first. The cycle follows it.
-  itBundled("splitting/CycleFollowsWhicheverOfTwoImportCallsInFlightRunsFirst", {
+  itBundled("splitting/ContestedCycleConcurrentImportCalls", {
     files: {
-      ...cycleSharedByTwoImportCalls,
+      ...lazyCycleFiles,
       "/first.js": `globalThis.late2 = import("./late2.js");`,
       "/entry.js": /* js */ `
         import "./first.js";

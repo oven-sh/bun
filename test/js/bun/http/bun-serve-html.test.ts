@@ -224,7 +224,7 @@ console.log("How...dashing?");
   "content-length": "316",
   "content-type": "text/javascript;charset=utf-8",
   "date": "<date>",
-  "etag": ""f862dbeedf9b72bc"",
+  "etag": ""3ca06a4a22408e94"",
   "sourcemap": "/chunk-HASH.js.map",
 }
 `);

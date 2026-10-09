@@ -1219,9 +1219,20 @@ pub mod parse_worker {
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
                 // need in order to print code later.
-                let import_records_len = import_records.len();
                 let output_format = opts.output_format;
-                let mut ast = js_parser::new_lazy_export_ast(
+                // The namespace of each `import` statement below.
+                let mut symbols = ast::symbol::List::new_in(bump);
+                // The dev server format takes one part range per file.
+                let is_dev_server = output_format == js_parser::options::Format::InternalBakeDev;
+                for record in &import_records {
+                    if !is_dev_server && record.kind == ast::ImportKind::Stmt {
+                        symbols.push(ast::Symbol {
+                            original_name: ast::StoreStr::new(b"import_script"),
+                            ..Default::default()
+                        });
+                    }
+                }
+                let mut ast = js_parser::new_lazy_export_ast_impl(
                     bump,
                     &mut topts.define,
                     opts,
@@ -1229,9 +1240,9 @@ pub mod parse_worker {
                     Expr::init(E::Missing {}, Loc::EMPTY),
                     source,
                     b"",
+                    symbols,
                 )?
                 .ok_or(AnyError::ParserError)?;
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1243,23 +1254,42 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                // Liveness for this synthetic part is seeded in
-                // `tree_shaking_and_code_splitting` (the per-part bitset
-                // does not exist at parse time).
-                ast.parts.as_mut_slice()[1] = Part {
-                    stmts: ast::StoreSlice::EMPTY,
-                    import_record_indices: {
-                        // Generate a single part that depends on all the import records.
-                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
-                            import_records_len as usize,
-                        );
-                        import_record_indices
-                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
-                        import_record_indices
-                    },
-                    ..Default::default()
-                };
+                // One part per import record, in the order of the page, so that the JavaScript bundle has all the user's
+                // code. A `<script src>` is an `import` statement: it prints `init_x()` where the linker wraps the file.
+                ast.parts.truncate(1);
+                if is_dev_server {
+                    let mut part = Part::default();
+                    part.import_record_indices
+                        .extend(0..u32::try_from(import_records.len()).expect("int cast"));
+                    ast.parts.push(part);
+                } else {
+                    let mut scripts: ast::base::RefInt = 0;
+                    for (record_index, record) in import_records.iter().enumerate() {
+                        let record_index = u32::try_from(record_index).expect("int cast");
+                        let mut part = Part::default();
+                        part.import_record_indices.push(record_index);
+                        if record.kind == ast::ImportKind::Stmt {
+                            let namespace_ref =
+                                ast::Ref::new(scripts, source.index.0, ast::base::RefTag::Symbol);
+                            scripts += 1;
+                            let import = ast::Stmt::alloc(
+                                ast::S::Import {
+                                    namespace_ref,
+                                    import_record_index: record_index,
+                                    ..Default::default()
+                                },
+                                Loc::EMPTY,
+                            );
+                            part.stmts = ast::StoreSlice::new_mut(bump.alloc_slice_copy(&[import]));
+                            part.declared_symbols.append(ast::DeclaredSymbol {
+                                ref_: namespace_ref,
+                                is_top_level: true,
+                            })?;
+                        }
+                        ast.parts.push(part);
+                    }
+                }
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
                 if output_format == js_parser::options::Format::Esm

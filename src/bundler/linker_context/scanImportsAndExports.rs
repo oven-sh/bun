@@ -1216,7 +1216,7 @@ pub(crate) fn scan_imports_and_exports(
                     let other_source_index = other_id as u32;
 
                     if other_flags.wrap != WrapKind::None {
-                        let uses = this.bind_import_of_wrapped_file(
+                        let uses = this.bind_wrapped_import(
                             source_index,
                             part_index as u32,
                             import_record_index,
@@ -1372,7 +1372,7 @@ pub(crate) fn scan_imports_and_exports(
                 }
             }
             if output_format != Format::InternalBakeDev {
-                this.bind_promise_all_of_unwrapped_file(source_index)?;
+                this.bind_promise_all_helper(source_index)?;
             }
         }
     }

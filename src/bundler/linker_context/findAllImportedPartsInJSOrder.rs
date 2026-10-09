@@ -3,7 +3,6 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
-use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
 use bun_core::perf;
 
@@ -342,10 +341,8 @@ pub(super) fn for_each_edge(
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
     let css = c.graph.ast.items_css();
-    if css[source_index as usize].is_some()
-        || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
-    {
-        // A CSS or HTML file has no parts; every record counts.
+    if css[source_index as usize].is_some() {
+        // A CSS file has no parts; every record counts.
         for record in records {
             if record.source_index.is_valid() {
                 each(0, Edge::Import(record.source_index.get()));

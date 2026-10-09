@@ -674,9 +674,9 @@ describe("bundler", () => {
       run: { file: "dist/out", stdout: "main ran\nmain main" },
     });
 
-    // See splitting/CycleEnteredAtTwoFiles. The main thread enters the cycle of m2.js, m5.js and m6.js at m5.js, the
+    // See splitting/ContestedCycle. The main thread enters the cycle of m2.js, m5.js and m6.js at m5.js, the
     // worker at m6.js.
-    itBundled("compile/splitting/CycleEnteredAtTwoFiles", {
+    itBundled("compile/splitting/ContestedCycle", {
       backend: "cli",
       compile: true,
       splitting: true,

@@ -408,7 +408,7 @@ impl<'a> LinkerContext<'a> {
     /// Calls `each` with every other file that loading `source_index` loads first:
     /// what the import records of its live parts load
     /// (`file_loaded_by_import`) and the files declaring the bindings those
-    /// parts use. A CSS or HTML file has no parts; every record counts.
+    /// parts use. Every record of a CSS or HTML file counts.
     pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
         let records = &self.graph.ast.items_import_records()[source_index as usize];
         if self.graph.ast.items_css()[source_index as usize].is_some()
@@ -988,21 +988,11 @@ impl<'a> LinkerContext<'a> {
         // Size the per-file part-liveness bitsets now that `scan_imports_and_exports`
         // has finished pushing wrapper / entry-point parts.
         {
-            let loaders = self.parse_graph().input_files.items_loader();
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
-            for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
-                // The HTML loader's `ParseTask` builds its synthetic part 1 already
-                // live (so the JS-chunk visitor follows every embedded import record).
-                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts, so seed the bit here to preserve the old
-                // `Part::is_live = true` initializer.
-                if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
-                    bits.set(1);
-                }
-                parts_live.push(bits);
+            for parts in parts_col.iter() {
+                parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
             }
             self.graph.parts_live = parts_live;
             self.graph.files_live.set_all(false);
@@ -3098,6 +3088,13 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
+            // Every part holds one of the records.
+            for part_index in 1..ctx.parts[source_index as usize].len() as u32 {
+                ctx.worklist.push(TreeShakeWork::Part {
+                    part_index,
+                    source_index,
+                });
+            }
             return;
         }
 
@@ -3309,7 +3306,7 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 
 /// How often an import of a wrapped file calls `__toESM` and `__toCommonJS`.
 #[derive(Default, Clone, Copy)]
-pub(crate) struct WrappedImportUses {
+pub(crate) struct InteropUseCounts {
     pub(crate) to_esm: u32,
     pub(crate) to_common_js: u32,
 }
@@ -3648,12 +3645,12 @@ impl<'a> LinkerContext<'a> {
 
     /// An import record of part `part_index` of `source_index` names a wrapped file: the part
     /// depends on what the printed import names. Returns the runtime helpers that it calls.
-    pub(crate) fn bind_import_of_wrapped_file(
+    pub(crate) fn bind_wrapped_import(
         &mut self,
         source_index: crate::IndexInt,
         part_index: u32,
         import_record_index: u32,
-    ) -> Result<WrappedImportUses, AllocError> {
+    ) -> Result<InteropUseCounts, AllocError> {
         let (kind, other_source_index, rec_flags) = {
             let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
                 [import_record_index as usize];
@@ -3663,7 +3660,7 @@ impl<'a> LinkerContext<'a> {
         let other_flags = self.graph.meta.items_flags()[other_id];
         let other_export_kind = self.graph.ast.items_exports_kind()[other_id];
         let output_format = self.options.output_format;
-        let mut uses = WrappedImportUses::default();
+        let mut uses = InteropUseCounts::default();
 
         // Depend on the automatically-generated require wrapper symbol
         let wrapper_ref = self.graph.ast.items_wrapper_ref()[other_id];
@@ -3736,7 +3733,7 @@ impl<'a> LinkerContext<'a> {
 
     /// An unwrapped file that imports two or more async wrapped files awaits them with one `__promiseAll` call.
     /// `create_wrapper_for_file` does this for a wrapped file.
-    pub(crate) fn bind_promise_all_of_unwrapped_file(
+    pub(crate) fn bind_promise_all_helper(
         &mut self,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
@@ -5357,7 +5354,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    fn append_async_dependency(
+    pub(crate) fn append_async_dependency(
         &mut self,
         call_expr: Expr,
         promise_all_ref: Ref,

@@ -1,5 +1,19 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { bunEnv, bunExe } from "harness";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+
+/** Runs the scripts of a bundled page, one after the other. */
+async function runScriptsOf(api: BundlerTestBundleAPI, page: string) {
+  const result = { stdout: "", stderr: "", exitCodes: [] as number[] };
+  for (const [, script] of api.readFile(page).matchAll(/src="([^"]+\.js)"/g)) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), api.join("out/" + script)], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    result.stdout += stdout;
+    result.stderr += stderr;
+    result.exitCodes.push(exitCode);
+  }
+  return result;
+}
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -1078,4 +1092,63 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // The require() wraps esm.js, and cjs.js is CommonJS: the page has to call both wrappers, where it loads them.
+  itBundled("html/wrapped-scripts", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<script type="module" src="./first.js"></script>
+<script type="module" src="./esm.js"></script>
+<script type="module" src="./between.js"></script>
+<script type="module" src="./cjs.js"></script>
+<script type="module" src="./last.js"></script>`,
+      "/first.js": `console.log("first");`,
+      "/esm.js": `export const value = 1; console.log("esm");`,
+      "/between.js": `console.log("between");`,
+      "/cjs.js": `console.log("cjs"); module.exports = () => require("./esm.js");`,
+      "/last.js": `console.log("last");`,
+    },
+    entryPoints: ["/index.html"],
+    async onAfterBundle(api) {
+      expect(await runScriptsOf(api, "out/index.html")).toEqual({
+        stdout: "first\nesm\nbetween\ncjs\nlast\n",
+        stderr: "",
+        exitCodes: [0],
+      });
+    },
+  });
+
+  // Each page enters the cycle at its own script. own.js is in the chunk of a.html alone, and comes after the cycle.
+  for (const [name, sideEffects] of Object.entries({ "": true, "-no-side-effects": false })) {
+    itBundled("html/splitting-contested-cycle" + name, {
+      files: {
+        "/package.json": JSON.stringify({ name: "app", sideEffects }),
+        "/a.html": /* html */ `
+          <!DOCTYPE html>
+          <script type="module" src="./set-a.js"></script>
+          <script type="module" src="./a.js"></script>
+          <script type="module" src="./own.js"></script>`,
+        "/b.html": /* html */ `
+          <!DOCTYPE html>
+          <script type="module" src="./set-b.js"></script>
+          <script type="module" src="./b.js"></script>`,
+        "/set-a.js": `globalThis.PAGE = "a";`,
+        "/set-b.js": `globalThis.PAGE = "b";`,
+        "/a.js": `import { b } from "./b.js"; export const a = globalThis.PAGE === "a" ? "a+" + b : "a"; console.log(a);`,
+        "/b.js": `import { a } from "./a.js"; export const b = globalThis.PAGE === "b" ? "b+" + a : "b"; console.log(b);`,
+        "/own.js": `console.log("own");`,
+      },
+      entryPoints: ["/a.html", "/b.html"],
+      splitting: true,
+      outdir: "out/",
+      format: "esm",
+      target: "browser",
+      async onAfterBundle(api) {
+        expect(await runScriptsOf(api, "out/a.html")).toEqual({ stdout: "b\na+b\nown\n", stderr: "", exitCodes: [0] });
+        expect(await runScriptsOf(api, "out/b.html")).toEqual({ stdout: "a\nb+a\n", stderr: "", exitCodes: [0] });
+      },
+    });
+  }
 });

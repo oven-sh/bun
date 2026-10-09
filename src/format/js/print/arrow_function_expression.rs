@@ -74,6 +74,19 @@ fn counts_space_before_commented_conditional(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// ```ts
+/// return (                   return (
+///   a: A,                        a: A,
+///   b: B,                        b: B,
+/// ) =>                         ) =>
+///   (c) => {};                 (c) => {};
+/// ```
+///
+/// oxfmt on the left, Prettier on the right: wherever the chain is, not only as an argument or an operand.
+fn first_signature_starts_where_chain_starts(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printArrowFunction`. `e`: the expression that `arrow` is.
 pub(crate) fn write_arrow_function_expression<'a>(
     e: Expr<'a>,
@@ -207,14 +220,15 @@ fn write_arrow<'a>(
         == Some(AssignmentLikeLayout::ChainTailArrowFunction)
         || (is_callee && !is_body_on_same_line);
     // As an argument or an operand, the first starts where the chain starts.
-    let is_first_indented = !matches!(
-        parent,
-        AstNodes::CallExpression(_)
-            | AstNodes::NewExpression(_)
-            | AstNodes::ImportExpression(_)
-            | AstNodes::BinaryExpression(_)
-            | AstNodes::LogicalExpression(_)
-    );
+    let is_first_indented = !first_signature_starts_where_chain_starts(f)
+        && !matches!(
+            parent,
+            AstNodes::CallExpression(_)
+                | AstNodes::NewExpression(_)
+                | AstNodes::ImportExpression(_)
+                | AstNodes::BinaryExpression(_)
+                | AstNodes::LogicalExpression(_)
+        );
 
     // Prettier's `printArrowFunctionSignatures`.
     let format_rest = format_with(|f| {

@@ -72,10 +72,34 @@ fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<
 
 /// `(a: () => void = () => {}) => {}`: for oxlint the type of the parameter says nothing about its default value.
 fn oxlint_is_default_of_parameter(func: Func) -> bool {
-    matches!(
-        func.owner(),
-        Node::Expr(e) if matches!(e.parent(), Node::Param(param) if param.default() == Some(e))
-    )
+    let Node::Expr(mut e) = func.owner() else {
+        return false;
+    };
+    // `(a: A = { b: { c: () => {} } }) => {}`
+    loop {
+        match e.parent() {
+            Node::Param(param) => return param.default() == Some(e),
+            Node::Prop(prop) if prop.kind() != PropKind::Spread => match prop.parent() {
+                Node::Expr(object) if object.tag() == ExprTag::Object => e = object,
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
+/// `() => ({ a: 1 } as const)`: oxlint does not look into parentheses.
+fn oxlint_hides_const_assertion(func: Func) -> bool {
+    let FnBody::Expr(mut body) = func.body() else {
+        return false;
+    };
+    while !body.is_parenthesized() {
+        match body.kind() {
+            ExprKind::Satisfies { expr, .. } => body = expr,
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// The member of a class that `func` is, or is the value of.
@@ -138,11 +162,13 @@ impl ExplicitFunctionReturnType {
             cx.report(head(), MISSING_RETURN_TYPE);
             return;
         }
-        let untyped = ReturnTypeOptions { allow_typed_function_expressions: false, ..self.options };
+        let mut options = self.options;
+        options.allow_direct_const_assertion_in_arrow_functions &= !(is_oxlint && oxlint_hides_const_assertion(func));
+        let untyped = ReturnTypeOptions { allow_typed_function_expressions: false, ..options };
         let is_default = is_oxlint && oxlint_is_default_of_parameter(func);
         if is_expression
             && self.options.allow_typed_function_expressions
-            && (is_valid_function_expression_return_type(func, if is_default { untyped } else { self.options })
+            && (is_valid_function_expression_return_type(func, if is_default { untyped } else { options })
                 || ancestor_has_return_type(func)
                 || is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
         {
@@ -157,7 +183,7 @@ impl ExplicitFunctionReturnType {
             cx.report(head(), MISSING_RETURN_TYPE);
             return;
         }
-        check_function_return_type(func, self.options, |mut loc| {
+        check_function_return_type(func, options, |mut loc| {
             // oxlint points at the decorators of a member.
             if is_oxlint && let Some(member) = member_of(func) {
                 loc.start = member.span().start;

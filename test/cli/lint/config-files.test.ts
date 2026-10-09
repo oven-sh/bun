@@ -303,6 +303,22 @@ describe.concurrent("an eslint.config.js", () => {
 });
 
 describe.concurrent("an .oxlintrc.json", () => {
+  test.each([
+    [{ node: true }, [4, 5, 6, 7, 8]],
+    [{ devtools: true, chai: true }, [1, 2, 3, 4, 5, 6, 7, 8]],
+    [{ bun: true }, [1, 2, 4, 6, 7, 8]],
+    [{ audioworklet: true }, [3, 4, 5, 7, 8]],
+    [{ browser: true }, [4, 5, 6, 7, 8]],
+    [{ jasmine: true }, [1, 2, 3, 4, 5, 6]],
+  ])("the environments are oxlint's: %j", async (env, lines) => {
+    const { problems } = await lint({
+      ".oxlintrc.json": JSON.stringify({ plugins: [], categories: { correctness: "off" }, rules: { "no-undef": "error" }, env }),
+      "a.js":
+        "QuotaExceededError;\nTemporal;\nnavigator;\n$0;\nBun;\nregisterProcessor;\nexpect;\nthrowUnless;\nexport {};\n",
+    });
+    expect(problems).toEqual(lines.map(line => `a.js:${line}:1 no-undef`));
+  });
+
   test("only comments that disable rules configure anything", async () => {
     const { problems, exitCode } = await lint({
       ".oxlintrc.json": JSON.stringify({
@@ -1255,6 +1271,15 @@ describe.concurrent("the configuration files of ESLint 8", () => {
     expect((await lint({ ...files, ".eslintrc.json": rc({ env: { es6: true }, rules }) })).problems).toEqual([]);
   });
 
+  test("the environments are those that ESLint 8 comes with", async () => {
+    const { problems } = await lint({
+      ".eslintrc.json": rc({ env: { node: true, jest: true }, rules: { "no-undef": "error" } }),
+      "a.js": "navigator;\nWebSocket;\nlocalStorage;\npit;\nfdescribe;\nIntl;\nprocess;\nstructuredClone;\n",
+      "b.js": "/* eslint-env worker */\nCSSImageValue;\nimportScripts;\nWebSocket;\nreportError;\n",
+    });
+    expect(problems).toEqual(["a.js:1:1 no-undef", "a.js:2:1 no-undef", "a.js:3:1 no-undef", "b.js:2:1 no-undef"]);
+  });
+
   test("a rule that ESLint 8 does not have is a message in every file", async () => {
     const { problems, stdout, exitCode } = await lint({
       ".eslintrc.json": rc({
@@ -1314,6 +1339,59 @@ describe.concurrent("the configuration files of ESLint 8", () => {
     // Formatting rules were deprecated by then, and what is deprecated is not in it.
     expect(problems).toContain("a.js:1:15 no-new-symbol");
     expect(problems.filter(it => it.endsWith("semi"))).toEqual([]);
+  });
+
+  test("the default options of typescript-eslint are those of the major version that is installed", async () => {
+    const installed = (version: string) => ({
+      ".eslintrc.json": rc({
+        plugins: ["@typescript-eslint"],
+        rules: { "@typescript-eslint/no-unused-vars": "error" },
+      }),
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "index.js" }),
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": "module.exports = { rules: {}, configs: {} };",
+      "a.js": "try { f(); } catch (e) {}\n",
+    });
+    // `caughtErrors` is "none" before version 8.
+    const old = await lint(installed("7.18.0"));
+    expect(old.problems).toEqual([]);
+    // It is said once, where no formatter writes, and the run does not fail for it.
+    expect(old.stderr.split("typescript-eslint 7.18.0 is installed.").length).toBe(2);
+    expect(old.stdout).not.toContain("is installed.");
+    expect(old.exitCode).toBe(0);
+    expect((await lint(installed("7.18.0"), ["--quiet", "."])).stderr).toContain("is installed.");
+    expect((await lint(installed("5.62.0"))).problems).toEqual([]);
+    const current = await lint(installed("8.0.0"));
+    expect(current.problems).toEqual(["a.js:1:21 @typescript-eslint/no-unused-vars"]);
+    expect(current.stderr).not.toContain("is installed.");
+  });
+
+  test("options that only versions of typescript-eslint before 8 take", async () => {
+    const installed = (version: string, rules: object) => ({
+      ".eslintrc.json": rc({ plugins: ["@typescript-eslint"], rules }),
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "index.js" }),
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": "module.exports = { rules: {}, configs: {} };",
+      "a.js": "",
+    });
+    const of5 = {
+      "@typescript-eslint/restrict-plus-operands": ["off", { checkCompoundAssignments: true }],
+      "@typescript-eslint/explicit-module-boundary-types": ["error", { shouldTrackReferences: true }],
+    };
+    const of7 = {
+      "@typescript-eslint/no-empty-object-type": ["error", { allowObjectTypes: "in-type-alias-with-name" }],
+    };
+    expect((await lint(installed("5.62.0", of5))).exitCode).toBe(0);
+    expect((await lint(installed("7.18.0", of7))).exitCode).toBe(0);
+    for (const rules of [of5, of7]) {
+      const { stderr, exitCode } = await lint(installed("8.0.0", rules));
+      expect(stderr).toContain("is invalid:");
+      expect(exitCode).toBe(2);
+    }
+  });
+
+  test("--print-config has no settings that the files do not have", async () => {
+    const files = { ".eslintrc.json": rc({ rules: { eqeqeq: "error" } }), "a.js": "" };
+    const { stdout } = await lint(files, ["--print-config", "a.js"]);
+    expect(Object.keys(JSON.parse(stdout).rules)).toEqual(["eqeqeq"]);
   });
 
   // What ESLint 8.57.1 does with each row is in oracle/driver/eslintrc-cli.expected.json, recorded by eslintrc-cli.mjs there.

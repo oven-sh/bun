@@ -12,8 +12,6 @@ use bun_lint::json::comparison::{describe, read_and_drop};
 
 pub(super) fn run(args: &Args) {
     let options = args.flag("options").unwrap_or("jsonc");
-    let variant = args.flag("variant").and_then(|it| it.parse::<u8>().ok());
-    bun_lint::json::comparison::set_variant_of_the_reader(variant.unwrap_or(0));
     let mut names = args.positional.clone();
     let mut texts: Vec<Vec<u8>> = (args.positional.iter())
         .map(|path| host::read(path).expect("the file"))

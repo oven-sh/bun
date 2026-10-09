@@ -228,6 +228,19 @@ impl Ignores {
         }
         self.patterns.get(best? as usize)
     }
+
+    /// Whether one of the `..` that `path` starts with is ignored. To the package `ignore` they are directories like any other:
+    /// `.*` has them, and so all that is not in the directory of the file.
+    fn ignores_a_way_up(&self, path: &[u8]) -> bool {
+        let ups = strings::split(path, b"/")
+            .take_while(|name| *name == b"..")
+            .count();
+        (1..=ups).any(|up| {
+            path.get(..3 * up - 1)
+                .and_then(|above| self.last_match(above, b"..", true))
+                .is_some_and(|pattern| !pattern.is_negated)
+        })
+    }
 }
 
 pub(crate) type Chain = Option<Arc<Ignores>>;
@@ -295,10 +308,39 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
 /// Whether `path` is ignored, if the directory that it is in is not. The nearest file that says
 /// anything about it decides, and in that file the last pattern.
 pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
+    let is_in_search = false;
+    decide(chain, path, is_directory, is_in_search)
+}
+
+/// The same for what a search of `bun format` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
+/// of the file as it is: a pattern without a `/` finds the name. About an argument that is not in the directory it does not ask.
+pub(crate) fn is_ignored_in_search(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
+    let is_in_search = true;
+    decide(chain, path, is_directory, is_in_search)
+}
+
+fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) -> bool {
     let mut next = chain.as_ref();
-    let name = paths::basename(path);
     while let Some(ignores) = next {
-        if let Some(inside) = paths::inside(&ignores.directory, path) {
+        let directory = &ignores.directory[..];
+        let from_outside;
+        let inside = match paths::inside(directory, path) {
+            Some(inside) => Some(inside),
+            // No pattern is about the directory of the file, or about one that it is in.
+            None if path == directory || paths::inside(path, directory).is_some() => None,
+            // Prettier asks the package `ignore` about `../src/a.js`, in which a pattern without a `/` finds the name.
+            None if ignores.ignores_case => {
+                from_outside = paths::relative(directory, path);
+                if ignores.ignores_a_way_up(&from_outside) {
+                    return true;
+                }
+                Some(&from_outside[..])
+            }
+            None if is_in_search => Some(path),
+            None => None,
+        };
+        if let Some(inside) = inside {
+            let name = paths::basename(inside);
             let in_lower_case;
             let (inside, name) =
                 match ignores.ignores_case && inside.iter().any(u8::is_ascii_uppercase) {

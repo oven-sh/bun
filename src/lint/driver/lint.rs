@@ -48,6 +48,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
     /// The files in which the type checker ran out of stack, so that the rules that need types may have missed something.
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
+    /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
+    pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,
@@ -74,10 +76,16 @@ struct How<'h> {
     /// It is a script in a file: its language, and which rules run.
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     vue_script: VueScript,
+    /// It is only to be known whether it can be parsed.
+    without_rules: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
     severity == Severity::Error
+}
+
+fn no_rule(_: &RuleId, _: Severity) -> bool {
+    false
 }
 
 impl Context<'_, '_> {
@@ -198,6 +206,26 @@ impl Context<'_, '_> {
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
         self.verify_as(path, text, config, &How::default())
+    }
+
+    /// Whether `text` can be parsed as the file at `path`.
+    pub(crate) fn parses(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> bool {
+        let how = How {
+            without_rules: true,
+            ..How::default()
+        };
+        let result = match Framework::of(path).filter(|_| config.language.is_oxlint) {
+            Some(framework) => {
+                self.verify_scripts_by(framework, path, text, config, Some(&no_rule))
+            }
+            None => self.verify_as(path, text, config, &how),
+        };
+        !result.messages.iter().any(|it| it.is_fatal)
+    }
+
+    /// The fixes of `rules` would have left the file at `path` with a syntax error.
+    pub(crate) fn note_broken_fixes(&self, path: &[u8], rules: Vec<RuleId>) {
+        self.broken_fixes.lock().push((path.to_vec(), rules));
     }
 
     /// The same for a block that a processor has found in a file, whose path is the first `physical_path_len` bytes of `path`.
@@ -332,7 +360,10 @@ impl Context<'_, '_> {
                     again: as_what.again,
                     wants_fixes: options.wants_fixes && !as_what.without_fixes,
                     physical_path_len: as_what.physical_path_len,
-                    rule_filter: as_what.script.map(|it| it.1).or(options.rule_filter),
+                    rule_filter: match as_what.without_rules {
+                        true => Some(&no_rule),
+                        false => as_what.script.map(|it| it.1).or(options.rule_filter),
+                    },
                     ..options
                 };
                 let mut result = self.linter.lint(&file, config, &options);
@@ -383,6 +414,10 @@ impl Context<'_, '_> {
                     result.messages.insert(0, grows_too_much(text.len()));
                     return self.result(path, result, text, false, config);
                 }
+                if fixed.is_fixed && !self.parses(path_to_verify, &fixed.output, config) {
+                    self.note_broken_fixes(path_to_verify, fixed.applied);
+                    return self.result(path, verify(&text), text, false, config);
+                }
                 result.messages = fixed.remaining;
                 let mut result = self.result(path, result, text, fixed.is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);
@@ -396,6 +431,9 @@ impl Context<'_, '_> {
                 );
                 if report.is_circular {
                     on_circular_fixes(path_to_verify);
+                }
+                if let Some(rules) = report.broken_by {
+                    self.note_broken_fixes(path_to_verify, rules);
                 }
                 (report.result, report.output, report.is_fixed)
             }

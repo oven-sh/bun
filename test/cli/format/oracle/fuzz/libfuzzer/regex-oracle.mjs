@@ -16,7 +16,9 @@ if (!isMainThread) {
     const found = regex.exec(text);
     if (!found) return parentPort.postMessage("null");
     // Offsets in bytes of UTF-8.
-    const bytes = index => Buffer.byteLength(text.slice(0, index));
+    // Between the halves of a pair, where only a search without `u` and `v` stops: half of its four bytes.
+    const splits = index => /[\ud800-\udbff]$/.test(text.slice(0, index)) && /^[\udc00-\udfff]/.test(text.slice(index));
+    const bytes = index => (splits(index) ? Buffer.byteLength(text.slice(0, index - 1)) + 2 : Buffer.byteLength(text.slice(0, index)));
     parentPort.postMessage(found.indices.map(it => (it ? `${bytes(it[0])},${bytes(it[1])}` : "-")).join(";"));
   });
 } else {

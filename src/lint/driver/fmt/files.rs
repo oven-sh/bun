@@ -467,7 +467,14 @@ impl Ignored {
             || self
                 .files
                 .iter()
-                .any(|chain| gitignore::is_ignored(chain, path, is_directory))
+                .any(|chain| gitignore::is_ignored_in_search(chain, path, is_directory))
+    }
+
+    /// Whether an ignore file has the directory at `path`, or one that it is in: then it has all that is in it.
+    fn ignores_directory(&self, path: &[u8]) -> bool {
+        self.files
+            .iter()
+            .any(|chain| gitignore::is_directory_ignored_anywhere(chain, path))
     }
 
     /// Prettier's `isIgnored`, for any file.
@@ -639,9 +646,10 @@ pub(crate) fn expand(
 ) -> Result<Vec<Expanded>, Fatal> {
     let cwd = ignored.cwd.clone();
     let mut expanded = Vec::new();
-    let mut entries: Vec<(Entry, Vec<u8>)> = Vec::new();
-    for pattern in patterns {
-        let pattern = paths::from_native(pattern);
+    // With the argument as it is written, which is how Prettier repeats it.
+    let mut entries: Vec<(Entry, Vec<u8>, &[u8])> = Vec::new();
+    for written in patterns {
+        let pattern = paths::from_native(written);
         let path = paths::resolve(&cwd, &pattern);
         if ignored.is_in_ignored_directory(&path) {
             continue;
@@ -652,27 +660,31 @@ pub(crate) fn expand(
                     expanded.push(Expanded::Error(
                         [
                             b"Explicitly specified pattern \"",
-                            &pattern[..],
+                            &written[..],
                             b"\" is a symbolic link.",
                         ]
                         .concat(),
                     ));
                 }
             }
-            Some((fs::LinkKind::File, size)) => entries.push((Entry::File(path, size), pattern)),
-            Some((fs::LinkKind::Directory, _)) => entries.push((Entry::Directory(path), pattern)),
+            Some((fs::LinkKind::File, size)) => {
+                entries.push((Entry::File(path, size), pattern, &written[..]))
+            }
+            Some((fs::LinkKind::Directory, _)) => {
+                entries.push((Entry::Directory(path), pattern, &written[..]))
+            }
             None => match pattern.strip_prefix(b"!") {
                 Some(negative) => ignored
                     .negative
                     .push(Glob::new(negative.strip_prefix(b"./").unwrap_or(negative))),
-                None => entries.push((Entry::Pattern, pattern)),
+                None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
         }
     }
     let ignored = &*ignored;
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut is_anything_ignored = false;
-    for (entry, input) in entries {
+    for (entry, input, written) in entries {
         // What the paths that `fast-glob` returns start with, which they are sorted by.
         let mut written_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
         let (mut found, nothing): (Vec<Target>, &[u8]) = match entry {
@@ -698,6 +710,11 @@ pub(crate) fn expand(
                 )
             }
             Entry::Directory(path) => {
+                // Prettier finds the files and then leaves each of them out, so this is no error.
+                if ignored.ignores_directory(&path) {
+                    is_anything_ignored = true;
+                    continue;
+                }
                 let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, false)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
                 written_base = (paths::relative(&cwd, &path), path);
@@ -712,14 +729,30 @@ pub(crate) fn expand(
                 if parent != b"." {
                     written_base = (parent, base.clone());
                 }
+                // `fast-glob` matches a path as the pattern writes where it starts: what an absolute pattern finds is absolute.
+                let is_absolute = paths::is_absolute(pattern);
+                let absolute = |relative: &[u8]| {
+                    let from_base = paths::relative(&base, &paths::resolve(&cwd, relative));
+                    paths::join(&written_base.0, &from_base)
+                };
                 let found = match fs::kind(&base) {
+                    Some(fs::Kind::Directory) if ignored.ignores_directory(&base) => {
+                        is_anything_ignored = true;
+                        continue;
+                    }
                     Some(fs::Kind::Directory) => search(
                         configs,
                         pool,
                         ignored,
                         &base,
-                        &|relative| glob.matches(relative),
-                        &|relative| glob.matches_partially(relative),
+                        &|relative| match is_absolute {
+                            true => glob.matches(&absolute(relative)),
+                            false => glob.matches(relative),
+                        },
+                        &|relative| match is_absolute {
+                            true => glob.matches_partially(&absolute(relative)),
+                            false => glob.matches_partially(relative),
+                        },
                         false,
                     )?,
                     _ => Vec::new(),
@@ -729,7 +762,9 @@ pub(crate) fn expand(
         };
         if found.is_empty() {
             if error_on_unmatched_pattern {
-                expanded.push(Expanded::Error([nothing, b": \"", &input, b"\"."].concat()));
+                expanded.push(Expanded::Error(
+                    [nothing, b": \"", written, b"\"."].concat(),
+                ));
             }
             continue;
         }

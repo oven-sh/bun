@@ -5,7 +5,7 @@
 //! - `comment-parser <cases.json>`: `ConfigCommentParser` for each `{ method, text }`.
 //! - `json-parse <cases.json>`: `JSON.parse` for each string.
 //! - `globals <cases.json>`: for each `{ code, filename, languageOptions, names }`, what `File::global` says about each name.
-//! - `environments`: the tables of the `globals` package.
+//! - `environments [eslint8 | oxlint]`: the tables of the `globals` package, or those of another tool.
 //! - `minimatch <cases.json>`: for each `{ pattern, path, flipNegate, partial }`, whether it matches.
 //! - `config <cases.json>`: for each `{ basePath, config, flavor, files, directories }`, the configuration of each file, and
 //!   whether each directory is ignored.
@@ -357,9 +357,15 @@ fn globals(args: &[String]) {
     print(&out);
 }
 
-fn environments() {
-    let tables = bun_lint::linter::globals::environments().map(|name| {
-        let variables = bun_lint::linter::globals::environment(name.as_bytes())
+fn environments(args: &[String]) {
+    use bun_lint::linter::globals::Tables;
+    let whose = match args.first().map(String::as_str) {
+        Some("eslint8") => Tables::Eslint8,
+        Some("oxlint") => Tables::Oxlint,
+        _ => Tables::Today,
+    };
+    let tables = bun_lint::linter::globals::environments(whose).map(|name| {
+        let variables = bun_lint::linter::globals::environment(name.as_bytes(), whose)
             .into_iter()
             .flatten();
         let variables = variables
@@ -991,7 +997,7 @@ pub(crate) fn run(args: &[String]) {
         Some("comment-parser") => comment_parser(&args[1..]),
         Some("json-parse") => json_parse(&args[1..]),
         Some("globals") => globals(&args[1..]),
-        Some("environments") => environments(),
+        Some("environments") => environments(&args[1..]),
         Some("minimatch") => minimatch(&args[1..]),
         Some("validate") => validate(&args[1..]),
         Some("bench") => bench(&args[1..]),

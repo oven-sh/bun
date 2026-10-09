@@ -155,7 +155,9 @@ function report(position, meta, args) {
   else assert(descriptor.loc, "Node must be provided when reporting error if location is not provided");
   const message = messageOf(descriptor, messages);
   validateSuggestions(descriptor.suggest, messages);
-  const loc = descriptor.loc ?? descriptor.node.loc;
+  // `{ ...node }` has no `loc`, which a node here computes when it is asked for.
+  const ofRange = ({ range }) => ({ start: locationOf(range[0]), end: locationOf(range[1]) });
+  const loc = descriptor.loc ?? descriptor.node.loc ?? ofRange(descriptor.node);
   const start = loc.start ?? loc;
   const end = loc.start ? loc.end : null;
   const fix = wantsFixes ? normalizeFixes(descriptor) : null;

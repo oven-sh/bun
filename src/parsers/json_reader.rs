@@ -14,20 +14,14 @@ use bun_core::StackCheck;
 use bun_core::lexer as identifier;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
+use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use std::simd::{mask8x32, u8x32};
 
 use crate::json::JSONOptions;
 use crate::json_index::{IndexError, is_ls_ps};
 use crate::json_stage2::is_exotic_whitespace;
 
 type PResult<T = ()> = crate::Result<T>;
-
-/// AN EXPERIMENT ON CYCLES, for a build or two. Bits: 1 the lines of a text are touched before it is
-/// read, 2 a branch on whether a string has 8 bytes, 4 the indentation is not guessed, 8 strings up to 32 bytes by `std::simd`.
-pub(crate) static VARIANT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
-/// To tell one build from another.
-#[used]
-static BUILD: [u8; 25] = *b"json_reader experiment 12";
 
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
@@ -44,7 +38,6 @@ pub(crate) struct Parser<'a, 's> {
     /// What is wrong with a `/`. There are no tokens from there on.
     pub(crate) index_error: Option<IndexError>,
     opts: JSONOptions,
-    variant: u8,
     is_json5: bool,
     /// Where the first token of a text of JSON5 starts.
     first_token: usize,
@@ -158,10 +151,52 @@ fn special_bytes(bytes: &[u8; 8], quote: u8) -> u64 {
     (is_quote | is_backslash | is_control) & !word & HIGH_BITS
 }
 
-/// How many of the first 16 bytes of `text` are before the first `quote`, backslash or control
-/// character. 0 if `text` is shorter.
+/// How many of the first 32 bytes of `text` are before the first `quote`, backslash or control
+/// character.
+///
+/// Without a branch: how long a string is cannot be predicted, and nine of ten have at most 32 bytes.
 #[inline(always)]
 fn short_plain_len(text: &[u8], quote: u8) -> usize {
+    let Some(bytes) = text.first_chunk::<32>() else {
+        return short_plain_len_at_the_end(text, quote);
+    };
+    let bytes = u8x32::from_array(*bytes);
+    let special = bytes.simd_eq(u8x32::splat(quote))
+        | bytes.simd_eq(u8x32::splat(b'\\'))
+        | bytes.simd_lt(u8x32::splat(0x20));
+    first_of_32(special)
+}
+
+/// The index of the first of `lanes` that is set. 32 if none is.
+#[inline(always)]
+fn first_of_32(lanes: mask8x32) -> usize {
+    let first = (lanes.to_bitmask() | (1 << 32)).trailing_zeros() as usize;
+    // FOR ONE BUILD: the form for aarch64 gives the same.
+    assert_eq!(first, first_of_32_for_aarch64(lanes));
+    first
+}
+
+#[used]
+static BUILD: [u8; 25] = *b"json_reader experiment 13";
+
+/// The index of the first of `lanes` that is set. 32 if none is.
+///
+/// The least of the indices of the lanes that are set: `umin`, `uminv` and one `umov`. The bits of a mask
+/// in a general register take six `addp` and two `umov` there, in the one chain that everything waits for.
+#[inline(always)]
+fn first_of_32_for_aarch64(lanes: mask8x32) -> usize {
+    use std::simd::Select;
+    use std::simd::num::SimdUint;
+    const INDICES: u8x32 = u8x32::from_array([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]);
+    lanes.select(INDICES, u8x32::splat(32)).reduce_min() as usize
+}
+
+/// The same for the first 16 bytes, where the text has no 32 more. 0 if it has no 16.
+#[inline(always)]
+fn short_plain_len_at_the_end(text: &[u8], quote: u8) -> usize {
     let Some((first, rest)) = text.split_first_chunk::<8>() else {
         return 0;
     };
@@ -172,36 +207,6 @@ fn short_plain_len(text: &[u8], quote: u8) -> usize {
     let in_first = special_bytes(first, quote).trailing_zeros() / 8;
     let in_second = special_bytes(second, quote).trailing_zeros() / 8;
     (in_first + if in_first == 8 { in_second } else { 0 }) as usize
-}
-
-/// The same for the first 32 bytes.
-#[inline(always)]
-fn short_plain_len_of_32(text: &[u8], quote: u8) -> usize {
-    use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
-    use std::simd::u8x32;
-    let Some(bytes) = text.first_chunk::<32>() else {
-        return short_plain_len(text, quote);
-    };
-    let bytes = u8x32::from_array(*bytes);
-    let special = bytes.simd_eq(u8x32::splat(quote))
-        | bytes.simd_eq(u8x32::splat(b'\\'))
-        | bytes.simd_lt(u8x32::splat(0x20));
-    (special.to_bitmask() | (1 << 32)).trailing_zeros() as usize
-}
-
-#[inline(always)]
-fn short_plain_len_with_a_branch(text: &[u8], quote: u8) -> usize {
-    let Some((first, rest)) = text.split_first_chunk::<8>() else {
-        return 0;
-    };
-    let Some(second) = rest.first_chunk::<8>() else {
-        return 0;
-    };
-    let found = special_bytes(first, quote);
-    if found != 0 {
-        return (found.trailing_zeros() / 8) as usize;
-    }
-    8 + (special_bytes(second, quote).trailing_zeros() / 8) as usize
 }
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. It can also
@@ -289,7 +294,6 @@ impl<'a, 's> Parser<'a, 's> {
             first_comment: None,
             index_error: None,
             opts,
-            variant: VARIANT.load(core::sync::atomic::Ordering::Relaxed),
             is_json5: false,
             first_token: 0,
             token_start: 0,
@@ -306,11 +310,6 @@ impl<'a, 's> Parser<'a, 's> {
             dup_maps: Vec::new(),
             spill_depth: 0,
         };
-        if parser.variant & 1 != 0 {
-            // All at once: what reads the text waits for each line in turn.
-            let lines = parser.contents.chunks(64).take(64);
-            core::hint::black_box(lines.fold(0u8, |all, line| all | line[0]));
-        }
         parser.skip_from(0);
         parser
     }
@@ -391,7 +390,7 @@ impl<'a, 's> Parser<'a, 's> {
             && let Some(line) = line.first_chunk::<8>()
         {
             let line = u64::from_le_bytes(*line);
-            if len < 8 && self.variant & 4 == 0 {
+            if len < 8 {
                 let other = (line ^ bytes) & ((1 << (8 * len)) - 1);
                 let first = (line >> (8 * len)) as u8;
                 if other == 0 && first > b' ' && first != b'/' {
@@ -885,11 +884,7 @@ impl<'a, 's> Parser<'a, 's> {
         open: usize,
     ) -> PResult<(E::Str, bool, usize)> {
         let rest = &self.contents[open + 1..];
-        let len = match self.variant & 10 {
-            0 => short_plain_len(rest, b'"'),
-            2 => short_plain_len_with_a_branch(rest, b'"'),
-            _ => short_plain_len_of_32(rest, b'"'),
-        };
+        let len = short_plain_len(rest, b'"');
         if rest.get(len) == Some(&b'"') {
             let string = E::Str::new(&rest[..len]);
             // A branch, which is predicted, and not a sum.
@@ -914,7 +909,7 @@ impl<'a, 's> Parser<'a, 's> {
         }
     }
 
-    /// A string of more than 16 bytes, at the end of the text, or with a backslash or a control
+    /// A string of more than 32 bytes, at the end of the text, or with a backslash or a control
     /// character in it. None of them, and no quote, is before `from`.
     #[inline(never)]
     fn parse_long_string(&mut self, open: usize, from: usize) -> PResult<(E::Str, usize)> {

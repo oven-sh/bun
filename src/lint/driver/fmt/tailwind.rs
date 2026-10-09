@@ -343,7 +343,7 @@ impl Classes {
                 .chain(&group.stale)
                 .map(|it| &it[..])
                 .collect();
-            classes.sort_unstable();
+            bun_collections::index_sort::sort_slice(&mut classes[..]);
             classes.dedup();
             let classes = classes.into_iter().map(|it| Json::String(it.to_vec()));
             let mut entries = which.entries();

@@ -345,6 +345,8 @@ struct Fixing {
     original_len: usize,
     /// The fixes are given up, and `current` is what it was at first: see [`max_fixed_len`].
     has_grown_too_much: bool,
+    /// The rules whose fixes the last pass has applied, and whether the text had changed before it.
+    last_pass: Option<(Vec<RuleId>, bool)>,
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -383,6 +385,21 @@ pub(crate) fn lint(
                 result
                     .messages
                     .insert(0, grows_too_much(state.original_len));
+            }
+            // The fixes of the last pass are taken back.
+            if matches!(&result.messages[..], [only] if only.is_fatal)
+                && let (Some(before), Some((rules, was_fixed))) =
+                    (state.previous.take(), state.last_pass.take())
+            {
+                context.note_broken_fixes(file.path, rules);
+                *state = Fixing {
+                    current: Some(before),
+                    is_fixed: was_fixed,
+                    is_over: true,
+                    ..Fixing::default()
+                };
+                next.push(index);
+                continue;
             }
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
                 let mut result = context.result(
@@ -429,12 +446,23 @@ pub(crate) fn lint(
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
+                if !context.parses(file.path, &fixed.output, file.config) {
+                    context.note_broken_fixes(file.path, fixed.applied);
+                    *state = Fixing {
+                        current: file.text.clone(),
+                        is_over: true,
+                        ..Fixing::default()
+                    };
+                    next.push(index);
+                    continue;
+                }
                 finish(result, Some(text.clone()), true);
                 if let Some(done) = &mut done[index] {
                     done.fixed_text = Some(fixed.output);
                 }
                 continue;
             }
+            state.last_pass = Some((fixed.applied, state.is_fixed));
             state.is_fixed = true;
             let before_the_last = state.previous.replace(text.clone());
             let is_circular = state.passes > 1 && before_the_last.as_ref() == Some(&fixed.output);

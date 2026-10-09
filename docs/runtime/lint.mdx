@@ -139,7 +139,7 @@ Types are not there for a rule in JavaScript. `parserServices.program` is `null`
 
 ### Other languages
 
-A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. Keep `eslint` in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
+A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
 
 ### Processors
 
@@ -188,6 +188,8 @@ The rules are those of ESLint 10, with the default options, the option schemas, 
     ```
 
     Keep the flags and the arguments. `oxlint --deny-warnings src` becomes `bun lint --deny-warnings src`.
+
+    If the project runs ESLint too, add `--flavor=oxlint`: `oxlint --fix` becomes `bun lint --flavor=oxlint --fix`. Without it, `bun lint` [stops and asks](#a-project-with-both-tools).
 
     Change the script before you try the command. While the script says `oxlint`, `bun lint` [runs the script](#if-packagejson-has-a-lint-script), so it runs oxlint.
 
@@ -550,6 +552,7 @@ These differences are intentional:
 - **`--print-config` leaves out the default options of rules.**
 - **A rule reports at most 65,536 problems in one file**, and at most 256 MB of messages and fixes. One more problem then says that the rest are not shown.
 - **`--fix` leaves a file as it is if the fixes would make it larger than 64 MB and than 64 times its size.** A warning says so.
+- **`--fix` does not write a file that no longer parses.** If the fixes of a pass leave a syntax error, `bun lint` takes them back, reports the problems as not fixed, and names the rules in a warning. ESLint writes the file.
 - **`--fix` does not write through a link that leads out of the repository**, or out of the working directory if that is in no repository. ESLint and oxlint do. The run fails and names the file.
 - **A file that TypeScript finds too large for control flow analysis (TS2563) gets a warning.** What rules that need types say about it may be wrong or incomplete, as in typescript-eslint, which says nothing.
 - **A summary line on stderr** says how many files were linted and how long it took.
@@ -572,6 +575,7 @@ These differences are intentional:
 - **`--ignore-path ./file` works.** oxlint ignores the flag if the path starts with `./`.
 - **More is accepted:** an argument with `..` in it, `--max-warnings -1`, and a configuration file that starts with a byte order mark. oxlint refuses them.
 - **A pattern in the options of a rule is a JavaScript regular expression.** oxlint compiles it with Rust's `regex`, where `(?x)`, `\z`, and `[[:alpha:]]` mean something else.
+- **`--fix` does not write a file that no longer parses.** `bun lint` leaves the file as it is, reports the problems as not fixed, and names the rules in a warning. oxlint writes the file: `foo(...[,])` becomes `foo(,)`.
 - **The limits on problems and fixes** in [Differences from ESLint](#differences-from-eslint) apply too.
 
 ## CLI usage

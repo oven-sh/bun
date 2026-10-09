@@ -36,6 +36,7 @@ pub(crate) fn lower_expression(
     })
 }
 
+#[inline(always)]
 fn lower_expression_without_cast(
     builder: &mut HirBuilder,
     expr: &Expr,

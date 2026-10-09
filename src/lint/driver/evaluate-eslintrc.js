@@ -122,11 +122,7 @@ require.cache[nodePath.join(pluginsFrom, "node_modules", "eslint", "lib", "linte
 
 // The rules of version 8 of typescript-eslint are all implemented here, and to load it is to load TypeScript: of that version only
 // the configurations are loaded, which are modules of their own. `file`: its main module.
-function configsOfTypescript(file) {
-  let version;
-  try {
-    ({ version } = require(resolveFrom("@typescript-eslint/eslint-plugin/package.json", file)));
-  } catch {}
+function configsOfTypescript(file, version) {
   if (!(parseInt(version, 10) >= 8)) return null;
   return name => {
     for (const directory of ["configs/eslintrc", "configs"]) {
@@ -161,7 +157,13 @@ function plugin(name, from) {
     // Not printed.
     const hide = (key, value) => Object.defineProperty(found, key, { value });
     hide("file", file);
-    hide("config", request === "@typescript-eslint/eslint-plugin" ? configsOfTypescript(file) : null);
+    if (request === "@typescript-eslint/eslint-plugin") {
+      // What its rules do by default follows it.
+      try {
+        found.version = require(resolveFrom(`${request}/package.json`, file)).version;
+      } catch {}
+    }
+    hide("config", found.version === undefined ? null : configsOfTypescript(file, found.version));
     const loaded = found.config ? {} : require(file);
     if (!found.config) hide("loaded", loaded);
     found.path = portable(file);

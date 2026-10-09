@@ -1,7 +1,7 @@
 //! ESLint's `languageOptions` and `settings`: what the configuration says about the code of a
 //! file.
 
-use crate::linter::globals::ConfigGlobals;
+use crate::linter::globals::{ConfigGlobals, Tables, environment};
 use crate::options::Json;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use std::sync::{Arc, OnceLock};
@@ -70,8 +70,6 @@ pub struct LanguageOptions {
     pub globals: Vec<(Box<[u8]>, Global)>,
     /// The names that `globals` itself turns on, without those of an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
-    /// An `env` is on in which oxlint has `Temporal`, which is none of its built-in globals.
-    pub has_temporal_in_env: bool,
     pub parser: Parser,
     /// `parserOptions.ecmaFeatures.globalReturn`
     pub global_return: bool,
@@ -232,6 +230,15 @@ impl LanguageOptions {
     /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
     /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
+        Self::from_json_for(language_options, settings, Tables::Today)
+    }
+
+    /// The same. `whose`: whose environments `$env` names.
+    pub(crate) fn from_json_for(
+        language_options: &Json,
+        settings: &Json,
+        whose: Tables,
+    ) -> LanguageOptions {
         let parser_options = language_options
             .get(b"parserOptions")
             .cloned()
@@ -260,22 +267,19 @@ impl LanguageOptions {
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         let mut written_globals: Vec<Box<[u8]>> = Vec::new();
-        let mut has_temporal_in_env = false;
         // `env` of an `.eslintrc` or an `.oxlintrc.json`.
         for (name, is_enabled) in language_options
             .get(b"$env")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
+            // oxlint has an `es6` of its own.
+            let name: &[u8] = match whose {
+                Tables::Today | Tables::Eslint8 if name == b"es6" => b"es2015",
+                _ => name,
+            };
             if is_enabled.as_bool() == Some(true) {
-                has_temporal_in_env |= matches!(
-                    name,
-                    b"browser" | b"node" | b"serviceworker" | b"shared-node-browser" | b"worker"
-                );
-                let variables = crate::linter::globals::environment(name)
-                    .into_iter()
-                    .flatten();
+                let variables = environment(name, whose).into_iter().flatten();
                 globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
             }
         }
@@ -304,7 +308,6 @@ impl LanguageOptions {
             source_type,
             globals,
             written_globals,
-            has_temporal_in_env,
             parser,
             // ESLint turns it off for espree in a module.
             global_return: feature(b"globalReturn")
@@ -413,7 +416,6 @@ impl Default for LanguageOptions {
             source_type: SourceType::Module,
             globals: Vec::new(),
             written_globals: Vec::new(),
-            has_temporal_in_env: false,
             parser: Parser::Espree,
             global_return: false,
             implied_strict: false,

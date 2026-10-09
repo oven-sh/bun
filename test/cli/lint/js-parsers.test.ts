@@ -335,7 +335,7 @@ const eslintPackage = {
     exports.Linter = class Linter {
       #suppressed = [];
       verify(text, [config], { filename, disableFixes }) {
-        const [prefix, name] = config.language.split("/");
+        const [prefix, name] = (config.language ?? "@/js").split("/");
         const { ast } =
           prefix === "@"
             ? config.languageOptions.parser.parseForESLint(text, config.languageOptions.parserOptions)

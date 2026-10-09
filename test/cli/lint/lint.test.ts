@@ -544,6 +544,14 @@ describe.concurrent("bun lint", () => {
         ["a.js", "export {};\nstatic = 1;"],
         ["a.js", "[a()] = b;"],
         ["a.js", "a = /a/gg;"],
+        ["a.js", '"use strict";\n(function (a, b, a) {});'],
+        ["a.js", '(function (a, b, a) { "use strict"; });'],
+        ["a.js", "(function (a, b, a) {});\nexport {};"],
+        ["a.js", "((a, a) => 1);"],
+        ["a.js", "function f(a, [a]) {}"],
+        ["a.js", "class A { b = function (a, a) {} }"],
+        ["a.ts", "type A = (a: number, a: number) => void;"],
+        ["a.ts", "declare function f(a: number, a: number): void;\nexport {};"],
       ])("what OXC refuses is a parsing error: %s: %j", async (name, code) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
         expect(stdout).toContain(": Parsing error: ");
@@ -560,6 +568,10 @@ describe.concurrent("bun lint", () => {
         ["a.ts", "let = 1;"],
         ["a.js", "function f() { await (1); }"],
         ["a.tsx", "if (f) function f() {}"],
+        ["a.js", "(function (a, b, a) {});"],
+        ["a.cjs", "(function (a, a) {});"],
+        ["a.ts", "declare function f(a: number, a: number): void;"],
+        ["a.ts", "function f(a: (a: number) => void, b = (a: number) => a) {}\nexport {};"],
         // What acorn does not know, or typescript-estree throws.
         ["a.ts", "class A { accessor b = 1 }"],
         ["a.js", "class A { accessor b = 1 }"],
@@ -1582,6 +1594,72 @@ describe.concurrent("bun lint", () => {
       expect(JSON.parse(result.raw)[0].output).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
     });
 
+    describe("fixes after which the text cannot be parsed are not written", () => {
+      const warning = (rules: string, file: string) =>
+        `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;
+
+      // oxlint 1.87 writes `foo(,);`, `await x ^= y;` and "declare module String.raw`a\\b` {}".
+      test.each([
+        ["a.js", "foo(...[,]);\n", "no-useless-spread"],
+        [
+          "b.js",
+          "async function f(x, y) { await Promise.race([x ^= y,],); }\nf();\n",
+          "no-single-promise-in-promise-methods",
+        ],
+        ["c.ts", "declare module 'a\\\\b' {}\n", "prefer-string-raw"],
+      ])("%s, with an .oxlintrc.json", async (name, text, rule) => {
+        const rules = { [`unicorn/${rule}`]: "error" };
+        const oxlintrc = JSON.stringify({ plugins: ["unicorn"], categories: { correctness: "off" }, rules });
+        const all = { ".oxlintrc.json": oxlintrc, [name]: text };
+        const result = await lint(all, ["--fix", "-f", "unix", name], { reads: [name] });
+        expect(result.files).toEqual({ [name]: text });
+        expect(result.stderr).toContain(warning(`unicorn/${rule}`, name));
+        expect(result.stdout).toContain(`unicorn(${rule})`);
+        expect(result.exitCode).toBe(1);
+      });
+
+      const plugin = `
+        const rule = (from, to) => ({
+          meta: { fixable: "code" },
+          create: context => ({
+            Identifier(node) {
+              if (node.name === from) context.report({ node, message: from, fix: fixer => fixer.replaceText(node, to) });
+            },
+          }),
+        });
+        export default [{
+          plugins: { p: { rules: { fine: rule("one", "two"), breaks: rule("two", "(") } } },
+          rules: { "p/fine": "error", "p/breaks": "error", "no-var": "error" },
+        }];`;
+
+      test("of a plugin in JavaScript: none of the fixes of that pass", async () => {
+        const all = { "eslint.config.mjs": plugin, "a.js": "var a = two;\nexport { a };\n" };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": all["a.js"] });
+        expect(result.stderr).toContain(warning("no-var, p/breaks", "a.js"));
+        expect(result.stdout).toContain("[Error/no-var]");
+        expect(result.stdout).toContain("[Error/p/breaks]");
+        expect(result.exitCode).toBe(1);
+        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
+        expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
+        expect(JSON.parse(dry.raw)[0].messages.map((it: { ruleId: string }) => it.ruleId)).toEqual([
+          "no-var",
+          "p/breaks",
+        ]);
+      });
+
+      test("the fixes of the passes before it stay", async () => {
+        const all = { "eslint.config.mjs": plugin, "a.js": "var a = one;\nexport { a };\n" };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": "let a = two;\nexport { a };\n" });
+        expect(result.stderr).toContain(warning("p/breaks", "a.js"));
+        expect(result.stdout).toContain("[Error/p/breaks]");
+        expect(result.exitCode).toBe(1);
+        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
+        expect(JSON.parse(dry.raw)[0].output).toBe("let a = two;\nexport { a };\n");
+      });
+    });
+
     test("--fix-type", async () => {
       const result = await lint(files, ["--fix", "--fix-type", "layout", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": "var a = 1;\nif (a == 2) { debugger; }\n" });
@@ -2268,8 +2346,9 @@ describe.concurrent("bun lint", () => {
       slow,
     );
 
-    // As for TypeScript, which drops it.
-    test("the byte order mark is no character of the line that a type error is in", async () => {
+    // For TypeScript, which drops it, it is column 14. In oxlint's formats a column counts bytes, of which the mark has three, as for
+    // every other problem. (oxlint 1.87.0 puts what tsgolint reports three bytes too far to the left in all of such a file.)
+    test("a type error is where it is, with a byte order mark before it, on the disk and on standard input", async () => {
       const project = {
         "tsconfig.json": files["tsconfig.json"],
         ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" } }),
@@ -2279,7 +2358,7 @@ describe.concurrent("bun lint", () => {
       const read = await lint(project, args);
       const piped = await lint(project, [...args, "--stdin", "--stdin-filename", "a.ts"], { stdin: project["a.ts"] });
       const where = (text: string) => /a\.ts:\d+:\d+: Type 'string'/.exec(text)?.[0];
-      expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:14: Type 'string'", "a.ts:1:14: Type 'string'"]);
+      expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:17: Type 'string'", "a.ts:1:17: Type 'string'"]);
     });
 
     test("rules that are about several files run on a file that is linted with types", async () => {

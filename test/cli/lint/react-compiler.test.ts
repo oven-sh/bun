@@ -263,6 +263,16 @@ describe.concurrent(
       // Nothing for `$FlowFixMe[react-rule-hook]` and `[react-rule-unsafe-ref]`, for a file with a decorator, and for a component
       // without a name.
       expect(briefly(files)).toEqual({
+        "casts.tsx": [
+          "react-hooks/static-components 7:8-7:13 Error: Cannot create components during render",
+          "react-hooks/immutability 13:4-13:16 Error: This value cannot be modified",
+          "react-hooks/refs 19:22-19:40 Error: Cannot access refs during render",
+          "react-hooks/refs 20:19-20:30 Error: Cannot access refs during render",
+          "react-hooks/memo-dependencies 25:39-25:46 Error: Found missing memoization dependencies",
+          "react-hooks/use-memo 25:50-25:66 Error: Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+          "react-hooks/immutability 30:4-30:33 Error: This value cannot be modified",
+          "react-hooks/immutability 35:3-35:14 Error: This value cannot be modified",
+        ],
         "disabled.jsx": [],
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],

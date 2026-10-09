@@ -54,6 +54,16 @@ enum Property<'a> {
     Computed(Expr<'a>),
 }
 
+impl<'a> Property<'a> {
+    /// Whether it is written as the name `left`, or as a string with that text.
+    fn is_called(self, left: Option<Name<'a>>) -> bool {
+        match self {
+            Property::Name(name) => left == Some(name),
+            Property::Computed(index) => left.is_some() && left == index.as_string(),
+        }
+    }
+}
+
 /// `e` as a `MemberExpression` that could be destructured: not an optional chain, not of `super`,
 /// not of a private name.
 fn member_expression(e: Expr<'_>) -> Option<(Expr<'_>, Property<'_>)> {
@@ -106,10 +116,7 @@ impl Config {
         if !enabled.object || is_port_of_oxlint && is_template {
             return None;
         }
-        let has_same_name = match property {
-            Property::Name(name) => left == Some(name),
-            Property::Computed(index) => left.is_some() && left == index.as_string(),
-        };
+        let has_same_name = property.is_called(left);
         (self.enforce_for_renamed_properties || has_same_name).then_some("object")
     }
 
@@ -126,10 +133,7 @@ impl Config {
         let Some(kind) = self.perform_check(self.variable_declarator, left, property, is_port_of_oxlint) else {
             return;
         };
-        let has_same_name = match property {
-            Property::Name(name) => left == Some(name),
-            Property::Computed(index) => left.is_some() && left == index.as_string(),
-        };
+        let has_same_name = property.is_called(left);
         // oxlint's port of ESLint's rule points at the value, without its parentheses if the name is another.
         let place = match declaration.init() {
             Some(init) if is_port_of_oxlint && kind == "object" && !has_same_name => init.span(),

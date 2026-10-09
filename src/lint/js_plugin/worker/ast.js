@@ -35,7 +35,17 @@ class Node {
 // espree also leaves out the `directive` of a statement that is none.
 const leftOut = new Set(["Literal.regex", "Literal.bigint", "TSModuleDeclaration.body"]);
 
-// The deprecated properties of typescript-estree that are other properties by an older name. They are not enumerable.
+// By node: the node that typescript-estree makes for a deprecated property of it.
+const madeFor = new WeakMap();
+
+// It has no `parent`: nothing goes through it.
+function makeFor(node, type, range, fields) {
+  if (!madeFor.has(node)) madeFor.set(node, Object.assign(Object.create(Node.prototype), { type, ...fields, range }));
+  return madeFor.get(node);
+}
+
+// The deprecated properties of typescript-estree: other properties by an older name, or in a node of their own. They are not
+// enumerable. The rules of typescript-eslint until version 7 read them.
 const deprecated = {
   ImportDeclaration: { assertions: node => node.attributes },
   ExportNamedDeclaration: { assertions: node => node.attributes },
@@ -43,6 +53,18 @@ const deprecated = {
   ImportExpression: { attributes: node => node.options },
   TSEnumDeclaration: { members: node => node.body.members },
   TSEnumMember: { computed: node => node.id.type !== "Identifier" && node.id.type !== "Literal" },
+  TSImportType: { argument: node => makeFor(node, "TSLiteralType", [...node.source.range], { literal: node.source }) },
+  TSMappedType: {
+    typeParameter: ({ key, constraint }, node) =>
+      makeFor(node, "TSTypeParameter", [key.range[0], constraint.range[1]], {
+        const: false,
+        constraint,
+        default: undefined,
+        in: false,
+        name: key,
+        out: false,
+      }),
+  },
 };
 
 // `types`: for each type `[name, [[field, flags], ..]]`. See `write_start` in `schema.rs`.
@@ -80,7 +102,7 @@ function defineTypes(types, strings) {
       for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
         Object.defineProperty(constructors[0][id].prototype, key, {
           get() {
-            return get(this);
+            return get(this, this);
           },
           set(value) {
             Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });

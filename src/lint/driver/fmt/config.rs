@@ -891,17 +891,28 @@ impl<'c> Configs<'c> {
         } else {
             NAMES.len()
         };
+        // Prettier asks the file system for each name, and one that does not tell `A` from `a` has `.prettierrc` if
+        // `.PrettierRC` is there.
+        let is_called = |name: &[u8], wanted: &[u8]| {
+            name == wanted
+                || (name.eq_ignore_ascii_case(wanted)
+                    && bun_sys::exists(&paths::join(directory, wanted)))
+        };
         let mut listed = Listed::default();
-        for name in names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o'))) {
-            match name {
-                b".editorconfig" => listed.has_editorconfig = true,
-                b".git" | b".hg" => listed.is_project_root = true,
-                name => listed.candidates.extend(
+        for name in
+            names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
+        {
+            if is_called(name, b".editorconfig") {
+                listed.has_editorconfig = true;
+            } else if is_called(name, b".git") || is_called(name, b".hg") {
+                listed.is_project_root = true;
+            } else {
+                listed.candidates.extend(
                     NAMES
                         .iter()
-                        .position(|it| *it == name)
+                        .position(|it| is_called(name, it))
                         .filter(|at| *at < count),
-                ),
+                );
             }
         }
         self.scope_of(directory, listed, above)
@@ -918,6 +929,7 @@ impl<'c> Configs<'c> {
         if self.named.is_none() && self.options.config_lookup {
             // One after the other: a `package.json` need not have a configuration.
             sort_slice(&mut candidates[..]);
+            candidates.dedup();
             if let [first, second, ..] = candidates[..]
                 && second < NAMES_OF_OXFMT
             {

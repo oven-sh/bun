@@ -1,5 +1,5 @@
 // `.oxlintrc.json` as oxlint itself applies it (`categories`, `rules`, `overrides`, `ignorePatterns`, `extends`)
-// against `Config::from_rc_json` with `RcFlavor::Oxlint`: generated projects are linted by both, and
+// against `Config::from_rc_json`: generated projects are linted by both, and
 // which rule reports with which severity on which line of which file is compared.
 //
 //   OXLINT=<the oxlint executable> node oxlintrc.mjs

@@ -13,7 +13,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Engine, Host, Loading, Route};
-use bun_lint::linter::{FileConfig, LintMessage, Linter, Registry};
+use bun_lint::linter::{FileConfig, LintMessage, Linter, Registry, RuleId};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
@@ -851,9 +851,11 @@ impl Run<'_> {
         let memory = bun_sema::session::Session::new();
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let broken_fixes = Guarded::new(Vec::new());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
+            broken_fixes: &broken_fixes,
             memory: &memory,
             atoms: &atoms,
             linter: &linter,
@@ -913,6 +915,23 @@ impl Run<'_> {
                 b" in JavaScript did not run, only the built-in rules have types: ",
                 &ids.join(&b", "[..]),
             ]);
+        }
+        let mut broken = std::mem::take(&mut *broken_fixes.lock());
+        bun_lint::utils::sort::sort_by(&mut broken, |a, b| a.0.cmp(&b.0));
+        for (path, rules) in &broken {
+            let rules: Vec<Vec<u8>> = rules.iter().map(RuleId::to_vec).collect();
+            let of: &[u8] = if rules.is_empty() { b"" } else { b" of " };
+            self.warn(
+                &[
+                    b"Fixes",
+                    of,
+                    &rules.join(&b", "[..])[..],
+                    b" would leave ",
+                    &paths::relative(&environment.cwd, &paths::from_native(path))[..],
+                    b" with a syntax error. They are not applied.",
+                ]
+                .concat(),
+            );
         }
         let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *out_of_stack.lock());
         if !incomplete.is_empty() {

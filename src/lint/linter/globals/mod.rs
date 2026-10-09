@@ -13,7 +13,7 @@
 //! | `variable.isTypeVariable`, `isValueVariable` | [`GlobalVariable::is_type`], [`GlobalVariable::is_value`] |
 //! | the variables with `eslintExplicitGlobal` | [`File::globals_in_comments`] |
 //! | `astUtils.getNameLocationInGlobalDirectiveComment` | [`File::name_in_global_comment`] |
-//! | `require("globals").browser` | [`environment`]`(b"browser")` |
+//! | `require("globals").browser` | [`environment`]`(b"browser", Tables::Today)` |
 
 mod tables;
 
@@ -27,6 +27,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 const WRITABLE: u16 = 1;
+/// Of a change to an environment: the name is not in it.
+const REMOVED: u16 = 2;
 const TYPE: u8 = 1;
 const VALUE: u8 = 2;
 
@@ -59,30 +61,105 @@ fn entries(start: u16, len: u16) -> &'static [u16] {
         .unwrap_or_default()
 }
 
-fn variables(start: u16, len: u16) -> impl Iterator<Item = (&'static [u8], Global)> {
-    entries(start, len).iter().map(|entry| {
-        let setting = if entry & WRITABLE != 0 {
-            Global::Writable
-        } else {
-            Global::Readonly
-        };
-        (name_at((entry >> 2) as usize), setting)
-    })
+fn variable(entry: u16) -> (&'static [u8], Global) {
+    let setting = if entry & WRITABLE != 0 {
+        Global::Writable
+    } else {
+        Global::Readonly
+    };
+    (name_at((entry >> 2) as usize), setting)
 }
 
-/// The variables of an environment of the `globals` package: `browser`, `node`, `es2021`, `jest`,
-/// `shared-node-browser`, .. Sorted by name. `None` if there is no such environment.
-pub fn environment(name: &[u8]) -> Option<impl Iterator<Item = (&'static [u8], Global)>> {
-    let at = tables::ENVIRONMENTS
-        .binary_search_by(|it| it.0.as_bytes().cmp(name))
-        .ok()?;
-    let (_, start, len) = tables::ENVIRONMENTS[at];
-    Some(variables(start, len))
+fn variables(start: u16, len: u16) -> impl Iterator<Item = (&'static [u8], Global)> {
+    entries(start, len).iter().copied().map(variable)
+}
+
+/// Whose environments.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Tables {
+    /// The `globals` package of today.
+    Today,
+    /// What ESLint 8.57.1 comes with.
+    Eslint8,
+    /// The crate that oxlint is built with.
+    Oxlint,
+}
+
+type Rows = &'static [(&'static str, u16, u16)];
+
+impl Tables {
+    /// Where its environments are other than `ENVIRONMENTS`.
+    fn changes(self) -> Rows {
+        match self {
+            Tables::Today => &[],
+            Tables::Eslint8 => tables::CHANGES_FOR_ESLINT_8,
+            Tables::Oxlint => tables::CHANGES_FOR_OXLINT,
+        }
+    }
+}
+
+fn entries_of(rows: Rows, name: &[u8]) -> Option<&'static [u16]> {
+    let at = rows.binary_search_by(|it| it.0.as_bytes().cmp(name)).ok()?;
+    rows.get(at).map(|it| entries(it.1, it.2))
+}
+
+/// The entries of an environment with the changes to it. Both are sorted by name.
+struct Changed {
+    entries: &'static [u16],
+    changes: &'static [u16],
+}
+
+impl Iterator for Changed {
+    type Item = u16;
+
+    fn next(&mut self) -> Option<u16> {
+        loop {
+            let Some((&change, later)) = self.changes.split_first() else {
+                let (&entry, rest) = self.entries.split_first()?;
+                self.entries = rest;
+                return Some(entry);
+            };
+            if let Some((&entry, rest)) = self.entries.split_first()
+                && entry >> 2 <= change >> 2
+            {
+                self.entries = rest;
+                if entry >> 2 < change >> 2 {
+                    return Some(entry);
+                }
+            }
+            self.changes = later;
+            if change & REMOVED == 0 {
+                return Some(change);
+            }
+        }
+    }
+}
+
+/// The variables of an environment: `browser`, `node`, `es2021`, `jest`, `shared-node-browser`, ..
+/// Sorted by name. `None` if `whose` has no such environment.
+pub fn environment(
+    name: &[u8],
+    whose: Tables,
+) -> Option<impl Iterator<Item = (&'static [u8], Global)>> {
+    let (known, changes) = (
+        entries_of(tables::ENVIRONMENTS, name),
+        entries_of(whose.changes(), name),
+    );
+    if known.is_none() && changes.is_none() {
+        return None;
+    }
+    let (entries, changes) = (known.unwrap_or_default(), changes.unwrap_or_default());
+    Some(Changed { entries, changes }.map(variable))
 }
 
 /// The names of all environments.
-pub fn environments() -> impl Iterator<Item = &'static str> {
-    tables::ENVIRONMENTS.iter().map(|it| it.0)
+pub fn environments(whose: Tables) -> impl Iterator<Item = &'static str> {
+    let is_new = |it: &&(&'static str, u16, u16)| {
+        entries_of(tables::ENVIRONMENTS, it.0.as_bytes()).is_none()
+    };
+    (tables::ENVIRONMENTS.iter())
+        .chain(whose.changes().iter().filter(is_new))
+        .map(|it| it.0)
 }
 
 /// The edition of the language whose variables are defined. ESLint 8 defines those of ES5 and leaves the others to `env`.
@@ -150,11 +227,7 @@ impl ConfigGlobals {
             for &(_, start, len) in tables::ECMA_VERSIONS.iter().filter(|it| it.0 <= edition) {
                 settings.extend(
                     variables(start, len)
-                        .filter(|it| {
-                            !language.is_oxlint
-                                || is_builtin_global_of_oxlint(it.0)
-                                || language.has_temporal_in_env && it.0 == b"Temporal"
-                        })
+                        .filter(|it| !language.is_oxlint || is_builtin_global_of_oxlint(it.0))
                         .map(|(name, setting)| (Cow::Borrowed(name), setting)),
                 );
             }

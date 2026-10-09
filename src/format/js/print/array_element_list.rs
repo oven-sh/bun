@@ -59,11 +59,12 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
                         previous_end as usize,
                     ) {
                         write!(f, empty_line());
-                    } else if f
-                        .comments()
-                        .comments_before_iter(element.span().start)
-                        .any(|comment| comment.is_line())
-                    {
+                    } else if f.comments().comments_before_iter(element.span().start).any(
+                        |comment| match block_comment_that_ends_line_starts_one(f) {
+                            true => comment.followed_by_newline(),
+                            false => comment.is_line(),
+                        },
+                    ) {
                         write!(f, hard_line_break());
                     } else {
                         write!(f, soft_line_break_or_space());
@@ -81,6 +82,11 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
             write_trailing_comments_of(last.as_ast_nodes(), f);
         }
     }
+}
+
+/// `[1,⏎/* comment */⏎2]`: for oxfmt the comment stays on its line, for Prettier it is behind the `1,`.
+fn block_comment_that_ends_line_starts_one(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `isConciselyPrintedArray`: all elements are numbers, with or without a sign.

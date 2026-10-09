@@ -43,11 +43,11 @@ fn is_member_expression(e: Expr<'_>) -> bool {
 fn is_in_type_context(reference: Reference<'_>, is_oxlint: bool) -> bool {
     // For oxc the operand of a `typeof` type is a value, and what `export default` exports can be a type.
     if is_oxlint {
-        return reference.is_type()
-            || reference.expr().is_some_and(|it| {
-                !it.is_parenthesized()
-                    && matches!(it.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::ExportDefault)
-            });
+        let is_exported = |it: &Expr| matches!(it.parent(), Node::Stmt(it) if it.tag() == StmtTag::ExportDefault);
+        return match reference.expr().filter(is_exported) {
+            Some(exported) => !exported.is_parenthesized(),
+            None => reference.is_type(),
+        };
     }
     match reference.node() {
         Node::Expr(e) => is_in_type_query(e),

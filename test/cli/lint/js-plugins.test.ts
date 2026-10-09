@@ -1291,6 +1291,55 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `indent` of typescript-eslint 5, which hands ESLint's `indent` an object literal for a mapped type.
+  test(
+    "the nodes that typescript-estree makes for deprecated properties, and nodes that a rule makes up",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          const old = {
+            create: ({ sourceCode, report }) => ({
+              TSMappedType(node) {
+                const { typeParameter: key, typeAnnotation: value } = node;
+                const made = { type: "Property", key, value, range: [sourceCode.getTokenBefore(key).range[0], value.range[1]], parent: node };
+                const tokens = ["getFirstToken", "getLastToken", "getTokenBefore", "getTokenAfter"].map(it => sourceCode[it](made).value);
+                const is = [key === node.typeParameter, Object.keys(node).includes("typeParameter"), "parent" in key];
+                report({ node: key, message: [key.type, key.name.name, key.constraint.type, ...is, ...tokens, sourceCode.getText(made)].join(" ") });
+              },
+              TSImportType(node) {
+                report({ node: node.argument, message: [node.argument.type, node.argument.literal.value].join(" ") });
+              },
+              // As \`no-unused-expressions\` of typescript-eslint.
+              TSAsExpression(node) {
+                report({ node: { ...node, expression: null }, message: "a copy" });
+              },
+            }),
+          };
+          export default [
+            {
+              files: ["a.ts"],
+              plugins: { own: { rules: { old } } },
+              languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+              rules: { "own/old": "error" },
+            },
+          ];`,
+          "a.ts": `type A<T> = { [P in keyof T]: T[P] };\ntype B = import("b").C;\n1 as 2;\n`,
+        },
+        ["-f", "unix", "a.ts"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.ts:1:16: TSTypeParameter P TSTypeOperator true false false [ ] { } [P in keyof T]: T[P] [Error/own/old]
+        <dir>/a.ts:2:17: TSLiteralType b [Error/own/old]
+        <dir>/a.ts:3:1: a copy [Error/own/old]
+
+        3 problems"
+      `);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "without rules in JavaScript there is no engine",
     async () => {

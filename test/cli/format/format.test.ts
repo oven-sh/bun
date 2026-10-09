@@ -2443,6 +2443,162 @@ try {
   });
 });
 
+/** The files that are not formatted, according to `-l`, in a directory that is there. */
+async function differentIn(cwd: string, args: string[]) {
+  await using proc = Bun.spawn({ cmd: [...command, "-l", ...args], env, cwd, stdout: "pipe", stderr: "ignore" });
+  return (await proc.stdout.text()).split("\n").filter(Boolean);
+}
+
+describe.concurrent("what an ignore file has is not written, however it is come to", () => {
+  // What Prettier 3.9.9 does.
+  test("a directory that is ignored, and named", async () => {
+    const files = {
+      ".prettierignore": "generated/\n/vendor\n",
+      "generated/a.js": ugly,
+      "generated/deep/b.js": ugly,
+      "vendor/c.js": ugly,
+      "src/d.js": ugly,
+    };
+    expect(
+      await Promise.all([
+        different(files, ["generated", join("generated", "deep"), "vendor", "src"]),
+        // The search for a pattern starts in the directory that all it matches is in.
+        different(files, ["generated/*.js", "generated/deep/**", "vendor/**/*.js", "src"]),
+        different(files, ["{generated,src}/*.js"]),
+      ]),
+    ).toEqual([["src/d.js"], ["src/d.js"], ["src/d.js"]]);
+    const kept = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
+    const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: kept });
+    expect(result.stdout).toBe("src/d.js");
+    expect(result.stderr).not.toContain("[error]");
+    expect(result.files).toEqual(Object.fromEntries(kept.map(name => [name, ugly])));
+    expect(result.exitCode).toBe(0);
+  });
+
+  // From the directory of the file they are `..`, which `.*` matches. Nobody asks about them: a file in the project is `src/a.js`.
+  test("a pattern says nothing about the directories that the ignore file is in", async () => {
+    const files = { ".prettierignore": ".*\n", "src/a.js": ugly, "b.js": ugly, ".hidden.js": ugly };
+    expect(await Promise.all([different(files, ["src", "b.js", ".hidden.js"]), different(files, ["."])])).toEqual([
+      ["src/a.js", "b.js"],
+      ["b.js", "src/a.js"],
+    ]);
+  });
+
+  const beside = {
+    "configs/ignored": "skipped.js\n*.gen.js\n/src/anchored.js\ndir/\n../lib/up.js\n**/src/any.js\nsrc/mid.js\n",
+    "configs/hidden": ".*\n",
+    "configs/skipped.js": ugly,
+    "lib/up.js": ugly,
+    "src/a.gen.js": ugly,
+    "src/anchored.js": ugly,
+    "src/any.js": ugly,
+    "src/dir/in.js": ugly,
+    "src/kept.js": ugly,
+    "src/mid.js": ugly,
+    "src/skipped.js": ugly,
+    "top.js": ugly,
+  };
+  const ignored = ["--ignore-path", join("configs", "ignored")];
+
+  // src/utilities/ignore.js: `ignore({ allowRelativePaths: true })` is asked about `path.relative(..)`, `../src/skipped.js`. A
+  // pattern without `/` finds the name in it, and `..` is a directory like any other.
+  test("a file beside the directory of the file that --ignore-path names", async () => {
+    expect(
+      await Promise.all([
+        different(beside, [...ignored, "."]),
+        different(beside, [...ignored, "src/skipped.js", "src/dir/in.js", "src/kept.js"]),
+        different(beside, [...ignored, "src/dir"]),
+        different(beside, ["--ignore-path", join("configs", "hidden"), "."]),
+      ]),
+    ).toEqual([
+      ["src/anchored.js", "src/kept.js", "src/mid.js", "top.js"],
+      ["src/kept.js"],
+      [],
+      ["configs/skipped.js"],
+    ]);
+  });
+
+  // What oxfmt 0.72.0 does. apps/oxfmt/src/core/global_ignore.rs: in a search `Gitignore::matched` gets the whole path, in which a
+  // pattern without `/` finds the name. For an argument, "a path outside the matcher's root is never ignored".
+  test("the same, like oxfmt", async () => {
+    const files = { ...beside, ".oxfmtrc.json": "{}\n" };
+    expect(
+      await Promise.all([
+        different(files, [...ignored, "."]),
+        different(files, [...ignored, "src/skipped.js", "src/kept.js"]),
+        different(files, [...ignored, "src/dir"]),
+      ]),
+    ).toEqual([
+      ["lib/up.js", "src/anchored.js", "src/kept.js", "src/mid.js", "top.js"],
+      ["src/kept.js", "src/skipped.js"],
+      ["src/dir/in.js"],
+    ]);
+  });
+});
+
+describe.concurrent("how a path is written", () => {
+  test("an absolute pattern", async () => {
+    using dir = tempDir("bun-format", {
+      "src/a.js": ugly,
+      "src/deep/b.js": ugly,
+      "src/c.ts": ugly,
+      "other/d.js": ugly,
+    });
+    const at = (...names: string[]) => join(String(dir), ...names);
+    expect(
+      await Promise.all([
+        differentIn(String(dir), [at("**", "*.js")]),
+        differentIn(String(dir), [at("src", "*.{js,ts}")]),
+        differentIn(at("other"), [at("src", "**", "*.js")]),
+      ]),
+    ).toEqual([
+      ["other/d.js", "src/a.js", "src/deep/b.js"],
+      ["src/a.js", "src/c.ts"],
+      ["../src/a.js", "../src/deep/b.js"],
+    ]);
+  });
+
+  // Nothing in it is replaced: `normalizeBunSnapshot` makes `/` of every `\\`.
+  test("what cannot be used is named as the system writes it", async () => {
+    using dir = tempDir("bun-format", { "src/a.js": ugly, "notes.foo": "a\n" });
+    const firstLine = async (args: string[], stdin?: string) => {
+      await using proc = Bun.spawn({
+        cmd: [...command, ...args],
+        env,
+        cwd: String(dir),
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      return (await proc.stderr.text()).split(/\r?\n/)[0];
+    };
+    const noParser = `[error] No parser could be inferred for file "${join(String(dir), "notes.foo")}".`;
+    expect(
+      await Promise.all([
+        firstLine(["-l", join("src", "*.foo")]),
+        firstLine(["-l", join(String(dir), "notes.foo")]),
+        firstLine(["--stdin-filepath", join("src", "..", "notes.foo")], "a\n"),
+      ]),
+    ).toEqual([`[error] No files matching the pattern were found: "${join("src", "*.foo")}".`, noParser, noParser]);
+  });
+
+  // src/config/prettier-config/config-searcher.js and the package `editorconfig` ask the system for a file of that name.
+  test("a configuration file whose name is written in other capitals counts where the system finds it", async () => {
+    using dir = tempDir("bun-format", {
+      "rc/.Prettierrc": '{ "semi": false }\n',
+      "rc/a.js": "a  ;\n",
+      "editorconfig/.EditorConfig": "[*]\nindent_style = tab\n",
+      "editorconfig/a.js": "if (a) {\n  b;\n}\n",
+    });
+    const foldsCase = existsSync(join(String(dir), "rc", ".prettierrc"));
+    await using proc = Bun.spawn({ cmd: command, env, cwd: String(dir), stdout: "ignore", stderr: "ignore" });
+    expect(await proc.exited).toBe(0);
+    expect(["rc", "editorconfig"].map(name => readFileSync(join(String(dir), name, "a.js"), "utf8"))).toEqual(
+      foldsCase ? ["a\n", "if (a) {\n\tb;\n}\n"] : ["a;\n", "if (a) {\n  b;\n}\n"],
+    );
+  });
+});
+
 describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
   /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
   async function bytesAfter(files: Record<string, string | Buffer>) {

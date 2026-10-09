@@ -1,9 +1,10 @@
-//! `bun-lint format letters <paths..> [--check=false]`: the trial of a check for the languages whose tree is not compared
+//! `bun-lint format letters <paths..> [--check=false] [--refused=true]`: the trial of a check for the languages whose tree is not compared
 //! before a file is written: style sheets, YAML, Markdown, GraphQL, JSON, Handlebars. Nothing with a letter in it is
 //! lost, and nothing is there twice.
 //!
 //! Each file that formatting changes is looked at. An alarm is printed with the letters that differ. With
-//! `--check=false` the files are only formatted: the difference between the two runs is what the check costs.
+//! `--check=false` the files are only formatted: the difference between the two runs is what the check costs. With
+//! `--refused=true` the files that are not formatted are named, with the reason.
 
 use super::{Args, collect_files, format_text_or_panic, is_other_language};
 use crate::host::{self, output_line};
@@ -148,6 +149,7 @@ fn difference(path: &[u8], before: &[u8], after: &[u8]) -> Option<String> {
 pub(super) fn run(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let checks = args.flags.get("check").is_none_or(|it| it != "false");
+    let names_refused = args.flags.get("refused").is_some_and(|it| it == "true");
     let (mut files, mut refused, mut changed, mut alarms) = (0, 0, 0, 0);
     for path in collect_files(&args.positional) {
         if !is_other_language(&path) {
@@ -158,9 +160,15 @@ pub(super) fn run(args: &Args) {
             continue;
         };
         files += 1;
-        let Ok(out) = format_text_or_panic(&name, &code, &args.options) else {
-            refused += 1;
-            continue;
+        let out = match format_text_or_panic(&name, &code, &args.options) {
+            Ok(out) => out,
+            Err(why) => {
+                refused += 1;
+                if names_refused {
+                    output_line!("NOT FORMATTED {name}: {why}");
+                }
+                continue;
+            }
         };
         if out == code {
             continue;

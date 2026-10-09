@@ -534,12 +534,6 @@ pub fn parse_rows_for_comparison(
     })
 }
 
-/// An experiment on cycles, for a build or two.
-#[cfg(bun_sema_mimalloc)]
-pub fn set_variant_of_the_reader(variant: u8) {
-    crate::json_reader::VARIANT.store(variant, core::sync::atomic::Ordering::Relaxed);
-}
-
 /// JSON5, read by the reader of JSON. In the test harness only, until it takes the place of `json5.rs`.
 #[cfg(bun_sema_mimalloc)]
 pub fn parse_json5_rows_for_comparison(

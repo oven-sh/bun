@@ -75,7 +75,9 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
             number(config.linter.report_unused_inline_configs as u32),
         ));
     }
-    let rules = config.rules.iter().map(|rule| {
+    let rules = config.rules.iter();
+    let rules = rules.filter(|it| !config.only_has_defaults(it));
+    let rules = rules.map(|rule| {
         let mut setting = vec![number(rule.severity as u32)];
         setting.extend(rule.options.iter().cloned());
         (

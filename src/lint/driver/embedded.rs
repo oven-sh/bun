@@ -3,7 +3,7 @@
 //! They are found as oxlint finds them, by searching the text: nothing is parsed but the scripts. Each is a program of its own,
 //! which knows nothing of the other scripts of the file or of the template.
 
-use crate::lint::Context;
+use crate::lint::{Context, RuleFilter};
 use bun_core::strings;
 use bun_lint::ast::{ExprKind, File, PropKind, StmtKind, VueScript};
 use bun_lint::context::Severity;
@@ -459,6 +459,18 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
     ) -> LintResult {
         let outer = self.lint_options().rule_filter;
+        self.verify_scripts_by(framework, path, text, config, outer)
+    }
+
+    /// The same. `outer`: which rules run, of those that run on such a script.
+    pub(crate) fn verify_scripts_by(
+        &self,
+        framework: Framework,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        outer: Option<&RuleFilter>,
+    ) -> LintResult {
         let mut all = LintResult::default();
         let scripts = scripts_of(framework, text);
         for (index, &script) in scripts.iter().enumerate() {

@@ -63,6 +63,7 @@ mod presets;
 mod rc;
 mod shape;
 
+use super::globals::Tables;
 use super::registry::Registry;
 use super::resolved::{
     ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, find_js_rule,
@@ -769,7 +770,12 @@ impl Config {
         if config.is_javascript() {
             config.validate_language_options(&language_options);
         }
-        config.language = LanguageOptions::from_json(&language_options, &settings);
+        let whose = match (self.is_legacy, self.prefers_typescript_rules) {
+            (true, _) => Tables::Eslint8,
+            (false, true) => Tables::Oxlint,
+            (false, false) => Tables::Today,
+        };
+        config.language = LanguageOptions::from_json_for(&language_options, &settings, whose);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;

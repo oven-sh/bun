@@ -994,7 +994,7 @@ impl Run<'_> {
                 configs.flavor,
                 &[
                     b"No parser could be inferred for file \"",
-                    &path[..],
+                    &paths::to_native(path)[..],
                     b"\".",
                 ]
                 .concat(),
@@ -1170,7 +1170,7 @@ impl Run<'_> {
                     done[index] = Some(Done::Failed(
                         [
                             b"No parser could be inferred for file \"",
-                            &target.path[..],
+                            &paths::to_native(target.path.clone())[..],
                             b"\".",
                         ]
                         .concat(),

@@ -16,9 +16,9 @@ use super::{Config, ConfigObject, eslint8, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::Global;
-use crate::linter::message::write_js_string;
+use crate::linter::message::{RuleId, write_js_string};
 use crate::linter::registry::{Registry, parse_rule_id};
-use crate::linter::resolved::{ResolvedConfig, find_js_rule};
+use crate::linter::resolved::{ConfiguredRule, ResolvedConfig, find_js_rule};
 use crate::linter::space::space_len;
 use crate::linter::{schema, write_json};
 use crate::options::Json;
@@ -148,6 +148,84 @@ fn defaults_of_eslint_8() -> Json {
     crate::json::parse(DEFAULTS_OF_ESLINT_8).unwrap_or(Json::Null)
 }
 
+/// The same for the rules of typescript-eslint, which are those of version 8 here, by the major version that is installed: up to
+/// 5, and 6 and 7, which have the same.
+const DEFAULTS_OF_TYPESCRIPT_ESLINT: &[u8] = br#"{
+    "5": {
+        "no-floating-promises": [{ "checkThenables": true }],
+        "no-shadow": [{ "hoist": "functions" }],
+        "no-unused-vars": [{ "caughtErrors": "none" }],
+        "prefer-nullish-coalescing": [{ "ignoreMixedLogicalExpressions": true, "ignoreTernaryTests": true }],
+        "require-array-sort-compare": [{ "ignoreStringArrays": false }],
+        "restrict-plus-operands": [{
+            "allowAny": false,
+            "allowBoolean": false,
+            "allowNullish": false,
+            "allowNumberAndString": false,
+            "allowRegExp": false,
+            "skipCompoundAssignments": true
+        }],
+        "restrict-template-expressions": [{
+            "allow": [],
+            "allowAny": false,
+            "allowBoolean": false,
+            "allowNullish": false,
+            "allowRegExp": false
+        }],
+        "strict-boolean-expressions": [{ "allowNullableEnum": true }]
+    },
+    "6": {
+        "no-floating-promises": [{ "checkThenables": true }],
+        "no-shadow": [{ "hoist": "functions" }],
+        "no-unused-vars": [{ "caughtErrors": "none" }],
+        "only-throw-error": [{ "allowRethrowing": false }],
+        "prefer-nullish-coalescing": [{ "ignoreConditionalTests": false }],
+        "restrict-template-expressions": [{ "allow": [] }]
+    }
+}"#;
+
+/// Puts `setting`, which is for the rule `id`, into the words of version 8 of typescript-eslint, if it has an option that only
+/// version `major` and those before it take.
+fn in_the_words_of_today(major: u32, id: &[u8], setting: &mut Json) {
+    let Json::Array(setting) = setting else {
+        return;
+    };
+    let Some(Json::Object(options)) = setting.get_mut(1) else {
+        return;
+    };
+    match id {
+        b"@typescript-eslint/restrict-plus-operands" if major <= 5 => {
+            for (key, value) in options {
+                if let Json::Bool(checks) = value
+                    && key[..] == *b"checkCompoundAssignments"
+                {
+                    *key = b"skipCompoundAssignments".to_vec();
+                    *checks = !*checks;
+                }
+            }
+        }
+        // It says nothing to the rule.
+        b"@typescript-eslint/explicit-module-boundary-types" if major <= 5 => {
+            options.retain(|it| it.0 != b"shouldTrackReferences" || !matches!(it.1, Json::Bool(_)))
+        }
+        // The rule asks whether it is "always".
+        b"@typescript-eslint/no-empty-object-type" => {
+            for (key, value) in options {
+                if key[..] == *b"allowObjectTypes" && *value == text(b"in-type-alias-with-name") {
+                    *value = text(b"never");
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A setting that turns a rule off and has `options`. A setting that is only a severity keeps them.
+fn off_with(options: &Json) -> Json {
+    let options = options.as_array().unwrap_or_default().iter().cloned();
+    Json::Array(std::iter::once(text(b"off")).chain(options).collect())
+}
+
 /// `option` with what `default` has and it says nothing about. A list has the items of both.
 fn with_default(default: &Json, option: &Json) -> Json {
     match (default, option) {
@@ -170,13 +248,15 @@ fn with_default(default: &Json, option: &Json) -> Json {
 }
 
 /// The options to give the rule `id` of today for it to do what that of ESLint 8 does with `options`, which are not empty.
-/// `defaults`: [`DEFAULTS_OF_ESLINT_8`].
+/// `defaults`: [`Legacy::defaults`].
 fn options_for_today(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
     let Some(defaults) = defaults.get(id).and_then(Json::as_array) else {
         return options.to_vec();
     };
     let written = |at: usize| match (id, options.get(at)?) {
-        (b"no-unused-vars", vars @ Json::String(_)) => Some(object(vec![(b"vars", vars.clone())])),
+        (b"no-unused-vars" | b"@typescript-eslint/no-unused-vars", vars @ Json::String(_)) => {
+            Some(object(vec![(b"vars", vars.clone())]))
+        }
         (_, option) => Some(option.clone()),
     };
     (0..defaults.len().max(options.len()))
@@ -803,8 +883,11 @@ struct Legacy<'r, 'l, 'c> {
     options: &'c LegacyOptions<'c>,
     plugins: Vec<LoadedPlugin>,
     elements: Vec<Element<'c>>,
-    /// [`DEFAULTS_OF_ESLINT_8`]
+    /// [`DEFAULTS_OF_ESLINT_8`], and of [`DEFAULTS_OF_TYPESCRIPT_ESLINT`] what is for the version that is installed. The keys are the
+    /// ids of the rules.
     defaults: Json,
+    /// The major version of typescript-eslint that is installed, if it is before 8.
+    typescript_eslint: Option<u32>,
 }
 
 impl<'c> Legacy<'_, '_, 'c> {
@@ -1563,6 +1646,54 @@ impl<'c> Legacy<'_, '_, 'c> {
         Ok(())
     }
 
+    /// The default options of the version of typescript-eslint that is installed: an object as that for
+    /// [`DEFAULTS_OF_ESLINT_8`], before all elements. What `elements` say to its rules is put into the words of today.
+    fn follow_typescript_eslint(
+        &mut self,
+        named: &Named,
+        elements: &mut [Element],
+    ) -> Result<(), ConfigError> {
+        let mut plugins = named.0.iter();
+        let version = plugins
+            .find(|it| *it.id == *b"@typescript-eslint")
+            .and_then(|it| self.answer(it.at)?.get(b"version")?.as_str());
+        let Some(version) = version.map(<[u8]>::to_vec) else {
+            return Ok(());
+        };
+        let digits = version.iter().take_while(|it| it.is_ascii_digit()).count();
+        let major = std::str::from_utf8(version.get(..digits).unwrap_or_default());
+        let major = major.ok().and_then(|it| it.parse::<u32>().ok());
+        let Some(major) = major.filter(|it| *it < 8) else {
+            return Ok(());
+        };
+        let all = crate::json::parse(DEFAULTS_OF_TYPESCRIPT_ESLINT).unwrap_or(Json::Null);
+        let of_version = all.get(if major <= 5 { b"5" } else { b"6" });
+        let mut settings = Vec::new();
+        for (name, options) in of_version.and_then(Json::as_object).unwrap_or_default() {
+            let id = [b"@typescript-eslint/", &name[..]].concat();
+            put(&mut self.defaults, &id, options.clone());
+            settings.push((id, off_with(options)));
+        }
+        let read = (self.reader).object(&object(vec![(b"rules", Json::Object(settings))]))?;
+        self.reader.objects.push(read);
+        self.reader.defaults = self.reader.objects.len();
+        self.typescript_eslint = Some(major);
+        for rules in elements.iter_mut().filter_map(|it| it.rules.as_mut()) {
+            let Json::Object(rules) = rules else {
+                continue;
+            };
+            for (id, setting) in rules {
+                in_the_words_of_today(major, id, setting);
+            }
+        }
+        self.reader.note(&[
+            b"typescript-eslint ",
+            &version,
+            b" is installed. Its rules are those of version 8 here, with the default options of the version that is installed.",
+        ]);
+        Ok(())
+    }
+
     /// An object for all files, with what [`resolve`] has to know of the whole list.
     fn summary(&mut self, named: &Named) -> Result<(), ConfigError> {
         let mut environments = Vec::new();
@@ -1578,6 +1709,11 @@ impl<'c> Legacy<'_, '_, 'c> {
         let own = object(vec![
             (b"plugins", Json::Array(ids.collect())),
             (b"environments", Json::Object(environments)),
+            (b"defaults", self.defaults.clone()),
+            (
+                b"typescriptEslint",
+                (self.typescript_eslint).map_or(Json::Null, |it| Json::Number(f64::from(it))),
+            ),
         ]);
         let summary = object(vec![(b"languageOptions", object(vec![(OWN, own)]))]);
         let read = self.reader.object(&summary)?;
@@ -1615,6 +1751,13 @@ fn merge_values(earlier: &mut Json, later: &Json) {
                     None => before.push(value.clone()),
                 }
             }
+        }
+        // ESLint goes through the keys of a list as through those of an object.
+        (Json::Array(before), Json::Object(_)) => {
+            let items = std::mem::take(before).into_iter().enumerate();
+            let entries = items.map(|(at, item)| (at.to_string().into_bytes(), item));
+            *earlier = Json::Object(entries.collect());
+            merge_values(earlier, later);
         }
         (earlier, later) => earlier.clone_from(later),
     }
@@ -1666,6 +1809,10 @@ pub struct Eslint8 {
     env: Vec<(Box<[u8]>, bool)>,
     /// `pluginEnvironments`
     environments: Json,
+    /// [`Legacy::defaults`]
+    defaults: Json,
+    /// [`Legacy::typescript_eslint`]
+    typescript_eslint: Option<u32>,
     /// `parserOptions` as the files have them.
     parser_options: Json,
     is_espree: bool,
@@ -1847,10 +1994,14 @@ impl Eslint8 {
         value: &Json,
         js: Option<&js_plugin::Rule>,
     ) -> Result<Vec<Json>, Vec<u8>> {
-        let severity = validate_rule(id, value, js.map_or(Definition::Native, Definition::Js))?;
+        let mut value = value.clone();
+        if let Some(major) = self.typescript_eslint {
+            in_the_words_of_today(major, id, &mut value);
+        }
+        let severity = validate_rule(id, &value, js.map_or(Definition::Native, Definition::Js))?;
         let defaults = match js {
-            Some(_) => Json::Null,
-            None => defaults_of_eslint_8(),
+            Some(_) => &Json::Null,
+            None => &self.defaults,
         };
         let options = match value
             .as_array()
@@ -1860,7 +2011,7 @@ impl Eslint8 {
             [] => {
                 (defaults.get(id).and_then(Json::as_array)).map_or_else(Vec::new, <[Json]>::to_vec)
             }
-            options => options_for_today(&defaults, id, options),
+            options => options_for_today(defaults, id, options),
         };
         let severity = Json::Number(f64::from(severity as u8));
         Ok(std::iter::once(severity).chain(options).collect())
@@ -1868,6 +2019,14 @@ impl Eslint8 {
 }
 
 impl ResolvedConfig {
+    /// Whether `rule` is off, with the options that [`Legacy::defaults`] has for it: no file has turned it on.
+    pub fn only_has_defaults(&self, rule: &ConfiguredRule) -> bool {
+        let id = RuleId::Known(rule.entry.meta).to_vec();
+        let eslint_8 = self.language.eslint_8.as_ref();
+        let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
+        matches!(rule.severity, Severity::Off) && defaults.is_some_and(|it| *it == *rule.options)
+    }
+
     /// Whether the configuration is one of ESLint 8, which has no definition of the rule that it or a comment calls `id`.
     pub(crate) fn lacks_rule(&self, id: &[u8]) -> bool {
         (self.language.eslint_8.as_ref()).is_some_and(|it| it.lacks_rule(id, &self.js_plugins))
@@ -1901,6 +2060,11 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
             .map(|(name, value)| (name[..].into(), is_truthy(value)))
             .collect(),
         environments: own.get(b"environments").cloned().unwrap_or(Json::Null),
+        defaults: own.get(b"defaults").cloned().unwrap_or(Json::Null),
+        typescript_eslint: match own.get(b"typescriptEslint") {
+            Some(Json::Number(major)) => Some(*major as u32),
+            _ => None,
+        },
         parser_options: (language_options.get(b"parserOptions").cloned()).unwrap_or(Json::Null),
         is_espree: parser.is_none_or(|it| it == b"espree"),
         edition: Ok(5),
@@ -1984,6 +2148,7 @@ impl Config {
             plugins: Vec::new(),
             elements: Vec::new(),
             defaults,
+            typescript_eslint: None,
         };
         // What ESLint lints of a directory. An override adds its patterns.
         let extensions: Vec<Json> = match options.extensions {
@@ -1992,13 +2157,8 @@ impl Config {
                 .map(|it| Json::String([b"**/*.", it.strip_prefix(b".").unwrap_or(it)].concat()))
                 .collect(),
         };
-        // A setting that is only a severity keeps them.
         let defaults = legacy.defaults.as_object().unwrap_or_default().iter();
-        let defaults = defaults.map(|(id, options)| {
-            let options = options.as_array().unwrap_or_default().iter().cloned();
-            let setting = std::iter::once(text(b"off")).chain(options);
-            (id.clone(), Json::Array(setting.collect()))
-        });
+        let defaults = defaults.map(|(id, options)| (id.clone(), off_with(options)));
         for default in [
             object(vec![(b"language", text(b"@/js"))]),
             object(vec![(b"files", Json::Array(extensions))]),
@@ -2027,8 +2187,9 @@ impl Config {
         for file in others {
             legacy.file(file)?;
         }
-        let elements = std::mem::take(&mut legacy.elements);
+        let mut elements = std::mem::take(&mut legacy.elements);
         let named = Named::of(&elements);
+        legacy.follow_typescript_eslint(&named, &mut elements)?;
         legacy.load_js_plugins(&elements, &named, load_plugin)?;
         legacy.validate_elements(&elements, &named)?;
         for element in &elements {

@@ -25,13 +25,29 @@ use bun_core::strings;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+/// Whether `word` is one of the words of `list`, which have spaces between them.
+fn has_word(list: &str, word: &[u8]) -> bool {
+    let list = list.as_bytes();
+    let mut from = 0;
+    while !word.is_empty()
+        && let Some(at) = list.get(from..).and_then(|it| strings::index_of(it, word))
+    {
+        let (start, end) = (from + at, from + at + word.len());
+        if (start == 0 || list[start - 1] == b' ') && list.get(end).is_none_or(|it| *it == b' ') {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
 /// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
 pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
     let has = |lists: &[(&str, &str)]| {
         (lists
             .iter()
             .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(plugin.in_oxlint())))
-        .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == name.as_bytes()))
+        .any(|it| has_word(it.1, name.as_bytes()))
     };
     categories::CATEGORIES
         .iter()
@@ -53,7 +69,7 @@ pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
     };
     !(lists.iter())
         .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()).is_some_and(is_of))
-        .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
+        .any(|it| has_word(it.1, meta.name.as_bytes()))
 }
 
 /// Fixes of rules for which the lists say nothing, or not enough: the plugin, the rule, the `messageId` of the report or nothing
@@ -105,7 +121,7 @@ pub(crate) fn oxlint_changes(meta: &Meta, message_id: &str) -> OxlintChanges {
     let is_in = |list: &[(&str, &str)]| {
         (list.iter())
             .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(meta.plugin))
-            .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
+            .any(|it| has_word(it.1, meta.name.as_bytes()))
     };
     let probed = (PROBED_FIXES.iter()).find(|it| {
         it.0 == meta.plugin && it.1 == meta.name && (it.2.is_empty() || it.2 == message_id)
@@ -122,7 +138,7 @@ pub(crate) fn oxlint_changes(meta: &Meta, message_id: &str) -> OxlintChanges {
 
 /// Whether oxlint has a rule that is called `name`, in whatever plugin.
 pub(crate) fn is_rule_of_oxlint(name: &[u8]) -> bool {
-    strings::split(categories::RULE_NAMES.as_bytes(), b" ").any(|it| it == name)
+    has_word(categories::RULE_NAMES, name)
 }
 
 /// What an element of `plugins` can be for oxlint 1.80, after `eslint-plugin-` or `oxlint-plugin-`. Each was tried.

@@ -118,6 +118,10 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
 // `{ location, rules, isNeeded }`.
 async function builtConfiguration({ FlatConfigArray }, { basePath }, { object, parser, plugins }) {
   const config = { ...object, files: [() => true], plugins: {} };
+  // What is as it is without being said is not said: ESLint knows `reportUnusedInlineConfigs` since 9.19, `language` since 9.5.
+  const { reportUnusedInlineConfigs, ...linterOptions } = object.linterOptions;
+  if (reportUnusedInlineConfigs === 0) config.linterOptions = linterOptions;
+  if (object.language === "@/js") delete config.language;
   for (const [prefix, { location, rules, isNeeded }] of Object.entries(plugins)) {
     const loaded = isNeeded ? await locatedPlugin(location, prefix) : undefined;
     config.plugins[prefix] = pluginFor(location, rules, loaded);
@@ -157,6 +161,13 @@ function shortPluginName(name) {
   return name.startsWith("eslint-plugin-") ? name.slice("eslint-plugin-".length) : name;
 }
 
+// `config.getRuleDefinition(ruleId)`, which the configurations of ESLint have since 9.24: before, its `getRuleFromConfig`.
+function ruleDefinition(config, ruleId) {
+  if (config.getRuleDefinition !== undefined) return config.getRuleDefinition(ruleId);
+  const slash = ruleId.lastIndexOf("/");
+  return config.plugins?.[slash === -1 ? "@" : ruleId.slice(0, slash)]?.rules?.[ruleId.slice(slash + 1)];
+}
+
 // ESLint's `getOrFindUsedDeprecatedRules`, by the configuration of a file.
 const usedDeprecatedRules = new WeakMap();
 
@@ -167,7 +178,7 @@ function deprecatedRulesOf(config) {
   for (const [ruleId, setting] of Object.entries(config.rules ?? {})) {
     const severity = Array.isArray(setting) ? setting[0] : setting;
     if (severity === 0 || severity === "off") continue;
-    const meta = config.getRuleDefinition(ruleId)?.meta;
+    const meta = ruleDefinition(config, ruleId)?.meta;
     if (!meta?.deprecated) continue;
     const isObject = typeof meta.deprecated === "object";
     let replacedBy = meta.replacedBy || [];

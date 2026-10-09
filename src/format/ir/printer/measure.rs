@@ -329,15 +329,7 @@ impl<'d> Printer<'d> {
                         // fill, an item that has a comment on a line of its own before it does
                         // not have to be alone on its line because of that. If the content is
                         // in a group, the group is known to break and this is not asked.
-                        // For oxfmt such an item starts a line.
-                        LineMode::Hard | LineMode::Empty => {
-                            return Ok(
-                                match measure.must_be_flat && self.options.flavor.is_oxfmt() {
-                                    true => Fits::No,
-                                    false => Fits::Yes,
-                                },
-                            );
-                        }
+                        LineMode::Hard | LineMode::Empty => return Ok(Fits::Yes),
                     }
                 } else {
                     // This is past the end of what is measured, in content that is expanded.

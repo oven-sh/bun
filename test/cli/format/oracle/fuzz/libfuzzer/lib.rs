@@ -1,6 +1,8 @@
 //! What the fuzzers share: the natives that Bun's C and C++ side provides, what the first bytes of
 //! an input mean, and where a finding goes. See README.md.
 
+#![feature(linkage)]
+
 mod mimalloc;
 /// Compiled with `--cfg bun_sema_mimalloc`, which leaves mimalloc to `mimalloc.rs`.
 #[path = "../../../../../../src/sema/standalone/native.rs"]

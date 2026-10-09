@@ -4,6 +4,11 @@ declare module "bun" {
   /**
    * A connection reserved from the pool with {@link SQL.reserve}. Call
    * {@link release} to return it to the pool.
+   *
+   * After {@link release}, a query of this client that has not run yet rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` code). Queries are
+   * lazy, so this includes a query that is returned without `await` from a
+   * `using` block.
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
@@ -77,6 +82,12 @@ declare module "bun" {
   /**
    * The client passed to transaction callbacks ({@link SQL.begin},
    * {@link SQL.transaction}). Extends {@link SQL} with savepoints.
+   *
+   * The client belongs to its transaction. A query of it that runs after
+   * `COMMIT` or `ROLLBACK` was sent rejects with
+   * `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code), also
+   * when the query was created inside the callback. Await every query
+   * before the callback returns.
    */
   interface TransactionSQL extends SQL {
     /**
@@ -1056,8 +1067,14 @@ declare module "bun" {
   const postgres: SQL;
 
   /**
-   * The client passed to {@link TransactionSQL.savepoint} callbacks; queries
-   * run within that savepoint
+   * The client passed to {@link TransactionSQL.savepoint} callbacks. It is a
+   * client of its own, not the client of the transaction: its queries belong
+   * to that savepoint.
+   *
+   * A query of it that runs after the savepoint was released or rolled back
+   * rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE`
+   * code), also when the query was created inside the callback. Use the
+   * client of the transaction for queries after the savepoint.
    */
-  interface SavepointSQL extends SQL {}
+  interface SavepointSQL extends TransactionSQL {}
 }

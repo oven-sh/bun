@@ -863,6 +863,8 @@ await sql.begin(async tx => {
 });
 ```
 
+The `tx` client belongs to its transaction. A query that runs after Bun sent `COMMIT` or `ROLLBACK` rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (`ERR_MYSQL_CONNECTION_CLOSED`, `ERR_SQLITE_CONNECTION_CLOSED`) and never reaches the database. Await every query before the callback returns. When one task of a `Promise.all` fails, the other tasks keep running: a query of theirs that runs after `ROLLBACK` rejects.
+
 ### Savepoints
 
 Savepoints create intermediate checkpoints within a transaction, so part of it can roll back without aborting the whole thing.
@@ -883,6 +885,8 @@ await sql.begin(async tx => {
   await tx`INSERT INTO audit_log (action) VALUES ('user_created')`;
 });
 ```
+
+The callback gets its own client (`sp` above). Its queries belong to the savepoint. After the savepoint is released or rolled back, a query on `sp` rejects with `ERR_POSTGRES_CONNECTION_CLOSED`. Use `tx` for the queries that follow. A savepoint callback can also return an array of queries, like a transaction callback.
 
 ### Distributed Transactions
 
@@ -1016,6 +1020,8 @@ try {
   await reserved`SELECT 1`;
 } // Automatically released
 ```
+
+After `release()`, a query on the reserved client that has not run yet rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (`ERR_MYSQL_CONNECTION_CLOSED`). Queries are lazy, so `await` each query before the release. A query that a `using` block returns without `await` runs after the release and rejects.
 
 When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
 

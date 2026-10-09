@@ -1228,6 +1228,123 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(600);
   });
 
+  // A statement that runs behind ROLLBACK, ROLLBACK TO SAVEPOINT or RELEASE SAVEPOINT is outside
+  // the scope it was made in: SQLite runs it in autocommit mode, or as part of the outer transaction.
+  describe("a statement behind the end of its scope", () => {
+    const ids = async () => (await sql`SELECT id FROM accounts ORDER BY id`).map(row => row.id);
+    const outcome = (statement: PromiseLike<unknown>) =>
+      statement.then(
+        () => "resolved",
+        err => err.code ?? err.message,
+      );
+    // Three awaited inserts. An invalid item fails behind its first insert.
+    const insertThree = async (handle: Bun.SQL, item: number, invalid: boolean) => {
+      await handle`INSERT INTO accounts VALUES (${item * 10 + 1}, 0)`;
+      if (invalid) throw new Error(`item ${item} is invalid`);
+      await handle`INSERT INTO accounts VALUES (${item * 10 + 2}, 0)`;
+      await handle`INSERT INTO accounts VALUES (${item * 10 + 3}, 0)`;
+    };
+
+    test("a rejected transaction keeps no row of the tasks that go on after one failed", async () => {
+      const tasks: Promise<void>[] = [];
+      const begun = sql.begin(tx =>
+        Promise.all(
+          [3, 4, 5].map(item => {
+            tasks.push(insertThree(tx, item, item === 3));
+            return tasks.at(-1);
+          }),
+        ),
+      );
+      expect(await outcome(begun)).toBe("item 3 is invalid");
+      expect(await Promise.all(tasks.map(outcome))).toEqual([
+        "item 3 is invalid",
+        "ERR_SQLITE_CONNECTION_CLOSED",
+        "ERR_SQLITE_CONNECTION_CLOSED",
+      ]);
+      expect(await ids()).toEqual([1, 2]);
+    });
+
+    test("a rolled-back savepoint keeps no row of the tasks that go on after one failed", async () => {
+      const tasks: Promise<void>[] = [];
+      await sql.begin(async tx => {
+        await tx`INSERT INTO accounts VALUES (3, 0)`;
+        const savepoint = tx.savepoint(sp =>
+          Promise.all(
+            [4, 5, 6].map(item => {
+              tasks.push(insertThree(sp, item, item === 4));
+              return tasks.at(-1);
+            }),
+          ),
+        );
+        expect(await outcome(savepoint)).toBe("item 4 is invalid");
+        expect(await Promise.all(tasks.map(outcome))).toEqual([
+          "item 4 is invalid",
+          "ERR_SQLITE_CONNECTION_CLOSED",
+          "ERR_SQLITE_CONNECTION_CLOSED",
+        ]);
+        await tx`INSERT INTO accounts VALUES (7, 0)`;
+      });
+      expect(await ids()).toEqual([1, 2, 3, 7]);
+    });
+
+    test("a transaction that a timeout rejects keeps no row of the job that goes on", async () => {
+      const timeout = Promise.withResolvers<never>();
+      let job!: Promise<void>;
+      const begun = sql.begin(tx => {
+        job = (async () => {
+          for (let id = 3; id < 20; id++) {
+            await tx`INSERT INTO accounts VALUES (${id}, 0)`;
+            if (id === 5) timeout.reject(new Error("timed out"));
+          }
+        })();
+        return Promise.race([job, timeout.promise]);
+      });
+      expect(await outcome(begun)).toBe("timed out");
+      expect(await outcome(job)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+      expect(await ids()).toEqual([1, 2]);
+    });
+
+    test("a statement of an ended transaction or savepoint does not run", async () => {
+      using dir = tempDir("sqlite-sql-ended-scope", { "insert.sql": "INSERT INTO accounts VALUES (6, 0)" });
+      let ended!: Bun.TransactionSQL;
+      let early!: PromiseLike<unknown>;
+      let released!: Bun.SavepointSQL;
+      await sql.begin(async tx => {
+        await tx.savepoint(async sp => {
+          released = sp;
+        });
+        // The savepoint is released and the transaction is open.
+        expect(await outcome(released`INSERT INTO accounts VALUES (3, 0)`)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+        ended = tx;
+        // A query is lazy. This one is made inside the transaction and first awaited after it.
+        early = tx`INSERT INTO accounts VALUES (4, 0)`;
+      });
+      expect([
+        await outcome(early),
+        await outcome(ended.unsafe("INSERT INTO accounts VALUES (5, 0)")),
+        await outcome(ended.file(join(String(dir), "insert.sql"))),
+      ]).toEqual(["ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED"]);
+      expect(await ids()).toEqual([1, 2]);
+    });
+
+    test("the queries of an array that a savepoint callback returns run inside the savepoint", async () => {
+      const results = await sql.begin(async tx => {
+        const inserted = await tx.savepoint(sp => [
+          sp`INSERT INTO accounts VALUES (3, 0) RETURNING id`,
+          sp`INSERT INTO accounts VALUES (4, 0) RETURNING id`,
+        ]);
+        // The second query fails. The savepoint rolls back with the error of that query, and the transaction goes on.
+        const failed = await outcome(
+          tx.savepoint(sp => [sp`INSERT INTO accounts VALUES (5, 0)`, sp`INSERT INTO accounts VALUES (1, 0)`]),
+        );
+        await tx`INSERT INTO accounts VALUES (6, 0)`;
+        return { inserted, failed };
+      });
+      expect(results).toEqual({ inserted: [[{ id: 3 }], [{ id: 4 }]], failed: "SQLITE_CONSTRAINT_PRIMARYKEY" });
+      expect(await ids()).toEqual([1, 2, 3, 4, 6]);
+    });
+  });
+
   // SQLite doesn't support read-only transactions via BEGIN syntax
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
   test("read-only transactions throw appropriate error", async () => {

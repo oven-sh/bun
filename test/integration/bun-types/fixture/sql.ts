@@ -133,6 +133,19 @@ sql1.begin(async txn => {
   });
 });
 
+// The client of a savepoint callback opens nested savepoints.
+sql1.begin(async txn => {
+  await txn.savepoint(async sp => {
+    expectType(sp).is<Bun.SavepointSQL>();
+    expectType(
+      sp.savepoint("nested", async nested => {
+        expectType(nested).is<Bun.SavepointSQL>();
+        return 11 as const;
+      }),
+    ).is<Promise<11>>();
+  });
+});
+
 // @ts-expect-error
 sql1.commitDistributed();
 

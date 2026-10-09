@@ -4469,7 +4469,7 @@ describe.concurrent(
           Bun.plugin({
             name: "slow",
             setup(build) {
-              build.onLoad({ filter: /[\\/]slow\.js$/ }, async () => (started.resolve(), await gate.promise, { contents: "export const s = 2;", loader: "js" }));
+              build.onLoad({ filter: /slow\\.js$/ }, async () => (started.resolve(), await gate.promise, { contents: "export const s = 2;", loader: "js" }));
             },
           });
           test("the gate is closed", async () => {
@@ -4497,7 +4497,7 @@ describe.concurrent(
             Bun.plugin({
               name: "never",
               setup(build) {
-                build.onLoad({ filter: /[\\/]slow\.js$/ }, () => (started.resolve(), new Promise(() => {})));
+                build.onLoad({ filter: /slow\\.js$/ }, () => (started.resolve(), new Promise(() => {})));
               },
             });
             void import("./unrelated.js");
@@ -4545,7 +4545,7 @@ describe.concurrent(
           Bun.plugin({
             name: "held",
             setup(build) {
-              build.onLoad({ filter: /[\\/]user\.js/ }, async () => (fetches++, started.resolve(), await gate.promise, undefined));
+              build.onLoad({ filter: /user\\.js/ }, async () => (fetches++, started.resolve(), await gate.promise, undefined));
             },
           });
           test("and the other load gets the mock", async () => {

@@ -155,17 +155,15 @@ fn has_what_json_lacks(json: &Json) -> bool {
 
 impl FileSettings {
     pub fn new(language: &LanguageOptions) -> Arc<FileSettings> {
-        Self::from_objects(language, std::iter::empty())
+        Self::from_objects(language, &[])
     }
 
     /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order.
-    pub fn from_objects<'s>(
-        language: &LanguageOptions,
-        sources: impl Iterator<Item = &'s Json>,
-    ) -> Arc<FileSettings> {
+    pub fn from_objects(language: &LanguageOptions, sources: &[&Json]) -> Arc<FileSettings> {
         let sources = has_what_json_lacks(&language.settings).then(|| {
+            let sources = sources.iter().map(|it| (*it).clone());
             let mut written = Vec::new();
-            write_json(&mut written, &Json::Array(sources.cloned().collect()));
+            write_json(&mut written, &Json::Array(sources.collect()));
             written.into()
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);

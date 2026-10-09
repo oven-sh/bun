@@ -714,12 +714,13 @@ impl Config {
                 self.accepts_all_plugins || plugins.contains(&&it.name[..])
             };
             config.js_plugins = self.js_plugins.iter().filter(has).cloned().collect();
-            let sources = indices
+            let sources: Vec<&Json> = indices
                 .iter()
-                .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref());
+                .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref())
+                .collect();
             config.js_settings = Some(js_plugin::FileSettings::from_objects(
                 &config.language,
-                sources,
+                &sources,
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.

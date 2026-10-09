@@ -1,6 +1,6 @@
 //! `yaml` 2.9: `parse/lexer.js`. All of the text is there from the start, and its line breaks are `\n`.
 
-use crate::text::BOM;
+use crate::text::{BOM, ByteSet};
 use bun_core::strings;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -291,11 +291,12 @@ impl<'a> Lexer<'a> {
 
     fn parse_document(&mut self) -> State {
         self.push_spaces(true);
-        let line = self.get_line();
-        let mut n = self.push_indicators();
-        match line.get(n) {
+        self.push_indicators();
+        // What is left of the line is looked for where it is wanted.
+        match self.char_at(0).filter(|ch| *ch != b'\n') {
             Some(b'#') => {
-                self.push_count(line.len() - n);
+                let rest = self.get_line().len();
+                self.push_count(rest);
                 self.push_newline();
                 self.parse_line_start()
             }
@@ -319,9 +320,10 @@ impl<'a> Lexer<'a> {
             }
             Some(b'"' | b'\'') => self.parse_quoted_scalar(),
             Some(b'|' | b'>') => {
-                n += self.parse_block_scalar_header();
-                n += self.push_spaces(true);
-                self.push_count(line.len() - n);
+                self.parse_block_scalar_header();
+                self.push_spaces(true);
+                let rest = self.get_line().len();
+                self.push_count(rest);
                 self.push_newline();
                 self.parse_block_scalar()
             }
@@ -546,7 +548,16 @@ impl<'a> Lexer<'a> {
         // One more than the position of the last character.
         let mut end = self.pos;
         let mut i = self.pos;
-        while let Some(ch) = self.at(i) {
+        // Anything else is part of the scalar, whatever follows it.
+        static CAN_END: ByteSet = ByteSet::new(b": \n\r\t,[]{}");
+        loop {
+            let run_end = CAN_END.find(self.buffer, i).unwrap_or(self.buffer.len());
+            if run_end > i {
+                (i, end) = (run_end, run_end);
+            }
+            let Some(ch) = self.at(i) else {
+                break;
+            };
             let next = self.at(i + 1);
             if ch == b':' {
                 if is_empty(next) || (in_flow && is_flow_indicator(next)) {
@@ -584,7 +595,8 @@ impl<'a> Lexer<'a> {
 pub(crate) fn lex(text: &[u8]) -> Vec<Lexeme> {
     let mut lexer = Lexer {
         buffer: text,
-        out: Vec::new(),
+        // A key and its value on a line are eight.
+        out: Vec::with_capacity(text.len() / 3),
         block_scalar_indent: -1,
         block_scalar_keep: false,
         flow_key: false,

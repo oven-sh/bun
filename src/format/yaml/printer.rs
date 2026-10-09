@@ -1,6 +1,7 @@
 //! Prettier's `language-yaml`: `printer-yaml.js`, `print/*.js` and `utilities.js`.
 
 use super::ast::{Chomping, Id, Kind, List, Node, Tree};
+use super::compose::{ScalarType, scalar_source};
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::options::ProseWrap;
 use crate::text::{self, is_previous_line_empty};
@@ -45,6 +46,11 @@ fn has_comments(node: &Node<'_>) -> bool {
         || node.indicator_comment.is_some()
         || node.trailing_comment.is_some()
         || !node.end_comments.is_empty()
+}
+
+/// All that is printed of it is what `print_node` prints.
+fn is_bare(node: &Node<'_>) -> bool {
+    !has_comments(node) && node.tag.is_none() && node.anchor.is_none()
 }
 
 /// `isEmptyNode`
@@ -195,24 +201,19 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `isNextLineEmpty`
     fn is_next_line_empty(&self, node: &Node<'a>) -> bool {
-        let mut newline_count = 0;
         let from = (node.position.end.offset as usize).saturating_sub(1);
         let rest = self.text.get(from..).unwrap_or_default();
-        let mut i = 0;
-        while let Some(&byte) = rest.get(i) {
-            if byte == b'\n' {
-                newline_count += 1;
+        // The rest of the line, whatever it is. Most of the time that is one character.
+        let line_len = rest.iter().take_while(|byte| **byte != b'\n').count();
+        let mut rest = rest.get(line_len + 1..).unwrap_or_default();
+        loop {
+            rest = &rest[rest.iter().take_while(|byte| **byte == b' ').count()..];
+            match text::white_space_len(rest) {
+                0 => return false,
+                _ if rest[0] == b'\n' => return true,
+                len => rest = &rest[len..],
             }
-            let white_space_len = text::white_space_len(&rest[i..]);
-            if newline_count == 1 && white_space_len == 0 {
-                return false;
-            }
-            if newline_count == 2 {
-                return true;
-            }
-            i += white_space_len.max(1);
         }
-        false
     }
 
     /// `printNextEmptyLine`: whether it is a `softline`.
@@ -238,16 +239,46 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         };
         comments.last().is_some_and(|comment| {
             matches!(
-                text::trim(&self.node(comment).value),
+                text::trim(self.node(comment).value),
                 b"prettier-ignore" | b"oxfmt-ignore"
             )
         })
+    }
+
+    /// What `print` does with most nodes: a scalar on one line or an alias, or the key or value that is nothing else.
+    /// They are groups with a text in them. Of anything else nothing is written.
+    fn prints_text(&mut self, node: &'t Node<'a>) -> bool {
+        if !is_bare(node) {
+            return false;
+        }
+        let scalar = match node.kind {
+            Kind::MappingKey | Kind::MappingValue | Kind::FlowSequenceItem => {
+                match self.first_child(node) {
+                    Some(content) if is_bare(content) => content,
+                    _ => return false,
+                }
+            }
+            _ => node,
+        };
+        match scalar.kind {
+            Kind::Alias => {}
+            Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle
+                if self.prose_wrap == ProseWrap::Preserve
+                    && scalar.position.start.line == scalar.position.end.line => {}
+            _ => return false,
+        }
+        self.out.text_group();
+        self.print_node(scalar, false);
+        true
     }
 
     /// `genericPrint`. `is_last_descendant`: `isLastDescendantNode(path)`, for what is not a comment, a tag
     /// or an anchor.
     pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
+        if self.prints_text(node) {
+            return;
+        }
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {
             self.print_comments(node.leading_comments);
             self.out.hard_line();
@@ -455,7 +486,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
                 self.out.text(b"%");
-                let parts = strings::split_any(text::trim(&node.value), b" \t")
+                let parts = strings::split_any(text::trim(node.value), b" \t")
                     .filter(|part| !part.is_empty());
                 for (index, part) in parts.enumerate() {
                     if index > 0 {
@@ -470,18 +501,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             Kind::Comment => {
                 self.out.text(b"#");
-                self.out.text(&node.value);
+                self.out.text(node.value);
             }
             Kind::Alias => {
                 self.out.text(b"*");
-                self.out.text(&node.value);
+                self.out.text(node.value);
             }
             Kind::Tag => self.out.text(self.source(node)),
             Kind::Anchor => {
                 self.out.text(b"&");
-                self.out.text(&node.value);
+                self.out.text(node.value);
             }
-            Kind::Plain => self.print_flow_scalar_content(node.kind, self.source(node)),
+            Kind::Plain => self.print_flow_scalar_content(node, self.source(node)),
             Kind::QuoteDouble | Kind::QuoteSingle => self.print_quoted(node),
             Kind::BlockFolded | Kind::BlockLiteral => self.print_block(node, is_last_descendant),
             Kind::Mapping | Kind::Sequence => self.print_children(node, is_last_descendant),
@@ -581,18 +612,20 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 )
             };
         self.out.text(quote);
-        self.print_flow_scalar_content(node.kind, &content);
+        self.print_flow_scalar_content(node, &content);
         self.out.text(quote);
     }
 
     /// `printFlowScalarContent`
-    fn print_flow_scalar_content(&mut self, kind: Kind, content: &[u8]) {
+    fn print_flow_scalar_content(&mut self, node: &Node<'a>, content: &[u8]) {
         // Most are one line that stays as it is.
-        if self.prose_wrap == ProseWrap::Preserve && !strings::contains_char(content, b'\n') {
+        if self.prose_wrap == ProseWrap::Preserve
+            && node.position.start.line == node.position.end.line
+        {
             return Words::line(content).write_fill(self.out);
         }
         for (index, words) in self
-            .flow_scalar_line_contents(kind, content)
+            .flow_scalar_line_contents(node.kind, content)
             .iter()
             .enumerate()
         {
@@ -885,11 +918,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let Some(node) = node else {
             return true;
         };
-        match node.kind {
-            Kind::Plain | Kind::QuoteSingle | Kind::QuoteDouble => {}
+        let kind = match node.kind {
+            Kind::Plain => ScalarType::Plain,
+            Kind::QuoteSingle => ScalarType::QuoteSingle,
+            Kind::QuoteDouble => ScalarType::QuoteDouble,
             Kind::Alias => return true,
             _ => return false,
-        }
+        };
         if self.prose_wrap == ProseWrap::Preserve {
             return node.position.start.line == node.position.end.line;
         }
@@ -898,9 +933,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if source.ends_with(b"\\") || text::includes(source, b"\\\n") {
             return false;
         }
+        let value = scalar_source(kind, source).unwrap_or_default();
         match self.prose_wrap {
-            ProseWrap::Never => !strings::contains_char(&node.value, b'\n'),
-            _ => strings::index_of_any(&node.value, b"\n ").is_none(),
+            ProseWrap::Never => !strings::contains_char(&value, b'\n'),
+            _ => strings::index_of_any(&value, b"\n ").is_none(),
         }
     }
 
@@ -1072,9 +1108,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.hard_line();
         self.out.text(b": ");
         self.start_align(2);
-        let value_start = self.out.len();
+        let value_start = self.out.position();
         self.print(value_id, is_last_descendant);
-        let value_end = self.out.len();
+        let value_end = self.out.position();
         self.out.end_indent();
         self.out.otherwise();
         self.start_align(self.tab_width);

@@ -453,7 +453,7 @@ impl<'o> Sink<'o> {
     /// Starts what `removeLines` is applied to.
     pub(crate) fn start_without_lines(&mut self) {
         match self.is_document {
-            true => self.without_lines.push(self.elements.len()),
+            true => self.without_lines.push(self.elements.position()),
             false => self.has_failed = true,
         }
     }

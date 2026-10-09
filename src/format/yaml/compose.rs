@@ -4,7 +4,7 @@
 //! Prettier rejects a text with an error, so the first one ends the composing. Warnings are nothing.
 //! Of the values of scalars there is only what an error or Prettier's printer depends on.
 
-use super::cst::{Item, SourceToken, Token, TokenType};
+use super::cst::{Item, SourceToken, Token, TokenType, Tree};
 use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -33,52 +33,68 @@ enum ScalarValue {
 }
 
 #[derive(Debug)]
-pub(crate) struct Pair<'t, 'a> {
-    pub(crate) key: Node<'t, 'a>,
-    pub(crate) value: Option<Node<'t, 'a>>,
+pub(crate) struct Pair<'t> {
+    pub(crate) key: Node<'t>,
+    pub(crate) value: Option<Node<'t>>,
     pub(crate) src_token: Option<&'t Item>,
 }
 
 #[derive(Debug)]
-pub(crate) enum SeqItem<'t, 'a> {
-    Node(Node<'t, 'a>),
+pub(crate) enum SeqItem<'t> {
+    Node(Node<'t>),
     /// In a sequence with the tag `!!omap` or `!!pairs`.
-    Pair(Pair<'t, 'a>),
+    Pair(Pair<'t>),
 }
 
 #[derive(Debug)]
-pub(crate) enum NodeKind<'t, 'a> {
+pub(crate) enum NodeKind<'t> {
     Alias,
     Scalar(ScalarType),
-    Map {
-        flow: bool,
-        items: Vec<Pair<'t, 'a>>,
-    },
-    Seq {
-        flow: bool,
-        items: Vec<SeqItem<'t, 'a>>,
-    },
+    Map { flow: bool, items: Vec<Pair<'t>> },
+    Seq { flow: bool, items: Vec<SeqItem<'t>> },
 }
 
 #[derive(Debug)]
-pub(crate) struct Node<'t, 'a> {
-    pub(crate) kind: NodeKind<'t, 'a>,
+pub(crate) struct Node<'t> {
+    pub(crate) kind: NodeKind<'t>,
     pub(crate) range: [u32; 3],
     /// `tag === "tag:yaml.org,2002:set"`
     pub(crate) has_set_tag: bool,
     has_tag: bool,
     /// Where the name of the anchor is.
     pub(crate) anchor: Option<(u32, u32)>,
-    /// Of an alias and of a scalar that is not a block scalar.
-    pub(crate) source: Cow<'a, [u8]>,
     pub(crate) src_token: Option<&'t Token>,
-    value: ScalarValue,
     /// `comment || commentBefore`
     has_comment: bool,
 }
 
-pub(crate) struct Document<'t, 'a> {
-    pub(crate) contents: Option<Node<'t, 'a>>,
+impl Node<'_> {
+    /// `scalar.source`, of a scalar that has been composed without an error.
+    fn source<'a>(&self, text: &'a [u8]) -> Cow<'a, [u8]> {
+        let (start, end) = match self.src_token {
+            Some(Token::BlockScalar { source, .. }) => *source,
+            _ => (self.range[0], self.range[1]),
+        };
+        let written = text.get(start as usize..end as usize).unwrap_or_default();
+        match self.kind {
+            NodeKind::Scalar(kind) => scalar_source(kind, written).unwrap_or_default(),
+            _ => Cow::Borrowed(written),
+        }
+    }
+
+    /// `scalar.value`
+    fn value(&self, text: &[u8]) -> ScalarValue {
+        match self.kind {
+            NodeKind::Scalar(ScalarType::Plain) if !self.has_tag => {
+                value_by_test(&self.source(text))
+            }
+            _ => ScalarValue::String,
+        }
+    }
+}
+
+pub(crate) struct Document<'t> {
+    pub(crate) contents: Option<Node<'t>>,
     pub(crate) range: [u32; 3],
 }
 
@@ -113,23 +129,29 @@ struct PropsOptions<'t> {
     start_on_newline: bool,
 }
 
-struct Directives {
+/// Handles and prefixes.
+type Tags<'a> = smallvec::SmallVec<[(&'a [u8], &'a [u8]); 2]>;
+
+struct Directives<'a> {
     is_explicit: bool,
     is_version_1_1: bool,
-    /// Handles and prefixes. The last with a handle counts.
-    tags: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The last with a handle counts.
+    tags: Tags<'a>,
     at_next_document: bool,
 }
 
 const DEFAULT_PREFIX: &[u8] = b"tag:yaml.org,2002:";
 
-impl Directives {
-    fn default_tags() -> Vec<(Vec<u8>, Vec<u8>)> {
-        vec![(b"!!".to_vec(), DEFAULT_PREFIX.to_vec())]
+/// For white space, which is a few bytes.
+static TAB: text::ByteSet = text::ByteSet::new(b"\t");
+
+impl<'a> Directives<'a> {
+    fn default_tags() -> Tags<'a> {
+        smallvec::smallvec![(&b"!!"[..], DEFAULT_PREFIX)]
     }
 
     /// `atDocument`: those of the document that starts.
-    fn at_document(&mut self) -> Directives {
+    fn at_document(&mut self) -> Directives<'a> {
         let result = Directives {
             is_explicit: self.is_explicit,
             is_version_1_1: self.is_version_1_1,
@@ -146,7 +168,7 @@ impl Directives {
         result
     }
 
-    fn add(&mut self, line: &[u8]) -> Result<()> {
+    fn add(&mut self, line: &'a [u8]) -> Result<()> {
         if self.at_next_document {
             self.is_explicit = false;
             self.is_version_1_1 = true;
@@ -162,7 +184,7 @@ impl Directives {
                 let [handle, prefix] = parts[..] else {
                     return Err(SyntaxError);
                 };
-                self.tags.push((handle.to_vec(), prefix.to_vec()));
+                self.tags.push((handle, prefix));
             }
             b"%YAML" => {
                 self.is_explicit = true;
@@ -209,9 +231,9 @@ impl Directives {
         if suffix.is_empty() {
             return Err(SyntaxError);
         }
-        match self.tags.iter().rev().find(|(it, _)| it == handle) {
+        match self.tags.iter().rev().find(|(it, _)| *it == handle) {
             Some((_, prefix)) if !prefix.is_empty() => {
-                Ok(Some([&prefix[..], &decode_uri_component(suffix)?].concat()))
+                Ok(Some([*prefix, &decode_uri_component(suffix)?].concat()))
             }
             _ if handle == b"!" => Ok(Some(source.to_vec())),
             _ => Err(SyntaxError),
@@ -255,11 +277,12 @@ fn decode_uri_component(text: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-struct Context<'a> {
+struct Context<'t, 'a> {
     text: &'a [u8],
+    tree: &'t Tree,
     at_key: bool,
     at_root: bool,
-    directives: Directives,
+    directives: Directives<'a>,
 }
 
 /// `resolveEnd`, with `reqSpace`. Returns whether there is a comment, and the offset.
@@ -316,20 +339,20 @@ fn empty_scalar_position(mut offset: u32, before: Option<&[SourceToken]>) -> u32
 }
 
 /// `containsNewline`
-fn contains_newline(key: Option<&Token>, text: &[u8]) -> bool {
+fn contains_newline(tree: &Tree, key: Option<&Token>, text: &[u8]) -> bool {
     let has_newline =
         |tokens: &[SourceToken]| tokens.iter().any(|st| st.kind == TokenType::Newline);
     match key {
         None => false,
         Some(Token::FlowScalar { token, end }) => {
             strings::contains_char(token.source(text), b'\n')
-                || end.as_deref().is_some_and(has_newline)
+                || end.is_some_and(|end| has_newline(tree.list(end)))
         }
         Some(Token::FlowCollection { items, .. }) => items.iter().any(|it| {
-            has_newline(&it.start)
-                || it.sep.as_deref().is_some_and(has_newline)
-                || contains_newline(it.key.as_deref(), text)
-                || contains_newline(it.value.as_deref(), text)
+            has_newline(tree.list(it.start))
+                || it.sep.is_some_and(|sep| has_newline(tree.list(sep)))
+                || contains_newline(tree, tree.get(it.key), text)
+                || contains_newline(tree, tree.get(it.value), text)
         }),
         Some(_) => true,
     }
@@ -384,20 +407,43 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-fn plain_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
-    match source.first() {
-        Some(b'\t' | b',' | b'%' | b'|' | b'>' | b'@' | b'`') => Err(SyntaxError),
-        _ => Ok(fold_lines(source)),
-    }
+/// The errors of `resolveFlowScalar`, for a scalar that is written `source`.
+fn check_flow_scalar(kind: ScalarType, source: &[u8]) -> Result<()> {
+    let is_valid = match kind {
+        ScalarType::Plain => !matches!(
+            source.first(),
+            Some(b'\t' | b',' | b'%' | b'|' | b'>' | b'@' | b'`')
+        ),
+        ScalarType::QuoteSingle => source.ends_with(b"'") && source.len() != 1,
+        ScalarType::QuoteDouble => double_quoted_value(source).is_ok(),
+        ScalarType::BlockFolded | ScalarType::BlockLiteral => true,
+    };
+    if is_valid { Ok(()) } else { Err(SyntaxError) }
 }
 
-fn single_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
-    if !source.ends_with(b"'") || source.len() == 1 {
-        return Err(SyntaxError);
+/// `scalar.source`, for a scalar that is written `source`. Of a block scalar: all that is asked of it is what is in it
+/// apart from white space.
+pub(crate) fn scalar_source(kind: ScalarType, source: &[u8]) -> Result<Cow<'_, [u8]>> {
+    match kind {
+        ScalarType::QuoteDouble => return double_quoted_value(source),
+        _ => check_flow_scalar(kind, source)?,
     }
-    let folded = fold_lines(&source[1..source.len() - 1]);
+    Ok(match kind {
+        ScalarType::Plain => fold_lines(source),
+        ScalarType::QuoteSingle => single_quoted_value(source),
+        _ => Cow::Borrowed(source),
+    })
+}
+
+/// `source` has both quotes.
+fn single_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
+    let folded = fold_lines(
+        source
+            .get(1..source.len().saturating_sub(1))
+            .unwrap_or_default(),
+    );
     if !text::includes(&folded, b"''") {
-        return Ok(folded);
+        return folded;
     }
     let mut result = Vec::with_capacity(folded.len());
     let mut i = 0;
@@ -409,7 +455,7 @@ fn single_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
             1
         };
     }
-    Ok(Cow::Owned(result))
+    Cow::Owned(result)
 }
 
 fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
@@ -643,7 +689,7 @@ fn is_timestamp(value: &[u8]) -> bool {
     }
 }
 
-impl<'a> Context<'a> {
+impl<'t, 'a> Context<'t, 'a> {
     fn resolve_props(&self, tokens: &[SourceToken], options: &PropsOptions<'_>) -> Result<Props> {
         let PropsOptions {
             is_flow,
@@ -684,7 +730,7 @@ impl<'a> Context<'a> {
                     // instead of indentation. In a flow collection, only the parser looks at it.
                     if !is_flow
                         && (indicator != TokenType::DocStart || !next_is_flow_collection)
-                        && strings::contains_char(token.source(self.text), b'\t')
+                        && TAB.find(token.source(self.text), 0).is_some()
                     {
                         tab = Some(token);
                     }
@@ -792,22 +838,21 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn compose_node<'t>(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t, 'a>> {
+    fn compose_node(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t>> {
         let mut node = match token {
             Token::FlowScalar { token: source, end } if source.kind == TokenType::Alias => {
                 if props.anchor.is_some() || props.tag.is_some() || source.len() <= 1 {
                     return Err(SyntaxError);
                 }
-                let (has_comment, offset) = resolve_end(end.as_deref(), source.end, true)?;
+                let end = end.map(|end| self.tree.list(end));
+                let (has_comment, offset) = resolve_end(end, source.end, true)?;
                 Node {
                     kind: NodeKind::Alias,
                     range: [source.offset, source.end, offset],
                     has_set_tag: false,
                     has_tag: false,
                     anchor: None,
-                    source: Cow::Borrowed(&source.source(self.text)[1..]),
                     src_token: None,
-                    value: ScalarValue::String,
                     has_comment,
                 }
             }
@@ -827,20 +872,14 @@ impl<'a> Context<'a> {
         Ok(node)
     }
 
-    fn compose_empty_node<'t>(
+    fn compose_empty_node(
         &mut self,
         offset: u32,
         before: Option<&[SourceToken]>,
         props: &Props,
-    ) -> Result<Node<'t, 'a>> {
+    ) -> Result<Node<'t>> {
         let offset = empty_scalar_position(offset, before);
-        let mut node = self.finish_scalar(
-            ScalarType::Plain,
-            Cow::Borrowed(b""),
-            [offset; 3],
-            false,
-            props.tag,
-        )?;
+        let mut node = self.finish_scalar(ScalarType::Plain, b"", [offset; 3], false, props.tag)?;
         node.anchor = self.anchor_of(props.anchor)?;
         if props.comment_len > 0 {
             node.has_comment = true;
@@ -849,15 +888,15 @@ impl<'a> Context<'a> {
         Ok(node)
     }
 
-    /// The second half of `composeScalar`.
-    fn finish_scalar<'t>(
+    /// The second half of `composeScalar`, for a scalar that is written `source`.
+    fn finish_scalar(
         &mut self,
         kind: ScalarType,
-        value: Cow<'a, [u8]>,
+        source: &[u8],
         range: [u32; 3],
         has_comment: bool,
         tag_token: Option<SourceToken>,
-    ) -> Result<Node<'t, 'a>> {
+    ) -> Result<Node<'t>> {
         let tag_name = match tag_token {
             Some(tag) => self.directives.tag_name(tag.source(self.text))?,
             None => None,
@@ -866,53 +905,50 @@ impl<'a> Context<'a> {
             .as_deref()
             .and_then(|name| name.strip_prefix(DEFAULT_PREFIX))
         {
-            Some(b"timestamp") if !self.directives.is_version_1_1 && !is_timestamp(&value) => {
+            Some(b"timestamp")
+                if !self.directives.is_version_1_1
+                    && !is_timestamp(&scalar_source(kind, source)?) =>
+            {
                 return Err(SyntaxError);
             }
-            Some(b"binary") if !is_base64(&value) => return Err(SyntaxError),
+            Some(b"binary") if !is_base64(&scalar_source(kind, source)?) => {
+                return Err(SyntaxError);
+            }
             _ => {}
         }
-        let scalar_value = match (tag_token, kind) {
-            (None, ScalarType::Plain) => value_by_test(&value),
-            _ => ScalarValue::String,
-        };
         Ok(Node {
             kind: NodeKind::Scalar(kind),
             range,
             has_set_tag: false,
             has_tag: tag_token.is_some(),
             anchor: None,
-            source: value,
             src_token: None,
-            value: scalar_value,
             has_comment,
         })
     }
 
-    fn compose_scalar<'t>(
+    fn compose_scalar(
         &mut self,
         token: &'t Token,
         tag_token: Option<SourceToken>,
-    ) -> Result<Node<'t, 'a>> {
+    ) -> Result<Node<'t>> {
         match token {
             Token::FlowScalar {
                 token: source_token,
                 end,
             } => {
                 let source = source_token.source(self.text);
-                let (kind, value) = match source_token.kind {
-                    TokenType::Scalar => (ScalarType::Plain, plain_value(source)?),
-                    TokenType::SingleQuotedScalar => {
-                        (ScalarType::QuoteSingle, single_quoted_value(source)?)
-                    }
-                    TokenType::DoubleQuotedScalar => {
-                        (ScalarType::QuoteDouble, double_quoted_value(source)?)
-                    }
+                let kind = match source_token.kind {
+                    TokenType::Scalar => ScalarType::Plain,
+                    TokenType::SingleQuotedScalar => ScalarType::QuoteSingle,
+                    TokenType::DoubleQuotedScalar => ScalarType::QuoteDouble,
                     _ => return Err(SyntaxError),
                 };
-                let (has_comment, offset) = resolve_end(end.as_deref(), source_token.end, true)?;
+                check_flow_scalar(kind, source)?;
+                let end = end.map(|end| self.tree.list(end));
+                let (has_comment, offset) = resolve_end(end, source_token.end, true)?;
                 let range = [source_token.offset, source_token.end, offset];
-                self.finish_scalar(kind, value, range, has_comment, tag_token)
+                self.finish_scalar(kind, source, range, has_comment, tag_token)
             }
             Token::BlockScalar {
                 offset,
@@ -921,13 +957,12 @@ impl<'a> Context<'a> {
                 source,
             } => {
                 let (kind, range, has_comment) =
-                    self.resolve_block_scalar(*offset, *indent, props, *source)?;
-                // All that is asked of the value is what is in it apart from white space.
-                let value = self
+                    self.resolve_block_scalar(*offset, *indent, self.tree.list(*props), *source)?;
+                let source = self
                     .text
                     .get(source.0 as usize..source.1 as usize)
                     .unwrap_or_default();
-                self.finish_scalar(kind, Cow::Borrowed(value), range, has_comment, tag_token)
+                self.finish_scalar(kind, source, range, has_comment, tag_token)
             }
             _ => Err(SyntaxError),
         }
@@ -1030,7 +1065,7 @@ impl<'a> Context<'a> {
         Ok((kind, range, has_comment))
     }
 
-    fn compose_collection<'t>(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t, 'a>> {
+    fn compose_collection(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t>> {
         let tag_name = match props.tag {
             Some(tag) => self.directives.tag_name(tag.source(self.text))?,
             None => None,
@@ -1078,7 +1113,7 @@ impl<'a> Context<'a> {
                 let are_all_null = items.iter().all(|pair| {
                     pair.value.as_ref().is_none_or(|value| {
                         matches!(value.kind, NodeKind::Scalar(_))
-                            && value.value == ScalarValue::Null
+                            && value.value(self.text) == ScalarValue::Null
                             && !value.has_comment
                             && !value.has_tag
                     })
@@ -1106,20 +1141,20 @@ impl<'a> Context<'a> {
                     }
                 }
                 if name == b"omap" {
-                    let keys: Vec<&Node<'t, 'a>> = items
+                    let keys: Vec<(ScalarValue, Cow<'_, [u8]>)> = items
                         .iter()
                         .filter_map(|item| match item {
                             SeqItem::Pair(pair) if matches!(pair.key.kind, NodeKind::Scalar(_)) => {
-                                Some(&pair.key)
+                                Some((pair.key.value(self.text), pair.key.source(self.text)))
                             }
                             _ => None,
                         })
                         .collect();
-                    let is_same = |a: &Node<'t, 'a>, b: &Node<'t, 'a>| {
-                        a.value == b.value
-                            && (a.value != ScalarValue::String || a.source == b.source)
-                    };
-                    if (1..keys.len()).any(|i| keys[..i].iter().any(|key| is_same(key, keys[i]))) {
+                    let is_same =
+                        |a: &(ScalarValue, Cow<'_, [u8]>), b: &(ScalarValue, Cow<'_, [u8]>)| {
+                            a.0 == b.0 && (a.0 != ScalarValue::String || a.1 == b.1)
+                        };
+                    if (1..keys.len()).any(|i| keys[..i].iter().any(|key| is_same(key, &keys[i]))) {
                         return Err(SyntaxError);
                     }
                 }
@@ -1129,26 +1164,24 @@ impl<'a> Context<'a> {
         Ok(node)
     }
 
-    fn collection<'t>(kind: NodeKind<'t, 'a>, range: [u32; 3]) -> Node<'t, 'a> {
+    fn collection(kind: NodeKind<'t>, range: [u32; 3]) -> Node<'t> {
         Node {
             kind,
             range,
             has_set_tag: false,
             has_tag: false,
             anchor: None,
-            source: Cow::Borrowed(b""),
             src_token: None,
-            value: ScalarValue::String,
             has_comment: false,
         }
     }
 
-    fn resolve_block_map<'t>(
+    fn resolve_block_map(
         &mut self,
         map_offset: u32,
         map_indent: u32,
         items: &'t [Item],
-    ) -> Result<Node<'t, 'a>> {
+    ) -> Result<Node<'t>> {
         let mut pairs = Vec::with_capacity(items.len());
         self.at_root = false;
         let mut offset = map_offset;
@@ -1161,8 +1194,10 @@ impl<'a> Context<'a> {
                 value,
                 ..
             } = item;
-            let (key, value) = (key.as_deref(), value.as_deref());
-            let first_of_sep = sep.as_ref().and_then(|sep| sep.first()).copied();
+            let tree = self.tree;
+            let (key, value) = (tree.get(*key), tree.get(*value));
+            let (start, sep) = (tree.list(*start), sep.map(|sep| tree.list(sep)));
+            let first_of_sep = sep.and_then(|sep| sep.first()).copied();
             let key_props = self.resolve_props(
                 start,
                 &PropsOptions {
@@ -1188,7 +1223,9 @@ impl<'a> Context<'a> {
                     comment_end = Some(key_props.end);
                     continue;
                 }
-                if key_props.newline_after_prop.is_some() || contains_newline(key, self.text) {
+                if key_props.newline_after_prop.is_some()
+                    || contains_newline(self.tree, key, self.text)
+                {
                     return Err(SyntaxError);
                 }
             } else if key_props
@@ -1206,7 +1243,7 @@ impl<'a> Context<'a> {
             self.at_key = false;
 
             let value_props = self.resolve_props(
-                sep.as_deref().unwrap_or_default(),
+                sep.unwrap_or_default(),
                 &PropsOptions {
                     is_flow: false,
                     indicator: TokenType::MapValueInd,
@@ -1238,7 +1275,7 @@ impl<'a> Context<'a> {
             }
             let value_node = match value {
                 Some(value) => self.compose_node(value, &value_props)?,
-                None => self.compose_empty_node(offset, sep.as_deref(), &value_props)?,
+                None => self.compose_empty_node(offset, sep, &value_props)?,
             };
             offset = value_node.range[2];
             pairs.push(Pair {
@@ -1260,19 +1297,19 @@ impl<'a> Context<'a> {
         ))
     }
 
-    fn resolve_block_seq<'t>(
+    fn resolve_block_seq(
         &mut self,
         seq_offset: u32,
         seq_indent: u32,
         items: &'t [Item],
-    ) -> Result<Node<'t, 'a>> {
+    ) -> Result<Node<'t>> {
         let mut nodes = Vec::with_capacity(items.len());
         self.at_root = false;
         self.at_key = false;
         let mut offset = seq_offset;
         let mut comment_end = None;
         for Item { start, value, .. } in items {
-            let value = value.as_deref();
+            let (start, value) = (self.tree.list(*start), self.tree.get(*value));
             let props = self.resolve_props(
                 start,
                 &PropsOptions {
@@ -1308,7 +1345,7 @@ impl<'a> Context<'a> {
         ))
     }
 
-    fn resolve_flow_collection<'t>(&mut self, token: &'t Token) -> Result<Node<'t, 'a>> {
+    fn resolve_flow_collection(&mut self, token: &'t Token) -> Result<Node<'t>> {
         let Token::FlowCollection {
             offset: collection_offset,
             indent,
@@ -1333,8 +1370,10 @@ impl<'a> Context<'a> {
                 value,
                 ..
             } = item;
-            let (key, value) = (key.as_deref(), value.as_deref());
-            let first_of_sep = sep.as_ref().and_then(|sep| sep.first()).copied();
+            let tree = self.tree;
+            let (key, value) = (tree.get(*key), tree.get(*value));
+            let (start, sep) = (tree.list(*start), sep.map(|sep| tree.list(sep)));
+            let first_of_sep = sep.and_then(|sep| sep.first()).copied();
             let mut props = self.resolve_props(
                 start,
                 &PropsOptions {
@@ -1359,7 +1398,7 @@ impl<'a> Context<'a> {
                     offset = props.end;
                     continue;
                 }
-                if !is_map && contains_newline(key, self.text) {
+                if !is_map && contains_newline(self.tree, key, self.text) {
                     return Err(SyntaxError);
                 }
             }
@@ -1410,7 +1449,7 @@ impl<'a> Context<'a> {
             }
             self.at_key = false;
             let value_props = self.resolve_props(
-                sep.as_deref().unwrap_or_default(),
+                sep.unwrap_or_default(),
                 &PropsOptions {
                     is_flow: true,
                     indicator: TokenType::MapValueInd,
@@ -1423,7 +1462,6 @@ impl<'a> Context<'a> {
             if let Some(found) = value_props.found {
                 if !is_map && props.found.is_none() {
                     let before_found = sep
-                        .as_deref()
                         .unwrap_or_default()
                         .iter()
                         .take_while(|st| st.offset != found.offset);
@@ -1439,7 +1477,7 @@ impl<'a> Context<'a> {
             let value_node = match value {
                 Some(value) => Some(self.compose_node(value, &value_props)?),
                 None if value_props.found.is_some() => {
-                    Some(self.compose_empty_node(value_props.end, sep.as_deref(), &value_props)?)
+                    Some(self.compose_empty_node(value_props.end, sep, &value_props)?)
                 }
                 None => None,
             };
@@ -1471,7 +1509,7 @@ impl<'a> Context<'a> {
         } else {
             TokenType::FlowSeqEnd
         };
-        let [close, rest @ ..] = &end[..] else {
+        let [close, rest @ ..] = self.tree.list(*end) else {
             return Err(SyntaxError);
         };
         if close.kind != expected_end {
@@ -1498,9 +1536,10 @@ impl<'a> Context<'a> {
 /// `composeDoc`. Returns the document and whether it has a `---`.
 fn compose_doc<'t, 'a>(
     text: &'a [u8],
-    directives: Directives,
+    tree: &'t Tree,
+    directives: Directives<'a>,
     token: &'t Token,
-) -> Result<(Document<'t, 'a>, bool)> {
+) -> Result<(Document<'t>, bool)> {
     let Token::Document {
         offset,
         start,
@@ -1512,12 +1551,14 @@ fn compose_doc<'t, 'a>(
     };
     let mut context = Context {
         text,
+        tree,
         at_key: false,
         at_root: true,
         directives,
     };
-    let value = value.as_deref();
-    let first_of_end = end.as_ref().and_then(|end| end.first()).copied();
+    let value = tree.get(*value);
+    let (start, end) = (tree.list(*start), end.map(|end| tree.list(end)));
+    let first_of_end = end.and_then(|end| end.first()).copied();
     let props = context.resolve_props(
         start,
         &PropsOptions {
@@ -1539,7 +1580,7 @@ fn compose_doc<'t, 'a>(
         None => context.compose_empty_node(props.end, Some(start), &props)?,
     };
     let content_end = contents.range[2];
-    let (_, end_offset) = resolve_end(end.as_deref(), content_end, false)?;
+    let (_, end_offset) = resolve_end(end, content_end, false)?;
     let document = Document {
         contents: Some(contents),
         range: [*offset, content_end, end_offset],
@@ -1548,11 +1589,8 @@ fn compose_doc<'t, 'a>(
 }
 
 /// `[...new Composer(..).compose(tokens, true, text.length)]`
-pub(crate) fn compose<'t, 'a>(
-    text: &'a [u8],
-    tokens: &'t [Token],
-) -> Result<Vec<Document<'t, 'a>>> {
-    let mut documents: Vec<Document<'t, 'a>> = Vec::new();
+pub(crate) fn compose<'t>(text: &[u8], tree: &'t Tree) -> Result<Vec<Document<'t>>> {
+    let mut documents: Vec<Document<'t>> = Vec::new();
     let mut directives = Directives {
         is_explicit: false,
         is_version_1_1: false,
@@ -1560,14 +1598,15 @@ pub(crate) fn compose<'t, 'a>(
         at_next_document: false,
     };
     let mut at_directives = false;
-    for token in tokens {
+    for token in &tree.tokens {
         match token {
             Token::Directive(directive) => {
                 directives.add(directive.source(text))?;
                 at_directives = true;
             }
             Token::Document { .. } => {
-                let (document, has_doc_start) = compose_doc(text, directives.at_document(), token)?;
+                let (document, has_doc_start) =
+                    compose_doc(text, tree, directives.at_document(), token)?;
                 if at_directives && !has_doc_start {
                     return Err(SyntaxError);
                 }
@@ -1577,7 +1616,7 @@ pub(crate) fn compose<'t, 'a>(
             Token::Source(_) => {}
             Token::DocEnd { token, end } => {
                 let document = documents.last_mut().ok_or(SyntaxError)?;
-                let (_, offset) = resolve_end(end.as_deref(), token.end, true)?;
+                let (_, offset) = resolve_end(end.map(|end| tree.list(end)), token.end, true)?;
                 document.range[2] = offset;
             }
             _ => return Err(SyntaxError),

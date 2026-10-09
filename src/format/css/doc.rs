@@ -345,6 +345,9 @@ enum Element {
     LineSuffixBoundary,
     /// What has been taken out.
     Nothing,
+    /// A group with nothing but text in it, which follows. To come to a group is all that it does to the printer, so it
+    /// has no end.
+    TextGroup,
     StartGroup {
         end: u32,
         /// Not 0: what an `ifBreak` can ask about it by.
@@ -403,6 +406,8 @@ pub(crate) struct Elements {
     open_groups: Vec<u32>,
     /// How many of `open_groups`, from the first on, are known not to be plain.
     groups_with_lines: usize,
+    /// So many of `list` stay where they are and as they are: somebody has asked where the next one goes.
+    settled: usize,
 }
 
 impl Default for Elements {
@@ -414,6 +419,7 @@ impl Default for Elements {
             open: Vec::new(),
             open_groups: Vec::new(),
             groups_with_lines: 0,
+            settled: 1,
         }
     }
 }
@@ -426,6 +432,7 @@ impl Elements {
         self.open.clear();
         self.open_groups.clear();
         self.groups_with_lines = 0;
+        self.settled = 1;
     }
 
     /// What is written next depends on whether the group that it is in is broken.
@@ -446,11 +453,40 @@ impl Elements {
         }
         let start = self.texts.len() as u32;
         self.texts.extend_from_slice(text);
-        self.list.push(Element::Text {
-            start,
-            len: text.len() as u32,
-            width: string_width(text) as u32,
-        });
+        self.add_text(start, text.len() as u32, string_width(text) as u32);
+    }
+
+    /// Texts that follow each other, here and in `texts`, are one.
+    fn add_text(&mut self, start: u32, len: u32, width: u32) {
+        match self.list.get_mut(self.settled..) {
+            Some(
+                [
+                    ..,
+                    Element::Text {
+                        start: last_start,
+                        len: last_len,
+                        width: last_width,
+                    },
+                ],
+            ) if *last_start + *last_len == start => {
+                *last_len += len;
+                *last_width += width;
+            }
+            _ => self.list.push(Element::Text { start, len, width }),
+        }
+    }
+
+    /// A group around the text that is written next. Where it starts in a text makes no difference, nor how many there
+    /// are: it comes first.
+    pub(crate) fn text_group(&mut self) {
+        match self.list.get_mut(self.settled..) {
+            Some([.., Element::TextGroup] | [.., Element::TextGroup, Element::Text { .. }]) => {}
+            Some([.., last @ Element::Text { .. }]) => {
+                let text = std::mem::replace(last, Element::TextGroup);
+                self.list.push(text);
+            }
+            _ => self.list.push(Element::TextGroup),
+        }
     }
 
     pub(crate) fn line(&mut self, line: Line) {
@@ -541,7 +577,34 @@ impl Elements {
     pub(crate) fn end_group(&mut self) {
         self.open_groups.pop();
         self.groups_with_lines = self.groups_with_lines.min(self.open_groups.len());
-        self.end(Element::End);
+        let start = self.open.last().map_or(0, |start| *start as usize);
+        let text = match self.list.get(start..) {
+            _ if start < self.settled => return self.end(Element::End),
+            Some(
+                [
+                    Element::StartGroup {
+                        is_plain: true,
+                        should_break: false,
+                        ..
+                    },
+                    contents @ ..,
+                ],
+            ) => match *contents {
+                [] | [Element::TextGroup] => None,
+                [Element::Text { start, len, width }]
+                | [Element::TextGroup, Element::Text { start, len, width }] => {
+                    Some((start, len, width))
+                }
+                _ => return self.end(Element::End),
+            },
+            _ => return self.end(Element::End),
+        };
+        self.open.pop();
+        self.list.truncate(start);
+        self.text_group();
+        if let Some((start, len, width)) = text {
+            self.add_text(start, len, width);
+        }
     }
 
     pub(crate) fn start_indent(&mut self, command: IndentCommand) {
@@ -613,9 +676,10 @@ impl Elements {
         self.end(Element::Nothing);
     }
 
-    /// Where the next element goes, for `remove_lines_from`.
-    pub(crate) fn len(&self) -> usize {
-        self.list.len()
+    /// Where the next element goes, for `remove_lines_from` and `duplicate`.
+    pub(crate) fn position(&mut self) -> usize {
+        self.settled = self.list.len();
+        self.settled
     }
 
     /// Prettier's `removeLines` for everything from `start` on.
@@ -670,6 +734,7 @@ impl Elements {
         self.open.iter_mut().for_each(shift);
         self.open_groups.iter_mut().for_each(shift);
         self.list.splice(at..at, inserted.iter().copied());
+        self.settled = self.list.len();
     }
 
     /// In an item of a `fill`: makes a `fill` of its own of what the `fill` has so far, which starts the only item
@@ -833,6 +898,13 @@ impl Elements {
                 Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
                 Element::LineSuffixBoundary => Doc::LineSuffixBoundary,
+                Element::TextGroup => match self.list.get(*at) {
+                    Some(&Element::Text { start, len, .. }) if *at < end => {
+                        *at += 1;
+                        group(self.texts[start as usize..(start + len) as usize].to_vec())
+                    }
+                    _ => group(Doc::EMPTY),
+                },
                 Element::StartGroup {
                     end,
                     id,
@@ -1227,7 +1299,7 @@ impl<'o> Printer<'o> {
                         return false;
                     }
                 }
-                Element::BreakParent | Element::Nothing => {}
+                Element::BreakParent | Element::Nothing | Element::TextGroup => {}
             }
         }
         false
@@ -1274,6 +1346,7 @@ impl<'o> Printer<'o> {
                     self.write_text(&elements.texts[start as usize..(start + len) as usize]);
                     position += width as usize;
                 }
+                Element::TextGroup => should_remeasure = false,
                 Element::StartIndent(command) => {
                     self.frames.push(frame);
                     indent = self.make_indent(indent, elements.indents[command as usize]);

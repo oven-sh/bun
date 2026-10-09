@@ -6,6 +6,7 @@ import {
   describe,
   expect,
   expectTypeOf,
+  type ExtendTest,
   jest,
   type Matchers,
   mock,
@@ -363,6 +364,7 @@ expectType(
   }),
 ).is<typeof vi>();
 jest.useFakeTimers("legacy");
+vi.useFakeTimers("modern");
 // @ts-expect-error
 vi.useFakeTimers({ toFake: ["setTimeOut"] });
 expectType(jest.advanceTimersByTimeAsync(1)).is<Promise<void>>();
@@ -557,6 +559,21 @@ built("test.extend", ({ one, two, three }) => {
   expectType<string>(two);
   expectType<boolean>(three);
 });
+expectType(test.extend).is<ExtendTest<object>>();
+export const spreadTest = { ...test };
+export const spreadDescribe = { ...describe };
+
+test.todo("to be written");
+test.todo("to be fixed", () => {});
+test.concurrent.todo("to be written");
+extended.todo("to be written");
+describe.todo("to be written");
+expectType<Parameters<typeof test.todo>["length"]>().is<2 | 3>();
+// @ts-expect-error
+test("no callback");
+// @ts-expect-error
+test.skip("no callback");
+
 test.describe("test.describe", () => {
   test.beforeEach(() => {});
   test.afterAll(done => done());
@@ -574,6 +591,33 @@ expectType(expect(1).not.toBe(2)).is<void>();
 expect(Promise.resolve(1)).resolves.toBe("1");
 // @ts-expect-error
 expect(async () => 1).resolves.toBe("1");
+
+// custom matchers after .resolves and .rejects
+declare module "bun:test" {
+  interface Matchers<T> {
+    toBeWithinRange(floor: number, ceiling: number): void;
+    toHaveClassNames(...names: string[]): void;
+    toHaveClassNames(names: string, options: { exact: boolean }): void;
+    toBeOfKind<Kind>(kind: Kind): void;
+  }
+}
+expect.extend({
+  toBeWithinRange(received: unknown, floor: unknown, ceiling: unknown) {
+    return { pass: true, message: () => this.utils.matcherHint("toBeWithinRange", received, floor) };
+  },
+});
+expectType(expect(1).toBeWithinRange(0, 2)).is<void>();
+expectType(expect(Promise.resolve(1)).resolves.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).resolves.not.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect(Promise.reject(1)).rejects.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect.poll(() => 1).toBeWithinRange(0, 2)).is<Promise<void>>();
+expect(Promise.resolve(1)).resolves.toHaveClassNames("a", "b");
+expect(Promise.resolve(1)).resolves.toHaveClassNames("a b", { exact: true });
+expect(Promise.resolve(1)).resolves.toBeOfKind<string>("kind");
+expect(Promise.resolve(1)).resolves.toBeOfKind("kind");
+// @ts-expect-error
+expect(Promise.resolve(1)).resolves.toBeWithinRange("0", 2);
+const resolvedMatchers: Matchers<number> = expect(Promise.resolve(1)).resolves;
 
 expectType(expect.soft(1, "message").toBe(1)).is<void>();
 expectType(expect.soft(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();

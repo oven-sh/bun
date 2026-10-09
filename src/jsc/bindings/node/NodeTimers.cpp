@@ -11,6 +11,8 @@
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__setTimeout(JSC::JSGlobalObject*, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__setInterval(JSC::JSGlobalObject*, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
@@ -361,6 +363,34 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__cr
         return JSValue::encode(create("cancelAnimationFrame"_s, functionClearTimeout));
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What each fake replaced, by fake: a `jest.spyOn()` that is restored after `jest.useRealTimers()` puts the fake it saw back on its owner.
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__createOriginals(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(JSWeakMap::create(JSC::getVM(globalObject), globalObject->weakMapStructure()));
+}
+
+extern "C" void Bun__FakeTimers__setOriginal(Zig::GlobalObject* globalObject, JSC::EncodedJSValue originals, JSC::EncodedJSValue fake, JSC::EncodedJSValue original)
+{
+    uncheckedDowncast<JSWeakMap>(JSValue::decode(originals))->set(JSC::getVM(globalObject), JSValue::decode(fake).asCell(), JSValue::decode(original));
+}
+
+// Empty: `value` is not a fake.
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue originals, JSC::EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    auto* fakes = uncheckedDowncast<JSWeakMap>(JSValue::decode(originals));
+    if (!value || !value.isCell() || !fakes->has(value.asCell()))
+        return {};
+    return JSValue::encode(fakes->get(value.asCell()));
+}
+
+// What `owner` holds under `name` itself. Runs no getter: an accessor is a cell that is no fake.
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__getDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy))));
 }
 
 // node:timers and node:timers/promises keep the functions that are the globals when they are first loaded.

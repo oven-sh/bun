@@ -2886,11 +2886,19 @@ impl TestCommand {
     /// The next load finds the modules as the preloads left them. A module that is still being loaded goes
     /// once it has loaded, which is waited for: the next load would be given it, with the mocks it has imported.
     /// One that can never finish loading goes as it is: the next file would wait for it, and be blamed.
+    /// A file that has mocked modules holds on to its own copies of all that imported them: it goes too.
     fn undo_module_mocks(
         vm: &VirtualMachine,
         global: &jsc::JSGlobalObject,
+        file_path: &[u8],
         next_load_shares_global: bool,
     ) {
+        unsafe extern "C" {
+            safe fn JSMock__replaceModuleOfTestFile(
+                global: &jsc::JSGlobalObject,
+                path: &bun::String,
+            );
+        }
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
         if !next_load_shares_global {
@@ -2902,6 +2910,7 @@ impl TestCommand {
         if loaded == Err(TopLevelWaitError::NothingLeft) {
             drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
         }
+        JSMock__replaceModuleOfTestFile(global, &bun::String::from_bytes(file_path));
     }
 
     /// In words, and what tells it from the runner's next step. `None`: several tests at once.
@@ -3172,7 +3181,7 @@ impl TestCommand {
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            Self::undo_module_mocks(vm, global, next_load_shares_global);
+            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
             // After them: what the script they run rejects is still this file's.
             let _ = vm.global().handle_rejected_promises();
 

@@ -528,6 +528,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
     /// `inject_jest_globals` changed what this file is transpiled to.
     pub(crate) did_apply_test_feature: bool,
+    /// `bun test` hoists a statement of this file.
+    pub(crate) has_hoisted_mock_stmt: bool,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
     /// The `S::Import`s of the `import.meta.glob(..., { eager: true })` calls visited so far.
@@ -3527,13 +3529,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
-
-        if self.options.features.inject_jest_globals {
-            for (global, name) in Jest::GLOBALS.iter().enumerate() {
-                self.jest.refs[global] =
-                    self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, name.as_bytes())?;
-            }
-        }
 
         if self.options.features.react_fast_refresh {
             self.react_refresh.create_signature_ref =
@@ -10026,6 +10021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             jest: Jest::default(),
             imported_mock_apis: Default::default(),
             did_apply_test_feature: false,
+            has_hoisted_mock_stmt: false,
             import_meta_glob_use: Default::default(),
             import_meta_glob_imports: BumpVec::new_in(arena),
             import_meta_glob_eager_calls: BumpVec::new_in(arena),

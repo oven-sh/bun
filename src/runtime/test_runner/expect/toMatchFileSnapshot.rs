@@ -45,12 +45,15 @@ pub(crate) fn to_match_file_snapshot(
         return throw!(this, global, "", "\n\nMatcher error: Expected second argument to be a string\n");
     }
     let path = path.to_js_string_view(global)?;
+    if path.index_of_ascii_char(0).is_some() {
+        return throw!(this, global, "", "\n\nMatcher error: Expected first argument to be a string without null bytes\n");
+    }
     let hint = if hint.is_string() { Some(hint.to_js_string_view(global)?) } else { None };
     let hint = hint.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |hint| hint.to_utf8());
 
     let value = this.get_value(global, this_value, "toMatchFileSnapshot", "<green>path<r><d>, <r>hint")?;
     let mut received: Vec<u8> = Vec::new();
-    if value.is_string() {
+    if value.is_string_literal() {
         received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
     } else {
         JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;

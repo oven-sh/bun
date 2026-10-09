@@ -330,8 +330,6 @@ pub(crate) struct Formatter<'a> {
     same_as_older_bun: bool,
     /// The objects that the value being printed is in. pretty-format's `refs`.
     ancestors: ObjectList,
-    /// The objects that print without the name of their class: see `find_merged`.
-    merged: ObjectList,
     /// See `count_copied`.
     copied: usize,
     /// pretty-format's `printBasicPrototype`: `Object {}` and `Array []`.
@@ -358,7 +356,6 @@ impl<'a> Formatter<'a> {
             like_older_bun: None,
             same_as_older_bun: true,
             ancestors: ObjectList::default(),
-            merged: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
             serializers: None,
@@ -3120,6 +3117,163 @@ fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue
     jsc::host_fn::from_js_host_call(global, || SnapshotFormat__getIndex(global, value, index))
 }
 
+/// `value[key]`, of any value.
+fn member_by_value(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__getByValue(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JSValue;
+    }
+    jsc::host_fn::from_js_host_call(global, || SnapshotFormat__getByValue(global, value, key))
+}
+
+/// `key in value`
+fn has_member(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<bool> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__hasByValue(global: &JSGlobalObject, value: JSValue, key: JSValue) -> bool;
+    }
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasByValue(global, value, key))
+}
+
+/// Defines `object[key]`, for an object that the printer has made.
+fn define(global: &JSGlobalObject, object: JSValue, key: JSValue, value: JSValue) -> JsResult<()> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__define(global: &JSGlobalObject, object: JSValue, key: JSValue, value: JSValue);
+    }
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__define(global, object, key, value))
+}
+
+/// What `expect.stringMatching()` makes of its argument in Jest and Vitest.
+fn to_reg_exp(global: &JSGlobalObject, pattern: JSValue) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__toRegExp(global: &JSGlobalObject, pattern: JSValue) -> JSValue;
+    }
+    jsc::host_fn::from_js_host_call(global, || SnapshotFormat__toRegExp(global, pattern))
+}
+
+/// `value != null && typeof value === "object" && !Array.isArray(value)`
+fn is_object_but_no_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    Ok(value.is_object() && !value.is_callable() && !is_array(global, value)?)
+}
+
+/// jest-snapshot `deepMerge`, Vitest `deepMergeSnapshot`: `target` with what `source`, the property matchers, has for
+/// it, in plain copies of the objects and arrays that both have.
+#[cold]
+fn deep_merge(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
+    if is_array(global, target)? && is_array(global, source)? {
+        return deep_merge_array(global, target, source, format);
+    }
+    if !is_object_but_no_array(global, target)? || !is_object_but_no_array(global, source)? {
+        return Ok(target);
+    }
+    let merged = JSValue::create_empty_object(global, 0);
+    for_each_sorted_property(global, target, format, &mut |key, value| define(global, merged, key, value))?;
+    for_each_member_of_source(global, source, format, &mut |key, from_source| {
+        let is_matcher = || Ok::<bool, JsError>(expect::Expect::is_asymmetric_matcher(from_source) || member(global, from_source, "$$typeof")?.to_boolean());
+        let value = if is_object_but_no_array(global, from_source)? && !is_matcher()? {
+            if has_member(global, target, key)? {
+                deep_merge(global, member_by_value(global, target, key)?, from_source, format)?
+            } else {
+                from_source
+            }
+        } else if is_array(global, from_source)? {
+            deep_merge_array(global, member_by_value(global, target, key)?, from_source, format)?
+        } else {
+            from_source
+        };
+        define(global, merged, key, value)
+    })?;
+    Ok(merged)
+}
+
+/// `Object.keys(source)`, each with `source[key]`. A matcher of `expect` has the members that it has in Jest and Vitest.
+fn for_each_member_of_source(
+    global: &JSGlobalObject,
+    source: JSValue,
+    format: SnapshotFormat,
+    each: &mut dyn FnMut(JSValue, JSValue) -> JsResult<()>,
+) -> JsResult<()> {
+    if let Some((sample, inverse, precision)) = members_of_matcher(global, source)? {
+        let key = |name: &'static str| bun_core::String::static_(name).to_js(global);
+        each(key("$$typeof")?, JSValue::symbol_for(global, b"jest.asymmetricMatcher"))?;
+        each(key("inverse")?, JSValue::from(inverse))?;
+        if let Some(precision) = precision {
+            each(key("precision")?, precision)?;
+        }
+        return each(key("sample")?, sample);
+    }
+    for_each_sorted_property(global, source, format, &mut |key, value| if key.is_string() { each(key, value) } else { Ok(()) })
+}
+
+/// `sample`, `inverse` and, of `closeTo()`, `precision`.
+fn members_of_matcher(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<(JSValue, bool, Option<JSValue>)>> {
+    if value.js_type() != JSType::DOMWrapper {
+        return Ok(None);
+    }
+    let found = |sample: Option<JSValue>, flags: expect::Flags| Some((sample.unwrap_or(JSValue::UNDEFINED), flags.not(), None));
+    Ok(if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
+        found(expect_js::array_containing::array_value_get_cached(value), matcher.flags.get())
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
+        found(expect_js::object_containing::object_value_get_cached(value), matcher.flags.get())
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
+        found(expect_js::string_containing::string_value_get_cached(value), matcher.flags.get())
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
+        let sample = expect_js::string_matching::test_value_get_cached(value).map(|sample| to_reg_exp(global, sample)).transpose()?;
+        found(sample, matcher.flags.get())
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
+        found(expect_js::close_to::number_value_get_cached(value), matcher.flags.get())
+            .map(|(sample, inverse, _)| (sample, inverse, expect_js::close_to::digits_value_get_cached(value)))
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
+        found(expect_js::custom::captured_args_get_cached(value), matcher.flags)
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
+        found(expect_js::any::constructor_value_get_cached(value), matcher.flags.get())
+    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
+        found(None, matcher.flags.get())
+    } else {
+        None
+    })
+}
+
+fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
+    let is_vitest = format == SnapshotFormat::Vitest;
+    let merged = JSValue::create_empty_array(global, 0)?;
+    // Vitest: `target = []`, `source = []`
+    let has_target = !(is_vitest && target.is_undefined());
+    if has_target {
+        for i in 0..length_of(global, target)? {
+            merged.put_index(global, i, item(global, target, i)?)?;
+        }
+    }
+    if is_vitest && source.is_undefined() {
+        return Ok(merged);
+    }
+    if is_vitest && !is_array(global, source)? {
+        return Err(global.throw_type_error(format_args!("source.forEach is not a function")));
+    }
+    for i in 0..length_of(global, source)? {
+        // `forEach()` leaves out the holes, `entries()` does not.
+        if is_vitest && !has_index(global, source, i)? {
+            continue;
+        }
+        let from_source = item(global, source, i)?;
+        let from_target = if has_target { item(global, target, i)? } else { JSValue::UNDEFINED };
+        let value = if is_array(global, from_target)? && (is_vitest || is_array(global, from_source)?) {
+            deep_merge_array(global, from_target, from_source, format)?
+        } else if is_object_but_no_array(global, from_target)? && (is_vitest || !is_any_or_anything(from_source)) {
+            deep_merge(global, from_target, from_source, format)?
+        } else {
+            from_source
+        };
+        merged.put_index(global, i, value)?;
+    }
+    Ok(merged)
+}
+
+fn is_any_or_anything(value: JSValue) -> bool {
+    value.as_class_ref::<expect::ExpectAny>().is_some() || value.as_class_ref::<expect::ExpectAnything>().is_some()
+}
+
 /// `value === text`
 fn is_text(global: &JSGlobalObject, value: JSValue, text: &[u8]) -> JsResult<bool> {
     Ok(value.is_string_literal() && value.to_bun_string(global)?.eq_ascii(text))
@@ -3287,9 +3441,10 @@ impl JestPrettyFormat {
             return Ok(formatter.same_as_older_bun && formatter.serializers.is_none());
         }
 
-        if let Some(properties) = property_matchers {
-            formatter.find_merged(value, properties)?;
-        }
+        let value = match property_matchers {
+            Some(properties) => deep_merge(global, value, properties, format)?,
+            None => value,
+        };
 
         // jest-snapshot `addExtraLineBreaks(normalizeNewlines(format(value)))`
         let mut printed = Vec::new();
@@ -3311,6 +3466,10 @@ impl JestPrettyFormat {
         Ok(false)
     }
 }
+
+/// Where Jest and Vitest run, the stack of pretty-format ends before 2,400 levels. What is printed on the way to the
+/// end of Bun's grows with the square of the depth, for the indentation.
+pub(crate) const MAX_INDENT: u32 = 4096;
 
 /// pretty-format, with the options and the plugins of jest-snapshot.
 impl Formatter<'_> {
@@ -3357,29 +3516,6 @@ impl Formatter<'_> {
         Ok(())
     }
 
-    /// jest-snapshot `deepMerge(received, properties)` copies what both have into plain objects and arrays.
-    #[cold]
-    fn find_merged(&mut self, received: JSValue, properties: JSValue) -> JsResult<()> {
-        if !received.is_object()
-            || !properties.is_object()
-            || received.is_array() != properties.is_array()
-            || expect::Expect::is_asymmetric_matcher(properties)
-            || self.merged.includes(received)
-        {
-            return Ok(());
-        }
-        let global = self.global_this;
-        if !bun_core::StackCheck::init().is_safe_to_recurse() {
-            return Err(global.throw_stack_overflow());
-        }
-        self.merged.push(global, received)?;
-        let format = self.snapshot_format;
-        for_each_sorted_property(global, properties, format, &mut |key, property| match received.get_own_by_value(global, key)? {
-            Some(value) => self.find_merged(value, property),
-            None => Ok(()),
-        })
-    }
-
     /// False when `value` is left to Bun's own format, which only a serializer takes it from.
     #[cold]
     #[inline(never)]
@@ -3409,7 +3545,7 @@ impl Formatter<'_> {
         has_called_to_json: bool,
     ) -> JsResult<()> {
         let global = self.global_this;
-        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        if self.indent > MAX_INDENT || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(global.throw_stack_overflow());
         }
         self.check_length(out.len())?;
@@ -3595,12 +3731,10 @@ impl Formatter<'_> {
                 out.push(b']');
             }
             Kind::List => {
-                if !self.merged.includes(value) {
-                    let name = member(global, member(global, value, "constructor")?, "name")?;
-                    if self.print_basic_prototype || !is_text(global, name, b"Array")? {
-                        write_string(global, out, name)?;
-                        out.push(b' ');
-                    }
+                let name = member(global, member(global, value, "constructor")?, "name")?;
+                if self.print_basic_prototype || !is_text(global, name, b"Array")? {
+                    write_string(global, out, name)?;
+                    out.push(b' ');
                 }
                 out.push(b'[');
                 self.print_list_items(out, value)?;
@@ -3636,7 +3770,7 @@ impl Formatter<'_> {
     fn write_constructor_name(&mut self, out: &mut Vec<u8>, value: JSValue, basic: &[u8]) -> JsResult<()> {
         let global = self.global_this;
         let start = out.len();
-        let constructor = if self.merged.includes(value) { JSValue::UNDEFINED } else { member(global, value, "constructor")? };
+        let constructor = member(global, value, "constructor")?;
         match if constructor.is_callable() { first_truthy(global, constructor, &["name"])? } else { None } {
             Some(name) => write_string(global, out, name)?,
             None => out.extend_from_slice(b"Object"),
@@ -3794,7 +3928,7 @@ impl Formatter<'_> {
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
             let Some(sample) = expect_js::string_matching::test_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(name(matcher.flags.get(), "StringMatching ", "StringNotMatching "));
-            self.print_child(out, sample)?;
+            self.print_child(out, to_reg_exp(global, sample)?)?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             let (Some(number), Some(digits)) =
                 (expect_js::close_to::number_value_get_cached(value), expect_js::close_to::digits_value_get_cached(value))
@@ -3802,7 +3936,7 @@ impl Formatter<'_> {
                 return Ok(false);
             };
             out.extend_from_slice(name(matcher.flags.get(), "NumberCloseTo ", "NumberNotCloseTo "));
-            self.print_child(out, number)?;
+            write_string(global, out, number)?;
             let digits = digits.to_int32();
             let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
@@ -3834,7 +3968,9 @@ impl Formatter<'_> {
         } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
             let Some(constructor) = expect_js::any::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");
-            out.extend_from_slice(constructor.get_class_name(global)?.to_utf8().slice());
+            let name = constructor.get_class_name(global)?;
+            let name = name.to_utf8();
+            out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
             out.push(b'>');
         } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
             out.extend_from_slice(b"Anything");
@@ -4184,26 +4320,30 @@ impl JestPrettyFormat {
             ));
         }
 
+        let utils_value = expect::ExpectMatcherUtils::singleton(global);
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(JSValue::UNDEFINED) };
+        // SAFETY: `utils_value` is on the stack and owns the payload.
+        let utils = unsafe { &*utils };
+
+        let is_of_file = expect::Expect::is_called_by_test_file(global, frame);
         let serializers = JSValue::create_empty_array(global, 0)?;
         serializers.push(global, plugin)?;
         if let Some(registered) = Self::serializers(global)? {
             let mut iter = registered.array_iterator(global)?;
             while let Some(earlier) = iter.next()? {
+                // A helper that every test file calls registers its serializer once.
+                if !is_of_file && earlier == plugin && utils.serializers_of_file.get().get(iter.i as usize - 1) == Some(&false) {
+                    return Ok(JSValue::UNDEFINED);
+                }
                 serializers.push(global, earlier)?;
             }
         }
-        let utils_value = expect::ExpectMatcherUtils::singleton(global);
         serializers_js::snapshot_serializers_set_cached(utils_value, global, serializers);
-        if global.bun_vm().is_in_preload {
-            if let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) {
-                // SAFETY: `utils_value` is on the stack and owns the payload.
-                unsafe { &*utils }.preload_serializers.set(serializers.get_length(global)? as u32);
-            }
-        }
+        utils.serializers_of_file.with_mut(|of_file| of_file.insert(0, is_of_file));
         Ok(JSValue::UNDEFINED)
     }
 
-    /// The last added first: those of the current test file, then those of preload scripts.
+    /// The last added first. Those that the code of a test file added end with the file.
     fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
         let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
@@ -4214,19 +4354,25 @@ impl JestPrettyFormat {
         let Some(serializers) = serializers_js::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);
         };
-        if is_same_file {
+        if is_same_file || !utils.serializers_of_file.get().contains(&true) {
             return Ok(Some(serializers));
         }
 
-        let from_preload = utils.preload_serializers.get();
-        if from_preload == 0 {
+        let of_file = utils.serializers_of_file.replace(Vec::new());
+        let kept = JSValue::create_empty_array(global, 0)?;
+        let mut count = 0;
+        let mut iter = serializers.array_iterator(global)?;
+        for is_of_file in of_file {
+            let Some(serializer) = iter.next()? else { break };
+            if !is_of_file {
+                kept.put_index(global, count, serializer)?;
+                count += 1;
+            }
+        }
+        utils.serializers_of_file.set(vec![false; count as usize]);
+        if count == 0 {
             serializers_js::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
             return Ok(None);
-        }
-        let kept = JSValue::create_empty_array(global, 0)?;
-        let count = serializers.get_length(global)? as u32;
-        for i in count.saturating_sub(from_preload)..count {
-            kept.push(global, serializers.get_index(global, i)?)?;
         }
         serializers_js::snapshot_serializers_set_cached(utils_value, global, kept);
         Ok(Some(kept))

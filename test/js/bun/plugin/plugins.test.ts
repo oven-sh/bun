@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, Heap } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -4055,25 +4055,37 @@ describe.concurrent("a module made from an object", () => {
         `;
       }
       files["9.test.ts"] = `
-        import { heapStats } from "bun:jsc";
+        import { generateHeapSnapshotForDebugging } from "bun:jsc";
         import { test } from "bun:test";
-        test("counts", () => {
-          Bun.gc(true);
-          Bun.gc(true);
-          console.log("GlobalObject: " + heapStats().objectTypeCounts.GlobalObject);
+        ${Heap}
+        let heap;
+        test("counts", async () => {
+          heap = new Promise(resolve => setTimeout(() => resolve(new Heap({ followers: false })), 0));
+          heap = await heap;
+          const ofThisFile = "root(ProtectedValues) GlobalObject -";
+          console.log(
+            JSON.stringify({
+              GlobalObject: heap.pathsTo("GlobalObject"),
+              JSSourceCode: heap.pathsTo("JSSourceCode").filter(path => !path.startsWith(ofThisFile)),
+            }),
+          );
         });
       `;
       using dir = tempDir("plugin-object-module-leak", files);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        // A compilation in flight is a root of the code that it compiles.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // 9 when they are kept. A debug build still has that of the file before.
-      expect(stdout).toMatch(/GlobalObject: [12]\n/);
+      // 9 when they are kept. The object follows from the JSSourceCode.
+      expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
+        GlobalObject: ["root(ProtectedValues) GlobalObject"],
+        JSSourceCode: [],
+      });
       expect(stderr).toContain(" 9 pass\n 0 fail\n");
       expect(exitCode).toBe(0);
     },

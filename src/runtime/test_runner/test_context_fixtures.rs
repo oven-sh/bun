@@ -653,8 +653,7 @@ impl ActiveFixture {
             .ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a fixture")))
     }
 
-    /// The fixture has its value: the callbacks that wait for it can go on, and it is torn down after them.
-    /// At once, if the test or the file that asked for it has ended.
+    /// The fixture has its value: what waits for it goes on, and it is torn down after that, or at once if that has ended.
     fn provide(&self, this_value: JSValue, global: &JSGlobalObject, definition: &Definition, value: JSValue) -> JsResult<()> {
         let tear_down = bound(global, this_value, "tearDown", __jsc_host_tear_down)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);

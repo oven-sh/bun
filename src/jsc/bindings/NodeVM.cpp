@@ -874,6 +874,7 @@ NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, NodeVMContextOptions
     cell->finishCreation(vm);
     // After finishCreation(), which reads and deletes properties of the bare global.
     cell->m_sandbox.setMayBeNull(vm, cell, contextifiedObject);
+    defaultGlobalObject(vm)->addDerivedRealm(cell);
     return cell;
 }
 
@@ -889,6 +890,8 @@ static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::
 {
     // Delegate to the parent global object so that unhandled rejections
     // in VM contexts are reported to the main process (matching Node.js behavior)
+    if (Bun::isRetiredTestIsolationRealm(globalObject)) [[unlikely]]
+        return;
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
 }

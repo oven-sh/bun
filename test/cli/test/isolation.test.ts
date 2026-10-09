@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -942,6 +942,203 @@ describe.concurrent("bun test --isolate", () => {
         counts: stderr.match(/^ \d+ (pass|fail)$/gm),
         exitCode,
       }).toEqual({ stdout: "", counts: [" 3 pass", " 0 fail"], exitCode: 0 });
+    },
+  );
+
+  // What a close handler of a finished file starts cannot be over before the file's realm is retired.
+  test.each([
+    ["a ShadowRealm", "new ShadowRealm().evaluate(code)"],
+    ["a node:vm context", "vm.runInContext(code, vm.createContext({ console }))"],
+    [
+      "a node:vm context without a sandbox",
+      "vm.runInContext(code, Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { console }))",
+    ],
+  ])("with --isolate, what a file leaves in flight in %s does not go on in the next file", async (_, evaluate) => {
+    using dir = tempDir("isolate-derived-realm", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import vm from "node:vm";
+        const code = \`
+          Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(8)), 0, 0, 1).value.then(() => {
+            console.log("a: goes on");
+            throw new Error("from a");
+          });
+          0;
+        \`;
+        test("leaves sockets open", async () => {
+          let isClosed = false;
+          const close = () => {
+            if (isClosed) return;
+            isClosed = true;
+            ${evaluate};
+          };
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close } });
+          await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, close } });
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("waits longer than what a left", async () => {
+          await Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(8)), 0, 0, 1).value;
+          await new Promise(resolve => setImmediate(resolve));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect({
+      stdout: stdout.replace(/^bun test .*\n/, ""),
+      counts: stderr.match(/^ \d+ (pass|fail|error)$/gm),
+      exitCode,
+    }).toEqual({ stdout: "", counts: [" 2 pass", " 0 fail"], exitCode: 0 });
+  });
+
+  test("with --isolate, a BroadcastChannel that a file leaves open in a ShadowRealm hears nothing of the next file", async () => {
+    using dir = tempDir("isolate-derived-realm-channel", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("leaves a channel open", () => {
+          new ShadowRealm().evaluate(\`
+            globalThis.channel = new BroadcastChannel("isolate-derived-realm");
+            channel.onmessage = () => {
+              console.log("a: goes on");
+              Promise.reject(new Error("from a"));
+            };
+            0;
+          \`);
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("posts to the channel", async () => {
+          const receiver = new BroadcastChannel("isolate-derived-realm");
+          const sender = new BroadcastChannel("isolate-derived-realm");
+          const received = new Promise(resolve => (receiver.onmessage = resolve));
+          sender.postMessage(1);
+          await received;
+          receiver.close();
+          sender.close();
+          await new Promise(resolve => setImmediate(resolve));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect({
+      stdout: stdout.replace(/^bun test .*\n/, ""),
+      counts: stderr.match(/^ \d+ (pass|fail|error)$/gm),
+      exitCode,
+    }).toEqual({ stdout: "", counts: [" 2 pass", " 0 fail"], exitCode: 0 });
+  });
+
+  describe("no root reaches the global object of a finished file", () => {
+    const shadowRealm = `globalThis.realm = new ShadowRealm(); realm.evaluate("1");`;
+    const context = `globalThis.context = vm.createContext({ kept }); vm.runInContext("1", context);`;
+    const bareContext = `globalThis.bareContext = vm.createContext(vm.constants.DONT_CONTEXTIFY); bareContext.kept = kept;`;
+    const channel = `new ShadowRealm().evaluate('globalThis.channel = new BroadcastChannel("kept"); channel.onmessage = () => {}; 0');`;
+
+    describe.each([
+      ["nothing", ""],
+      ["a ShadowRealm", shadowRealm],
+      ["a node:vm context", context],
+      ["a node:vm context without a sandbox", bareContext],
+      ["a BroadcastChannel in a ShadowRealm", channel],
+      ["all of them", shadowRealm + context + bareContext + channel],
+    ])("that makes %s", (_, make) => {
+      test.each([3, 12, 48])("%d files", async count => {
+        const files: Record<string, string> = {};
+        for (let file = 0; file < count; file++) {
+          files[`${String(file).padStart(2, "0")}.test.ts`] = `
+            import { test } from "bun:test";
+            import vm from "node:vm";
+            globalThis.kept = Array.from({ length: 100 }, () => new URLSearchParams());
+            test("makes it", () => {
+              ${make}
+            });
+          `;
+        }
+        files["counts.test.ts"] = `
+          import { generateHeapSnapshotForDebugging } from "bun:jsc";
+          import { test } from "bun:test";
+          ${Heap}
+          globalThis.kept = Array.from({ length: 7 }, () => new URLSearchParams());
+          let heap;
+          test("counts", async () => {
+            heap = new Promise(resolve => setTimeout(() => resolve(new Heap({ followers: false })), 0));
+            heap = await heap;
+            console.log(
+              JSON.stringify({
+                globals: heap.pathsTo("GlobalObject"),
+                contexts: heap.pathsTo("NodeVMGlobalObject"),
+                kept: heap.pathsTo("URLSearchParams").length,
+              }),
+            );
+          });
+        `;
+        using dir = tempDir("isolate-collects-globals", files);
+        const { stdout, stderr, exitCode } = await runTests(
+          String(dir),
+          ["--isolate"],
+          Object.keys(files).map(file => "./" + file),
+          // A compilation in flight is a root of the code that it compiles.
+          { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+        );
+        const printed = stdout.replace(/^bun test .*\n/, "");
+        expect(printed, stderr).toStartWith("{");
+        // Of the file that counts: its global object, its 7 objects, their prototype and constructor.
+        expect({ ...JSON.parse(printed), exitCode }).toEqual({
+          globals: ["root(ProtectedValues) GlobalObject"],
+          contexts: [],
+          kept: 9,
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
+  // Not on a debug build, where the temporaries of `vm.global().set_time_zone()` in the frame of `TestCommand::exec` keep the first file.
+  test.skipIf(isDebug)(
+    "with --isolate, of the finished files only the last two can be waiting for a collection",
+    async () => {
+      // File i keeps 16 * 2 ** i objects of a native class on its global, so their number says which files are alive.
+      const keep = (file: number) =>
+        `globalThis.kept = Array.from({ length: ${16 * 2 ** file} }, () => new URLSearchParams());`;
+      const files: Record<string, string> = {};
+      for (let file = 0; file < 12; file++) {
+        files[`${String(file).padStart(2, "0")}.test.ts`] = `
+          import { test } from "bun:test";
+          ${keep(file)}
+          test("passes", () => {});
+        `;
+      }
+      files["counts.test.ts"] = `
+        import { heapStats } from "bun:jsc";
+        import { test } from "bun:test";
+        ${keep(12)}
+        test("counts", async () => {
+          let alive, rounds = 0;
+          // Only what stays alive counts.
+          do {
+            Bun.gc(true);
+            await new Promise(resolve => setTimeout(resolve, 1));
+            const count = heapStats().objectTypeCounts.URLSearchParams >> 4;
+            alive = Array.from({ length: 13 }, (_, file) => file).filter(file => count & (1 << file));
+          } while (++rounds < 100 && alive.some(file => file < 10));
+          console.log(JSON.stringify(alive));
+        });
+      `;
+      using dir = tempDir("isolate-collects-globals", files);
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        Object.keys(files).map(file => "./" + file),
+      );
+      const printed = stdout.replace(/^bun test .*\n/, "");
+      expect(printed, stderr).toStartWith("[");
+      const alive: number[] = JSON.parse(printed);
+      expect({
+        theFileThatCounts: alive.includes(12),
+        aliveLongAfterItsEnd: alive.filter(file => file < 10),
+        exitCode,
+      }).toEqual({ theFileThatCounts: true, aliveLongAfterItsEnd: [], exitCode: 0 });
     },
   );
 
@@ -2273,6 +2470,63 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
     expect(stderr).toContain("error: thrown while loading");
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) b"], exitCode: 1 });
+  });
+
+  // `onRestore` runs in the defineProperty trap of a spied-on Proxy once the test is over.
+  const restoredThroughTrap = (onRestore: string) => `
+    import { jest, spyOn, test } from "bun:test";
+    test("a", () => {
+      let isOver = false;
+      globalThis.target = new Proxy({ method() {} }, {
+        defineProperty(...args) {
+          if (isOver) { ${onRestore} }
+          return Reflect.defineProperty(...args);
+        },
+      });
+      globalThis.other = { method: () => "original" };
+      globalThis.called = jest.fn();
+      spyOn(target, "method");
+      isOver = true;
+    });
+  `;
+
+  test("a spy that cannot be restored is an error of the file that made it, and of no other", async () => {
+    using dir = tempDir("spies-of-a-file", {
+      "a.test.ts": restoredThroughTrap(`throw new Error("the trap refuses");`),
+      "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+      "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts", "./c.test.ts"]);
+    const lines = stderr.split("\n").filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+    expect(
+      lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      stderr,
+    ).toEqual([
+      "a.test.ts:",
+      "(pass) a",
+      "error: the trap refuses",
+      "b.test.ts:",
+      "(pass) b",
+      "c.test.ts:",
+      "(pass) c",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    [
+      "a spy that is made",
+      `isOver = false; spyOn(other, "method").mockReturnValue("spied");`,
+      `expect(other.method()).toBe("original")`,
+    ],
+    ["a call that is made", `called("by the trap");`, `expect(called.mock.calls).toEqual([])`],
+  ])("%s while the spies of a file are restored does not outlive the file either", async (_, onRestore, check) => {
+    using dir = tempDir("spies-of-a-file", {
+      "a.test.ts": restoredThroughTrap(onRestore),
+      "b.test.ts": `import { expect, test } from "bun:test"; test("b", () => ${check});`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
   test("the spies of a preload, and of its beforeAll(), stay", async () => {

@@ -8,6 +8,7 @@
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/RegExpObject.h>
 
 using namespace JSC;
 
@@ -215,6 +216,65 @@ extern "C" EncodedJSValue SnapshotFormat__getIndex(JSGlobalObject* globalObject,
     JSValue item = value.get(globalObject, index);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(item);
+}
+
+// `value[key]`
+extern "C" EncodedJSValue SnapshotFormat__getByValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedKey)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue value = JSValue::decode(encodedValue);
+    auto key = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (value.isUndefinedOrNull()) {
+        throwCannotRead(globalObject, scope, value, key.isSymbol() ? String("a symbol"_s) : key.string());
+        return {};
+    }
+    JSValue member = value.get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(member);
+}
+
+// `key in value`
+extern "C" bool SnapshotFormat__hasByValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedKey)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (!object) {
+        throwTypeError(globalObject, scope, "Cannot use the 'in' operator on a value that is not an object"_s);
+        return false;
+    }
+    auto key = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, object->hasProperty(globalObject, key));
+}
+
+// Defines `object[key]`, for an object that the printer has made.
+extern "C" void SnapshotFormat__define(JSGlobalObject* globalObject, EncodedJSValue encodedObject, EncodedJSValue encodedKey, EncodedJSValue encodedValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSObject* object = JSValue::decode(encodedObject).getObject();
+    if (!object)
+        return;
+    auto key = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    scope.release();
+    object->putDirectMayBeIndex(globalObject, key, JSValue::decode(encodedValue));
+}
+
+// `new RegExp(pattern)`, or `pattern` when it is not one.
+extern "C" EncodedJSValue SnapshotFormat__toRegExp(JSGlobalObject* globalObject, EncodedJSValue encodedPattern)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue pattern = JSValue::decode(encodedPattern);
+    if (!pattern.isString())
+        return encodedPattern;
+    auto string = asString(pattern)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RegExp* regExp = RegExp::create(vm, string, {});
+    if (!regExp->isValid())
+        return encodedPattern;
+    return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
 // The entries of a Map or the values of a Set. False, with nothing done, unless `method` is the `entries` or `values` it is born with.

@@ -40,7 +40,7 @@ impl Expect {
     }
 
     /// Whether the function that made the call in `frame` is in the test file that is running.
-    fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
+    pub(crate) fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
         let Some(runner) = Jest::runner() else { return false };
         let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
         let path = runner.files.items_source()[buntest.get().file_id as usize].path.text;

@@ -5502,10 +5502,19 @@ pub mod formatter {
             iter_always_newline: bool,
         ) -> JsResult<()> {
             if iter_i == 0 {
-                if value.is_class(self.global_this) {
-                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
-                } else if value.is_callable() {
-                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
+                if value.is_callable() {
+                    let tag = if value.is_class(self.global_this) {
+                        Tag::Class
+                    } else {
+                        Tag::Function
+                    };
+                    // It is among the visited as the object that it has been printed as so far.
+                    let was_in_map = self.map_node.is_some() && self.map.remove(&value).is_some();
+                    let result = self.print_as::<C>(tag, writer_, value, js_type);
+                    if was_in_map {
+                        self.map.insert(value, ());
+                    }
+                    result?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");

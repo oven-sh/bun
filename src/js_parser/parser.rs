@@ -1791,7 +1791,7 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    /// The symbol of each of `Jest::GLOBALS`.
+    /// The symbol of each of `Jest::GLOBALS` that the file has looked up and does not bind.
     pub(crate) refs: [Ref; Jest::GLOBALS.len()],
 }
 
@@ -1819,6 +1819,16 @@ impl Jest {
         "onTestFailed",
         "assertType",
     ];
+
+    #[cold]
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
+        if let Some(global) = Self::GLOBALS
+            .iter()
+            .position(|global| global.as_bytes() == name)
+        {
+            self.refs[global] = symbol;
+        }
+    }
 
     /// Whether "bun:test" lacks this one of `GLOBALS`.
     pub(crate) fn is_of_vitest_only(global: &str) -> bool {

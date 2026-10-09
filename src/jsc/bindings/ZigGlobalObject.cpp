@@ -1074,6 +1074,7 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
+    defaultGlobalObject(vm)->addDerivedRealm(shadow);
 
     return shadow;
 }
@@ -3663,38 +3664,44 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    bool moduleMocksRun = false;
-    if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
-        if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString))
-            return Identifier::fromString(vm, keyString.substring(1));
-        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString)) {
-            if (moduleMocksRun) [[unlikely]]
-                return Identifier::fromString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), referrerString, true));
-            return Identifier::fromString(vm, resolvedString.value());
-        }
+    // (A factory goes on running when Bun.plugin.clearAll() has removed its mock, and all the others.)
+    bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
+    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]]
+        return Identifier::fromString(vm, moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, keyString.substring(1), referrerString, true) : keyString.substring(1));
+    WTF::String resolved;
+    bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
+    if (hasModuleMocks) {
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString))
+            resolved = resolvedString.value();
     } else {
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    ErrorableString res;
-    BunString keyZ = Bun::toString(keyString);
-    BunString referrerZ = Bun::toString(referrerString);
-    BunString queryZ = BunStringEmpty;
-    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!res.success) {
-        throwException(scope, res.result.err, globalObject);
-        return {};
-    }
-    auto resolved = res.result.value.transferToWTFString();
-    auto query = queryZ.transferToWTFString();
+    if (resolved.isNull()) {
+        ErrorableString res;
+        BunString keyZ = Bun::toString(keyString);
+        BunString referrerZ = Bun::toString(referrerString);
+        BunString queryZ = BunStringEmpty;
+        Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!res.success) {
+            throwException(scope, res.result.err, globalObject);
+            return {};
+        }
+        resolved = res.result.value.transferToWTFString();
+        auto query = queryZ.transferToWTFString();
 
-    if (!query.isEmpty())
-        resolved = makeString(resolved, query);
+        if (!query.isEmpty())
+            resolved = makeString(resolved, query);
+    }
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
-    return Identifier::fromString(vm, resolved);
+    Identifier resolvedKey = Identifier::fromString(vm, resolved);
+    if (hasModuleMocks) [[unlikely]] {
+        Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return resolvedKey;
 }
 
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool useImportMap)
@@ -4816,12 +4823,33 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
     globalObject->forbidExecution();
 }
 
-// `bun test --isolate`: the file that just finished is being retired on a live VM. Its context's
+void GlobalObject::addDerivedRealm(JSC::JSGlobalObject* realm)
+{
+    if (!isBunTest)
+        return;
+    if (m_derivedRealms.size() == m_derivedRealms.capacity())
+        m_derivedRealms.removeAllMatching([](auto& derived) { return !derived; });
+    m_derivedRealms.append(JSC::Weak<JSC::JSGlobalObject>(realm));
+}
+
+// A ShadowRealm has a context of its own.
+static void stopActiveDOMObjectsOfDerivedRealms(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    for (size_t i = 0; i < globalObject->m_derivedRealms.size(); ++i) {
+        JSC::Strong<JSC::JSGlobalObject> derived(vm, globalObject->m_derivedRealms[i].get());
+        if (auto* shadowRealm = dynamicDowncast<Zig::GlobalObject>(derived.get()))
+            shadowRealm->scriptExecutionContext()->prepareForDestruction();
+    }
+}
+
+// `bun test --isolate`: the file that just finished is being retired on a live VM. Its contexts'
 // workers, ports, channels and sockets are stopped before anything else of the file is swept.
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     globalObject->scriptExecutionContext()->prepareForDestruction();
+    stopActiveDOMObjectsOfDerivedRealms(globalObject);
 }
 
 // `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
@@ -4831,6 +4859,12 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    // Also of those that its close handlers have made since.
+    stopActiveDOMObjectsOfDerivedRealms(globalObject);
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (derived)
+            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    }
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

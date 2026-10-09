@@ -366,7 +366,8 @@ impl Snapshots {
         // SAFETY: `buntest_strong` owns the entries of its sequences.
         let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
         let mut name = full_test_name(entry, format.name_separator(), format == Format::Jest);
-        if !hint.is_empty() {
+        // Jest: `name && hint ? name + ": " + hint : name`
+        if !hint.is_empty() && !(format == Format::Jest && name.is_empty()) {
             name.extend_from_slice(format.hint_separator());
             name.extend_from_slice(hint);
         }
@@ -413,10 +414,10 @@ impl Snapshots {
             self.file_buf.extend_from_slice(format.header());
         } else {
             self.file_buf = contents;
-            if let Err(err) = self.parse_file(path) {
+            if self.parse_file(path).is_err() {
                 self.file_buf = Vec::new();
                 self.values.clear();
-                return Err(err);
+                return Err(Error::ParseError);
             }
         }
         if format != Format::Bun {

@@ -220,6 +220,32 @@ describe.concurrent("a file that imports from a test module", () => {
   );
 });
 
+test.concurrent("a global that the type of a decorated member names as well", async () => {
+  using dir = tempDir("jest-globals-decorator-metadata", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } }),
+    "metadata.test.ts": `
+      const types: unknown[] = [];
+      (Reflect as any).metadata = (key: string, type: unknown) => () => {
+        if (key === "design:type") types.push(type);
+      };
+      function decorated(target: unknown, key: string) {}
+      class Service {}
+      class Holder {
+        @decorated service: jest.Mocked<Service>;
+      }
+      test("test", () => {
+        const fn = jest.fn();
+        fn();
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(types).toEqual([Object]);
+      });
+    `,
+  });
+  const { stderr, exitCode } = await run(String(dir), ["test", "metadata.test.ts"]);
+  expect(stderr).toContain(" 1 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("the transpiler cache", () => {
   const padding = `// ${Buffer.alloc(8192, "x").toString()}`;
   const cacheEnv = dir => ({

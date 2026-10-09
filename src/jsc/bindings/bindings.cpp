@@ -1925,7 +1925,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
         return true;
     }
-    case JSFunctionType: {
+    case JSFunctionType:
+    case InternalFunctionType: {
         return false;
     }
 
@@ -2246,6 +2247,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case BigUint64ArrayType:
     case StringObjectType:
     case JSFunctionType:
+    case InternalFunctionType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:

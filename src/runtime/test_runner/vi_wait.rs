@@ -10,7 +10,7 @@ use bun_jsc::{
 
 use super::expect_core::expect_deferred::RunningEntry;
 use super::jest::Jest;
-use super::timers::fake_timers;
+use super::timers::fake_timers::{self, Stop};
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -331,7 +331,13 @@ impl ViWait {
 
     /// `Err`: a fake timer threw while the fake clock advanced, or the VM is terminating.
     fn poll(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
-        fake_timers::advance_by_ms(global, f64::from(self.interval_ms))?;
+        match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
+            Ok(thrown) if thrown.is_empty() => {}
+            Ok(thrown) => return Err(global.throw_value(thrown)),
+            Err(Stop::Vm(err)) => return Err(err),
+            // The next advance would stop at the same ticks.
+            Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),
+        }
         if self.callback_pending.get() || !self.is_pending() {
             return Ok(());
         }

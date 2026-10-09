@@ -1244,11 +1244,16 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
+        let asks_uses_test_api = cfg!(debug_assertions)
+            || p.options
+                .features
+                .runtime_transpiler_cache_mut()
+                .is_some_and(|cache| cache.input_hash.is_some());
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
-            let mock_hoist_order = if p.options.features.inject_jest_globals {
+            let mock_hoist_order = if p.options.features.inject_jest_globals || asks_uses_test_api {
                 p.plan_mock_hoisting(stmts)
             } else {
                 None
@@ -2286,12 +2291,7 @@ impl<'a> Parser<'a> {
         }
 
         // Before the import of the globals is added, which only `bun test` does.
-        let uses_test_api = (cfg!(debug_assertions)
-            || p.options
-                .features
-                .runtime_transpiler_cache_mut()
-                .is_some_and(|cache| cache.input_hash.is_some()))
-            && p.uses_test_api();
+        let uses_test_api = asks_uses_test_api && p.uses_test_api();
 
         // Auto inject jest globals into the test file
         'outer: {
@@ -2319,6 +2319,7 @@ impl<'a> Parser<'a> {
                     .enumerate()
                     .filter(|(index, (_, global))| {
                         left_alone & (1 << index) == 0
+                            && global.is_valid()
                             && p.symbols.as_slice()[global.inner_index() as usize]
                                 .use_count_estimate
                                 > 0

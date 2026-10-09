@@ -71,7 +71,9 @@ bun_core::declare_scope!(cache, visible);
 /// `import.meta.glob()` that cannot be expanded calls a function that throws.
 /// Version 38: `inject_jest_globals` participates in the features hash of a file that uses the
 /// API of `bun test`, and of no other.
-const EXPECTED_VERSION: u32 = 38;
+/// Version 39: A file uses that API if it looks up one of its globals at all, counted or not, or
+/// `bun test` hoists a statement of it.
+const EXPECTED_VERSION: u32 = 39;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

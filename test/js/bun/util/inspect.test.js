@@ -1549,6 +1549,16 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
   );
 });
 
+it("a function that is printed as an object and has nothing to list is printed as a function", () => {
+  const f = () => {};
+  expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");
+  expect(Bun.inspect(expect.objectContaining(class A {}))).toBe("ObjectContaining [class A]");
+  expect(Bun.inspect({ x: expect.objectContaining(f) })).toBe("{\n  x: ObjectContaining [Function: f],\n}");
+  expect(Bun.inspect(expect.objectContaining(Object.assign(() => {}, { a: 1 })))).toBe(
+    "ObjectContaining {\n  a: 1,\n}",
+  );
+});
+
 describe("compact prints one line", () => {
   it("an array of more than 100 items", () => {
     expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(

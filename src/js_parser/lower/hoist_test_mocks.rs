@@ -62,21 +62,22 @@ pub(crate) fn drop_namespace_of_lowered_callee(
 
 impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEMA> {
     /// Whether `bun test` may transpile this file to something else than `bun run` does. Both find
-    /// the same answer: it is made of what the visit pass leaves behind with or without
-    /// `inject_jest_globals`.
+    /// the same answer, and nothing that either does to the file takes any of it back: a record
+    /// stays, and so does the symbol of a name that was looked up and that nothing binds.
     pub(crate) fn uses_test_api(&self) -> bool {
-        self.import_records
-            .items()
-            .iter()
-            .any(|record| is_test_module(record.path.text))
+        self.has_hoisted_mock_stmt
+            || self
+                .import_records
+                .items()
+                .iter()
+                .any(|record| is_test_module(record.path.text))
             || Jest::GLOBALS.iter().any(|global| {
                 self.module_scope()
                     .members
                     .get(global.as_bytes())
                     .is_some_and(|member| {
-                        let symbol = &self.symbols[member.ref_.inner_index() as usize];
-                        symbol.kind == js_ast::symbol::Kind::Unbound
-                            && symbol.use_count_estimate > 0
+                        self.symbols[member.ref_.inner_index() as usize].kind
+                            == js_ast::symbol::Kind::Unbound
                     })
             })
     }
@@ -94,6 +95,14 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             .members
             .get(self.load_name_from_ref(name))
             .map(|member| member.ref_)
+    }
+
+    /// Before the visit pass no global has a symbol: a name of one that nothing binds is one.
+    fn unvisited_top_level_mock_api(&self, name: Ref) -> Option<MockApi> {
+        match self.unvisited_top_level_symbol(name) {
+            Some(symbol) => self.mock_api(symbol),
+            None => MockApi::from_export_name(self.load_name_from_ref(name)),
+        }
     }
 
     /// The `vi` and `mock` of `vi.mock(...)` or `await vi.mock(...)`, before the visit pass.
@@ -122,7 +131,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             let last_name = *last_name.get_or_insert_with(|| dot.name.slice());
             match dot.target.data {
                 ExprData::EIdentifier(id) => {
-                    let api = self.mock_api(self.unvisited_top_level_symbol(id.ref_)?)?;
+                    let api = self.unvisited_top_level_mock_api(id.ref_)?;
                     return (!is_chain || matches!(api, MockApi::Jest)).then_some((api, last_name));
                 }
                 ExprData::ECall(_) => callee = dot.target,
@@ -192,7 +201,8 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
     /// Runs before the visit pass. `None` when no statement is hoisted.
     pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
-        if !stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt)) {
+        self.has_hoisted_mock_stmt = stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt));
+        if !self.has_hoisted_mock_stmt || !self.options.features.inject_jest_globals {
             return None;
         }
         self.did_apply_test_feature = true;
@@ -351,7 +361,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
     /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Returns whether it visited the first argument.
     pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
-        // Uses in dead code are not counted, so `uses_test_api()` does not know of this one.
+        // Dead code is visited as outside of `bun test`.
         if self.is_control_flow_dead {
             return false;
         }

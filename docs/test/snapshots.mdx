@@ -273,7 +273,7 @@ test("price", () => {
 
 A serializer is a [`pretty-format` plugin](https://github.com/jestjs/jest/tree/main/packages/pretty-format#writing-plugins), so the serializers written for Jest and Vitest work. `serialize(value, config, indentation, depth, refs, printer)` calls `printer` for the values inside of `value`.
 
-The serializer that was added last is asked first. One that a test file adds lasts until the end of that file. Add those that every file needs in a [preload script](/test/configuration#preload-scripts).
+The serializer that was added last is asked first. One that a test file adds lasts until the end of that file. One that a [preload script](/test/configuration#preload-scripts) or a module that test files import adds lasts for every file after it.
 
 ## Snapshots from Jest and Vitest
 

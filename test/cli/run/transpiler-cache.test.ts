@@ -695,15 +695,15 @@ console.log("OK");
 describe.concurrent("`bun test` and `bun run`", () => {
   const padding = Buffer.alloc("// padding\n".length * 400, "// padding\n").toString();
   const commands = {
-    "run": ["load.js"],
+    "run": ["run", "load.js"],
     "test": ["test", "./load.test.js"],
     "test --globals=vitest": ["test", "--globals=vitest", "./load.test.js"],
   };
   type Mode = keyof typeof commands;
 
-  async function load(cwd: string, cache: string, mode: Mode) {
+  async function load(cwd: string, cache: string, mode: Mode, flags: string[] = []) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...commands[mode]],
+      cmd: [bunExe(), ...commands[mode].slice(0, -1), ...flags, commands[mode].at(-1)!],
       env: { ...env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
       cwd,
       stdout: "pipe",
@@ -870,8 +870,9 @@ describe.concurrent("`bun test` and `bun run`", () => {
     "member of an enum": ["ts", `export enum E { test = 1, y = test }`, false],
     "import equals": ["ts", `import describe = require("./dep.js"); export function f() { return describe; }`, false],
     "JSX tag": ["jsx", `export function f() { return <describe />; }`, false],
-    "if (false)": ["js", `export function f() { if (false) { describe(); } }`, false],
-    "false &&": ["js", `export function f() { return false && describe(); }`, false],
+    "if (false)": ["js", `export function f() { if (false) { describe(); } }`, true],
+    "false &&": ["js", `export function f() { return false && describe(); }`, true],
+    "vi.mock(import()) in dead code": ["js", `if (false) vi.mock(import("./dep.js"), () => ({}));`, true],
     "NODE_ENV": ["js", `export function f() { return process.env.NODE_ENV === "test" ? 1 : 2; }`, false],
     "import.meta.env": [
       "js",
@@ -952,6 +953,8 @@ describe.concurrent("`bun test` and `bun run`", () => {
       `import { vi } from "vitest"; export function f() { vi.doMock(import("./dep.js"), () => ({})); }`,
       true,
     ],
+    "vi.mock() that is pure": ["js", `/* @__PURE__ */ vi.mock("./dep.js");`, true],
+    "vi.mock(import()) that is pure": ["js", `/* @__PURE__ */ vi.mock(import("./dep.js"));`, true],
     "mock.module()": [
       "js",
       `import { a } from "./dep.js"; import { mock } from "bun:test"; mock.module("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
@@ -1021,6 +1024,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
       expect(differs).toContain("global suite");
       expect(differs).toContain("import vitest");
       expect(differs).toContain("vi.doMock(import()), imported");
+      expect(differs).toContain("vi.mock(import()) that is pure");
 
       for (const { first, second, afterFirst, afterSecond } of pairs) {
         const differ = (entries: typeof afterFirst, mode: Mode) =>
@@ -1041,6 +1045,49 @@ describe.concurrent("`bun test` and `bun run`", () => {
       }
     },
     120_000,
+  );
+
+  test.each([
+    ["vi.mock=replaced", `vi.mock("./dep.js", () => ({ a() {} }));`],
+    ["vi.hoisted=replaced", `const hoisted = vi.hoisted(() => 1);`],
+    ["vi=replaced", `vi.mock("./dep.js", () => ({ a() {} }));`],
+    ["named=describe", `export const g = () => named;`],
+    ["named.dot=expect", `export const g = () => named.dot;`],
+    ["named=vi", `export const g = () => named.doMock(import("./dep.js"), () => ({}));`],
+  ])(
+    "keep apart the entries of a file that uses it only without, or only with, --define %s",
+    async (define, statement) => {
+      using dir = tempDir("transpiler-cache-define", {
+        "source.js": `globalThis.id = "entry:0:";\nimport { a } from "./dep.js";\n${statement}\nexport function f() { return a(); }\n${padding}`,
+        "nothing.js": `globalThis.id = "entry:1:";\nimport { a } from "./dep.js";\nexport function f() { return a(); }\n${padding}`,
+        "dep.js": `export function a() {}`,
+        ...loader(["source.js", "nothing.js"], "import"),
+      });
+      const flags = ["--define", define];
+      const [runFirst, testFirst] = await Promise.all(
+        (
+          [
+            ["run", "test"],
+            ["test", "run"],
+          ] as const
+        ).map(async ([first, second], i) => {
+          const cache = join(String(dir), `.cache-${i}`);
+          await load(String(dir), cache, first, flags);
+          const afterFirst = readEntries(cache);
+          await load(String(dir), cache, second, flags);
+          return { afterFirst, afterSecond: readEntries(cache) };
+        }),
+      );
+      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst };
+      expect({
+        differs: !fresh.run.get(0)!.output.equals(fresh.test.get(0)!.output),
+        keys: new Set([fresh.run.get(0)!.key, fresh.test.get(0)!.key, fresh.run.get(1)!.key, fresh.test.get(1)!.key])
+          .size,
+        testAfterRun: runFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
+        runAfterTest: testFirst.afterSecond.get(0)!.bytes.equals(fresh.run.get(0)!.bytes),
+      }).toEqual({ differs: true, keys: 3, testAfterRun: true, runAfterTest: true });
+    },
+    60_000,
   );
 
   test("an entry of another version is replaced", async () => {

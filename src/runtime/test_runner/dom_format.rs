@@ -30,6 +30,7 @@ pub(crate) fn print_in_message(
             host: &mut *formatter,
             out: Vec::new(),
             min: true,
+            keeps_carriage_returns: true,
             shadow_roots: false,
             max_depth,
             max_width,
@@ -77,6 +78,7 @@ pub(crate) fn print_in_snapshot(
         host: formatter,
         out: Vec::new(),
         min: false,
+        keeps_carriage_returns: format.is_pretty_format(),
         shadow_roots: format == super::snapshot::Format::Vitest,
         max_depth: u32::MAX,
         max_width: u32::MAX,
@@ -325,6 +327,8 @@ struct Printer<'a> {
     out: Vec<u8>,
     /// pretty-format's `min` option: everything on one line.
     min: bool,
+    /// A message has them; of a snapshot in the format of Jest or Vitest, the line breaks are normalized as a whole.
+    keeps_carriage_returns: bool,
     /// Vitest's `printShadowRoot` option.
     shadow_roots: bool,
     max_depth: u32,
@@ -336,7 +340,7 @@ struct Printer<'a> {
 impl Printer<'_> {
     /// False, with nothing written, when `value` is not DOM.
     fn print_dom(&mut self, value: JSValue, indent: u32, depth: u32) -> JsResult<bool> {
-        if !StackCheck::init().is_safe_to_recurse() {
+        if indent > pretty_format::MAX_INDENT || !StackCheck::init().is_safe_to_recurse() {
             return Err(self.global.throw_stack_overflow());
         }
         if self.out.len() >= self.give_up_at {
@@ -650,13 +654,13 @@ impl Printer<'_> {
     }
 
     fn write_text(&mut self, text: &String) {
-        self.write_replacing(text, if self.min { b"<>" } else { b"<>\r" });
+        self.write_replacing(text, if self.keeps_carriage_returns { b"<>" } else { b"<>\r" });
     }
 
     /// `escapeString` is on in a message and off in a snapshot.
     fn write_quoted(&mut self, text: &String) {
         self.out.push(b'"');
-        self.write_replacing(text, if self.min { b"\"\\" } else { b"\r" });
+        self.write_replacing(text, if self.min { b"\"\\" } else if self.keeps_carriage_returns { b"" } else { b"\r" });
         self.out.push(b'"');
     }
 

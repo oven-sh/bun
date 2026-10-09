@@ -185,7 +185,8 @@ declare module "bun:test" {
      */
     advanceTimers?: boolean | number | undefined;
     /**
-     * How many timers `runAllTimers()` runs before it throws.
+     * How many timers `runAllTimers()` runs before it throws, and how many faked `process.nextTick` or
+     * `queueMicrotask` callbacks in a row any function that moves the clock.
      *
      * @default 10_000 for `vi.useFakeTimers()`, 100_000 for `jest.useFakeTimers()`
      */
@@ -711,7 +712,7 @@ declare module "bun:test" {
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: ((label: DescribeLabel) => void) & Describe<T>;
+    todo: ((label: string) => void) & Describe<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
@@ -1567,7 +1568,7 @@ declare module "bun:test" {
      * wherever in a snapshot they are. The serializer that was added last is asked first.
      *
      * A serializer added by a test file lasts until the end of that file; one added by a preload
-     * script lasts for every file.
+     * script, or by a module that test files import, lasts for every file after it.
      *
      * @example
      * expect.addSnapshotSerializer({

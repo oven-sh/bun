@@ -684,11 +684,13 @@ impl Expect {
         }
     }
 
-    /// Whether the test that is running was registered through "vitest".
+    /// Whether the test that is running, or the hook when it is of no test, was registered through "vitest".
     pub(crate) fn is_in_vitest_test(&self, buntest: &mut bun_test::BunTest) -> bool {
-        let sequence = self.parent.as_ref().and_then(|parent| parent.phase.sequence(buntest));
+        let Some(parent) = self.parent.as_ref() else { return false };
+        let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
+        let entry = test.or_else(|| parent.phase.entry(buntest).map(core::ptr::NonNull::from));
         // SAFETY: `buntest` owns the entries of its sequences.
-        sequence.and_then(|sequence| sequence.test_entry).is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest())
+        entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest())
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -937,28 +939,27 @@ impl Expect {
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
-        let mut captured_rejection: JSValue = JSValue::ZERO;
+        let mut reported = FirstReport { value: JSValue::ZERO, is_calling: true, outer: vm.unhandled_rejection_scope() };
         let question = Question { asked: Asked::Call, who: JSValue::UNDEFINED, what: value };
         let return_value_from_function = Pass::once(global_this, question, &mut || {
             // Drain existing unhandled rejections
             let _ = vm.global().handle_rejected_promises();
 
-            let scope = vm.unhandled_rejection_scope();
-            let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-            vm.unhandled_pending_rejection_to_capture = Some(&raw mut captured_rejection);
-            vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+            reported.outer = vm.unhandled_rejection_scope();
+            vm.on_unhandled_rejection_ctx = Some((&raw mut reported).cast());
+            vm.on_unhandled_rejection = FirstReport::take;
             let returned = match value.call(global_this, JSValue::UNDEFINED, &[]) {
                 Ok(v) => v,
                 Err(err) => global_this.take_exception(err),
             };
-            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
+            reported.is_calling = false;
             let _ = vm.global().handle_rejected_promises();
-            scope.apply(vm);
+            reported.outer.apply(vm);
             Ok(returned)
         })?;
         let return_value = Pass::once(global_this, question, &mut || {
-            Ok(if captured_rejection.is_empty() { return_value_from_function } else { captured_rejection })
+            Ok(if reported.value.is_empty() { return_value_from_function } else { reported.value })
         })?;
 
         if let Some(promise) = return_value.as_any_promise() {
@@ -1159,6 +1160,8 @@ impl Expect {
             match runner.snapshots.format_of(this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
                 Ok(_) => {}
                 Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
+                // The matcher that needs the file says what is wrong with it.
+                Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => {}
                 Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
             }
         }
@@ -1184,9 +1187,10 @@ impl Expect {
                     (Received::Value(_), false) | (Received::Thrown(_), true) => &[SnapshotFormat::Jest],
                     (Received::Thrown(_), false) => &[SnapshotFormat::Jest, SnapshotFormat::Vitest],
                 },
-                !same_as_older_bun,
+                !same_as_older_bun || property_matchers.is_some(),
                 global_this,
-                if property_matchers.is_some() { Received::Value(shown) } else { received },
+                received,
+                shown,
                 property_matchers,
                 trim_res.trimmed,
             )? {
@@ -1265,6 +1269,7 @@ impl Expect {
         or_older_bun: bool,
         global_this: &JSGlobalObject,
         received: Received,
+        with_matchers: JSValue,
         property_matchers: Option<JSValue>,
         saved: &[u8],
     ) -> JsResult<bool> {
@@ -1272,7 +1277,9 @@ impl Expect {
             let is_it = (|| {
                 let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
                 let Some(format) = format else {
-                    return JestPrettyFormat::did_older_bun_print(global_this, value, saved);
+                    // It put the matchers into the object itself, which what a getter returns or what is frozen did not keep.
+                    return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
+                        || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?);
                 };
                 let mut printed: Vec<u8> = Vec::new();
                 JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)?;
@@ -1288,7 +1295,7 @@ impl Expect {
         Ok(false)
     }
 
-    /// What was printed, which has the matchers of `property_matchers`, and the result of `print_snapshot`.
+    /// `value` with the matchers of `property_matchers` as Bun's own format shows them, and the result of `print_snapshot`.
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1298,7 +1305,7 @@ impl Expect {
         fn_name: &'static str,
         format: SnapshotFormat,
     ) -> JsResult<(JSValue, bool)> {
-        let mut value = value;
+        let mut shown = value;
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -1318,11 +1325,12 @@ impl Expect {
                     value.to_fmt(&mut formatter),
                 ).map(|_| (value, true));
             }
-            value = with_matchers;
+            shown = with_matchers;
         }
 
-        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, value, property_matchers, pretty_value, format)?;
-        Ok((value, same_as_older_bun))
+        let printed = if format.is_pretty_format() { value } else { shown };
+        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
+        Ok((shown, same_as_older_bun))
     }
 
     pub(crate) fn snapshot(
@@ -1346,9 +1354,16 @@ impl Expect {
         match runner.snapshots.match_or_write(self, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
-                let received = if property_matchers.is_some() { Received::Value(shown) } else { received };
                 if runner.snapshots.may_hold_entries_of_bun()
-                    && Self::was_written_by_another(&[], !same_as_older_bun, global_this, received, property_matchers, &saved)?
+                    && Self::was_written_by_another(
+                        &[],
+                        !same_as_older_bun || property_matchers.is_some(),
+                        global_this,
+                        received,
+                        shown,
+                        property_matchers,
+                        &saved,
+                    )?
                 {
                     runner.snapshots.passed += 1;
                     return Ok(JSValue::UNDEFINED);
@@ -3009,6 +3024,34 @@ impl HintColor {
     }
 }
 
+/// What the function of `toThrow()` reports instead of throwing it, as the listeners of a native emitter do: the first
+/// error counts as thrown. The others are reported as anywhere else.
+struct FirstReport {
+    value: JSValue,
+    /// Not so while the rejections that the call left behind are looked at: those are dropped.
+    is_calling: bool,
+    outer: bun_jsc::virtual_machine::UnhandledRejectionScope,
+}
+
+impl FirstReport {
+    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+        let Some(this) = vm.on_unhandled_rejection_ctx else { return };
+        // SAFETY: `get_value_as_to_throw` points it at its local for as long as this is the handler.
+        let this = unsafe { &mut *this.cast::<FirstReport>() };
+        if !this.is_calling {
+            return;
+        }
+        if this.value.is_empty() {
+            this.value = value;
+            return;
+        }
+        let inner = vm.unhandled_rejection_scope();
+        this.outer.apply(vm);
+        (vm.on_unhandled_rejection)(vm, global, value);
+        inner.apply(vm);
+    }
+}
+
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 ///
 /// The one cell of `expect` that each global roots, so it also holds what `expect` keeps per global.
@@ -3020,8 +3063,8 @@ pub(crate) struct ExpectMatcherUtils {
     pub(crate) testers_of_file: bun_jsc::JsCell<Vec<bool>>,
     /// `BunTestRoot::file_generation` of that test file.
     pub(crate) testers_file: Cell<u32>,
-    /// The same two for the snapshot serializers, of which those of preload scripts are the last.
-    pub(crate) preload_serializers: Cell<u32>,
+    /// The same two for the snapshot serializers.
+    pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
     pub(crate) serializers_file: Cell<u32>,
 }
 

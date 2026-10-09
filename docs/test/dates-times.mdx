@@ -131,11 +131,11 @@ test("fires after a minute", () => {
 | `isFakeTimers()`                  | Returns whether fake timers are on                                         |
 | `useRealTimers()`                 | Puts the real functions and clocks back, and drops the pending fake timers |
 
-An error that a timer callback throws comes out of the function that ran the timer.
+An error that a timer callback throws comes out of the function that ran the timer. An error that a faked `process.nextTick` or `queueMicrotask` callback throws also ends that function at once: the clock stays where it is, and what has not run stays pending.
 
 At the end of each test file, Bun puts the real timers and the real time back. Fake timers and a system time that a [preload](/test/configuration#preload-scripts) sets at its top level stay on from file to file. Without `--isolate` that is one clock for all files: it keeps the time and the pending timers that a file leaves behind, and it ends with the first file that calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` of the preload.
 
-`runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` does not run forever. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
+`runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` does not run forever. Every function that moves the clock throws the same error after as many faked `process.nextTick` or `queueMicrotask` callbacks in a row. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
 
 ### Timers armed after an `await`
 
@@ -210,6 +210,8 @@ await new Promise(resolve => setTimeout(resolve, 30)); // resolves without an ad
 - `"interval"`: the same as `shouldAdvanceTime`. The second argument is the number of milliseconds.
 
 `jest.setTimerTickMode()` takes `{ mode: "manual" | "nextAsync" | "interval", delta }`.
+
+An error that a timer callback throws while the clock moves by itself is an uncaught error. After an error of a faked `process.nextTick` or `queueMicrotask` callback the mode is `"manual"` again.
 
 ## Set the time zone
 

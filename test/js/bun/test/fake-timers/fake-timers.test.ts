@@ -2126,6 +2126,39 @@ describe("a faked tick that queues itself again", () => {
     });
   });
 
+  test.concurrent.each([
+    ["vi.waitFor(() => expect(0).toBe(1), wait)"],
+    ["vi.waitUntil(() => false, wait)"],
+    ["expect.poll(() => 0, wait).toBe(1)"],
+  ])("%s rejects with it when the first is queued in a later advance", async drive => {
+    using dir = tempDir("fake-timers-endless-ticks", {
+      "endless.test.ts": `${prelude}
+        const wait = { interval: 10, timeout: 60_000 };
+        test.each([again, throwsAndAgain])("%p", async tick => {
+          vi.useFakeTimers(options);
+          ticks = 0;
+          setTimeout(() => process.nextTick(tick), 15);
+          let thrown;
+          try {
+            await ${drive};
+          } catch (error) {
+            thrown = error;
+          }
+          console.log(JSON.stringify({ thrown: thrown?.message, ticks, now: performance.now() }));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode, signalCode } = await run(["test", "./endless.test.ts"], String(dir));
+    expect({ printed: printed(stdout), exitCode, signalCode }, stderr).toEqual({
+      printed: [
+        { thrown: limit, ticks: 100, now: 15 },
+        { thrown: "from a tick", ticks: 1, now: 15 },
+      ],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test.concurrent("what polls in microtasks for a timer to fire gets the error of the loop limit", async () => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
@@ -2212,6 +2245,101 @@ describe("as in @sinonjs/fake-timers", () => {
     process.nextTick(() => setTimeout(() => fired.push("of the second tick"), 2000));
     await vi.runOnlyPendingTimersAsync();
     expect({ fired, now: performance.now() }).toEqual({ fired: ["pending", "of the tick"], now: 1000 });
+  });
+
+  test("advanceTimersToNextTimerAsync() does not wait for an immediate that is armed again after an await", async () => {
+    vi.useFakeTimers({ toFake: ["setImmediate", "performance"] });
+    let fires = 0;
+    const again = async () => {
+      if (++fires > 100) return;
+      await null;
+      setImmediate(again);
+    };
+    setImmediate(again);
+    await vi.advanceTimersToNextTimerAsync();
+    expect({ fires, pending: vi.getTimerCount(), now: performance.now() }).toEqual({ fires: 2, pending: 1, now: 0 });
+  });
+});
+
+// As in Vitest, what is undone after useRealTimers() puts back what it saw: the fake.
+describe("a fake that comes back after useRealTimers()", () => {
+  const ways = [
+    ["jest.spyOn()", () => void jest.spyOn(globalThis, "setTimeout"), () => void jest.restoreAllMocks()],
+    ["vi.stubGlobal()", () => void vi.stubGlobal("setTimeout", () => {}), () => void vi.unstubAllGlobals()],
+  ] as const;
+
+  test.each(ways)(
+    "%s: it does not say that the timers are fake, and is not what the next useFakeTimers() replaces",
+    (_, replace, undo) => {
+      try {
+        vi.useFakeTimers();
+        const fake = setTimeout;
+        replace();
+        vi.useRealTimers();
+        undo();
+        expect({ isTheFake: setTimeout === fake, clock: Object.hasOwn(setTimeout, "clock") }).toEqual({
+          isTheFake: true,
+          clock: false,
+        });
+        vi.useFakeTimers();
+        expect(Object.hasOwn(setTimeout, "clock")).toBe(true);
+        vi.useRealTimers();
+        expect(setTimeout).toBe(saved.setTimeout);
+      } finally {
+        globalThis.setTimeout = saved.setTimeout;
+      }
+    },
+  );
+
+  test("process.nextTick", () => {
+    try {
+      vi.useFakeTimers({ toFake: ["nextTick"] });
+      const fake = process.nextTick;
+      jest.spyOn(process, "nextTick");
+      vi.useRealTimers();
+      jest.restoreAllMocks();
+      expect(process.nextTick).toBe(fake);
+      vi.useFakeTimers({ toFake: ["nextTick"] });
+      vi.useRealTimers();
+      expect(process.nextTick).toBe(saved.nextTick);
+    } finally {
+      process.nextTick = saved.nextTick;
+    }
+  });
+
+  test.concurrent.each([
+    ["jest.spyOn()", `jest.spyOn(globalThis, "setTimeout")`, "jest.restoreAllMocks()"],
+    ["vi.stubGlobal()", `vi.stubGlobal("setTimeout", () => {})`, "vi.unstubAllGlobals()"],
+  ])("%s: it is gone at the end of the test file", async (_, replace, undo) => {
+    using dir = tempDir("fake-timers-file-end-stale", {
+      "a.test.ts": `
+        import { afterEach, beforeEach, expect, jest, test, vi } from "bun:test";
+        globalThis.setTimeoutAtFirst = setTimeout;
+        beforeEach(() => {
+          jest.useFakeTimers();
+          ${replace};
+        });
+        afterEach(() => {
+          jest.useRealTimers();
+          ${undo};
+        });
+        test.each([1, 2])("fakes and replaces %d", () => {
+          expect(setTimeout).not.toBe(setTimeoutAtFirst);
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("has the real function", async () => {
+          console.log(JSON.stringify({ isReal: setTimeout === setTimeoutAtFirst, clock: Object.hasOwn(setTimeout, "clock") }));
+          await new Promise(resolve => setTimeout(resolve, 1));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ isReal: true, clock: false }) + "\n",
+      exitCode: 0,
+    });
   });
 });
 

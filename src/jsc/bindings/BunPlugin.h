@@ -102,8 +102,12 @@ public:
         Vector<RunningModuleMock> runningModuleMocks = {};
         // Module mocks a preload made that the running test file replaced or removed. They are back for the next file.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
+        // What a preload loaded and the running test file has evicted. It is back for the next file.
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules = {};
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Counts the test files that share this global object, from 1.
         unsigned testFile = 1;
+        bool hasTestFileMockedModules = false;
         // The test file that was running when each module was last fetched. None for what a preload fetched.
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Modules that were being loaded when they were to be evicted: they go once they have loaded (evictModulesAndTheirImporters).
@@ -188,5 +192,6 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 // After a load that did not yield to the event loop, unless it is part of another: what it was loading when that was to be evicted goes now.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
+void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

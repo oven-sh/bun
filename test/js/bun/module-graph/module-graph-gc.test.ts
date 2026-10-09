@@ -1,9 +1,9 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
-import { generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
+import { heapStats, jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, Heap, isArm64, isLinux, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -91,75 +91,6 @@ function collect(): Promise<void> {
       setTimeout(resolve, 0);
     }, 0),
   );
-}
-
-/** What these tests mean by "kept alive": a root reaches the cell through the heap. A collection
- *  alone cannot say that. JavaScriptCore also marks whatever a word on the native stack happens to
- *  point at, and a slot a live native frame never writes can hold a cell of an earlier callback's
- *  frames for as long as the loop re-enters that frame, so "it was not finalized" does not mean
- *  something holds it. The debugging heap snapshot has every edge and every root, and no entry for
- *  such words. */
-class Heap {
-  readonly #className = new Map<number, string>();
-  readonly #label = new Map<number, string>();
-  readonly #idOfAddress = new Map<bigint, number>();
-  /** For each cell a root reaches: the cell it was reached from and the edge, on a shortest path. */
-  readonly #reachedFrom = new Map<number, [number, string] | undefined>();
-  readonly #rootReason = new Map<number, string>();
-
-  constructor() {
-    const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
-      generateHeapSnapshotForDebugging() as any;
-    for (let i = 0; i < nodes.length; i += 7) {
-      this.#className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
-      if (labels[nodes[i + 4]]) this.#label.set(nodes[i], labels[nodes[i + 4]]);
-      this.#idOfAddress.set(BigInt(nodes[i + 5]), nodes[i]);
-    }
-    const outgoing = new Map<number, [number, string][]>();
-    for (let i = 0; i < edges.length; i += 4) {
-      const type = edgeTypes[edges[i + 2]];
-      const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
-      let list = outgoing.get(edges[i]);
-      if (!list) outgoing.set(edges[i], (list = []));
-      list.push([edges[i + 1], type + ":" + name]);
-    }
-    const queue: number[] = [];
-    for (let i = 0; i < roots.length; i += 3) {
-      const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
-      // What an output constraint appends (the listeners of a marked EventTarget, ...) is recorded
-      // as a root, but only follows from its owner being marked, and the owner's edges say the same.
-      if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
-      this.#rootReason.set(roots[i], reason);
-      this.#reachedFrom.set(roots[i], undefined);
-      queue.push(roots[i]);
-    }
-    for (let i = 0; i < queue.length; i++)
-      for (const [child, edge] of outgoing.get(queue[i]) ?? [])
-        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
-  }
-
-  /** The shortest path from a root to the cell at `address`, or undefined when no root reaches it. */
-  pathTo(address: bigint): string | undefined {
-    const id = this.#idOfAddress.get(address);
-    if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
-    const describe = (cell: number) =>
-      this.#className.get(cell) + (this.#label.has(cell) ? "(" + this.#label.get(cell) + ")" : "");
-    const path: string[] = [];
-    let at = id;
-    for (let step = this.#reachedFrom.get(at); step; at = step[0], step = this.#reachedFrom.get(at))
-      path.unshift(`-${step[1]}-> ${describe(at)}`);
-    return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
-  }
-
-  /** How many cells of each type a root reaches. */
-  counts(types: string[]): Record<string, number> {
-    const counts = Object.fromEntries(types.map(type => [type, 0]));
-    for (const id of this.#reachedFrom.keys()) {
-      const name = this.#className.get(id)!;
-      if (name in counts) counts[name]++;
-    }
-    return counts;
-  }
 }
 
 /** The heap as a timer callback sees it: with the caller suspended, so that what its frames hold

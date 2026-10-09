@@ -89,6 +89,8 @@ public:
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     static bool preventExtensions(JSObject*, JSGlobalObject*) { return false; }
 
+    JSObject* processEnv(JSGlobalObject*) const;
+
 private:
     ImportMetaEnv(VM& vm, Structure* structure)
         : Base(vm, structure)
@@ -98,7 +100,6 @@ private:
     Zig::GlobalObject* zigGlobalObject() const { return uncheckedDowncast<Zig::GlobalObject>(globalObject()); }
     // Kept in the one bit of a cell that is its class's to use.
     bool isProduction() const { return perCellBit(); }
-    JSObject* processEnv(JSGlobalObject*) const;
     JSValue defaultValueOf(ViteVariable) const;
 };
 
@@ -285,6 +286,13 @@ JSObject* createImportMetaEnvForTests(Zig::GlobalObject* globalObject)
 bool isImportMetaEnvForTests(JSObject* object)
 {
     return object->inherits<ImportMetaEnv>();
+}
+
+// What a property of `object` is a property of, or null for an object that is not `import.meta.env` in a test.
+JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject* globalObject, JSObject* object)
+{
+    auto* env = dynamicDowncast<ImportMetaEnv>(object);
+    return env ? env->processEnv(globalObject) : nullptr;
 }
 
 }

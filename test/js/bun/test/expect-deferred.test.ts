@@ -1016,6 +1016,45 @@ describe.concurrent(".resolves and .rejects", () => {
 });
 
 describe.concurrent("matchers that meet a pending promise", () => {
+  test("of the errors that the function of toThrow() reports, only the first one is taken for what it threw", async () => {
+    const { report, exitCode, signalCode } = await runTests(`
+      const listenerThrows = message => {
+        const target = new EventTarget();
+        target.addEventListener("event", () => {
+          throw new Error(message);
+        });
+        target.dispatchEvent(new Event("event"));
+      };
+      for (const [name, report] of Object.entries({ reportError: message => reportError(new Error(message)), listenerThrows })) {
+        test(name + ": one", () => {
+          expect(() => report("first")).toThrow("first");
+        });
+        test(name + ": the second one would match", () => {
+          expect(() => {
+            report("first");
+            report("second");
+          }).toThrow("second");
+        });
+        test(name + ": the first one matches", () => {
+          expect(() => {
+            report("first");
+            report("second");
+          }).toThrow("first");
+        });
+      }
+    `);
+    expect(report.filter(line => line.startsWith("(") || line === "error: second")).toEqual(
+      ["reportError", "listenerThrows"].flatMap(name => [
+        `(pass) ${name}: one`,
+        "error: second",
+        `(fail) ${name}: the second one would match`,
+        "error: second",
+        `(fail) ${name}: the first one matches`,
+      ]),
+    );
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
   test("toThrow() calls the function once and returns a promise", async () => {
     const source = `
       test("passes", async () => {

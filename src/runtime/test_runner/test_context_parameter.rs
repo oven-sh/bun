@@ -36,8 +36,7 @@ impl ContextParameter {
             return ContextParameter::Absent;
         }
         let from_parameters = from_parameters.to_utf8();
-        // Every function body parses as an async generator's, every arrow function's as an async one's.
-        // `super.x` and `this.#x` only do in a method of a class, where all is strict mode code.
+        // Any body parses as that of an async generator or arrow; `super.x` and `this.#x` only in a class, which is strict mode code.
         let around: [(&[u8], &[u8]); 2] = if is_arrow_function {
             [(b"(async ", b")"), (b"(class{m(){(async ", b")}})")]
         } else {

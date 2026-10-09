@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -905,6 +906,56 @@ describe("mock()", () => {
   });
 });
 
+describe("a function equals itself and no other", () => {
+  const implementation = () => {};
+  const twice = value => [value, value];
+  describe.each([
+    ["jest.fn() and jest.fn()", [jest.fn(), jest.fn()], false],
+    ["vi.fn() and vi.fn()", [vi.fn(), vi.fn()], false],
+    ["two mocks of one function", [jest.fn(implementation), jest.fn(implementation)], false],
+    ["two mocks that return the same", [jest.fn().mockReturnValue(1), jest.fn().mockReturnValue(1)], false],
+    ["a mock and the function that it wraps", [jest.fn(implementation), implementation], false],
+    ["a mock and itself", twice(jest.fn()), true],
+    ["Map and Set", [Map, Set], false],
+    ["Map and the Map of another realm", [Map, vm.runInNewContext("Map")], false],
+    ["Map and itself", twice(Map), true],
+    ["two functions that are bound alike", [implementation.bind(null), implementation.bind(null)], false],
+    ["a bound function and itself", twice(implementation.bind(null)), true],
+    ["two classes that are alike", [class A {}, class A {}], false],
+    ["a class and itself", twice(class A {}), true],
+  ])("%s", (_, [a, b], isEqual) => {
+    const expectEqual = (actual, expected, matcher = "toEqual") =>
+      (isEqual ? expect(actual) : expect(actual).not)[matcher](expected);
+
+    test.each(["toEqual", "toStrictEqual"])("%s", matcher => {
+      expectEqual(a, b, matcher);
+      expectEqual(b, a, matcher);
+      expectEqual({ nested: [a] }, { nested: [b] }, matcher);
+    });
+
+    test("toHaveBeenCalledWith, toHaveReturnedWith", () => {
+      const called = jest.fn(value => value);
+      called(a);
+      expectEqual(called, b, "toHaveBeenCalledWith");
+      expectEqual(called, b, "toHaveReturnedWith");
+    });
+
+    test("asymmetric matchers", () => {
+      expectEqual({ a, other: 1 }, expect.objectContaining({ a: b }));
+      expectEqual([a, 1], expect.arrayContaining([b]));
+      expect({ a }).toEqual({ a: expect.any(Function) });
+    });
+
+    test.skipIf(!isBun)("Bun.deepEquals", () => {
+      expect([Bun.deepEquals(a, b), Bun.deepEquals(a, b, true), Bun.deepEquals([b], [a])]).toEqual([
+        isEqual,
+        isEqual,
+        isEqual,
+      ]);
+    });
+  });
+});
+
 describe("resetAllMocks", () => {
   test("removes implementations, not just calls", () => {
     const fn = jest.fn(() => 42);
@@ -1525,6 +1576,120 @@ describe("spyOn", () => {
       const frozen = new Proxy(Object.freeze({ method() {}, get x() { return 1; } }), {}); // prettier-ignore
       expect(() => spyOn(frozen, "method")).toThrow(TypeError);
       expect(() => spyOn(frozen, "x", "get")).toThrow(TypeError);
+    });
+  });
+
+  describe.each([
+    ["spyOn", spyOn],
+    ["vi.spyOn", vi.spyOn],
+  ])("%s on the global object of a node:vm context", (_, spyOn) => {
+    function makeContext(contextify = sandbox => sandbox) {
+      const sandbox = {
+        value: "original",
+        method() {
+          return "original";
+        },
+        get accessor() {
+          return "original";
+        },
+        set accessor(value) {},
+      };
+      const context = vm.createContext(contextify(sandbox));
+      vm.runInContext("var declared = 'original'; function declaredFunction() { return 'original'; }", context);
+      return { sandbox, context, global: vm.runInContext("this", context) };
+    }
+
+    describe.each([
+      ["an object", sandbox => sandbox],
+      ["an object without a prototype", sandbox => Object.setPrototypeOf(sandbox, null)],
+      ["a Proxy", sandbox => new Proxy(sandbox, {})],
+    ])("made of %s", (_, contextify) => {
+      test.each([
+        ["method", undefined, "method()"],
+        ["value", "get", "value"],
+        ["accessor", "get", "accessor"],
+      ])("what that has is spied on, and put back: %s", (key, access, code) => {
+        const { sandbox, context, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        const fn = access ? spyOn(global, key, access) : spyOn(global, key);
+        fn.mockReturnValue("spied");
+        expect(vm.runInContext(code, context)).toBe("spied");
+        expect(fn).toHaveBeenCalledTimes(1);
+        fn.mockRestore();
+        expect(vm.runInContext(code, context)).toBe("original");
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+      });
+
+      test("what that has is spied on, and put back: a setter", () => {
+        const { sandbox, context, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        const fn = spyOn(global, "accessor", "set");
+        vm.runInContext("accessor = 'assigned'", context);
+        expect(fn.mock.calls).toEqual([["assigned"]]);
+        fn.mockRestore();
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+      });
+
+      test.each(["method", "value", "declared", "declaredFunction", "toString", "parseInt", "missing"])(
+        "that is as it was once a spy is restored: %s",
+        key => {
+          // Vitest and Jest refuse what is not a function, and leave a builtin behind.
+          if (!isBun && !["method", "declaredFunction", "toString"].includes(key)) return;
+          const { sandbox, context, global } = makeContext(contextify);
+          const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+          const type = vm.runInContext(`typeof ${key}`, context);
+          spyOn(global, key).mockRestore();
+          expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+          expect(vm.runInContext(`typeof ${key}`, context)).toBe(type);
+        },
+      );
+
+      test("that is as it was after restoreAllMocks()", () => {
+        const { sandbox, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        for (const key of ["method", "declaredFunction", "toString"]) spyOn(global, key);
+        spyOn(global, "accessor", "get");
+        jest.restoreAllMocks();
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+      });
+
+      test("what that got while a spy was on the global object stays", () => {
+        if (!isBun) return;
+        const { sandbox, global } = makeContext(contextify);
+        const spies = [spyOn(global, "missing"), spyOn(global, "toString"), spyOn(global, "parseInt")];
+        Object.assign(sandbox, { missing: "added", toString: "added", parseInt: "added" });
+        for (const fn of spies) fn.mockRestore();
+        expect(sandbox).toMatchObject({ missing: "added", toString: "added", parseInt: "added" });
+      });
+    });
+
+    test("made of a frozen object, which refuses", () => {
+      const { sandbox, context, global } = makeContext(Object.freeze);
+      const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+      expect(() => spyOn(global, "method")).toThrow(TypeError);
+      expect(() => spyOn(global, "accessor", "get")).toThrow(TypeError);
+      expect(vm.runInContext("[method(), accessor]", context)).toEqual(["original", "original"]);
+
+      const fn = spyOn(global, "parseInt").mockReturnValue("spied");
+      expect(vm.runInContext("parseInt('7')", context)).toBe("spied");
+      fn.mockRestore();
+      expect(vm.runInContext("parseInt('7')", context)).toBe(7);
+      expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+    });
+
+    test("made of nothing", () => {
+      const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+      const global = vm.runInContext("this", context);
+      Object.defineProperties(global, Object.getOwnPropertyDescriptors(makeContext().sandbox));
+      const describe = () => ["method", "accessor"].map(key => Object.getOwnPropertyDescriptor(global, key));
+      const descriptors = describe();
+
+      const spies = [spyOn(global, "method"), spyOn(global, "accessor", "get")];
+      for (const fn of spies) fn.mockReturnValue("spied");
+      expect(vm.runInContext("[method(), accessor]", context)).toEqual(["spied", "spied"]);
+      for (const fn of spies) fn.mockRestore();
+      expect(vm.runInContext("[method(), accessor]", context)).toEqual(["original", "original"]);
+      expect(describe()).toEqual(descriptors);
     });
   });
 
@@ -4289,6 +4454,46 @@ if (isBun) {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const asNew = `{"calls":[],"contexts":[],"instances":[],"results":[],"invocationCallOrder":[]}`;
       expect(stdout).toBe(`[0,1,1,1,1] ${asNew}\n[0,1,1,1,1] ${asNew}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("what is recorded after clearAllMocks() ran while a call is recorded is found by the next one", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { jest, vi, mock } = Bun.jest(import.meta.path);
+          for (const fn of [jest.fn, vi.fn, mock]) {
+            for (const all of ["clearAllMocks", "resetAllMocks"]) {
+              const mocked = fn(() => {});
+              mocked();
+              let armed = true;
+              Object.defineProperty(Array.prototype, 1, {
+                configurable: true,
+                set(value) {
+                  Object.defineProperty(this, 1, { value, writable: true, enumerable: true, configurable: true });
+                  if (!armed) return;
+                  armed = false;
+                  jest[all]();
+                },
+              });
+              mocked();
+              delete Array.prototype[1];
+              // Nothing reads \`mocked.mock\` before this: that alone would have it found.
+              jest[all]();
+              const { calls, contexts, instances, results, invocationCallOrder } = mocked.mock;
+              console.log([calls, contexts, instances, results, invocationCallOrder].map(array => array.length).join());
+            }
+          }
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe(Buffer.alloc(6 * 10, "0,0,0,0,0\n").toString());
       expect(exitCode).toBe(0);
     });
 

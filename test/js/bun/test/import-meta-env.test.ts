@@ -1,6 +1,6 @@
 import { jscDescribe } from "bun:jsc";
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, mock, test, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import assert from "node:assert";
 import { stringify } from "node:querystring";
@@ -710,10 +710,11 @@ describe("import.meta.env in a test file", () => {
     expect(Object.getPrototypeOf(child)).toBe(null);
   });
 
+  /** The names of the properties in the storage of the cell. */
+  const stored = () => /\{(.*?)\}/.exec(jscDescribe(env))![1];
+
   // Native code that writes to an object past its hooks leaves here what no script can see or delete.
   describe("every write is a write to process.env", () => {
-    /** The names of the properties in the storage of the cell. */
-    const stored = () => /\{(.*?)\}/.exec(jscDescribe(env))![1];
     const writes: Record<string, (object: any) => unknown> = {
       "an assignment": object => void (object.ADDED = "x"),
       "delete": object => delete object.GREETING,
@@ -749,6 +750,26 @@ describe("import.meta.env in a test file", () => {
         return stubbed;
       },
       "an assignment in a node:vm context of it": object => runInContext("ADDED = 'x'", createContext(object)),
+      "spyOn": object => {
+        const spy = spyOn(object, "GREETING").mockReturnValue("mocked");
+        const seen = [object.GREETING, spy.mock.calls.length];
+        spy.mockRestore();
+        return seen;
+      },
+      "spyOn of a getter": object => {
+        const spy = spyOn(object, "GREETING", "get").mockReturnValue("mocked");
+        const seen = [object.GREETING, spy.mock.calls.length];
+        spy.mockRestore();
+        return seen;
+      },
+      "spyOn of a setter": object => {
+        const spy = spyOn(object, "GREETING", "set");
+        object.GREETING = "written";
+        const seen = [object.GREETING, spy.mock.calls];
+        spy.mockRestore();
+        return seen;
+      },
+      "spyOn of what it does not have": object => void spyOn(object, "MISSING").mockRestore(),
     };
 
     test.each(Object.keys(writes))("%s", name => {
@@ -764,6 +785,130 @@ describe("import.meta.env in a test file", () => {
     test("Error.captureStackTrace, which does not write to process.env, is refused", () => {
       expect(() => Error.captureStackTrace(env)).toThrow("invalid_argument");
       expect(stored()).toBe("");
+    });
+  });
+
+  // `spyOn(import.meta.env, name)` is `spyOn(process.env, name)`.
+  describe("spyOn", () => {
+    const name = "IMPORT_META_ENV_TEST_SPIED";
+    const environments = ["the real process.env", "a process.env that is an ordinary object"];
+    const spy = (property: string, mode = "value") =>
+      (spyOn as Function)(env, property, ...(mode === "value" ? [] : [mode]));
+    // On Windows `process.env` is a Proxy that takes an accessor from nobody, so it cannot be spied on either.
+    const refusal = "'process.env' does not accept an accessor(getter/setter) descriptor";
+    const refuses = (environment: string) => isWindows && environment === environments[0];
+
+    afterEach(() => {
+      mock.restore();
+    });
+
+    describe.each(environments)("with %s", environment => {
+      beforeEach(() => {
+        if (environment !== environments[0]) process.env = {};
+      });
+
+      test.each(["value", "get", "set"])("of a variable that is set: %s", mode => {
+        process.env[name] = "original";
+        const before = Object.getOwnPropertyDescriptor(process.env, name);
+        if (refuses(environment)) {
+          expect(() => spy(name, mode)).toThrow(refusal);
+        } else {
+          const spied = spy(name, mode);
+          if (mode === "set") {
+            env[name] = "written";
+            expect(spied.mock.calls).toEqual([["written"]]);
+          } else {
+            spied.mockReturnValue("mocked");
+            expect([env[name], process.env[name]]).toEqual(["mocked", "mocked"]);
+            expect(spied).toHaveBeenCalledTimes(2);
+          }
+          spied.mockRestore();
+        }
+        expect(Object.getOwnPropertyDescriptor(process.env, name)).toEqual(before);
+        expect(Object.getOwnPropertyDescriptor(env, name)).toEqual(before);
+        delete process.env[name];
+        expect([env[name], name in env]).toEqual([undefined, false]);
+        expect(stored()).toBe("");
+      });
+
+      test("of a variable of Vite's that process.env does not have", () => {
+        if (refuses(environment)) {
+          expect(() => spy("MODE")).toThrow(refusal);
+        } else {
+          const mode = spy("MODE");
+          const dev = spy("DEV");
+          // What the spies stand for is what process.env has: nothing.
+          expect([env.MODE, env.DEV]).toEqual([undefined, false]);
+          mode.mockReturnValue("mocked");
+          dev.mockReturnValue("yes");
+          expect([env.MODE, env.DEV]).toEqual(["mocked", true]);
+          expect([mode.mock.calls.length, dev.mock.calls.length]).toEqual([2, 2]);
+          mode.mockRestore();
+          dev.mockRestore();
+        }
+        expect([env.MODE, env.DEV]).toEqual(["test", true]);
+        expect(["MODE" in process.env, "DEV" in process.env]).toEqual([false, false]);
+        expect(stored()).toBe("");
+      });
+
+      test.each(["get", "set"])(
+        "of the %ster of a variable of Vite's that process.env does not have throws",
+        access => {
+          expect(() => spy("MODE", access)).toThrow(
+            "spyOn(target, prop, accessType) expects target to have the property `MODE`",
+          );
+          expect([env.MODE, "MODE" in process.env]).toEqual(["test", false]);
+          expect(stored()).toBe("");
+        },
+      );
+
+      test("of a variable that is not set", () => {
+        if (refuses(environment)) {
+          expect(() => spy(name)).toThrow(refusal);
+        } else {
+          const spied = spy(name).mockReturnValue("mocked");
+          expect(env[name]).toBe("mocked");
+          expect(spied).toHaveBeenCalledTimes(1);
+          spied.mockRestore();
+        }
+        expect([env[name], name in env, name in process.env, Object.keys(env).includes(name)]).toEqual([
+          undefined,
+          false,
+          false,
+          false,
+        ]);
+        expect(() => spy(name, "get")).toThrow(
+          `spyOn(target, prop, accessType) expects target to have the property \`${name}\``,
+        );
+        expect(stored()).toBe("");
+      });
+
+      test.each([
+        ["mock.restore", () => mock.restore()],
+        ["jest.restoreAllMocks", () => jest.restoreAllMocks()],
+        ["vi.restoreAllMocks", () => vi.restoreAllMocks()],
+      ])("%s() undoes it", (_, restoreAll) => {
+        process.env[name] = "original";
+        const before = Object.getOwnPropertyDescriptor(process.env, name);
+        if (!refuses(environment)) {
+          spy(name).mockReturnValue("mocked");
+          spy("MODE").mockReturnValue("mocked");
+          expect([env[name], env.MODE]).toEqual(["mocked", "mocked"]);
+        }
+        restoreAll();
+        expect([env[name], env.MODE, "MODE" in process.env]).toEqual(["original", "test", false]);
+        expect(Object.getOwnPropertyDescriptor(process.env, name)).toEqual(before);
+        expect(stored()).toBe("");
+      });
+    });
+
+    test("stays on the object that process.env was", () => {
+      const first: Record<string, string | undefined> = (process.env = { [name]: "first" });
+      const spied = spy(name).mockReturnValue("mocked");
+      process.env = { [name]: "second" };
+      expect([env[name], first[name]]).toEqual(["second", "mocked"]);
+      spied.mockRestore();
+      expect([env[name], first[name]]).toEqual(["second", "first"]);
     });
   });
 
@@ -983,6 +1128,35 @@ describe.concurrent("import.meta.env", () => {
       "variables.test.ts": `import { test } from "bun:test"; test("prints", () => { ${printVariables} });`,
     });
     expect(await run(String(dir), ["test"], variables)).toEqual({ printed: [expected], failures: [], exitCode: 0 });
+  });
+
+  test.each([[[]], [["--isolate"]]])("a spy that a file leaves on it is not the next file's %j", async flags => {
+    using dir = tempDir("import-meta-env", {
+      // A copy, which can be spied on on Windows too.
+      "a.test.ts": `
+        import { spyOn, test } from "bun:test";
+        process.env = { ...process.env };
+        test("leaves two spies", () => {
+          spyOn(import.meta.env, "LEFT").mockReturnValue("mocked");
+          spyOn(import.meta.env, "MODE").mockReturnValue("mocked");
+          console.log("@" + JSON.stringify([import.meta.env.LEFT, process.env.LEFT, import.meta.env.MODE]));
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("prints", () => {
+          console.log("@" + JSON.stringify([import.meta.env.LEFT, process.env.LEFT, import.meta.env.MODE, "MODE" in process.env]));
+        });
+      `,
+    });
+    expect(await run(String(dir), ["test", ...flags, "./a.test.ts", "./b.test.ts"], { LEFT: "original" })).toEqual({
+      printed: [
+        ["mocked", "mocked", "mocked"],
+        ["original", "original", "test", false],
+      ],
+      failures: [],
+      exitCode: 0,
+    });
   });
 
   test("the variables of a .env file count", async () => {

@@ -469,6 +469,6 @@ const names = {
 };
 ```
 
-A call that Bun cannot replace, such as one with a variable for a pattern, throws a `TypeError` when it runs. Bun leaves the calls alone in a file that assigns its own function to `import.meta.glob`.
+A call that Bun cannot replace, such as one with a variable for a pattern, throws a `TypeError` when it runs. `eager` needs `import` statements, so it throws in a CommonJS module. Bun leaves the calls alone in a file that assigns its own function to `import.meta.glob`.
 
 With `--watch`, `--hot` and the [dev server](/bundler/fullstack), a new file that matches a pattern shows up once the file that calls `import.meta.glob()` changes.

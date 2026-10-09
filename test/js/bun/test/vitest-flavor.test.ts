@@ -781,6 +781,11 @@ describe.concurrent("each and for", () => {
         test.each([{ a: 1 }])("object $a", function (a, b) { show("object", arguments); }, 500);
         test.each([[1, 2], 3])("mixed %s", function (a, b) { show("mixed", arguments); }, 500);
         test.each([[[1, 2]], [[3]]])("nested %j", function (a, b) { show("nested", arguments); }, 500);
+        test.each([[]])("empty", function (a) { show("empty", arguments); }, 500);
+        test.each\`
+          a
+          \${1}
+        \`("template $a", function (row, b) { show("template", arguments); }, 500);
         describe.each([[1, 2]])("describe %i %i", function (a, b, c) { show("describe", arguments); test("test", () => {}); });
       `,
     });
@@ -798,6 +803,8 @@ describe.concurrent("each and for", () => {
         "mixed 1 [3]",
         "nested 1 [[1,2]]",
         "nested 1 [[3]]",
+        "empty 0 []",
+        `template 1 [{"a":1}]`,
       ],
       results: [
         "(pass) array 1 2",
@@ -809,6 +816,8 @@ describe.concurrent("each and for", () => {
         "(pass) mixed 3",
         "(pass) nested [1,2]",
         "(pass) nested [3]",
+        "(pass) empty",
+        "(pass) template 1",
         "(pass) describe 1 2 > test",
       ],
       exitCode: 0,

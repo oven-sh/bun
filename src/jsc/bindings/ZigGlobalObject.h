@@ -825,6 +825,10 @@ public:
     napi_env makeNapiEnvForFFI();
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
 
+    // `bun test`: the realms that script has made while this one was the thread's (ShadowRealm, node:vm). With --isolate they end with it.
+    WTF::Vector<JSC::Weak<JSC::JSGlobalObject>> m_derivedRealms;
+    void addDerivedRealm(JSC::JSGlobalObject*);
+
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;

@@ -8,7 +8,7 @@ use crate::ir::element::{Interned, TextWidth};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
-use crate::options::{HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
+use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
 use crate::prelude::*;
 use crate::{format_args, write};
 use bun_core::strings;
@@ -137,8 +137,9 @@ type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> 
 /// What code is.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Piece {
-    /// All that is in a `<script>`. What sorts imports and rewrites JSDoc comments takes it for a file.
-    Script,
+    /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
+    /// a file.
+    Script(Flavor),
     Other,
 }
 
@@ -170,7 +171,8 @@ fn with_file(
     let mut options = options_in_html(f.options(), in_html);
     // A plugin of Prettier sorts the imports of the text before it is parsed.
     let mut sorts_text = None;
-    if piece == Piece::Script {
+    if let Piece::Script(flavor) = piece {
+        options.flavor = flavor;
         options.jsdoc = f.options().jsdoc;
         match f.options().sort_imports.clone() {
             Some(how) if how.is_applied_by_format() => options.sort_imports = Some(how),
@@ -279,13 +281,14 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
     write!(f, FormatTrailingComments::Comments(rest));
 }
 
-/// `textToDoc(code, { parser })` for a program. Returns whether it has been written.
+/// `textToDoc(code, { parser })` for a program. `flavor`: whose output it is. Returns whether it has been written.
 pub(crate) fn write_program(
     f: &mut Formatter<'_>,
     code: &[u8],
     syntax: Syntax,
     source_type: SourceType,
     in_html: InHtml,
+    flavor: Flavor,
 ) -> bool {
     with_file(
         f,
@@ -293,7 +296,7 @@ pub(crate) fn write_program(
         paths_of(syntax, code),
         source_type,
         in_html,
-        Piece::Script,
+        Piece::Script(flavor),
         &mut |file, f| {
             write_statements(file, f);
             true

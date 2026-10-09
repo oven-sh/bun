@@ -241,9 +241,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             ..InHtml::default()
         };
         let program = |syntax: Syntax, printer: &mut Self| {
+            let flavor = printer.options.script_flavor;
             printer
                 .out
-                .foreign(|f| js::write_program(f, code, syntax, source_type, in_html))
+                .foreign(|f| js::write_program(f, code, syntax, source_type, in_html, flavor))
         };
         if let Some(parser) = crate::css::Parser::from_name(parser)
             && self.out.indent_level().is_some()

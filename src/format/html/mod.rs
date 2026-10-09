@@ -34,7 +34,7 @@ use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
 use crate::js::sort_imports::SortImports;
-use crate::options::{HtmlRoot, InHtml, JavaScriptParser};
+use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser};
 use crate::range::{Offsets, normalized_len, write_with_line_ending};
 use crate::text::{self, BOM, trim_end};
 use crate::{FormatError, FormatOptions, front_matter};
@@ -108,6 +108,8 @@ pub(crate) struct Options<'o> {
     pub(crate) filepath: Option<&'o [u8]>,
     /// Whether there is a `parentParser`: the text is in a text in another language.
     pub(crate) has_parent_parser: bool,
+    /// Whose output the scripts are.
+    pub(crate) script_flavor: Flavor,
 }
 
 /// `/^\s*<!--\s*@(?:a|b)\s*-->/.test(text)`
@@ -203,10 +205,14 @@ pub fn has_same_content(
         && keeps_content(before, &formatted, parser, &plain)
 }
 
+/// Whether oxfmt formats the scripts of a text that `parser` parses by itself. HTML and all other code in it is Prettier's.
+fn is_vue_file(options: &FormatOptions, parser: Parser) -> bool {
+    parser == Parser::Vue && !options.is_in_markdown
+}
+
 /// `options` for a text that `parser` parses.
 pub(crate) fn options_of_host(options: &FormatOptions, parser: Parser) -> FormatOptions {
-    // oxfmt formats the scripts of a Vue file by itself, and leaves all other code in HTML to Prettier.
-    let is_vue_file = parser == Parser::Vue && !options.is_in_markdown;
+    let is_vue_file = is_vue_file(options, parser);
     // The plugins of Prettier have sorted the imports of a Vue file when it is parsed: `with_sorted_scripts`.
     let sort_imports = options.sort_imports.clone();
     FormatOptions {
@@ -215,6 +221,7 @@ pub(crate) fn options_of_host(options: &FormatOptions, parser: Parser) -> Format
             false => parser != Parser::Vue && how.applies_to_embedded_code(),
         }),
         jsdoc: options.jsdoc.filter(|_| is_vue_file),
+        flavor: Flavor::Prettier,
         ..options.clone()
     }
 }
@@ -300,12 +307,13 @@ pub(crate) fn write_document(
         is_embedded,
         indent_level,
         None,
+        Flavor::Prettier,
         f,
     )
     .map(|written| written.top_level_count)
 }
 
-/// The same. `cursor_offset`: where the cursor is in `text`.
+/// The same. `cursor_offset`: where the cursor is in `text`. `script_flavor`: whose output the scripts are.
 #[allow(clippy::too_many_arguments)]
 fn write_document_with_cursor(
     text: &[u8],
@@ -315,6 +323,7 @@ fn write_document_with_cursor(
     is_embedded: bool,
     indent_level: Option<u32>,
     cursor_offset: Option<u32>,
+    script_flavor: Flavor,
     f: &mut Formatter<'_>,
 ) -> Result<Written, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
@@ -330,6 +339,7 @@ fn write_document_with_cursor(
         format: options,
         filepath: path,
         has_parent_parser: is_embedded || options.is_in_markdown,
+        script_flavor,
     };
     if !preprocess::preprocess(&mut tree, &options) {
         return Err(FormatError::NestedTooDeeply);
@@ -396,6 +406,7 @@ fn format_angular_expression(
                 format: &options,
                 filepath: None,
                 has_parent_parser: false,
+                script_flavor: options.flavor,
             },
             out: writer::Writer::new(f, Some(0), true),
             ancestors: 0,
@@ -500,6 +511,10 @@ pub fn format_with(
         )
     });
     let start = out.len() - if has_bom { BOM.len() } else { 0 };
+    let script_flavor = match is_vue_file(options, parser) {
+        true => options.flavor,
+        false => Flavor::Prettier,
+    };
     let options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
@@ -518,6 +533,7 @@ pub fn format_with(
             false,
             Some(0),
             cursor_offset,
+            script_flavor,
             f,
         )
         .map(|written| written.region);

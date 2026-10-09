@@ -30,10 +30,11 @@ pub(crate) fn rule_of(message: &LintMessage, is_oxlint: bool) -> Option<Vec<u8>>
     if matches!(id, RuleId::Unknown(_)) {
         return None;
     }
+    let rule = id;
     let id = id.to_vec();
     Some(match parse_rule_id(&id) {
         (b"", name) => name.to_vec(),
-        (prefix, name) => [crate::format::oxlint::scope(prefix), b"/", name].concat(),
+        (prefix, name) => [crate::format::oxlint::scope_of(rule, prefix), b"/", name].concat(),
     })
 }
 

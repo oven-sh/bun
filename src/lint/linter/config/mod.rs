@@ -204,6 +204,9 @@ struct ConfigObject {
     parser_location: Option<Json>,
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
+    /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
+    /// `rules` that yield are what `categories` turn on.
+    plugins_of_override: Option<(u32, u32)>,
 }
 
 impl Default for ConfigObject {
@@ -228,6 +231,7 @@ impl Default for ConfigObject {
             source: None,
             parser_location: None,
             changes_linter: false,
+            plugins_of_override: None,
         }
     }
 }
@@ -722,6 +726,14 @@ impl Config {
             ..ResolvedConfig::default()
         };
         let mut plugins: Vec<&[u8]> = Vec::new();
+        // In oxlint `categories` say something about the plugins that overrides add only if one of the overrides names other
+        // plugins than all that are on for the file.
+        let of_overrides = || {
+            let objects = indices.iter();
+            objects.filter_map(|index| self.objects.get(*index as usize)?.plugins_of_override)
+        };
+        let all_plugins = of_overrides().fold(0, |all, (own, of_files)| all | own | of_files);
+        let have_categories = of_overrides().any(|(own, _)| own != all_plugins);
         for object in indices
             .iter()
             .filter_map(|index| self.objects.get(*index as usize))
@@ -741,7 +753,14 @@ impl Config {
             linter.merge_json(&object.linter_options);
             match self.is_legacy {
                 true => eslintrc::merge_rules(&mut rules, &object.rules),
-                false => merge::merge_rules(&mut rules, &object.rules, self.keeps_options),
+                false => {
+                    let skipped = match object.plugins_of_override.is_some() && !have_categories {
+                        true => object.rules.iter().take_while(|it| it.yields).count(),
+                        false => 0,
+                    };
+                    let settings = object.rules.get(skipped..).unwrap_or_default();
+                    merge::merge_rules(&mut rules, settings, self.keeps_options);
+                }
             }
             for plugin in &object.foreign_plugins {
                 if !config.foreign_plugins.contains(plugin) {
@@ -848,8 +867,13 @@ impl Config {
             // So does a plugin that is not the one which is implemented here under that name.
             let prefix = super::registry::parse_rule_id(&setting.id).0;
             let is_foreign = config.foreign_plugins.iter().any(|it| **it == *prefix);
-            let is_hidden =
-                js.is_some() && self.accepts_all_plugins && !config.prefers_native_rules_of(prefix);
+            // Not what is written with a name that oxlint has for the plugin here, `node/..`, or comes from a category.
+            let is_native_for_oxlint =
+                self.prefers_typescript_rules && setting.written_for.is_some();
+            let is_hidden = js.is_some()
+                && self.accepts_all_plugins
+                && !is_native_for_oxlint
+                && !config.prefers_native_rules_of(prefix);
             let native = match is_foreign || is_hidden {
                 true => None,
                 false => config.find_rule(registry, &setting.id),

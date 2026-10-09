@@ -75,95 +75,133 @@ impl Message {
     }
 }
 
-/// Where a rule is from. It decides the prefix of its name in a configuration.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Plugin {
+/// Who answers for the rules of a plugin in a configuration of ESLint.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum UnderEslint {
+    /// The rules here. There is no package that could.
+    Here,
+    /// The rules here, in place of those of the package of that name, which is loaded for the rules that do not exist
+    /// here. Without a name: whatever the plugin of the configuration says it is called.
+    InPlaceOf(Option<&'static str>),
+    /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
+    /// for a configuration of oxlint.
+    Package,
+}
+
+/// What a plugin is called, and who answers for it.
+struct Names {
+    /// What can be before the `/`. The first is in the name that a rule is reported under, which is the name that is
+    /// usual with ESLint. The others are what oxlint calls the plugin.
+    prefixes: &'static [&'static str],
+    under_eslint: UnderEslint,
+}
+
+macro_rules! plugins {
+    ($($(#[$example:meta])* $plugin:ident: $prefixes:expr, $under_eslint:expr;)*) => {
+        /// Where a rule is from. It decides the prefix of its name in a configuration.
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+        pub enum Plugin {
+            $($(#[$example])* $plugin,)*
+        }
+
+        impl Plugin {
+            const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
+
+            const fn names(self) -> Names {
+                use UnderEslint::{Here, InPlaceOf, Package};
+                match self {
+                    $(Plugin::$plugin => Names { prefixes: &$prefixes, under_eslint: $under_eslint },)*
+                }
+            }
+        }
+    };
+}
+
+// The one place that says what a plugin is called and who answers for it: what finds a rule by its name, what reads the
+// `plugins` of a configuration and what decides whether a package is loaded all ask here. oxlint has the rules of
+// `react-hooks` in `react`. Two lists answer other questions: the order in which oxlint looks for a name without a
+// prefix (`PLUGINS_OF_OXLINT`), and that in which its rules report at one node (`order_fixes_as_oxlint`).
+plugins! {
     /// `no-debugger`
-    Eslint,
+    Eslint: ["", "eslint"], Here;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript,
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None);
     /// `react-hooks/rules-of-hooks`
-    ReactHooks,
+    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"));
     /// `import/no-cycle`
-    Import,
+    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"));
     /// `n/no-unsupported-features/es-syntax`
-    Node,
+    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"));
     /// `oxc/no-accumulating-spread`
-    Oxc,
+    Oxc: ["oxc"], Here;
     /// `unicorn/no-null`
-    Unicorn,
+    Unicorn: ["unicorn"], Package;
     /// `react/jsx-key`
-    React,
+    React: ["react", "react-hooks", "react_hooks"], Package;
     /// `react-perf/jsx-no-new-object-as-prop`
-    ReactPerf,
+    ReactPerf: ["react-perf", "react_perf"], Package;
     /// `jsx-a11y/alt-text`
-    JsxA11y,
+    JsxA11y: ["jsx-a11y", "jsx_a11y"], Package;
     /// `@next/next/no-img-element`
-    Nextjs,
+    Nextjs: ["@next/next", "nextjs"], Package;
     /// `promise/param-names`
-    Promise,
+    Promise: ["promise"], Package;
     /// `jest/no-focused-tests`
-    Jest,
+    Jest: ["jest"], Package;
     /// `vitest/no-focused-tests`
-    Vitest,
+    Vitest: ["vitest"], Package;
     /// `jsdoc/require-param`
-    Jsdoc,
+    Jsdoc: ["jsdoc"], Package;
     /// `vue/no-dupe-keys`
-    Vue,
+    Vue: ["vue"], Package;
 }
 
 impl Plugin {
     /// What is before the `/` in the name that a rule is reported under. Empty for a rule of ESLint.
     pub const fn prefix(self) -> &'static str {
-        match self {
-            Plugin::Eslint => "",
-            Plugin::TypeScript => "@typescript-eslint",
-            Plugin::ReactHooks => "react-hooks",
-            Plugin::Import => "import",
-            Plugin::Node => "n",
-            Plugin::Oxc => "oxc",
-            Plugin::Unicorn => "unicorn",
-            Plugin::React => "react",
-            Plugin::ReactPerf => "react-perf",
-            Plugin::JsxA11y => "jsx-a11y",
-            Plugin::Nextjs => "@next/next",
-            Plugin::Promise => "promise",
-            Plugin::Jest => "jest",
-            Plugin::Vitest => "vitest",
-            Plugin::Jsdoc => "jsdoc",
-            Plugin::Vue => "vue",
+        match self.names().prefixes.first() {
+            Some(prefix) => *prefix,
+            None => "",
         }
     }
 
-    /// The plugin that a configuration or a comment calls `prefix`: by the name that is usual with ESLint, or by one that oxlint
-    /// has for it. oxlint has the rules of `react-hooks` in `react`.
-    pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
-        Some(match prefix {
-            b"" | b"eslint" => Plugin::Eslint,
-            b"@typescript-eslint" | b"typescript-eslint" | b"typescript" => Plugin::TypeScript,
-            b"react-hooks" | b"react_hooks" | b"react" => Plugin::ReactHooks,
-            b"import" | b"import-x" => Plugin::Import,
-            b"n" | b"node" => Plugin::Node,
-            b"oxc" => Plugin::Oxc,
-            _ => return None,
-        })
+    fn is_called(self, prefix: &[u8]) -> bool {
+        self.names()
+            .prefixes
+            .iter()
+            .any(|it| it.as_bytes() == prefix)
     }
 
-    /// The same in a configuration of oxlint and in the comments of a file that is linted with one. oxlint has more plugins built
-    /// in. With ESLint these are packages of the project, which have other messages and other options.
+    fn is_only_of_oxlint(self) -> bool {
+        self.names().under_eslint == UnderEslint::Package
+    }
+
+    /// The plugin that a configuration or a comment calls `prefix`: by the name that is usual with ESLint, or by one
+    /// that oxlint has for it.
+    pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
+        let mut all = Plugin::ALL.iter().copied();
+        all.find(|it| !it.is_only_of_oxlint() && it.is_called(prefix))
+    }
+
+    /// The same in a configuration of oxlint and in the comments of a file that is linted with one. oxlint has more
+    /// plugins built in. With ESLint these are packages of the project.
     pub fn of_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
-        Some(match prefix {
-            b"unicorn" => Plugin::Unicorn,
-            b"react" | b"react-hooks" | b"react_hooks" => Plugin::React,
-            b"react-perf" | b"react_perf" => Plugin::ReactPerf,
-            b"jsx-a11y" | b"jsx_a11y" => Plugin::JsxA11y,
-            b"nextjs" | b"@next/next" => Plugin::Nextjs,
-            b"promise" => Plugin::Promise,
-            b"jest" => Plugin::Jest,
-            b"vitest" => Plugin::Vitest,
-            b"jsdoc" => Plugin::Jsdoc,
-            b"vue" => Plugin::Vue,
-            _ => return Plugin::of_prefix(prefix),
+        let mut all = Plugin::ALL.iter().copied();
+        all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
+            .or_else(|| Plugin::of_prefix(prefix))
+    }
+
+    /// Whether the rules here answer for the plugin that a configuration of ESLint has as `prefix`, in place of those
+    /// of the package: it has the name that is usual for it, and it is that package. `package`: what the plugin says it
+    /// is called, if it says so.
+    pub(crate) fn answers_in_place_of(prefix: &[u8], package: Option<&[u8]>) -> bool {
+        Plugin::ALL.iter().any(|it| match it.names().under_eslint {
+            UnderEslint::InPlaceOf(usual) => {
+                it.prefix().as_bytes() == prefix
+                    && (usual.zip(package))
+                        .is_none_or(|(usual, package)| usual.as_bytes() == package)
+            }
+            UnderEslint::Here | UnderEslint::Package => false,
         })
     }
 

@@ -7,7 +7,7 @@ use crate::print_config::{object, text, write_indented};
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Registry, parse_rule_id};
+use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
 use bun_lint::options::Json;
 use bun_lint::rule::Fixable;
 use std::io::Write;
@@ -24,13 +24,22 @@ pub(crate) struct Run {
 
 /// `eslint(no-debugger)`, `typescript(no-explicit-any)`
 pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
-    let id = message.rule_id.as_ref()?.to_vec();
+    let rule = message.rule_id.as_ref()?;
+    let id = rule.to_vec();
     let (plugin, name) = parse_rule_id(&id);
-    Some([scope(plugin), b"(", name, b")"].concat())
+    Some([scope_of(rule, plugin), b"(", name, b")"].concat())
+}
+
+/// [`scope`] for the prefix of `rule`. A plugin in JavaScript is called what it is called.
+pub(crate) fn scope_of<'p>(rule: &RuleId, prefix: &'p [u8]) -> &'p [u8] {
+    match rule {
+        RuleId::Js(_) => prefix,
+        RuleId::Known(_) | RuleId::Unknown(_) => scope(prefix),
+    }
 }
 
 /// What oxlint calls, in a diagnostic, the plugin that rules have the prefix `prefix` of.
-pub(crate) fn scope(prefix: &[u8]) -> &[u8] {
+fn scope(prefix: &[u8]) -> &[u8] {
     match prefix {
         b"" => b"eslint",
         b"@typescript-eslint" => b"typescript",

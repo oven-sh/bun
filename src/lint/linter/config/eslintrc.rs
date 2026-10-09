@@ -717,10 +717,7 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
 
 /// Whether the plugin that ESLint calls `id` is implemented here, in whole or in part.
 fn is_implemented_here(id: &[u8]) -> bool {
-    matches!(
-        id,
-        b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
-    )
+    crate::rule::Plugin::answers_in_place_of(id, None)
 }
 
 /// Whether ESLint 8 has no definition of the rule called `id`. `has_plugin`: whether the elements have a plugin with that id.

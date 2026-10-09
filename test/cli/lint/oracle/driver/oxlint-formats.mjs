@@ -115,6 +115,16 @@ function marked(files, say, more = {}) {
   };
 }
 
+// To oxlint `n`, which a plugin in JavaScript can be called, and `node`, which is built in, are two plugins.
+const calledN = more => ({
+  ".oxlintrc.json": JSON.stringify({ ...off, plugins: ["node"], jsPlugins: ["./n.js"], ignorePatterns: ["n.js"], ...more }),
+  "n.js": `const rule = message => ({ create: context => ({ BinaryExpression(node) { context.report({ node, message }); } }) });
+export default { meta: { name: "eslint-plugin-n" }, rules: { "no-path-concat": rule("of the package"), "only-there": rule("only there") } };
+`,
+  "a.js": 'export const p = __dirname + "/x";\n',
+});
+const bothOfN = { "n/no-path-concat": "error", "node/no-path-concat": "warn" };
+
 // `files`: path -> text. `args`: `{root}` is the directory of the project. `cwd`: below the project. `env`: more of it.
 // `formats`: not all of them, `null` is a run without `--format`, which prints the format `as`.
 const cases = [
@@ -233,6 +243,14 @@ const cases = [
   { name: "a message with special characters", exact: true, files: marked({ "a.js": "⟦x⟧; ⟪y⟫;\n" }, "a & b <c> \"d\" 'e' `f` \\ \\n 100% %0A ::, ]]> &amp; é 漢 😀 [Error/x] end") },
   { name: "a message with line breaks and tabs", exact: true, files: marked({ "a.js": "⟦x⟧;\n" }, "one\ntwo\r\nthree\rfour\tfive  six \u{2028} seven \u{A0} eight") },
   { name: "a message with blanks around it", exact: true, files: marked({ "a.js": "⟦x⟧;\n" }, "  blanks \n") },
+  { name: "n and node: both are on", files: calledN({ rules: bothOfN }) },
+  { name: "n and node: only what is built in", files: calledN({ rules: { "node/no-path-concat": "warn" } }) },
+  { name: "n and node: only the plugin's", files: calledN({ rules: { "n/no-path-concat": "warn" } }) },
+  { name: "n and node: node is not among the plugins", files: calledN({ plugins: [], rules: bothOfN }) },
+  { name: "n and node: a category", files: calledN({ categories: { correctness: "off", restriction: "warn" }, rules: { "n/only-there": "error" } }) },
+  { name: "n and node: an override turns off what is built in", files: calledN({ rules: bothOfN, overrides: [{ files: ["*.js"], rules: { "node/no-path-concat": "off" } }] }) },
+  { name: "n and node: an override turns off the plugin's", files: calledN({ rules: bothOfN, overrides: [{ files: ["*.js"], rules: { "n/no-path-concat": "off" } }] }) },
+  { name: "n and node: suppressions", files: { ...calledN({ rules: { "n/no-path-concat": "error", "node/no-path-concat": "error" } }), "oxlint-suppressions.json": JSON.stringify({ "a.js": { "n/no-path-concat": { count: 1 } } }) } },
   { name: "a message with control characters", exact: true, files: marked({ "a.js": "⟦x⟧;\n" }, "\u{1} \b \f \v \u{1B}[31m \u{7F} \u{85} \u{FEFF} \u{FFFD}") },
   { name: "an empty message", exact: true, files: marked({ "a.js": "⟦x⟧;\n" }, "") },
   {

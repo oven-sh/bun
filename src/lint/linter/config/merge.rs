@@ -81,7 +81,12 @@ pub(crate) fn merge_rules(
     keeps_options: bool,
 ) {
     for setting in second {
-        match first.iter_mut().find(|it| it.id == setting.id) {
+        // A rule of a plugin in JavaScript and one that is built in can have one name: `n/..` with oxlint, for which the second is
+        // `node/..`.
+        let is_same = |it: &&mut RuleSetting| {
+            it.id == setting.id && it.written_for.is_some() == setting.written_for.is_some()
+        };
+        match first.iter_mut().find(is_same) {
             Some(_) if setting.yields => {}
             Some(existing) if setting.has_only_severity && keeps_options => {
                 existing.severity = setting.severity

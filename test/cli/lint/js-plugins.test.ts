@@ -392,6 +392,113 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // To oxlint `n`, which a plugin can be called, and `node`, which is built in, are two plugins. What oxlint 1.87 prints, sorted.
+  const calledN = {
+    "n.js": `const rule = message => ({ create: context => ({ BinaryExpression(node) { context.report({ node, message }); } }) });
+      export default { meta: { name: "eslint-plugin-n" }, rules: { "no-path-concat": rule("of the package"), "only-there": rule("only there") } };`,
+    "a.js": `export const p = __dirname + "/x";\n`,
+  };
+  const besideNode = (more: object) =>
+    JSON.stringify({ categories: { correctness: "off" }, plugins: ["node"], jsPlugins: ["./n.js"], ...more });
+  test.each([
+    [
+      "both are on",
+      { "rules": { "n/no-path-concat": "error", "node/no-path-concat": "warn" } },
+      [
+        "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
+        "a.js:1:18: of the package [Error/n(no-path-concat)]",
+      ],
+      1,
+    ],
+    [
+      "both are on, the other way round",
+      { "rules": { "node/no-path-concat": "warn", "n/no-path-concat": "error" } },
+      [
+        "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
+        "a.js:1:18: of the package [Error/n(no-path-concat)]",
+      ],
+      1,
+    ],
+    [
+      "only what is built in",
+      { "rules": { "node/no-path-concat": "warn" } },
+      [
+        "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
+      ],
+      0,
+    ],
+    [
+      "only the plugin's",
+      { "rules": { "n/no-path-concat": "warn" } },
+      ["a.js:1:18: of the package [Warning/n(no-path-concat)]"],
+      0,
+    ],
+    [
+      "node is not among the plugins",
+      { "plugins": [], "rules": { "n/no-path-concat": "warn", "node/no-path-concat": "error" } },
+      ["a.js:1:18: of the package [Warning/n(no-path-concat)]"],
+      0,
+    ],
+    [
+      "a category turns on what is built in",
+      { "categories": { "correctness": "off", "restriction": "warn" }, "rules": { "n/only-there": "error" } },
+      [
+        "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
+        "a.js:1:18: only there [Error/n(only-there)]",
+      ],
+      1,
+    ],
+    [
+      "an override turns off what is built in",
+      {
+        "rules": { "n/no-path-concat": "error", "node/no-path-concat": "warn" },
+        "overrides": [{ "files": ["*.js"], "rules": { "node/no-path-concat": "off" } }],
+      },
+      ["a.js:1:18: of the package [Error/n(no-path-concat)]"],
+      1,
+    ],
+    [
+      "an override turns off the plugin's",
+      {
+        "rules": { "n/no-path-concat": "error", "node/no-path-concat": "warn" },
+        "overrides": [{ "files": ["*.js"], "rules": { "n/no-path-concat": "off" } }],
+      },
+      [
+        "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
+      ],
+      0,
+    ],
+  ] as [string, object, string[], number][])(
+    "a plugin that is called n beside the node that is built in: %s",
+    async (_, more, expected, exitCode) => {
+      const result = await lint({ ...calledN, ".oxlintrc.json": besideNode(more) }, ["-f", "unix", "a.js"]);
+      expect(
+        result.stdout
+          .split("\n")
+          .filter(it => it.startsWith("a.js:"))
+          .sort(),
+      ).toEqual(expected);
+      expect(result.exitCode).toBe(exitCode);
+    },
+    timeout,
+  );
+
+  test(
+    "a plugin that is called n beside the node that is built in: each has its name in oxlint-suppressions.json",
+    async () => {
+      const rules = { "n/no-path-concat": "error", "node/no-path-concat": "error" };
+      const { files } = await lint(
+        { ...calledN, ".oxlintrc.json": besideNode({ rules }) },
+        ["--suppress-all", "a.js"],
+        ["oxlint-suppressions.json"],
+      );
+      expect(JSON.parse(files["oxlint-suppressions.json"])).toEqual({
+        "a.js": { "n/no-path-concat": { count: 1 }, "node/no-path-concat": { count: 1 } },
+      });
+    },
+    timeout,
+  );
+
   test(
     "options that the schema refuses, and a rule that does not exist",
     async () => {

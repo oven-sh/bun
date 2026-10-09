@@ -4686,5 +4686,23 @@
   "a.ts:5:32+4 typescript(no-invalid-void-type)",
   "a.ts:6:23+4 typescript(no-invalid-void-type)",
   "a.ts:7:23+4 typescript(no-invalid-void-type)"
+ ],
+ "restrict-plus-operands/an-operand-once": [
+  "a.ts:10:19+2 typescript(restrict-plus-operands)",
+  "a.ts:11:19+2 typescript(restrict-plus-operands)",
+  "a.ts:11:24+2 typescript(restrict-plus-operands)",
+  "a.ts:12:23+2 typescript(restrict-plus-operands)",
+  "a.ts:13:26+2 typescript(restrict-plus-operands)",
+  "a.ts:4:23+2 typescript(restrict-plus-operands)",
+  "a.ts:5:23+2 typescript(restrict-plus-operands)",
+  "a.ts:6:23+2 typescript(restrict-plus-operands)",
+  "a.ts:7:23+2 typescript(restrict-plus-operands)",
+  "a.ts:8:19+2 typescript(restrict-plus-operands)",
+  "a.ts:9:19+2 typescript(restrict-plus-operands)"
+ ],
+ "strict-boolean-expressions/a-type-parameter-or-null-with-allowAny": [
+  "a.ts:10:7+2 typescript(strict-boolean-expressions)",
+  "a.ts:8:7+1 typescript(strict-boolean-expressions)",
+  "a.ts:9:7+2 typescript(strict-boolean-expressions)"
  ]
 }

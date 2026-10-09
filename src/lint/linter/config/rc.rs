@@ -282,7 +282,7 @@ struct Rc<'r, 'l> {
     /// `plugins` of all files and overrides. A file without it stands for typescript, unicorn and oxc.
     plugins: Vec<Vec<u8>>,
     /// In oxlint the overrides of all files come after the rules of all files. With each, its `plugins`.
-    overrides: Vec<(ConfigObject, Vec<Vec<u8>>)>,
+    overrides: Vec<(ConfigObject, Option<Vec<Vec<u8>>>)>,
     /// [`Config::option_of_oxlint`]
     options: Vec<(Vec<u8>, Json)>,
     /// `plugins` of all files, without those of overrides.
@@ -295,6 +295,13 @@ struct Rc<'r, 'l> {
 fn is_among(plugin: Plugin, names: &[Vec<u8>]) -> bool {
     (names.iter())
         .any(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
+}
+
+/// `names`, which are as a configuration file of oxlint has them, as a set. `eslint` is no plugin.
+fn set_of(names: &[Vec<u8>]) -> u32 {
+    let plugins = (names.iter()).filter_map(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)));
+    let plugins = plugins.filter(|it| *it != Plugin::Eslint);
+    plugins.fold(0, |set, it| set | (1 << (it.in_oxlint() as u32)))
 }
 
 /// The plugins of oxlint, in the order in which it prints them.
@@ -654,8 +661,8 @@ impl Rc<'_, '_> {
         {
             let files = strings_of(item.get(b"files"));
             let excluded = strings_of(item.get(b"excludeFiles"));
-            let plugins = self.plugin_names(item)?.unwrap_or_default();
-            self.plugins.extend_from_slice(&plugins);
+            let plugins = self.plugin_names(item)?;
+            (self.plugins).extend_from_slice(plugins.as_deref().unwrap_or_default());
             let object = ConfigObject {
                 files: Some(
                     (files.iter())
@@ -752,16 +759,18 @@ impl Rc<'_, '_> {
 
     /// The overrides, as oxlint 1.87 applies them. The `plugins` of one count for it alone. Its `rules` can name their rules, which
     /// the `rules` of the files and of other overrides cannot. Where it applies, `categories` turn on the rules of its
-    /// plugins, if an override before it has not done so: but not if the files have no plugin at all, and not what the
-    /// command line says about a category.
+    /// plugins, if an override before it has not done so, and not what the command line says about a category: but see
+    /// [`ConfigObject::plugins_of_override`].
     fn take_overrides(&mut self) -> Vec<ConfigObject> {
         let overrides = std::mem::take(&mut self.overrides);
-        let have_categories = !self.plugins_of_files.iter().all(|it| it == b"eslint");
+        let of_files = set_of(&self.plugins_of_files);
         let objects = overrides.into_iter().map(|(mut object, plugins)| {
+            object.plugins_of_override = plugins.as_deref().map(|it| (set_of(it), of_files));
+            let plugins = plugins.unwrap_or_default();
             let is_own = |it: Plugin| !self.has_plugin(it) && is_among(it, &plugins);
             (object.rules)
                 .retain(|it| (it.written_for).is_none_or(|it| self.has_plugin(it) || is_own(it)));
-            if have_categories && !plugins.is_empty() {
+            if !plugins.is_empty() {
                 let mut rules = self.category_rules(&self.categories_of_files, &is_own);
                 rules.iter_mut().for_each(|it| it.yields = true);
                 rules.append(&mut object.rules);

@@ -5506,6 +5506,15 @@
   "message": "Operands of '+' operations must be of the same type."
  },
  {
+  "rule": "typescript/restrict-plus-operands",
+  "id": "invalid",
+  "file": "a.ts",
+  "code": "declare const s: string, u: string | string[];\nexport const x = s + u;\n",
+  "options": [],
+  "typed": true,
+  "message": "Invalid operand of type 'string | string[]' for a '+' operation."
+ },
+ {
   "rule": "typescript/restrict-template-expressions",
   "id": "invalidType",
   "file": "a.ts",
@@ -5641,6 +5650,15 @@
   ],
   "typed": true,
   "message": "Unexpected string value in conditional. A string can be falsy (empty string) or truthy."
+ },
+ {
+  "rule": "typescript/strict-boolean-expressions",
+  "id": "conditionErrorAny",
+  "file": "a.ts",
+  "code": "export function f<T>(t: T | null) {\n  if (t) {}\n}\n",
+  "options": [],
+  "typed": true,
+  "message": "Unexpected any value in conditional."
  },
  {
   "rule": "typescript/switch-exhaustiveness-check",

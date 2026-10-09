@@ -66,14 +66,8 @@ fn is_built_in(prefix: &[u8], name: Option<&[u8]>) -> bool {
             _ => name,
         },
     );
-    let is_called = |usual: &[u8]| package.is_none_or(|it| it == usual);
-    match prefix {
-        b"@" | b"@typescript-eslint" => true,
-        b"react-hooks" => is_called(b"eslint-plugin-react-hooks"),
-        b"import" => is_called(b"eslint-plugin-import"),
-        b"n" => is_called(b"eslint-plugin-n"),
-        _ => false,
-    }
+    // ESLint has its own rules in a plugin that is called `@`.
+    prefix == b"@" || Plugin::answers_in_place_of(prefix, package)
 }
 
 /// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not

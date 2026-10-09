@@ -149,6 +149,8 @@ pub struct ResolvedConfig {
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
+    /// The plugins of an `eslint.config.js` as `--print-config` has them, but for ESLint's own: `prefix:name@version`.
+    pub printed_plugins: Vec<Box<[u8]>>,
     /// A rule that does not exist is skipped, whatever its name.
     pub skips_unknown_rules: bool,
     /// A rule that is configured for the file, and not off, is skipped. Nobody can say then that an `eslint-disable` without

@@ -77,6 +77,8 @@ fn is_checked(scope: Scope, config: Config) -> bool {
 fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(DeclarationType, Span)>) {
     // For oxlint the declarations that TypeScript merges are declarations like the others, in the order of the source.
     let is_oxlint = symbol.file().language().is_oxlint;
+    // Of what redeclares a global oxlint reports the overloads too.
+    let redeclares_global = is_oxlint && into.first().is_some_and(|it| it.0 == DeclarationType::Builtin);
     let mut add = |declarations: &mut dyn Iterator<Item = Declaration<'a>>| {
         let known = into.len();
         into.extend(declarations.filter_map(identifier_span).map(|span| (DeclarationType::Syntax, span)));
@@ -84,7 +86,7 @@ fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(Decla
             utils::sort::sort_unstable_by_key(added, |it| it.1.start);
         }
     };
-    let Some(ignore_declaration_merge) = config.ignore_declaration_merge else {
+    let Some(ignore_declaration_merge) = config.ignore_declaration_merge.filter(|_| !redeclares_global) else {
         add(&mut symbol.declarations());
         return;
     };
@@ -144,11 +146,10 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     let name = symbol.name().bytes();
     let global = match is_oxlint {
         // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
-        true if config.builtin_globals => {
-            let is_module = || utils::oxlint::source_type(cx.file()) == SourceType::Module;
+        true if config.builtin_globals && utils::oxlint::source_type(cx.file()) != SourceType::Module => {
             // Not what an `env` defines.
             let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
-            cx.file().global(name).filter(|_| is_asked && !is_module())
+            if is_asked { cx.file().global(name) } else { None }
         }
         true => None,
         // In a script, what the file declares at the top level and what is defined otherwise are the

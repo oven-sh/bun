@@ -246,8 +246,8 @@ impl<'e> Host<'e> {
     }
 
     /// [`Engine::expect`]
-    pub fn expect(&self, files: usize, most: usize) {
-        self.engine.expect(files, most);
+    pub fn expect(&self, files: usize, size: u64, most: usize) {
+        self.engine.expect(files, size, most);
     }
 
     /// [`Engine::most_realms`]
@@ -361,7 +361,7 @@ impl<'e> Host<'e> {
         }
         let mut loaded = Err(OUT_OF_STEP.to_vec());
         self.engine
-            .with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
+            .with_vm(0, &mut |vm| loaded = self.load_in(vm, &location, None))?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
         Ok(self.register(location, &described, false))
     }
@@ -481,7 +481,7 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
     ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine.with_vm(&mut |vm| {
+        self.engine.with_vm(file.text().len(), &mut |vm| {
             outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
         })?;
         outcome

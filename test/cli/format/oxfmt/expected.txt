@@ -10,8 +10,6 @@ FAIL oxfmt css/format/css/important-comments.css { printWidth: 80 }
 FAIL oxfmt css/format/css/important-comments.css { printWidth: 100 }
 FAIL oxfmt css/format/css/keyframe-selector-comment.css { printWidth: 80 }
 FAIL oxfmt css/format/css/keyframe-selector-comment.css { printWidth: 100 }
-FAIL oxfmt css/format/css/media-general-enclosed.css { printWidth: 80 }
-FAIL oxfmt css/format/css/media-general-enclosed.css { printWidth: 100 }
 FAIL oxfmt css/format/css/missed-semicolon-accepted.css { printWidth: 80 }
 FAIL oxfmt css/format/css/missed-semicolon-accepted.css { printWidth: 100 }
 FAIL oxfmt css/format/css/nest-params-indent.css { printWidth: 80 }
@@ -63,8 +61,6 @@ FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 80 }
@@ -86,8 +82,6 @@ FAIL oxfmt css/format/scss/single-item-list-trailing-comma.scss { printWidth: 80
 FAIL oxfmt css/format/scss/single-item-list-trailing-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/supports-selector-inline-comments.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/supports-selector-inline-comments.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/terminator-gap.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/terminator-gap.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 80, trailingComma: "none" }
 FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 100, trailingComma: "none" }
 FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 80 }

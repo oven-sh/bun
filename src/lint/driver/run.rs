@@ -1,6 +1,6 @@
 //! `bun lint`: ESLint's `cli.execute`.
 
-use crate::cli::Options;
+use crate::cli::{Options, Tool};
 use crate::configs::{self, Flavor, Loader};
 use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
@@ -316,6 +316,18 @@ impl Run<'_> {
         let path = paths::join(&self.environment.cwd, b".oxlintrc.json");
         if fs::kind(&path).is_some() {
             return self.fail(&[&path[..], b" exists already."].concat());
+        }
+        if self.options.flavor != Some(Tool::Oxlint)
+            && let Some(file) = configs::file_of_eslint(&self.environment.cwd)
+        {
+            return self.fail(
+                &[
+                    b"--init writes an .oxlintrc.json, which would count in place of ",
+                    &file[..],
+                    b". Use --flavor=oxlint to write it.",
+                ]
+                .concat(),
+            );
         }
         if let Err(error) = fs::write_new(&path, INITIAL_OXLINTRC) {
             return self
@@ -677,7 +689,8 @@ impl Run<'_> {
         let most_engines = (pool.threads())
             .min(MOST_ENGINES)
             .min(context.js_plugins.most_realms());
-        (context.js_plugins).expect(with_engine.count(), most_engines);
+        let size: u64 = with_engine.clone().map(|it| it.size).sum();
+        (context.js_plugins).expect(with_engine.count(), size, most_engines);
         if !with_types.is_empty() {
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);

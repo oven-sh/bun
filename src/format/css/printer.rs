@@ -104,6 +104,8 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) value_stack: Vec<ValueId>,
     /// Not 0: the comment at the start of what follows a comma that has been written behind the comma.
     pub(crate) comment_behind_comma: ValueId,
+    /// An item of a list, and how many of the comments that it starts with have been written before it.
+    pub(crate) comments_above_item: (ValueId, usize),
     /// For a text that is made to be written.
     pub(crate) scratch: Vec<u8>,
     /// Prettier throws an error for the style sheet.
@@ -139,12 +141,62 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
     true
 }
 
+/// Whether oxfmt leaves `value`, of a custom property, as it is: there is something in it that is no value in the language,
+/// as in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier takes it for values all the same. Only what is on one line.
+fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
+    let is_name_part = |byte: u8| text::is_word_character(byte) || byte == b'-' || byte >= 0x80;
+    let mut at = 0;
+    while let Some(&byte) = value.get(at) {
+        let next = value.get(at + 1).copied();
+        match byte {
+            b'\n' => return false,
+            b'"' | b'\'' => {
+                at += 1;
+                while value.get(at).is_some_and(|it| *it != byte) {
+                    at += 1 + usize::from(value[at] == b'\\');
+                }
+            }
+            b'#' if syntax == Syntax::Scss && next == Some(b'{') => {
+                at += bun_core::strings::index_of_char_usize(&value[at..], b'}').unwrap_or(0);
+            }
+            b':' | b'{' | b'}' | b'!' => break,
+            b'<' | b'>' if syntax == Syntax::Css => break,
+            b'@' if syntax != Syntax::Less || next == Some(b'{') => break,
+            b'(' if at >= 3 && value[at - 3..at].eq_ignore_ascii_case(b"url") => {
+                at += bun_core::strings::index_of_char_usize(&value[at..], b')').unwrap_or(0);
+            }
+            b'(' if syntax != Syntax::Scss
+                && !at.checked_sub(1).is_some_and(|it| is_name_part(value[it])) =>
+            {
+                break;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    at < value.len() && !bun_core::strings::contains_char(&value[at..], b'\n')
+}
+
 /// Whether `text`, which is in parentheses, is more than a name and a value: `(width>=1px)`, `((color) or (hover))`. Not what
-/// starts with a variable or an interpolation, which oxfmt does not read either.
+/// starts with a variable or an interpolation, which oxfmt does not read either. The `(` of a function does not count.
 fn is_range_or_condition(text: &[u8]) -> bool {
     let inner = text.get(1..).unwrap_or_default();
-    !matches!(text::trim_start(inner).first(), Some(b'$' | b'@' | b'#'))
-        && bun_core::strings::index_of_any(inner, b"<>=(").is_some()
+    if matches!(text::trim_start(inner).first(), Some(b'$' | b'@' | b'#')) {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(found) = bun_core::strings::index_of_any(&inner[from..], b"<>=(") {
+        let at = from + found;
+        let is_call = inner[at] == b'('
+            && at
+                .checked_sub(1)
+                .is_some_and(|it| !inner[it].is_ascii_whitespace() && inner[it] != b'(');
+        if !is_call {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
 }
 
 /// For oxfmt there is a blank on both sides of `<`, `>`, `=`, `<=` and `>=` in a media query, one behind a `:`, and none
@@ -721,6 +773,13 @@ impl<'a> Printer<'a, '_> {
             match &node.value {
                 Value::None | Value::Rule(_) => {}
                 Value::Text(value) => printer.sink.text(value),
+                Value::Parsed(_)
+                    if printer.is_oxfmt
+                        && node.prop.starts_with(b"--")
+                        && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
+                {
+                    printer.sink.text(text::trim(printer.context.of(raw.value)));
+                }
                 Value::Parsed(value) => {
                     // `hasComposesNode`
                     let is_without_lines = statement.values.node(*value).kind == ValueKind::Root
@@ -1007,6 +1066,14 @@ impl<'a> Printer<'a, '_> {
                     if self.is_oxfmt
                         && (statement.is_in_keyframes()
                             || matches!(node.name, b"error" | b"warn")) =>
+                {
+                    self.sink.text(&adjust_strings(params, self.single_quote));
+                }
+                // `prettier-plugin-tailwindcss` has them parsed like those of `@import`.
+                Params::Text(params) | Params::Unknown(params)
+                    if !self.is_oxfmt
+                        && self.tailwind.is_some()
+                        && matches!(node.name, b"plugin" | b"config" | b"source") =>
                 {
                     self.sink.text(&adjust_strings(params, self.single_quote));
                 }

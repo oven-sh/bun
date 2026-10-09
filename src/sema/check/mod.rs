@@ -1950,9 +1950,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Query::TypeNode(file, node) => {
                 let node = &c.hir(file)[node];
-                // One whose end is unknown extends to the end.
-                let end = if node.end == 0 { u32::MAX } else { node.end };
-                Some((file, node.pos, end))
+                Some((file, node.pos, node.end.max(node.pos)))
             }
             _ => None,
         };
@@ -1964,11 +1962,16 @@ impl<'p, 's> Checker<'p, 's> {
         let queried = span_of(self, q);
         let is_low = self.is_stack_low();
         if is_low {
-            let outermost = self.stack.iter().find_map(|&q| span_of(self, q));
-            if let Some(outermost) = outermost.or(queried)
-                && !is_refused(self, outermost)
+            let mut in_flight = self.stack.iter().chain([&q]);
+            let outermost = in_flight.find_map(|&q| Some((q, span_of(self, q)?)));
+            if let Some((outermost, span)) = outermost
+                && !is_refused(self, span)
             {
-                self.refused_expressions.push(outermost);
+                let span = match outermost {
+                    Query::TypeNode(..) => self.span_of_statement_around(span),
+                    _ => span,
+                };
+                self.refused_expressions.push(span);
             }
         }
         // Every later `enter` takes this path.
@@ -1983,6 +1986,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Refused;
         self.bailed_out();
         true
+    }
+
+    /// `checkSourceElement` is no query, and asks for the type of a type node after it has visited what is in the node. So
+    /// the outermost type node in flight is the one that it has come back to, and the next one it comes back to is around
+    /// that: it would descend to what is refused, be cut short, and the one around it in turn, which costs depth^2 and,
+    /// with the search in `stack`, more. What is refused is the statement of the file that `span` is in.
+    fn span_of_statement_around(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
+        let hir = self.hir(span.0);
+        let mut statements = hir.ids(hir.body).map(|s| hir[s].loc);
+        match statements.find(|loc| (loc.pos..loc.end).contains(&span.1)) {
+            Some(loc) => (span.0, loc.pos, loc.end.max(span.2)),
+            None => span,
+        }
     }
 
     /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.

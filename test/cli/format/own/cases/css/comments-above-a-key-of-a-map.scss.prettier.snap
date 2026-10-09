@@ -1,0 +1,69 @@
+------------------
+{ printWidth: 80 }
+------------------
+$icons: (
+  a: (
+    left: 253,
+    top: 73,
+  ),
+  /* block */
+  b: (
+      left: 1,
+      top: 169,
+    ),
+  // line
+  c: (
+      left: 1,
+      top: 169,
+    ),
+  /* same line */
+  d: (
+      left: 1,
+      top: 169,
+    ),
+  // one
+  // two
+  e: (
+      f: (
+        g: 1,
+      ),
+    ),
+  // above a plain value
+  h: 1,
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+$icons: (
+  a: (
+    left: 253,
+    top: 73,
+  ),
+  /* block */
+  b: (
+      left: 1,
+      top: 169,
+    ),
+  // line
+  c: (
+      left: 1,
+      top: 169,
+    ),
+  /* same line */
+  d: (
+      left: 1,
+      top: 169,
+    ),
+  // one
+  // two
+  e: (
+      f: (
+        g: 1,
+      ),
+    ),
+  // above a plain value
+  h: 1,
+);
+
+===================== End =====================

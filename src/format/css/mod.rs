@@ -362,6 +362,7 @@ fn parse_and_print<'o>(
         tailwind: options.tailwind.clone(),
         value_stack: Vec::new(),
         comment_behind_comma: 0,
+        comments_above_item: (0, 0),
         scratch: Vec::new(),
         failure: None,
         sink,

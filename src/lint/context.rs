@@ -239,11 +239,18 @@ pub struct Report<'a> {
 
 impl<'a> Report<'a> {
     /// What `{{name}}` in the message stands for.
+    #[inline]
     pub fn data(mut self, name: &'static str, value: impl IntoText<'a>) -> Self {
-        if self.diagnostic.is_some() {
-            self.data.push((name, value.into_text()));
-        }
+        self.push_data(name, value.into_text());
         self
+    }
+
+    /// What of [`Report::data`] is the same for all values.
+    #[inline(never)]
+    fn push_data(&mut self, name: &'static str, value: Cow<'a, [u8]>) {
+        if self.diagnostic.is_some() {
+            self.data.push((name, value));
+        }
     }
 
     /// Reports `start` as the start, for the rare rule whose `loc.start` is a line and a column that are not in the text: some

@@ -187,6 +187,8 @@ struct ConfigObject {
     plugins: Vec<Box<[u8]>>,
     /// The prefixes of the plugins that are not implemented here.
     foreign_plugins: Vec<Box<[u8]>>,
+    /// All of them as `--print-config` has them: `prefix:name@version`, or the prefix of one that does not say what it is called.
+    printed_plugins: Vec<Box<[u8]>>,
     /// The object is invalid: the message of ESLint, which it gives when the object is merged.
     error: Option<Vec<u8>>,
     language: Option<Box<[u8]>>,
@@ -214,6 +216,7 @@ impl Default for ConfigObject {
             rules: Vec::new(),
             plugins: Vec::new(),
             foreign_plugins: Vec::new(),
+            printed_plugins: Vec::new(),
             error: None,
             language: None,
             processor: None,
@@ -708,6 +711,11 @@ impl Config {
             for plugin in &object.foreign_plugins {
                 if !config.foreign_plugins.contains(plugin) {
                     config.foreign_plugins.push(plugin.clone());
+                }
+            }
+            for plugin in &object.printed_plugins {
+                if !config.printed_plugins.contains(plugin) {
+                    config.printed_plugins.push(plugin.clone());
                 }
             }
             if object.language.is_some() {

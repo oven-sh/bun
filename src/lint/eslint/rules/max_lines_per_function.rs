@@ -81,7 +81,13 @@ impl MaxLinesPerFunction {
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !ast_utils::is_function_with_body(func) {
+        // For oxlint a method of a class is a function also if it has no body.
+        let is_method_without_body = || {
+            cx.language().is_oxlint
+                && matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
+                && matches!(func.owner(), Node::Member(member) if matches!(member.parent(), Node::Class(_)))
+        };
+        if !ast_utils::is_function_with_body(func) && !is_method_without_body() {
             return;
         }
         // A method or an accessor counts from its first modifier or its name.

@@ -17,12 +17,23 @@ struct Kept {
     end: bool,
 }
 
+/// An expression in a template.
+struct InTemplate {
+    /// Where the `${` before it ends.
+    after_open: u32,
+    start: u32,
+    /// What has to be kept in it.
+    kept: Kept,
+    /// A line break has been taken out of it.
+    has_lost_line_break: bool,
+}
+
 /// Something around what is visited that `canCollapseWhitespaceIn` looks at.
 enum Around<'a> {
     /// `left + right`
     Concatenation(Span, Span),
-    /// A template: where each expression in it starts, and what has to be kept in it.
-    Template(Vec<(u32, Kept)>),
+    /// A template, with its expressions.
+    Template(Vec<InTemplate>),
     /// What `sortInside` has been called with. What is further out does not count: it is sorted once for each, and
     /// white space that one of them takes away is gone.
     Root(Expr<'a>),
@@ -70,35 +81,35 @@ fn has_classes(attribute: Prop<'_>, tailwind: &Tailwind) -> bool {
         })
 }
 
-/// What has to be kept in the expressions of `template`. To the plugin an expression is next to the text before it, if
-/// there is nothing in between, and to all texts behind it. The white space at the start can go if each of them starts
-/// with white space, that at the end if each of those behind it ends with some.
-fn kept_in(template: Template<'_>) -> Vec<(u32, Kept)> {
-    // Where a text ends, by the parser.
-    let gap = if template
-        .exprs()
-        .iter()
-        .next()
-        .is_some_and(|it| it.file().is_javascript())
-    {
-        0
-    } else {
-        2
-    };
-    let mut behind = Kept::default();
-    let mut all: Vec<(u32, Kept)> = (template.exprs().iter().enumerate())
+/// The expressions of `template`. To the plugin an expression is next to the text before it, if there is nothing in
+/// between, and to all texts behind it. The white space at the start can go if each of them starts with white space,
+/// that at the end if each of those behind it ends with some. It goes by `start` and `end` of the nodes, which only the
+/// trees of Babel have: elsewhere nothing has to be kept.
+fn expressions_of(template: Template<'_>) -> Vec<InTemplate> {
+    let mut all: Vec<InTemplate> = (template.exprs().iter().enumerate())
         .map(|(index, it)| {
-            let is_next_to = it.span().start <= template.quasi_span(index).end + gap;
-            let start = is_next_to && !text::starts_with_white_space(template.raw(index));
-            (it.span().start, Kept { start, end: false })
+            let (after_open, start) = (template.quasi_span(index).end, it.span().start);
+            let keeps_start =
+                start == after_open && !text::starts_with_white_space(template.raw(index));
+            InTemplate {
+                after_open,
+                start,
+                kept: Kept {
+                    start: keeps_start && it.file().is_javascript(),
+                    end: false,
+                },
+                has_lost_line_break: false,
+            }
         })
         .collect();
-    for (index, (_, kept)) in all.iter_mut().enumerate().rev() {
+    let is_babel = (template.exprs().iter().next()).is_some_and(|it| it.file().is_javascript());
+    let mut behind = Kept::default();
+    for (index, it) in all.iter_mut().enumerate().rev().filter(|_| is_babel) {
         let text = template.raw(index + 1);
         behind.start |= !text::starts_with_white_space(text);
         behind.end |= text::trim_end(text).len() == text.len();
-        kept.start |= behind.start;
-        kept.end = behind.end;
+        it.kept.start |= behind.start;
+        it.kept.end = behind.end;
     }
     all
 }
@@ -117,9 +128,9 @@ impl<'a> Sorter<'a, '_> {
                 end: is_in(left),
             },
             Around::Template(expressions) => {
-                let behind = expressions.partition_point(|it| it.0 <= span.start);
+                let behind = expressions.partition_point(|it| it.start <= span.start);
                 (behind.checked_sub(1).and_then(|at| expressions.get(at)))
-                    .map_or(Kept::default(), |it| it.1)
+                    .map_or(Kept::default(), |it| it.kept)
             }
         };
         Kept {
@@ -147,9 +158,29 @@ impl<'a> Sorter<'a, '_> {
             collapses_end: !kept.end && index + 1 == count,
         };
         let sorted = self.tailwind.sorted_between(text, ends);
-        if *sorted != *text {
-            self.changes.push((span, sorted.into_owned()));
+        if *sorted == *text {
+            return;
         }
+        let sorted = sorted.into_owned();
+        // Prettier asks the text as it was whether there is a line break between a `${` and its `}`.
+        if strings::contains_char(text, b'\n') && !strings::contains_char(&sorted, b'\n') {
+            for (around, _) in self.around.iter_mut().rev() {
+                let Around::Template(expressions) = around else {
+                    continue;
+                };
+                let behind = expressions.partition_point(|it| it.start <= span.start);
+                let Some(it) = behind.checked_sub(1).and_then(|at| expressions.get_mut(at)) else {
+                    continue;
+                };
+                // So have those further out.
+                if std::mem::replace(&mut it.has_lost_line_break, true) {
+                    break;
+                }
+                let place = Span::new(it.after_open, it.after_open);
+                self.changes.push((place, b"\n".to_vec()));
+            }
+        }
+        self.changes.push((span, sorted));
     }
 
     /// `sortStringLiteral`. `span`: of a string with its quotes, or of a template without expressions.
@@ -237,7 +268,7 @@ impl<'a> Visitor<'a> for Sorter<'a, '_> {
                 if self.roots > 0 || has_tag() {
                     self.sort_template(template, self.kept_at(e.span()));
                 }
-                self.push(Around::Template(kept_in(template)), e.span());
+                self.push(Around::Template(expressions_of(template)), e.span());
             }
             _ => {}
         }

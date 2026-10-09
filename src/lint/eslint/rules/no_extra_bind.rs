@@ -13,6 +13,19 @@ pub(crate) struct OwnKeywords {
     pub(crate) new_target: bool,
 }
 
+impl OwnKeywords {
+    /// Whether `e` is one of them, which is then kept.
+    pub(crate) fn note(&mut self, e: Expr) -> bool {
+        match e.tag() {
+            ExprTag::This => self.this = true,
+            ExprTag::Super => self.has_super = true,
+            ExprTag::NewTarget => self.new_target = true,
+            _ => return false,
+        }
+        true
+    }
+}
+
 /// A field of a class, whose type and initializer ESLint has in a `PropertyDefinition`.
 fn is_property_definition(member: Member) -> bool {
     member.kind() == MemberKind::Property
@@ -28,12 +41,9 @@ pub(crate) fn own_keywords(func: Func, class_scopes: bool) -> OwnKeywords {
     let mut pending = Node::Func(func).children();
     while let Some(node) = pending.pop() {
         match node {
-            Node::Expr(e) => match e.tag() {
-                ExprTag::This => found.this |= !e.is_jsx_tag_name(),
-                ExprTag::Super => found.has_super = true,
-                ExprTag::NewTarget => found.new_target = true,
-                _ => node.for_each_child(|child| pending.push(child)),
-            },
+            // For ESLint the `this` of `<this.a />` is a name.
+            Node::Expr(e) if e.tag() == ExprTag::This && e.is_jsx_tag_name() => {}
+            Node::Expr(e) if found.note(e) => {}
             Node::Func(inner) if inner.kind() == FnKind::StaticBlock && !class_scopes => {
                 node.for_each_child(|child| pending.push(child));
             }

@@ -80,6 +80,9 @@ pub struct Environment {
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
 
+    // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
+    pub(crate) binding_names: HashMap<StoreStr, u32>,
+
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
     // whose node_id is in this set (type labels like ObjectTypeIndexer params
@@ -196,6 +199,7 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
+            binding_names: HashMap::new(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config

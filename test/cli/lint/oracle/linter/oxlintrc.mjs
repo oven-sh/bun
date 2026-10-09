@@ -40,6 +40,8 @@ const codeOf = name => {
 const ids = Object.keys(probes);
 
 const rng = random(11);
+// For what was added later, so that the rest of a project stays what it was.
+const later = random(29);
 const list = (make, max) => Array.from({ length: 1 + rng.int(max) }, make);
 const dirs = ["src", "lib", "test", "dist", "a", "b", ".hidden", "build"];
 const names = ["index.js", "a.js", "b.mjs", "d.ts", "e.tsx", "f.test.js", "j.jsx", "k.min.js", "l.cjs", "m.cts"];
@@ -63,6 +65,7 @@ const file = canExtend => ({
   overrides: Array.from({ length: rng.int(4) }, () => ({
     files: list(glob, 2),
     ...(rng.int(3) === 0 ? { excludeFiles: list(glob, 2) } : {}),
+    ...(later.int(3) === 0 ? { plugins: later.pick([["typescript"], ["typescript"], ["unicorn"], []]) } : {}),
     rules: rules(),
   })),
   ...(canExtend && rng.int(3) === 0 ? { extends: rng.pick([["./base.json"], ["./base.json", "./other.json"], ["./config/base.json"]]) } : {}),

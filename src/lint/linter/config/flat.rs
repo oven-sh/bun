@@ -362,6 +362,12 @@ impl Reader<'_> {
                 true => object.plugins.push(prefix[..].into()),
                 false => object.foreign_plugins.push(prefix[..].into()),
             }
+            if prefix != b"@" {
+                object.printed_plugins.push(match name.as_str() {
+                    Some(name) => [&prefix[..], b":", name].concat().into(),
+                    None => prefix[..].into(),
+                });
+            }
         }
         for (prefix, location) in json
             .get(b"$jsPlugins")

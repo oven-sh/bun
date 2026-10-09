@@ -83,6 +83,11 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
             Json::Array(setting),
         )
     });
+    let js_rules = config.js_rules.iter().map(|rule| {
+        let mut setting = vec![number(rule.severity as u32)];
+        setting.extend(rule.options.iter().cloned());
+        (rule.configured.rule.id.to_vec(), Json::Array(setting))
+    });
     let mut plugins = vec![text(b"@")];
     let of_rules = config.rules.iter().map(|it| it.entry.meta.plugin);
     for prefix in config
@@ -97,6 +102,10 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         }
     }
     plugins.extend(config.foreign_plugins.iter().map(|it| text(it)));
+    if !config.printed_plugins.is_empty() {
+        plugins.truncate(1);
+        plugins.extend(config.printed_plugins.iter().map(|it| text(it)));
+    }
     let language = &config.language;
     let mut language_options = vec![
         (
@@ -140,7 +149,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     if !matches!(language.settings, Json::Null) {
         all.push((b"settings", language.settings.clone()));
     }
-    all.push((b"rules", Json::Object(rules.collect())));
+    all.push((b"rules", Json::Object(rules.chain(js_rules).collect())));
     all.push((b"plugins", Json::Array(plugins)));
     all.push((
         b"language",

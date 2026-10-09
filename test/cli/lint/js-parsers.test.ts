@@ -332,10 +332,11 @@ const eslintPackage = {
     exports.Linter = class Linter {
       #suppressed = [];
       verify(text, [config], { filename, disableFixes }) {
-        const [prefix, name] = (config.language ?? "").split("/");
-        const { ast } = config.language
-          ? config.plugins[prefix].languages[name].parse({ body: text, path: filename }, config)
-          : config.languageOptions.parser.parseForESLint(text, config.languageOptions.parserOptions);
+        const [prefix, name] = config.language.split("/");
+        const { ast } =
+          prefix === "@"
+            ? config.languageOptions.parser.parseForESLint(text, config.languageOptions.parserOptions)
+            : config.plugins[prefix].languages[name].parse({ body: text, path: filename }, config);
         const messages = [];
         for (const [ruleId, [severity, ...options]] of Object.entries(config.rules)) {
           const [plugin, rule] = ruleId.split("/");
@@ -420,7 +421,7 @@ describe.concurrent("bun lint with languages", () => {
           ...eslintPackage,
           ...lines,
           "parser.cjs": `
-            const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\n"), languageOptions } });
+            const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\\n"), languageOptions } });
             module.exports = { meta: { name: "vue-eslint-parser", version: "10.0.0" }, parseForESLint };`,
           "eslint.config.mjs": `
             import lines from "./lines.mjs";

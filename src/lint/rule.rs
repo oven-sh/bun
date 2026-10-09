@@ -379,7 +379,7 @@ macro_rules! sorts {
                 pub fn $method(&mut self, listener: Listener<'a, R, $handle<'a>>) {
                     let has_any: fn(&File) -> bool = $has_any;
                     if has_any(self.file) {
-                        self.entries.push(Entry::$variant(listener));
+                        self.unordered(Entry::$variant(listener));
                     }
                 }
             )*
@@ -430,9 +430,67 @@ impl<'a, R: Rule> Listeners<'a, R> {
         }
     }
 
+    // Those that follow are not inlined: they look neither into the rule nor into its state, so they are the same code for all
+    // rules, of which the linker then keeps one copy. `register` has a call for each kind that it names.
+
+    #[inline(never)]
     fn later(&mut self, entry: Entry<'a, R>) {
         self.has_later = true;
         self.entries.push(entry);
+    }
+
+    #[inline(never)]
+    fn unordered(&mut self, entry: Entry<'a, R>) {
+        self.entries.push(entry);
+    }
+
+    #[inline(never)]
+    fn one_of_exprs(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
+        if self.file.has_exprs([tag]) {
+            self.entries.push(Entry::Exprs(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_optional_chains(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
+        if !self.file.chained_exprs_of(tag).is_empty() {
+            self.entries.push(Entry::Chained(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_binaries(&mut self, tag: BinOp, listener: Listener<'a, R, Expr<'a>>) {
+        if !self.file.binaries_of(tag).is_empty() {
+            self.entries.push(Entry::Binaries(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_unaries(&mut self, tag: UnOp, listener: Listener<'a, R, Expr<'a>>) {
+        if !self.file.unaries_of(tag).is_empty() {
+            self.entries.push(Entry::Unaries(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_stmts(&mut self, tag: StmtTag, listener: Listener<'a, R, Stmt<'a>>) {
+        if self.file.has_stmts([tag]) {
+            self.entries.push(Entry::Stmts(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_types(&mut self, tag: TypeTag, listener: Listener<'a, R, TypeNode<'a>>) {
+        if !self.file.types_of(tag).is_empty() {
+            self.entries.push(Entry::Types(tag, listener));
+        }
+    }
+
+    #[inline(never)]
+    fn one_of_pats(&mut self, tag: PatTag, listener: Listener<'a, R, Pat<'a>>) {
+        if !self.file.pats_of(tag).is_empty() {
+            self.entries.push(Entry::Pats(tag, listener));
+        }
     }
 
     /// Every expression of one of these kinds, in no particular order.
@@ -441,18 +499,17 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = ExprTag>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let tags = tags.into_iter().filter(|&tag| self.file.has_exprs([tag]));
-        self.entries
-            .extend(tags.map(|tag| Entry::Exprs(tag, listener)));
+        for tag in tags {
+            self.one_of_exprs(tag, listener);
+        }
     }
 
     /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`), in no particular
     /// order: in `a?.b.c()` that is `a?.b`, `a?.b.c` and `a?.b.c()`. Not the `!` in a chain.
     pub fn optional_chains(&mut self, listener: Listener<'a, R, Expr<'a>>) {
-        let tags = [ExprTag::Dot, ExprTag::Index, ExprTag::Call].into_iter();
-        let tags = tags.filter(|&tag| !self.file.chained_exprs_of(tag).is_empty());
-        self.entries
-            .extend(tags.map(|tag| Entry::Chained(tag, listener)));
+        for tag in [ExprTag::Dot, ExprTag::Index, ExprTag::Call] {
+            self.one_of_optional_chains(tag, listener);
+        }
     }
 
     /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators, in no particular order. A rule that
@@ -462,11 +519,9 @@ impl<'a, R: Rule> Listeners<'a, R> {
         ops: impl IntoIterator<Item = BinOp>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let ops = ops
-            .into_iter()
-            .filter(|&op| !self.file.binaries_of(op).is_empty());
-        self.entries
-            .extend(ops.map(|op| Entry::Binaries(op, listener)));
+        for op in ops {
+            self.one_of_binaries(op, listener);
+        }
     }
 
     /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators, in no particular order.
@@ -475,11 +530,9 @@ impl<'a, R: Rule> Listeners<'a, R> {
         ops: impl IntoIterator<Item = UnOp>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let ops = ops
-            .into_iter()
-            .filter(|&op| !self.file.unaries_of(op).is_empty());
-        self.entries
-            .extend(ops.map(|op| Entry::Unaries(op, listener)));
+        for op in ops {
+            self.one_of_unaries(op, listener);
+        }
     }
 
     /// Every statement of one of these kinds, in no particular order.
@@ -488,9 +541,9 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = StmtTag>,
         listener: Listener<'a, R, Stmt<'a>>,
     ) {
-        let tags = tags.into_iter().filter(|&tag| self.file.has_stmts([tag]));
-        self.entries
-            .extend(tags.map(|tag| Entry::Stmts(tag, listener)));
+        for tag in tags {
+            self.one_of_stmts(tag, listener);
+        }
     }
 
     /// Every type of one of these kinds, in no particular order.
@@ -499,11 +552,9 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = TypeTag>,
         listener: Listener<'a, R, TypeNode<'a>>,
     ) {
-        let tags = tags
-            .into_iter()
-            .filter(|&tag| !self.file.types_of(tag).is_empty());
-        self.entries
-            .extend(tags.map(|tag| Entry::Types(tag, listener)));
+        for tag in tags {
+            self.one_of_types(tag, listener);
+        }
     }
 
     /// Every binding pattern of one of these kinds, in no particular order.
@@ -512,16 +563,14 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = PatTag>,
         listener: Listener<'a, R, Pat<'a>>,
     ) {
-        let tags = tags
-            .into_iter()
-            .filter(|&tag| !self.file.pats_of(tag).is_empty());
-        self.entries
-            .extend(tags.map(|tag| Entry::Pats(tag, listener)));
+        for tag in tags {
+            self.one_of_pats(tag, listener);
+        }
     }
 
     /// Every node of one of these kinds, in no particular order: for a rule that learns from its options which kinds it is about.
     pub fn nodes(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.entries.push(Entry::Nodes(tags.into(), listener));
+        self.unordered(Entry::Nodes(tags.into(), listener));
     }
 
     /// Every node of one of these kinds, in source order, before its children.

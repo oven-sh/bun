@@ -267,11 +267,40 @@ fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) 
     else {
         return false;
     };
-    finding.category == ErrorCategory::Refs
-        && message == "Passing a ref to a function may read its value during render"
-        && finding.function_span.is_some()
-        && enclosing_function(file, *at).map(crate::program::diagnostic_span)
-            != finding.function_span
+    if finding.category != ErrorCategory::Refs
+        || message != "Passing a ref to a function may read its value during render"
+        || finding.function_span.is_none()
+    {
+        return false;
+    }
+    // A function that is the operand is not around it.
+    let innermost = get_node_by_range_index(file, at.start);
+    let operand = std::iter::once(innermost)
+        .chain(innermost.ancestors())
+        .take_while(|node| at.contains(node.span()))
+        .last();
+    let first = operand.unwrap_or(innermost).enclosing_function();
+    std::iter::successors(first, |it| it.enclosing())
+        .take_while(|it| Some(crate::program::diagnostic_span(*it)) != finding.function_span)
+        .any(|it| !is_inlined(it))
+}
+
+/// The compiler puts the body of a function that is called where it is written, and that of the callback of `useMemo`, in the
+/// place of the call.
+fn is_inlined(func: Func<'_>) -> bool {
+    let owner = func.owner();
+    let Node::Expr(parent) = owner.parent() else {
+        return false;
+    };
+    parent.as_call().is_some_and(|call| {
+        let callee = call.callee();
+        callee.span() == owner.span()
+            || match callee.kind() {
+                ExprKind::Ident(name) => name.is("useMemo"),
+                ExprKind::Dot { name, .. } => name.name().is("useMemo"),
+                _ => false,
+            }
+    })
 }
 
 fn labels_of(finding: &Finding) -> Vec<Label> {

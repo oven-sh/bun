@@ -3,6 +3,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::{SmallVec, smallvec};
 
 /// Disallow redundant return statements.
 pub struct NoUselessReturn;
@@ -132,6 +133,9 @@ pub struct State<'a> {
     functions: AncestorMemo<'a, Func<'a>>,
     /// Whether a `return` statement is in a loop or in a `finally` block.
     in_loop_or_finally: AncestorMemo<'a, bool>,
+    /// With a configuration of oxlint: [`is_at_function_end`] and [`is_code_after`].
+    at_function_end: AncestorMemo<'a, bool>,
+    code_after: AncestorMemo<'a, bool>,
     /// For each of the code paths around the current node, the innermost last.
     scopes: Vec<ScopeInfo<'a>>,
     segments: SegmentInfoMap,
@@ -165,6 +169,95 @@ fn is_in_loop_or_finally<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> 
         return Some(false);
     }
     ast_utils::is_loop(parent).then_some(true)
+}
+
+/// oxlint's `analyze_ancestors`, as far as `parent`, which `child` is directly in, tells: whether a `return` is in no
+/// loop and in no `finally` block, and in the last statement of each block around it and of the function. In a `case` it
+/// can be anywhere.
+fn is_at_function_end<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    if is_in_loop_or_finally(child, parent) == Some(true) {
+        return Some(false);
+    }
+    let is_last_of = |statements: List<'a, Stmt<'a>>| statements.last().map(Node::Stmt) == Some(child);
+    match parent {
+        Node::Func(func) => {
+            Some(func.kind() != FnKind::StaticBlock && func.body_statements().is_some_and(is_last_of))
+        }
+        Node::File(_) => Some(false),
+        Node::Stmt(statement) => match statement.kind() {
+            StmtKind::Block(body) if !is_last_of(body) => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether something is run in `statements` from `first` on. `Some(false)`: a `break`, a `continue` or a `return` without
+/// a value comes first. `None`: it goes on after them.
+fn runs_code<'a>(statements: List<'a, Stmt<'a>>, first: Option<Stmt<'a>>) -> Option<bool> {
+    let mut open: SmallVec<[(List<'a, Stmt<'a>>, Option<Stmt<'a>>); 4]> = smallvec![(statements, first)];
+    while let Some((statements, next)) = open.pop() {
+        let Some(statement) = next else {
+            continue;
+        };
+        open.push((statements, statements.after(statement.span().start)));
+        match statement.kind() {
+            StmtKind::Empty
+            | StmtKind::Fn(_)
+            | StmtKind::Class(_)
+            | StmtKind::Interface(_)
+            | StmtKind::TypeAlias(_)
+            | StmtKind::Enum(_)
+            | StmtKind::Module(_) => {}
+            StmtKind::Block(body) => open.push((body, body.first())),
+            StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Return(None) => return Some(false),
+            _ => return Some(true),
+        }
+    }
+    None
+}
+
+/// A statement of the block, or of a block that is a statement of it, leaves it.
+fn leaves(block: Stmt) -> bool {
+    let mut blocks: SmallVec<[Stmt; 4]> = smallvec![block];
+    while let Some(block) = blocks.pop() {
+        let StmtKind::Block(body) = block.kind() else {
+            continue;
+        };
+        for statement in body {
+            match statement.tag() {
+                StmtTag::Throw | StmtTag::Return | StmtTag::Break | StmtTag::Continue => return true,
+                StmtTag::Block => blocks.push(statement),
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// What oxlint's `has_reachable_code_after` comes to for a `return` that [is at the end](is_at_function_end) of its
+/// function, as far as `parent`, which `child` is directly in, tells: whether something would be run without it. That can
+/// only be in a `case`, after `child`, and in the cases after it. What is in a `finally` block does not count.
+fn is_code_after<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    match parent {
+        Node::Func(_) | Node::File(_) => Some(false),
+        Node::Stmt(statement) => match statement.kind() {
+            StmtKind::Try { finalizer: Some(finalizer), .. } if Node::Stmt(finalizer) != child && leaves(finalizer) => {
+                Some(false)
+            }
+            _ => None,
+        },
+        Node::Case(case) => {
+            let StmtKind::Switch { cases, .. } = case.parent().as_stmt()?.kind() else {
+                return None;
+            };
+            let after = |it: Case<'a>| cases.after(it.span().start);
+            let mut following = std::iter::successors(after(case), |&it| after(it));
+            runs_code(case.body(), case.body().after(child.span().start))
+                .or_else(|| following.find_map(|it| runs_code(it.body(), it.body().first())))
+        }
+        _ => None,
+    }
 }
 
 impl<'a> State<'a> {
@@ -318,6 +411,15 @@ fn is_known_to_be_useful<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool
 }
 
 impl NoUselessReturn {
+    fn check_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(statement.kind(), StmtKind::Return(None))
+            && cx.state.at_function_end.find(statement.into(), is_at_function_end) == Some(true)
+            && cx.state.code_after.find(statement.into(), is_code_after) != Some(true)
+        {
+            cx.report(statement, UNNECESSARY_RETURN);
+        }
+    }
+
     /// Checks the code path that starts with `root`.
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
         for step in steps_of_code_path(root, STATEMENTS, [StmtTag::Block, StmtTag::Try]) {
@@ -437,7 +539,11 @@ impl Rule for NoUselessReturn {
         NoUselessReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        if file.language().is_oxlint {
+            on.stmts([StmtTag::Return], Self::check_as_oxlint);
+            return State::default();
+        }
         on.stmts([StmtTag::Return], |_, statement, cx| {
             if !matches!(statement.kind(), StmtKind::Return(None))
                 || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)

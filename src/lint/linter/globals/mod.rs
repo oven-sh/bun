@@ -330,7 +330,8 @@ impl<'a> File<'a> {
                 implicit_setting: Some(Global::Readonly),
                 comments: &[],
                 is_type: lib & TYPE != 0,
-                is_value: lib & VALUE != 0,
+                // oxlint knows no libraries: `Temporal` is not defined.
+                is_value: lib & VALUE != 0 && !self.language().is_oxlint,
                 is_in_lib: true,
                 is_only_in_lib: true,
                 is_exported,

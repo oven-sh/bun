@@ -154,8 +154,9 @@ impl Host<'_> {
         message.extend_from_slice(file.text);
         self.count_one_for_eslint();
         let mut returned = Err(OUT_OF_STEP.to_vec().into());
-        self.engine
-            .with_vm(&mut |vm| returned = self.lint_in(vm, &message, configuration, run))?;
+        self.engine.with_vm(file.text.len(), &mut |vm| {
+            returned = self.lint_in(vm, &message, configuration, run)
+        })?;
         let Some(Json::Array(parts)) = crate::json::parse(&returned?) else {
             return Err(OUT_OF_STEP.to_vec().into());
         };

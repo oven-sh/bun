@@ -115,6 +115,21 @@ pub(crate) fn is_for_oxlint(flavor: Option<Tool>, cwd: &[u8]) -> bool {
     }
 }
 
+/// The configuration file of ESLint that counts in `cwd`: the nearest, if there is none of oxlint beside it.
+pub(crate) fn file_of_eslint(cwd: &[u8]) -> Option<Vec<u8>> {
+    paths::ancestors(cwd).find_map(|directory| {
+        let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
+        let of = |flavor: Flavor| NAMES.iter().filter(move |it| it.1 == flavor).map(|it| it.0);
+        if of(Flavor::Oxlint).any(|it| is_there(&it)) {
+            return Some(None);
+        }
+        let mut names = of(Flavor::Eslint).chain(eslintrc::NAMES.iter().copied());
+        let found = names.find(is_there)?;
+        let is_one = found != b"package.json" || eslintrc::has_one(directory);
+        is_one.then(|| Some(paths::join(directory, found)))
+    })?
+}
+
 /// Whether the file at `path`, which `--config` names, has what only a configuration file of oxlint has.
 fn is_written_for_oxlint(path: &[u8]) -> bool {
     let Some(json) = fs::read(path)

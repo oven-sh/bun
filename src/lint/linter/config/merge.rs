@@ -50,6 +50,8 @@ pub(crate) struct RuleSetting {
     pub(crate) options: Vec<Json>,
     /// It has no options of its own, so it keeps those of the setting that it overrides.
     pub(crate) has_only_severity: bool,
+    /// It says nothing about a rule that something is said about before it.
+    pub(crate) yields: bool,
 }
 
 impl RuleSetting {
@@ -66,6 +68,7 @@ impl RuleSetting {
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,
+            yields: false,
         })
     }
 }
@@ -79,6 +82,7 @@ pub(crate) fn merge_rules(
 ) {
     for setting in second {
         match first.iter_mut().find(|it| it.id == setting.id) {
+            Some(_) if setting.yields => {}
             Some(existing) if setting.has_only_severity && keeps_options => {
                 existing.severity = setting.severity
             }

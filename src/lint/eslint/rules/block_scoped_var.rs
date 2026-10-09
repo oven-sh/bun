@@ -91,7 +91,10 @@ impl BlockScopedVar {
                 let Some(name) = declaration.name_span() else {
                     return false;
                 };
-                if context.contains(name) || cx.has_reported_too_much() {
+                // The parameters of a function are in the scope of its body.
+                let is_parameter_there = matches!(declaration, Declaration::Param(_))
+                    && matches!(declaration.node(), Some(Node::Func(func)) if func.body_span() == Some(context));
+                if context.contains(name) || is_parameter_there || cx.has_reported_too_much() {
                     return true;
                 }
                 if cx.file().reference_at(name.start).is_none() {

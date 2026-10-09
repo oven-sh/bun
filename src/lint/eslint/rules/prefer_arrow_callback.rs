@@ -64,9 +64,7 @@ fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
     let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
     while let Some(node) = pending.pop() {
         match node {
-            Node::Expr(e) if e.tag() == ExprTag::This => found.this = true,
-            Node::Expr(e) if e.tag() == ExprTag::Super => found.has_super = true,
-            Node::Expr(e) if e.tag() == ExprTag::NewTarget => found.new_target = true,
+            Node::Expr(e) if found.note(e) => {}
             Node::Class(_) => {}
             Node::Func(inner) if !inner.is_arrow() => {}
             _ => node.for_each_child(|child| pending.push(child)),
@@ -184,7 +182,11 @@ impl PreferArrowCallback {
         if own.has_super
             || own.new_target
             || self.allow_unbound_this && own.this && !is_lexical_this
-            || func.symbol().is_some_and(|name| name.references().len() > 0)
+            // oxlint looks for the name in the body alone.
+            || func.symbol().is_some_and(|name| match func.body_span().filter(|_| is_oxlint) {
+                Some(body) => name.references().any(|it| body.contains(it.span())),
+                None => name.references().len() > 0,
+            })
             || uses_arguments(func)
         {
             return;

@@ -394,6 +394,8 @@ struct Borrowed<'e> {
     at: usize,
     desk: Arc<Desk>,
     since: Instant,
+    /// The size of the file that it is borrowed for.
+    size: usize,
     /// A caller further up has borrowed it, and gives it back.
     is_borrowed_further_up: bool,
 }
@@ -434,7 +436,8 @@ impl Drop for Borrowed<'_> {
         state.idle.push(self.at);
         let started = state.all[self.at].1.take();
         drop(state);
-        (self.engines.demand).note(self.since.elapsed(), started.map(|it| it.elapsed()));
+        let since_its_start = started.map(|it| it.elapsed());
+        (self.engines.demand).note(self.size, self.since.elapsed(), since_its_start);
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -469,7 +472,7 @@ impl Engines {
     }
 
     /// Waits for an engine.
-    fn borrow(&self) -> Result<Borrowed<'_>, Vec<u8>> {
+    fn borrow(&self, size: usize) -> Result<Borrowed<'_>, Vec<u8>> {
         let me = std::thread::current().id();
         let mut state = self.state.lock();
         // Nothing is asked of it at the moment: this thread would be waiting for the answer.
@@ -479,6 +482,7 @@ impl Engines {
                 at,
                 desk: Arc::clone(&state.all[at].0),
                 since: Instant::now(),
+                size,
                 is_borrowed_further_up: true,
             });
         }
@@ -506,21 +510,22 @@ impl Engines {
             at,
             desk: Arc::clone(&state.all[at].0),
             since: Instant::now(),
+            size,
             is_borrowed_further_up: false,
         })
     }
 }
 
 impl Engine for Engines {
-    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        then(&mut self.borrow()?);
+    fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        then(&mut self.borrow(size)?);
         Ok(())
     }
 
-    fn expect(&self, files: usize, most: usize) {
+    fn expect(&self, files: usize, size: u64, most: usize) {
         let is_for_few = most <= FEW_VMS || files <= FEW_FILES;
         (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
-        self.demand.expect(files, most);
+        self.demand.expect(size, most);
     }
 
     /// Half of the memory is for them.

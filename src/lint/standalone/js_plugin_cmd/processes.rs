@@ -143,7 +143,7 @@ impl<'e> Processes<'e> {
 }
 
 impl Engine for Processes<'_> {
-    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+    fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         let me = std::thread::current().id();
         let mut state = self.state.lock();
         // It has one, which it would wait for.
@@ -171,7 +171,7 @@ impl Engine for Processes<'_> {
             then(&mut process);
             if !is_within {
                 let started = process.started.take();
-                (self.demand).note(since.elapsed(), started.map(|it| it.elapsed()));
+                (self.demand).note(size, since.elapsed(), started.map(|it| it.elapsed()));
             }
             process
         });
@@ -192,8 +192,8 @@ impl Engine for Processes<'_> {
         Ok(())
     }
 
-    fn expect(&self, files: usize, most: usize) {
+    fn expect(&self, _files: usize, size: u64, most: usize) {
         self.is_told.store(true, Ordering::Relaxed);
-        self.demand.expect(files, most);
+        self.demand.expect(size, most);
     }
 }

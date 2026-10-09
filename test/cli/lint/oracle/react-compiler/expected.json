@@ -2783,6 +2783,285 @@
     ]
    }
   },
+  "fork": {
+   "exit": 1,
+   "files": 12,
+   "diagnostics": {
+    "arguments.jsx": [
+     {
+      "code": "react(unsupported-syntax)",
+      "help": "React Compiler does not support compiling functions that reference the implicit arguments object",
+      "labels": [
+       {
+        "label": "Implicit 'arguments' is not supported",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 2,
+         "offset": 38
+        }
+       }
+      ],
+      "message": "Implicit 'arguments' is not supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "catch.jsx": [
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 7,
+         "length": 8,
+         "line": 7,
+         "offset": 151
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 3,
+         "offset": 74
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "clock.jsx": [
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 15,
+         "length": 10,
+         "line": 2,
+         "offset": 37
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 6,
+         "line": 3,
+         "offset": 64
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "default.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`JSXElement` cannot be safely reordered",
+        "span": {
+         "column": 29,
+         "length": 8,
+         "line": 1,
+         "offset": 28
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `JSXElement` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`JSXFragment` cannot be safely reordered",
+        "span": {
+         "column": 47,
+         "length": 5,
+         "line": 1,
+         "offset": 46
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `JSXFragment` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "import.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 26,
+         "length": 6,
+         "line": 5,
+         "offset": 95
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Handle Import expressions",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 28,
+         "line": 6,
+         "offset": 119
+        }
+       }
+      ],
+      "message": "Logical assignment operators (||=, &&=, ??=) are not yet supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "ref-in-memo.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `props.a`",
+        "span": {
+         "column": 46,
+         "length": 7,
+         "line": 3,
+         "offset": 101
+        }
+       }
+      ],
+      "message": "Found extra memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 32,
+         "length": 3,
+         "line": 4,
+         "offset": 143
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 39,
+         "length": 3,
+         "line": 3,
+         "offset": 94
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "update.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 7,
+         "offset": 102
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 6,
+         "offset": 87
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "virtual.jsx": [
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 20,
+         "line": 4,
+         "offset": 115
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,

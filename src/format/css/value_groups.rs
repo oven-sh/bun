@@ -284,8 +284,15 @@ impl<'a> Printer<'a, '_> {
         let has_expressions = self.is_oxfmt && self.syntax() == Syntax::Scss && !inside_calc;
         let mut is_in_expression = false;
 
-        for (i, i_node) in node.groups().enumerate() {
-            let prev_node = i.checked_sub(1).and_then(|at| node.group(at));
+        let written_above = match self.comments_above_item {
+            (item, count) if item == id => count,
+            _ => 0,
+        };
+        for (i, i_node) in node.groups().enumerate().skip(written_above) {
+            let prev_node = i
+                .checked_sub(1)
+                .filter(|at| *at >= written_above)
+                .and_then(|at| node.group(at));
             let next_node = node.group(i + 1);
 
             if i_node.id == self.comment_behind_comma {
@@ -770,6 +777,38 @@ impl<'a> Printer<'a, '_> {
         .ends_with(b",")
     }
 
+    /// Writes the comments before the key of `item`, a pair of a key and a value in the list `list`, each on a line of its
+    /// own, where oxfmt has them: next to the pair, not in it.
+    fn print_comments_above_pair(
+        &mut self,
+        statement: Statement<'_, 'a>,
+        list: ValueId,
+        item: ValueRef<'_>,
+    ) {
+        if !self.is_oxfmt
+            || item.kind() != ValueKind::CommaGroup
+            || !item.group(0).is_some_and(is_comment)
+            || self.at_rule_around(statement).is_some()
+        {
+            return;
+        }
+        let count = item.groups().take_while(|it| is_comment(*it)).count();
+        if count == 0 || !item.group(count + 1).is_some_and(is_colon) {
+            return;
+        }
+        for comment in item.groups().take(count) {
+            if comment.id == self.comment_behind_comma {
+                self.comment_behind_comma = 0;
+                continue;
+            }
+            self.value_stack.push(list);
+            self.print_child_value(statement, item.id, comment.id);
+            self.value_stack.pop();
+            self.sink.hard_line();
+        }
+        self.comments_above_item = (item.id, count);
+    }
+
     /// For oxfmt a `//` comment on the line of a comma stays there. For Prettier it is the first of what follows the comma,
     /// `next`, and on a line of its own. Returns whether it has been written.
     fn print_comment_behind_comma(
@@ -996,13 +1035,20 @@ impl<'a> Printer<'a, '_> {
             if index > 0 {
                 self.sink.line();
             }
+            // For oxfmt the comments before a key make no difference to what follows them.
+            self.print_comments_above_pair(statement, id, child);
+            let key = match self.comments_above_item {
+                (item, count) if item == child.id => count,
+                _ => 0,
+            };
             // A pair of a key and a value in parentheses is indented already.
-            let is_dedented = is_key_value_pair(child)
+            let is_dedented = child.kind() == ValueKind::CommaGroup
+                && child.group(key + 1).is_some_and(is_colon)
                 && child
-                    .group(0)
+                    .group(key)
                     .is_some_and(|it| it.kind() != ValueKind::ParenGroup)
                 && child
-                    .group(2)
+                    .group(key + 2)
                     .is_some_and(|it| it.kind() == ValueKind::ParenGroup)
                 && self.shape_of_comma_group(statement, child) == Shape::GroupIndentFill;
             if is_dedented {
@@ -1010,6 +1056,7 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_dedent();
             }
             self.print_child_value(statement, id, child.id);
+            self.comments_above_item = (0, 0);
             if is_dedented {
                 self.sink.end_indent();
                 self.sink.end_group();

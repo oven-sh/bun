@@ -144,6 +144,24 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     expect(exit).toBe(1);
   });
 
+  test("what oxc's fork of the compiler takes or says otherwise", async () => {
+    const { diagnostics, files, exit } = await report(small.fork);
+    expect(diagnostics).toEqual(expected.reports.fork.diagnostics);
+    // The others are compiled.
+    expect(Object.keys(diagnostics)).toEqual([
+      "arguments.jsx",
+      "catch.jsx",
+      "clock.jsx",
+      "default.jsx",
+      "import.jsx",
+      "ref-in-memo.jsx",
+      "update.jsx",
+      "virtual.jsx",
+    ]);
+    expect(files).toBe(expected.reports.fork.files);
+    expect(exit).toBe(1);
+  });
+
   test("nothing for a path that has node_modules in it", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

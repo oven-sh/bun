@@ -274,12 +274,18 @@ struct Rc<'r, 'l> {
     categories: Vec<(Vec<u8>, Severity)>,
     /// `plugins` of all files and overrides. A file without it stands for typescript, unicorn and oxc.
     plugins: Vec<Vec<u8>>,
-    /// In oxlint the overrides of all files come after the rules of all files.
-    overrides: Vec<ConfigObject>,
+    /// In oxlint the overrides of all files come after the rules of all files. With each, its `plugins`.
+    overrides: Vec<(ConfigObject, Vec<Vec<u8>>)>,
     /// [`Config::option_of_oxlint`]
     options: Vec<(Vec<u8>, Json)>,
     /// `plugins` of all files, without those of overrides.
     plugins_of_files: Vec<Vec<u8>>,
+}
+
+/// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
+fn is_among(plugin: Plugin, names: &[Vec<u8>]) -> bool {
+    (names.iter())
+        .any(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
 }
 
 /// The plugins of oxlint, in the order in which it prints them.
@@ -653,9 +659,8 @@ impl Rc<'_, '_> {
                 item.get(b"excludeFiles")
                     .or_else(|| item.get(b"excludedFiles")),
             );
-            if let Some(plugins) = self.plugin_names(item)? {
-                self.plugins.extend(plugins);
-            }
+            let plugins = self.plugin_names(item)?.unwrap_or_default();
+            self.plugins.extend_from_slice(&plugins);
             let object = ConfigObject {
                 base_path: base_path.clone(),
                 files: Some(
@@ -674,7 +679,7 @@ impl Rc<'_, '_> {
                 ..ConfigObject::default()
             };
             match self.flavor {
-                RcFlavor::Oxlint => self.overrides.push(object),
+                RcFlavor::Oxlint => self.overrides.push((object, plugins)),
                 RcFlavor::Eslint => self.reader.objects.push(object),
             }
         }
@@ -711,25 +716,22 @@ impl Rc<'_, '_> {
         Ok(Some(names))
     }
 
-    /// Whether the rules of `plugin` run.
+    /// Whether the rules of `plugin` run wherever no override says otherwise.
     fn has_plugin(&self, plugin: Plugin) -> bool {
-        plugin == Plugin::Eslint
-            || (self.plugins.iter()).any(|it| {
-                Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint())
-            })
+        plugin == Plugin::Eslint || is_among(plugin, &self.plugins_of_files)
     }
 
     /// Adds a setting for each of the rules in `lists` that exist here: the plugins as oxlint calls them, each with the names of
-    /// its rules.
+    /// its rules. `of`: of which plugins.
     fn add_settings(
         &self,
         lists: &[(&str, &str)],
         severity: Severity,
+        of: &dyn Fn(Plugin) -> bool,
         settings: &mut Vec<RuleSetting>,
     ) {
         for (plugin, names) in lists {
-            let Some(plugin) =
-                Plugin::of_oxlint_prefix(plugin.as_bytes()).filter(|it| self.has_plugin(*it))
+            let Some(plugin) = Plugin::of_oxlint_prefix(plugin.as_bytes()).filter(|it| of(*it))
             else {
                 continue;
             };
@@ -744,30 +746,53 @@ impl Rc<'_, '_> {
                     severity,
                     options: Vec::new(),
                     has_only_severity: true,
+                    yields: false,
                 });
             }
         }
     }
 
-    /// The rules that `categories` turns on, which everything else overrides.
-    fn category_rules(&self) -> Vec<RuleSetting> {
+    /// The rules that `categories` turns on, which everything else overrides. `of`: of which plugins.
+    fn category_rules(&self, of: &dyn Fn(Plugin) -> bool) -> Vec<RuleSetting> {
         let mut settings = Vec::new();
         for (category, severity) in &self.categories {
             if let Some((_, lists)) = categories::CATEGORIES
                 .iter()
                 .find(|it| it.0.as_bytes() == &category[..])
             {
-                self.add_settings(lists, *severity, &mut settings);
+                self.add_settings(lists, *severity, of, &mut settings);
             }
         }
         settings
+    }
+
+    /// The overrides, as oxlint 1.87 applies them. The `plugins` of one count for it alone. Its `rules` can name their rules, which
+    /// the `rules` of the files and of other overrides cannot. Where it applies, `categories` turn on the rules of its
+    /// plugins, if an override before it has not done so: but not if the files have no plugin at all.
+    fn take_overrides(&mut self) -> Vec<ConfigObject> {
+        let overrides = std::mem::take(&mut self.overrides);
+        let have_categories = !self.plugins_of_files.iter().all(|it| it == b"eslint");
+        let objects = overrides.into_iter().map(|(mut object, plugins)| {
+            let is_own = |it: Plugin| !self.has_plugin(it) && is_among(it, &plugins);
+            (object.rules)
+                .retain(|it| (it.written_for).is_none_or(|it| self.has_plugin(it) || is_own(it)));
+            if have_categories && !plugins.is_empty() {
+                let mut rules = self.category_rules(&is_own);
+                rules.iter_mut().for_each(|it| it.yields = true);
+                rules.append(&mut object.rules);
+                object.rules = rules;
+            }
+            object
+        });
+        objects.collect()
     }
 
     /// The rules that `categories` turns on, of the plugins that are on, which do not exist here and about which the files say
     /// nothing: as [`oxlint_rule_key`] writes them.
     fn lacking_rules(&self) -> Vec<Vec<u8>> {
         let is_named = |key: &[u8]| {
-            let objects = self.reader.objects.iter().chain(&self.overrides);
+            let objects = self.reader.objects.iter();
+            let objects = objects.chain(self.overrides.iter().map(|it| &it.0));
             objects.flat_map(|it| &it.rules).any(|it| *it.id == *key)
         };
         let mut lacking = Vec::new();
@@ -923,7 +948,8 @@ impl Rc<'_, '_> {
         ];
         let objects = kinds.into_iter().map(|(files, lists)| {
             let mut rules = Vec::new();
-            self.add_settings(lists, Severity::Off, &mut rules);
+            let is_on = |it: Plugin| it == Plugin::Eslint || is_among(it, &self.plugins);
+            self.add_settings(lists, Severity::Off, &is_on, &mut rules);
             ConfigObject {
                 files: Some(vec![vec![Pattern::new(files)]]),
                 rules,
@@ -1033,7 +1059,7 @@ impl Config {
         let categories_at = rc.reader.objects.len();
         rc.reader.objects.push(ConfigObject::default());
         rc.file(json, &base_path, false, 0)?;
-        rc.reader.objects[categories_at].rules = rc.category_rules();
+        rc.reader.objects[categories_at].rules = rc.category_rules(&|it| rc.has_plugin(it));
         let lacking = rc.lacking_rules();
         if !lacking.is_empty() {
             rc.reader.note(&[
@@ -1046,13 +1072,13 @@ impl Config {
             RcFlavor::Oxlint => rc.printed(json, categories_at),
             RcFlavor::Eslint => Vec::new(),
         };
-        rc.reader.objects.append(&mut rc.overrides);
         if flavor == RcFlavor::Oxlint {
             // What is said about a rule of a plugin that oxlint does not have on has no effect.
             let mut objects = std::mem::take(&mut rc.reader.objects);
             for object in &mut objects {
                 (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
             }
+            objects.append(&mut rc.take_overrides());
             // Only with `import` does oxlint look at other files, which `oxc/no-barrel-file` has to know.
             if !rc.has_plugin(Plugin::Import) {
                 objects.push(ConfigObject {

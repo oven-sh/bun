@@ -475,6 +475,8 @@ struct Builder<'t> {
     is_mdx: bool,
     is_for_oxfmt: bool,
     has_nul: bool,
+    /// What a NUL is in the tree: U+FFFD, as CommonMark says. oxfmt prints what is written.
+    nul: &'static [u8],
     tree: &'t mut Tree,
     /// The containers that are open, the root first.
     open: Vec<Open>,
@@ -521,11 +523,19 @@ struct Builder<'t> {
 #[derive(Copy, Clone)]
 struct GuardedBreak {
     place: (u32, u32),
-    is_as_written: bool,
-    is_hard: bool,
+    kind: LineBreak,
     /// The line before it, and the line behind it without its indentation.
     above: (u32, u32),
     line: (u32, u32),
+}
+
+#[derive(Copy, Clone)]
+enum LineBreak {
+    /// `is_as_written`: nothing has been taken away before it.
+    Soft {
+        is_as_written: bool,
+    },
+    Hard,
 }
 
 /// What follows a [`GuardedBreak`].
@@ -796,7 +806,7 @@ impl Builder<'_> {
         let value = if is_plain {
             Str::source(first_segment.start, last_segment.end)
         } else {
-            let text = self.text;
+            let (text, nul) = (self.text, self.nul);
             self.tree.owned(|out| {
                 for (index, segment) in segments.iter().enumerate() {
                     if index > 0 {
@@ -809,12 +819,7 @@ impl Builder<'_> {
                     let line = text
                         .get(segment.start as usize..segment.end as usize)
                         .unwrap_or_default();
-                    for (index, part) in bun_core::strings::split(line, b"\0").enumerate() {
-                        if index > 0 {
-                            out.extend_from_slice("\u{FFFD}".as_bytes());
-                        }
-                        out.extend_from_slice(part);
-                    }
+                    push_without_nul(line, nul, out);
                 }
             })
         };
@@ -1341,23 +1346,26 @@ impl Builder<'_> {
         }
         let mut bytes = Vec::new();
         self.push_content_between(start, end, &mut bytes);
-        self.tree.owned(|out| push_without_nul(&bytes, out))
+        let nul = self.nul;
+        self.tree.owned(|out| push_without_nul(&bytes, nul, out))
     }
 
     /// `bytes` without the backslashes of escapes and with what character references stand for.
     fn decoded(&mut self, bytes: &[u8]) -> Str {
+        let nul = self.nul;
         self.tree.owned(|out| {
             let mut decoded = Vec::new();
             unescape(bytes, &mut decoded);
-            push_without_nul(&decoded, out);
+            push_without_nul(&decoded, nul, out);
         })
     }
 
     fn title(&mut self, raw: &[u8]) -> Str {
+        let nul = self.nul;
         self.tree.owned(|out| {
             let mut title = Vec::new();
             spans::push_title(raw, &mut title);
-            push_without_nul(&title, out);
+            push_without_nul(&title, nul, out);
         })
     }
 
@@ -1412,7 +1420,8 @@ impl Builder<'_> {
         if is_on_one_line && !(self.has_nul && bun_core::strings::contains_char(code, 0)) {
             return Str::source(start + padding as u32, end - padding as u32);
         }
-        self.tree.owned(|out| push_without_nul(code, out))
+        let nul = self.nul;
+        self.tree.owned(|out| push_without_nul(code, nul, out))
     }
 
     fn is_in_image(&self) -> bool {
@@ -1477,7 +1486,7 @@ impl Builder<'_> {
 
     /// A node without anything in it at `self.place`.
     /// The line break at `self.place`, if what follows it has a say in what becomes of it.
-    fn guarded_break(&mut self, is_as_written: bool, is_hard: bool) -> Option<GuardedBreak> {
+    fn guarded_break(&mut self, kind: LineBreak) -> Option<GuardedBreak> {
         if !self.is_for_oxfmt {
             return None;
         }
@@ -1496,8 +1505,7 @@ impl Builder<'_> {
         }
         Some(GuardedBreak {
             place: self.place,
-            is_as_written,
-            is_hard,
+            kind,
             above: (above.beg, above.end),
             line: (line.beg, line.end),
         })
@@ -1521,16 +1529,17 @@ impl Builder<'_> {
             }
             _ => line,
         };
-        let is_as_written = is_line_shape_start(line)
+        let is_line_as_written = is_line_shape_start(line)
             || (follower == Follower::Text
                 && (line.starts_with(b"```")
                     || line.starts_with(b"~~~")
                     || line.starts_with(b"$$")));
-        let stays = it.is_hard || self.is_on_line_as_written || is_as_written;
-        self.is_on_line_as_written = is_as_written;
+        let is_hard = matches!(it.kind, LineBreak::Hard);
+        let stays = is_hard || self.is_on_line_as_written || is_line_as_written;
+        self.is_on_line_as_written = is_line_as_written;
         // Behind a line break that stays it does not look at the line above.
         let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line);
-        if !it.is_hard {
+        if let LineBreak::Soft { is_as_written } = it.kind {
             // What looks like the line under a heading is escaped.
             let marks = line.trim_ascii_end();
             let is_underline =
@@ -1539,7 +1548,7 @@ impl Builder<'_> {
             match leaves && !stays && !is_underline {
                 // Words are cut from the text as it is written, where there is a line break.
                 true => self.add_blanks(b" "),
-                false => self.add_text(b"\n", it.is_as_written),
+                false => self.add_text(b"\n", is_as_written),
             }
             self.place = place;
         }
@@ -1586,11 +1595,12 @@ impl Builder<'_> {
         let text = self.tree.add(Kind::Text, start, end);
         self.tree.append(node, text);
         let value = self.raw(start, end);
+        let nul = self.nul;
         let url = match prefix.is_empty() {
             true => value,
             false => self.tree.owned(|out| {
                 out.extend_from_slice(prefix);
-                push_without_nul(content, out);
+                push_without_nul(content, nul, out);
             }),
         };
         if let Some(text) = self.tree.get_mut(text) {
@@ -1837,7 +1847,9 @@ impl RendererImpl for Builder<'_> {
                         out.extend_from_slice(detail.href);
                     })
                 } else if detail.autolink {
-                    self.tree.owned(|out| push_without_nul(detail.href, out))
+                    let nul = self.nul;
+                    self.tree
+                        .owned(|out| push_without_nul(detail.href, nul, out))
                 } else if detail.href.is_empty() {
                     Str::EMPTY
                 } else {
@@ -1942,7 +1954,7 @@ impl RendererImpl for Builder<'_> {
                 TextType::Normal | TextType::Code | TextType::Html | TextType::Latexmath => {
                     self.alt.extend_from_slice(content);
                 }
-                TextType::NullChar => self.alt.extend_from_slice("\u{FFFD}".as_bytes()),
+                TextType::NullChar => self.alt.extend_from_slice(self.nul),
                 TextType::Entity => unescape(content, &mut self.alt),
                 TextType::Softbr => {
                     if self.alt_end == self.place.0 {
@@ -1965,7 +1977,7 @@ impl RendererImpl for Builder<'_> {
             // In an autolink.
             TextType::Normal if self.has_nul && bun_core::strings::contains_char(content, 0) => {
                 let mut value = Vec::new();
-                push_without_nul(content, &mut value);
+                push_without_nul(content, self.nul, &mut value);
                 self.add_text(&value, false);
             }
             TextType::Normal => {
@@ -1975,7 +1987,7 @@ impl RendererImpl for Builder<'_> {
             }
             // The value of code is cut from the text when it ends.
             TextType::Code | TextType::Latexmath => {}
-            TextType::NullChar => self.add_text("\u{FFFD}".as_bytes(), false),
+            TextType::NullChar => self.add_text(self.nul, false),
             TextType::Entity => {
                 self.add_text(b"", false);
                 unescape(content, &mut self.text_value);
@@ -1996,14 +2008,16 @@ impl RendererImpl for Builder<'_> {
                         self.text_range = None;
                     }
                 }
-                self.guarded_break = self.guarded_break(blanks == 0, false);
+                self.guarded_break = self.guarded_break(LineBreak::Soft {
+                    is_as_written: blanks == 0,
+                });
                 if self.guarded_break.is_none() {
                     self.add_text(b"\n", blanks == 0);
                 }
             }
             TextType::Br => {
                 self.add_span(Kind::Break);
-                self.guarded_break = self.guarded_break(false, true);
+                self.guarded_break = self.guarded_break(LineBreak::Hard);
             }
             TextType::Html => {
                 let node = self.add_span(Kind::Html);
@@ -2130,6 +2144,10 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         is_mdx,
         is_for_oxfmt: syntax == Syntax::WithDirectives,
         has_nul: bun_core::strings::contains_char(text, 0),
+        nul: match syntax {
+            Syntax::WithDirectives => b"\0",
+            _ => "\u{FFFD}".as_bytes(),
+        },
         tree,
         open: vec![Open {
             node: root,

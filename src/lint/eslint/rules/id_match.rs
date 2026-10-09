@@ -98,7 +98,7 @@ fn is_key_of_import_attribute<'a>(prop: Prop<'a>, name: Name<'a>, object: Expr<'
     let is_options = |it: Expr<'a>| matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::ImportCall);
     match object.parent() {
         Node::Prop(outer) => {
-            matches!(outer.key().map(Key::kind), Some(KeyKind::Ident(it)) if it.is("with"))
+            matches!(outer.key().map(Key::kind), Some(KeyKind::Ident(it) | KeyKind::String(it)) if it.is("with"))
                 && matches!(outer.parent(), Node::Expr(options) if is_options(options))
         }
         _ => !is_options(object) || name.is("with"),

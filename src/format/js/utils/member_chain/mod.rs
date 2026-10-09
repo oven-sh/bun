@@ -382,6 +382,17 @@ fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
+/// `a.b⏎// comment⏎.c()`: for oxfmt a group of the chain ends before the comment, which so stays on its line.
+fn is_before_comment_that_starts_line<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let end = expression.span().end;
+    f.options().flavor.is_oxfmt()
+        && (f.comments().comments_after(end).first()).is_some_and(|comment| {
+            comment.preceded_by_newline()
+                && (f.source_text())
+                    .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
+        })
+}
+
 fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {
     matches!(member, ChainMember::ComputedMember(expression)
         if matches!(expression.kind(), ExprKind::Index { index, .. } if matches!(index.kind(), ExprKind::Number(_))))
@@ -455,7 +466,10 @@ fn push_ends_of_remaining_groups<'a>(
         }
 
         // So that the comment stays behind what it is written behind.
-        if !f.is_quiet() && has_trailing_comment(member.expr(), f) {
+        if !f.is_quiet()
+            && (has_trailing_comment(member.expr(), f)
+                || is_before_comment_that_starts_line(member.expr(), f))
+        {
             group_ends.push(index as u32 + 1);
             group_start = index + 1;
             has_seen_call_expression = false;

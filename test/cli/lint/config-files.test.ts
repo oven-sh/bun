@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const command = [bunExe(), "lint"];
@@ -208,6 +208,25 @@ describe.concurrent("an eslint.config.js", () => {
       "a.js:2:1 node/no-deprecated-api",
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  test("--print-config has the rules of a plugin in JavaScript", async () => {
+    const { stdout, exitCode } = await lint(
+      {
+        "eslint.config.mjs": `export default [{ plugins: { q: { meta: { name: "eslint-plugin-q", version: "1.2.3" } } } }, {
+          plugins: {
+            p: { rules: { r: { meta: { schema: false }, create: () => ({}) }, s: { create: () => ({}) } } },
+            n: { meta: { name: "eslint-plugin-n" } },
+          },
+          rules: { "no-var": "error", "p/r": ["warn", { a: 1 }], "p/s": "off" },
+        }];`,
+        "a.js": code,
+      },
+      ["--print-config", "a.js"],
+    );
+    expect(JSON.parse(stdout).rules).toEqual({ "no-var": [2], "p/r": [1, { a: 1 }], "p/s": [0] });
+    expect(JSON.parse(stdout).plugins).toEqual(["@", "q:eslint-plugin-q@1.2.3", "p", "n:eslint-plugin-n"]);
+    expect(exitCode).toBe(0);
   });
 
   test("the options of the language of a plugin are not those of JavaScript", async () => {
@@ -588,6 +607,43 @@ describe.concurrent("an .oxlintrc.json", () => {
     });
     expect(extended.problems).toEqual(["a.js:1:1 no-var"]);
     expect(extended.exitCode).toBe(1);
+  });
+
+  // What oxlint 1.87 does with each.
+  test("`plugins` of an override count for that override alone", async () => {
+    const files = Object.fromEntries(
+      ["a.ts", "a.test.ts", "a.spec.test.ts"].map(name => [name, "beforeEach(() => {});\ntest('a', () => {});\n"]),
+    );
+    const ofVitest = async (config: object) => {
+      const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, ...config });
+      const { problems } = await lint({ ...files, ".oxlintrc.json": oxlintrc });
+      return problems.filter(it => it.includes(" vitest/"));
+    };
+    const [noHooks, timeout] = [{ "vitest/no-hooks": "error" }, "vitest/require-test-timeout"];
+    const tests = { files: ["**/*.test.ts"], plugins: ["vitest"] };
+    const specs = { files: ["**/*.spec.test.ts"] };
+    const restriction = { categories: { correctness: "off", restriction: "warn" } };
+    const hooks = ["a.spec.test.ts:1:1 vitest/no-hooks", "a.test.ts:1:1 vitest/no-hooks"];
+    const timeouts = [`a.spec.test.ts:2:1 ${timeout}`, `a.test.ts:2:1 ${timeout}`];
+    expect(
+      await Promise.all([
+        // Its own rules can name them. Those of the file and of another override cannot.
+        ofVitest({ plugins: [], overrides: [{ ...tests, rules: noHooks }] }),
+        ofVitest({ plugins: [], rules: noHooks, overrides: [tests] }),
+        ofVitest({ plugins: [], overrides: [tests, { ...specs, rules: noHooks }] }),
+        // The categories turn their rules on where it applies, unless the file has no plugin at all.
+        ofVitest({ plugins: ["unicorn"], ...restriction, overrides: [tests] }),
+        ofVitest({ ...restriction, overrides: [tests] }),
+        ofVitest({ plugins: [], ...restriction, overrides: [tests] }),
+        ofVitest({ plugins: ["unicorn"], ...restriction, overrides: [{ ...tests, rules: { [timeout]: "off" } }] }),
+        ofVitest({ plugins: ["unicorn"], ...restriction, rules: { [timeout]: "off" }, overrides: [tests] }),
+        ofVitest({
+          plugins: ["unicorn"],
+          ...restriction,
+          overrides: [tests, { ...specs, rules: { [timeout]: "off" } }],
+        }),
+      ]),
+    ).toEqual([hooks, [], [], timeouts, timeouts, [], [], timeouts, timeouts]);
   });
 
   test("`options.respectEslintDisableDirectives: false`: only comments of oxlint count", async () => {
@@ -1257,6 +1313,32 @@ describe.concurrent("the command line of oxlint", () => {
     // It is one that can be used.
     expect((await run("--allow-unsupported", "a.js")).exitCode).toBe(1);
   });
+
+  test.each(["eslint.config.mjs", ".eslintrc.json"])(
+    "--init beside %s writes nothing unless --flavor=oxlint",
+    async name => {
+      using dir = tempDir("bun-lint-init", {
+        [name]: name.endsWith(".json") ? rc(noVar) : "export default [];",
+        "sub/a.js": code,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [...command, ...args],
+          env,
+          cwd: join(String(dir), "sub"),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+      };
+      const refused = await run("--init");
+      expect(refused.stderr).toContain(`which would count in place of <dir>/${name}. Use --flavor=oxlint to write it.`);
+      expect(refused.exitCode).toBe(2);
+      expect(existsSync(join(String(dir), "sub", ".oxlintrc.json"))).toBe(false);
+      expect((await run("--init", "--flavor=oxlint")).exitCode).toBe(0);
+      expect(existsSync(join(String(dir), "sub", ".oxlintrc.json"))).toBe(true);
+    },
+  );
 
   test("node_modules is a directory like any other, which a .gitignore has", async () => {
     const files = {

@@ -112,6 +112,118 @@ export const small: Record<string, Files> = {
     "alone/.oxlintrc.json": rc(["react/todo"]),
     "alone/a.jsx": severalRules,
   },
+  // What oxc's fork of the compiler takes, or says otherwise, and the compiler that is in Bun does not.
+  fork: {
+    ".oxlintrc.json": rc(),
+    // The callback of `useMemo` is a part of the component.
+    "ref-in-memo.jsx": `function Component(props) {
+  const ref = useRef(null);
+  const value = useMemo(() => compute(ref), [props.a]);
+  const other = (() => compute(ref))();
+  return <div>{value}{other}</div>;
+}
+`,
+    // What another callback captures is not an operand of the call.
+    "ref-in-callback.jsx": `function Row() {
+  const pending = useRef(null);
+  const handle = rating => {
+    pending.current = rating;
+  };
+  return [1, 2].map(rating => <Pressable onPress={() => handle(rating)} />);
+}
+
+function Brush() {
+  const drag = useRef(null);
+  const begin = mode => e => {
+    drag.current = mode;
+  };
+  return <div onPointerDown={begin("end")} />;
+}
+`,
+    "parameter.jsx": `function Component({ loading, x }) {
+  const read = () => loading;
+  if (x) {
+    loading = true;
+  }
+  return <div onClick={read}>{loading}</div>;
+}
+`,
+    "literals.jsx": `function Component(props) {
+  const big = 10n;
+  const className = css\`color: \${props.color};\`;
+  const raw = String.raw\`a\\_b\`;
+  return <div className={className}>{String(big)}{raw}</div>;
+}
+`,
+    "import.jsx": `let cached;
+
+function Component(props) {
+  const load = async () => {
+    const module = await import("./module");
+    cached ??= import("./other");
+    return module;
+  };
+  return <div onClick={load} />;
+}
+`,
+    "catch.jsx": `function Component(props) {
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    try {
+      props.load();
+    } catch (thrown) {
+      setError(() => thrown);
+    }
+  });
+  return <div>{error}</div>;
+}
+`,
+    "own-name.jsx": `function Component(props) {
+  useEffect(() => {
+    let frame = requestAnimationFrame(function tick() {
+      props.draw();
+      frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+  return <div />;
+}
+`,
+    "default.jsx": `function Component({ icon = <Icon />, empty = <></>, either = props.a || other() }) {
+  return <div>{icon}{empty}{either}</div>;
+}
+`,
+    "update.jsx": `let count = 0;
+
+test("counts", () => {
+  let renders = 0;
+  function Component() {
+    renders++;
+    count++;
+    return <div />;
+  }
+  render(<Component />);
+});
+`,
+    "clock.jsx": `function Component() {
+  const now = new Date();
+  const text = Date();
+  const then = new Date(0);
+  return <div>{now.getTime()}{text}{then.getTime()}</div>;
+}
+`,
+    "arguments.jsx": `function Component() {
+  return <div>{arguments.length}</div>;
+}
+`,
+    "virtual.jsx": `import { useWindowVirtualizer } from "@tanstack/react-virtual";
+
+function Component(props) {
+  const virtualizer = useWindowVirtualizer({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+`,
+  },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

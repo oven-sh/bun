@@ -3,7 +3,7 @@ use super::semicolon::OptionalSemicolon;
 use crate::js::format::{format_node, identifier};
 use crate::js::utils::object::FormatKey;
 use crate::js::utils::string::{
-    FormatLiteralStringToken, StringLiteralParentKind, is_es5_identifier_name,
+    FormatLiteralStringToken, StringLiteralParentKind, is_name_without_quotes,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -368,8 +368,9 @@ fn write_with_clause<'a>(with_clause: ImportAttributes<'a>, f: &mut Formatter<'a
         let quote_needed = entries.iter().any(|attribute| {
             attribute.key().is_some_and(|key| {
                 matches!(key.kind(), KeyKind::String(_))
-                    && !is_es5_identifier_name(
+                    && !is_name_without_quotes(
                         f.source_text().text_for(&key.span(f.file()).shrink(1, 1)),
+                        f.options().flavor,
                     )
             })
         });

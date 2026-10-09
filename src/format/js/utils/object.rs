@@ -3,7 +3,7 @@
 use super::number::format_trimmed_number;
 use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
-    is_es5_identifier_name, is_simple_number,
+    is_name_without_quotes, is_simple_number,
 };
 use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
@@ -170,13 +170,14 @@ fn unquoted<'a>(
         }
         // In TypeScript, `1` and `"1"` are different types.
         _ => {
-            is_es5_identifier_name(content)
+            is_name_without_quotes(content, f.options().flavor)
                 || (is_javascript
                     && is_parser_for_programs(f)
                     && is_simple_number(content)
                     && is_canonical_simple_number(content)
                     && !f.file().is_flow()
-                    && !crate::pragma::is_flow_file(f.file().text(), f.filepath()))
+                    && (f.options().flavor.is_oxfmt()
+                        || !crate::pragma::is_flow_file(f.file().text(), f.filepath())))
         }
     };
     is_safe.then_some(content)
@@ -200,7 +201,10 @@ pub(crate) fn should_preserve_quote<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool
 fn requires_quotes<'a>(key: Key<'a>, parent: Option<AstNodes<'a>>, f: &Formatter<'a>) -> bool {
     matches!(key.kind(), KeyKind::String(_))
         && unquoted(f.source_text().text_for(&key.span(file_of(f))), parent, f).is_none_or(
-            |content| number_in_quotes_requires_them(f) && !is_es5_identifier_name(content),
+            |content| {
+                number_in_quotes_requires_them(f)
+                    && !is_name_without_quotes(content, f.options().flavor)
+            },
         )
 }
 

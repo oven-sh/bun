@@ -200,10 +200,11 @@ pub(crate) fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize
     Some(parse_path(bytes, parse_domain(bytes, after)?))
 }
 
-pub(crate) fn push_without_nul(bytes: &[u8], out: &mut Vec<u8>) {
+/// `bytes` with `nul` in the place of each NUL.
+pub(crate) fn push_without_nul(bytes: &[u8], nul: &[u8], out: &mut Vec<u8>) {
     for (index, part) in bun_core::strings::split(bytes, b"\0").enumerate() {
         if index > 0 {
-            out.extend_from_slice("\u{FFFD}".as_bytes());
+            out.extend_from_slice(nul);
         }
         out.extend_from_slice(part);
     }

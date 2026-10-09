@@ -1,0 +1,7 @@
+```vue [pages/[id\\].vue]
+<a />
+```
+
+```powershell { data-prompt="C:\\a>" }
+b
+```

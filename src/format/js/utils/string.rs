@@ -47,6 +47,14 @@ pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
         })
 }
 
+/// Whether the name of a property can do without its quotes. For oxfmt whatever is an identifier today can: `{ ℘: 1 }`.
+pub(crate) fn is_name_without_quotes(name: &[u8], flavor: Flavor) -> bool {
+    match flavor.is_oxfmt() {
+        true => bun_core::lexer::is_identifier(name),
+        false => is_es5_identifier_name(name),
+    }
+}
+
 /// Prettier's `isSimpleNumber`: `123` and `2.5`, but not `1_000`, `1e+100` or `0b10`.
 pub(crate) fn is_simple_number(text: &[u8]) -> bool {
     let is_digits = |part: &[u8]| !part.is_empty() && part.iter().all(u8::is_ascii_digit);
@@ -151,7 +159,7 @@ impl<'a> FormatLiteralStringToken<'a> {
             StringLiteralParentKind::Expression => self.normalize_string_literal(&information),
             StringLiteralParentKind::Directive => self.normalize_directive(&information),
             StringLiteralParentKind::ImportAttribute
-                if !is_quote_needed && is_es5_identifier_name(content) =>
+                if !is_quote_needed && is_name_without_quotes(content, options.flavor) =>
             {
                 Cow::Borrowed(content)
             }

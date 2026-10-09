@@ -293,10 +293,8 @@ impl Builder<'_> {
             } else {
                 comment.end
             };
-            matches!(
-                bun_lint::utils::text::trim(this.slice(comment.start + 2, end)),
-                b"prettier-ignore" | b"oxfmt-ignore"
-            )
+            let text = bun_lint::utils::text::trim(this.slice(comment.start + 2, end));
+            this.config.flavor.is_ignore_comment(text)
         })
     }
 

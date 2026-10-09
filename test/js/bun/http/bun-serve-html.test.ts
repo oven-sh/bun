@@ -1665,8 +1665,7 @@ test("bunfig [serve.static] define outranks env for the same variable", async ()
       { APP_MODE: "fromenv", NODE_ENV: "staging" },
       { appMode: '"FROMDEFINE"', nodeEnv: '"custom"' },
     ],
-    // A production bundle gets a NODE_ENV define from Bun, which replaces the one in bunfig.toml. The environment
-    // still replaces that default.
+    // Bun's own NODE_ENV define replaces the one in bunfig.toml, and the environment still replaces Bun's.
     [
       "false",
       "inline",

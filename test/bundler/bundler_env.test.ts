@@ -125,8 +125,7 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
-    // A `define` for `process.env.X` outranks the value that `env` inlines for X: what the build environment holds
-    // for X does not reach the bundle. The api backend builds in-process, so X is a variable this process started with.
+    // A `define` for `process.env.X` outranks the value that `env` inlines for X. The api backend builds in this process.
     if (backend === "api")
       for (const [name, dotenv] of [
         ["inline", "inline"],
@@ -338,8 +337,7 @@ for (let backend of ["api", "cli"] as const) {
   });
 }
 
-// The recipe from docs/bundler/index.mdx, "define takes precedence over env". A bunfig `[define]` of the same key
-// also applies to the build script, so the recipe reads the variable through `Bun.env`.
+// The fallback recipe of docs/bundler/index.mdx, next to a bunfig `[define]` of the same key.
 test.concurrent.each([
   ["set", { FOO: "fromenv" }, "fromenv"],
   ["not set", {}, "fallback"],

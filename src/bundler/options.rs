@@ -882,8 +882,7 @@ pub(crate) fn defines_from_transform_options(
             bump,
         )?;
 
-        // A `define` for `process.env.X` that the caller wrote outranks the entry that env
-        // inlining made for X.
+        // The caller's `define` for `process.env.X` outranks the entry env inlining made for X.
         for key in input_keys {
             if !key.starts_with(defines::PROCESS_ENV) {
                 continue;
@@ -2134,8 +2133,7 @@ pub struct Env {
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
 
-    /// The `process.env.NODE_ENV` entry of `define` is a default that Bun wrote, not one the
-    /// caller wrote. The value that env inlining makes for `NODE_ENV` replaces it.
+    /// `define` holds Bun's own default for `process.env.NODE_ENV`, which env inlining replaces.
     pub node_env_define_is_default: bool,
 }
 

@@ -73,6 +73,15 @@ fn report<'a>(
     }
 }
 
+/// What oxlint 1.80 passes over: in a string a backslash after a backslash, also the third of `\\\"`, and in a template
+/// `\$` before a substitution or the end.
+fn oxlint_passes_over(raw: &[u8], index: usize, quoted: Quoted) -> bool {
+    match quoted {
+        Quoted::Template => matches!(raw.get(index + 1..), Some(b"$${" | b"$`")),
+        _ => index > 0 && raw.get(index - 1) == Some(&b'\\'),
+    }
+}
+
 /// ESLint's `validateString`, for each `/\\\D/gu` in the text of `span`.
 fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
     let raw = cx.slice(span);
@@ -96,7 +105,7 @@ fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
             b'"' | b'\'' => quoted != Quoted::Template && raw.first() == Some(&escaped),
             _ => matches!(character, b"\xE2\x80\xA8" | b"\xE2\x80\xA9"),
         };
-        if !is_valid {
+        if !is_valid && !(cx.language().is_oxlint && oxlint_passes_over(raw, index, quoted)) {
             report(span.start + index as u32, character, quoted == Quoted::Directive, true, cx);
         }
     }

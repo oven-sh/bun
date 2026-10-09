@@ -512,6 +512,17 @@ describe("import.meta.env in a test file", () => {
       expect(Reflect.ownKeys(env)).toEqual([...all, ...viteVariables]);
     });
 
+    // What it is on Windows, where TZ is such a getter.
+    test("a Proxy whose target has a getter that only answers the target", () => {
+      const target = {
+        get ONLY_THE_TARGET() {
+          return this === target ? "value" : undefined;
+        },
+      };
+      process.env = new Proxy(target, { get: (_, key) => target[key] }) as any;
+      expect([process.env.ONLY_THE_TARGET, env.ONLY_THE_TARGET]).toEqual(["value", "value"]);
+    });
+
     test("a Proxy of import.meta.env, every operation is a RangeError", () => {
       process.env = new Proxy(env, {});
       expect(() => env.MODE).toThrow(RangeError);

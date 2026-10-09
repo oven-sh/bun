@@ -4036,8 +4036,8 @@ describe.concurrent("a module made from an object", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // This file's, and that of the file before it.
-      expect(stdout).toContain("GlobalObject: 2\n");
+      // 9 when they are kept. A debug build still has that of the file before.
+      expect(stdout).toMatch(/GlobalObject: [12]\n/);
       expect(stderr).toContain(" 9 pass\n 0 fail\n");
       expect(exitCode).toBe(0);
     },

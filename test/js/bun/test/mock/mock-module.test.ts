@@ -2988,7 +2988,7 @@ test("two import()s at once of a mocked module do not keep the global object of 
     test("counts", () => {
       Bun.gc(true);
       Bun.gc(true);
-      const { GlobalObject, ModuleMock } = heapStats().objectTypeCounts;
+      const { GlobalObject, ModuleMock = 0 } = heapStats().objectTypeCounts;
       console.log(JSON.stringify({ GlobalObject, ModuleMock }));
     });
   `;
@@ -3001,8 +3001,10 @@ test("two import()s at once of a mocked module do not keep the global object of 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // This file's, and that of the file before it.
-  expect(stdout).toContain(`{"GlobalObject":2,"ModuleMock":1}`);
+  // 9 and 8 when they are kept. A debug build still has those of the file before.
+  const { GlobalObject, ModuleMock } = JSON.parse(stdout.slice(stdout.indexOf("{")));
+  expect(GlobalObject).toBeLessThanOrEqual(2);
+  expect(ModuleMock).toBeLessThanOrEqual(1);
   expect(stderr).toContain(" 9 pass\n 0 fail\n");
   expect(exitCode).toBe(0);
 });

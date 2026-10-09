@@ -137,7 +137,8 @@ bool ImportMetaEnv::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 
     JSValue value;
     if (exists) {
-        value = envSlot.getValue(globalObject, propertyName);
+        // A getter that a Proxy answers with is one of its target: on Windows `process.env` is a Proxy, which keeps TZ that way.
+        value = envSlot.isAccessor() && env->type() == ProxyObjectType ? env->get(globalObject, propertyName) : envSlot.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
         // On Windows `process.env` keeps its `toJSON` and `Bun.inspect.custom` among its properties, and they show `process.env`.
         exists = !value.isCallable();

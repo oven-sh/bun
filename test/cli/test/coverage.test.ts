@@ -135,6 +135,7 @@ test("coverage excludes node_modules directory", () => {
 
 test("coverage leaves out the modules generated for ?worker and ?init, and nothing else that has a query", async () => {
   using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
     "echo.ts": `postMessage("started");`,
     "empty.wasm": Buffer.from("0061736d01000000", "hex"),
     "lib.ts": `export const used = () => 1;`,
@@ -170,7 +171,6 @@ test("coverage leaves out the modules generated for ?worker and ?init, and nothi
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("1 pass");
   expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
-    "SF:generated.test.ts",
     "SF:lib.ts",
     "SF:lib.ts?supplied",
     "SF:preload.ts",
@@ -181,6 +181,7 @@ test("coverage leaves out the modules generated for ?worker and ?init, and nothi
 // Such a name does not exist on Windows.
 test.skipIf(isWindows)("a file with ? in its name is not left out of coverage: it cannot be loaded", async () => {
   using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
     "named.ts": `export const file = "named.ts";`,
     "named.ts?worker": `export const file = "named.ts?worker";`,
     "only?init.ts": `export const file = "only?init.ts";`,
@@ -219,7 +220,6 @@ test.skipIf(isWindows)("a file with ? in its name is not left out of coverage: i
   });
   expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
     "SF:named.ts",
-    "SF:names.test.ts",
   ]);
   expect(exitCode).toBe(0);
 });

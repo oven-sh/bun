@@ -2176,7 +2176,9 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
   ];
   const spied = `[
     [globalThis, "fetch"], [console, "info"], [process, "cwd"], [Response.prototype, "status", "get"], [path, "join"], [fs, "readFileSync"],
-    [Object, "keys"], [Date, "now"], [Math, "random"], [Bun, "sleep"], [process.env, "ISOLATION_SPIED", "get"], [shared, "method"], [Shared.prototype, "inherited"],
+    [Object, "keys"], [Date, "now"], [Math, "random"], [Bun, "sleep"], [shared, "method"], [Shared.prototype, "inherited"],
+    // On Windows it is a Proxy, which like Node's refuses an accessor.
+    ...(process.platform === "win32" ? [] : [[process.env, "ISOLATION_SPIED", "get"]]),
   ]`;
   const prelude = `
     import { expect, jest, spyOn, test, vi } from "bun:test";
@@ -2220,7 +2222,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       ...bunEnv,
       ISOLATION_SPIED: "original",
     });
-    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
   test("spies of a file that fails to load are restored", async () => {
@@ -2238,7 +2240,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       ISOLATION_SPIED: "original",
     });
     expect(stderr).toContain("error: thrown while loading");
-    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) b"], exitCode: 1 });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) b"], exitCode: 1 });
   });
 
   test("the spies of a preload, and of its beforeAll(), stay", async () => {

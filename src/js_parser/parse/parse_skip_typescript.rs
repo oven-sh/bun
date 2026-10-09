@@ -3867,6 +3867,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
 
         if is_at_greater_than(self) {
+            // No error of `checkJSSyntax` is about a list without a parameter.
+            if self.is_ecmascript() {
+                let less_than = bun_ast::Range {
+                    loc: less_than,
+                    len: 1,
+                };
+                self.lexer.ts_error(less_than, 1098);
+            }
             // "<>" is not a parse error.
             // `checkGrammarClassLikeDeclaration` looks at the heritage clauses first: `parse_class`
             // reports it. The checker finds the empty list of a function in the source text.

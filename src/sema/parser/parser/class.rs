@@ -38,16 +38,15 @@ impl Parser<'_> {
             _ => self.pos(),
         };
         let class = self.class((start.pos, unnamed_at), base, class_flags);
-        // In a namespace the other parser does not export what has no name.
-        let is_unnamed_export = |it: &Class| {
-            it.name.is_none() && it.flags & (Flags::EXPORT | Flags::DEFAULT) == Flags::EXPORT
+        // In a namespace the other parser does not export what has no name. For acorn and Babel only
+        // a default export has none.
+        let is_ecmascript = self.is_ecmascript;
+        let lacks_name = |it: &Class| {
+            it.name.is_none()
+                && !it.flags.contains(Flags::DEFAULT)
+                && (is_ecmascript || it.flags.contains(Flags::EXPORT))
         };
-        if self
-            .f
-            .classes
-            .get(class.idx())
-            .is_some_and(is_unnamed_export)
-        {
+        if self.f.classes.get(class.idx()).is_some_and(lacks_name) {
             self.report();
         }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
@@ -160,6 +159,7 @@ impl Parser<'_> {
                 _ if heritage.has_error => {}
                 Some(_) if self.is_ecmascript => self.report(),
                 Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, comma, &[]),
+                None if count == 0 && self.is_ecmascript => self.report(),
                 None if count == 0 => {
                     let at = (keyword.1, Diagnostic::NO_LENGTH);
                     let keyword: &[u8] = if is_extends {

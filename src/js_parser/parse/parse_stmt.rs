@@ -909,6 +909,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         result
     }
 
+    /// Past `var` or `const` in the head of a `for`: whether the list is read as an empty one. acorn
+    /// and Babel expect a declaration.
+    fn is_at_empty_declaration_list(p: &mut Self) -> bool {
+        p.is_tolerant() && !p.is_ecmascript() && Self::no_declaration_follows(p)
+    }
+
     #[inline(never)]
     fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
@@ -988,7 +994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         is_for_loop_init: true,
                         ..Default::default()
                     };
-                    let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
+                    let decls = if Self::is_at_empty_declaration_list(p) {
                         bun_alloc::AstAlloc::vec()
                     } else {
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?
@@ -1010,7 +1016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         is_for_loop_init: true,
                         ..Default::default()
                     };
-                    let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
+                    let decls = if Self::is_at_empty_declaration_list(p) {
                         bun_alloc::AstAlloc::vec()
                     } else {
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?

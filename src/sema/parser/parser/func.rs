@@ -223,6 +223,8 @@ impl Parser<'_> {
             && let [first, .., last] | [first @ last] = self.s.type_params[base..]
         {
             self.js_error((first.start, last.end), 8004, b"");
+        } else if self.is_ecmascript {
+            self.report();
         }
         self.expect(T::GreaterThan);
         take_span!(self, type_params, base)

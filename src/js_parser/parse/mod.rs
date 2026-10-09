@@ -494,7 +494,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     } else {
                         b"implements"
                     };
-                    p.lexer.ts_grammar_error_about(after, 1097, keyword);
+                    // For acorn and Babel the `{` after `extends` starts an expression.
+                    match p.is_ecmascript() {
+                        true => p.lexer.ts_error_about(after, 1097, keyword),
+                        false => p.lexer.ts_grammar_error_about(after, 1097, keyword),
+                    }
                 } else if let Some((range, code)) = element_error
                     // `checkTypeReferenceNode` has reported any other.
                     && (is_extends || code == 1326)
@@ -1637,7 +1641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let is_identifier = p.lexer.token == T::TIdentifier;
 
         // `parseNameOfClassDeclarationOrExpression`: for TypeScript's parser the name is always optional. Its checker reports 1211.
-        if (!opts.is_name_optional && !p.is_tolerant())
+        if (!opts.is_name_optional && (!p.is_tolerant() || p.is_ecmascript()))
             || (is_identifier
                 && (!Self::IS_TYPESCRIPT_ENABLED
                     || p.lexer.identifier != b"implements"
@@ -2531,7 +2535,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> Result<G::DeclList, Error> {
         let p = self;
         let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
-        if p.is_tolerant() && !p.lexer.is_log_disabled && p.is_for_of_without_declarations() {
+        if p.is_tolerant()
+            && !p.lexer.is_log_disabled
+            && !p.is_ecmascript()
+            && p.is_for_of_without_declarations()
+        {
             return Ok(G::DeclList::from_arena_slice(&decls));
         }
         let saved_contexts = p.enter_list(ListKind::VariableDeclarations);
@@ -2541,13 +2549,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.allow_in = !opts.is_for_loop_init;
         }
 
-        // For TypeScript's parser the list can end with a comma. acorn expects a declaration.
+        // For TypeScript's parser the list can be empty, and can end with a comma. acorn and Babel
+        // expect a declaration.
         let mut follows_comma = false;
         loop {
             match p.classify_list_token(ListKind::VariableDeclarations)? {
                 ListStep::Element => {}
                 ListStep::Skipped => continue,
-                ListStep::Over if follows_comma && p.is_ecmascript() => {}
+                ListStep::Over if (follows_comma || decls.is_empty()) && p.is_ecmascript() => {}
                 ListStep::Over => break,
             }
             let decl_start = p.lexer.loc();

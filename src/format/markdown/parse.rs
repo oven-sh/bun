@@ -511,6 +511,117 @@ struct Builder<'t> {
     can_start_with_check: &'t Cell<bool>,
     /// The paragraph that is open starts with one.
     starts_with_check: bool,
+    /// For oxfmt: a line break whose fate what follows it decides.
+    guarded_break: Option<GuardedBreak>,
+    /// For oxfmt: the line is one that it prints as it is written.
+    is_on_line_as_written: bool,
+}
+
+/// A line break before a line that is text only because it is indented.
+#[derive(Copy, Clone)]
+struct GuardedBreak {
+    place: (u32, u32),
+    is_as_written: bool,
+    is_hard: bool,
+    /// The line before it, and the line behind it without its indentation.
+    above: (u32, u32),
+    line: (u32, u32),
+}
+
+/// What follows a [`GuardedBreak`].
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Follower {
+    Text,
+    /// HTML, Liquid, math: what is printed as it is written.
+    Verbatim,
+    /// A code span, whose backticks are counted anew.
+    Code,
+    Other,
+}
+
+/// The first `len` bytes of `rest`, a line that starts with a code span, with as few backticks before it as what is in
+/// the span allows.
+fn with_printed_backticks(rest: &[u8], len: usize) -> Vec<u8> {
+    let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
+    let written = run_at(0);
+    let (mut lengths, mut at) = (0u64, written);
+    while let Some(skipped) = bun_core::strings::index_of_char_usize(&rest[at..], b'`') {
+        at += skipped;
+        let run = run_at(at);
+        if run == written {
+            break;
+        }
+        lengths |= 1 << (run.clamp(1, 64) - 1);
+        at += run;
+    }
+    let mut line = vec![b'`'; lengths.trailing_ones() as usize + 1];
+    line.extend_from_slice(rest.get(written..len).unwrap_or_default());
+    line
+}
+
+/// oxfmt's `is_line_shape_start`: `:::` that does not start a container, `<<<` of VitePress, the tag of a component.
+fn is_line_shape_start(line: &[u8]) -> bool {
+    if line.starts_with(b":::") {
+        let colons = line.iter().take_while(|&&byte| byte == b':').count();
+        return !line[colons..]
+            .trim_ascii_start()
+            .first()
+            .is_some_and(|&byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'{' | b'[') || byte >= 0x80
+            });
+    }
+    let Some(tag) = line.strip_prefix(b"<") else {
+        return false;
+    };
+    if tag.starts_with(b"<<") {
+        return true;
+    }
+    let tag = tag.strip_prefix(b"/").unwrap_or(tag);
+    let len = tag
+        .iter()
+        .take_while(|&&byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        .count();
+    let name = &tag[..len];
+    name.first().is_some_and(|first| {
+        first.is_ascii_uppercase()
+            || (first.is_ascii_alphabetic() && bun_core::strings::contains_char(name, b'-'))
+    })
+}
+
+/// Whether `line` may be the row under the header of a table.
+fn is_like_delimiter_row(line: &[u8]) -> bool {
+    line.iter()
+        .all(|byte| matches!(byte, b'|' | b':' | b'-' | b' ' | b'\t'))
+}
+
+/// Whether `line` is not a line of the paragraph any more if it starts in the first column. `above` is the line
+/// before it, which only the row under the header of a table looks at. Without it, the header is taken to fit.
+fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
+    let fitting_header: Vec<u8>;
+    let first: &[u8] = match above {
+        _ if !is_like_delimiter_row(line) => b"a",
+        Some(above) => above,
+        None => {
+            let letter = |&byte: &u8| {
+                if matches!(byte, b':' | b'-') {
+                    b'a'
+                } else {
+                    byte
+                }
+            };
+            fitting_header = line.iter().map(letter).collect();
+            &fitting_header
+        }
+    };
+    let text = [first, b"\n", line, b"\n"].concat();
+    let mut tree = Tree::default();
+    let Some(root) = parse_lines(&text, &mut tree, Syntax::WithDirectives, 0) else {
+        return false;
+    };
+    let first = tree.get(root).map_or(NONE, |root| root.first_child);
+    !tree
+        .get(first)
+        .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
 }
 
 impl Builder<'_> {
@@ -929,7 +1040,7 @@ impl Builder<'_> {
         // At the end of a line, micromark asks whether that line goes on without the markers of its containers, not
         // the next: code that starts on the line that ends a container ends with that line.
         let line_start = self.tree.line_start(first.beg);
-        if lines.len() > 1 && self.ended.iter().any(|it| it.1 == line_start) {
+        if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
             self.indented_code(&lines[..1]);
             let blank = lines[1..]
                 .iter()
@@ -964,6 +1075,7 @@ impl Builder<'_> {
         let value = self.joined_value(first_segment);
         if let Some(node) = self.tree.get_mut(node) {
             node.value = value;
+            node.number = u32::from(self.is_for_oxfmt);
         }
     }
 
@@ -993,12 +1105,15 @@ impl Builder<'_> {
         }
     }
 
-    fn html(&mut self, lines: &[VerbatimLine], is_unended: bool) {
+    fn html(&mut self, lines: &[VerbatimLine], is_unended: bool, is_ended_by_text: bool) {
         let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
             return;
         };
         let (start, _) = self.indentation_start(first.beg, first.indent);
         let node = self.add_leaf(Kind::Html, start, last.end);
+        if let Some(node) = self.tree.get_mut(node) {
+            node.number = u32::from(is_ended_by_text && self.is_for_oxfmt);
+        }
         let first_segment = self.segments.len();
         for line in lines {
             let segment = self.segment(line);
@@ -1361,6 +1476,90 @@ impl Builder<'_> {
     }
 
     /// A node without anything in it at `self.place`.
+    /// The line break at `self.place`, if what follows it has a say in what becomes of it.
+    fn guarded_break(&mut self, is_as_written: bool, is_hard: bool) -> Option<GuardedBreak> {
+        if !self.is_for_oxfmt {
+            return None;
+        }
+        let next = self.lines.partition_point(|line| line.beg <= self.place.0);
+        let (above, line) = (self.lines.get(next.checked_sub(1)?)?, self.lines.get(next)?);
+        let written = self.text.get(line.beg as usize..line.end as usize)?;
+        // oxfmt's `may_open_block`
+        let may_start_block = matches!(
+            written.first()?,
+            b'>' | b'=' | b'-' | b'*' | b'_' | b'+' | b'0'
+                ..=b'9' | b'#' | b'`' | b'~' | b'<' | b'$' | b'{' | b':' | b'[' | b'|'
+        );
+        if !may_start_block || (line.indent < 4 && !is_like_delimiter_row(written)) {
+            self.is_on_line_as_written = is_line_shape_start(written);
+            return None;
+        }
+        Some(GuardedBreak {
+            place: self.place,
+            is_as_written,
+            is_hard,
+            above: (above.beg, above.end),
+            line: (line.beg, line.end),
+        })
+    }
+
+    /// `follower` comes next: now it is known what becomes of the line break before it.
+    fn end_guarded_break(&mut self, follower: Follower) {
+        let Some(it) = self.guarded_break.take() else {
+            return;
+        };
+        let text = self.text;
+        let slice =
+            |(start, end): (u32, u32)| text.get(start as usize..end as usize).unwrap_or_default();
+        let line = slice(it.line);
+        let printed;
+        let line = match follower {
+            Follower::Code => {
+                let rest = text.get(it.line.0 as usize..).unwrap_or_default();
+                printed = with_printed_backticks(rest, line.len());
+                &printed[..]
+            }
+            _ => line,
+        };
+        let is_as_written = is_line_shape_start(line)
+            || (follower == Follower::Text
+                && (line.starts_with(b"```")
+                    || line.starts_with(b"~~~")
+                    || line.starts_with(b"$$")));
+        let stays = it.is_hard || self.is_on_line_as_written || is_as_written;
+        self.is_on_line_as_written = is_as_written;
+        // Behind a line break that stays it does not look at the line above.
+        let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line);
+        if !it.is_hard {
+            // What looks like the line under a heading is escaped.
+            let marks = line.trim_ascii_end();
+            let is_underline =
+                marks.iter().all(|&byte| byte == b'=') || marks.iter().all(|&byte| byte == b'-');
+            let place = std::mem::replace(&mut self.place, it.place);
+            match leaves && !stays && !is_underline {
+                // Words are cut from the text as it is written, where there is a line break.
+                true => self.add_blanks(b" "),
+                false => self.add_text(b"\n", it.is_as_written),
+            }
+            self.place = place;
+        }
+        if leaves && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
+            let place = self.place;
+            self.place = (place.0, place.0);
+            self.add_blanks(b"    ");
+            self.place = place;
+        }
+    }
+
+    /// `blanks` that are printed as they are.
+    fn add_blanks(&mut self, blanks: &[u8]) {
+        let node = self.add_span(Kind::Html);
+        let value = self.tree.owned(|out| out.extend_from_slice(blanks));
+        if let Some(node) = self.tree.get_mut(node) {
+            node.value = value;
+        }
+    }
+
     fn add_span(&mut self, kind: Kind) -> NodeId {
         self.end_text();
         let node = self.tree.add(kind, self.place.0, self.place.1);
@@ -1561,6 +1760,7 @@ impl RendererImpl for Builder<'_> {
             BlockType::Html => self.html(
                 &lines,
                 flags & (BLOCK_HTML_UNTIL_TEXT | BLOCK_CLOSED) == BLOCK_HTML_UNTIL_TEXT,
+                flags & BLOCK_HTML_UNTIL_TEXT != 0,
             ),
             BlockType::Table => self.table(&lines),
             BlockType::Thead | BlockType::Tbody => {}
@@ -1588,6 +1788,8 @@ impl RendererImpl for Builder<'_> {
                 self.end_unended(None);
             }
             BlockType::P | BlockType::H | BlockType::Table | BlockType::Th | BlockType::Td => {
+                self.end_guarded_break(Follower::Other);
+                self.is_on_line_as_written = false;
                 self.end_text();
                 self.can_start_with_check.set(false);
                 let node = self.spans.pop();
@@ -1607,6 +1809,11 @@ impl RendererImpl for Builder<'_> {
         if self.is_in_image() {
             return Ok(());
         }
+        self.end_guarded_break(match span_type {
+            SpanType::Latexmath | SpanType::LatexmathDisplay => Follower::Verbatim,
+            SpanType::Code => Follower::Code,
+            _ => Follower::Other,
+        });
         let is_image = span_type == SpanType::Img;
         let kind = match (span_type, detail.reference) {
             (SpanType::Em | SpanType::U, _) => Kind::Emphasis,
@@ -1672,6 +1879,7 @@ impl RendererImpl for Builder<'_> {
         if self.is_in_image() && span_type != SpanType::Img {
             return Ok(());
         }
+        self.end_guarded_break(Follower::Other);
         self.end_text();
         let (Some(node), Some(marker_end)) = (self.spans.pop(), self.marker_ends.pop()) else {
             return Ok(());
@@ -1748,6 +1956,11 @@ impl RendererImpl for Builder<'_> {
             self.alt_end = self.place.1;
             return Ok(());
         }
+        self.end_guarded_break(match text_type {
+            TextType::Normal | TextType::NullChar | TextType::Entity => Follower::Text,
+            TextType::Html => Follower::Verbatim,
+            _ => Follower::Other,
+        });
         match text_type {
             // In an autolink.
             TextType::Normal if self.has_nul && bun_core::strings::contains_char(content, 0) => {
@@ -1783,9 +1996,15 @@ impl RendererImpl for Builder<'_> {
                         self.text_range = None;
                     }
                 }
-                self.add_text(b"\n", blanks == 0);
+                self.guarded_break = self.guarded_break(blanks == 0, false);
+                if self.guarded_break.is_none() {
+                    self.add_text(b"\n", blanks == 0);
+                }
             }
-            TextType::Br => _ = self.add_span(Kind::Break),
+            TextType::Br => {
+                self.add_span(Kind::Break);
+                self.guarded_break = self.guarded_break(false, true);
+            }
             TextType::Html => {
                 let node = self.add_span(Kind::Html);
                 let value = self.raw(self.place.0, self.place.1);
@@ -1798,6 +2017,10 @@ impl RendererImpl for Builder<'_> {
     }
 
     fn extension_span(&mut self, tag: u32, content: &[u8]) -> JsResult<()> {
+        self.end_guarded_break(match tag {
+            tag::LIQUID | tag::MATH => Follower::Verbatim,
+            _ => Follower::Other,
+        });
         let (start, end) = self.place;
         let (kind, value) = match tag {
             tag::CHECK => {
@@ -1882,8 +2105,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
-    // oxfmt's parser follows micromark, but is written in Rust.
-    options.code_units = syntax != Syntax::WithDirectives;
+    options.micromark_to_the_letter = syntax != Syntax::WithDirectives;
     let leaf_memo = Cell::new(LeafMemo::default());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
         true => es_syntax_end(start),
@@ -1932,6 +2154,8 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         alt_end: 0,
         can_start_with_check: &can_start_with_check,
         starts_with_check: false,
+        guarded_break: None,
+        is_on_line_as_written: false,
     };
     render_with_extensions(
         &text[first_line..],

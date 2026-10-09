@@ -54,6 +54,9 @@ enum Failure {
     Bug(&'static str),
     /// What Prettier prints does not say what the file says.
     Loss(&'static str),
+    /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
+    /// error.
+    Unread(Vec<u8>),
 }
 
 /// Prettier's message for a parser that it does not have.
@@ -257,7 +260,10 @@ fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
         column + 1
     )
     .into_bytes();
-    let lines: Vec<&[u8]> = bun_lint::utils::text::lines(text).collect();
+    // No more of them than are shown.
+    let lines: Vec<&[u8]> = bun_lint::utils::text::lines(text)
+        .take(line as usize + 3)
+        .collect();
     write_frame(&mut out, &lines[..], line, column);
     out
 }
@@ -491,7 +497,7 @@ fn format(
             if done == Err(FormatError::SyntaxError)
                 && let Some((message, offset)) = bun_format::toml::syntax_error(text)
             {
-                return Err(Failure::Syntax(syntax_error_in_words(
+                return Err(Failure::Unread(syntax_error_in_words(
                     text, &message, offset,
                 )));
             }
@@ -548,9 +554,11 @@ fn format(
                 ));
             }
             if matches!(done, Err(FormatError::SyntaxError))
-                && let Some(error) = bun_format::html::syntax_error(text, parser)
+                && let Some((message, offset)) = bun_format::html::syntax_error(text, parser)
             {
-                return Err(Failure::Syntax(error));
+                return Err(Failure::Syntax(syntax_error_in_words(
+                    text, &message, offset,
+                )));
             }
             let cursor = done.as_ref().ok().copied().flatten();
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
@@ -688,11 +696,27 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
             Some(sorted) => with_file(how, &sorted, |file, program, first_error| {
-                print((file, program), first_error, how, scratch)
+                print_with_sorted_classes((file, program), first_error, how, scratch)
             }),
-            None => print((file, program), first_error, how, scratch),
+            None => print_with_sorted_classes((file, program), first_error, how, scratch),
         }
     })
+}
+
+/// [`print`]. For `prettier-plugin-tailwindcss` a file whose classes move is parsed again.
+fn print_with_sorted_classes<'a>(
+    (file, program): (&'a File<'a>, &Program<'a>),
+    first_error: Option<&Diagnostic>,
+    how: &How,
+    scratch: &mut Scratches,
+) -> Result<Formatted, Failure> {
+    let tailwind = how.resolved.options.tailwind.as_deref();
+    match tailwind.and_then(|it| bun_format::tailwind::plugin::sorted_text(file, it)) {
+        Some(sorted) => with_file(how, &sorted, |file, program, first_error| {
+            print((file, program), first_error, how, scratch)
+        }),
+        None => print((file, program), first_error, how, scratch),
+    }
 }
 
 /// Why `bun format` leaves a file as it is.
@@ -733,7 +757,7 @@ pub fn format_for_tests(
         verifies,
     )
     .map_err(|failure| match failure {
-        Failure::Syntax(_) => Refusal::Syntax,
+        Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
         Failure::Bug(what) => Refusal::Bug(what),
         Failure::Loss(what) => Refusal::Loss(what),
     })
@@ -748,6 +772,8 @@ enum Done {
     PutAside,
     /// For the user. The exit code is 2.
     Failed(Vec<u8>),
+    /// See [`Failure::Unread`]. A warning for the user.
+    Unread(Vec<u8>),
 }
 
 struct Run<'r> {
@@ -788,12 +814,14 @@ impl Run<'_> {
     /// Prettier's `logger.warn`
     fn warn(&mut self, text: &[u8]) {
         if self.options.log_level >= LogLevel::Warn {
-            pretty!(
-                &mut self.out.stderr,
-                self.colors(),
-                "[<yellow>warn<r>] {}\n",
-                BStr::new(text)
-            );
+            for line in strings::split(text, b"\n") {
+                pretty!(
+                    &mut self.out.stderr,
+                    self.colors(),
+                    "[<yellow>warn<r>] {}\n",
+                    BStr::new(line)
+                );
+            }
         }
     }
 
@@ -832,7 +860,7 @@ impl Run<'_> {
 
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
-            Failure::Syntax(error) => [shown, b": ", &error].concat(),
+            Failure::Syntax(error) | Failure::Unread(error) => [shown, b": ", &error].concat(),
             Failure::Bug(what) => [
                 shown,
                 b": ",
@@ -898,7 +926,7 @@ impl Run<'_> {
             return out;
         }
         let kind = Kind::with_options(&path, &options.options);
-        tailwind::only_where_supported(&mut options.options, kind, &text);
+        tailwind::only_where_sorted(&mut options.options, kind);
         let names = Session::new();
         let verifies = self.options.verify;
         let format_text = || {
@@ -925,6 +953,12 @@ impl Run<'_> {
             formatted = format_text();
         }
         match formatted {
+            Err(failure @ Failure::Unread(_)) => {
+                self.warn(&Self::describe(name, failure));
+                if !self.options.check && !self.options.list_different {
+                    self.out.stdout = text;
+                }
+            }
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok((formatted, _)) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -1044,8 +1078,6 @@ impl Run<'_> {
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
         let mut results = Guarded::new(done);
-        // By ending, how many files may have classes of Tailwind CSS and are in a language in which they are not sorted yet.
-        let mut unsorted: Guarded<Vec<(&[u8], usize)>> = Guarded::new(Vec::new());
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let format_at = |at: usize| {
@@ -1069,16 +1101,7 @@ impl Run<'_> {
                     .concat()
                 })?;
                 let kind = Kind::with_options(&target.path, &options.options);
-                if tailwind::only_where_supported(&mut options.options, kind, &text) {
-                    let name = paths::basename(&target.path);
-                    let ending =
-                        strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
-                    let mut unsorted = unsorted.lock();
-                    match unsorted.iter_mut().find(|it| it.0 == ending) {
-                        Some(entry) => entry.1 += 1,
-                        None => unsorted.push((ending, 1)),
-                    }
-                }
+                tailwind::only_where_sorted(&mut options.options, kind);
                 // What a template would lose is known without a second look, and the second look at HTML is a short
                 // one, which only a file that changes gets.
                 let is_free = || {
@@ -1087,15 +1110,20 @@ impl Run<'_> {
                         Some(Kind::Handlebars | Kind::Html(_))
                     )
                 };
-                let (formatted, _) = format(
+                let formatted = match format(
                     &target.path,
                     &text,
                     &options,
                     (&atoms, &memory),
                     &mut scratch,
                     self.options.verify && (!only_looks || is_free()),
-                )
-                .map_err(|failure| Self::describe(&shown, failure))?;
+                ) {
+                    Ok((formatted, _)) => formatted,
+                    Err(failure @ Failure::Unread(_)) => {
+                        return Ok(Done::Unread(Self::describe(&shown, failure)));
+                    }
+                    Err(failure) => return Err(Self::describe(&shown, failure)),
+                };
                 if options
                     .options
                     .tailwind
@@ -1150,6 +1178,10 @@ impl Run<'_> {
             match done {
                 None => {}
                 Some(Done::Unchanged) => unchanged += 1,
+                Some(Done::Unread(warning)) => {
+                    unchanged += 1;
+                    self.warn(&warning);
+                }
                 Some(Done::Failed(error)) => {
                     failed += 1;
                     self.error(&error);
@@ -1157,7 +1189,8 @@ impl Run<'_> {
                 Some(Done::PutAside) => {
                     failed += 1;
                     classes_are_unknown.get_or_insert_with(|| {
-                        b"sortTailwindcss: The order of some classes cannot be found.".to_vec()
+                        let name = configs.classes.name().as_bytes();
+                        [name, b": The order of some classes cannot be found."].concat()
                     });
                 }
                 Some(Done::Different) => {
@@ -1255,29 +1288,6 @@ impl Run<'_> {
             Some(error) if options.allow_unsupported => self.warn(&error),
             Some(error) => self.error(&error),
             None => {}
-        }
-        let mut unsorted = std::mem::take(unsorted.get_mut());
-        if !unsorted.is_empty() {
-            sort_slice_by(&mut unsorted[..], |a, b| {
-                b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0))
-            });
-            let kinds: Vec<Vec<u8>> = unsorted
-                .iter()
-                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
-                .collect();
-            let text = [
-                &b"sortTailwindcss is not supported yet in these languages, and has no effect there: "[..],
-                &kinds.join(&b", "[..]),
-            ]
-            .concat();
-            match options.allow_unsupported {
-                true => self.warn(&text),
-                false => {
-                    self.error(
-                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
-                    );
-                }
-            }
         }
         if let (count @ 1.., names) = &left_for_plugins {
             let noun = if *count == 1 { "file is" } else { "files are" };

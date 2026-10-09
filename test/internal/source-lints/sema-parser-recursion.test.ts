@@ -38,7 +38,9 @@ import path from "path";
 //     whenever the closure runs, as long as no closure is stored (none is).
 //   - Calls that a macro writes. `take_span!` and the macros that declare lists call nothing of
 //     the parser.
-//   - Calls through `dyn Intern` and into other crates (`bun_sema::hir`): they cannot call back.
+//   - Calls through `dyn Intern` and into other crates (`bun_sema::hir`): they cannot call back,
+//     but for `bun_sema::check::jsdoc::syntax::read`, which calls the `impl Syntax for Parser`.
+//     No node has comments while it runs (`State::is_in_comment`), so it is never on the stack twice.
 //   - How much stack the calls between two guards take. `StackCheck` keeps 128 KB for them.
 //   - Time: a speculative parse (`try_parse`, `look_ahead_parsing`) is on the same stack, so its
 //     depth is checked, but not how often the same text is parsed.

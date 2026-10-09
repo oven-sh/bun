@@ -172,6 +172,9 @@ pub fn render_all<'a, 'f>(
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
     let (mut said, mut memo) = (FxHashSet::default(), Memo::default());
     findings.into_iter().filter_map(move |finding| {
+        if is_about_what_a_callback_captures(file, finding) {
+            return None;
+        }
         let rendered = render(file, finding, &mut memo);
         let labels = || {
             rendered
@@ -254,6 +257,23 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Ren
     out
 }
 
+/// Of the effects of a call, oxc's validation of refs looks at those on the operands of the call. Upstream's also looks at those
+/// on what a function among the operands captures, which is written in that function.
+fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) -> bool {
+    let Some(Detail::Error {
+        span: Some(at),
+        message: Some(message),
+    }) = finding.details.first()
+    else {
+        return false;
+    };
+    finding.category == ErrorCategory::Refs
+        && message == "Passing a ref to a function may read its value during render"
+        && finding.function_span.is_some()
+        && enclosing_function(file, *at).map(crate::program::diagnostic_span)
+            != finding.function_span
+}
+
 fn labels_of(finding: &Finding) -> Vec<Label> {
     let text_of = |message: Option<&str>| match message {
         Some(message) => Cow::Owned(message.to_owned()),
@@ -314,7 +334,7 @@ fn parameter_at<'a>(file: &'a File<'a>, span: Span) -> Option<Param<'a>> {
 }
 
 /// The property of a pattern or of an object literal that `span` is in.
-fn property_around<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
+pub(crate) fn property_around<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let innermost = get_node_by_range_index(file, span.start);
     std::iter::once(innermost)
         .chain(innermost.ancestors())

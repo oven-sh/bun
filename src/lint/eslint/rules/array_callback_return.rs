@@ -94,6 +94,15 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
                 ExprKind::Call(call) => {
                     let (callee, args) = (call.callee(), call.args());
                     let is_second = args.get(1) == Some(current);
+                    // oxlint looks only at a call without further arguments, and at no `from` but that of `Array`.
+                    if current.file().language().is_oxlint
+                        && (args.len() != if is_second { 2 } else { 1 }
+                            || is_second
+                                && !matches!(callee.kind(), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+                                    if obj.is_ident("Array")))
+                    {
+                        return None;
+                    }
                     if !func.is_async() {
                         if is_second && ast_utils::is_array_from_method(callee) {
                             return Some(("from", callee));

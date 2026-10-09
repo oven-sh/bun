@@ -359,6 +359,161 @@
   "suggestions": "class C { static { var a = 1; a; } }\n",
   "dangerously": "class C { static { const a = 1; a; } }\n"
  },
+ "81-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "82-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"\", { cause: e }); }\n"
+ },
+ "83-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error; }\n",
+  "suggestions": "try {} catch (e) { throw new Error; }\n",
+  "dangerously": "try {} catch (e) { throw new Error; }\n"
+ },
+ "84-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", {}); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "85-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", {  cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", {  cause: e }); }\n"
+ },
+ "86-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b: 1 }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e }); }\n"
+ },
+ "87-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e, }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b: 1, }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e, }); }\n"
+ },
+ "88-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "89-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "90-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error((\"a\"), { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error((\"a\")); }\n",
+  "dangerously": "try {} catch (e) { throw new Error((\"a\"), { cause: e }); }\n"
+ },
+ "91-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e },); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\",); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e },); }\n"
+ },
+ "92-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new TypeError(`a${b}`, { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new TypeError(`a${b}`); }\n",
+  "dangerously": "try {} catch (e) { throw new TypeError(`a${b}`, { cause: e }); }\n"
+ },
+ "93-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError(); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n"
+ },
+ "94-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([]); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n"
+ },
+ "95-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([], \"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"a\", { cause: e }); }\n"
+ },
+ "96-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n"
+ },
+ "97-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw Error(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw Error(\"a\", { cause: e }); }\n"
+ },
+ "98-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", o); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", o); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", o); }\n"
+ },
+ "99-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new RangeError(\"a\"); }\n",
+  "suggestions": "try {} catch (e) { throw new RangeError(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new RangeError(\"a\"); }\n"
+ },
+ "100-preserve-caught-error": {
+  "fix": "try {} catch ({ e }) { throw new Error(\"a\"); }\n",
+  "suggestions": "try {} catch ({ e }) { throw new Error(\"a\"); }\n",
+  "dangerously": "try {} catch ({ e }) { throw new Error(\"a\"); }\n"
+ },
+ "101-preserve-caught-error": {
+  "fix": "try {} catch (e) { if (a) { throw new Error(\"a\", { cause: e }); } else { throw new Error(\"b\"); } }\n",
+  "suggestions": "try {} catch (e) { if (a) { throw new Error(\"a\"); } else { throw new Error(\"b\"); } }\n",
+  "dangerously": "try {} catch (e) { if (a) { throw new Error(\"a\", { cause: e }); } else { throw new Error(\"b\"); } }\n"
+ },
+ "102-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", ({})); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", ({})); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", ({})); }\n"
+ },
+ "103-no-import-type-side-effects": {
+  "fix": "import type {} from \"a\";\n",
+  "suggestions": "import {} from \"a\";\n",
+  "dangerously": "import type {} from \"a\";\n"
+ },
+ "104-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e, cause: g }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f, cause: g }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e, cause: g }); }\n"
+ },
+ "105-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e, cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e, cause: e }); }\n"
+ },
+ "106-preserve-caught-error": {
+  "fix": "try {} catch (e) { const g = () => { throw new Error(\"a\", { cause: e }); }; }\n",
+  "suggestions": "try {} catch (e) { const g = () => { throw new Error(\"a\"); }; }\n",
+  "dangerously": "try {} catch (e) { const g = () => { throw new Error(\"a\", { cause: e }); }; }\n"
+ },
+ "107-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n"
+ },
+ "108-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw (new Error(\"a\")); }\n",
+  "suggestions": "try {} catch (e) { throw (new Error(\"a\")); }\n",
+  "dangerously": "try {} catch (e) { throw (new Error(\"a\")); }\n"
+ },
+ "109-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e, ...c }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f, ...c }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e, ...c }); }\n"
+ },
+ "110-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n"
+ },
+ "111-preserve-caught-error": {
+  "fix": "try {} catch (e) { class A { static { throw new Error(\"a\", { cause: e }); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n",
+  "suggestions": "try {} catch (e) { class A { static { throw new Error(\"a\"); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n",
+  "dangerously": "try {} catch (e) { class A { static { throw new Error(\"a\", { cause: e }); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n"
+ },
  "9-non-nullable-type-assertion-style": {
   "fix": "declare const a: string | null; export const b = a as string;\n",
   "suggestions": "declare const a: string | null; export const b = a!;\n",

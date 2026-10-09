@@ -60,6 +60,9 @@ impl Parser<'_> {
         let start = self.pos();
         let base = self.s.modifiers.len();
         let class = self.class((start, start), base, Flags::empty());
+        if self.reads_jsdoc {
+            self.class_jsdoc(class, start);
+        }
         self.finish_expr(ExprKind::Class(class), start)
     }
 
@@ -73,6 +76,9 @@ impl Parser<'_> {
         }
         let keyword = self.pos();
         let class = self.class((start, keyword), base, flags & Flags::ABSTRACT);
+        if self.reads_jsdoc {
+            self.class_jsdoc(class, start);
+        }
         self.finish_expr(ExprKind::Class(class), keyword)
     }
 
@@ -269,6 +275,9 @@ impl Parser<'_> {
         {
             // A `SemicolonClassElement` is not a member.
             if self.eat(T::Semicolon) {
+                if self.reads_jsdoc {
+                    self.semicolon_jsdoc();
+                }
                 continue;
             }
             self.class_element(members);
@@ -588,6 +597,9 @@ impl Parser<'_> {
             pos: start.full,
             end: self.prev_end(),
         };
+        if self.reads_jsdoc {
+            self.member_jsdoc(&mut member, first_modifier);
+        }
         member.modifiers = self.take_modifiers(first_modifier);
         if self.options.is_javascript {
             self.check_js_member(&member, question);
@@ -619,6 +631,9 @@ impl Parser<'_> {
             anchor: open,
             start: start.pos,
         });
+        if self.reads_jsdoc {
+            self.static_block_jsdoc(start);
+        }
         self.s.members.push(Member {
             kind: MemberKind::StaticBlock,
             key: PropKey::None,

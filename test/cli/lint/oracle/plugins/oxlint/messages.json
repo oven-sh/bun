@@ -156,12 +156,102 @@
   "message": "Comments should not begin with an uppercase letter"
  },
  {
+  "rule": "eslint/class-methods-use-this",
+  "id": "missingThis",
+  "file": "a.js",
+  "code": "class A { foo() {} }",
+  "options": [],
+  "message": "Expected method `foo` to have this."
+ },
+ {
+  "rule": "eslint/class-methods-use-this",
+  "id": "missingThis",
+  "file": "a.js",
+  "code": "class A { [foo]() {} }",
+  "options": [
+   {
+    "exceptMethods": [
+     "foo"
+    ]
+   }
+  ],
+  "message": "Expected method to have this."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "(class { x = a || b; })",
+  "options": [
+   1
+  ],
+  "message": "class field initializer has a complexity of 2. Maximum allowed is 1."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "class C { static { a || b; }  }",
+  "options": [
+   1
+  ],
+  "message": "class static block has a complexity of 2. Maximum allowed is 1."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "function a(x) {}",
+  "options": [
+   0
+  ],
+  "message": "function `a` has a complexity of 1. Maximum allowed is 0."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "var func = function () {}",
+  "options": [
+   0
+  ],
+  "message": "function has a complexity of 1. Maximum allowed is 0."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "class Test { a(x) {} }",
+  "options": [
+   0
+  ],
+  "message": "method `a` has a complexity of 1. Maximum allowed is 0."
+ },
+ {
+  "rule": "eslint/complexity",
+  "id": "complex",
+  "file": "a.js",
+  "code": "class C { static { a || b; } static static(){ c || d || e; } static { f || g; } }",
+  "options": [
+   2
+  ],
+  "message": "static method `static` has a complexity of 3. Maximum allowed is 2."
+ },
+ {
   "rule": "eslint/constructor-super",
   "id": "badSuper",
   "file": "a.js",
   "code": "class A extends 100 { constructor() { super(); } }",
   "options": [],
   "message": "Unexpected `super()` because `super` is not a constructor."
+ },
+ {
+  "rule": "eslint/constructor-super",
+  "id": "duplicate",
+  "file": "a.js",
+  "code": "class A extends B { constructor() { super(); super(); } }",
+  "options": [],
+  "message": "Unexpected duplicate `super()`."
  },
  {
   "rule": "eslint/constructor-super",
@@ -231,9 +321,43 @@
   "rule": "eslint/eqeqeq",
   "id": "unexpected",
   "file": "a.js",
+  "code": "null !== null",
+  "options": [
+   "always",
+   {
+    "null": "never"
+   }
+  ],
+  "message": "Expected != and instead saw !=="
+ },
+ {
+  "rule": "eslint/eqeqeq",
+  "id": "unexpected",
+  "file": "a.js",
   "code": "a!=b;",
   "options": [],
   "message": "Expected !== and instead saw !="
+ },
+ {
+  "rule": "eslint/eqeqeq",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "null === null",
+  "options": [
+   "always",
+   {
+    "null": "never"
+   }
+  ],
+  "message": "Expected == and instead saw ==="
+ },
+ {
+  "rule": "eslint/eqeqeq",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "0 == 0",
+  "options": [],
+  "message": "Expected === and instead saw =="
  },
  {
   "rule": "eslint/for-direction",
@@ -264,12 +388,141 @@
   "message": "Function name `foo` should not match variable name `foo`."
  },
  {
+  "rule": "eslint/func-names",
+  "id": "named",
+  "file": "a.js",
+  "code": "({foo: function foo() {}})",
+  "options": [
+   "never"
+  ],
+  "message": "Unexpected named function `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "named",
+  "file": "a.js",
+  "code": "var foo = bar(function *baz() {});",
+  "options": [
+   "always",
+   {
+    "generators": "never"
+   }
+  ],
+  "message": "Unexpected named generator function `baz`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "named",
+  "file": "a.js",
+  "code": "class C { foo = function bar() {} }",
+  "options": [
+   "never"
+  ],
+  "message": "Unexpected named method `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.js",
+  "code": "const x = { delete: async function () {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed async function `delete`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.js",
+  "code": "const x = { foo: function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed function `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.js",
+  "code": "const x = { ['foo']: function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed function."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.js",
+  "code": "class C { foo = function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed method `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.js",
+  "code": "class C { #foo = function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed private method `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.ts",
+  "code": "class C { public foo = function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed public method `foo`."
+ },
+ {
+  "rule": "eslint/func-names",
+  "id": "unnamed",
+  "file": "a.ts",
+  "code": "class C { public [foo] = function() {} }",
+  "options": [
+   "always"
+  ],
+  "message": "Unexpected unnamed public method."
+ },
+ {
   "rule": "eslint/getter-return",
   "id": "expected",
   "file": "a.js",
   "code": "class foo { get bar(){} }",
   "options": [],
   "message": "Expected to always return a value in getter."
+ },
+ {
+  "rule": "eslint/grouped-accessor-pairs",
+  "id": "notGrouped",
+  "file": "a.js",
+  "code": "({ set 'abc'(foo){}, b:1, get 'abc'(){} })",
+  "options": [],
+  "message": "Accessor pair getter 'abc' and setter 'abc' should be grouped."
+ },
+ {
+  "rule": "eslint/grouped-accessor-pairs",
+  "id": "notGrouped",
+  "file": "a.js",
+  "code": "({ set [a](foo){}, set a(bar){}, get [a](){} })",
+  "options": [],
+  "message": "Accessor pair getter and setter should be grouped."
+ },
+ {
+  "rule": "eslint/grouped-accessor-pairs",
+  "id": "notGrouped",
+  "file": "a.js",
+  "code": "(class { static set a(foo){} b(){} static get a(){} })",
+  "options": [
+   "setBeforeGet"
+  ],
+  "message": "Accessor pair static getter 'a' and static setter 'a' should be grouped."
  },
  {
   "rule": "eslint/guard-for-in",
@@ -353,6 +606,75 @@
   "message": "File has too many lines (1)."
  },
  {
+  "rule": "eslint/max-lines-per-function",
+  "id": "exceed",
+  "file": "a.js",
+  "code": "function name() {\n}",
+  "options": [
+   1
+  ],
+  "message": "The function `name` has too many lines (2). Maximum allowed is 1."
+ },
+ {
+  "rule": "eslint/max-lines-per-function",
+  "id": "exceed",
+  "file": "a.js",
+  "code": "const bar = () =>\n 2",
+  "options": [
+   1
+  ],
+  "message": "The function has too many lines (2). Maximum allowed is 1."
+ },
+ {
+  "rule": "eslint/max-lines-per-function",
+  "id": "exceed",
+  "file": "a.js",
+  "code": "class foo {\n    method() {\n        let y = 10;\n        let x = 20;\n        return y + x;\n    }\n}",
+  "options": [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  "message": "The method `method` has too many lines (5). Maximum allowed is 2."
+ },
+ {
+  "rule": "eslint/max-params",
+  "id": "exceed",
+  "file": "a.ts",
+  "code": "\n  class Foo {\n\tmethod(this: void, a) {}\n  }\n\t\t",
+  "options": [
+   {
+    "countThis": "always",
+    "max": 1
+   }
+  ],
+  "message": "Function has too many parameters (2). Maximum allowed is 1."
+ },
+ {
+  "rule": "eslint/max-statements",
+  "id": "exceed",
+  "file": "a.js",
+  "code": "function foo() { 1; }",
+  "options": [
+   {
+    "max": 0
+   }
+  ],
+  "message": "function `foo` has too many statements (1). Maximum allowed is 0."
+ },
+ {
+  "rule": "eslint/max-statements",
+  "id": "exceed",
+  "file": "a.js",
+  "code": "var foo = () => { var bar = 1; var baz = 2; var qux = 3; };",
+  "options": [
+   2
+  ],
+  "message": "function has too many statements (3). Maximum allowed is 2."
+ },
+ {
   "rule": "eslint/no-alert",
   "id": "unexpected",
   "file": "a.js",
@@ -404,9 +726,65 @@
   "rule": "eslint/no-compare-neg-zero",
   "id": "unexpected",
   "file": "a.js",
+  "code": "-0 != x",
+  "options": [],
+  "message": "Do not use the != operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 !== x",
+  "options": [],
+  "message": "Do not use the !== operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
   "code": "-0 < x",
   "options": [],
   "message": "Do not use the < operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 <= x",
+  "options": [],
+  "message": "Do not use the <= operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 == x",
+  "options": [],
+  "message": "Do not use the == operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 === x",
+  "options": [],
+  "message": "Do not use the === operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 > x",
+  "options": [],
+  "message": "Do not use the > operator to compare against -0."
+ },
+ {
+  "rule": "eslint/no-compare-neg-zero",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "-0 >= x",
+  "options": [],
+  "message": "Do not use the >= operator to compare against -0."
  },
  {
   "rule": "eslint/no-cond-assign",
@@ -439,6 +817,30 @@
    }
   ],
   "message": "Unexpected console statement."
+ },
+ {
+  "rule": "eslint/no-const-assign",
+  "id": "const",
+  "file": "a.js",
+  "code": "const b = 0; ({a, ...b} = {a: 1, c: 2, d: 3})",
+  "options": [],
+  "message": "Unexpected re-assignment of `const` variable b."
+ },
+ {
+  "rule": "eslint/no-const-assign",
+  "id": "const",
+  "file": "a.js",
+  "code": "const [a, b, ...[c, ...d]] = [1, 2, 3, 4, 5]; d = 123",
+  "options": [],
+  "message": "Unexpected re-assignment of `const` variable d."
+ },
+ {
+  "rule": "eslint/no-const-assign",
+  "id": "const",
+  "file": "a.js",
+  "code": "for (const i = 0; i < 10; ++i) { foo(i); }",
+  "options": [],
+  "message": "Unexpected re-assignment of `const` variable i."
  },
  {
   "rule": "eslint/no-const-assign",
@@ -489,6 +891,14 @@
   "message": "Unexpected constant nullishness on the left-hand side of a \"??\" expression"
  },
  {
+  "rule": "eslint/no-constant-binary-expression",
+  "id": "constantShortCircuit",
+  "file": "a.jsx",
+  "code": "'' && foo",
+  "options": [],
+  "message": "Unexpected constant truthiness on the left-hand side of a \"&&\" expression"
+ },
+ {
   "rule": "eslint/no-constant-condition",
   "id": "unexpected",
   "file": "a.js",
@@ -503,6 +913,22 @@
   "code": "var sum = 0, i; for(i = 0; i < 10; i++){ if(i <= 5) { continue; } sum += i; }",
   "options": [],
   "message": "Unexpected use of `continue` statement."
+ },
+ {
+  "rule": "eslint/no-control-regex",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "/\\x00/",
+  "options": [],
+  "message": "Unexpected control character"
+ },
+ {
+  "rule": "eslint/no-control-regex",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "var regex = new RegExp('\\x1f\\x1e')",
+  "options": [],
+  "message": "Unexpected control characters"
  },
  {
   "rule": "eslint/no-debugger",
@@ -621,12 +1047,92 @@
   "message": "Empty character class will not match anything"
  },
  {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "async function a(){}",
+  "options": [],
+  "message": "Unexpected empty async function `a`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "class A {constructor() {}}",
+  "options": [],
+  "message": "Unexpected empty constructor `constructor`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "var obj = {foo() {}};",
+  "options": [],
+  "message": "Unexpected empty function"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "function foo() {}",
+  "options": [],
+  "message": "Unexpected empty function `foo`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "function* baz() {}",
+  "options": [],
+  "message": "Unexpected empty generator function `baz`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "class A {get foo() {}}",
+  "options": [],
+  "message": "Unexpected empty getter `foo`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "class A {foo() {}}",
+  "options": [],
+  "message": "Unexpected empty method `foo`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "class A {set foo(value) {}}",
+  "options": [],
+  "message": "Unexpected empty setter `foo`"
+ },
+ {
+  "rule": "eslint/no-empty-function",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "class A {static foo() {}}",
+  "options": [],
+  "message": "Unexpected empty static method `foo`"
+ },
+ {
   "rule": "eslint/no-empty-pattern",
   "id": "unexpected",
   "file": "a.js",
   "code": "var [] = foo",
   "options": [],
   "message": "Empty array binding pattern"
+ },
+ {
+  "rule": "eslint/no-empty-pattern",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "var {} = foo",
+  "options": [],
+  "message": "Empty object binding pattern"
  },
  {
   "rule": "eslint/no-empty-static-block",
@@ -656,9 +1162,73 @@
   "rule": "eslint/no-extend-native",
   "id": "unexpected",
   "file": "a.js",
+  "code": "AggregateError.prototype.p = 0",
+  "options": [],
+  "message": "AggregateError prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "Array.prototype.p &&= 0",
+  "options": [],
+  "message": "Array prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
   "code": "BigInt.prototype.p = 0",
   "options": [],
   "message": "BigInt prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "FinalizationRegistry.prototype.p = 0",
+  "options": [],
+  "message": "FinalizationRegistry prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "Function.prototype['p'] = 0",
+  "options": [],
+  "message": "Function prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "Number['prototype']['p'] = 0",
+  "options": [],
+  "message": "Number prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "Object.prototype.p = 0",
+  "options": [],
+  "message": "Object prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "String['prototype'].p = 0",
+  "options": [],
+  "message": "String prototype is read-only, properties should not be added."
+ },
+ {
+  "rule": "eslint/no-extend-native",
+  "id": "unexpected",
+  "file": "a.js",
+  "code": "WeakRef.prototype.p = 0",
+  "options": [],
+  "message": "WeakRef prototype is read-only, properties should not be added."
  },
  {
   "rule": "eslint/no-extra-boolean-cast",
@@ -703,6 +1273,58 @@
   "code": "switch(foo) { case 0:\n\n default: b() }",
   "options": [],
   "message": "Expected a `break` statement before `default`."
+ },
+ {
+  "rule": "eslint/no-implicit-coercion",
+  "id": "implicitCoercion",
+  "file": "a.js",
+  "code": "!!foo",
+  "options": [],
+  "message": "Unexpected implicit coercion to boolean"
+ },
+ {
+  "rule": "eslint/no-implicit-coercion",
+  "id": "implicitCoercion",
+  "file": "a.js",
+  "code": "+foo",
+  "options": [],
+  "message": "Unexpected implicit coercion to number"
+ },
+ {
+  "rule": "eslint/no-implicit-coercion",
+  "id": "implicitCoercion",
+  "file": "a.js",
+  "code": "\"\"+foo",
+  "options": [],
+  "message": "Unexpected implicit coercion to string"
+ },
+ {
+  "rule": "eslint/no-implicit-globals",
+  "id": "globalLexicalBinding",
+  "file": "a.js",
+  "code": "let a = 1;",
+  "options": [
+   {
+    "lexicalBindings": true
+   }
+  ],
+  "message": "Unexpected 'let' declaration in the global scope."
+ },
+ {
+  "rule": "eslint/no-implicit-globals",
+  "id": "globalNonLexicalBinding",
+  "file": "a.js",
+  "code": "var a = 1;",
+  "options": [],
+  "message": "Unexpected 'var' declaration in the global scope."
+ },
+ {
+  "rule": "eslint/no-implicit-globals",
+  "id": "globalVariableLeak",
+  "file": "a.js",
+  "code": "a = 1;",
+  "options": [],
+  "message": "Global variable leak."
  },
  {
   "rule": "eslint/no-import-assign",
@@ -816,6 +1438,294 @@
   "rule": "eslint/no-magic-numbers",
   "id": "noMagic",
   "file": "a.js",
+  "code": "foo[-0b110]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: -0b110"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[-0o71]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: -0o71"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[-0x12]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: -0x12"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -0xbc;",
+  "options": [
+   {
+    "ignore": [
+     188
+    ]
+   }
+  ],
+  "message": "No magic number: -0xbc"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "f(-100n)",
+  "options": [
+   {
+    "ignore": [
+     "100n"
+    ]
+   }
+  ],
+  "message": "No magic number: -100n"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[-1e310]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: -1e310"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -3e4;",
+  "options": [
+   {
+    "ignore": [
+     30000
+    ]
+   }
+  ],
+  "message": "No magic number: -3e4"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -4n;",
+  "options": [
+   {
+    "ignore": [
+     "4n"
+    ]
+   }
+  ],
+  "message": "No magic number: -4n"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -7e-8;",
+  "options": [
+   {
+    "ignore": [
+     7e-8
+    ]
+   }
+  ],
+  "message": "No magic number: -7e-8"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[-1]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: -1"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -7.1e-8;",
+  "options": [
+   {
+    "ignore": [
+     7.1e-8
+    ]
+   }
+  ],
+  "message": "No magic number: -7.1e-8"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = -3.1e4;",
+  "options": [
+   {
+    "ignore": [
+     31000
+    ]
+   }
+  ],
+  "message": "No magic number: -3.1e4"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 0x0a;",
+  "options": [
+   {
+    "ignore": [
+     -10
+    ]
+   }
+  ],
+  "message": "No magic number: 0x0a"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = Bar[0xab];",
+  "options": [
+   {
+    "ignoreTypeIndexes": false
+   }
+  ],
+  "message": "No magic number: 0xab"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "f(100n)",
+  "options": [
+   {
+    "ignore": [
+     "-100n"
+    ]
+   }
+  ],
+  "message": "No magic number: 100n"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = Bar[10n];",
+  "options": [
+   {
+    "ignoreTypeIndexes": false
+   }
+  ],
+  "message": "No magic number: 10n"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 1e2;",
+  "options": [
+   {
+    "ignore": [
+     -100
+    ]
+   }
+  ],
+  "message": "No magic number: 1e2"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[1e300]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: 1e300"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[1e310]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: 1e310"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 3n;",
+  "options": [
+   {
+    "ignore": [
+     "-3n"
+    ]
+   }
+  ],
+  "message": "No magic number: 3n"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[56e-1]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: 56e-1"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 5e-6;",
+  "options": [
+   {
+    "ignore": [
+     -0.000005
+    ]
+   }
+  ],
+  "message": "No magic number: 5e-6"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
   "code": "f(100)",
   "options": [
    {
@@ -825,6 +1735,70 @@
    }
   ],
   "message": "No magic number: 100"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[0.12e1]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: 0.12e1"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 5.1e-6;",
+  "options": [
+   {
+    "ignore": [
+     -0.0000051
+    ]
+   }
+  ],
+  "message": "No magic number: 5.1e-6"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = 1.1e2;",
+  "options": [
+   {
+    "ignore": [
+     -110
+    ]
+   }
+  ],
+  "message": "No magic number: 1.1e2"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.js",
+  "code": "foo[1.678e2]",
+  "options": [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  "message": "No magic number: 1.678e2"
+ },
+ {
+  "rule": "eslint/no-magic-numbers",
+  "id": "noMagic",
+  "file": "a.ts",
+  "code": "type Foo = Bar[5.6e1];",
+  "options": [
+   {
+    "ignoreTypeIndexes": false
+   }
+  ],
+  "message": "No magic number: 5.6e1"
  },
  {
   "rule": "eslint/no-misleading-character-class",
@@ -967,6 +1941,144 @@
   "message": "Multiple consecutive spaces are hard to count."
  },
  {
+  "rule": "eslint/no-restricted-exports",
+  "id": "restrictedDefault",
+  "file": "a.js",
+  "code": "const foo = 123;\nexport { foo as default };",
+  "options": [
+   {
+    "restrictDefaultExports": {
+     "named": true
+    }
+   }
+  ],
+  "message": "Exporting named value as default is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-exports",
+  "id": "restrictedDefault",
+  "file": "a.js",
+  "code": "export { default } from 'mod';",
+  "options": [
+   {
+    "restrictDefaultExports": {
+     "defaultFrom": true
+    }
+   }
+  ],
+  "message": "Reexporting 'default' export is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-exports",
+  "id": "restrictedDefault",
+  "file": "a.js",
+  "code": "export { foo as default } from 'mod';",
+  "options": [
+   {
+    "restrictDefaultExports": {
+     "namedFrom": true
+    }
+   }
+  ],
+  "message": "Reexporting named export as default is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-exports",
+  "id": "restrictedDefault",
+  "file": "a.js",
+  "code": "export * as default from 'mod';",
+  "options": [
+   {
+    "restrictDefaultExports": {
+     "namespaceFrom": true
+    }
+   }
+  ],
+  "message": "Reexporting namespace as default is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportName",
+  "file": "a.js",
+  "code": "import { AllowedObject, DisallowedObject } from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ]
+     }
+    ]
+   }
+  ],
+  "message": "'DisallowedObject' import from 'foo' is restricted because only AllowedObject import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportName",
+  "file": "a.js",
+  "code": "import { GoodThing, BadThing } from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "GoodThing",
+       "AlsoGood"
+      ]
+     }
+    ]
+   }
+  ],
+  "message": "'BadThing' import from 'foo' is restricted because only GoodThing, AlsoGood import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportName",
+  "file": "a.ts",
+  "code": "import { baz } from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "bar"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  "message": "'baz' import from 'foo' is restricted because only bar import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportName",
+  "file": "a.js",
+  "code": "import { foo, bar, baz, qux } from \"foo-bar-baz\";",
+  "options": [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo-bar-baz"
+      ],
+      "allowImportNames": [
+       "foo",
+       "bar",
+       "baz"
+      ]
+     }
+    ]
+   }
+  ],
+  "message": "'qux' import from 'foo-bar-baz' is restricted because only foo, bar, baz import(s) is/are allowed."
+ },
+ {
   "rule": "eslint/no-restricted-imports",
   "id": "allowedImportNamePattern",
   "file": "a.js",
@@ -1004,6 +2116,127 @@
    }
   ],
   "message": "'Bar' import from 'foo' is restricted because only imports that match the pattern '^Foo' are allowed from 'foo'."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportNameWithCustomMessage",
+  "file": "a.js",
+  "code": "import { Allowed1, Disallowed, Allowed2 } from \"foo\";",
+  "options": [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "Allowed1",
+       "Allowed2"
+      ],
+      "message": "Fix this please."
+     }
+    ]
+   }
+  ],
+  "message": "'Disallowed' import from 'foo' is restricted because only Allowed1, Allowed2 import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportNameWithCustomMessage",
+  "file": "a.js",
+  "code": "import { AllowedObject, DisallowedObject } from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only 'AllowedObject' is allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  "message": "'DisallowedObject' import from 'foo' is restricted because only AllowedObject import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "allowedImportNameWithCustomMessage",
+  "file": "a.js",
+  "code": "import { GoodThing, SomethingBad } from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "GoodThing",
+       "AlsoGood"
+      ],
+      "message": "Only good stuff allowed."
+     }
+    ]
+   }
+  ],
+  "message": "'SomethingBad' import from 'foo' is restricted because only GoodThing, AlsoGood import(s) is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "everything",
+  "file": "a.js",
+  "code": "export * from \"foo\";",
+  "options": [
+   {
+    "name": "foo",
+    "importNames": [
+     "DisallowedObject1",
+     "DisallowedObject2"
+    ]
+   }
+  ],
+  "message": "* import is invalid because 'DisallowedObject1, DisallowedObject2' from 'foo' is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "everythingWithAllowImportNames",
+  "file": "a.js",
+  "code": "import * as AllowedObject from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject",
+       "AnotherObject"
+      ]
+     }
+    ]
+   }
+  ],
+  "message": "* import is invalid because only 'AllowedObject, AnotherObject' from 'foo' is/are allowed."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "everythingWithAllowImportNamesAndCustomMessage",
+  "file": "a.js",
+  "code": "import * as AllowedObject from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject",
+       "AnotherObject"
+      ],
+      "message": "Nothing else."
+     }
+    ]
+   }
+  ],
+  "message": "* import is invalid because only 'AllowedObject, AnotherObject' from 'foo' is/are allowed."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -1046,6 +2279,26 @@
  },
  {
   "rule": "eslint/no-restricted-imports",
+  "id": "everythingWithCustomMessage",
+  "file": "a.js",
+  "code": "export * from \"foo\";",
+  "options": [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject"
+      ],
+      "message": "Please import 'DisallowedObject' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  "message": "* import is invalid because 'DisallowedObject' from 'foo' is restricted."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
   "id": "importNameWithCustomMessage",
   "file": "a.js",
   "code": "export {''} from \"fs\";",
@@ -1081,6 +2334,51 @@
    }
   ],
   "message": "'import-foo' import is restricted from being used."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "patternAndEverything",
+  "file": "a.js",
+  "code": "import * as All from 'foo-bar-baz';",
+  "options": [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**"
+      ],
+      "importNames": [
+       "Foo",
+       "Bar"
+      ]
+     }
+    ]
+   }
+  ],
+  "message": "* import is invalid because 'Foo, Bar' from 'foo-bar-baz' is restricted from being used by a pattern."
+ },
+ {
+  "rule": "eslint/no-restricted-imports",
+  "id": "patternAndEverythingWithCustomMessage",
+  "file": "a.js",
+  "code": "import * as AllWithCustomMessage from 'foo-bar-baz';",
+  "options": [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/*-*-baz"
+      ],
+      "importNames": [
+       "Foo",
+       "Bar"
+      ],
+      "message": "Use only 'Baz'."
+     }
+    ]
+   }
+  ],
+  "message": "* import is invalid because 'Foo, Bar' from 'foo-bar-baz' is restricted from being used by a pattern."
  },
  {
   "rule": "eslint/no-restricted-imports",
@@ -1164,6 +2462,34 @@
  },
  {
   "rule": "eslint/no-restricted-properties",
+  "id": "restrictedObjectProperty",
+  "file": "a.js",
+  "code": "foo.bar();",
+  "options": [
+   {
+    "object": "foo"
+   }
+  ],
+  "message": "'foo' is restricted from being used."
+ },
+ {
+  "rule": "eslint/no-restricted-properties",
+  "id": "restrictedObjectProperty",
+  "file": "a.js",
+  "code": "someObject.disallowedProperty",
+  "options": [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "allowedProperty"
+    ],
+    "message": "Please use someObject.allowedProperty instead."
+   }
+  ],
+  "message": "'someObject' is restricted from being used. Only these properties are allowed: allowedProperty."
+ },
+ {
+  "rule": "eslint/no-restricted-properties",
   "id": "restrictedProperty",
   "file": "a.js",
   "code": "obj[0]",
@@ -1173,6 +2499,22 @@
    }
   ],
   "message": "'0' is restricted from being used."
+ },
+ {
+  "rule": "eslint/no-restricted-properties",
+  "id": "restrictedProperty",
+  "file": "a.js",
+  "code": "someObject.disallowedProperty",
+  "options": [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "anotherObject"
+    ],
+    "message": "Please use someObject.allowedProperty instead."
+   }
+  ],
+  "message": "'disallowedProperty' is restricted from being used. Property 'disallowedProperty' is only allowed on these objects: anotherObject."
  },
  {
   "rule": "eslint/no-return-assign",
@@ -1249,6 +2591,22 @@
   "code": "class undefined {}",
   "options": [],
   "message": "Shadowing of global properties such as `undefined` is not allowed."
+ },
+ {
+  "rule": "eslint/no-sparse-arrays",
+  "id": "unexpectedSparseArray",
+  "file": "a.js",
+  "code": "var a = [,];",
+  "options": [],
+  "message": "Unexpected comma in middle of array"
+ },
+ {
+  "rule": "eslint/no-sparse-arrays",
+  "id": "unexpectedSparseArray",
+  "file": "a.js",
+  "code": "var a = [ 1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,, 2];",
+  "options": [],
+  "message": "30 unexpected commas in middle of array"
  },
  {
   "rule": "eslint/no-template-curly-in-string",
@@ -1407,6 +2765,309 @@
   "message": "Expected expression to be used"
  },
  {
+  "rule": "eslint/no-unused-private-class-members",
+  "id": "unusedPrivateClassMember",
+  "file": "a.js",
+  "code": "class Foo {\n    #unusedMember = 5;\n}",
+  "options": [],
+  "message": "'unusedMember' is defined but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "try {} catch(e){ }",
+  "options": [],
+  "message": "Catch parameter 'e' is caught but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "try {} catch ({ stack: $ }) { $ = 'Something broke: ' + $; }",
+  "options": [
+   {
+    "caughtErrorsIgnorePattern": "\\w"
+   }
+  ],
+  "message": "Catch parameter '$' is caught but never used. Unused caught errors should match /\\w/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "try{}catch(err){};",
+  "options": [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^ignore"
+   }
+  ],
+  "message": "Catch parameter 'err' is caught but never used. Unused caught errors should match /^ignore/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "try {} catch(foo) { }",
+  "options": [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^ignored"
+   }
+  ],
+  "message": "Catch parameter 'foo' is caught but never used. Unused caught errors should match /^ignored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "\ntry {\n} catch (_) {\n  _ = 'foo'\n}\n            ",
+  "options": [
+   {
+    "caughtErrorsIgnorePattern": "foo"
+   }
+  ],
+  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /foo/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "\ntry {\n} catch (_) {\n  _ = 'foo'\n}\n            ",
+  "options": [
+   {
+    "caughtErrorsIgnorePattern": "ignored",
+    "varsIgnorePattern": "_"
+   }
+  ],
+  "message": "Catch parameter '_' is caught but never used. Unused caught errors should match /ignored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "class Foo {}",
+  "options": [
+   {
+    "ignoreClassWithStaticInitBlock": true
+   }
+  ],
+  "message": "Class 'Foo' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.ts",
+  "code": "enum Foo { A }",
+  "options": [],
+  "message": "Enum 'Foo' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "function foo() {}",
+  "options": [],
+  "message": "Function 'foo' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "export function promisify() { var fn; function fn() { fn() } }",
+  "options": [],
+  "message": "Function 'fn' is declared but never used. Unused functions should start with a '_'."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "import x from \"y\";",
+  "options": [],
+  "message": "Identifier 'x' is imported but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.ts",
+  "code": "interface LinkedList<T> { next: LinkedList<T> | undefined }",
+  "options": [],
+  "message": "Interface 'LinkedList' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "(function(_a) {})();",
+  "options": [
+   {
+    "args": "all",
+    "caughtErrorsIgnorePattern": "^_"
+   }
+  ],
+  "message": "Parameter '_a' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "function foo(_a) { } foo();",
+  "options": [
+   {
+    "args": "all",
+    "argsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  "message": "Parameter '_a' is declared but never used. Unused parameters should match /[iI]gnored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "function foo(unused) {} foo()",
+  "options": [
+   {
+    "argsIgnorePattern": "^ignored"
+   }
+  ],
+  "message": "Parameter 'unused' is declared but never used. Unused parameters should match /^ignored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "_ => { _ = _ + 1 };",
+  "options": [
+   {
+    "argsIgnorePattern": "ignored",
+    "varsIgnorePattern": "_"
+   }
+  ],
+  "message": "Parameter '_' is declared but never used. Unused parameters should match /ignored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "array.forEach(a => {})",
+  "options": [],
+  "message": "Parameter 'a' is declared but never used. Unused parameters should start with a '_'."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.ts",
+  "code": "type Foo = Foo",
+  "options": [],
+  "message": "Type alias 'Foo' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "let type, coords;\n({ type, ...coords } = data);\n console.log(type)",
+  "options": [
+   {
+    "ignoreRestSiblings": true
+   }
+  ],
+  "message": "Variable 'coords' is assigned a value but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "let x = 1; x = 2;",
+  "options": [
+   {
+    "varsIgnorePattern": "^tooCompli[cated]"
+   }
+  ],
+  "message": "Variable 'x' is assigned a value but never used. Unused variables should match /^tooCompli[cated]/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "let a; a = foo;",
+  "options": [],
+  "message": "Variable 'a' is assigned a value but never used. Unused variables should start with a '_'."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "let _a = 1",
+  "options": [
+   {
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  "message": "Variable '_a' is declared but never used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "var [ firstItemIgnored, secondItem ] = items;",
+  "options": [
+   {
+    "vars": "all",
+    "varsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  "message": "Variable 'secondItem' is declared but never used. Unused variables should match /[iI]gnored/."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "unusedVar",
+  "file": "a.js",
+  "code": "var a=10",
+  "options": [],
+  "message": "Variable 'a' is declared but never used. Unused variables should start with a '_'."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "usedIgnoredVar",
+  "file": "a.js",
+  "code": "try{}catch(_err){console.error(_err)}",
+  "options": [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  "message": "Catch parameter '_err' is marked as ignored but is used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "usedIgnoredVar",
+  "file": "a.js",
+  "code": "function _foo() {} _foo()",
+  "options": [
+   {
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  "message": "Function '_foo' is marked as ignored but is used."
+ },
+ {
+  "rule": "eslint/no-unused-vars",
+  "id": "usedIgnoredVar",
+  "file": "a.js",
+  "code": "let _a = 1; console.log(_a)",
+  "options": [
+   {
+    "varsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  "message": "Variable '_a' is marked as ignored but is used."
+ },
+ {
   "rule": "eslint/no-useless-assignment",
   "id": "unnecessaryAssignment",
   "file": "a.js",
@@ -1432,11 +3093,27 @@
  },
  {
   "rule": "eslint/no-useless-backreference",
+  "id": "forward",
+  "file": "a.js",
+  "code": "/\\1(a)/",
+  "options": [],
+  "message": "Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."
+ },
+ {
+  "rule": "eslint/no-useless-backreference",
   "id": "intoNegativeLookaround",
   "file": "a.js",
   "code": "/(?<!(a))b\\1/",
   "options": [],
   "message": "Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."
+ },
+ {
+  "rule": "eslint/no-useless-call",
+  "id": "unnecessaryCall",
+  "file": "a.js",
+  "code": "foo.apply(null, [1, 2]);",
+  "options": [],
+  "message": "Avoid unnecessary use of .apply()"
  },
  {
   "rule": "eslint/no-useless-call",
@@ -1471,6 +3148,22 @@
   "message": "Unnecessarily computed property `0` found."
  },
  {
+  "rule": "eslint/no-useless-constructor",
+  "id": "noUselessConstructor",
+  "file": "a.js",
+  "code": "class A { constructor(){} }",
+  "options": [],
+  "message": "Empty constructors are unnecessary"
+ },
+ {
+  "rule": "eslint/no-useless-constructor",
+  "id": "noUselessConstructor",
+  "file": "a.js",
+  "code": "class A extends B { constructor() { super(); } }",
+  "options": [],
+  "message": "Redundant super call in constructor"
+ },
+ {
   "rule": "eslint/no-useless-escape",
   "id": "unnecessaryEscape",
   "file": "a.js",
@@ -1498,9 +3191,311 @@
   "rule": "eslint/no-warning-comments",
   "id": "unexpectedComment",
   "file": "a.js",
+  "code": "// !!!TODO comment starting with term including punctuation preceded by more",
+  "options": [
+   {
+    "terms": [
+     "!todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected '!todo' comment: !!!TODO comment starting with term..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// !TODO comment starting with term including punctuation",
+  "options": [
+   {
+    "terms": [
+     "!todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected '!todo' comment: !TODO comment starting with term..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "//!XXX comment starting with no spaces (start)",
+  "options": [
+   {
+    "terms": [
+     "!xxx"
+    ],
+    "location": "start"
+   }
+  ],
+  "message": "Unexpected '!xxx' comment: !XXX comment starting with no spaces..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "//**TODO term starts with a decoration character",
+  "options": [
+   {
+    "terms": [
+     "*todo"
+    ],
+    "location": "start",
+    "decoration": [
+     "*"
+    ]
+   }
+  ],
+  "message": "Unexpected '*todo' comment: **TODO term starts with a decoration..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// https://github.com/eslint/eslint/pull/13522#discussion_r470293411 TODO",
+  "options": [
+   {
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: ..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "///*/*/ TODO decorated single-line comment with multiple decoration characters (start) \n /////",
+  "options": [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "start",
+    "decoration": [
+     "*",
+     "/"
+    ]
+   }
+  ],
+  "message": "Unexpected 'todo' comment: /*/*/ TODO decorated single-line comment..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "///// TODO decorated single-line comment with decoration array \n /////",
+  "options": [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "start",
+    "decoration": [
+     "*",
+     "/"
+    ]
+   }
+  ],
+  "message": "Unexpected 'todo' comment: /// TODO decorated single-line comment..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// Comment ending with term followed by punctuation TODO!",
+  "options": [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: Comment ending with term followed by..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// Comment ending with term including punctuation TODO!",
+  "options": [
+   {
+    "terms": [
+     "todo!"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo!' comment: Comment ending with term including..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "/*\nTODO undecorated multi-line block comment (start)\n*/",
+  "options": [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "start"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: TODO undecorated multi-line block..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// TODO: small",
+  "options": [
+   {
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: TODO: small"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// TODO: something really longer than 40 characters",
+  "options": [
+   {
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: TODO: something really longer than 40..."
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// TODO: something small",
+  "options": [
+   {
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'todo' comment: TODO: something small"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// any FIXME",
+  "options": [
+   {
+    "terms": [
+     "fixme"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'fixme' comment: any FIXME"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// any fIxMe",
+  "options": [
+   {
+    "terms": [
+     "fixme"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'fixme' comment: any fIxMe"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// any fixme",
+  "options": [
+   {
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected 'fixme' comment: any fixme"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "/* eslint one-var: 2 */",
+  "options": [
+   {
+    "terms": [
+     "eslint"
+    ]
+   }
+  ],
+  "message": "Unexpected 'eslint' comment: eslint one-var: 2"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
   "code": "// fixme",
   "options": [],
   "message": "Unexpected 'fixme' comment: fixme"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "/* fixme and todo */",
+  "options": [],
+  "message": "Unexpected 'fixme' comment: fixme and todo"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "/* fixme! */",
+  "options": [
+   {
+    "terms": [
+     "fixme"
+    ]
+   }
+  ],
+  "message": "Unexpected 'fixme' comment: fixme!"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// regex [litera|$]",
+  "options": [
+   {
+    "terms": [
+     "[litera|$]"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  "message": "Unexpected '[litera|$]' comment: regex [litera|$]"
+ },
+ {
+  "rule": "eslint/no-warning-comments",
+  "id": "unexpectedComment",
+  "file": "a.js",
+  "code": "// todo! with punctuation at start",
+  "options": [
+   {
+    "terms": [
+     "todo!"
+    ],
+    "location": "start"
+   }
+  ],
+  "message": "Unexpected 'todo!' comment: todo! with punctuation at start"
  },
  {
   "rule": "eslint/no-with",
@@ -1519,6 +3514,22 @@
   "message": "`a` is never reassigned."
  },
  {
+  "rule": "eslint/prefer-destructuring",
+  "id": "preferDestructuring",
+  "file": "a.js",
+  "code": "foo = array[0];",
+  "options": [],
+  "message": "Use Array destructuring."
+ },
+ {
+  "rule": "eslint/prefer-destructuring",
+  "id": "preferDestructuring",
+  "file": "a.js",
+  "code": "foo = object.foo;",
+  "options": [],
+  "message": "Use Object destructuring."
+ },
+ {
   "rule": "eslint/prefer-exponentiation-operator",
   "id": "useExponentiation",
   "file": "a.js",
@@ -1533,6 +3544,22 @@
   "code": "/([0-9]{4})/",
   "options": [],
   "message": "Capture group should be named."
+ },
+ {
+  "rule": "eslint/prefer-numeric-literals",
+  "id": "useLiteral",
+  "file": "a.js",
+  "code": "parseInt('11', 2)",
+  "options": [],
+  "message": "Use binary literals instead of parseInt()."
+ },
+ {
+  "rule": "eslint/prefer-numeric-literals",
+  "id": "useLiteral",
+  "file": "a.js",
+  "code": "5+parseInt('A', 16)",
+  "options": [],
+  "message": "Use hexadecimal literals instead of parseInt()."
  },
  {
   "rule": "eslint/prefer-numeric-literals",
@@ -1683,6 +3710,14 @@
   "message": "This generator function does not have `yield`"
  },
  {
+  "rule": "eslint/sort-imports",
+  "id": "unexpectedSyntaxOrder",
+  "file": "a.js",
+  "code": "import a from 'foo.js';\nimport 'bar.js';",
+  "options": [],
+  "message": "Expected 'None' syntax before 'Single' syntax."
+ },
+ {
   "rule": "eslint/sort-keys",
   "id": "sortKeys",
   "file": "a.js",
@@ -1729,6 +3764,30 @@
    }
   ],
   "message": "Checking for NaN in `case` clause will never match"
+ },
+ {
+  "rule": "eslint/use-isnan",
+  "id": "comparisonWithNaN",
+  "file": "a.js",
+  "code": "1 == NaN",
+  "options": [],
+  "message": "Checking equality with NaN will always return false"
+ },
+ {
+  "rule": "eslint/use-isnan",
+  "id": "comparisonWithNaN",
+  "file": "a.js",
+  "code": "1 != NaN",
+  "options": [],
+  "message": "Checking inequality with NaN will always return true"
+ },
+ {
+  "rule": "eslint/use-isnan",
+  "id": "comparisonWithNaN",
+  "file": "a.js",
+  "code": "\"abc\" < NaN;",
+  "options": [],
+  "message": "Comparison with NaN will always return false"
  },
  {
   "rule": "eslint/use-isnan",
@@ -1806,6 +3865,26 @@
  },
  {
   "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveComment",
+  "file": "a.ts",
+  "code": "// @ts-expect-error",
+  "options": [
+   {
+    "ts-expect-error": true
+   }
+  ],
+  "message": "Do not use @ts-expect-error because it alters compilation errors."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveComment",
+  "file": "a.ts",
+  "code": "// @ts-nocheck",
+  "options": [],
+  "message": "Do not use @ts-nocheck because it alters compilation errors."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
   "id": "tsDirectiveCommentDescriptionNotMatchPattern",
   "file": "a.ts",
   "code": "// @ts-check: TS1234",
@@ -1817,6 +3896,48 @@
    }
   ],
   "message": "The description for the @ts-check directive must match the ^: TS\\d+ because .+$ format."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentDescriptionNotMatchPattern",
+  "file": "a.ts",
+  "code": "// @ts-expect-error: TS1234",
+  "options": [
+   {
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  "message": "The description for the @ts-expect-error directive must match the ^: TS\\d+ because .+$ format."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentDescriptionNotMatchPattern",
+  "file": "a.ts",
+  "code": "// @ts-ignore: TS1234",
+  "options": [
+   {
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  "message": "The description for the @ts-ignore directive must match the ^: TS\\d+ because .+$ format."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentDescriptionNotMatchPattern",
+  "file": "a.ts",
+  "code": "// @ts-nocheck: TS1234",
+  "options": [
+   {
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  "message": "The description for the @ts-nocheck directive must match the ^: TS\\d+ because .+$ format."
  },
  {
   "rule": "typescript/ban-ts-comment",
@@ -1832,11 +3953,64 @@
  },
  {
   "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentRequiresDescription",
+  "file": "a.ts",
+  "code": "// @ts-expect-error",
+  "options": [
+   {
+    "ts-expect-error": "allow-with-description"
+   }
+  ],
+  "message": "Include a description after the @ts-expect-error directive to explain why the @ts-expect-error is necessary. The description must be 3 characters or longer."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentRequiresDescription",
+  "file": "a.ts",
+  "code": "// @ts-ignore",
+  "options": [
+   {
+    "ts-ignore": "allow-with-description"
+   }
+  ],
+  "message": "Include a description after the @ts-ignore directive to explain why the @ts-ignore is necessary. The description must be 3 characters or longer."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
+  "id": "tsDirectiveCommentRequiresDescription",
+  "file": "a.ts",
+  "code": "// @ts-nocheck",
+  "options": [
+   {
+    "ts-nocheck": "allow-with-description"
+   }
+  ],
+  "message": "Include a description after the @ts-nocheck directive to explain why the @ts-nocheck is necessary. The description must be 3 characters or longer."
+ },
+ {
+  "rule": "typescript/ban-ts-comment",
   "id": "tsIgnoreInsteadOfExpectError",
   "file": "a.ts",
   "code": "// @ts-ignore",
   "options": [],
   "message": "Use \"@ts-expect-error\" instead of @ts-ignore, as \"@ts-ignore\" will do nothing if the following line is error-free."
+ },
+ {
+  "rule": "typescript/ban-tslint-comment",
+  "id": "commentDetected",
+  "file": "a.ts",
+  "code": "/* tslint:enable */",
+  "options": [],
+  "message": "tslint comment detected: \"tslint:enable\""
+ },
+ {
+  "rule": "typescript/consistent-return",
+  "id": "missingReturn",
+  "file": "a.ts",
+  "code": "\n        function foo(flag: boolean) {\n          if (flag) {\n            return 1;\n          }\n        }\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Function 'foo' expected a return value."
  },
  {
   "rule": "typescript/consistent-type-assertions",
@@ -1918,6 +4092,95 @@
   "message": "All exports in the declaration are only used as types."
  },
  {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport { A, B, C } from 'foo';\nconst foo: A = B();\nlet bar: C;\n          ",
+  "options": [],
+  "message": "Imports A and C are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport A, { B } from 'foo';\nB();\ntype T = A;\n          ",
+  "options": [],
+  "message": "Imports A are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport A, { B, C, D } from 'foo';\nB();\ntype T = { foo: A; bar: C; baz: D };\n          ",
+  "options": [],
+  "message": "Imports A, C, and D are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport A, { B, C } from 'foo';\ntype T = B;\ntype U = C;\nA();\n          ",
+  "options": [
+   {
+    "fixStyle": "inline-type-imports",
+    "prefer": "type-imports"
+   }
+  ],
+  "message": "Imports B and C are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport A, { /* comment */ B } from 'foo';\ntype T = B;\n          ",
+  "options": [],
+  "message": "Imports B are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport Default, * as Rest from 'module';\nconst a: Default = '';\n          ",
+  "options": [
+   {
+    "prefer": "type-imports"
+   }
+  ],
+  "message": "Imports Default are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport 'foo';\nimport { Foo, Bar } from 'foo';\nfunction test(foo: Foo) {}\n          ",
+  "options": [],
+  "message": "Imports Foo are only used as type."
+ },
+ {
+  "rule": "typescript/consistent-type-imports",
+  "id": "someImportsAreOnlyTypes",
+  "file": "a.ts",
+  "code": "\nimport Default, * as Rest from 'module';\nconst a: Rest.A = '';\n          ",
+  "options": [
+   {
+    "prefer": "type-imports"
+   }
+  ],
+  "message": "Imports Rest are only used as type."
+ },
+ {
+  "rule": "typescript/explicit-member-accessibility",
+  "id": "missingAccessibility",
+  "file": "a.ts",
+  "code": "\nabstract class SomeClass {\n  abstract ['computed-method-name'](): string;\n}\n      ",
+  "options": [
+   {
+    "accessibility": "explicit"
+   }
+  ],
+  "message": "Missing accessibility modifier on method definition computed-method-name."
+ },
+ {
   "rule": "typescript/explicit-module-boundary-types",
   "id": "anyTypedArg",
   "file": "a.ts",
@@ -1996,6 +4259,14 @@
   "message": "Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`."
  },
  {
+  "rule": "typescript/no-confusing-non-null-assertion",
+  "id": "confusingEqual",
+  "file": "a.ts",
+  "code": "a! == b;",
+  "options": [],
+  "message": "Confusing combinations of non-null assertion and equal test like `a! == b`, which looks very similar to not equal `a !== b`."
+ },
+ {
   "rule": "typescript/no-confusing-void-expression",
   "id": "invalidVoidExpr",
   "file": "a.ts",
@@ -2038,6 +4309,131 @@
   ],
   "typed": true,
   "message": "Returning a void expression from a function is forbidden."
+ },
+ {
+  "rule": "typescript/no-deprecated",
+  "id": "deprecatedWithReason",
+  "file": "a.tsx",
+  "code": "\n/** @deprecated Reason. */ const a = { b: 1 };\nconst c = a;\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "`a` is deprecated."
+ },
+ {
+  "rule": "typescript/no-duplicate-enum-values",
+  "id": "duplicateValue",
+  "file": "a.ts",
+  "code": "\nenum E {\n  A = 1,\n  B = 1,\n}\n      ",
+  "options": [],
+  "message": "Duplicate enum value `1`"
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = true & true;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Intersection type constituent is duplicated with  true."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = 'A' | 'A';\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  'A'."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "\ntype A = 'A';\ntype T = A | A;\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  A."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "\ntype IsArray<T> = T extends any[] ? true : false;\ntype ActuallyDuplicated = IsArray<number> | IsArray<string>;\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  IsArray<number>."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = Set<string> | Set<string>;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  Set<string>."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = [1, 2, 3] | [1, 2, 3];\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  [1, 2, 3]."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = any | any;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  any."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = null | null;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  null."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = () => string | string;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  string."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = string[] | string[];\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  string[]."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type T = string[][] | string[][];\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  string[][]."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "class A { constructor(readonly name?: string | undefined | undefined) {} }\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  undefined."
  },
  {
   "rule": "typescript/no-duplicate-type-constituents",
@@ -2325,6 +4721,42 @@
   "message": "Optional chain expressions can return undefined by design: using a non-null assertion is unsafe and wrong."
  },
  {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "literalOverridden",
+  "file": "a.ts",
+  "code": "type T = '' | string;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": " is overridden by string in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "literalOverridden",
+  "file": "a.ts",
+  "code": "type T = true | boolean;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "literal type is overridden by boolean in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "primitiveOverridden",
+  "file": "a.ts",
+  "code": "type T = true & boolean;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "boolean is overridden by the literal type in this intersection type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "primitiveOverridden",
+  "file": "a.ts",
+  "code": "type T = '' & string;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "string is overridden by the  in this intersection type."
+ },
+ {
   "rule": "typescript/no-require-imports",
   "id": "noRequireImports",
   "file": "a.ts",
@@ -2379,6 +4811,15 @@
   "options": [],
   "typed": true,
   "message": "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "noOverlapBooleanExpression",
+  "file": "a.ts",
+  "code": "\nfunction test(value: string) {\n  switch (value) {\n    case undefined:\n      break;\n  }\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "This condition will always return the same value since the types have no overlap."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -2438,12 +4879,84 @@
  },
  {
   "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArgument",
+  "file": "a.ts",
+  "code": "\ntype T = [number, T[]];\ndeclare function foo(t: T): void;\ndeclare const t: T;\nfoo(t as any);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe argument of type any assigned to a parameter of type T."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArgument",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg: number): void;\nfoo(1 as any);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe argument of type any assigned to a parameter of type number."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArgument",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg1: number, arg2: string): void;\nfoo(1, 1 as any);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe argument of type any assigned to a parameter of type string."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArgument",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg: { x: number }): void;\ndeclare const anyValue: any;\nfoo({ ...anyValue });\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe argument of type any assigned to a parameter of type { x: number; }."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArgument",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg: number): void;\nfoo(error);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe argument of type error typed assigned to a parameter of type number."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeArraySpread",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nfoo(...(x as any[]));\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe spread of an any[] array type."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
   "id": "unsafeSpread",
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nfoo(...(x as any));\n      \nexport {};\n",
   "options": [],
   "typed": true,
   "message": "Unsafe spread of an any type."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeTupleSpread",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nconst x = ['a', error] as const;\nfoo(...x);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe spread of a tuple type. The argument is error typed and is assigned to a parameter of type number."
+ },
+ {
+  "rule": "typescript/no-unsafe-argument",
+  "id": "unsafeTupleSpread",
+  "file": "a.ts",
+  "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nconst x = ['a', 1 as any] as const;\nfoo(...x);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe spread of a tuple type. The argument is of type any and is assigned to a parameter of type number."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -2620,12 +5133,93 @@
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeOfAnyTypeAssertion",
+  "file": "a.ts",
+  "code": "\ndeclare const a: [any];\na as [number];\n        \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe assertion from `any` detected."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeToAnyTypeAssertion",
+  "file": "a.ts",
+  "code": "\n'foo' as any;\n        \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe assertion to `any` detected."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeToAnyTypeAssertion",
+  "file": "a.ts",
+  "code": "\nconst bar = 'foo' as errorType;\n        \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unsafe assertion to error typed detected."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
   "id": "unsafeToUnconstrainedTypeAssertion",
   "file": "a.ts",
   "code": "\nfunction unconstrained<T>(x: T, y: string) {\n  y as T;\n}\n        \nexport {};\n",
   "options": [],
   "typed": true,
   "message": "Unsafe type assertion: 'T' could be instantiated with an arbitrary type which could be unrelated to the original type."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessDefaultAssignment",
+  "file": "a.ts",
+  "code": "\n[1, 2, 3].map((a = 42) => a + 1);\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because the parameter has type `number` (not nullish). This default assignment will never be used."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessDefaultAssignment",
+  "file": "a.ts",
+  "code": "\ninterface B {\n  foo: (b: boolean | string) => void;\n}\n\nconst h: B = {\n  foo: (b = false) => {},\n};\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because the parameter is not nullish. This default assignment will never be used."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessDefaultAssignment",
+  "file": "a.ts",
+  "code": "\nfunction Bar({ foo = '' }: { foo: string }) {\n  return foo;\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because the property has type `string` (not nullish). This default assignment will never be used."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessDefaultAssignment",
+  "file": "a.ts",
+  "code": "\nconst { a = 'baz' } = cond ? { a() {} } : { a: 'bar' };\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because the property is not nullish. This default assignment will never be used."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessUndefined",
+  "file": "a.ts",
+  "code": "\nfunction foo(a = undefined) {}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because it is undefined. Optional parameters are already undefined by default."
+ },
+ {
+  "rule": "typescript/no-useless-default-assignment",
+  "id": "uselessUndefined",
+  "file": "a.ts",
+  "code": "\nconst [a = undefined] = [];\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Default value is useless because it is undefined. Optional properties are already undefined by default."
  },
  {
   "rule": "typescript/no-useless-empty-export",
@@ -2924,6 +5518,29 @@
  },
  {
   "rule": "typescript/strict-boolean-expressions",
+  "id": "conditionErrorObject",
+  "file": "a.ts",
+  "code": "[] || 1;\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Unexpected object value in conditional. An object is always truthy."
+ },
+ {
+  "rule": "typescript/strict-boolean-expressions",
+  "id": "conditionErrorOther",
+  "file": "a.ts",
+  "code": "(x: bigint | string) => !x;\nexport {};\n",
+  "options": [
+   {
+    "allowNumber": true,
+    "allowString": true
+   }
+  ],
+  "typed": true,
+  "message": "Unexpected value in conditional. A union of different types has inconsistent truthiness."
+ },
+ {
+  "rule": "typescript/strict-boolean-expressions",
   "id": "conditionErrorString",
   "file": "a.ts",
   "code": "while ('') {}\nexport {};\n",
@@ -2934,6 +5551,69 @@
   ],
   "typed": true,
   "message": "Unexpected string value in conditional. A string can be falsy (empty string) or truthy."
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\n        enum Enum {\n          'a' = 1,\n          \"'a' `b` \\\"c\\\"\" = 2,\n        }\n\n        declare const a: Enum;\n\n        switch (a) {}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: Enum.a | (typeof Enum)[\"'a' `b` \\\"c\\\"\"]"
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\nenum Enum {\n  zebra = 'z',\n  apple = 'a',\n}\ndeclare const value: Enum;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: Enum.zebra | Enum.apple"
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\nenum Status {\n  Pending = 2,\n  Active = 0,\n  Done = 1,\n}\ndeclare const value: Status;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: Status.Pending | Status.Active | Status.Done"
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\nenum Zebra {\n  same = 'zebra',\n  zLast = 'zLast',\n}\nenum Apple {\n  same = 'apple',\n  aLast = 'aLast',\n}\ndeclare const value: Zebra | Apple;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: Zebra.same | Zebra.zLast | Apple.same | Apple.aLast"
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\ndeclare const value: 'c' | 'a' | 'B' | null | undefined;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: undefined | null | \"B\" | \"a\" | \"c\""
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\nenum Enum {\n  b = 'b',\n  a = 'a',\n}\ndeclare const value: 'x' | 10 | 2n | true | Enum | null | undefined;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: undefined | null | \"x\" | 10 | 2n | true | Enum.b | Enum.a"
+ },
+ {
+  "rule": "typescript/switch-exhaustiveness-check",
+  "id": "switchIsNotExhaustive",
+  "file": "a.ts",
+  "code": "\ndeclare const value: 10 | 2 | 1 | 20 | 100;\nswitch (value) {\n}\n      \nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Switch is not exhaustive. Cases not matched: 1 | 2 | 10 | 20 | 100"
  },
  {
   "rule": "typescript/unbound-method",
@@ -2952,6 +5632,30 @@
   "options": [],
   "typed": true,
   "message": "Avoid referencing unbound methods which may cause unintentional scoping of `this`."
+ },
+ {
+  "rule": "typescript/unified-signatures",
+  "id": "allParametersAreSame",
+  "file": "a.ts",
+  "code": "\ndeclare function f(a: number): void;\ndeclare function f(a: number): void;\ndeclare function f(a: string): string;\n      ",
+  "options": [],
+  "message": "This overload can be combined with another overload into one signature with identical parameters."
+ },
+ {
+  "rule": "typescript/unified-signatures",
+  "id": "omittingSingleParameter",
+  "file": "a.ts",
+  "code": "\ninterface I {\n  a0(): void;\n  a0(x: string): string;\n  a0(x: number): void;\n}\n      ",
+  "options": [],
+  "message": "This overload can be combined with another overload into one signature with an optional parameter."
+ },
+ {
+  "rule": "typescript/unified-signatures",
+  "id": "singleParameterDifference",
+  "file": "a.ts",
+  "code": "\ninterface I {\n  f(x: string | number): void;\n  f(x: number | boolean): void;\n  f(x: symbol): string;\n}\n      ",
+  "options": [],
+  "message": "This overload can be combined with another overload into one signature taking `string | number | boolean`."
  },
  {
   "rule": "typescript/use-unknown-in-catch-callback-variable",

@@ -34,8 +34,11 @@ impl NoInnerDeclarations {
     fn check_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (kind, keyword) = match statement.kind() {
             StmtKind::Fn(func) if func.has_body() => {
-                let is_strict = func.scope().and_then(Scope::parent).is_some_and(Scope::is_strict);
-                if !self.is_both && self.has_options && self.allows_block_scoped_functions && is_strict {
+                let is_strict = || {
+                    let around = func.scope().and_then(Scope::parent);
+                    around.is_some_and(|it| utils::oxlint::is_strict_mode(it, cx.file()))
+                };
+                if !self.is_both && self.has_options && self.allows_block_scoped_functions && is_strict() {
                     return;
                 }
                 ("function", "function")

@@ -49,7 +49,7 @@ const INDENTABLE: u8 = 1 << 2;
 const TYPE_CAST: u8 = 1 << 3;
 /// Prettier's `isTypeCastComment`, which is asked of the comment alone.
 const LOOKS_LIKE_TYPE_CAST: u8 = 1 << 4;
-/// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
+/// See [`Flavor::is_ignore_comment`].
 const SUPPRESSION: u8 = 1 << 5;
 /// It is between the two sides of a declarator or an assignment and trails the left one.
 const TRAILS_LEFT_SIDE: u8 = 1 << 6;
@@ -170,7 +170,7 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
                 LOOKS_LIKE_TYPE_CAST
             };
         }
-        if matches!(content.trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore") {
+        if flavor.is_ignore_comment(content.trim_ascii()) {
             flags |= SUPPRESSION;
         }
         // Prettier's `mergeNestledJsdocComments`. JSDoc has a form in which several `/** .. */` directly
@@ -1314,7 +1314,7 @@ impl<'a> Comments<'a> {
             )
     }
 
-    /// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
+    /// See [`Flavor::is_ignore_comment`].
     #[inline]
     pub(crate) fn is_suppression_comment(&self, comment: &Comment) -> bool {
         comment.flags & SUPPRESSION != 0

@@ -470,6 +470,12 @@ impl Flavor {
     pub const fn is_oxfmt(self) -> bool {
         matches!(self, Flavor::Oxfmt)
     }
+
+    /// Whether a comment with nothing but `text` in it says that what follows stays as it is written. oxfmt knows
+    /// Prettier's comment too, Prettier only its own.
+    pub fn is_ignore_comment(self, text: &[u8]) -> bool {
+        text == b"prettier-ignore" || (text == b"oxfmt-ignore" && self.is_oxfmt())
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]

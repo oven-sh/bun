@@ -1282,6 +1282,17 @@ impl<'l> Loader<'l> {
         }
     }
 
+    /// Whether the run stands in for oxlint, where the configuration of the working directory cannot be read.
+    pub(crate) fn is_for_oxlint(&self) -> bool {
+        let is_json = |it: &Vec<u8>| it.ends_with(b".json") || it.ends_with(b".jsonc");
+        let is_there =
+            |it: &Vec<u8>| fs::is_file(&paths::resolve(self.cwd(), &paths::from_native(it)));
+        match &self.options.config {
+            Some(path) if is_there(path) => is_json(path) && !self.is_command_line_of_eslint_8(),
+            _ => self.tool() == Some(Flavor::Oxlint),
+        }
+    }
+
     /// Whether a directory called `name`, which `loaded` ignores, can have a configuration file in it that counts. Nothing
     /// of a project is in the directories of Git and Jujutsu.
     pub(crate) fn looks_for_configurations_in(&self, loaded: &Loaded, name: &[u8]) -> bool {

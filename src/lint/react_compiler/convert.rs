@@ -290,8 +290,9 @@ impl<'a> Converter<'a, '_> {
         if let Some(known) = self.by_symbol.get(&symbol.key()) {
             return *known;
         }
-        let is_outside = !self.root.contains(symbol.scope().span());
         let declaration = symbol.declarations().next();
+        let is_outside = !self.root.contains(symbol.scope().span())
+            || matches!(declaration, Some(Declaration::Fn(func)) if self.is_without_its_name(func));
         let name = StoreStr::new(symbol.name().bytes());
         let import = match declaration {
             Some(Declaration::ImportDefault(import)) => Some(VariableBinding::ImportDefault {
@@ -403,9 +404,16 @@ impl<'a> Converter<'a, '_> {
     fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
         let mut binding = self.binding(param.pat())?;
         let default = self.default(param.default())?;
-        if self.flavor == Flavor::Oxlint && !param.is_rest() && is_assigned_pattern(param.pat()) {
-            // oxc's lowering takes a parameter apart as a declaration does, which can have a variable
-            // that a function in it assigns.
+        // oxc's lowering takes a parameter apart as a declaration does, which can have a variable that a
+        // function in it assigns. Upstream's does that for the `...rest` of an object, Bun's for nothing.
+        let is_taken_apart_in_body = match (self.flavor, param.pat().kind()) {
+            (Flavor::Oxlint, PatKind::Object(_) | PatKind::Array(_)) => is_assigned(param.pat()),
+            (Flavor::Eslint, PatKind::Object(props)) => props
+                .iter()
+                .all(|it| it.is_rest() || !is_assigned(it.value())),
+            _ => false,
+        };
+        if is_taken_apart_in_body && !param.is_rest() && is_assigned(param.pat()) {
             binding = self.declared_in_body(binding, SymbolKind::Hoisted, first);
         }
         Ok(G::Arg {
@@ -462,6 +470,14 @@ impl<'a> Converter<'a, '_> {
         Ok((G::FnBody { loc, stmts }, is_expression))
     }
 
+    /// Upstream's compiler fails on a function expression that refers to itself by its name. oxc's does not: the
+    /// name is as good as one from outside.
+    fn is_without_its_name(&self, func: Func<'a>) -> bool {
+        self.flavor == Flavor::Oxlint
+            && func.kind() == FnKind::Expr
+            && func.estree_span() != self.root
+    }
+
     /// Calls `then`, which converts a function, one level further down.
     fn in_function<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
         self.functions += 1;
@@ -482,6 +498,7 @@ impl<'a> Converter<'a, '_> {
         self.in_function(|this| {
             let loc = this.loc(func.estree_span())?;
             let name = match func.name() {
+                Some(_) if this.is_without_its_name(func) => None,
                 Some(name) => Some(LocRef {
                     loc: this.loc(name.span())?,
                     ref_: this.declared(func.symbol(), name.name()),
@@ -1013,14 +1030,16 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            ExprKind::Assign { op, target, value } => JsExpr::init(
-                E::Binary {
-                    left: self.expr(target)?,
-                    right: self.expr(value)?,
-                    op: assign_op(op),
-                },
-                loc,
-            ),
+            ExprKind::Assign { op, target, value } => {
+                let recorded = self.recorded.len();
+                let (left, right) = (self.expr(target)?, self.expr(value)?);
+                // No lowering has these, and none looks into them.
+                if matches!(op, Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {
+                    self.recorded.truncate(recorded);
+                }
+                let op = assign_op(op);
+                JsExpr::init(E::Binary { left, right, op }, loc)
+            }
             ExprKind::Cond { test, yes, no } => JsExpr::init(
                 E::If {
                     test: self.expr(test)?,
@@ -1525,16 +1544,14 @@ impl<'a> Converter<'a, '_> {
     }
 }
 
-/// An object or an array pattern with a variable that is assigned somewhere.
-fn is_assigned_pattern(pat: Pat<'_>) -> bool {
+/// A pattern with a variable that is assigned somewhere.
+fn is_assigned(pat: Pat<'_>) -> bool {
     let mut is_assigned = false;
-    if matches!(pat.kind(), PatKind::Object(_) | PatKind::Array(_)) {
-        pat.for_each_binding(&mut |name| {
-            is_assigned |= (name.symbol().into_iter())
-                .flat_map(Symbol::references)
-                .any(|it| it.is_write() && !it.is_init());
-        });
-    }
+    pat.for_each_binding(&mut |name| {
+        is_assigned |= (name.symbol().into_iter())
+            .flat_map(Symbol::references)
+            .any(|it| it.is_write() && !it.is_init());
+    });
     is_assigned
 }
 

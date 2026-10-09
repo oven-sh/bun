@@ -5,7 +5,7 @@
 //! Only with `Options::recovers`. Without it the first error ends the file, or the speculative parse
 //! that is going on: a text without errors pays one test of a flag at each list.
 
-use super::Parser;
+use super::{Parser, ctx};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -218,8 +218,18 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn take_errors_of_scanner_slowly(&mut self) {
-        for error in std::mem::take(&mut self.lx.errors) {
+        for error in self.lx.take_errors() {
             self.add_error(error);
+        }
+    }
+
+    /// The token, a word with an escape, is taken as a name: as a keyword it would be an error.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forget_escaped_keyword(&mut self) {
+        let at = self.lx.start;
+        if self.recovers && !self.lx.forget_escaped_keyword() {
+            (self.f.diagnostics).retain(|it| it.code != 1260 || it.start != at);
         }
     }
 
@@ -472,6 +482,19 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn skip_to_element(&mut self, kind: ListKind) -> bool {
+        if kind == ListKind::SourceElements {
+            // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is, and
+            // goes to the next token if that has consumed nothing.
+            if self.reparses_rest_of_file {
+                if self.lx.start == self.reparsed_at {
+                    self.next();
+                }
+                self.reparsed_at = self.lx.start;
+                return self.token() != T::Eof;
+            }
+            self.has_await_in_statement = false;
+            self.was_await_refused = false;
+        }
         loop {
             match self.list_step(kind) {
                 ListStep::Element => return true,
@@ -549,11 +572,32 @@ impl Parser<'_> {
 
     /// `isInSomeParsingContext`
     fn is_in_some_parsing_context(&mut self) -> bool {
-        let open = self.lists;
-        ALL_LISTS.iter().any(|&kind| {
+        let mut open = self.lists;
+        // `reparseTopLevelAwait` parses a statement of the file that has an `await` again, and no
+        // list of statements is open then.
+        if self.token() == T::Await
+            && self.has_context(ctx::TOP_LEVEL)
+            && self.has_context(ctx::AWAIT)
+        {
+            self.note_await();
+            self.was_await_refused = true;
+        }
+        if self.has_await_in_statement {
+            open &= !(1 << ListKind::SourceElements as u32);
+        }
+        let is_in_some = ALL_LISTS.iter().any(|&kind| {
             open & 1 << kind as u32 != 0
                 && (self.is_list_element(kind, true) || self.is_list_terminator(kind))
-        })
+        });
+        // The first parse has ended its statement at this token.
+        if !is_in_some
+            && open != self.lists
+            && !self.was_await_refused
+            && self.is_list_element(ListKind::SourceElements, true)
+        {
+            self.reparses_rest_of_file = true;
+        }
+        is_in_some
     }
 
     /// `IsKeyword`

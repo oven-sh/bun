@@ -3,7 +3,7 @@
 //! task that encounters it (`OwnStore`), and the merge at the barrier publishes it.
 
 use crate::local::LOCAL;
-use crate::session::{ArenaBox, Session};
+use crate::session::Session;
 use crate::types::OwnStore;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
@@ -56,15 +56,27 @@ pub fn next_interner_number() -> u64 {
     NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-type Texts<'s> = AppendVec<ArenaBox<'s, [u8]>, &'s Session>;
+type Texts = AppendVec<Box<[u8]>>;
 
+#[derive(Copy, Clone)]
 pub struct Interner<'s> {
-    /// A text is in the arena of the thread that first interns it.
     session: &'s Session,
-    shards: Box<[GrowingPlaces<&'s Session>; SHARDS], &'s Session>,
-    texts: Texts<'s>,
+    tables: &'s Tables,
+}
+
+/// On the regular heap, and without a lifetime: they are written through a shared reference, so a lifetime in them
+/// would make an `Interner<'s>` invariant in `'s`, and it is covariant (`shortened`). The session has them
+/// (`Session::keep`): nothing drops what a program refers to.
+struct Tables {
+    shards: Box<[GrowingPlaces; SHARDS]>,
+    texts: Texts,
     /// Sequence number of this interner among all that have been created.
     number: u64,
+}
+
+/// It compiles because an `Interner<'s>` is covariant in `'s`: one that outlives a program is an interner of the program.
+pub fn shortened<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
+    atoms
 }
 
 macro_rules! known_atoms {
@@ -404,7 +416,7 @@ impl crate::table::Id for Atom {
     }
 }
 
-/// An `Interner` for those who cannot name the lifetime of its session, in which it is invariant.
+/// An `Interner` for those who cannot name the lifetime of its session.
 pub trait Intern: Sync {
     fn intern(&self, text: &[u8]) -> Atom;
     /// The atom of `text` if it has one. Nothing is entered. For the interner of one file: if it is
@@ -515,13 +527,12 @@ impl Intern for InternerPerThread<'_> {
 
 impl<'s> Interner<'s> {
     pub fn new_in(session: &'s Session) -> Self {
-        let shards = std::array::from_fn(|_| GrowingPlaces::new_in(session));
-        let this = Interner {
-            session,
-            shards: Box::new_in(shards, session),
-            texts: AppendVec::new_in(session),
+        let tables = session.keep(Tables {
+            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            texts: AppendVec::new(),
             number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        };
+        });
+        let this = Interner { session, tables };
         for (i, text) in known::TEXTS.iter().enumerate() {
             let atom = this.intern(text.as_bytes());
             assert_eq!(atom.0 as usize, i);
@@ -537,8 +548,8 @@ impl<'s> Interner<'s> {
     }
 
     /// For the merge at the barrier.
-    pub(crate) fn halves(&self) -> (&[GrowingPlaces<&'s Session>], &Texts<'s>) {
-        (&self.shards[..], &self.texts)
+    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts) {
+        (&self.tables.shards[..], &self.tables.texts)
     }
 
     pub fn session(&self) -> &'s Session {
@@ -549,7 +560,7 @@ impl<'s> Interner<'s> {
     /// interner is invalid for another.
     #[inline]
     pub fn number(&self) -> u64 {
-        self.number
+        self.tables.number
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
@@ -560,8 +571,8 @@ impl<'s> Interner<'s> {
         let spread = spread_hash(&(start, end));
         RECENT.with_borrow_mut(|recent| {
             // Nothing in this scope re-enters it.
-            if recent.of != self.number {
-                recent.of = self.number;
+            if recent.of != self.tables.number {
+                recent.of = self.tables.number;
                 match recent.entries.is_empty() {
                     true => recent.entries = vec![Recent::NOTHING; 1 << Recent::BITS],
                     false => recent.entries.fill(Recent::NOTHING),
@@ -582,32 +593,30 @@ impl<'s> Interner<'s> {
     }
 
     fn intern_shared(&self, spread: u64, text: &[u8]) -> Atom {
-        let shard = &self.shards[shard_of(spread)];
-        if let Some(atom) = shard.find(spread, |i| &**self.texts.get(i) == text) {
+        let Tables { shards, texts, .. } = self.tables;
+        let shard = &shards[shard_of(spread)];
+        if let Some(atom) = shard.find(spread, |i| &**texts.get(i) == text) {
             return Atom(atom);
         }
         Atom(shard.find_or_add(
             spread,
-            |i| &**self.texts.get(i) == text,
-            || {
-                let text = ArenaBox::copy_from_slice_in(text, self.session.arena());
-                self.texts.push(text)
-            },
+            |i| &**texts.get(i) == text,
+            || texts.push(text.into()),
         ))
     }
 
     /// The atom of `text`, if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
-        self.shards[shard_of(spread)]
-            .find(spread, |i| &**self.texts.get(i) == text)
+        self.tables.shards[shard_of(spread)]
+            .find(spread, |i| &**self.tables.texts.get(i) == text)
             .map(Atom)
     }
 
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &[u8] {
         debug_assert!(!atom.is_own(), "only `Atoms` knows a task's own");
-        self.texts.get(atom.0)
+        self.tables.texts.get(atom.0)
     }
 
     /// The name of the property `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given
@@ -644,8 +653,8 @@ impl<'p, 's> Atoms<'p, 's> {
 
     #[inline]
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
-        let texts = &self.published.texts;
-        (self.published.shards[shard_of(spread)])
+        let texts = &self.published.tables.texts;
+        (self.published.tables.shards[shard_of(spread)])
             .find_frozen(spread, |i| &**texts.get(i) == text)
             .map(Atom)
     }

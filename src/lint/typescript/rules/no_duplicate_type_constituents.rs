@@ -511,8 +511,11 @@ impl<'a> Constituents<'a> {
             report(cx, DUPLICATE, constituent_node, Some((union_or_intersection, previous)));
         };
 
-        // The syntax is compared first, which is cheaper than to ask for the type.
-        if let Some(previous) = self.find_same_ast_node(constituent_node) {
+        // The syntax is compared first, which is cheaper than to ask for the type. tsgolint 7.0 only compares the
+        // types: `{ a: 1 } | { a: 1 }` are two.
+        if !cx.language().is_oxlint
+            && let Some(previous) = self.find_same_ast_node(constituent_node)
+        {
             report_duplicate(previous);
             return;
         }

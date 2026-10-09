@@ -45,8 +45,12 @@ fn parent_type(ty: TypeNode<'_>) -> Option<TypeNode<'_>> {
     }
 }
 
-/// typescript-eslint's `isNodeDescendantOfRestElementInFunction`.
+/// typescript-eslint's `isNodeDescendantOfRestElementInFunction`. For oxlint it can be anywhere in the type of a rest
+/// parameter.
 fn is_descendant_of_rest_element_in_function(any: TypeNode) -> bool {
+    if any.file().language().is_oxlint {
+        return Node::Type(any).ancestors().any(|it| matches!(it, Node::Param(param) if param.is_rest()));
+    }
     if let Node::Type(reference) = any.parent()
         && let TypeKind::Ref { name, .. } = reference.kind()
     {

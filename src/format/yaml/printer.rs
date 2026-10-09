@@ -262,12 +262,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             },
             _ => node.leading_comments,
         };
-        comments.last().is_some_and(|comment| {
-            matches!(
-                text::trim(self.node(comment).value),
-                b"prettier-ignore" | b"oxfmt-ignore"
-            )
-        })
+        comments
+            .last()
+            .is_some_and(|comment| match text::trim(self.node(comment).value) {
+                b"prettier-ignore" => true,
+                b"oxfmt-ignore" => self.is_oxfmt,
+                _ => false,
+            })
     }
 
     /// What `print` does with most nodes: a scalar on one line or an alias, or the key or value that is nothing else.
@@ -1189,14 +1190,20 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if is_single_line_key
             && key_has_no_comments
             && has_no_comments_before_or_in(value_content)
-            && value.end_comments.is_empty()
+            // For oxfmt the comments behind a value do not matter to where it is.
+            && (value.end_comments.is_empty() || self.is_oxfmt)
             && self.is_absolutely_printed_as_single_line(value_content)
             && self.is_absolutely_printed_as_single_line(key_content)
         {
             self.print(key_id, is_last_descendant);
             self.out.text(space_before_colon);
             self.out.token(": ");
-            return self.print(value_id, is_last_descendant);
+            if value.end_comments.is_empty() {
+                return self.print(value_id, is_last_descendant);
+            }
+            self.start_align(self.tab_width);
+            self.print(value_id, is_last_descendant);
+            return self.out.end_indent();
         }
 
         // Everything from the colon on is taken for the value: what is between the colon and the value.

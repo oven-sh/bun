@@ -324,6 +324,10 @@ pub(crate) fn is_indented_code(text: &[u8], tree: &Tree, code: NodeId) -> bool {
     let Some(node) = tree.get(code).filter(|node| node.kind == Kind::Code) else {
         return false;
     };
+    // oxfmt knows.
+    if node.number == 1 {
+        return true;
+    }
     let source = text
         .get(node.start as usize..node.end as usize)
         .unwrap_or_default();
@@ -342,6 +346,7 @@ pub(crate) struct Preprocessor<'x> {
     /// Lines are wrapped: `proseWrap: "always"`.
     pub(crate) wraps_lines: bool,
     pub(crate) is_mdx: bool,
+    pub(crate) is_for_oxfmt: bool,
     pub(crate) tree: &'x mut Tree,
     pub(crate) tab_width: usize,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -502,6 +507,16 @@ impl Preprocessor<'_> {
             .tree
             .get(first)
             .map_or(super::ast::NONE, |item| item.next);
+        // oxfmt: blanks behind the marker of an item that starts with indented code would be code.
+        if self.is_for_oxfmt {
+            let mut item = first;
+            while let Some(node) = self.tree.get(item) {
+                if is_indented_code(self.original, self.tree, node.first_child) {
+                    return false;
+                }
+                item = node.next;
+            }
+        }
         if ordered_item_info(self.original, self.tree, first).1 > 1 {
             return true;
         }
@@ -513,7 +528,9 @@ impl Preprocessor<'_> {
             // is a line break.
             let start = match child.start.checked_sub(1) {
                 Some(before)
-                    if item.checked != 0 && self.original.get(before as usize) == Some(&b'\n') =>
+                    if item.checked != 0
+                        && !self.is_for_oxfmt
+                        && self.original.get(before as usize) == Some(&b'\n') =>
                 {
                     return Some((before - self.tree.line_start(before)) as usize + 1);
                 }

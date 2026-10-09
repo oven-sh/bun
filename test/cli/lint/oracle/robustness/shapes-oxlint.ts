@@ -560,6 +560,15 @@ export function wide(n: number): Record<string, string> {
     "ox-import-commonjs-exports.js": () => seq(n, i => `exports.a${i} = 1;\nmodule.exports.b${i} = 2;\n`),
     "ox-import-module-exports.js": () => rep("module.exports = {};\n", n),
     "ox-import-attributes.js": () => seq(n, i => `import a${i} from "./m${i}.json" with { type: "json" };\n`),
+    // Scripts: without `import` and `export`.
+    "ox-script-declarations.js": () => seq(n, i => `var a${i} = 1;\nfunction b${i}() {}\nc${i} = 1;\n`),
+    "ox-script-same-names.js": () => rep("var a;\n", n) + rep("a = 1; b = 1; [c = 1] = [];\n", n),
+    "ox-script-functions-in-blocks.js": () =>
+      seq(n, i => `{ function a${i}() {} }\na${i} = 1;\n{ function b() {} function b() {} }\nb = 1;\n`),
+    "ox-script-functions-in-blocks-of-functions.js": () =>
+      seq(n, i => `function a${i}() { { function b() {} } b = 1; }\n`) + rep("b = 1;\n", n),
+    "ox-script-vars-in-catches.js": () => rep("try {} catch (e) { var e; }\n", n) + rep("var e;\n", n),
+    "ox-script-this-eval.js": () => rep('(function () { this.eval("a"); })();\nthis.eval("b");\n', n),
     "ox-export-consts.js": () => seq(n, i => `export const a${i} = 1;\n`),
     "ox-export-lets.js": () => seq(n, i => `export let a${i} = 1;\nexport var b${i} = 1;\n`),
     "ox-export-functions.js": () => seq(n, i => `export function a${i}() {}\nexport class B${i} {}\n`),
@@ -1624,6 +1633,14 @@ export function deep(n: number): Record<string, string> {
     "ox-deep-under-tries.js": () => under("try {\n", "try { a(); } catch (b) { c(b); }\n", "} catch (d) {}\n"),
     "ox-deep-under-catches.js": () =>
       under("try { z(); } catch (error) {\n", "try { a(); } catch (b) { c(b); }\n", "}\n"),
+    "ox-deep-script-under-blocks.js": () =>
+      "try {} catch (e) {\n{ function f() {} }\n" + under("{\n", "var e; a = 1; f = 1;\n", "}\n") + "}\n",
+    "ox-deep-script-under-catches.js": () =>
+      "try {} catch (f) {\n" + under("try {} catch (e) {\n", "var f;\n", "}\n") + "}\n",
+    "ox-deep-script-under-functions.js": () =>
+      "{ function f() {} }\n" + under("(function () {\n", 'a = 1; f = 1; this.eval("b");\n', "})();\n"),
+    "ox-deep-script-functions-in-blocks.js": () =>
+      nest('function a() {\n{ function b() {} }\nb = 1; c = 1; this.eval("d");\n', "", "}\n"),
     "ox-deep-under-classes.js": () => under("class A { m() {\n", "class B { static c = 1; }\nthis.d;\n", "} }\n"),
     "ox-deep-under-awaits.mjs": () => under("a(async () => {\n", "(await b).c; d.then(e => e);\n", "});\n"),
     "ox-deep-under-blocks-top-level.mjs": () => under("{\n", "a.then(b => b); (async () => {})();\n", "}\n"),

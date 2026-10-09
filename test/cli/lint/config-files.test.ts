@@ -36,6 +36,8 @@ async function lint(files: Record<string, string>, args: string[] = ["."], optio
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   type Result = { filePath: string; messages: { ruleId: string | null; line?: number; column?: number }[] };
   const results: Result[] = stdout.startsWith('{"results":') ? JSON.parse(stdout).results : [];
   const problems = results.flatMap(({ filePath, messages }) => {
@@ -599,6 +601,21 @@ describe.concurrent("an .oxlintrc.json", () => {
       "a.js:2:1 no-debugger",
     ]);
     expect((await lint({ ...files, ".oxlintrc.json": JSON.stringify(config) })).problems).toEqual([]);
+    // Also one that only oxlint takes for a directive: ESLint wants `eslint-enable` in a block comment.
+    const enables = { "a.js": "// eslint-enable\n// oxlint-enable\n", ".oxlintrc.json": JSON.stringify(off) };
+    expect((await lint(enables, [".", "--report-unused-disable-directives"])).problems).toEqual(["a.js:2:3 -"]);
+  });
+
+  test("a comment that disables a rule which does not run on the file is unused, as for oxlint", async () => {
+    const { problems } = await lint(
+      {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "error" } }),
+        "a.vue": "<script>\n// eslint-disable-next-line no-unused-vars\nconst a = 1;\n</script>\n",
+        "a.js": "// eslint-disable-next-line no-unused-vars\nconst a = 1;\n",
+      },
+      [".", "--report-unused-disable-directives"],
+    );
+    expect(problems).toEqual(["a.vue:2:1 -"]);
   });
 
   test("the rules that a category turns on and that do not exist here are named, in a warning", async () => {
@@ -1078,6 +1095,15 @@ describe.concurrent("the command line of oxlint", () => {
     expect(forEslint.exitCode).toBe(2);
   });
 
+  test("so does a run that is oxlint's by --config, by the package.json or by a flag", async () => {
+    const broken = { "broken.json": "{", "a.js": code };
+    expect((await lint(broken, ["-c", "broken.json"])).exitCode).toBe(1);
+    const files = { "package.json": JSON.stringify({ devDependencies: { oxlint: "*" } }), "a.js": code };
+    expect((await lint(files, ["--type-check"])).exitCode).toBe(1);
+    expect((await lint({ "a.js": code }, ["-D", "no-var", "--type-check"])).exitCode).toBe(1);
+    expect((await lint({ "a.js": code }, ["--type-check"])).exitCode).toBe(2);
+  });
+
   test("a configuration that cannot be used ends the run with 1", async () => {
     const { exitCode } = await lint({ ".oxlintrc.json": "{", "a.js": code });
     expect(exitCode).toBe(1);
@@ -1278,6 +1304,23 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect(stderr).toContain("warn: 2 rules of ESLint did not run: no-such-rule, no-other-rule");
     expect(exitCode).toBe(1);
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
+  });
+
+  test("a rule that only a comment turns on, of a plugin that is not loaded", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        plugins: { p: { rules: { r: { create: context => ({ Program: node => context.report({ node, message: "m" }) }) } } } },
+        rules: { "no-var": "error" },
+      }];`,
+      "a.js": `/* eslint p/r: "error" */\n${code}`,
+      "b.js": `/* eslint p/r: "off" */\n// eslint-disable-next-line p/r\n${code}`,
+    };
+    const { problems, stderr, exitCode } = await lint(files, ["a.js", "b.js"]);
+    expect(problems).toEqual(["a.js:2:1 no-var", "b.js:3:1 no-var"]);
+    expect(stderr).toContain("1 rule that a comment turns on did not run");
+    expect(stderr).toContain(": p/r\n");
+    expect(exitCode).toBe(2);
+    expect((await lint(files, ["b.js"])).exitCode).toBe(1);
   });
 
   test("files in a language that is not read here", async () => {

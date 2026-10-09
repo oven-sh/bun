@@ -188,7 +188,7 @@ The algorithm is oxc's, not Prettier's: comments are not attached to nodes up fr
 - `impl Format for <handle>` prints leading comments (all unprinted ones before `span.start`), the node, then trailing comments: `Comments::get_trailing_comments(enclosing_span, preceding_span, following_span_start)` decides how many of the next comments belong to this node and not to the next sibling. The parent's span and the next sibling come from `AstNodes::parent()` and `siblings.rs`, and are only computed if there is a comment nearby.
 - Dangling comments (`{ /* here */ }`) are printed by the function that writes the node: `format_dangling_comments(span).with_block_indent()`.
 - `FormatNodeWithoutTrailingComments(&x)` leaves the comments after `x` to the caller.
-- `// prettier-ignore` and `// oxfmt-ignore`: `f.comments().is_suppressed(span.start)` → `FormatSuppressedNode(span)` prints the source text.
+- `// prettier-ignore`, and in the flavor of oxfmt `// oxfmt-ignore` (`Flavor::is_ignore_comment`, for every language): `f.comments().is_suppressed(span.start)` → `FormatSuppressedNode(span)` prints the source text.
 - Where Prettier attaches a comment to a node that it is not next to (`handleMemberExpressionComments`, a comment before the `(` of a signature), `comments::collect` ends with `move_comments`: the comment gets a position that it counts as being at, `Comment::start()`/`end()` (zero width, `is_moved()`), and the list is sorted by that. `comment.span` stays where the text is. All queries of `Comments` go by `start()`/`end()`. A moved comment at the very end of a node is behind it: `comments_before_end_of(span)`.
 - `/** @type {T} */ (e)`: `utils/typecast.rs` keeps the parentheses.
 
@@ -250,17 +250,19 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 
 `f.options().flavor.is_oxfmt()`: whoever has an `.oxfmtrc.json` gets what oxfmt prints where that is not what Prettier 3.9.9 prints, so that switching gives no diff. oxfmt follows Prettier 3.8 in those places, or has a rule of its own. Each is behind a function next to its use that is named after the behaviour (`union_breaks_one_per_line(f)`), to be deleted when oxfmt catches up. The default flavor must not change because of one.
 
-## `sortTailwindcss`
+## `sortTailwindcss` and `prettier-plugin-tailwindcss`
 
-oxfmt's option: the classes of Tailwind CSS in a text are put in the order of their rules.
+oxfmt's option, and the plugin of Prettier that it is made of: the classes of Tailwind CSS in a text are put in the order of their rules. `Tailwind::follows_plugin` says which of the two it is. They differ in programs only.
 
 - **One function**: `tailwind.rs::Tailwind::sorted_between` is `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which everything in oxfmt ends in. A language only says where a text with classes is, and what is at its ends (`Ends`).
 - **The order** is known to the Tailwind of the project alone, which is JavaScript. The formatter asks `Orders` for the ranks of a list of classes. The driver implements it (`src/lint/driver/fmt/tailwind.rs`): a class that is not known is noted, the text stays as it is, and `Tailwind::has_missed` says that what has been printed is of no use. The driver puts such a file aside, asks once for all classes (`tailwind.js`, run by `evaluate.rs`), and formats those files again. Where Tailwind 3 and 4 put a class does not depend on what else they are asked about (27,345 real lists: no pair in another order), only the numbers that they answer with do, so all classes are asked about at once. The answer is kept in `node_modules/.cache/bun-format` for as long as what Tailwind has loaded stays the same: most runs start no script. So the formatter is what collects the classes, and nothing is run for files without any. What is sorted is not sorted again further down: that would ask for a list that only the second pass knows of.
-- **JavaScript**: `js/utils/tailwindcss.rs`, a port of oxc's, with its stack of contexts (`JsFormatContext::tailwind_context`) and what follows from it: no context for the arguments of a call that is written as a member chain, a text of a template is sorted in a call of another function and a string is not.
+- **JavaScript, for the plugin**: `tailwind/plugin.rs::sorted_text`, its `transformJavaScript`. The plugin changes the tree before Prettier prints it, so this changes the text, and a file whose classes move is parsed again, as for the plugins that sort imports.
+- **JavaScript, for oxfmt**: `js/utils/tailwindcss.rs`, a port of oxc's, with its stack of contexts (`JsFormatContext::tailwind_context`) and what follows from it: no context for the arguments of a call that is written as a member chain, a text of a template is sorted in a call of another function and a string is not.
 - **Style sheets**: `@apply`, in `print_at_rule_up_to_block`.
-- **HTML and Vue**: the plugin rewrites the values of attributes in the tree, so `html/tailwind.rs` rewrites the text before it is parsed. Of the code in HTML the plugin takes over programs and `__js_expression`, nothing else: `js.rs::with_file`.
+- **Handlebars**: the plugin changes the tree, and so does `handlebars/tailwind.rs`.
+- **HTML, Vue and Angular**: the plugin rewrites the values of attributes in the tree, so `html/tailwind.rs` rewrites the text before it is parsed. Of the code in HTML the plugin takes over programs and `__js_expression`, nothing else: `js.rs::with_file`.
 - **The checks before writing** know that words change places and that one that is there twice is there once: `verify/tree.rs::has_same_words`. HTML is compared without the option: `html::has_same_content`.
-- **Not there**: `[class]` and `[ngClass]` of Angular, Handlebars (a run with such a file ends with an error). With `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
+- **Not there**: with `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
 - **Tests**: `test/cli/format/tailwind`, with a stand-in for the package. `test/cli/format/oracle/tailwind/make-fixtures.ts` makes what is expected with the real tools.
 
 ## Pitfalls

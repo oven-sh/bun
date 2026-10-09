@@ -136,7 +136,8 @@ impl Rule for NoParamReassign {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.params(|rule, param, cx| {
-            if param.func().is_some_and(Func::has_body) {
+            // oxlint does not look at a rest parameter.
+            if param.func().is_some_and(Func::has_body) && !(param.is_rest() && cx.language().is_oxlint) {
                 param.pat().for_each_binding(&mut |pat| rule.check_variable(pat, cx));
             }
         });

@@ -45,6 +45,9 @@ const BUILT_IN_ERROR_TYPES: &[&str] = &[
     "AggregateError",
 ];
 
+/// The ones that oxlint 1.87 knows.
+const OXLINT_ERROR_TYPES: &[&str] = &["Error", "TypeError", "AggregateError"];
+
 /// What to pass for the arguments before the options.
 const AGGREGATE_ERROR_PLACEHOLDERS: &[&str] = &["[]", "\"\""];
 const ERROR_PLACEHOLDERS: &[&str] = &["\"\""];
@@ -86,6 +89,27 @@ fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize) -> Cause<
     }
 }
 
+/// oxlint's `has_cause_property`: the first `cause` that is written as a name counts, a spread before it can have one,
+/// and what is not an object in braces has none.
+fn get_error_cause_as_oxlint<'a>(args: List<'a, Expr<'a>>, options_index: usize) -> Cause<'a> {
+    if args.iter().any(|arg| arg.tag() == ExprTag::Spread) {
+        return Cause::Unknown;
+    }
+    let properties = match args.get(options_index).map(|options| (options.kind(), options.is_parenthesized())) {
+        Some((ExprKind::Object(properties), false)) => properties,
+        _ => return Cause::Missing,
+    };
+    for property in properties {
+        if property.kind() == PropKind::Spread {
+            return Cause::Unknown;
+        }
+        if matches!(property.key().map(|key| key.kind()), Some(KeyKind::Ident(name)) if name.is("cause")) {
+            return Cause::Found { property, has_multiple_definitions: false };
+        }
+    }
+    Cause::Missing
+}
+
 /// By a statement: the `try` statement in whose `catch` block it is, or `None` in a function in that
 /// block.
 type ParentCatches<'a> = AncestorMemo<'a, Option<Stmt<'a>>>;
@@ -96,7 +120,10 @@ fn find_parent_catch<'a>(
     statement: Stmt<'a>,
     known: &mut ParentCatches<'a>,
 ) -> Option<(Stmt<'a>, Option<VarDecl<'a>>)> {
+    // oxlint looks into arrow functions and static blocks.
+    let is_oxlint = statement.file().language().is_oxlint;
     let parent = known.find(statement.into(), |child, ancestor| match ancestor {
+        Node::Func(func) if is_oxlint && (func.is_arrow() || func.kind() == FnKind::StaticBlock) => None,
         Node::Func(_) => Some(None),
         Node::Stmt(parent) => matches!(
             parent.kind(),
@@ -194,11 +221,57 @@ fn include_cause<'a>(
     }
 }
 
+/// What ESLint suggests is a fix for oxlint 1.87, with its own text for `{}`, and none for `new Error` without
+/// parentheses and for more arguments than it knows. `param`: the parameter of the `catch`, which is part of the fix as
+/// it is, so that no other fix renames or removes it in the same pass.
+fn include_cause_as_oxlint<'a>(
+    fixer: Fixer<'a>,
+    (thrown, call): (Expr<'a>, Call<'a>),
+    is_aggregate_error: bool,
+    (caught, param): (Name<'a>, Span),
+) -> Option<[Fix; 2]> {
+    let file = fixer.file();
+    let cause = [&b"cause: "[..], caught.bytes()].concat();
+    let options = [&b"{ "[..], cause.as_slice(), b" }"].concat();
+    let (cause, options) = (cause.as_slice(), options.as_slice());
+    let args = call.args();
+    let fix = match (args.len(), args.last()) {
+        (0, _) => {
+            let (after_callee, last) = (file.last_token(call.callee())?, file.last_token(thrown)?);
+            let open = file.tokens_between(after_callee, last).find(ast_utils::is_opening_paren_token)?;
+            let before: &[u8] = if is_aggregate_error { b"[], \"\", " } else { b"\"\", " };
+            fixer.insert_after(open, [before, options].concat())
+        }
+        (1, Some(last)) => {
+            let before: &[u8] = if is_aggregate_error { b", \"\", " } else { b", " };
+            fixer.insert_after(last.outer_span(), [before, options].concat())
+        }
+        (2, Some(last)) if is_aggregate_error => fixer.insert_after(last.outer_span(), [&b", "[..], options].concat()),
+        (2, Some(last)) if !last.is_parenthesized() => match last.kind() {
+            ExprKind::Object(properties) => match properties.last() {
+                Some(property) => fixer.insert_after(property, [&b", "[..], cause].concat()),
+                None => {
+                    let close_brace = Span::empty(last.span().end.saturating_sub(1));
+                    fixer.insert_after(close_brace, [&b" "[..], cause, b" "].concat())
+                }
+            },
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some([fixer.replace(param, file.slice(param)), fix])
+}
+
 impl PreserveCaughtError {
     fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Throw(thrown) = statement.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
+        // It does not look into parentheses.
+        if is_oxlint && thrown.is_parenthesized() {
+            return;
+        }
         // In an optional chain it is a `ChainExpression` that is thrown or called.
         let call = match thrown.kind() {
             ExprKind::New(call) => call,
@@ -207,6 +280,7 @@ impl PreserveCaughtError {
         };
         let callee = call.callee();
         let (class_name, can_be_built_in) = match callee.kind() {
+            ExprKind::Ident(name) if is_oxlint => (name, name.is_any(OXLINT_ERROR_TYPES)),
             ExprKind::Ident(name) => (name, name.is_any(BUILT_IN_ERROR_TYPES)),
             ExprKind::Dot { name, chain: Chain::No, .. } if !name.bytes().starts_with(b"#") => (name.name(), false),
             _ => return,
@@ -227,6 +301,7 @@ impl PreserveCaughtError {
                 (false, None) => return,
             };
 
+        let param_span = param.map_or_else(Span::default, |param| param.pat().span());
         let caught = match param.map(|param| param.pat().kind()) {
             Some(PatKind::Ident(name)) => name,
             Some(_) => {
@@ -247,12 +322,22 @@ impl PreserveCaughtError {
             }
         };
 
-        let (property, has_multiple_definitions) = match get_error_cause(call.args(), options_index) {
+        let cause = match is_oxlint {
+            true => get_error_cause_as_oxlint(call.args(), options_index),
+            false => get_error_cause(call.args(), options_index),
+        };
+        let (property, has_multiple_definitions) = match cause {
             Cause::Unknown => return,
             Cause::Missing => {
-                cx.report(statement, MISSING_CAUSE).suggest(INCLUDE_CAUSE, |fixer| {
-                    include_cause(fixer, thrown, call, options_index, placeholders, caught)
-                });
+                let report = cx.report(statement, MISSING_CAUSE);
+                match cx.language().is_oxlint {
+                    true => report.fix(|fixer| {
+                        include_cause_as_oxlint(fixer, (thrown, call), options_index == 2, (caught, param_span))
+                    }),
+                    false => report.suggest(INCLUDE_CAUSE, |fixer| {
+                        include_cause(fixer, thrown, call, options_index, placeholders, caught)
+                    }),
+                };
                 return;
             }
             Cause::Found { property, has_multiple_definitions } => (property, has_multiple_definitions),
@@ -268,11 +353,17 @@ impl PreserveCaughtError {
             let place = if cx.language().is_oxlint { statement.span() } else { value_span };
             let report = cx.report(place, INCORRECT_CAUSE);
             // With several definitions of `cause`, a suggestion could be confusing.
-            if !has_multiple_definitions {
-                report.suggest(INCLUDE_CAUSE, |fixer| match property.kind() {
-                    PropKind::Init => fixer.replace(value, caught),
-                    _ => fixer.replace(property, [&b"cause: "[..], caught.bytes()].concat()),
-                });
+            let replace = |fixer: Fixer<'a>| match property.kind() {
+                PropKind::Init => fixer.replace(value, caught),
+                _ => fixer.replace(property, [&b"cause: "[..], caught.bytes()].concat()),
+            };
+            if cx.language().is_oxlint {
+                // It only knows the options of `Error` and `TypeError`.
+                if options_index == 1 && call.args().len() == 2 && !has_multiple_definitions {
+                    report.fix(|fixer| [fixer.replace(param_span, fixer.file().slice(param_span)), replace(fixer)]);
+                }
+            } else if !has_multiple_definitions {
+                report.suggest(INCLUDE_CAUSE, replace);
             }
             return;
         }

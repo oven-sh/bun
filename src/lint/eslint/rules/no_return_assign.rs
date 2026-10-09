@@ -26,7 +26,12 @@ impl NoReturnAssign {
         let Some(Some((at, is_arrow))) = found else {
             return;
         };
-        if !self.is_always && ast_utils::is_parenthesised(e) {
+        // For ESLint the parentheses of the call `f(a = 1)` are around the assignment, for oxlint they are not.
+        let is_parenthesized = match cx.language().is_oxlint {
+            true => e.is_parenthesized(),
+            false => ast_utils::is_parenthesised(e),
+        };
+        if !self.is_always && is_parenthesized {
             return;
         }
         // The default in a destructuring assignment is an `AssignmentPattern`.

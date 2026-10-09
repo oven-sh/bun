@@ -111,14 +111,14 @@ impl<'a, T: Format<'a>> Format<'a> for InTailwindContext<T> {
 /// The context for the arguments of `callee`, or for the template that it is the tag of, if they are classes.
 pub(crate) fn context_of_function(callee: Expr<'_>, f: &Formatter<'_>) -> Option<TailwindContext> {
     (f.options().tailwind.as_deref())
-        .filter(|tailwind| is_class_function(callee, tailwind))
+        .filter(|tailwind| !tailwind.follows_plugin && is_class_function(callee, tailwind))
         .map(TailwindContext::new)
 }
 
 /// The context for the value of the JSX attribute called `name`, if it is classes.
 pub(crate) fn context_of_attribute(name: &[u8], f: &Formatter<'_>) -> Option<TailwindContext> {
     (f.options().tailwind.as_deref())
-        .filter(|tailwind| is_class_attribute(name, tailwind))
+        .filter(|tailwind| !tailwind.follows_plugin && is_class_attribute(name, tailwind))
         .map(TailwindContext::new)
 }
 

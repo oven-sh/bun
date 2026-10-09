@@ -920,6 +920,16 @@ impl Parser<'_> {
         run_end: usize,
         is_label: bool,
     ) -> Flanking {
+        if content.get(run_start) == Some(&b'*')
+            && compat::asterisks_do_not_look_around(&self.flags)
+        {
+            return Flanking {
+                left: true,
+                right: true,
+                before: Neighbor::Punctuation,
+                after: Neighbor::Punctuation,
+            };
+        }
         let edge = if is_label {
             Neighbor::Punctuation
         } else {

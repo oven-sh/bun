@@ -19,18 +19,6 @@ use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use bun_parsers::toml::TOML;
 
-/// Whether oxfmt takes the file at `path` for TOML.
-pub fn is_toml_path(path: &[u8]) -> bool {
-    use bun_core::strings::last_index_of_char;
-    let separator = last_index_of_char(path, b'/').max(last_index_of_char(path, b'\\'));
-    let name = path
-        .get(separator.map_or(0, |at| at + 1)..)
-        .unwrap_or_default();
-    matches!(name, b"Pipfile" | b"Cargo.toml.orig")
-        || (name.ends_with(b".toml") && name != b".toml")
-        || name.ends_with(b".toml.example")
-}
-
 /// Why [`format`] takes `text` for something else than TOML, in the words of Bun's parser, and at which byte, not counting
 /// a byte order mark. The text is read once more for it.
 #[cold]

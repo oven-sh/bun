@@ -1,0 +1,14 @@
+@media (width>=600px) {}
+@media (400px<=width<=700px) {}
+@media (400px <  width  <= 700px) {}
+@media (width=600px) {}
+@media (width>=.5em) {}
+@media (not ( screen and ( color ) )), print and (color) {}
+@media ( (min-width:1px) or (max-width:2px) ) {}
+@media (min-width:1px) and ((width>1px) or (color)) {}
+@media screen and (width>=600px),print and (width<1px) {}
+@media (width>=calc( 1px + 2px )) {}
+@media (not(color)) {}
+@media (min-width:100px) and (max-width:200px) {}
+@media (aspect-ratio:16/9) {}
+@custom-media --a (width >=500px) and (width<= 1200px);

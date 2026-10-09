@@ -25,6 +25,7 @@ use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::ThreadId;
 
 /// `FxHashMap` in an arena.
@@ -43,14 +44,16 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
 }
 
 /// Owns the arena of every thread that has allocated for one check.
-#[derive(Default)]
 pub struct Session {
     /// A linked list that only grows. A thread appends its own node, so each arena is created by
     /// the thread that allocates in it.
     first: Link,
-    /// What `keep` was given. A linked list that only grows.
-    kept: KeptLink,
+    /// What `keep` was given. Linked lists that only grow, taken in turn: a value is added at the end of one.
+    kept: [KeptLink; KEPT_LISTS],
+    next_kept_list: AtomicUsize,
 }
+
+const KEPT_LISTS: usize = 64;
 
 type Link = OnceLock<Box<ThreadArena>>;
 type KeptLink = OnceLock<Box<Kept>>;
@@ -66,11 +69,18 @@ struct ThreadArena {
     next: Link,
 }
 
+impl Default for Session {
+    fn default() -> Session {
+        Session::new()
+    }
+}
+
 impl Session {
     pub const fn new() -> Session {
         Session {
             first: OnceLock::new(),
-            kept: OnceLock::new(),
+            kept: [const { OnceLock::new() }; KEPT_LISTS],
+            next_kept_list: AtomicUsize::new(0),
         }
     }
 
@@ -98,7 +108,7 @@ impl Session {
     /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
     /// what the program refers to, since nothing drops the program.
     ///
-    /// The search is linear in the number of values: for a few per check, not one per file.
+    /// The search is linear in a 64th of the number of values: for one per file at most.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {
         let kept = self.keep_boxed(Box::new(value));
         kept.downcast_ref().expect("it was boxed as a `T`")
@@ -110,7 +120,8 @@ impl Session {
             value,
             next: OnceLock::new(),
         });
-        let mut link = &self.kept;
+        let list = self.next_kept_list.fetch_add(1, Ordering::Relaxed) % KEPT_LISTS;
+        let mut link = &self.kept[list];
         while let Err(refused) = link.set(node) {
             node = refused;
             link = &link.get().expect("`set` found a value").next;
@@ -135,9 +146,11 @@ impl Drop for Session {
         while let Some(mut node) = next {
             next = node.next.take();
         }
-        let mut next = self.kept.take();
-        while let Some(mut node) = next {
-            next = node.next.take();
+        for list in &mut self.kept {
+            let mut next = list.take();
+            while let Some(mut node) = next {
+                next = node.next.take();
+            }
         }
     }
 }

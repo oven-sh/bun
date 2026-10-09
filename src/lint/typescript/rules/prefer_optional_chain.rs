@@ -1019,6 +1019,15 @@ fn includes_type(node: Expr, type_flag: TypeFlags) -> bool {
     union_constituents(node.ty()).iter().any(|ty| is_type_flag_set(ty, type_flag))
 }
 
+/// tsgolint's `wouldChangeReturnType`: among the types of `node` is that of a literal, as in `boolean`, and neither
+/// `null` nor `undefined`.
+fn tsgolint_would_change_return_type(node: Expr) -> bool {
+    let literal =
+        TypeFlags::BOOLEAN_LITERAL | TypeFlags::NUMBER_LITERAL | TypeFlags::STRING_LITERAL | TypeFlags::BIG_INT_LITERAL;
+    let types = union_constituents(node.ty());
+    types.iter().any(|ty| is_type_flag_set(ty, literal)) && !types.iter().any(|ty| is_type_flag_set(ty, NULLISH_FLAGS))
+}
+
 /// tsgolint's `isOrChainComparisonSafe`, which goes by what is written and not by its type.
 fn tsgolint_is_or_chain_comparison_safe(comparison_value: Expr, comparison_type: ComparisonType) -> bool {
     let tag = comparison_value.tag();
@@ -1396,6 +1405,17 @@ impl PreferOptionalChain {
             return;
         };
         if self.require_nullish && !maybe_nullish.iter().any(|operand| is_maybe_nullish(operand.node)) {
+            return;
+        }
+        // `!a || !a.b` with a `b` that is a `boolean`: tsgolint leaves it alone.
+        if cx.language().is_oxlint
+            && operator == BinOp::Or
+            && !self.allow_potentially_unsafe_fixes_that_modify_the_return_type_i_know_what_im_doing
+            && chain.iter().any(|operand| {
+                matches!(operand.comparison_type, T::Boolean | T::NotBoolean)
+                    && tsgolint_would_change_return_type(operand.compared_name.expr())
+            })
+        {
             return;
         }
 

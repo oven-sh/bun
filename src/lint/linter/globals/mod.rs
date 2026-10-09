@@ -21,6 +21,7 @@ use super::space::{space_len, space_len_back};
 use crate::ast::File;
 use crate::language::{Global, LanguageOptions, Parser, SourceType};
 use crate::span::Span;
+use crate::utils::ast_utils::is_builtin_global_of_oxlint;
 use bun_core::strings;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -144,7 +145,9 @@ impl ConfigGlobals {
                 .filter(|it| it.0 <= language.ecma_version)
             {
                 settings.extend(
-                    variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)),
+                    variables(start, len)
+                        .filter(|it| !language.is_oxlint || is_builtin_global_of_oxlint(it.0))
+                        .map(|(name, setting)| (Cow::Borrowed(name), setting)),
                 );
             }
         }

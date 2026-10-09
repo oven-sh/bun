@@ -803,7 +803,7 @@ impl Host for WithoutListings<'_> {
         path: &[u8],
         text: &[u8],
         atoms: &Interner<'s>,
-        options: &bun_sema::resolve::Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.0.parse(arena, path, text, atoms, options)
     }

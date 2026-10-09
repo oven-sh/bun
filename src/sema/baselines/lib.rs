@@ -9,7 +9,7 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, Options, displayed_path, join, to_path};
+use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
@@ -462,7 +462,7 @@ impl Host for Virtual {
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }

@@ -1067,6 +1067,7 @@ dependencies = [
  "bun_core",
  "bun_glob",
  "bun_lint",
+ "bun_lint_oxlint",
  "rustc-hash",
  "smallvec",
 ]
@@ -1631,6 +1632,7 @@ dependencies = [
  "bun_core",
  "bun_sema",
  "bun_threading",
+ "smallvec",
 ]
 
 [[package]]

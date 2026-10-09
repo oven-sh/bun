@@ -490,10 +490,12 @@ impl Walk<'_, '_> {
         is_same
     }
 
-    /// Whether `b` is what sorting classes has made of `a`. They have passed for the same.
+    /// Whether `b` can be what sorting classes has made of `a`. They have passed for the same.
     #[inline]
     fn is_sorted(&self, a: Atom, b: Atom) -> bool {
-        self.classes_can_move && self.a.atoms.bytes(a) != self.b.atoms.bytes(b)
+        let has_white_space = |text: &[u8]| text.iter().any(u8::is_ascii_whitespace);
+        self.classes_can_move
+            && (has_white_space(self.a.atoms.bytes(a)) || has_white_space(self.b.atoms.bytes(b)))
     }
 
     #[inline]

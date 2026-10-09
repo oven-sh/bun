@@ -302,13 +302,18 @@ impl<'a> Context<'_, 'a> {
                     };
                     count as u32
                 };
-                let (place, before_place) = self.last_place.get();
-                let column = match offset >= place {
-                    true => before_place + units(place, offset),
-                    false => before_place.saturating_sub(units(offset, place)),
-                };
-                self.last_place.set((offset, column));
-                column
+                // Near the start of the line nothing is gained by remembering.
+                if offset.saturating_sub(start) <= 64 {
+                    units(start, offset)
+                } else {
+                    let (place, before_place) = self.last_place.get();
+                    let column = match offset >= place {
+                        true => before_place + units(place, offset),
+                        false => before_place.saturating_sub(units(offset, place)),
+                    };
+                    self.last_place.set((offset, column));
+                    column
+                }
             }
         };
         Point {

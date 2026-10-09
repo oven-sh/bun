@@ -322,6 +322,10 @@ impl PreferConst {
             }
         }
         let writer = writer?;
+        // For oxlint `a ??= 1` and `a += 1` are no first assignment.
+        if writer.is_read() && variable.file().language().is_oxlint {
+            return None;
+        }
         if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut known.patterns) {
             return None;
         }
@@ -451,6 +455,20 @@ impl PreferConst {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;
             };
+            // Which only oxlint looks at: all of the variables or none.
+            if declarations.len() > 1 && is_init_of_for_statement(statement) {
+                let mut is_all_const = true;
+                for declaration in declarations {
+                    declaration.pat().for_each_binding(&mut |pat| {
+                        let variable = pat.symbol().filter(|_| is_all_const);
+                        is_all_const =
+                            variable.is_some_and(|it| self.get_identifier_if_should_be_const(it, &mut known).is_some());
+                    });
+                }
+                if !is_all_const {
+                    continue;
+                }
+            }
             for declaration in declarations {
                 declaration.pat().for_each_binding(&mut |pat| {
                     if let Some(variable) = pat.symbol() {
@@ -483,7 +501,7 @@ impl Rule for PreferConst {
         on.stmts([StmtTag::Var], |_, stmt, cx| {
             if let StmtKind::Var(declarations) = stmt.kind()
                 && declarations.first().is_some_and(|it| it.var_kind() == VarKind::Let)
-                && !is_init_of_for_statement(stmt)
+                && (!is_init_of_for_statement(stmt) || cx.language().is_oxlint)
             {
                 cx.state.push(stmt);
             }

@@ -17,6 +17,8 @@ pub struct Known<'a> {
     /// The same directly in a function.
     in_function: FxHashMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
+    /// Whether oxc takes the file for a module.
+    is_module: Option<bool>,
 }
 
 /// `e` is a member access of the property `name`.
@@ -99,20 +101,36 @@ impl NoEval {
         if !is_member(member, "eval") {
             return;
         }
-        let Known { at, in_function, bindings } = &mut cx.state;
+        let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
+        if is_oxlint {
+            let is_module = || utils::oxlint::source_type(file) == SourceType::Module;
+            // For oxc parentheses are nodes: `(this).eval` is no property of `this`.
+            if *cx.state.is_module.get_or_insert_with(is_module) || e.is_parenthesized() {
+                return;
+            }
+        }
+        let is_strict = |scope: Scope<'a>| match is_oxlint {
+            true => scope.chain().any(utils::oxlint::makes_strict),
+            false => scope.is_strict(),
+        };
+        let Known { at, in_function, bindings, .. } = &mut cx.state;
         let is_global_object = at.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) if !func.is_arrow() => Some(*in_function.entry(func).or_insert_with(|| {
-                !func.scope().is_none_or(Scope::is_strict)
-                    && ast_utils::is_default_this_binding_with(func, true, bindings)
+                // oxlint takes a function for a constructor by its own name alone, and knows the capitals of ASCII.
+                let is_ascii = |it: Ident<'a>| it.bytes().first().is_some_and(u8::is_ascii);
+                let cap_is_constructor = !is_oxlint || func.name().is_some_and(is_ascii);
+                !func.scope().is_none_or(is_strict)
+                    && ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
             })),
             // In the initializer of a field it is the instance or the class.
             Node::Member(field)
                 if field.kind() == MemberKind::Property
-                    && !field.flags().contains(Flags::ACCESSOR)
+                    && (is_oxlint || !field.flags().contains(Flags::ACCESSOR))
                     && field.init().map(Node::Expr) == Some(child) =>
             {
                 Some(false)
             }
+            Node::Stmt(namespace) if is_oxlint && namespace.tag() == StmtTag::Module => Some(false),
             _ => None,
         });
         if let Some(is_global_object) = is_global_object {
@@ -121,8 +139,13 @@ impl NoEval {
             }
             return;
         }
+        // For oxlint it is the global object at the top of a script and of CommonJS, also below `"use strict"`.
+        if is_oxlint {
+            Self::report_member(member, cx);
+            return;
+        }
 
-        let (file, language) = (cx.file(), cx.language());
+        let language = cx.language();
         let is_module = language.scope_source_type() == SourceType::Module;
         let is_top_level_of_script = !is_module && !language.global_return;
         if is_top_level_of_script

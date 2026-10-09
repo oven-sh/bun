@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+@mixin a {
+  @if b {
+    @error "Undefined breakpoint." +
+      "The available breakpoints are #{map-keys($breakpoints)}";
+    @warn "Undefined breakpoint." +
+      "The available breakpoints are #{map-keys($breakpoints)}" + $a;
+    @error "a very long text that does not fit on the line whatever is done with it, really not at all";
+    @error "a" + $b;
+    @warn a + b;
+    @error "Unknown #{$a}: expected one of #{map-keys($b)}, or something else that is as long as this.";
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+@mixin a {
+  @if b {
+    @error "Undefined breakpoint." + "The available breakpoints are #{map-keys($breakpoints)}";
+    @warn "Undefined breakpoint." + "The available breakpoints are #{map-keys($breakpoints)}" + $a;
+    @error "a very long text that does not fit on the line whatever is done with it, really not at all";
+    @error "a" + $b;
+    @warn a + b;
+    @error "Unknown #{$a}: expected one of #{map-keys($b)}, or something else that is as long as this.";
+  }
+}
+
+===================== End =====================

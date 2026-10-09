@@ -153,6 +153,8 @@ impl<'a> Format<'a> for FormatCommentsAroundParenthesis<'a> {
             return;
         };
         let comments = match self.0.this_param().or_else(|| self.0.params().first()) {
+            // For oxfmt the parentheses are a node, and the comments in it lead the first parameter.
+            Some(_) if f.options().flavor.is_oxfmt() => return,
             Some(first) => end_of_line_comments(f.comments().comments_before(first.span().start)),
             None => f.comments().comments_before(span.start),
         };

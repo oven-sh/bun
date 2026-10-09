@@ -1926,9 +1926,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
     ///
     /// After a refusal no query in flight is cacheable. Every later query about a part of the same
-    /// expression would descend the same chain and be refused again, which costs depth^3 for nested
-    /// calls. So the outermost expression in flight is recorded, and until the end of `check_file`
-    /// every query about an expression inside it is refused immediately.
+    /// expression or type node would descend the same chain and be refused again, which costs depth^3
+    /// for nested calls. So the outermost one in flight is recorded, and until the end of `check_file`
+    /// every query about an expression or a type node inside it is refused immediately.
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
@@ -1947,6 +1947,12 @@ impl<'p, 's> Checker<'p, 's> {
         let span_of = |c: &Self, q: Query| match q {
             Query::Expr(file, e) | Query::Call(file, e) => {
                 Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
+            }
+            Query::TypeNode(file, node) => {
+                let node = &c.hir(file)[node];
+                // One whose end is unknown extends to the end.
+                let end = if node.end == 0 { u32::MAX } else { node.end };
+                Some((file, node.pos, end))
             }
             _ => None,
         };

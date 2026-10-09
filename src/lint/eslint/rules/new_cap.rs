@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 
 /// Require constructor names to begin with a capital letter.
@@ -113,25 +114,36 @@ impl NewCap {
 
     fn check_new<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::New(call) = e.kind()
-            && let Some(name) = extract_name(call.callee())
+            && let callee = callee_of(call)
+            && let Some(name) = extract_name(callee)
             && get_cap(&name) == Cap::Lower
-            && !self.is_cap_allowed(&self.new_is_cap_exceptions, call.callee(), &name)
+            && !self.is_cap_allowed(&self.new_is_cap_exceptions, callee, &name)
         {
-            report(call.callee(), LOWER, cx);
+            report(callee, LOWER, cx);
         }
     }
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Call(call) = e.kind()
-            && let Some(name) = extract_name(call.callee())
+            && let callee = callee_of(call)
+            && let Some(name) = extract_name(callee)
             && get_cap(&name) == Cap::Upper
-            && !self.is_cap_allowed(&self.cap_is_new_exceptions, call.callee(), &name)
+            && !self.is_cap_allowed(&self.cap_is_new_exceptions, callee, &name)
             // oxlint goes by the name, whatever it refers to.
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
-                && (cx.language().is_oxlint || is_global_built_in(call.callee(), &name)))
+                && (cx.language().is_oxlint || is_global_built_in(callee, &name)))
         {
-            report(call.callee(), UPPER, cx);
+            report(callee, UPPER, cx);
         }
+    }
+}
+
+/// The callee. oxlint finds a name in what only concerns types: `(A as any)()`, `A!()`.
+fn callee_of(call: Call<'_>) -> Expr<'_> {
+    let callee = call.callee();
+    match callee.file().language().is_oxlint {
+        true => Some(get_inner_expression(callee)).filter(|it| it.tag() == ExprTag::Ident).unwrap_or(callee),
+        false => callee,
     }
 }
 

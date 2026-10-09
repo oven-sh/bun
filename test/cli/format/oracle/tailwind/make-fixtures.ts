@@ -1,7 +1,8 @@
-// Makes test/cli/format/tailwind/cases.json and order.json again: what oxfmt prints for the inputs in cases.json with the real
-// Tailwind CSS, and where that puts each class that it is asked about.
+// Makes test/cli/format/tailwind/cases.json and order.json again: what oxfmt, and Prettier with prettier-plugin-tailwindcss,
+// print for the inputs in cases.json with the real Tailwind CSS, and where that puts each class that it is asked about.
 //
-//   bun make-fixtures.ts <directory with node_modules/oxfmt> <directory with node_modules/tailwindcss, version 4>
+//   bun make-fixtures.ts <directory with node_modules/oxfmt> <directory with node_modules/tailwindcss, version 4> \
+//     <directory with node_modules/prettier and node_modules/prettier-plugin-tailwindcss>
 //
 // The inputs are those of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT) and some more.
 import { spawnSync } from "node:child_process";
@@ -10,8 +11,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-type Case = { name: string; filename: string; options: object; input: string; output: string; todo?: string };
-const [oxfmt, tailwind] = process.argv.slice(2).map(it => resolve(it));
+import { forPrettier } from "../../tailwind/for-prettier";
+
+type Case = {
+  name: string;
+  filename: string;
+  options: Record<string, unknown>;
+  input: string;
+  output: string;
+  prettier?: string;
+  todo?: string;
+};
+const [oxfmt, tailwind, prettier] = process.argv.slice(2).map(it => resolve(it));
 const target = join(import.meta.dir, "../../tailwind");
 const cases: Case[] = JSON.parse(readFileSync(join(target, "cases.json"), "utf8"));
 const real = join(tailwind, "node_modules/tailwindcss");
@@ -48,6 +59,19 @@ export async function __unstable__loadDesignSystem(...args) {
     });
     if (done.status !== 0) throw new Error(`${it.name}: ${done.stderr}${done.stdout}`);
     it.output = readFileSync(file, "utf8");
+    // The same for the plugin, if Prettier has all of the options.
+    delete it.prettier;
+    const options = forPrettier(it.options);
+    if (!options) continue;
+    writeFileSync(file, it.input);
+    rmSync(join(root, String(index), ".oxfmtrc.json"));
+    const plugin = join(prettier, "node_modules/prettier-plugin-tailwindcss/dist/index.mjs");
+    writeFileSync(join(root, String(index), ".prettierrc"), JSON.stringify({ ...options, plugins: [plugin] }));
+    const other = spawnSync(join(prettier, "node_modules/.bin/prettier"), ["--write", it.filename], {
+      cwd: join(root, String(index)),
+    });
+    if (other.status !== 0) throw new Error(`${it.name}: ${other.stderr}${other.stdout}`);
+    it.prettier = readFileSync(file, "utf8");
   }
   const classes = [...new Set(readFileSync(asked, "utf8").split("\n"))].sort();
   const { __unstable__loadDesignSystem } = await import(pathToFileURL(join(real, "dist/lib.mjs")).href);

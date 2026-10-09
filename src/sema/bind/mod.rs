@@ -2083,7 +2083,7 @@ impl<'s> Bound<'s> {
 }
 
 /// The compiler options `requiresScopeChangeWorker` reads.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub struct BindOptions {
     /// `GetEmitStandardClassFields`
     pub emit_standard_class_fields: bool,

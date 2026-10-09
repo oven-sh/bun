@@ -562,6 +562,23 @@ struct Parser<'a> {
     is_custom_property_set: bool,
     /// For the tokens of a statement.
     token_buffer: Vec<Token>,
+    placeholder: Placeholder,
+}
+
+/// What `@prettier-placeholder-1-id`, which stands for a `${}` in a template of JavaScript, is at the start of a statement.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Placeholder {
+    /// The name of an at-rule, which goes on to the next `;` or `{`, as for `postcss`.
+    AtRule,
+    /// A statement, with the others that are behind it on its line, as for oxfmt.
+    Statement,
+}
+
+/// Whether `name` is all of such a name, without the `@`.
+fn is_placeholder(name: &[u8]) -> bool {
+    name.strip_prefix(b"prettier-placeholder-")
+        .and_then(|it| it.strip_suffix(b"-id"))
+        .is_some_and(|number| !number.is_empty() && number.iter().all(u8::is_ascii_digit))
 }
 
 /// How deep rules can be nested. What writes them is recursive.
@@ -828,6 +845,8 @@ impl<'a> Parser<'a> {
         }
         let id = self.new_node(Kind::AtRule, start);
         self.node(id).name = name;
+        let is_statement =
+            self.placeholder == Placeholder::Statement && is_placeholder(self.texts.of(name));
 
         let mut last = false;
         let mut open = false;
@@ -863,6 +882,22 @@ impl<'a> Parser<'a> {
                     self.end(token)?;
                     break;
                 }
+            }
+            if is_statement
+                && token.kind == TokenKind::Space
+                && bun_core::strings::contains_char(self.text_of(token), b'\n')
+                && params.iter().all(|it| match it.kind {
+                    TokenKind::Space => true,
+                    TokenKind::AtWord => {
+                        is_placeholder(self.text_of(*it).get(1..).unwrap_or_default())
+                    }
+                    _ => false,
+                })
+            {
+                self.tokenizer.back(Some(token));
+                self.node(id).end = Some(name.end);
+                last = true;
+                break;
             }
             params.push(token);
             if self.tokenizer.end_of_file() {
@@ -1569,8 +1604,12 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub(crate) fn parse(css: &[u8], syntax: Syntax) -> Result<Tree, SyntaxError> {
-    parse_from(css, syntax, 0, false)
+pub(crate) fn parse(
+    css: &[u8],
+    syntax: Syntax,
+    placeholder: Placeholder,
+) -> Result<Tree, SyntaxError> {
+    parse_from(css, syntax, 0, false, placeholder)
 }
 
 /// Parses `--a: { .. }`, which starts at `start` and goes to the end of `css`, as if it were the rule
@@ -1580,7 +1619,7 @@ pub(crate) fn parse_custom_property_set(
     syntax: Syntax,
     start: u32,
 ) -> Result<Tree, SyntaxError> {
-    parse_from(css, syntax, start as usize, true)
+    parse_from(css, syntax, start as usize, true, Placeholder::AtRule)
 }
 
 fn parse_from(
@@ -1588,6 +1627,7 @@ fn parse_from(
     syntax: Syntax,
     pos: usize,
     is_custom_property_set: bool,
+    placeholder: Placeholder,
 ) -> Result<Tree, SyntaxError> {
     // Half of the numbers are for `Texts::extra`, which is no longer than the text.
     if css.len() >= (u32::MAX / 2) as usize {
@@ -1620,6 +1660,7 @@ fn parse_from(
         depth: 0,
         is_custom_property_set,
         token_buffer: Vec::new(),
+        placeholder,
     };
     parser.nodes.push(Node {
         has_block: true,

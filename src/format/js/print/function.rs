@@ -126,7 +126,9 @@ pub(crate) struct FormatCommentsBehindParenthesis<'a>(pub(crate) Func<'a>);
 
 impl<'a> Format<'a> for FormatCommentsBehindParenthesis<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        // For oxfmt the parentheses are a node, and the comments in it lead the first parameter.
         if !f.is_quiet()
+            && !f.options().flavor.is_oxfmt()
             && let Some(first) = self.0.params_with_this().next()
             && follows_name_or_type_parameters(self.0)
         {

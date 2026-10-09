@@ -1,4 +1,4 @@
-//! oxfmt's `sortTailwindcss`: where the order of classes comes from.
+//! oxfmt's `sortTailwindcss` and `prettier-plugin-tailwindcss`: where the order of classes comes from.
 //!
 //! Only the Tailwind CSS of the project knows it, and that is JavaScript. The formatter asks for the order of each list of
 //! classes that it comes across. A file with a class that is not known yet is put aside. When all files have had their
@@ -8,7 +8,7 @@
 //! most runs start no script.
 
 use super::files::Kind;
-use crate::evaluate::evaluate_at;
+use crate::evaluate::{evaluate_at, kept_at};
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -89,6 +89,8 @@ struct Group {
     known: FxHashMap<Vec<u8>, Rank>,
     /// Asked for, and not known.
     missing: Vec<Vec<u8>>,
+    /// Known to an earlier run, before something that Tailwind has loaded changed.
+    stale: Vec<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -98,6 +100,8 @@ struct Known {
     groups: FxHashMap<Which, Group>,
     /// A directory with files that have classes, from which there is no Tailwind to be found.
     without_package: Option<Vec<u8>>,
+    /// It is the plugin of Prettier that sorts.
+    follows_plugin: bool,
 }
 
 /// What a run knows about the order of classes.
@@ -181,6 +185,7 @@ impl Known {
             }
             let group = self.groups.entry(which).or_default();
             group.missing.clear();
+            group.stale.clear();
             group.known.clear();
             for (class, rank) in
                 (answer.get(b"ranks").and_then(Json::as_object)).unwrap_or_default()
@@ -193,6 +198,19 @@ impl Known {
             }
         }
         failure
+    }
+
+    /// Takes in what an earlier run has asked, the answer to which is of no use any more. It is asked again together with
+    /// the next class that is not known.
+    fn take_in_question(&mut self, question: &Json) {
+        for group in (question.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
+            if let Some(which) = Which::of(group) {
+                let classes = (group.get(b"classes").and_then(Json::as_array)).unwrap_or_default();
+                self.groups.entry(which).or_default().stale = (classes.iter())
+                    .filter_map(|it| it.as_str().map(<[u8]>::to_vec))
+                    .collect();
+            }
+        }
     }
 }
 
@@ -222,10 +240,14 @@ pub(crate) fn for_file(
     // What earlier runs have found out.
     if !std::mem::replace(&mut known.is_loaded, true)
         && let Some([question, kept]) = files(environment)
-        && fs::is_file(&question)
-        && let Ok(answer) = evaluate_at(environment, SCRIPT, &question, Some(kept), true)
     {
-        known.take_in(&answer);
+        if let Some(answer) = kept_at(environment, SCRIPT, &kept) {
+            known.take_in(&answer);
+        } else if let Some(question) =
+            (fs::read(&question).ok()).and_then(|text| bun_lint::json::parse(&text))
+        {
+            known.take_in_question(&question);
+        }
     }
     if !known.by_directory.contains_key(directory) {
         known
@@ -233,10 +255,15 @@ pub(crate) fn for_file(
             .insert(directory.to_vec(), find(directory));
     }
     let found = known.by_directory.get(directory).cloned().flatten();
+    known.follows_plugin = is_on(b"followsPlugin");
     drop(known);
     // The plugin's `getTailwindConfig`.
-    let stylesheet = path_at(b"stylesheet");
-    let config = path_at(b"config").filter(|it| !it.ends_with(b".css"));
+    let (sheets, config): (Vec<_>, Vec<_>) =
+        (path_at(b"config").into_iter()).partition(|it| it.ends_with(b".css"));
+    let stylesheet = path_at(b"stylesheet")
+        .or_else(|| path_at(b"entryPoint"))
+        .or_else(|| sheets.into_iter().next());
+    let config = config.into_iter().next();
     let which = found.map(|found| Which {
         root: found.root,
         config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
@@ -247,6 +274,7 @@ pub(crate) fn for_file(
         attributes: names(b"attributes"),
         preserves_whitespace: is_on(b"preserveWhitespace"),
         preserves_duplicates: is_on(b"preserveDuplicates"),
+        follows_plugin: is_on(b"followsPlugin"),
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
             which: which.ok_or_else(|| directory.to_vec()),
@@ -255,10 +283,47 @@ pub(crate) fn for_file(
     }
 }
 
+/// The options of `prettier-plugin-tailwindcss`, as JSON in the shape of `sortTailwindcss`.
+pub(crate) fn options_of_plugin(settings: &[(&[u8], &[u8])]) -> Result<Vec<u8>, Fatal> {
+    let mut entries = vec![(b"followsPlugin".to_vec(), Json::Bool(true))];
+    for &(name, value) in settings {
+        let text = || Json::String(value.to_vec());
+        let list = || bun_lint::json::parse(value).unwrap_or(Json::Null);
+        let (key, value): (&[u8], Json) = match name {
+            b"tailwindConfig" => (b"config", text()),
+            b"tailwindStylesheet" => (b"stylesheet", text()),
+            b"tailwindEntryPoint" => (b"entryPoint", text()),
+            b"tailwindFunctions" => (b"functions", list()),
+            b"tailwindAttributes" => (b"attributes", list()),
+            b"tailwindPreserveWhitespace" => (b"preserveWhitespace", Json::Bool(value == b"true")),
+            b"tailwindPreserveDuplicates" => (b"preserveDuplicates", Json::Bool(value == b"true")),
+            b"tailwindPackageName" if value != b"tailwindcss" => {
+                let text = b"prettier-plugin-tailwindcss: tailwindPackageName is not supported.";
+                return Err(Fatal(text.to_vec()));
+            }
+            _ => continue,
+        };
+        entries.retain(|it| it.0 != key);
+        entries.push((key.to_vec(), value));
+    }
+    let mut text = Vec::new();
+    write_json(&mut text, &Json::Object(entries));
+    Ok(text)
+}
+
 impl Classes {
+    /// What sorts, for a message.
+    pub(crate) fn name(&self) -> &'static str {
+        match self.known.lock().follows_plugin {
+            true => "prettier-plugin-tailwindcss",
+            false => "sortTailwindcss",
+        }
+    }
+
     /// Asks Tailwind about the classes that are not known. `Err`: for the user.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
-        let fail = |why: &[u8]| [&b"sortTailwindcss: "[..], why].concat();
+        let name = self.name().as_bytes();
+        let fail = |why: &[u8]| [name, b": ", why].concat();
         let mut known = self.known.lock();
         let (None, Some([question, kept])) = (&known.without_package, files(environment)) else {
             let directory = known.without_package.as_deref();
@@ -273,7 +338,9 @@ impl Classes {
         };
         // The ranks are among all classes that are asked about, so those that are known are asked about again.
         let groups = known.groups.iter().map(|(which, group)| {
-            let mut classes: Vec<&[u8]> = (group.known.keys().chain(&group.missing))
+            let mut classes: Vec<&[u8]> = (group.known.keys())
+                .chain(&group.missing)
+                .chain(&group.stale)
                 .map(|it| &it[..])
                 .collect();
             classes.sort_unstable();
@@ -289,7 +356,7 @@ impl Classes {
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
         fs::write_new_atomically(&question, &text).map_err(|error| fail(&fs::describe(&error)))?;
-        let answer = evaluate_at(environment, SCRIPT, &question, Some(kept), false)
+        let answer = evaluate_at(environment, SCRIPT, &question, Some(kept))
             .map_err(|Fatal(error)| error)?;
         match known.take_in(&answer) {
             Some(error) => Err(fail(&error)),
@@ -298,30 +365,20 @@ impl Classes {
     }
 }
 
-/// Takes `sortTailwindcss` from `options`, which are for `text`, if that is in a language in which classes are not sorted
-/// yet. Returns whether it may have some.
-pub(crate) fn only_where_supported(
-    options: &mut FormatOptions,
-    kind: Option<Kind>,
-    text: &[u8],
-) -> bool {
+/// Takes `sortTailwindcss` from `options`, which are for a file of this kind, if oxfmt does not sort in that language.
+pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>) {
     use bun_format::html::Parser;
-    if options.tailwind.is_none()
-        || matches!(
-            kind,
-            None | Some(
-                Kind::Script
-                    | Kind::Css(_)
-                    | Kind::Markdown
-                    | Kind::Html(Parser::Html | Parser::Vue)
-            )
+    let is_sorted = matches!(
+        kind,
+        None | Some(
+            Kind::Script
+                | Kind::Css(_)
+                | Kind::Markdown
+                | Kind::Handlebars
+                | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular)
         )
-    {
-        return false;
-    }
-    options.tailwind = None;
-    match kind {
-        Some(Kind::Html(Parser::Angular) | Kind::Handlebars) => strings::contains(text, b"class"),
-        _ => false,
+    );
+    if !is_sorted {
+        options.tailwind = None;
     }
 }

@@ -5,7 +5,7 @@ use crate::results::{Counts, FileResult};
 use crate::run::Fatal;
 use crate::{fs, paths};
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Suppression, write_json_string};
+use bun_lint::linter::{LintMessage, RuleId, Suppression, parse_rule_id, write_json_string};
 use bun_lint::options::Json;
 use std::io::Write;
 
@@ -20,17 +20,30 @@ type ByRule = Vec<(Vec<u8>, u64)>;
 #[derive(Default)]
 pub(crate) struct Suppressions(Vec<(Vec<u8>, ByRule)>);
 
-fn rule_of(message: &LintMessage) -> Option<Vec<u8>> {
-    message.rule_id.as_ref().map(|id| id.to_vec())
+/// What the file calls the rule of `message`. `None`: it cannot be suppressed. `is_oxlint`: the file is oxlint's, which has the
+/// names of its diagnostics, `typescript/array-type` for `typescript(array-type)`, and nothing about what the type checker reports.
+pub(crate) fn rule_of(message: &LintMessage, is_oxlint: bool) -> Option<Vec<u8>> {
+    let id = message.rule_id.as_ref()?;
+    if !is_oxlint {
+        return Some(id.to_vec());
+    }
+    if matches!(id, RuleId::Unknown(_)) {
+        return None;
+    }
+    let id = id.to_vec();
+    Some(match parse_rule_id(&id) {
+        (b"", name) => name.to_vec(),
+        (prefix, name) => [crate::format::oxlint::scope(prefix), b"/", name].concat(),
+    })
 }
 
 /// `countViolationsByRule`
-fn count_violations(messages: &[LintMessage]) -> ByRule {
+fn count_violations(messages: &[LintMessage], is_oxlint: bool) -> ByRule {
     let mut counts: ByRule = Vec::new();
     for rule in messages
         .iter()
         .filter(|it| it.severity == Severity::Error)
-        .filter_map(rule_of)
+        .filter_map(|it| rule_of(it, is_oxlint))
     {
         match counts.iter_mut().find(|it| it.0 == rule) {
             Some(entry) => entry.1 += 1,
@@ -109,10 +122,11 @@ impl Suppressions {
         results: &[FileResult],
         cwd: &[u8],
         rules: Option<&[Vec<u8>]>,
+        is_oxlint: bool,
     ) {
         for result in results {
             let relative = paths::relative(cwd, &paths::from_native(&result.path));
-            for (rule, count) in count_violations(&result.messages) {
+            for (rule, count) in count_violations(&result.messages, is_oxlint) {
                 if rules.is_none_or(|rules| rules.contains(&rule)) {
                     *entry(entry(&mut self.0, &relative), &rule) = count;
                 }
@@ -121,14 +135,19 @@ impl Suppressions {
     }
 
     /// `applySuppressions`. Returns what is suppressed and does not occur.
-    pub(crate) fn apply(&self, results: &mut [FileResult], cwd: &[u8]) -> Suppressions {
+    pub(crate) fn apply(
+        &self,
+        results: &mut [FileResult],
+        cwd: &[u8],
+        is_oxlint: bool,
+    ) -> Suppressions {
         let mut unused = Suppressions::default();
         for result in results {
             let relative = paths::relative(cwd, &paths::from_native(&result.path));
             let Some((_, suppressed)) = self.0.iter().find(|it| it.0 == relative) else {
                 continue;
             };
-            let violations = count_violations(&result.messages);
+            let violations = count_violations(&result.messages, is_oxlint);
             let mut was_suppressed = false;
             for (rule, count) in &violations {
                 let Some(&(_, tolerated)) = suppressed.iter().find(|it| it.0 == *rule) else {
@@ -139,7 +158,7 @@ impl Suppressions {
                     let (mut hidden, shown): (Vec<_>, Vec<_>) =
                         std::mem::take(&mut result.messages)
                             .into_iter()
-                            .partition(|it| rule_of(it).as_ref() == Some(rule));
+                            .partition(|it| rule_of(it, is_oxlint).as_ref() == Some(rule));
                     for message in &mut hidden {
                         message.suppressions = vec![Suppression::file()];
                     }

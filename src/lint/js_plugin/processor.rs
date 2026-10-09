@@ -5,7 +5,7 @@
 //! ESLint's JSON: [`write_messages`], [`read_messages`].
 
 use super::engine::Vm;
-use super::host::{Host, number, realms_for};
+use super::host::{Host, number};
 use super::offsets::Offsets;
 use super::wire::{self, result};
 use crate::context::Severity;
@@ -46,7 +46,7 @@ pub enum Route {
     /// By the `Linter` of the `eslint` that the project has installed: it has a `language` other than JavaScript, or a parser that
     /// is not known here is to read what is not called like JavaScript.
     Eslint,
-    /// Not at all: its parser finds JavaScript in it, for which it has another parser.
+    /// Not at all: it is for a processor or for `eslint`, and the configuration is not ESLint's or the package is not installed.
     Unsupported,
 }
 
@@ -231,8 +231,7 @@ impl Host<'_> {
     ) -> Result<Json, Vec<u8>> {
         let mut outcome = Err(OUT_OF_STEP.to_vec());
         // Both calls are for the same realm: a processor remembers the blocks of a file.
-        let among = realms_for(processor.needs_the_configuration);
-        self.engine.with_vm(among, &mut |vm| {
+        self.engine.with_vm(&mut |vm| {
             outcome = self.process_in(vm, processor, path, text, lint);
         })?;
         outcome

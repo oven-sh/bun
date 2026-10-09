@@ -4,17 +4,130 @@
 use super::ancestor_memo::AncestorMemo;
 use super::ast_utils::is_global_reference;
 use crate::ast::{
-    Expr, ExprKind, File, Flags, FnKind, Func, Ident, Key, KeyKind, Member, MemberKind, ModuleName,
-    Node, Prop, PropKind, StmtKind, VarDecl,
+    Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Ident, Key, KeyKind, List, Member,
+    MemberKind, ModuleName, Node, Prop, PropKind, Stmt, StmtKind, StmtTag, VarDecl, VarKind,
 };
+use crate::language::SourceType;
+use crate::semantic::{Scope, ScopeKind};
 use crate::span::Span;
+use crate::tokens::{skip_trivia, token_len};
 use smallvec::SmallVec;
+
+/// An `await` that is in no function, in a file that can be a script or a module, makes it a module if what follows cannot be anything
+/// but its operand.
+fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>) -> bool {
+    let (file, after) = (e.file(), e.span().start + 5);
+    let next = skip_trivia(file.text(), after);
+    let rest = file.text().get(next as usize..).unwrap_or_default();
+    let starts_operand = match rest.first() {
+        Some(b'"' | b'\'' | b'0'..=b'9') => true,
+        Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80..) => !matches!(
+            rest.get(..token_len(rest)),
+            Some(b"of" | b"using" | b"in" | b"instanceof")
+        ),
+        _ => false,
+    };
+    starts_operand
+        && !super::text::has_line_break(file.slice(Span::new(after, next)))
+        && in_function
+            .find(Node::Expr(e), |_, parent| parent.as_func().map(|_| ()))
+            .is_none()
+}
+
+/// By its name the file can be a script or a module.
+fn is_either(file: &File) -> bool {
+    !matches!(file.path(), [.., b'.', b'm' | b'c', b'j' | b't', b's'])
+}
+
+/// oxc takes the file for a script, in which the `await` of `await (a)` that is in no function is the name of a function.
+pub fn is_script<'a>(file: &'a File<'a>) -> bool {
+    is_either(file) && !has_module_syntax(file)
+}
+
+/// `ModuleRecord::has_module_syntax`
+pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
+    let is_module_declaration = |stmt: Stmt| {
+        matches!(
+            stmt.tag(),
+            StmtTag::Import
+                | StmtTag::ExportNamed
+                | StmtTag::ExportStar
+                | StmtTag::ExportDefault
+                | StmtTag::ExportAssign
+                | StmtTag::ExportAsNamespace
+        ) || stmt.is_exported()
+    };
+    let is_await_using = |stmt: &Stmt| match stmt.kind() {
+        StmtKind::Var(declarations) => {
+            (declarations.first()).is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
+        }
+        _ => false,
+    };
+    let mut in_function = AncestorMemo::default();
+    file.body().iter().any(is_module_declaration)
+        || file.has_exprs([ExprTag::ImportMeta])
+        || file.has_exprs([ExprTag::Await])
+            && is_either(file)
+            && file
+                .exprs_of_kind(ExprTag::Await)
+                .any(|it| is_unambiguous_await(it, &mut in_function))
+        || is_either(file)
+            && (file.stmts_of_kind(StmtTag::Var).filter(is_await_using)).any(|it| {
+                in_function
+                    .find(Node::Stmt(it), |_, parent| parent.as_func().map(|_| ()))
+                    .is_none()
+            })
+}
+
+/// `ctx.source_type()`: what oxc takes the file for. `.mjs` and `.mts` are modules, and so are the scripts in `.vue` and `.svelte`
+/// files, `.cjs` and `.cts` are CommonJS, and any other is a module if it has an `import` or an `export`, else a script. [`File::language`] does not say so: with a configuration
+/// of oxlint the scopes of every file are those of a module, which is what oxc's are like, whatever the file is. Few of its rules ask.
+pub fn source_type<'a>(file: &'a File<'a>) -> SourceType {
+    *file.lazy.oxc_source_type.get_or_init(|| match file.path() {
+        [.., b'.', b'm', b'j' | b't', b's'] | [.., b'.', b'v', b'u', b'e'] => SourceType::Module,
+        [.., b'.', b's', b'v', b'e', b'l', b't', b'e'] => SourceType::Module,
+        [.., b'.', b'c', b'j' | b't', b's'] => SourceType::CommonJs,
+        _ if has_module_syntax(file) => SourceType::Module,
+        _ => SourceType::Script,
+    })
+}
+
+/// `ScopeFlags::is_strict_mode` of oxc's scope: in a module, in a class, or below a `"use strict"`. [`Scope::is_strict`] takes
+/// every file for a module.
+pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
+    let has_use_strict = |statements: List<'a, Stmt<'a>>| {
+        let mut directives = statements.iter().map_while(Stmt::directive);
+        directives.any(|it| it == b"use strict")
+    };
+    source_type(file) == SourceType::Module
+        || scope.chain().any(|it| match (it.kind(), it.node()) {
+            (ScopeKind::Class, _) => true,
+            (_, Node::Func(func)) => func.body_statements().is_some_and(has_use_strict),
+            (_, Node::File(file)) => has_use_strict(file.body()),
+            _ => false,
+        })
+}
 
 /// [`is_global_reference`] for the rules whose port in oxlint goes by the name and does not ask what it refers to:
 /// `Boolean`, `Promise`, `NaN`. With a configuration of oxlint it is enough that `e`, which the caller knows
 /// to have the name, is written.
 pub fn is_global_by_name(e: Expr) -> bool {
     e.file().language().is_oxlint || is_global_reference(e)
+}
+
+/// `scope` is that of a class, or of a function or a file that begins with `"use strict"`: it and what is in it are strict for
+/// oxc, whatever the file is. For a rule that asks about many scopes of a file that it knows to be no module.
+pub fn makes_strict(scope: crate::semantic::Scope<'_>) -> bool {
+    fn has_use_strict<'a>(statements: crate::ast::List<'a, crate::ast::Stmt<'a>>) -> bool {
+        let mut directives = statements.iter().map_while(crate::ast::Stmt::directive);
+        directives.any(|it| it == b"use strict")
+    }
+    match (scope.kind(), scope.node()) {
+        (crate::semantic::ScopeKind::Class, _) => true,
+        (_, Node::Func(func)) => func.body_statements().is_some_and(has_use_strict),
+        (_, Node::File(file)) => has_use_strict(file.body()),
+        _ => false,
+    }
 }
 
 /// `GetFunctionHeadLoc` of tsgolint 7.0. Of an arrow function it is the `=>` and what is between it and the token before.

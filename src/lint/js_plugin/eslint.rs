@@ -6,7 +6,7 @@
 //! configuration file is run again only for what JSON cannot say.
 
 use super::engine::Vm;
-use super::host::{Host, realms_for};
+use super::host::Host;
 use super::processor::{FindRule, read_messages};
 use super::wire::{self, result};
 use crate::linter::{LintMessage, write_json};
@@ -51,10 +51,6 @@ impl Configuration {
     /// Whatever the configuration file has for a file: a realm runs all of it.
     pub fn whole() -> Configuration {
         Configuration::new(&Json::Null)
-    }
-
-    fn is_whole(&self) -> bool {
-        *self.json == *b"null"
     }
 }
 
@@ -156,11 +152,10 @@ impl Host<'_> {
         );
         message.extend_from_slice(file.path);
         message.extend_from_slice(file.text);
+        self.count_one_for_eslint();
         let mut returned = Err(OUT_OF_STEP.to_vec().into());
         self.engine
-            .with_vm(realms_for(configuration.is_whole()), &mut |vm| {
-                returned = self.lint_in(vm, &message, configuration, run)
-            })?;
+            .with_vm(&mut |vm| returned = self.lint_in(vm, &message, configuration, run))?;
         let Some(Json::Array(parts)) = crate::json::parse(&returned?) else {
             return Err(OUT_OF_STEP.to_vec().into());
         };

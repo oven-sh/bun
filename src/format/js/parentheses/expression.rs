@@ -151,7 +151,11 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::Regex(_)
         | ExprKind::Template(_)
         | ExprKind::ImportMeta
-        | ExprKind::NewTarget => return is_for_in_statement_init(e) && !is_cast_target(e, f),
+        | ExprKind::NewTarget => {
+            return is_for_in_statement_init(e)
+                && !is_cast_target(e, f)
+                && !few_initializers_of_for_in_get_parentheses(f);
+        }
         // A pattern is not an expression.
         ExprKind::Array(_) | ExprKind::Object(_) if is_assignment_target(e) => return false,
         // The function of a method is not an expression of its own.
@@ -205,7 +209,10 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 
     match kind {
-        ExprKind::Number(_) => is_member_object(e, parent),
+        ExprKind::Number(_) => match number_before_brackets_is_bare(f) {
+            true => matches!(parent, N::StaticMemberExpression(_)),
+            false => is_member_object(e, parent),
+        },
         // So that it does not become a directive.
         ExprKind::String(_) => {
             matches!(parent, N::ExpressionStatement(ExpressionStatement::Stmt(_)))
@@ -369,7 +376,17 @@ fn parent_needs_parentheses<'a>(
         }
         // Written by `print/decorators.rs`.
         N::Decorator(_) => Some(false),
-        N::VariableDeclarator(_) => is_for_in_statement_init(e).then_some(true),
+        N::VariableDeclarator(_) => (is_for_in_statement_init(e)
+            && (!few_initializers_of_for_in_get_parentheses(f)
+                || matches!(
+                    e.kind(),
+                    ExprKind::Array(_)
+                        | ExprKind::Object(_)
+                        | ExprKind::Binary { .. }
+                        | ExprKind::Fn(_)
+                        | ExprKind::Class(_)
+                )))
+        .then_some(true),
         N::TSInstantiationExpression(_) => {
             matches!(e.kind(), ExprKind::Await(_) | ExprKind::Yield { .. }).then_some(true)
         }
@@ -738,6 +755,17 @@ fn is_in_for_statement_initializer<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// for (!(function () { if (a) b in c; })(); ; );      for (!(function () { if (a) (b in c); })(); ; );
 /// ```
 fn search_for_initializer_ends_at_statements(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `for (var a = 1 in b);`: oxfmt writes the parentheses around an array, an object, a function, a class, and what has an
+/// operator. Prettier writes them around everything.
+fn few_initializers_of_for_in_get_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `4["a"]` for oxfmt, `(4)["a"]` for Prettier.
+fn number_before_brackets_is_bare(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

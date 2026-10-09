@@ -233,9 +233,10 @@ pub fn is_global_turned_off(file: &File, name: &str) -> bool {
     global_of_configuration(file, name.as_bytes()) == Some(Global::Off)
 }
 
-/// `ctx.globals().is_enabled(name)`: the configuration has a global variable of that name.
+/// `ctx.globals().is_enabled(name)`: `globals` of the configuration has a variable of that name. What an `env` defines does not
+/// count.
 pub fn is_enabled_global(file: &File, name: &[u8]) -> bool {
-    global_of_configuration(file, name).is_some_and(|it| it != Global::Off)
+    file.language().is_written_global(name)
 }
 
 /// `LintContext::is_reference_to_global_variable`: nothing in the file declares it, and the configuration does not turn it off.

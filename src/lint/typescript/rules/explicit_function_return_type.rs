@@ -70,6 +70,26 @@ fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<
     answer == Some(true)
 }
 
+/// `(a: () => void = () => {}) => {}`: for oxlint the type of the parameter says nothing about its default value.
+fn oxlint_is_default_of_parameter(func: Func) -> bool {
+    matches!(
+        func.owner(),
+        Node::Expr(e) if matches!(e.parent(), Node::Param(param) if param.default() == Some(e))
+    )
+}
+
+/// The member of a class that `func` is, or is the value of.
+fn member_of(func: Func<'_>) -> Option<Member<'_>> {
+    match func.owner() {
+        Node::Member(member) => Some(member),
+        Node::Expr(e) => match e.parent() {
+            Node::Member(member) if member.init() == Some(e) => Some(member),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl ExplicitFunctionReturnType {
     fn is_allowed_function(&self, func: Func) -> bool {
         (self.allow_functions_without_type_parameters && func.type_params().is_empty())
@@ -81,7 +101,17 @@ impl ExplicitFunctionReturnType {
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.return_type().is_some() || !ast_utils::is_function_with_body(func) {
+        // oxlint also looks at a function and at a method of a class that have no body.
+        let is_oxlint = cx.language().is_oxlint;
+        let is_only_declared = is_oxlint
+            && !func.has_body()
+            && match func.owner() {
+                Node::Member(member) => {
+                    matches!(func.kind(), FnKind::Method | FnKind::Getter) && matches!(member.parent(), Node::Class(_))
+                }
+                _ => func.kind() == FnKind::Decl,
+            };
+        if func.return_type().is_some() || !ast_utils::is_function_with_body(func) && !is_only_declared {
             return;
         }
         let is_expression = func.kind() != FnKind::Decl;
@@ -95,15 +125,30 @@ impl ExplicitFunctionReturnType {
         if self.is_allowed_function(func) {
             return;
         }
+        if is_only_declared {
+            let start = match func.owner() {
+                Node::Stmt(statement) => statement.span_without_export().start,
+                Node::Member(member) => member.span().start,
+                _ => func.span().start,
+            };
+            let end = func.open_paren().filter(|&it| it >= start).unwrap_or(start);
+            cx.report(Span::new(start, end), MISSING_RETURN_TYPE);
+            return;
+        }
         if is_expression
             && self.options.allow_typed_function_expressions
             && (is_valid_function_expression_return_type(func, self.options)
+                && !(is_oxlint && oxlint_is_default_of_parameter(func))
                 || ancestor_has_return_type(func)
-                || cx.language().is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
+                || is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
         {
             return;
         }
-        check_function_return_type(func, self.options, |loc| {
+        check_function_return_type(func, self.options, |mut loc| {
+            // oxlint points at the decorators of a member.
+            if is_oxlint && let Some(member) = member_of(func) {
+                loc.start = member.span().start;
+            }
             cx.report(loc, MISSING_RETURN_TYPE);
         });
     }

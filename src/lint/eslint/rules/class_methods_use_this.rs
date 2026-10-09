@@ -86,7 +86,8 @@ impl Checker {
 
     /// `e` is a `this` or a `super`: notes which function it belongs to.
     pub fn mark_this_used<'a>(&self, e: Expr<'a>, state: &mut State<'a>) {
-        if e.is_jsx_tag_name() {
+        let is_oxlint = e.file().language().is_oxlint;
+        if e.is_jsx_tag_name() && !is_oxlint {
             return;
         }
         let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
@@ -120,7 +121,10 @@ impl Checker {
             }
             _ => None,
         });
-        if let Some(Some(func)) = owner {
+        // oxlint looks at the body alone.
+        if let Some(Some(func)) = owner
+            && !(is_oxlint && func.params_span().is_some_and(|it| it.contains(e.span())))
+        {
             state.uses_this.insert(func);
         }
     }
@@ -137,15 +141,17 @@ impl Checker {
         if flags.intersects(Flags::STATIC | Flags::ABSTRACT) {
             return;
         }
+        // oxlint sees no function in parentheses, and none in a key.
+        let is_oxlint = member.file().language().is_oxlint;
         let value = match is_field {
-            true => member.init().and_then(Expr::as_fn),
+            true => member.init().filter(|it| !(is_oxlint && it.is_parenthesized())).and_then(Expr::as_fn),
             false => member.func(),
         };
         let value = value.filter(|func| func.has_body());
         let key = member.key();
         // ESLint only looks at the parent of a function expression.
         let function_in_key = match key.map(Key::kind) {
-            Some(KeyKind::Computed(e)) => e.as_fn().filter(|func| !func.is_arrow()),
+            Some(KeyKind::Computed(e)) => e.as_fn().filter(|func| !func.is_arrow() && !is_oxlint),
             _ => None,
         };
         if value.is_none() && function_in_key.is_none() {

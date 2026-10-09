@@ -13,7 +13,7 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside,
+    Host, ModuleDetection, ParseOptions, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
@@ -1188,7 +1188,7 @@ impl Host for Disk {
         path: &[u8],
         text: &[u8],
         atoms: &Interner<'s>,
-        options: &Options,
+        options: ParseOptions,
     ) -> hir::File<'s> {
         let began = Instant::now();
         let (file, parsing) = bun_js_parser::sema::summarize(

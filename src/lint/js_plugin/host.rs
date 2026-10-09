@@ -77,6 +77,8 @@ pub struct Loading {
     pub milliseconds: f64,
     /// What only the configuration file has, so that a realm has to run all of that to get at it.
     pub need_the_configuration: Vec<Box<[u8]>>,
+    /// How many texts ESLint's own `Linter` was given.
+    pub linted_by_eslint: u64,
 }
 
 impl Loading {
@@ -189,14 +191,6 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
 
 const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
 
-/// Among how many realms one is taken for a file. One is enough to run the configuration file, with all that it imports.
-pub(super) fn realms_for(needs_the_configuration: bool) -> usize {
-    match needs_the_configuration {
-        true => 1,
-        false => usize::MAX,
-    }
-}
-
 impl<'e> Host<'e> {
     /// `cwd`: ESLint's `context.cwd`.
     pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
@@ -212,6 +206,10 @@ impl<'e> Host<'e> {
     /// The same host, which keeps track of what is loaded.
     pub fn measuring(self, measures: bool) -> Host<'e> {
         Host { measures, ..self }
+    }
+
+    pub(super) fn count_one_for_eslint(&self) {
+        self.state.lock().loading.linted_by_eslint += 1;
     }
 
     /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
@@ -362,9 +360,8 @@ impl<'e> Host<'e> {
             return Ok(plugin);
         }
         let mut loaded = Err(OUT_OF_STEP.to_vec());
-        self.engine.with_vm(usize::MAX, &mut |vm| {
-            loaded = self.load_in(vm, &location, None)
-        })?;
+        self.engine
+            .with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
         Ok(self.register(location, &described, false))
     }
@@ -484,12 +481,9 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
     ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        let needs_the_configuration = settings.sources.is_some()
-            || (enabled.iter()).any(|it| it.rule.needs_the_configuration);
-        self.engine
-            .with_vm(realms_for(needs_the_configuration), &mut |vm| {
-                outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
-            })?;
+        self.engine.with_vm(&mut |vm| {
+            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
+        })?;
         outcome
     }
 

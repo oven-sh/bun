@@ -125,7 +125,7 @@ pub trait Host: Sync {
         path: &[u8],
         text: &[u8],
         atoms: &crate::atom::Interner<'s>,
-        options: &Options,
+        options: ParseOptions,
     ) -> crate::hir::File<'s>;
     /// `packagejson.Parse`: an object with the fields of `Fields` that `text` has, and no others.
     /// `None`: an error, after which typescript-go goes on as if the file had no fields.
@@ -281,7 +281,7 @@ bun_core::comptime_string_map! {
 }
 
 /// `core.ModuleDetectionKind`: what makes a file that is not a declaration file a module.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleDetection {
     /// An `import`, an `export` or `import.meta`; a JSX tag that imports its factory; the format
     /// implied by its file name or its package.
@@ -452,6 +452,21 @@ pub fn is_jsx_file_name(path: &[u8]) -> bool {
 pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
     let by_name = || is_javascript(path);
     (host.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
+}
+
+/// All that parsing and binding a file read of the options of its program. Two programs in which it is the same have
+/// the same HIR and the same side tables for a file. It is made in one place, [`Options::for_parsing`], and what parses
+/// or binds is not given the options themselves.
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ParseOptions {
+    pub experimental_decorators: bool,
+    pub module_detection: ModuleDetection,
+    /// `jsx` is `react-jsx` or `react-jsxdev`: a JSX tag imports its factory.
+    pub jsx_imports_its_factory: bool,
+    /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
+    /// library can be any file.
+    pub keeps_the_text_of_libraries: bool,
+    pub bind: crate::bind::BindOptions,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -684,6 +699,24 @@ pub struct Options {
 }
 
 impl Options {
+    pub fn for_parsing(&self) -> ParseOptions {
+        // `GetEmitScriptTarget`: an unspecified target means the latest.
+        let is_before =
+            |target: ScriptTarget| self.target != ScriptTarget::None && self.target < target;
+        ParseOptions {
+            experimental_decorators: self.experimental_decorators,
+            module_detection: self.module_detection,
+            jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
+            keeps_the_text_of_libraries: self.lib_replacement
+                || !(self.skip_lib_check || self.skip_default_lib_check),
+            bind: crate::bind::BindOptions {
+                emit_standard_class_fields: self.emit_standard_class_fields,
+                before_es2020: is_before(ScriptTarget::ES2020),
+                before_es2017: is_before(ScriptTarget::ES2017),
+            },
+        }
+    }
+
     /// Whether `compilerOptions.lib` names the DOM.
     pub fn has_dom_lib(&self) -> bool {
         self.libs.iter().any(|l| l == b"dom")

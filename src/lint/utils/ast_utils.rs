@@ -153,6 +153,22 @@ pub fn is_ecmascript_global(name: &[u8]) -> bool {
     ecmascript_global_since(name).is_some()
 }
 
+/// Whether `name` is in oxlint's list of the built-in globals, which has neither `Temporal` nor what
+/// the global object inherits from `Object.prototype`.
+pub fn is_builtin_global_of_oxlint(name: &[u8]) -> bool {
+    !matches!(
+        name,
+        b"constructor"
+            | b"hasOwnProperty"
+            | b"isPrototypeOf"
+            | b"propertyIsEnumerable"
+            | b"Temporal"
+            | b"toLocaleString"
+            | b"toString"
+            | b"valueOf"
+    ) && is_ecmascript_global(name)
+}
+
 // ───────────────────────────── tokens ─────────────────────────────
 
 macro_rules! punctuator_predicates {

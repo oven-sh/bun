@@ -3893,6 +3893,22 @@ struct Taken<V> {
     joined: Vec<(u32, V)>,
 }
 
+impl<V> Taken<V> {
+    fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
+        let records = self.records.into_iter();
+        let joined = self.joined.into_iter();
+        Taken {
+            len: self.len,
+            records: records
+                .map(|(index, hash, record)| (index, hash, of(record)))
+                .collect(),
+            positions: self.positions,
+            parts: self.parts,
+            joined: joined.map(|(id, record)| (id, of(record))).collect(),
+        }
+    }
+}
+
 impl<V> Default for Taken<V> {
     fn default() -> Self {
         Taken {
@@ -4327,7 +4343,8 @@ impl<'s> TypeStore<'s> {
         let (mut texts, mut components, mut mappers, mut sigs, mut types) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (task, link) in tasks.into_iter().zip(&links) {
-            texts.push((task.atoms, link));
+            // The texts of the interner are not in an arena: see `atom::Tables`.
+            texts.push((task.atoms.map(|text| Box::<[u8]>::from(&*text)), link));
             components.push((task.components, link));
             mappers.push((task.mappers, link));
             sigs.push((task.sigs, link));

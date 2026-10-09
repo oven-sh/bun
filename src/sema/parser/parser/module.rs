@@ -9,21 +9,21 @@ use bun_sema::hir::*;
 
 /// A name in an import or export specifier.
 #[derive(Copy, Clone)]
-struct ExportName {
-    text: Atom,
-    pos: u32,
-    token: T,
+pub(super) struct ExportName {
+    pub(super) text: Atom,
+    pub(super) pos: u32,
+    pub(super) token: T,
 }
 
 /// `ImportSpecifier`, `ExportSpecifier`
-struct Specifier {
-    start: u32,
-    is_type_only: bool,
-    property_name: Option<ExportName>,
+pub(super) struct Specifier {
+    pub(super) start: u32,
+    pub(super) is_type_only: bool,
+    pub(super) property_name: Option<ExportName>,
     /// Where `property_name` ends, if an `as` that is no name follows it.
     property_name_end: u32,
-    name: ExportName,
-    end: u32,
+    pub(super) name: ExportName,
+    pub(super) end: u32,
 }
 
 impl Parser<'_> {
@@ -98,7 +98,7 @@ impl Parser<'_> {
 
     /// `checkExternalImportOrExportDeclaration`, of what is from `at` on in the place of a module
     /// specifier. Whether it is there: nothing is reported about a missing one.
-    fn string_literal_expected(&mut self, expression: ExprId, at: u32) -> bool {
+    pub(super) fn string_literal_expected(&mut self, expression: ExprId, at: u32) -> bool {
         let is_missing = matches!(
             self.f.exprs.get(expression.idx()),
             Some(Expr {
@@ -168,7 +168,7 @@ impl Parser<'_> {
 
     /// `tryParseImportAttributes`, and what `parseExportDeclaration` has in its place.
     #[inline]
-    fn import_attributes_of_declaration(&mut self, is_export: bool) -> ResolutionMode {
+    pub(super) fn import_attributes_of_declaration(&mut self, is_export: bool) -> ResolutionMode {
         // After an import, `with` can be on the next line. After an export it starts a statement
         // there.
         if self.token() == T::With && !(is_export && self.newline_before() && !self.is_ecmascript) {
@@ -327,7 +327,7 @@ impl Parser<'_> {
 
     /// `parseIdentifier`: the name, which is not noted, and where the node is.
     #[inline]
-    fn identifier_of_declaration(&mut self) -> (Atom, u32) {
+    pub(super) fn identifier_of_declaration(&mut self) -> (Atom, u32) {
         if !self.is_identifier() {
             return self.missing_name();
         }
@@ -361,7 +361,7 @@ impl Parser<'_> {
     }
 
     /// `parseImportOrExportSpecifier`, but for the error about the name.
-    fn import_or_export_specifier(&mut self) -> Specifier {
+    pub(super) fn import_or_export_specifier(&mut self) -> Specifier {
         let start = self.pos();
         let (mut is_type_only, mut property_name, mut can_parse_as) = (false, None, true);
         let mut property_name_end = 0;
@@ -420,7 +420,7 @@ impl Parser<'_> {
     /// more than an identifier. `imported`: the name in the other module.
     #[cold]
     #[inline(never)]
-    fn unusual_name_of_import_specifier(
+    pub(super) fn unusual_name_of_import_specifier(
         &mut self,
         specifier: &Specifier,
         imported: &mut ExportName,

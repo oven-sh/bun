@@ -26,6 +26,8 @@ async function lint(files: Record<string, string>, args: string[], reads: string
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   return {
     raw: stdout,
     stdout: normalizeBunSnapshot(stdout, String(dir)),
@@ -767,7 +769,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "one engine runs the configuration file, for the files with a rule of a plugin that only it has",
+    "an engine runs the configuration file, for the files with a rule of a plugin that only it has",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -1265,7 +1267,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           "eslint.config.mjs": `
           import local from "./local.cjs";
           import other from "./other.mjs";
-          local.RULES_DIR = new URL("./rules", import.meta.url).pathname;
+          import { fileURLToPath } from "node:url";
+          local.RULES_DIR = fileURLToPath(new URL("./rules", import.meta.url));
           export default [
             { files: ["a.js"], plugins: { other }, rules: { "other/last": "error" } },
             { files: ["a.js"], plugins: { local }, rules: { "local/one": "error", "local/two": "error" } },

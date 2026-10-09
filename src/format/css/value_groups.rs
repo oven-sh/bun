@@ -245,10 +245,12 @@ impl<'a> Printer<'a, '_> {
             && is_in_paren_group
             && grandparent.is_some_and(|it| is_func(it) && it.value() == Some(b"if"));
 
-        // For oxfmt a value is laid out as it is without the line comments before it. For Prettier it is one of several
-        // things that fill lines, which are indented.
+        // For oxfmt one of the values of a declaration is laid out as it is without the line comments before it. For Prettier
+        // it is one of several things that fill lines, which are indented.
         let count = node.groups().len();
         if self.is_oxfmt
+            && is_in_paren_group
+            && at_rule.is_none()
             && count > 1
             && node.groups().take(count - 1).all(is_inline_comment)
             && !node.groups().next_back().is_some_and(is_inline_comment)
@@ -970,13 +972,15 @@ impl<'a> Printer<'a, '_> {
                         .and_then(|at| parent.group(at))
                         .is_some_and(|it| is_the_word(it, b"with"))
             });
-        // For oxfmt only a list with commas and a map have each item on a line of its own, and a comma at the end:
-        // `($a + $b,)` is not `($a + $b)`.
-        let is_scss_map_item = is_scss_map_item
-            && !(self.is_oxfmt
-                && count == 1
-                && !node.group(0).is_some_and(is_key_value_pair)
-                && !self.has_comma_before_closing_parenthesis(node));
+        // For oxfmt only a list of several and a map have each item on a line of its own, and a comma at the end if there
+        // is none: `($a + $b,)` is not `($a + $b)`. It is a list of one, and stays one.
+        let is_one_value =
+            self.is_oxfmt && count == 1 && !node.group(0).is_some_and(is_key_value_pair);
+        let is_scss_map_item = is_scss_map_item && !is_one_value;
+        let is_list_of_one = is_one_value
+            && self.syntax() == Syntax::Scss
+            && !parent.is_some_and(is_func)
+            && self.has_comma_before_closing_parenthesis(node);
         let should_break = is_configuration || (is_scss_map_item && !is_key);
         let should_dedent = is_configuration || is_key;
 
@@ -1017,7 +1021,7 @@ impl<'a> Printer<'a, '_> {
             } else {
                 let is_only_comments = is_comment(child)
                     || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));
-                if is_var && self.has_comma_before_closing_parenthesis(node) {
+                if is_list_of_one || (is_var && self.has_comma_before_closing_parenthesis(node)) {
                     self.sink.token(",");
                 } else if !is_only_comments && self.trailing_comma && is_scss_map_item {
                     self.sink.if_break(",");

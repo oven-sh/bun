@@ -142,10 +142,28 @@ impl ArrayType {
         let (is_readonly, is_readonly_with_array) = match name.bytes() {
             b"Array" => (false, false),
             b"ReadonlyArray" => (true, false),
+            // oxlint does not know it.
+            b"Readonly" if cx.language().is_oxlint => return,
             b"Readonly" if args.first().is_some_and(|it| it.tag() == TypeTag::Array) => (true, true),
             _ => return,
         };
         let style = if is_readonly { self.readonly } else { self.default };
+        // oxlint takes `Array` for `Array<any>`.
+        if args.is_empty()
+            && cx.language().is_oxlint
+            && style != Style::Generic
+            && !cx.file().is_javascript()
+            && utils::estree_type_name(Node::Type(ty)) == "TSTypeReference"
+        {
+            let message = if style == Style::Array { ERROR_STRING_ARRAY } else { ERROR_STRING_ARRAY_SIMPLE };
+            let readonly_prefix = if is_readonly { "readonly " } else { "" };
+            cx.report(ty, message)
+                .data("type", "any")
+                .data("className", name)
+                .data("readonlyPrefix", readonly_prefix)
+                .fix(|fixer| fixer.replace(ty, [readonly_prefix, "any[]"].concat()));
+            return;
+        }
         let (Some(argument), 1) = (args.first(), args.len()) else {
             return;
         };

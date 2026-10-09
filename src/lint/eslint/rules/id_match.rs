@@ -64,6 +64,10 @@ fn is_in_assignment_to_property(member: Expr<'_>, name: &[u8]) -> bool {
     if op.is_none() && is_assignment_target(parent) {
         return false;
     }
+    // oxlint looks only at what is assigned to.
+    if member.file().language().is_oxlint {
+        return target == member;
+    }
     match target.kind() {
         ExprKind::Dot { name: property, .. } => {
             let property = property.bytes();
@@ -76,9 +80,29 @@ fn is_in_assignment_to_property(member: Expr<'_>, name: &[u8]) -> bool {
 
 /// `node.type === "PropertyDefinition"`
 fn is_property_definition(member: Member<'_>) -> bool {
-    member.kind() == MemberKind::Property
-        && !member.is_signature()
-        && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+    // For oxlint an abstract field and an `accessor` are fields like the others.
+    let others = match member.file().language().is_oxlint {
+        true => Flags::empty(),
+        false => Flags::ABSTRACT | Flags::ACCESSOR,
+    };
+    member.kind() == MemberKind::Property && !member.is_signature() && !member.flags().intersects(others)
+}
+
+/// Whether the key `name` of `prop`, a property of `object`, is left alone as the key of an import attribute. In the
+/// options of an `import()` those are for oxlint only `with`, and the keys of the object that is its value.
+fn is_key_of_import_attribute<'a>(prop: Prop<'a>, name: Name<'a>, object: Expr<'a>) -> bool {
+    let is_key = is_import_attribute_key(prop);
+    if !is_key || !prop.file().language().is_oxlint {
+        return is_key;
+    }
+    let is_options = |it: Expr<'a>| matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::ImportCall);
+    match object.parent() {
+        Node::Prop(outer) => {
+            matches!(outer.key().map(Key::kind), Some(KeyKind::Ident(it)) if it.is("with"))
+                && matches!(outer.parent(), Node::Expr(options) if is_options(options))
+        }
+        _ => !is_options(object) || name.is("with"),
+    }
 }
 
 /// Whether `reference`, which nothing in the file declares, resolves to `global`.
@@ -177,6 +201,10 @@ impl IdMatch {
             return !self.only_declarations;
         }
         if is_assignment_target(object) {
+            // oxlint checks a computed key there as it does elsewhere.
+            if e.file().language().is_oxlint && matches!(key.kind(), KeyKind::Computed(it) if it == e) {
+                return !self.only_declarations;
+            }
             let key_equals_value = key_identifier(key) == Some(name)
                 && prop.value().and_then(Expr::as_ident) == Some(name);
             return match prop.value() == Some(e) {
@@ -193,6 +221,18 @@ impl IdMatch {
 
     /// Whether the identifier `e`, named `name`, is checked where it is.
     fn checks_reference<'a>(&self, e: Expr<'a>, name: Name<'a>, state: &mut State<'a>) -> bool {
+        // oxlint sees through what only concerns types: `a as T`, `a!`.
+        let is_oxlint = e.file().language().is_oxlint;
+        let mut e = e;
+        while is_oxlint
+            && let Node::Expr(parent) = e.parent()
+            && matches!(
+                parent.tag(),
+                ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
+            )
+        {
+            e = parent;
+        }
         match e.parent() {
             Node::Expr(parent) => match parent.kind() {
                 ExprKind::Dot { .. } if e.is_in_type_query() => !self.only_declarations,
@@ -200,6 +240,7 @@ impl IdMatch {
                 ExprKind::Index { obj, .. } => {
                     self.checks_properties
                         && (obj.as_ident() == Some(name)
+                            || is_oxlint && obj == e
                             || is_in_assignment_to_property(parent, name.bytes()))
                 }
                 ExprKind::Call(_) | ExprKind::New(_) => false,
@@ -209,6 +250,12 @@ impl IdMatch {
                 _ => !self.only_declarations,
             },
             Node::Prop(prop) => self.checks_in_property(prop, e, name, state),
+            // oxlint checks a computed key there as it does elsewhere.
+            Node::PatProp(prop)
+                if is_oxlint && matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) =>
+            {
+                !self.only_declarations
+            }
             // A default value, or a computed key.
             Node::PatProp(prop) => {
                 prop.default().is_none()
@@ -276,6 +323,12 @@ impl IdMatch {
             return;
         }
         let is_checked = match pat.parent() {
+            // For oxlint the parameter of an index signature has no name.
+            Node::Param(param)
+                if cx.language().is_oxlint && param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature) =>
+            {
+                false
+            }
             Node::VarDecl(declaration) => {
                 !self.only_declarations
                     || !matches!(declaration.parent(), Node::Stmt(it) if it.tag() == StmtTag::Try)
@@ -302,7 +355,9 @@ impl IdMatch {
             _ => !self.only_declarations,
         };
         if is_checked {
-            self.report(estree_span(pat.into()), name.bytes(), cx);
+            // For oxlint the type annotation is not part of it.
+            let place = if cx.language().is_oxlint { pat.span() } else { estree_span(pat.into()) };
+            self.report(place, name.bytes(), cx);
         }
     }
 
@@ -348,7 +403,7 @@ impl IdMatch {
                         _ => false,
                     }
             }
-            false => self.checks_properties && !is_import_attribute_key(prop),
+            false => self.checks_properties && !is_key_of_import_attribute(prop, name, object),
         };
         if is_checked {
             self.check_key(key, cx);

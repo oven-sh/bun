@@ -24,7 +24,6 @@ use crate::check::spans::{
     jsx_identifier_end, skip_trivia, skip_trivia_back, start_of_token_before,
 };
 use crate::hir::*;
-use crate::session::{Arena, ArenaBox};
 use crate::util::SharedSort;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
@@ -420,13 +419,13 @@ node_vectors! {
 }
 
 /// `node.Parent` for every node of a file.
-pub struct Parents<'s> {
+pub struct Parents {
     /// Indexed by HIR node: one load.
-    rows: ArenaBox<'s, [Node]>,
+    rows: Box<[Node]>,
     /// The parents of the `TemplateSpan` and the `JsxExpression` around an expression and of the
     /// `QualifiedName` that ends with a name, which are themselves the entry in `rows` for that
     /// expression or name. Sorted.
-    around: ArenaBox<'s, [(Node, Node)]>,
+    around: Box<[(Node, Node)]>,
 }
 
 /// A typed id that is, or belongs to, a node.
@@ -1220,8 +1219,8 @@ impl<'s> File<'s> {
     }
 
     #[inline]
-    fn parents(&self) -> &Parents<'s> {
-        self.lazy.parents.get_or_init(|| self.parents_of_all())
+    fn parents(&self) -> &Parents {
+        (self.lazy.cells.parents).get_or_init(|| self.parents_of_all())
     }
 
     /// `node.Parent`. `NONE` for the file, and for a HIR node that is unreachable from the file.
@@ -1356,7 +1355,7 @@ impl<'s> File<'s> {
     /// with the same child (a HIR node that is not a tsgo node, or that is unreachable, has the
     /// children of the node around it) the later one is the tsgo node, and overwrites the earlier.
     #[cold]
-    fn parents_of_all(&self) -> Parents<'s> {
+    fn parents_of_all(&self) -> Parents {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
         let mut around = Vec::new();
@@ -1424,10 +1423,9 @@ impl<'s> File<'s> {
             }
             is_same
         });
-        let arena = self.lazy.session.arena();
         Parents {
-            rows: ArenaBox::copy_from_slice_in(&rows, arena),
-            around: ArenaBox::copy_from_slice_in(&around, arena),
+            rows: rows.into(),
+            around: around.into(),
         }
     }
 
@@ -2664,8 +2662,8 @@ impl Places {
         Places(ranges)
     }
 
-    pub fn into_arena(self, arena: &Arena) -> Places<ArenaBox<'_, [TextRange]>> {
-        Places(ArenaBox::copy_from_slice_in(&self.0, arena))
+    pub fn at_its_size(self) -> Places<Box<[TextRange]>> {
+        Places(self.0.into())
     }
 }
 
@@ -2735,7 +2733,7 @@ impl File<'_> {
     /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in source order,
     /// except those for which `is_identifier_name` is true, of which only some are included.
     pub fn keyword_identifiers(&self) -> &[Node] {
-        self.lazy.keyword_identifiers.get_or_init(|| {
+        self.lazy.cells.keyword_identifiers.get_or_init(|| {
             let mut found = Vec::new();
             for &pos in self.keyword_identifier_positions.iter() {
                 // Descends from the file, at each level into the last child that does not start
@@ -2760,7 +2758,7 @@ impl File<'_> {
             }
             found.shared_sort_unstable_by_key(|&node| (self.start(node), node));
             found.dedup();
-            ArenaBox::copy_from_slice_in(&found, self.lazy.session.arena())
+            found.into()
         })
     }
 
@@ -3316,8 +3314,8 @@ impl File<'_> {
 
     /// The ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type
     /// literals, and the `declare` declarations.
-    fn ambient_or_type_places(&self) -> &Places<ArenaBox<'_, [TextRange]>> {
-        self.lazy.ambient_or_type_places.get_or_init(|| {
+    fn ambient_or_type_places(&self) -> &Places<Box<[TextRange]>> {
+        self.lazy.cells.ambient_or_type_places.get_or_init(|| {
             let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
                 matches!(
                     statement.kind,
@@ -3340,13 +3338,13 @@ impl File<'_> {
                         end: if node.end == 0 { u32::MAX } else { node.end },
                     })),
             )
-            .into_arena(self.lazy.session.arena())
+            .at_its_size()
         })
     }
 
     /// Whether `e` begins in what a class extends.
     pub fn is_in_class_extends(&self, e: ExprId) -> bool {
-        let places = self.lazy.class_extends_places.get_or_init(|| {
+        let places = self.lazy.cells.class_extends_places.get_or_init(|| {
             let bases = self.classes.iter().flat_map(|class| {
                 std::iter::once(class.extends).chain(self.ids(class.other_extends))
             });
@@ -3360,7 +3358,7 @@ impl File<'_> {
                     self[base].end
                 },
             }))
-            .into_arena(self.lazy.session.arena())
+            .at_its_size()
         });
         places.contain(self[e].pos)
     }
@@ -3428,7 +3426,7 @@ impl File<'_> {
     /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression. A node that starts outside every
     /// `typeof` type needs no walk, which from each link of `a.b.b ..` is as long as what is left of the chain.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
-        let places = self.lazy.type_query_places.get_or_init(|| {
+        let places = self.lazy.cells.type_query_places.get_or_init(|| {
             let queries = self.types.iter();
             let queries = queries.filter(|node| matches!(node.kind, TypeNodeKind::Typeof { .. }));
             // One whose end is unknown extends to the end.
@@ -3436,7 +3434,7 @@ impl File<'_> {
                 pos: node.pos,
                 end: if node.end == 0 { u32::MAX } else { node.end },
             }))
-            .into_arena(self.lazy.session.arena())
+            .at_its_size()
         });
         // Where a name begins is not known without the text. It is in the node that it is the name of.
         if places.is_empty() || !places.contain(self.start(node.row())) {

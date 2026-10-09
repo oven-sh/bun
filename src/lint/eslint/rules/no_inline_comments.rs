@@ -35,6 +35,17 @@ fn is_in_jsx_empty_expression<'a>(file: &'a File<'a>, offset: u32) -> bool {
     }
 }
 
+/// oxlint's `is_directive_comment`: also `oxlint-disable`, and not `/* global a */` and `/* exported a */`.
+fn is_directive_for_oxlint(comment: Token) -> bool {
+    let value = text::trim(comment.comment_value());
+    let after_name = value.strip_prefix(b"eslint").or_else(|| value.strip_prefix(b"oxlint"));
+    match after_name.and_then(|it| it.first()) {
+        Some(b'-') => true,
+        Some(b' ' | b'\t') => comment.kind() == TokenKind::Block,
+        _ => false,
+    }
+}
+
 impl NoInlineComments {
     fn test_code_around_comment<'a>(&self, comment: Token<'a>, cx: &mut Cx<'a, Self>) {
         let start_line = cx.line_span(cx.line_of(comment.start()));
@@ -53,7 +64,11 @@ impl NoInlineComments {
         {
             return;
         }
-        if ast_utils::is_directive_comment(&comment) {
+        let is_directive = match cx.language().is_oxlint {
+            true => is_directive_for_oxlint(comment),
+            false => ast_utils::is_directive_comment(&comment),
+        };
+        if is_directive {
             return;
         }
         cx.report(comment, UNEXPECTED_INLINE_COMMENT);

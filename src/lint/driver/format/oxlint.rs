@@ -30,7 +30,7 @@ pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
 }
 
 /// What oxlint calls, in a diagnostic, the plugin that rules have the prefix `prefix` of.
-fn scope(prefix: &[u8]) -> &[u8] {
+pub(crate) fn scope(prefix: &[u8]) -> &[u8] {
     match prefix {
         b"" => b"eslint",
         b"@typescript-eslint" => b"typescript",

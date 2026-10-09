@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::get_inner_expression;
+use bun_lint_oxlint::same_expression::is_same_member_expression;
 
 /// Require or disallow logical assignment operator shorthand.
 pub struct LogicalAssignmentOperators {
@@ -55,8 +57,27 @@ fn is_undefined(e: Expr<'_>) -> bool {
     }
 }
 
+/// `e`, for oxlint without what only concerns types: `a as T`, `a!`.
+fn seen(e: Expr<'_>) -> Expr<'_> {
+    if e.file().language().is_oxlint { get_inner_expression(e) } else { e }
+}
+
+/// ESLint's `isSameReference`, oxlint's `is_same_expression_reference`.
+fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
+    if !a.file().language().is_oxlint {
+        return ast_utils::is_same_reference(a, b, false);
+    }
+    let is_member = |it: Expr<'a>| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
+    let (a, b) = (seen(a), seen(b));
+    match (a.as_ident(), b.as_ident()) {
+        (Some(a), Some(b)) => a == b,
+        _ => is_member(a) && is_member(b) && is_same_member_expression(a, b),
+    }
+}
+
 /// An `Identifier` or a `MemberExpression`. An optional chain is neither.
 fn is_reference(e: Expr<'_>) -> bool {
+    let e = seen(e);
     match e.kind() {
         ExprKind::Ident(name) => !name.is("undefined"),
         ExprKind::Dot { .. } | ExprKind::Index { .. } => !e.is_in_optional_chain(),
@@ -117,7 +138,7 @@ fn get_existence(expression: Expr<'_>) -> Option<(Expr<'_>, BinOp)> {
         ) => {
             let (first, first_nullish) = reference_first(first_left, first_right);
             let (second, second_nullish) = reference_first(second_left, second_right);
-            (ast_utils::is_same_reference(first, second, false)
+            (is_same_reference(first, second)
                 && ((ast_utils::is_null_literal(first_nullish) && is_undefined(second_nullish))
                     || (is_undefined(first_nullish) && ast_utils::is_null_literal(second_nullish))))
             .then_some((first, BinOp::Nullish))
@@ -251,7 +272,7 @@ impl LogicalAssignmentOperators {
         {
             (parent, left) = (left, next);
         }
-        if !ast_utils::is_same_reference(target, left, false) || utils::is_assignment_target(assignment) {
+        if !is_same_reference(target, left) || utils::is_assignment_target(assignment) {
             return;
         }
         let descriptor = Descriptor {
@@ -290,7 +311,7 @@ impl LogicalAssignmentOperators {
         let ExprKind::Assign { op: None, target, .. } = right.kind() else {
             return;
         };
-        if !is_reference(left) || !ast_utils::is_same_reference(left, target, false) {
+        if !is_reference(left) || !is_same_reference(left, target) {
             return;
         }
         let descriptor = Descriptor {
@@ -340,7 +361,7 @@ impl LogicalAssignmentOperators {
         let Some((reference, operator)) = get_existence(test) else {
             return;
         };
-        if !ast_utils::is_same_reference(reference, target, false) {
+        if !is_same_reference(reference, target) {
             return;
         }
         let is_logical_test = matches!(test.kind(), ExprKind::Binary { op, .. } if is_logical(op));

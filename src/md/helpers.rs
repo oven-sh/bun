@@ -55,7 +55,7 @@ pub(crate) fn is_unicode_whitespace(codepoint: u32) -> bool {
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
-pub(crate) fn is_unicode_punctuation(codepoint: u32) -> bool {
+pub fn is_unicode_punctuation(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_ascii_punctuation(u8::try_from(codepoint).expect("int cast"));
     }

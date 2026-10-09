@@ -246,7 +246,10 @@ impl SwitchExhaustivenessCheck {
         {
             let mut missing: Vec<(Type<'a>, Vec<u8>)> =
                 missing_literal_branch_types.iter().map(|&it| (it, type_to_string(it))).collect();
-            utils::sort::sort_by(&mut missing, |a, b| locale_compare(&a.1, &b.1));
+            // tsgolint leaves them in the order of the union.
+            if !cx.language().is_oxlint {
+                utils::sort::sort_by(&mut missing, |a, b| locale_compare(&a.1, &b.1));
+            }
 
             let mut missing_branches = Vec::new();
             for (i, (missing_type, printed)) in missing.iter().enumerate() {

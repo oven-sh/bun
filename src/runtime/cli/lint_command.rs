@@ -59,6 +59,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     };
     let mut argv: Vec<Box<[u8]>> = vec![
         Box::from(exe.as_bytes()),
+        // What is not installed is missing: nothing is fetched to read a configuration.
+        Box::from(&b"--no-install"[..]),
         Box::from(&b"-e"[..]),
         Box::from(script.source.as_bytes()),
     ];

@@ -110,7 +110,7 @@ impl NoFloatingPromises {
         if self.is_known_safe_promise_call(expression) {
             return;
         }
-        let Some(unhandled) = self.is_unhandled_promise(expression, true, &mut cx.state) else {
+        let Some((unhandled, promise)) = self.is_unhandled_promise(expression, true, &mut cx.state) else {
             return;
         };
         let message = match (unhandled, self.ignore_void) {
@@ -121,7 +121,8 @@ impl NoFloatingPromises {
             (Unhandled::Promise, true) => FLOATING_VOID,
             (Unhandled::Promise, false) => FLOATING,
         };
-        let mut report = cx.report(node, message);
+        // oxlint points at the promise.
+        let mut report = cx.report(if cx.language().is_oxlint { promise.span() } else { node }, message);
         if unhandled == Unhandled::PromiseArray {
             return;
         }
@@ -154,7 +155,7 @@ impl NoFloatingPromises {
         node: Expr<'a>,
         is_chain_element: bool,
         known: &mut State<'a>,
-    ) -> Option<Unhandled> {
+    ) -> Option<(Unhandled, Expr<'a>)> {
         match node.kind() {
             ExprKind::Assign { .. } => return None,
             // Any operand of a comma expression can be an unhandled promise, whatever the type of
@@ -173,7 +174,7 @@ impl NoFloatingPromises {
 
         let ty = node.ty();
         if self.is_promise_array(node, ty, known) {
-            return Some(Unhandled::PromiseArray);
+            return Some((Unhandled::PromiseArray, node));
         }
         // `await` handles a promise, but not an array of promises. The type does not tell: that of
         // `await (promise as Promise<number> & number)` is `Promise<number> & number`.
@@ -193,13 +194,13 @@ impl NoFloatingPromises {
                 if let Some(on_rejected) = promise_handling_method_call {
                     return match on_rejected {
                         Some(handler) if is_valid_rejection_handler(handler) => None,
-                        Some(_) => Some(Unhandled::NonFunctionHandler),
-                        None => Some(Unhandled::Promise),
+                        Some(_) => Some((Unhandled::NonFunctionHandler, node)),
+                        None => Some((Unhandled::Promise, node)),
                     };
                 }
                 match parse_finally_call(node) {
                     Some(call) => self.is_unhandled_promise(call.object, false, known),
-                    None => Some(Unhandled::Promise),
+                    None => Some((Unhandled::Promise, node)),
                 }
             }
             // The promise is the value of one of the branches.
@@ -209,7 +210,7 @@ impl NoFloatingPromises {
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } => self
                 .is_unhandled_promise(left, false, known)
                 .or_else(|| self.is_unhandled_promise(right, false, known)),
-            _ => Some(Unhandled::Promise),
+            _ => Some((Unhandled::Promise, node)),
         }
     }
 

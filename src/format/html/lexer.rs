@@ -510,6 +510,14 @@ impl<'a> Tokenizer<'a, '_> {
                 }
             }
         }
+        // `$EOF` is 0 for Angular: a NUL between tags ends the text, and Prettier prints nothing of what follows.
+        if self.pos < self.text.len() {
+            let rest = Span::new(self.pos as u32, self.text.len() as u32);
+            self.handle_error(
+                self.pos as u32,
+                (ErrorKind::UnexpectedCharacter, rest, false),
+            );
+        }
         self.begin_token(TokenType::Eof);
         let _ = self.end_token(Parts::None);
     }

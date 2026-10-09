@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -205,6 +206,9 @@ impl Yoda {
             true => (left, right),
             false => (right, left),
         };
+        // oxlint sees through what only concerns types: `"a" as T`.
+        let is_oxlint = cx.language().is_oxlint;
+        let is_literal_like = |it: Expr<'a>| is_literal_like(if is_oxlint { get_inner_expression(it) } else { it });
         if !is_literal_like(expected_non_literal)
             || is_literal_like(expected_literal)
             || (self.except_range && is_range_test(e.parent()))

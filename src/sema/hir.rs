@@ -269,7 +269,8 @@ impl Storage for Growable {
     type Set<K> = FxHashSet<K>;
     type Kept<T: Clone + 'static> = Vec<T>;
     type Text = Cow<'static, [u8]>;
-    type Lazy = ();
+    /// For `FileBuilder::lend`.
+    type Lazy = LazyCells;
 }
 
 /// From then on: at their final size, in the arena of the thread that loaded the file.
@@ -347,23 +348,40 @@ impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
     }
 }
 
-/// What is computed from a loaded file on demand, by the first thread that needs it, in the arena of
-/// that thread.
+/// `FileIn::lazy` of a loaded file.
 pub struct Lazy<'s> {
     pub(crate) session: &'s Session,
     /// `File::arena`
     pub(crate) arena: &'s Arena,
-    /// `node.Parent`, by `Node`: `File::parent`.
-    pub(crate) parents: OnceLock<crate::node::Parents<'s>>,
-    /// `File::is_in_ambient_or_type_node`
-    pub(crate) ambient_or_type_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
-    /// `File::is_in_type_query`
-    pub(crate) type_query_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
-    /// `File::is_in_class_extends`
-    pub(crate) class_extends_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
-    /// `File::keyword_identifiers`
-    pub(crate) keyword_identifiers: OnceLock<ArenaBox<'s, [Node]>>,
+    pub(crate) cells: &'s LazyCells,
 }
+
+/// What is computed from a loaded file on demand, by the first thread that needs it.
+///
+/// On the regular heap, and without a lifetime, so that a reference to them can be shortened: what is in a `OnceLock`
+/// cannot. Nothing drops a file of a program, so the session has the cells (`Session::keep`).
+#[derive(Default)]
+pub struct LazyCells {
+    /// `node.Parent`, by `Node`: `File::parent`.
+    pub(crate) parents: OnceLock<crate::node::Parents>,
+    /// `File::is_in_ambient_or_type_node`
+    pub(crate) ambient_or_type_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::is_in_type_query`
+    pub(crate) type_query_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::is_in_class_extends`
+    pub(crate) class_extends_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::keyword_identifiers`
+    pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
+}
+
+/// Those of every file without nodes: what is computed from one is the same for all.
+static CELLS_OF_NO_NODES: LazyCells = LazyCells {
+    parents: OnceLock::new(),
+    ambient_or_type_places: OnceLock::new(),
+    type_query_places: OnceLock::new(),
+    class_extends_places: OnceLock::new(),
+    keyword_identifiers: OnceLock::new(),
+};
 
 /// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
@@ -2406,7 +2424,7 @@ macro_rules! long_lists {
 
 /// A `File` of the `FileBuilder` `$this`. `$long`: what becomes of a list of nodes.
 macro_rules! file_in_arena {
-    ($this:ident, $arena:ident, $session:ident, $long:ident) => {
+    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident) => {
         File {
             kind: $this.kind,
             is_js: $this.is_js,
@@ -2511,11 +2529,7 @@ macro_rules! file_in_arena {
             lazy: Lazy {
                 session: $session,
                 arena: $arena,
-                parents: OnceLock::new(),
-                ambient_or_type_places: OnceLock::new(),
-                type_query_places: OnceLock::new(),
-                class_extends_places: OnceLock::new(),
-                keyword_identifiers: OnceLock::new(),
+                cells: $cells,
             },
             keyword_identifier_positions: few_to_arena(
                 std::mem::take(&mut $this.keyword_identifier_positions),
@@ -2534,10 +2548,15 @@ impl FileBuilder {
 
     /// The file with every list at its final size in `arena`, which is one of `session`. Also
     /// returns the long lists, emptied: the next file that the thread parses reuses their capacity.
-    pub fn into_arena<'s>(
+    pub fn into_arena<'s>(self, arena: &'s Arena, session: &'s Session) -> (File<'s>, FileBuilder) {
+        self.into_arena_with(arena, session, session.keep(LazyCells::default()))
+    }
+
+    fn into_arena_with<'s>(
         mut self,
         arena: &'s Arena,
         session: &'s Session,
+        cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
         // Nothing is asked of the arena for an empty list: see `File::empty_in`.
         macro_rules! copied {
@@ -2547,7 +2566,7 @@ impl FileBuilder {
                 exact
             }};
         }
-        let file = file_in_arena!(self, arena, session, copied);
+        let file = file_in_arena!(self, arena, session, cells, copied);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -2564,12 +2583,13 @@ impl FileBuilder {
         self.fn_nodes.resize(self.fns.len(), Node::NONE);
         self.class_nodes.clear();
         self.class_nodes.resize(self.classes.len(), Node::NONE);
+        self.lazy = LazyCells::default();
         macro_rules! lent {
             ($list:expr) => {
                 Fixed(FixedIn::Lent(&mut $list[..]))
             };
         }
-        file_in_arena!(self, arena, session, lent)
+        file_in_arena!(self, arena, session, &self.lazy, lent)
     }
 }
 
@@ -2577,7 +2597,10 @@ impl<'s> File<'s> {
     /// A file without nodes. It allocates nothing, so any thread can make one for the arena of
     /// another (`Files::free_tree`): only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
-        FileBuilder::default().into_arena(arena, session).0
+        let no_nodes = FileBuilder::default();
+        no_nodes
+            .into_arena_with(arena, session, &CELLS_OF_NO_NODES)
+            .0
     }
 
     /// The arena that the lists are in.

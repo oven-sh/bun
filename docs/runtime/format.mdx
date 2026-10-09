@@ -74,9 +74,9 @@ If the configuration file nearest to the working directory is one of these, `bun
 - Which files are read goes by oxfmt's list of names, which tells upper case from lower case: `a.MD` is not Markdown.
 - A configuration file that cannot be used ends the run with exit code `1`.
 
-`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` sorts the classes in JavaScript, TypeScript, CSS, SCSS, Less, HTML, Vue, and Markdown files, in the order of the `tailwindcss` that the project has installed, version 3 or 4. In Angular templates and Handlebars files it is not supported yet: a run with such a file that may have classes ends with an error that says so, or with a warning if you pass `--allow-unsupported`. Neither are Svelte files, which oxfmt formats if the configuration has `svelte`: they count as files in a language that is not supported.
+`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` sorts the classes in JavaScript, TypeScript, CSS, SCSS, Less, HTML, Vue, Angular, Handlebars, and Markdown files, in the order of the `tailwindcss` that the project has installed, version 3 or 4. Svelte files are not supported, which oxfmt formats if the configuration has `svelte`: they count as files in a language that is not supported.
 
-TOML files (`*.toml`, `*.toml.example`, `Pipfile`, `Cargo.toml.orig`) are formatted as oxfmt formats them: keys and values stay as they are written, white space, empty lines and the layout of arrays change. A file that is not valid TOML is an error and is left as it is, where oxfmt rewrites the rest of it.
+TOML files (`*.toml`, `*.toml.example`, `Pipfile`, `Cargo.toml.orig`) are formatted as oxfmt formats them: keys and values stay as they are written, white space, empty lines and the layout of arrays change. A file that is not valid TOML is left as it is, with a warning that says what is wrong with it, where oxfmt says nothing and rewrites the rest of it.
 
 Where oxfmt prints something other than Prettier, `bun format` prints what oxfmt 0.72 prints, for every file whose configuration file is one of oxfmt's, wherever the run starts. A project that pins an older version has a few files reformatted once, as when it upgrades oxfmt.
 
@@ -99,7 +99,7 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
-See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The three that sort imports are built in: see [Sort imports](#sort-imports). For any other, see [Differences from Prettier](#differences-from-prettier).
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The three that sort imports and `prettier-plugin-tailwindcss` are built in: see [Sort imports](#sort-imports) and [Sort Tailwind CSS classes](#sort-tailwind-css-classes). For any other, see [Differences from Prettier](#differences-from-prettier).
 
 A flag overrides the configuration file:
 
@@ -148,6 +148,15 @@ Every option of the four works as it does there. Comments move with their import
 - `importOrderParserPlugins` is accepted and not needed: `bun format` reads TypeScript, JSX, and decorators in every file.
 - `<BUILTIN_MODULES>` are the modules of Node.js 26, whatever runs `bun format`.
 
+## Sort Tailwind CSS classes
+
+`bun format` sorts the classes of Tailwind CSS if the configuration asks for it:
+
+- `"plugins": ["prettier-plugin-tailwindcss"]` in a Prettier configuration, with the plugin's options (`tailwindStylesheet`, `tailwindConfig`, `tailwindFunctions`, `tailwindAttributes`, `tailwindPreserveWhitespace`, `tailwindPreserveDuplicates`). The plugin does not have to be installed.
+- `sortTailwindcss` in `.oxfmtrc.json`.
+
+The order is that of the project's own `tailwindcss`, version 3 or 4, which has to be installed. `bun format` asks it once and keeps the answer in `node_modules/.cache` until the package, the stylesheet, or the configuration of Tailwind CSS changes.
+
 ## Choose what to format
 
 Pass files, directories, or glob patterns. Without arguments, `bun format` formats the current directory.
@@ -165,7 +174,7 @@ dist
 src/generated
 ```
 
-To keep a piece of code as it is, put a `// prettier-ignore` comment before it.
+To keep a piece of code as it is, put a `// prettier-ignore` comment before it. In a project of oxfmt, `// oxfmt-ignore` does the same.
 
 ## Run in CI
 
@@ -222,7 +231,7 @@ These differences are intentional:
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
 - **No Svelte or Astro.** Files in a language that is not supported are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning.
-- **Plugins do not load.** The three that sort imports are built in. A plugin that only adds a language, like `prettier-plugin-svelte` or `prettier-plugin-astro`, changes nothing for the rest: the files of that language, and those whose `parser` in the configuration is that of a plugin, count as files in a language that is not supported. Any other plugin, like `prettier-plugin-tailwindcss`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
+- **Plugins do not load.** The three that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-svelte` or `prettier-plugin-astro`, changes nothing for the rest: the files of that language, and those whose `parser` in the configuration is that of a plugin, count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.

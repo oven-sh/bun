@@ -46,7 +46,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     let span = FormatFormalParameters(func).span();
     let comments = f.comments().comments_before(span.start);
     if !comments.is_empty() {
-        let count = comments_trailing_the_name(func, has_parameters, comments);
+        let count = comments_trailing_the_name(func, has_parameters, comments, f.options().flavor);
         if count > 0 {
             write!(
                 f,
@@ -154,7 +154,12 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
 ///
 /// Prettier's `handleFunctionNameComments`, and what it does with any comment: on a line of its own
 /// it leads what follows, at the end of a line it trails what is before.
-fn comments_trailing_the_name(func: Func<'_>, has_parameters: bool, comments: &[Comment]) -> usize {
+fn comments_trailing_the_name(
+    func: Func<'_>,
+    has_parameters: bool,
+    comments: &[Comment],
+    flavor: Flavor,
+) -> usize {
     match func.kind() {
         FnKind::Decl | FnKind::Expr | FnKind::Arrow if func.has_body() => {
             if !follows_name_or_type_parameters(func) {
@@ -171,9 +176,9 @@ fn comments_trailing_the_name(func: Func<'_>, has_parameters: bool, comments: &[
         }
         _ if has_parameters && !matches!(func.as_ast_nodes(), AstNodes::Function(_)) => 0,
         // Babel has no node for the function of a method: on a line of its own the comment is between the key and
-        // the first parameter, which it leads.
+        // the first parameter, which it leads. oxfmt has that node.
         FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
-            if has_parameters && func.file().is_javascript() =>
+            if has_parameters && func.file().is_javascript() && !flavor.is_oxfmt() =>
         {
             (comments.iter())
                 .take_while(|it| !it.preceded_by_newline())

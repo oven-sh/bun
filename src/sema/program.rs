@@ -13,11 +13,12 @@ use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
-    Options, PackageId, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer, ancestors,
-    contains_path, displayed_path, file_extension_is_one_of, file_path, format_by_extension,
-    get_base_file_name, get_lib_file_name, has_ts_implementation_extension, inside, is_javascript,
-    is_javascript_file, is_relative, is_same_path, join, path_is_relative, remove_file_extension,
-    supported_extensions, to_file_name_lower_case, to_path, to_path_in, typescript_path,
+    Options, PackageId, ParseOptions, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer,
+    ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
+    format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
+    inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, path_is_relative,
+    remove_file_extension, supported_extensions, to_file_name_lower_case, to_path, to_path_in,
+    typescript_path,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -4695,7 +4696,7 @@ impl<'s> Files<'s> {
                         let (hir, bound) = Self::parse_and_bind(
                             arena,
                             host,
-                            options,
+                            options.for_parsing(),
                             &atoms,
                             path,
                             false,
@@ -5359,7 +5360,7 @@ impl<'s> Files<'s> {
                             let (hir, bound) = Self::parse_and_bind(
                                 arena,
                                 host,
-                                options,
+                                options.for_parsing(),
                                 atoms,
                                 path,
                                 is_lib,
@@ -5477,7 +5478,7 @@ impl<'s> Files<'s> {
     fn parse_and_bind(
         arena: &'s Arena,
         host: &dyn Host,
-        options: &Options,
+        options: ParseOptions,
         atoms: &Interner<'s>,
         path: &[u8],
         is_lib: bool,
@@ -5485,12 +5486,7 @@ impl<'s> Files<'s> {
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
         let mut hir = host.parse(arena, path, &text, atoms, options);
-        // The source text of TypeScript's own libraries is only consulted where they are checked.
-        // With `libReplacement` a library can be any file.
-        if !is_lib
-            || options.lib_replacement
-            || !(options.skip_lib_check || options.skip_default_lib_check)
-        {
+        if !is_lib || options.keeps_the_text_of_libraries {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: the other conditions that make a file without imports or
@@ -5506,7 +5502,7 @@ impl<'s> Files<'s> {
             let is_shown = has_import_meta
                 || options.module_detection == ModuleDetection::Auto
                     && has_jsx
-                    && matches!(options.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev);
+                    && options.jsx_imports_its_factory;
             // `moduleDetection: force`, `isFileForcedToBeModuleByFormat`: the file itself is the
             // external module indicator.
             let is_decreed = match options.module_detection {
@@ -5519,16 +5515,8 @@ impl<'s> Files<'s> {
             hir.has_module_syntax = is_shown || is_decreed;
             hir.is_module_by_decree = !is_shown && is_decreed;
         }
-        // `GetEmitScriptTarget`: an unspecified target means the latest.
-        let is_before =
-            |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
         let _binding = Spent::on(host, Phase::Bind);
-        let bind_options = bind::BindOptions {
-            emit_standard_class_fields: options.emit_standard_class_fields,
-            before_es2020: is_before(ScriptTarget::ES2020),
-            before_es2017: is_before(ScriptTarget::ES2017),
-        };
-        let mut bound = bind::bind(&hir, bind_options, atoms, arena);
+        let mut bound = bind::bind(&hir, options.bind, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
         // reports as not fully checked.
         if bound.ran_out_of_stack {
@@ -5541,7 +5529,7 @@ impl<'s> Files<'s> {
                 ran_out_of_stack: true,
                 ..host.parse(arena, path, b"", atoms, options)
             };
-            bound = bind::bind(&hir, bind_options, atoms, arena);
+            bound = bind::bind(&hir, options.bind, atoms, arena);
         }
         (hir, bound)
     }
@@ -5576,7 +5564,7 @@ impl<'s> Files<'s> {
         let (mut hir, bound) = Self::parse_and_bind(
             arena,
             host,
-            options,
+            options.for_parsing(),
             atoms,
             path,
             is_lib,

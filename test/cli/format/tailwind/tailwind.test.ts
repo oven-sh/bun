@@ -1,4 +1,4 @@
-// oxfmt's `sortTailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
+// oxfmt's `sortTailwindcss`, and `prettier-plugin-tailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
 // some more, with what oxfmt 0.72 prints for them with tailwindcss 4.3.3. order.json: the classes in them that Tailwind knows, in
 // its order. Both are made by test/cli/format/oracle/tailwind/make-fixtures.ts.
 //
@@ -8,6 +8,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import cases from "./cases.json";
+import { forPrettier } from "./for-prettier";
 import order from "./order.json";
 
 const getClassOrder = `classes => classes.map(name => [name, order.includes(name) ? BigInt(sign * order.indexOf(name)) : null])`;
@@ -63,6 +64,23 @@ describe.concurrent("sortTailwindcss", () => {
       expect(result.stderr).toBe("");
       for (const [index, it] of group.entries()) {
         if ("todo" in it) continue;
+        expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output: it.output });
+      }
+      expect(result.exitCode).toBe(0);
+    });
+  }
+
+  const forPlugin = cases.flatMap(it => {
+    const options = forPrettier(it.options);
+    return options && "prettier" in it ? [{ ...it, options, output: it.prettier }] : [];
+  });
+  for (const [options, group] of Map.groupBy(forPlugin, it => JSON.stringify(it.options))) {
+    test(`as prettier-plugin-tailwindcss: ${options}`, async () => {
+      const names = group.map((it, index) => `${index}/${it.filename}`);
+      const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
+      const result = await format({ ...version4, ".prettierrc": options, ...files }, names);
+      expect(result.stderr).toBe("");
+      for (const [index, it] of group.entries()) {
         expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output: it.output });
       }
       expect(result.exitCode).toBe(0);
@@ -164,6 +182,20 @@ describe.concurrent("sortTailwindcss", () => {
       stderr: "",
       files: ['<a className="p-4 m-1" />;\n', "xxx"],
     });
+  });
+
+  test("the options of the plugin of Prettier count if it is among the plugins", async () => {
+    const plugins = ["prettier-plugin-tailwindcss"];
+    const files = { ...version4, "css/app.css": "/* reversed */\n", "src/a.js": 'tw("flex p-4 m-2");\n' };
+    const options = { tailwindStylesheet: "./css/app.css", tailwindFunctions: ["tw"] };
+    const withIt = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...options }) }, ["src/a.js"]);
+    expect(withIt).toMatchObject({ stderr: "", files: ['tw("p-4 flex m-2");\n'], exitCode: 0 });
+    const without = await format({ ...files, ".prettierrc": JSON.stringify(options) }, ["src/a.js"]);
+    expect(without.stderr).toContain('[warn] Ignored unknown option { tailwindStylesheet: "./css/app.css" }.');
+    expect(without.files).toEqual(['tw("flex p-4 m-2");\n']);
+    const alone = await format({ ".prettierrc": JSON.stringify({ plugins }), "a.jsx": input }, ["a.jsx"]);
+    expect(alone.stderr).toContain("[error] prettier-plugin-tailwindcss: It needs the package tailwindcss");
+    expect(alone.exitCode).toBe(2);
   });
 
   test("nothing is run for files without classes", async () => {

@@ -26,6 +26,8 @@ async function lint(files: Record<string, string>, args: string[], reads: string
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   return {
     raw: stdout,
     stdout: normalizeBunSnapshot(stdout, String(dir)),
@@ -330,8 +332,10 @@ const eslintPackage = {
     exports.Linter = class Linter {
       #suppressed = [];
       verify(text, [config], { filename, disableFixes }) {
-        const [prefix, name] = config.language.split("/");
-        const { ast } = config.plugins[prefix].languages[name].parse({ body: text, path: filename }, config);
+        const [prefix, name] = (config.language ?? "").split("/");
+        const { ast } = config.language
+          ? config.plugins[prefix].languages[name].parse({ body: text, path: filename }, config)
+          : config.languageOptions.parser.parseForESLint(text, config.languageOptions.parserOptions);
         const messages = [];
         for (const [ruleId, [severity, ...options]] of Object.entries(config.rules)) {
           const [plugin, rule] = ruleId.split("/");
@@ -402,6 +406,34 @@ describe.concurrent("bun lint with languages", () => {
         b.txt: 3:1 lines/no-tabs tab o 4 s b.txt [fix 10,11 " "] [suppressed: ]"
       `);
       expect(result.stderr).not.toContain("not linted");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // As `vue-eslint-parser` for `.vue`.
+  test(
+    "so is a file that a parser of its own reads",
+    async () => {
+      const result = await lint(
+        {
+          ...eslintPackage,
+          ...lines,
+          "parser.cjs": `
+            const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\n"), languageOptions } });
+            module.exports = { meta: { name: "vue-eslint-parser", version: "10.0.0" }, parseForESLint };`,
+          "eslint.config.mjs": `
+            import lines from "./lines.mjs";
+            import parser from "./parser.cjs";
+            export default [
+              { files: ["**/*.vue"], plugins: { lines }, languageOptions: { parser, parserOptions: { width: 8 } }, settings: { name: "v" }, rules: { "lines/no-tabs": ["error", "p"] } },
+            ];`,
+          "c.vue": "<template>\n\t<p />\n</template>\n",
+        },
+        ["-f", "json", "--timing", "c.vue"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 2:1 lines/no-tabs tab p 8 v c.vue [fix 11,12 " "]"`);
+      expect(result.stderr).toContain("the package eslint has linted 1 texts");
       expect(result.exitCode).toBe(1);
     },
     timeout,

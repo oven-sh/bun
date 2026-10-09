@@ -333,11 +333,10 @@ impl Linter {
         };
         // ESLint takes `oxlint-disable` and the like for ordinary comments.
         let is_understood = |it: &&ConfigComment| {
-            let is_of_oxlint =
-                it.is_only_of_oxlint || file.slice(it.label_span).starts_with(b"oxlint");
+            let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
-                true => is_of_oxlint || options.respects_eslint_comments,
-                false => !is_of_oxlint,
+                true => is_called_oxlint || options.respects_eslint_comments,
+                false => !is_called_oxlint && !it.is_only_of_oxlint,
             }
         };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
@@ -376,11 +375,13 @@ impl Linter {
         }
 
         let mut rules_to_ignore = Vec::new();
+        // To oxlint, what disables a rule that it does not run on the file is unused.
+        let ignores_what_is_filtered = !config.language.is_oxlint;
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
                 let id = RuleId::Known(it.reported_as);
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
-                if !runs {
+                if !runs && ignores_what_is_filtered {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -388,7 +389,7 @@ impl Linter {
             running_js.retain(|it| {
                 let id = RuleId::Js(Arc::clone(&it.configured.rule));
                 let runs = filter(&id, it.severity);
-                if !runs {
+                if !runs && ignores_what_is_filtered {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -855,8 +856,13 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     }
 
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
-    /// configuration knows.
-    fn find(&mut self, comment: &ConfigComment, id: &[u8]) -> Option<Named<'c>> {
+    /// configuration knows. `is_turned_on`: by the comment, so that it is missed.
+    fn find(
+        &mut self,
+        comment: &ConfigComment,
+        id: &[u8],
+        is_turned_on: bool,
+    ) -> Option<Named<'c>> {
         let config = self.config;
         let js = config.find_js_rule(id);
         let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
@@ -870,7 +876,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             // All rules of a plugin that is loaded are known.
             let is_known_to_be_missing = js.is_some() && !config.skips_unknown_rules;
             if !is_known_to_be_missing && self.config.is_foreign(id) {
-                if !self.skipped.iter().any(|it| **it == *id) {
+                if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }
             } else {
@@ -920,7 +926,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Err(message) => return self.fatal(comment, message),
         };
         for (id, value) in rules {
-            let Some(rule) = self.find(comment, &id) else {
+            let first = match &value {
+                Json::Array(items) => items.first(),
+                value => Some(value),
+            };
+            let is_turned_on = first.and_then(severity_of) != Some(Severity::Off);
+            let Some(rule) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
             if self.configured.iter().any(|it| it.is(rule)) {
@@ -1167,7 +1178,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         // Two names for one rule count once.
         let mut rules: Vec<Named> = Vec::new();
         names.retain(|&name| {
-            let Some(rule) = self.find(comment, name) else {
+            let Some(rule) = self.find(comment, name, false) else {
                 return true;
             };
             let is_new = !rules.iter().any(|it| it.is(rule));

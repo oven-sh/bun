@@ -1,5 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
+use bun_lint_oxlint::ast_util::{
+    as_member_expression, get_inner_expression, get_inner_expression_unless_chain, is_method_call,
+    is_reference_to_global_variable,
+};
 
 /// Disallow using `Object.assign` with an object literal as the first argument and prefer the use
 /// of object spread instead.
@@ -48,6 +52,33 @@ fn message_for(call: Call) -> Option<Message> {
     }
     let cannot_be_inlined = args.iter().filter_map(properties).any(has_accessors)
         || args.iter().skip(1).filter_map(properties).any(has_proto_property);
+    (!cannot_be_inlined).then_some(USE_SPREAD_MESSAGE)
+}
+
+/// What oxlint reports for `call`. It follows no variable: `Object.assign` or `globalThis.Object.assign` is written out.
+fn message_for_oxlint(call: Call) -> Option<Message> {
+    if !is_method_call(call, None, Some(&["assign"]), Some(1), None) {
+        return None;
+    }
+    let is_global = |e: Expr, name: &str| e.is_ident(name) && is_reference_to_global_variable(e);
+    let object = get_inner_expression_unless_chain(as_member_expression(call.callee())?.object()?)?;
+    let is_object = match object.kind() {
+        ExprKind::Dot { obj, name, .. } => {
+            name.bytes() == b"Object" && is_global(get_inner_expression(obj), "globalThis")
+        }
+        _ => is_global(object, "Object"),
+    };
+    let args = call.args();
+    if !is_object
+        || get_inner_expression(args.first()?).tag() != ExprTag::Object
+        || args.iter().any(|it| it.tag() == ExprTag::Spread)
+    {
+        return None;
+    }
+    if args.len() == 1 {
+        return Some(USE_LITERAL_MESSAGE);
+    }
+    let cannot_be_inlined = args.iter().map(get_inner_expression).filter_map(properties).any(has_accessors);
     (!cannot_be_inlined).then_some(USE_SPREAD_MESSAGE)
 }
 
@@ -181,7 +212,17 @@ impl Rule for PreferObjectSpread {
         PreferObjectSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> bool {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
+        if file.language().is_oxlint {
+            on.exprs([ExprTag::Call], |_, e, cx| {
+                if let Some(call) = e.as_call()
+                    && let Some(message) = message_for_oxlint(call)
+                {
+                    cx.report(e, message).fix(|fixer| define_fixer(fixer, e, call));
+                }
+            });
+            return false;
+        }
         on.exprs([ExprTag::Call], |_, e, cx| {
             cx.state = cx.state || e.as_call().and_then(message_for).is_some();
         });

@@ -1,4 +1,4 @@
 FAIL oxlint/react/jsx-no-comment-textnodes#12 the parser rejects the code
 
-569 rules, 568 without failures, 0 not implemented
-29264 cases passed, 1 failed, 101 skipped
+573 rules, 572 without failures, 0 not implemented
+29879 cases passed, 1 failed, 101 skipped

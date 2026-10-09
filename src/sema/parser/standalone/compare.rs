@@ -26,6 +26,8 @@ pub(crate) struct Comparison<'a, A: Storage, B: Storage> {
     calls: Vec<u32>,
     /// The first list whose nodes the two parsers number in different orders.
     pub(crate) other_order: Option<&'static str>,
+    /// Both parsers have read the JSDoc comments: what they say about them is compared too.
+    pub(crate) compares_jsdoc: bool,
     stack_check: bun_core::StackCheck,
 }
 
@@ -102,6 +104,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             props: vec![u32::MAX; a.props.len()],
             calls: vec![u32::MAX; a.calls.len()],
             other_order: None,
+            compares_jsdoc: false,
             stack_check: bun_core::StackCheck::init(),
         }
     }
@@ -152,12 +155,27 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             source_len,
             jsx_pragmas
         );
+        // What its parser logs about a type in a comment, the reference reports as an error of the
+        // comment. The direct parser cannot tell it from what the reference writes into the file.
+        let compares_jsdoc = self.compares_jsdoc;
+        let is_in_comment = |pos: u32| compares_jsdoc && a.is_in_jsdoc(pos);
         // The reference lists what the lowering reports before what the parser reports.
         // `hasParseDiagnostics`: the checker reports none of `Grammar` then, and the reference drops some of them.
         let has_errors = a.has_parse_diagnostics && b.has_parse_diagnostics;
         let sorted = |list: &[Diagnostic]| {
             let mut list = list.to_vec();
+            for it in &mut list {
+                if matches!(it.kind, DiagnosticKind::Grammar | DiagnosticKind::Checker)
+                    && is_in_comment(it.start)
+                {
+                    it.kind = DiagnosticKind::JsDoc;
+                }
+            }
             list.retain(|it| !has_errors || it.kind != DiagnosticKind::Grammar);
+            // "Identifier expected." has no argument. The reference gives it one.
+            for it in list.iter_mut().filter(|it| it.code == 1003) {
+                it.args = Default::default();
+            }
             list.sort_by_key(|it| (it.start, it.code, it.end));
             list
         };
@@ -219,6 +237,9 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 self.expr("export from an expression", x.1, y.1);
             }
         }
+        if self.compares_jsdoc {
+            self.jsdoc_lists();
+        }
         if self.is_done() {
             return;
         }
@@ -277,6 +298,12 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         x.dedup();
         y.sort_unstable();
         y.dedup();
+        // Nobody asks about a name in a comment, and the reference reads the comments that no node
+        // has, too.
+        if self.compares_jsdoc {
+            x.retain(|&pos| !a.is_in_jsdoc(pos));
+            y.retain(|&pos| !a.is_in_jsdoc(pos));
+        }
         if x != y {
             self.differ("keyword_identifier_positions", &x, &y);
         }
@@ -314,6 +341,106 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             if !is_sorted {
                 self.differ("order", &name, &"not sorted");
             }
+        }
+    }
+
+    /// The lists about JSDoc comments, after the walk from the root, which says which node of the
+    /// direct parser corresponds to a node of the reference.
+    fn jsdoc_lists(&mut self) {
+        let (a, b) = (self.a, self.b);
+        if a.jsdoc_comments[..] != b.jsdoc_comments[..] {
+            let (x, y) = (&a.jsdoc_comments[..], &b.jsdoc_comments[..]);
+            self.differ("jsdoc_comments", &x, &y);
+        }
+        // The reference reads the comments that no node has, too.
+        let is_new = |at: &&u32| a.jsdoc_asterisks.binary_search(at).is_err();
+        if let Some(at) = b.jsdoc_asterisks.iter().find(is_new) {
+            self.differ("jsdoc_asterisks", &"no asterisk is passed over", at);
+        }
+        let hosts = |list: &[JsDocHost]| -> Vec<_> {
+            list.iter()
+                .map(|it| (it.token, it.comments, it.first_satisfies_tag))
+                .collect()
+        };
+        let (x, y) = (hosts(&a.jsdoc_hosts), hosts(&b.jsdoc_hosts));
+        if x != y {
+            self.differ("jsdoc_hosts", &x, &y);
+        }
+        let mut x: Vec<(JsDocTypeOwner, TypeNodeId)> = (a.jsdoc_types.iter())
+            .map(|&(owner, ty)| {
+                let owner = match owner {
+                    JsDocTypeOwner::Fn(it) => JsDocTypeOwner::Fn(FnId(self.fns[it.idx()])),
+                    JsDocTypeOwner::Prop(it) => JsDocTypeOwner::Prop(PropId(self.props[it.idx()])),
+                    JsDocTypeOwner::Assign(it) => {
+                        JsDocTypeOwner::Assign(ExprId(self.exprs[it.idx()]))
+                    }
+                    JsDocTypeOwner::Export(it) => {
+                        JsDocTypeOwner::Export(StmtId(self.stmts[it.idx()]))
+                    }
+                };
+                (owner, ty)
+            })
+            .collect();
+        x.sort_by_key(|it| it.0);
+        if self.lens("jsdoc_types", x.len(), b.jsdoc_types.len()) {
+            for (&(owner, ty), &(owner2, ty2)) in x.iter().zip(&b.jsdoc_types[..]) {
+                if owner != owner2 {
+                    self.differ("owner of a jsdoc type", &owner, &owner2);
+                }
+                self.ty("jsdoc type", ty, ty2);
+            }
+        }
+        let mut x: Vec<_> = (a.jsdoc_modifiers.iter())
+            .map(|&(e, flags)| (self.exprs[e.idx()], flags))
+            .collect();
+        x.sort_by_key(|it| it.0);
+        let y: Vec<_> = (b.jsdoc_modifiers.iter())
+            .map(|&(e, flags)| (e.0, flags))
+            .collect();
+        if x != y {
+            self.differ("jsdoc_modifiers", &x, &y);
+        }
+        let mut x: Vec<_> = (a.jsdoc_member_comments.iter())
+            .map(|(member, text)| (self.members[member.idx()], text))
+            .collect();
+        x.sort_by_key(|it| it.0);
+        let y: Vec<_> = (b.jsdoc_member_comments.iter())
+            .map(|(member, text)| (member.0, text))
+            .collect();
+        if x != y {
+            self.differ("jsdoc_member_comments", &x, &y);
+        }
+        // The two parsers get to the functions in different orders.
+        let mut x: Vec<_> = (a.jsdoc_param_errors.iter())
+            .map(|(func, error)| (self.fns[func.idx()], error))
+            .collect();
+        let mut y: Vec<_> = (b.jsdoc_param_errors.iter())
+            .map(|(func, error)| (func.0, error))
+            .collect();
+        x.sort_by_key(|it| (it.0, it.1.start, it.1.code));
+        y.sort_by_key(|it| (it.0, it.1.start, it.1.code));
+        if x != y {
+            self.differ("jsdoc_param_errors", &x, &y);
+        }
+        let mut x: Vec<u32> = (a.functions_with_param_tags.iter())
+            .map(|func| self.fns[func.idx()])
+            .collect();
+        let mut y: Vec<u32> = b.functions_with_param_tags.iter().map(|it| it.0).collect();
+        x.sort_unstable();
+        y.sort_unstable();
+        if x != y {
+            self.differ("functions_with_param_tags", &x, &y);
+        }
+        let mut x: Vec<_> = (a.unmatched_augments_tags.iter())
+            .map(|&(class, at)| (self.classes[class.idx()], at))
+            .collect();
+        let mut y: Vec<_> = (b.unmatched_augments_tags.iter())
+            .map(|&(class, at)| (class.0, at))
+            .collect();
+        x.sort_unstable();
+        y.sort_unstable();
+        if x != y {
+            self.differ("unmatched_augments_tags", &x, &y);
         }
     }
 

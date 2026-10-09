@@ -221,6 +221,8 @@ pub struct State<'a> {
     edges_down: Vec<(u32, u32)>,
     /// The greatest id of a segment that has been seen.
     last_seen: u32,
+    /// With a configuration of oxlint: a way back in a loop of the constructor leads to a `super()` again.
+    is_called_again_in_loop: bool,
 }
 
 impl<'a> State<'a> {
@@ -409,6 +411,7 @@ impl ConstructorSuper {
         cx.state.stale.clear();
         cx.state.edges_down.clear();
         cx.state.last_seen = 0;
+        cx.state.is_called_again_in_loop = false;
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -438,6 +441,11 @@ impl ConstructorSuper {
         else {
             return;
         };
+        // For oxlint a loop runs not at all or several times, and it says the former.
+        if cx.state.is_called_again_in_loop {
+            cx.report(func.owner(), MISSING_SOME);
+            return;
+        }
         let returned_segments = code_path.returned_segments();
         if returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
             return;
@@ -533,8 +541,13 @@ impl ConstructorSuper {
         info.called = called;
         info.lacking = before.lacking;
         if before.called.in_some_paths {
-            for node in std::mem::take(&mut info.valid_nodes) {
-                cx.report(node, DUPLICATE);
+            let again = std::mem::take(&mut info.valid_nodes);
+            if cx.language().is_oxlint {
+                cx.state.is_called_again_in_loop |= !again.is_empty();
+            } else {
+                for node in again {
+                    cx.report(node, DUPLICATE);
+                }
             }
         }
         cx.state.stale.remove(&segment.id());

@@ -220,6 +220,11 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("eslint", "no-implicit-coercion", &[
         m("implicitCoercion", "Unexpected implicit coercion to {{type}}"),
     ]),
+    ("eslint", "no-implicit-globals", &[
+        m("globalNonLexicalBinding", "Unexpected {{kind}} declaration in the global scope."),
+        m("globalLexicalBinding", "Unexpected {{kind}} declaration in the global scope."),
+        m("globalVariableLeak", "Global variable leak."),
+    ]),
     ("eslint", "no-import-assign", &[
         m("readonly", "Do not assign to imported bindings"),
         m("readonlyMember", "Do not assign to imported bindings"),
@@ -651,6 +656,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unsafeToUnconstrainedTypeAssertion", "Unsafe type assertion: '{{type}}' could be instantiated with an arbitrary type which could be unrelated to the original type."),
     ]),
     ("typescript", "no-useless-default-assignment", &[
+        m("uselessDefaultAssignment", "Default value is useless because the {{type}}{{why}}. This default assignment will never be used."),
         m("uselessUndefined", "Default value is useless because it is undefined. Optional {{types}} are already undefined by default."),
     ]),
     ("typescript", "no-useless-empty-export", &[

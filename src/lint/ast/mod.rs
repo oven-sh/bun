@@ -180,6 +180,8 @@ pub(crate) struct Lazy {
     pub(crate) parents: OnceCell<node::Parents>,
     pub(crate) jsdoc: OnceCell<bun_sema::check::jsdoc::Outline>,
     has_types_that_are_errors: OnceCell<bool>,
+    /// [`crate::utils::oxlint::source_type`]
+    pub(crate) oxc_source_type: OnceCell<crate::language::SourceType>,
     /// Where the text has a `\u`, in order.
     unicode_escapes: OnceCell<Box<[u32]>>,
     unicode_escape_range: UnicodeEscapeRange,

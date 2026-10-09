@@ -108,8 +108,9 @@ const actual = tuplesOf(ours.stdout, true).tuples;
 
 // The rules of a plugin in JavaScript are not in the list. Both have them if `bun lint` reports anything of that plugin.
 const prefixes = new Set(actual.map(it => it.rule.split("/")[0]).filter(it => it !== "@typescript-eslint"));
+// `TS2322`: what the type checker reports with `--type-check`.
 const isShared = rule =>
-  rule === "(none)" || rules.has(rule) || rules.has(`@typescript-eslint/${rule}`) || (rule.includes("/") && prefixes.has(rule.split("/")[0]));
+  rule === "(none)" || /^@typescript-eslint\/TS\d+$/.test(rule) || rules.has(rule) || rules.has(`@typescript-eslint/${rule}`) || (rule.includes("/") && prefixes.has(rule.split("/")[0]));
 // The second diagnostic of a rule at a position is another key than the first: `a!.b!` has two at `a`.
 const keyed = tuples => {
   const seen = new Map();

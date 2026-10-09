@@ -68,6 +68,8 @@ pub struct LanguageOptions {
     /// `languageOptions.globals`. Sorted by name. What the ECMAScript version defines is not
     /// listed here.
     pub globals: Vec<(Box<[u8]>, Global)>,
+    /// The names that `globals` itself turns on, without those of an `env`. Sorted.
+    pub written_globals: Vec<Box<[u8]>>,
     pub parser: Parser,
     /// `parserOptions.ecmaFeatures.globalReturn`
     pub global_return: bool,
@@ -254,6 +256,7 @@ impl LanguageOptions {
         let source_type =
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
+        let mut written_globals: Vec<Box<[u8]>> = Vec::new();
         // `env` of an `.eslintrc` or an `.oxlintrc.json`.
         for (name, is_enabled) in language_options
             .get(b"$env")
@@ -275,8 +278,12 @@ impl LanguageOptions {
         {
             if let Some(value) = Global::of_json(value) {
                 globals.push((name[..].into(), value));
+                if value != Global::Off {
+                    written_globals.push(name[..].into());
+                }
             }
         }
+        crate::utils::sort::sort_unstable(&mut written_globals);
         // The last of two entries with the same name counts.
         globals.reverse();
         crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
@@ -288,6 +295,7 @@ impl LanguageOptions {
             },
             source_type,
             globals,
+            written_globals,
             parser,
             // ESLint turns it off for espree in a module.
             global_return: feature(b"globalReturn")
@@ -322,6 +330,13 @@ impl LanguageOptions {
             settings: settings.clone(),
             config_globals: OnceLock::new(),
         }
+    }
+
+    /// oxlint's `ctx.globals().is_enabled(name)`: `globals` itself has `name`, and not as `"off"`.
+    pub fn is_written_global(&self, name: &[u8]) -> bool {
+        self.written_globals
+            .binary_search_by(|it| (**it).cmp(name))
+            .is_ok()
     }
 
     pub(crate) fn config_globals(&self) -> &ConfigGlobals {
@@ -387,6 +402,7 @@ impl Default for LanguageOptions {
             ecma_version: Self::LATEST_ECMA_VERSION,
             source_type: SourceType::Module,
             globals: Vec::new(),
+            written_globals: Vec::new(),
             parser: Parser::Espree,
             global_return: false,
             implied_strict: false,

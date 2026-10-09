@@ -106,7 +106,8 @@ impl Kind {
 
     /// Of the file at `path`, as `options` have it.
     pub(crate) fn with_options(path: &[u8], options: &bun_format::FormatOptions) -> Option<Kind> {
-        if !options.flavor.is_oxfmt() {
+        // No configuration file of oxfmt has `parser`. Its tests do.
+        if !options.flavor.is_oxfmt() || options.parser.is_some() {
             return Kind::of(path, options.parser.as_deref());
         }
         match classify_for_oxfmt(path) {

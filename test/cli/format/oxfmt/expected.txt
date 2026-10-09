@@ -63,8 +63,6 @@ FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/inline-comment-before-call.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/inline-comment-before-call.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 80 }

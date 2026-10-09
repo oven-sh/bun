@@ -28,6 +28,126 @@ pub struct State<'a> {
     /// Every private name that is not the key of a field or a method, and where it is: an `a.#x`,
     /// the `#x` of `#x in a`, an `accessor #x`.
     usages: Vec<(Node<'a>, Name<'a>)>,
+    /// For oxlint: every private field and method, with its class and its name.
+    declared: Vec<(Class<'a>, Name<'a>, Member<'a>)>,
+}
+
+/// The class whose body `child` is directly in. The heritage and the decorators of a class are not in its body.
+fn class_of_member<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Class<'a>> {
+    match (parent, child) {
+        (Node::Class(class), Node::Member(_)) => Some(class),
+        _ => None,
+    }
+}
+
+/// oxlint's `is_value_context`: whether the value of `e` goes somewhere, by what `e` is directly in. What only passes the value
+/// on is asked in its turn: `a ? e : b`, `a && e`, `e++`, `e as T`.
+fn is_value_context(e: Expr<'_>) -> bool {
+    let mut child = e;
+    loop {
+        // oxc has a `ChainExpression` around it.
+        if child.is_chain_root() {
+            return true;
+        }
+        let parent = match child.parent() {
+            Node::Expr(parent) => parent,
+            Node::Stmt(statement) => {
+                return matches!(
+                    statement.tag(),
+                    StmtTag::Return | StmtTag::If | StmtTag::Switch | StmtTag::Throw | StmtTag::While | StmtTag::DoWhile
+                );
+            }
+            Node::Case(_) | Node::VarDecl(_) => return true,
+            Node::Prop(prop) => {
+                return match prop.parent() {
+                    // `a={e}`, not `{...e}`.
+                    Node::Expr(owner) if owner.tag() == ExprTag::Jsx => {
+                        prop.kind() != PropKind::Spread && child.jsx_container_span().is_some()
+                    }
+                    Node::Expr(owner) => !owner.is_assignment_target(),
+                    _ => false,
+                };
+            }
+            // The key and the value of a field.
+            Node::Member(member) => {
+                return member.kind() == MemberKind::Property
+                    && !member.flags().contains(Flags::ACCESSOR)
+                    && !member.decorators().any(|it| it == child);
+            }
+            Node::Param(param) => return param.default() == Some(child),
+            Node::PatProp(property) => return property.default() == Some(child),
+            Node::PatElem(element) => return element.default() == Some(child),
+            Node::Func(func) => return func.is_arrow(),
+            _ => return false,
+        };
+        match parent.kind() {
+            ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::Index { .. }
+            | ExprKind::Template(_)
+            | ExprKind::Await(_) => return true,
+            ExprKind::TaggedTemplate(call) => return call.callee() != child,
+            ExprKind::Dot { .. } => return !parent.is_private_member(),
+            ExprKind::Array(_) => return !parent.is_assignment_target(),
+            ExprKind::Spread(_) => return !parent.is_assignment_target() && parent.jsx_container_span().is_none(),
+            ExprKind::Jsx(_) => return child.jsx_container_span().is_some(),
+            ExprKind::Assign { value, .. } => return value == child && !parent.is_assignment_target(),
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
+            | ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Satisfies { .. }
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. } => {}
+            // `#x in e`
+            ExprKind::Binary { op: BinOp::In, left, .. } if left.tag() == ExprTag::PrivateIdentifier => return false,
+            ExprKind::Binary { .. } | ExprKind::Unary { .. } => return true,
+            _ => return false,
+        }
+        child = parent;
+    }
+}
+
+/// oxlint's `is_read`, of an `a.#x`.
+fn is_read_for_oxlint(access: Expr<'_>) -> bool {
+    let is_cast = |e: Expr| {
+        matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation)
+    };
+    let mut top = access;
+    while !top.is_chain_root()
+        && let Node::Expr(parent) = top.parent()
+        && is_cast(parent)
+    {
+        top = parent;
+    }
+    if is_value_context(top) {
+        return true;
+    }
+    // Some places count only for what is written there with nothing around it.
+    let is_bare = top == access && !access.is_parenthesized();
+    match top.parent() {
+        Node::Expr(parent) => match parent.kind() {
+            // `a = this.#x += 1`
+            ExprKind::Assign { op: Some(_), target, .. } => {
+                target == top && !parent.is_assignment_target() && is_value_context(parent)
+            }
+            ExprKind::Cond { test, .. } => is_bare && test == top,
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, .. } => left == top,
+            _ => false,
+        },
+        Node::Stmt(statement) => match statement.kind() {
+            StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => is_bare && expr == top,
+            _ => false,
+        },
+        // `({ [this.#x]: a } = b)`
+        Node::Prop(prop) => {
+            is_bare
+                && matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == top)
+                && matches!(prop.parent(), Node::Expr(object) if object.is_assignment_target())
+        }
+        _ => false,
+    }
 }
 
 fn is_in_expression_statement(e: Expr<'_>) -> bool {
@@ -116,6 +236,18 @@ fn remove_member<'a>(fixer: Fixer<'a>, member: Member<'a>) -> Option<Vec<Fix>> {
 
 impl NoUnusedPrivateClassMembers {
     fn collect_members<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            // A method without a body is none, nor is an `accessor`.
+            let is_element = |member: &Member<'a>| {
+                !member.flags().contains(Flags::ACCESSOR) && member.func().is_none_or(Func::has_body)
+            };
+            for member in class.members().iter().filter(is_element) {
+                if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
+                    cx.state.declared.push((class, name, member));
+                }
+            }
+            return;
+        }
         for member in class.members() {
             let Some(KeyKind::Private(name)) = member.key().map(Key::kind) else {
                 continue;
@@ -146,8 +278,40 @@ impl NoUnusedPrivateClassMembers {
         }
     }
 
+    /// oxlint looks at each class alone: a name in a class in the class is not looked for further out. A method is used by
+    /// any `a.#x` or `#x in a`, a field by an `a.#x` whose value goes somewhere. A getter and a setter are two members.
+    fn finish_as_oxlint<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let State { declared, usages, .. } = std::mem::take(&mut cx.state);
+        if declared.is_empty() {
+            return;
+        }
+        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
+        // What is referred to, and whether it is read.
+        let mut referenced: FxHashMap<(Class<'a>, Name<'a>), bool> = FxHashMap::default();
+        for (usage, name) in usages {
+            if let Node::Expr(e) = usage
+                && let Some(class) = classes.find(usage, class_of_member)
+            {
+                let is_read = referenced.entry((class, name)).or_insert(false);
+                *is_read = *is_read || (e.tag() == ExprTag::Dot && is_read_for_oxlint(e));
+            }
+        }
+        for (class, name, member) in declared {
+            let is_used = (referenced.get(&(class, name)))
+                .is_some_and(|is_read| *is_read || member.kind() != MemberKind::Property);
+            if let Some(key) = member.key().filter(|_| !is_used) {
+                cx.report(key.span(cx.file()), UNUSED_PRIVATE_CLASS_MEMBER)
+                    .data("classMemberName", name.bytes().get(1..).unwrap_or_default());
+            }
+        }
+    }
+
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let State { mut members, usages } = std::mem::take(&mut cx.state);
+        if cx.language().is_oxlint {
+            self.finish_as_oxlint(cx);
+            return;
+        }
+        let State { mut members, usages, .. } = std::mem::take(&mut cx.state);
         if members.is_empty() {
             return;
         }
@@ -155,11 +319,7 @@ impl NoUnusedPrivateClassMembers {
         let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         for (usage, name) in usages {
             let mut inner = usage;
-            // The heritage and the decorators of a class are not in its body.
-            while let Some(class) = classes.find(inner, |child, parent| match (parent, child) {
-                (Node::Class(class), Node::Member(_)) => Some(class),
-                _ => None,
-            }) {
+            while let Some(class) = classes.find(inner, class_of_member) {
                 if let Some(member) = members.get_mut(&(class, name)) {
                     if !member.is_used {
                         member.has_reference = true;
@@ -177,8 +337,7 @@ impl NoUnusedPrivateClassMembers {
                 continue;
             };
             cx.report(key.span(cx.file()), UNUSED_PRIVATE_CLASS_MEMBER)
-                // oxlint has the name without the `#`.
-                .data("classMemberName", name.bytes().get(usize::from(cx.language().is_oxlint)..).unwrap_or_default())
+                .data("classMemberName", name.bytes())
                 .suggest_with(
                     REMOVE_UNUSED_PRIVATE_CLASS_MEMBER,
                     &[("classMemberName", name.bytes())],

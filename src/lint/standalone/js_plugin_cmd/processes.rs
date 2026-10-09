@@ -143,7 +143,7 @@ impl<'e> Processes<'e> {
 }
 
 impl Engine for Processes<'_> {
-    fn with_vm(&self, _among: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         let me = std::thread::current().id();
         let mut state = self.state.lock();
         // It has one, which it would wait for.

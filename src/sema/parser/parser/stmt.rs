@@ -191,6 +191,9 @@ impl Parser<'_> {
             }
         }
         let statement = self.statement();
+        if self.reads_jsdoc {
+            self.statement_jsdoc(statement);
+        }
         // The other parser takes these for statements of the file if no block is around them.
         if let Some(Stmt {
             kind: StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
@@ -738,7 +741,11 @@ impl Parser<'_> {
         }
         self.lists = lists;
         self.context = saved;
-        take_span!(self, var_decls, base)
+        let decls = take_span!(self, var_decls, base);
+        if self.reads_jsdoc {
+            self.variable_declarations_jsdoc(decls);
+        }
+        decls
     }
 
     /// `nextIsIdentifierAndCloseParen`, in a `lookAhead`.
@@ -970,8 +977,13 @@ impl Parser<'_> {
         // Only a statement of the file makes it a module.
         let was_module = self.f.has_module_syntax;
         let lists = self.enter_list(ListKind::BlockStatements);
+        let reparsed = self.jsdoc.reparsed.len();
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
             let statement = self.statement();
+            if self.reads_jsdoc {
+                self.statement_jsdoc(statement);
+                self.list_reparsed(reparsed);
+            }
             self.s.ids.push(statement.0);
         }
         self.lists = lists;
@@ -1242,15 +1254,23 @@ impl Parser<'_> {
                 self.flag(DiagnosticKind::Grammar, 1113, (pos, self.prev_end()), &[]);
             }
             let ids = self.s.ids.len();
+            let reparsed = self.jsdoc.reparsed.len();
             let lists = self.enter_list(ListKind::SwitchClauseStatements);
             while !matches!(self.token(), T::Case | T::Default | T::CloseBrace | T::Eof)
                 && self.is_at_element(ListKind::SwitchClauseStatements)
             {
                 let statement = self.statement();
+                if self.reads_jsdoc {
+                    self.statement_jsdoc(statement);
+                    self.list_reparsed_of_clause(reparsed);
+                }
                 self.s.ids.push(statement.0);
             }
             self.lists = lists;
             let body = self.take_ids(ids);
+            if self.reads_jsdoc {
+                self.clause_jsdoc(pos);
+            }
             self.s.cases.push(Case {
                 test,
                 body,
@@ -1295,6 +1315,9 @@ impl Parser<'_> {
                         end: self.prev_end(),
                     },
                 });
+                if self.reads_jsdoc {
+                    self.variable_declaration_jsdoc(param);
+                }
                 self.expect(T::CloseParen);
             }
             handler = self.block();

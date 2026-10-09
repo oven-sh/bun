@@ -354,8 +354,10 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
             if cx.language().is_oxlint {
                 loc.start = param.span().start;
             }
+            // tsgolint has the name alone.
+            let name = if cx.language().is_oxlint { param.pat().span() } else { param.binding_span() };
             cx.report(loc, PREFER_READONLY)
-                .data("name", file.slice(param.binding_span()))
+                .data("name", file.slice(name))
                 .fix(|fixer| fixer.insert_before(param.pat(), "readonly "));
             return;
         }

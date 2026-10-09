@@ -76,7 +76,7 @@ impl NoUnderscoreDangle {
         if let StmtKind::Fn(func) = statement.kind()
             && let Some(name) = func.name()
             && self.is_unexpected(name.bytes())
-            && func.has_body()
+            && (func.has_body() || cx.language().is_oxlint)
         {
             // Here and below, oxlint points at the name.
             let place = if cx.language().is_oxlint { name.span() } else { statement.span_without_export() };

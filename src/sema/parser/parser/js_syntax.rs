@@ -46,7 +46,8 @@ impl Parser<'_> {
             .union(Flags::STATIC)
             .union(Flags::ACCESSOR)
             .union(Flags::ASYNC)
-            .union(Flags::DEFAULT);
+            .union(Flags::DEFAULT)
+            .union(Flags::REPARSED);
         for index in 0..list.len() {
             let Modifier { kind, pos } = self.f.modifier_list(list)[index];
             if let ModifierKind::Keyword(flag) = kind

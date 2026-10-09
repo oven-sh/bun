@@ -11,6 +11,8 @@ pub struct IdLength {
     properties: bool,
     exceptions: Vec<Box<[u8]>>,
     exception_patterns: Vec<Regex>,
+    /// An option of oxlint.
+    check_generic: bool,
 }
 
 const TOO_SHORT: Message = Message::new(
@@ -255,6 +257,178 @@ impl IdLength {
     }
 }
 
+/// The rule of oxlint 1.87 is another one. It looks at every name that is declared, in types too, at every private name
+/// wherever it is written, and at the names of properties and members, but at no reference to a variable.
+impl IdLength {
+    fn check_ident<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
+        if !name.is_string() {
+            self.check(cx, name.name(), || Some(name.span()));
+        }
+    }
+
+    fn check_key<'a>(&self, key: Option<Key<'a>>, cx: &mut Cx<'a, Self>) {
+        if let Some(key) = key
+            && let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind()
+        {
+            let file = cx.file();
+            self.check(cx, name, || Some(key.span(file)));
+        }
+    }
+
+    fn check_binding_as_oxlint<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(name) = pat.as_ident() else {
+            return;
+        };
+        self.check(cx, name, || match pat.parent() {
+            Node::Param(param) if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature) => None,
+            // `{ a }`
+            Node::PatProp(prop) if prop.is_shorthand() && prop.default().is_none() && !self.properties => None,
+            _ => Some(pat.span()),
+        });
+    }
+
+    /// The keys of an object pattern, but for `{ a: b }` and `{ a: { b } }`. `{ a = 1 }` is reported twice.
+    fn check_keys_of_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let PatKind::Object(props) = pat.kind() else {
+            return;
+        };
+        for prop in props {
+            if prop.default().is_some() || prop.value().tag() == PatTag::Array {
+                self.check_key(prop.key().filter(|it| !it.is_private()), cx);
+            }
+        }
+    }
+
+    fn check_member_as_oxlint<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.properties && !matches!(member.parent(), Node::Class(_)) {
+            return;
+        }
+        match member.constructor_keyword() {
+            Some(keyword) if member.key().is_none() => self.check_ident(keyword, cx),
+            _ => self.check_key(member.key(), cx),
+        }
+    }
+
+    fn check_statement_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let names = match statement.kind() {
+            StmtKind::Interface(it) => [Some(it.name()), None],
+            StmtKind::TypeAlias(it) => [Some(it.name()), None],
+            StmtKind::Enum(it) => [Some(it.name()), None],
+            StmtKind::ImportEquals(it) => [Some(it.name()), None],
+            StmtKind::ExportStar { alias, .. } => [alias, None],
+            StmtKind::Import(it) => [it.default(), it.namespace()],
+            StmtKind::Module(it) => {
+                // `namespace A.B {}` is one statement.
+                let mut at = Some(it);
+                while let Some(module) = at {
+                    if let ModuleName::Ident(name) = module.name() {
+                        self.check_ident(name, cx);
+                    }
+                    at = module.nested();
+                }
+                [None, None]
+            }
+            _ => [None, None],
+        };
+        for name in names.into_iter().flatten() {
+            self.check_ident(name, cx);
+        }
+    }
+
+    /// `a.b`: a private name, or what an assignment or a property of an object pattern assigns to.
+    fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { name, .. } = e.kind() else {
+            return;
+        };
+        self.check(cx, name.name(), || {
+            let is_assigned_to = || match e.parent() {
+                Node::Expr(parent) => matches!(parent.kind(), ExprKind::Assign { target, .. } if target == e),
+                Node::Prop(prop) => {
+                    prop.kind() == PropKind::Init
+                        && prop.value() == Some(e)
+                        && matches!(prop.parent(), Node::Expr(object) if is_assignment_target(object))
+                }
+                _ => false,
+            };
+            (name.bytes().starts_with(b"#") || self.properties && is_assigned_to()).then(|| name.span())
+        });
+    }
+
+    /// The names in types that refer to no variable.
+    fn check_type_as_oxlint<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.kind() {
+            TypeKind::Tuple(elements) => {
+                for name in elements.iter().filter_map(|it| it.name()) {
+                    self.check_ident(name, cx);
+                }
+            }
+            TypeKind::Ref { name, .. } => {
+                for name in name.parts().skip(1) {
+                    self.check_ident(name, cx);
+                }
+            }
+            TypeKind::Typeof { expr, .. } => {
+                let mut at = expr;
+                while let ExprKind::Dot { obj, name, .. } = at.kind() {
+                    self.check_ident(name, cx);
+                    at = obj;
+                }
+            }
+            TypeKind::Predicate { .. } => {
+                if let Some(param) = ty.predicate_param().filter(|it| !it.name().is("this")) {
+                    self.check_ident(param, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn register_as_oxlint<'a>(&self, on: &mut Listeners<'a, Self>) {
+        on.pats([PatTag::Ident], Self::check_binding_as_oxlint);
+        on.funcs(|rule, func, cx| {
+            if let Some(name) = func.name() {
+                rule.check_ident(name, cx);
+            }
+        });
+        on.classes(|rule, class, cx| {
+            if let Some(name) = class.name() {
+                rule.check_ident(name, cx);
+            }
+        });
+        if self.check_generic {
+            on.type_params(|rule, it, cx| rule.check_ident(it.name(), cx));
+        }
+        on.import_specs(|rule, specifier, cx| {
+            if specifier.imported().name() != specifier.local().name() {
+                rule.check_ident(specifier.local(), cx);
+            }
+        });
+        let statements = [
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::ImportEquals,
+            StmtTag::ExportStar,
+            StmtTag::Import,
+            StmtTag::Module,
+        ];
+        on.stmts(statements, Self::check_statement_as_oxlint);
+        on.members(Self::check_member_as_oxlint);
+        on.enum_members(|rule, member, cx| rule.check_key(member.key(), cx));
+        on.exprs([ExprTag::Dot], Self::check_member_expression_as_oxlint);
+        on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
+            if let ExprKind::PrivateIdentifier(name) = e.kind() {
+                rule.check(cx, name, || Some(e.span()));
+            }
+        });
+        on.types([TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate], Self::check_type_as_oxlint);
+        if self.properties {
+            on.pats([PatTag::Object], Self::check_keys_of_pattern);
+            on.props(Self::check_property);
+        }
+    }
+}
+
 impl Rule for IdLength {
     const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
     /// Whether the length of each name that has been seen is wrong.
@@ -271,10 +445,15 @@ impl Rule for IdLength {
                 .map(|it| it.as_bytes().into())
                 .collect(),
             exception_patterns: patterns.iter().filter_map(|it| Regex::new(it, "u").ok()).collect(),
+            check_generic: options.bool_or("checkGeneric", true),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ByName<bool> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ByName<bool> {
+        if file.language().is_oxlint {
+            self.register_as_oxlint(on);
+            return ByName::default();
+        }
         on.pats([PatTag::Ident], Self::check_binding);
         on.exprs([ExprTag::Ident], Self::check_reference);
         on.members(Self::check_member);

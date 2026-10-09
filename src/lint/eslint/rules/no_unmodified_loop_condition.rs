@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::symbol_of;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -124,6 +125,130 @@ pub struct State<'a> {
     above: FxHashMap<Node<'a>, Above<'a>>,
     /// `has_dynamic_expressions`
     is_dynamic: FxHashMap<Expr<'a>, bool>,
+    oxlint: Oxlint<'a>,
+}
+
+/// A loop, for oxlint.
+struct Loop {
+    /// The function that it is in: `Oxlint::number_of_function`.
+    function: u32,
+    inside: Span,
+    /// The `init` of a `for`.
+    outside: Option<Span>,
+}
+
+/// References, each with the function that it is in, sorted by that and by where they are.
+type Places = Vec<(u32, Span)>;
+
+/// oxlint's `is_in_loop`, for any of `places`: it is in the loop, not in a function in the loop.
+fn is_any_in_loop(places: &[(u32, Span)], at: &Loop) -> bool {
+    let within = |span: Span| {
+        places.partition_point(|it| (it.0, it.1.start) < (at.function, span.start))
+            ..places.partition_point(|it| (it.0, it.1.end) <= (at.function, span.end))
+    };
+    let (inside, outside) = (within(at.inside), at.outside.map_or(0..0, within));
+    inside.start < inside.end && (inside.start < outside.start || outside.end < inside.end)
+}
+
+/// oxlint's `is_function_invocation_reference`
+fn is_invocation(reference: &Reference) -> bool {
+    reference.expr().is_some_and(|e| {
+        !e.is_parenthesized()
+            && matches!(e.parent(), Node::Expr(parent) if matches!(
+                parent.kind(),
+                ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) if call.callee() == e
+            ))
+    })
+}
+
+/// What oxlint's rule knows about the file.
+#[derive(Default)]
+struct Oxlint<'a> {
+    /// The function around a node.
+    functions: AncestorMemo<'a, Func<'a>>,
+    numbers: FxHashMap<Func<'a>, u32>,
+    /// The function declaration around a node.
+    declarations: AncestorMemo<'a, Func<'a>>,
+    /// Where a variable is written to.
+    writes: FxHashMap<Symbol<'a>, Places>,
+    /// Where the function declarations are called that a variable is written to in.
+    calls: FxHashMap<Symbol<'a>, Places>,
+}
+
+impl<'a> Oxlint<'a> {
+    /// 0 for what is in no function. A static block is none.
+    fn number_of_function(&mut self, node: Node<'a>) -> u32 {
+        let function = self.functions.find(node, |_, it| it.as_func().filter(|it| it.kind() != FnKind::StaticBlock));
+        let next = self.numbers.len() as u32 + 1;
+        function.map_or(0, |it| *self.numbers.entry(it).or_insert(next))
+    }
+
+    fn places(&mut self, references: impl Iterator<Item = Reference<'a>>) -> Places {
+        let mut places: Places = references.map(|it| (self.number_of_function(it.node()), it.span())).collect();
+        utils::sort::sort_unstable_by_key(&mut places, |it| (it.0, it.1.start));
+        places
+    }
+
+    /// oxlint's `is_symbol_modified_in_loop`
+    fn is_modified(&mut self, symbol: Symbol<'a>, at: &Loop) -> bool {
+        // What a declaration initializes is no reference for oxc.
+        let modifiers = || symbol.references().filter(|it| it.is_write() && !it.is_init());
+        if !symbol.has_writes() {
+            return false;
+        }
+        if !self.writes.contains_key(&symbol) {
+            let writes = self.places(modifiers());
+            self.writes.insert(symbol, writes);
+        }
+        if self.writes.get(&symbol).is_some_and(|it| is_any_in_loop(it, at)) {
+            return true;
+        }
+        if !self.calls.contains_key(&symbol) {
+            let mut functions: FxHashSet<Symbol<'a>> = FxHashSet::default();
+            let mut invocations: Vec<Reference<'a>> = Vec::new();
+            for modifier in modifiers() {
+                let declaration = self.declarations.find(modifier.node(), |_, it| {
+                    it.as_func().filter(|it| it.kind() == FnKind::Decl && it.has_body())
+                });
+                if let Some(function) = declaration.and_then(Func::symbol)
+                    && functions.insert(function)
+                {
+                    invocations.extend(function.references().filter(is_invocation));
+                }
+            }
+            let calls = self.places(invocations.into_iter());
+            self.calls.insert(symbol, calls);
+        }
+        self.calls.get(&symbol).is_some_and(|it| is_any_in_loop(it, at))
+    }
+}
+
+/// What oxlint finds in the test of a loop: a name that something in the file declares.
+struct Found<'a> {
+    symbol: Symbol<'a>,
+    at: Span,
+    /// The outermost `BinaryExpression` or `ConditionalExpression` that it is in.
+    group: Option<Span>,
+    /// It is in a conditional expression, with `checkConditionalExpressions`.
+    is_alone: bool,
+}
+
+/// What is still to be looked at in the test of a loop.
+enum Step<'a> {
+    /// `is_target`: it is assigned to.
+    Visit { e: Expr<'a>, is_target: bool },
+    /// The name in a tag.
+    Name { symbol: Symbol<'a>, at: Span },
+}
+
+/// What the name in a tag refers to for oxc: the `A` of `<A>` and the `a` of `<a.b>`. `<a>` is the name of an element.
+fn reference_in_tag(tag: Expr<'_>) -> Option<Expr<'_>> {
+    let mut first = tag;
+    while let ExprKind::Dot { obj, .. } = first.kind() {
+        first = obj;
+    }
+    let is_element = first == tag && first.text().first().is_some_and(u8::is_ascii_lowercase);
+    (!is_element).then_some(first)
 }
 
 /// ESLint's `isWriteReference`. Of the initializers only those of `var` count: they are evaluated
@@ -158,6 +283,134 @@ fn has_dynamic_expressions(root: Expr) -> bool {
 }
 
 impl NoUnmodifiedLoopCondition {
+    /// oxlint's `ConditionSymbolsCollector`: the names in `test`, in the order of the source, and the groups that have something
+    /// dynamic in them. It goes no further at a call or a member expression, unless that is the whole of an optional chain or
+    /// is assigned to.
+    fn collect_for_oxlint<'a>(&self, test: Expr<'a>) -> (Vec<Found<'a>>, FxHashSet<Span>) {
+        let expression = |e: Expr<'a>| Step::Visit { e, is_target: false };
+        let (mut found, mut dynamic_groups) = (Vec::new(), FxHashSet::default());
+        let mut stack = vec![(expression(test), None, false)];
+        while let Some((step, mut group, mut is_alone)) = stack.pop() {
+            let (e, is_target) = match step {
+                Step::Visit { e, is_target } => (e, is_target),
+                Step::Name { symbol, at } => {
+                    found.push(Found { symbol, at, group, is_alone });
+                    continue;
+                }
+            };
+            let same = |e: Expr<'a>| Step::Visit { e, is_target };
+            let mut next: SmallVec<[Step<'a>; 4]> = SmallVec::new();
+            match e.kind() {
+                ExprKind::Ident(_) => next.extend(symbol_of(e).map(|symbol| Step::Name { symbol, at: e.span() })),
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, left, right } => {
+                    next.extend([expression(left), expression(right)]);
+                }
+                // `#a in b`
+                ExprKind::Binary { left, right, .. } if left.tag() == ExprTag::PrivateIdentifier => {
+                    next.push(expression(right));
+                }
+                ExprKind::Binary { left, right, .. } => {
+                    group = group.or_else(|| Some(e.span()));
+                    next.extend([expression(left), expression(right)]);
+                }
+                ExprKind::Cond { test, yes, no } => {
+                    match self.check_conditional_expressions {
+                        true => is_alone = true,
+                        false => group = group.or_else(|| Some(e.span())),
+                    }
+                    next.extend([expression(test), expression(yes), expression(no)]);
+                }
+                ExprKind::Dot { obj, .. } if is_target || e.is_chain_root() => next.push(expression(obj)),
+                ExprKind::Index { obj, index, .. } if is_target || e.is_chain_root() => {
+                    next.extend([expression(obj), expression(index)]);
+                }
+                ExprKind::Call(call) if e.is_chain_root() => {
+                    next.push(expression(call.callee()));
+                    next.extend(call.args().iter().map(expression));
+                }
+                ExprKind::Call(_)
+                | ExprKind::New(_)
+                | ExprKind::Dot { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::TaggedTemplate(_)
+                | ExprKind::Yield { .. } => dynamic_groups.extend(group),
+                ExprKind::Assign { target, value, .. } => {
+                    next.extend([Step::Visit { e: target, is_target: true }, expression(value)]);
+                }
+                ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand } => {
+                    next.push(Step::Visit { e: operand, is_target: true });
+                }
+                ExprKind::Unary { operand, .. }
+                | ExprKind::Await(operand)
+                | ExprKind::AsConst(operand)
+                | ExprKind::NonNull(operand)
+                | ExprKind::As { expr: operand, .. }
+                | ExprKind::Satisfies { expr: operand, .. }
+                | ExprKind::Instantiation { expr: operand, .. } => next.push(expression(operand)),
+                ExprKind::Spread(operand) => next.push(same(operand)),
+                ExprKind::Array(elements) => next.extend(elements.iter().map(same)),
+                ExprKind::Object(properties) => {
+                    for property in properties {
+                        if let Some(KeyKind::Computed(key)) = property.key().map(Key::kind) {
+                            next.push(expression(key));
+                        }
+                        next.extend(property.value().map(same));
+                    }
+                }
+                ExprKind::Template(template) => next.extend(template.exprs().iter().map(expression)),
+                ExprKind::ImportCall { args } => next.extend(args.iter().map(expression)),
+                ExprKind::Jsx(jsx) => {
+                    // The name in the closing tag is a reference of its own.
+                    let symbol = jsx.tag().and_then(reference_in_tag).and_then(symbol_of);
+                    let name = |tag: Option<Expr<'a>>| Some(Step::Name { symbol: symbol?, at: reference_in_tag(tag?)?.span() });
+                    next.extend(name(jsx.tag()));
+                    next.extend(jsx.attrs().iter().filter_map(Prop::value).map(expression));
+                    next.extend(jsx.children().iter().map(expression));
+                    next.extend(name(jsx.close_tag()));
+                }
+                _ => {}
+            }
+            stack.extend(next.into_iter().rev().map(|step| (step, group, is_alone)));
+        }
+        (found, dynamic_groups)
+    }
+
+    /// oxlint's `check_loop_condition`
+    fn check_loop_for_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let (test, init) = match statement.kind() {
+            StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => (test, None),
+            StmtKind::For { test: Some(test), init, .. } => (test, init),
+            _ => return,
+        };
+        let (found, mut fine_groups) = self.collect_for_oxlint(test);
+        // Of a variable the first in each group counts, and the first of those that are in no group.
+        let mut seen: FxHashSet<(Option<Span>, Symbol<'a>)> = FxHashSet::default();
+        let found: Vec<Found<'a>> =
+            found.into_iter().filter(|it| it.is_alone || seen.insert((it.group, it.symbol))).collect();
+        if found.is_empty() {
+            return;
+        }
+        let known = &mut cx.state.oxlint;
+        let at = Loop {
+            function: known.number_of_function(Node::Stmt(statement)),
+            inside: statement.span(),
+            outside: init.map(|it| utils::estree_span(Node::Stmt(it))),
+        };
+        let is_modified: Vec<bool> = found.iter().map(|it| known.is_modified(it.symbol, &at)).collect();
+        // It is fine if anything in a group is modified.
+        fine_groups.extend(found.iter().zip(&is_modified).filter(|it| *it.1).filter_map(|it| it.0.group));
+        // Those in no group come first.
+        let mut reported: FxHashSet<Symbol<'a>> = FxHashSet::default();
+        for is_in_group in [false, true] {
+            for (it, &is_modified) in found.iter().zip(&is_modified) {
+                let is_fine = it.group.map_or(is_modified, |group| fine_groups.contains(&group));
+                if it.group.is_some() == is_in_group && !is_fine && (it.is_alone || reported.insert(it.symbol)) {
+                    cx.report(it.at, LOOP_CONDITION_NOT_MODIFIED).data("name", it.symbol.name());
+                }
+            }
+        }
+    }
+
     /// Walks up from `node`, whose child on the way is `child`. All the walks together take time in
     /// proportion to the number of nodes.
     fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, state: &mut State<'a>) -> Above<'a> {
@@ -297,7 +550,11 @@ impl Rule for NoUnmodifiedLoopCondition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        if file.language().is_oxlint {
+            on.stmts([StmtTag::While, StmtTag::DoWhile, StmtTag::For], Self::check_loop_for_oxlint);
+            return State::default();
+        }
         on.stmts([StmtTag::While, StmtTag::DoWhile, StmtTag::For], |_, statement, cx| {
             let test = match statement.kind() {
                 StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => Some(test),

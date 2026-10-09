@@ -8,7 +8,7 @@ use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
     is_bigint_literal_at, is_parenthesized, is_private_name_at, start_of,
 };
-use crate::resolve::{Host, Options};
+use crate::resolve::Host;
 use crate::session::Session;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -297,7 +297,7 @@ impl<'s> TsConfigSourceFile<'s> {
     ) -> Option<Self> {
         let atoms = Interner::new_in(session);
         let path = b"/tsconfig.json";
-        let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
+        let mut hir = host.parse(session.arena(), path, &text, &atoms, Default::default());
         hir.text = text;
         let is_object =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);

@@ -190,7 +190,12 @@ fn describe_literal_type(ty: Type) -> Vec<u8> {
 }
 
 fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
+    let is_oxlint = type_node.file().language().is_oxlint;
     let description: &[u8] = match type_node.kind() {
+        // tsgolint has a string without quotes, a template as it is written, and does not say which boolean it is.
+        TypeKind::StringLit(value) if is_oxlint => return value.bytes().to_vec(),
+        TypeKind::Template(_) if is_oxlint => return type_node.text().to_vec(),
+        TypeKind::BoolLit(_) if is_oxlint => b"literal type",
         TypeKind::Keyword(Keyword::Any) => b"any",
         TypeKind::Keyword(Keyword::Boolean) => b"boolean",
         TypeKind::Keyword(Keyword::Never) => b"never",
@@ -277,7 +282,12 @@ fn report_any<'a>(
 ) {
     let type_name = type_part.type_name();
     let message = if type_name == b"any" { OVERRIDES } else { ERROR_TYPE_OVERRIDES };
-    cx.report(type_node, message).data("container", container).data("typeName", type_name);
+    cx.report(place(type_node), message).data("container", container).data("typeName", type_name);
+}
+
+/// oxlint points at the parentheses around a constituent.
+fn place(type_node: TypeNode) -> Span {
+    if type_node.file().language().is_oxlint { type_node.outer_span() } else { type_node.span() }
 }
 
 impl NoRedundantTypeConstituents {
@@ -298,7 +308,7 @@ impl NoRedundantTypeConstituents {
                     report_any(type_part, type_node, "intersection", cx);
                 } else if type_flags == TypeFlags::NEVER || type_flags == TypeFlags::UNKNOWN {
                     let is_never = type_flags == TypeFlags::NEVER;
-                    cx.report(type_node, if is_never { OVERRIDES } else { OVERRIDDEN })
+                    cx.report(place(type_node), if is_never { OVERRIDES } else { OVERRIDDEN })
                         .data("container", "intersection")
                         .data("typeName", type_part.type_name());
                 } else if let Some(primitive) = Primitive::of_literal(type_flags) {
@@ -327,7 +337,7 @@ impl NoRedundantTypeConstituents {
                 if let Some(primitive) = type_values.last().and_then(primitive_of)
                     && type_values.iter().all(|it| primitive_of(it).is_some())
                 {
-                    cx.report(type_ref, PRIMITIVE_OVERRIDDEN)
+                    cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN)
                         .data("literal", join(type_values.iter().copied()))
                         .data("primitive", primitive.name());
                 }
@@ -353,7 +363,7 @@ impl NoRedundantTypeConstituents {
                 if cx.has_reported_too_much() {
                     return;
                 }
-                cx.report(type_node, PRIMITIVE_OVERRIDDEN)
+                cx.report(place(type_node), PRIMITIVE_OVERRIDDEN)
                     .data("literal", matched_literal_types.clone())
                     .data("primitive", primitive.name());
             }
@@ -375,12 +385,12 @@ impl NoRedundantTypeConstituents {
                 if type_flags == TypeFlags::ANY {
                     report_any(type_part, type_node, "union", cx);
                 } else if type_flags == TypeFlags::UNKNOWN {
-                    cx.report(type_node, OVERRIDES)
+                    cx.report(place(type_node), OVERRIDES)
                         .data("container", "union")
                         .data("typeName", type_part.type_name());
                 } else if type_flags == TypeFlags::NEVER {
                     if !is_node_inside_return_type(node) {
-                        cx.report(type_node, OVERRIDDEN)
+                        cx.report(place(type_node), OVERRIDDEN)
                             .data("container", "union")
                             .data("typeName", "never");
                     }
@@ -405,7 +415,7 @@ impl NoRedundantTypeConstituents {
                 let is_overridden =
                     |it: &TypeFlagsWithName| Primitive::of_literal(it.type_flags) == Some(primitive);
                 if type_part_flags.iter().any(is_overridden) {
-                    cx.report(type_node, LITERAL_OVERRIDDEN)
+                    cx.report(place(type_node), LITERAL_OVERRIDDEN)
                         .data("literal", join(type_part_flags.iter().copied().filter(is_overridden)))
                         .data("primitive", primitive.name());
                 }

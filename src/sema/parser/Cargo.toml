@@ -11,6 +11,7 @@ bun_sema.workspace = true
 bun_core.workspace = true
 bun_ast.workspace = true
 bun_threading.workspace = true
+smallvec.workspace = true
 
 [lints]
 workspace = true

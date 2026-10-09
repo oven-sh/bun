@@ -3,6 +3,7 @@
 //! same rows with the same places, the same error, the same messages at the same places.
 //!
 //! `--measure=index|one-pass|none [--iterations=n]`: reads every file that often and drops the rows.
+//! `--warm`: each text is copied right before it is read, as `read()` has just copied a file.
 //! `--records`: a file is many texts, with a line `@@@@` between them.
 
 use super::Args;
@@ -11,6 +12,8 @@ use bun_lint::json::comparison::{describe, read_and_drop};
 
 pub(super) fn run(args: &Args) {
     let options = args.flag("options").unwrap_or("jsonc");
+    let variant = args.flag("variant").and_then(|it| it.parse::<u8>().ok());
+    bun_lint::json::comparison::set_variant_of_the_reader(variant.unwrap_or(0));
     let mut names = args.positional.clone();
     let mut texts: Vec<Vec<u8>> = (args.positional.iter())
         .map(|path| host::read(path).expect("the file"))
@@ -30,8 +33,18 @@ pub(super) fn run(args: &Args) {
             .flag("iterations")
             .and_then(|it| it.parse::<usize>().ok());
         let mut taken = 0usize;
+        let is_warm = args.flag("warm").is_some();
+        let mut copy = Vec::new();
         for _ in 0..iterations.unwrap_or(1) {
             for text in &texts {
+                let text = match is_warm {
+                    true => {
+                        copy.clear();
+                        copy.extend_from_slice(text);
+                        &copy
+                    }
+                    false => text,
+                };
                 taken += usize::from(match reader {
                     "none" => text.is_empty(),
                     _ => read_and_drop(options, reader == "one-pass", text),

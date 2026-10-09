@@ -112,7 +112,8 @@ impl Rule for NoExtraBind {
             };
             if argument.tag() == ExprTag::Spread
                 || !ast_utils::is_specific_member_access(member, None, Some("bind"))
-                || !func.is_arrow() && own_keywords(func, true).this
+                // For oxlint the `this` of a field and of a static block of a class in it is its own.
+                || !func.is_arrow() && own_keywords(func, !cx.language().is_oxlint).this
             {
                 return;
             }

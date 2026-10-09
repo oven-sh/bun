@@ -72,14 +72,33 @@ fn is_unicode_code_point_escape(char: Character) -> bool {
     digits.is_some_and(|it| !it.is_empty() && it.iter().all(u8::is_ascii_hexdigit))
 }
 
+/// The blocks of combining characters that oxlint knows.
+fn is_combining_character_for_oxlint(value: u32) -> bool {
+    matches!(
+        value,
+        0x0300..=0x036F
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x20D0..=0x20FF
+            | 0xFE00..=0xFE0F
+            | 0xFE20..=0xFE2F
+            | 0xE0100..=0xE01EF
+    )
+}
+
 /// ESLint's `findCharacterSequences`, all kinds at once. In `chars` the characters that are not to
 /// be flagged are `None`.
 fn find_character_sequences<'r>(
     chars: &[Option<Character<'r>>],
     unfiltered_chars: &[Character<'r>],
     found: &mut Found<'r>,
+    is_oxlint: bool,
 ) {
     let at = |index: usize| chars.get(index).copied().flatten();
+    let is_combining_character: fn(u32) -> bool = match is_oxlint {
+        true => is_combining_character_for_oxlint,
+        false => is_combining_character,
+    };
     let mut zwj_sequence: Option<Match<'r>> = None;
     for index in 1..chars.len() {
         let Some(char) = at(index) else {
@@ -116,7 +135,8 @@ fn find_character_sequences<'r>(
             && value_of(next) != ZERO_WIDTH_JOINER
         {
             zwj_sequence = Some(match zwj_sequence {
-                Some((first, last)) if last == previous => (first, next),
+                // oxlint reports each joiner with what is before and after it.
+                Some((first, last)) if last == previous && !is_oxlint => (first, next),
                 Some(finished) => {
                     found[ZWJ].push(finished);
                     (previous, next)
@@ -249,7 +269,7 @@ impl NoMisleadingCharacterClass {
         let is_flagged = |char: &Character<'r>| !(self.allow_escape && node.is_acceptable_escape_sequence(*char));
         let chars: SmallVec<[Option<Character<'r>>; 8]> =
             unfiltered_chars.iter().map(|char| is_flagged(char).then_some(*char)).collect();
-        find_character_sequences(&chars, unfiltered_chars, found);
+        find_character_sequences(&chars, unfiltered_chars, found, node.node.file().language().is_oxlint);
     }
 
     /// `unicode_fixer`: adds the `u` flag.
@@ -357,6 +377,14 @@ impl NoMisleadingCharacterClass {
             };
             let flags = match flags_node {
                 None => Cow::Borrowed(&b""[..]),
+                // For oxlint flags that it cannot read are not there, but for a template with substitutions.
+                Some(flags_node) if file.language().is_oxlint && !oxlint_can_read(flags_node) => {
+                    match (flags_node.skip_type_wrappers().kind(), pattern_node.kind()) {
+                        (ExprKind::Template(_), _) => continue,
+                        (_, ExprKind::Regex(literal)) => Cow::Borrowed(literal.flags()),
+                        _ => Cow::Borrowed(&b""[..]),
+                    }
+                }
                 Some(flags_node) => match get_string_if_constant(flags_node, scope) {
                     Some(flags) => flags,
                     None => continue,

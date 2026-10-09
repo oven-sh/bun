@@ -6,11 +6,13 @@ mod expr;
 mod flow;
 mod func;
 mod js_syntax;
+pub(crate) mod jsdoc;
 mod json;
 mod jsx;
 mod module;
 mod pattern;
 mod recover;
+mod reparse;
 mod stmt;
 mod ty;
 
@@ -154,6 +156,7 @@ pub(crate) struct Checkpoint {
     classes_around: u32,
     has_top_level_await: bool,
     unclaimed_nullable_types: u32,
+    jsdoc: jsdoc::Lens,
 }
 
 pub(crate) struct Parser<'a> {
@@ -167,6 +170,9 @@ pub(crate) struct Parser<'a> {
     pub(crate) options: Options,
     /// `Options::recovers`
     pub(crate) recovers: bool,
+    /// `Options::reads_jsdoc`, in a file of which comments are read.
+    pub(crate) reads_jsdoc: bool,
+    pub(crate) jsdoc: jsdoc::State,
     /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
     pub(crate) lists: u32,
     pub(crate) declaration_scan: stmt::DeclarationScan,
@@ -181,6 +187,14 @@ pub(crate) struct Parser<'a> {
     /// In Flow: where the last expression statement starts.
     pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
+    /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
+    pub(crate) has_await_in_statement: bool,
+    /// It was an `await` that recovery met where no name can be.
+    pub(crate) was_await_refused: bool,
+    /// That parse has gone past the end of its statement. See `skip_to_element`.
+    pub(crate) reparses_rest_of_file: bool,
+    /// Where the statement before started, from then on.
+    pub(crate) reparsed_at: u32,
     /// The `?` of the last parameter that has one.
     pub(crate) question_of_parameter: u32,
     /// See `private_name_before_in`: where the last one is.
@@ -221,6 +235,7 @@ impl<'a> Parser<'a> {
             Some(atoms) => scratch.names.belong_to(atoms),
             None => scratch.names.begin_own(text.len()),
         }
+        let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
         let atoms = atoms.unwrap_or(&crate::names::NoInterner);
         let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
         let mut stacks = std::mem::take(&mut scratch.stacks);
@@ -249,6 +264,8 @@ impl<'a> Parser<'a> {
             classes_around: 0,
             options,
             recovers: options.recovers,
+            reads_jsdoc: jsdoc.wanted != 0,
+            jsdoc,
             lists: 0,
             // No token is in it.
             declaration_scan: stmt::DeclarationScan {
@@ -263,6 +280,10 @@ impl<'a> Parser<'a> {
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             flow_statement_start: u32::MAX,
             has_top_level_await: false,
+            has_await_in_statement: false,
+            was_await_refused: false,
+            reparses_rest_of_file: false,
+            reparsed_at: u32::MAX,
             question_of_parameter: 0,
             private_name_before_in: u32::MAX,
             not_arrows: Vec::new(),
@@ -346,16 +367,27 @@ impl<'a> Parser<'a> {
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
         }
+        let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = self.statement();
             self.take_stray_decorators(0);
             if self.is_an_external_module_indicator(statement) {
                 self.f.has_module_syntax = true;
             }
+            if self.reads_jsdoc {
+                self.statement_jsdoc(statement);
+                self.list_reparsed(reparsed);
+            }
             self.s.ids.push(statement.0);
+        }
+        if self.reads_jsdoc {
+            self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
         self.take_errors_of_scanner();
+        if self.reads_jsdoc {
+            self.finish_jsdoc();
+        }
         if self.f.diagnostics.iter().any(|it| it.code == 1141) {
             self.forget_specifiers_of_misplaced_declarations();
         }
@@ -428,7 +460,9 @@ impl<'a> Parser<'a> {
     /// `nextTokenWithoutCheck`: goes on from a word that is taken as a name.
     #[inline(always)]
     pub(crate) fn next_after_name(&mut self) {
-        self.lx.has_escape = false;
+        if self.lx.has_escape {
+            self.forget_escaped_keyword();
+        }
         self.lx.next();
     }
 
@@ -681,6 +715,7 @@ impl<'a> Parser<'a> {
             classes_around: self.classes_around,
             has_top_level_await: self.has_top_level_await,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
+            jsdoc: self.jsdoc_lens(),
         }
     }
 
@@ -693,6 +728,9 @@ impl<'a> Parser<'a> {
         self.classes_around = to.classes_around;
         self.has_top_level_await = to.has_top_level_await;
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
+        if self.reads_jsdoc {
+            self.rollback_jsdoc(to);
+        }
     }
 
     /// Forgets the nodes that were built since `since`, for which the tree has no place. The tokens
@@ -711,6 +749,9 @@ impl<'a> Parser<'a> {
         truncate_file(&mut self.f, &lens);
         let strays = since.stacks.stray_decorators as usize;
         self.s.stray_decorators.truncate(strays);
+        if self.reads_jsdoc {
+            self.rollback_jsdoc(since);
+        }
     }
 
     /// `tryParse`: what `parse` built is kept if it returns `Some` and met no syntax error.

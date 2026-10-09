@@ -123,10 +123,10 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
         _ => REDECLARED_BY_SYNTAX,
     };
     let is_oxlint = cx.language().is_oxlint;
-    for (&(previous_type, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
+    // oxlint points at the declaration before, but for what redeclares a global.
+    let is_before = is_oxlint && first != DeclarationType::Builtin;
+    for (&(_, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
         let message = if declaration_type == first { REDECLARED } else { detail };
-        // oxlint points at the declaration before.
-        let is_before = is_oxlint && previous_type != DeclarationType::Builtin;
         cx.report(if is_before { previous } else { span }, message).data("id", name);
     }
 }
@@ -136,14 +136,26 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     let count = symbol.declaration_count();
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
+    let is_oxlint = cx.language().is_oxlint;
     // oxlint looks at all scopes.
-    if count < 2 && !is_global || !cx.language().is_oxlint && !is_checked(scope, config) {
+    if !is_oxlint && (count < 2 && !is_global || !is_checked(scope, config)) {
         return;
     }
     let name = symbol.name().bytes();
-    // In a script, what the file declares at the top level and what is defined otherwise are the
-    // same variable.
-    let global = if is_global { cx.file().global(name) } else { None };
+    let global = match is_oxlint {
+        // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
+        true if config.builtin_globals => {
+            let is_module = || utils::oxlint::source_type(cx.file()) == SourceType::Module;
+            // Not what an `env` defines.
+            let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
+            cx.file().global(name).filter(|_| is_asked && !is_module())
+        }
+        true => None,
+        // In a script, what the file declares at the top level and what is defined otherwise are the
+        // same variable.
+        false if is_global => cx.file().global(name),
+        false => None,
+    };
     if count < 2 && global.is_none() {
         return;
     }

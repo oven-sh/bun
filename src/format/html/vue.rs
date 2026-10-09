@@ -118,9 +118,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             .collect::<Vec<_>>()
             .join(&b","[..]);
         self.out.start_group();
+        let binding = (Binding::ForLeft, self.options.script_flavor);
         let is_written = self
             .out
-            .foreign(|f| js::write_binding(f, &left, is_typescript, in_html, Binding::ForLeft));
+            .foreign(|f| js::write_binding(f, &left, is_typescript, in_html, binding));
         self.out.end_group();
         self.out.token(" ");
         self.out.text(operator);
@@ -142,6 +143,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let name = attr.full_name();
         let name = &name[..];
         let is_typescript = self.is_vue_sfc_with_typescript_script();
+        let flavor = self.options.script_flavor;
         let in_html = |root: HtmlRoot| InHtml {
             root,
             is_in_attribute: true,
@@ -161,7 +163,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                         value,
                         true,
                         in_html(HtmlRoot::Program),
-                        Binding::TypeParameters,
+                        (Binding::TypeParameters, flavor),
                     )
                 })
             });
@@ -182,7 +184,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                         value,
                         is_typescript,
                         in_html(HtmlRoot::Program),
-                        Binding::Parameters,
+                        (Binding::Parameters, flavor),
                     )
                 })
             });

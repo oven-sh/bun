@@ -466,20 +466,24 @@ pub fn summarize<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
-    use bun_sema::resolve::ScriptKind;
-    let kind = script_kind.or_else(|| ScriptKind::from_file_name(path));
-    // `bun_sema_parser` reads no types from the comments of a JavaScript file yet.
-    if direct_mode() != DirectMode::Never && !kind.is_some_and(ScriptKind::is_javascript) {
-        return summarize_as(
-            Default::default(),
-            arena,
-            path,
-            script_kind,
-            text,
-            atoms,
-            experimental_decorators,
-            every_file_is_a_module,
-        );
+    if direct_mode() != DirectMode::Never {
+        let directly = DIRECT.with_borrow_mut(|all| {
+            summarize_directly(
+                all[0].get_or_insert_default(),
+                Default::default(),
+                (arena, atoms.session()),
+                path,
+                script_kind,
+                text,
+                Some(atoms),
+                experimental_decorators,
+                every_file_is_a_module,
+                JsDoc::Read,
+            )
+        });
+        if let Some(file) = directly {
+            return (file, core::time::Duration::ZERO);
+        }
     }
     summarize_with_recovery(
         Default::default(),
@@ -521,7 +525,7 @@ fn give_back_scratch(scratch: Box<bun_sema_parser::Scratch>) {
 pub enum DirectMode {
     /// [`summarize`] does not ask it. [`summarize_as`] does, and hands what it refuses to Bun's parser.
     Never,
-    /// [`summarize`] is as [`summarize_as`], for what is not JavaScript.
+    /// [`summarize`] asks it first too.
     First,
     /// And what it refuses it parses again, with recovery. What it refuses then has one error, where it has given up, and no
     /// statements. Bun's parser gets JSON only.
@@ -568,6 +572,7 @@ fn summarize_directly<'s>(
     atoms: Option<&dyn bun_sema::atom::Intern>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    jsdoc: JsDoc,
 ) -> Option<bun_sema::hir::File<'s>> {
     let mut file = parse_directly(
         scratch,
@@ -579,6 +584,7 @@ fn summarize_directly<'s>(
         experimental_decorators,
         every_file_is_a_module,
         Json::Parsed,
+        jsdoc,
     )?;
     let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
     if in_arena.kind == bun_sema::hir::FileKind::Json {
@@ -617,6 +623,13 @@ impl<'s> Summary<'_, 's> {
     }
 }
 
+/// `bun_sema_parser::Options::reads_jsdoc`
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum JsDoc {
+    Read,
+    Ignored,
+}
+
 /// What `parse_directly` does with a JSON file.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Json {
@@ -636,6 +649,7 @@ fn parse_directly(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
     json: Json,
+    jsdoc: JsDoc,
 ) -> Option<bun_sema::hir::FileBuilder> {
     use bun_sema::resolve::ScriptKind;
     use core::sync::atomic::Ordering::Relaxed;
@@ -659,6 +673,7 @@ fn parse_directly(
         await_is_a_name: is_json
             || is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
         recovers: false,
+        reads_jsdoc: jsdoc == JsDoc::Read,
         dialect,
     };
     let parse = |options, scratch: &mut bun_sema_parser::Scratch| match atoms {
@@ -780,6 +795,7 @@ pub fn summarize_in<'s>(
             Some(atoms),
             experimental_decorators,
             every_file_is_a_module,
+            JsDoc::Ignored,
         )
     });
     if let Some(file) = directly {
@@ -863,6 +879,7 @@ pub fn with_summary_in_place<'s, R>(
         experimental_decorators,
         every_file_is_a_module,
         Json::Refused,
+        JsDoc::Ignored,
     );
     let Some(mut file) = directly else {
         give_back_scratch(scratch);

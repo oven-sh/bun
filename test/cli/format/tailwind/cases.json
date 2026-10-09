@@ -6,14 +6,16 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;",
-    "output": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 1",
     "filename": "test.tsx",
     "options": {},
     "input": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;",
-    "output": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;\n"
+    "output": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 2",
@@ -22,7 +24,8 @@
       "sortTailwindcss": false
     },
     "input": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;",
-    "output": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;\n"
+    "output": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 3",
@@ -31,7 +34,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "\nconst A = (\n  <div className=\"p-4 flex\">\n    <span className=\"p-2 inline\">Title</span>\n  </div>\n);",
-    "output": "const A = (\n  <div className=\"flex p-4\">\n    <span className=\"inline p-2\">Title</span>\n  </div>\n);\n"
+    "output": "const A = (\n  <div className=\"flex p-4\">\n    <span className=\"inline p-2\">Title</span>\n  </div>\n);\n",
+    "prettier": "const A = (\n  <div className=\"flex p-4\">\n    <span className=\"inline p-2\">Title</span>\n  </div>\n);\n"
   },
   {
     "name": "oxfmt 4",
@@ -40,7 +44,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div class=\"p-4 flex\">Hello</div>;",
-    "output": "const A = <div class=\"flex p-4\">Hello</div>;\n"
+    "output": "const A = <div class=\"flex p-4\">Hello</div>;\n",
+    "prettier": "const A = <div class=\"flex p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 5",
@@ -52,7 +57,8 @@
       }
     },
     "input": "const A = <div className=\"p-4 flex\">Hello</div>;",
-    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 6",
@@ -61,7 +67,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div myClassProp=\"p-4 flex\">Hello</div>;",
-    "output": "const A = <div myClassProp=\"p-4 flex\">Hello</div>;\n"
+    "output": "const A = <div myClassProp=\"p-4 flex\">Hello</div>;\n",
+    "prettier": "const A = <div myClassProp=\"p-4 flex\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 7",
@@ -72,7 +79,8 @@
       }
     },
     "input": "const A = <div className={clsx(\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={clsx(\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={clsx(\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx(\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 8",
@@ -83,7 +91,8 @@
       }
     },
     "input": "\nconst A = (\n  <div className={clsx(\"p-4 flex\")}>\n    <span className={cva(\"p-2 inline\")}>Title</span>\n  </div>\n);",
-    "output": "const A = (\n  <div className={clsx(\"flex p-4\")}>\n    <span className={cva(\"inline p-2\")}>Title</span>\n  </div>\n);\n"
+    "output": "const A = (\n  <div className={clsx(\"flex p-4\")}>\n    <span className={cva(\"inline p-2\")}>Title</span>\n  </div>\n);\n",
+    "prettier": "const A = (\n  <div className={clsx(\"flex p-4\")}>\n    <span className={cva(\"inline p-2\")}>Title</span>\n  </div>\n);\n"
   },
   {
     "name": "oxfmt 9",
@@ -94,7 +103,8 @@
       }
     },
     "input": "const A = <div className={clsx.foo(\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={clsx.foo(\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={clsx.foo(\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx.foo(\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 10",
@@ -105,7 +115,8 @@
       }
     },
     "input": "const A = <div className={obj.clsx(\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={obj.clsx(\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={obj.clsx(\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={obj.clsx(\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 11",
@@ -116,7 +127,8 @@
       }
     },
     "input": "const A = <div className={foo().clsx(\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={foo().clsx(\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={foo().clsx(\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={foo().clsx(\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 12",
@@ -127,7 +139,8 @@
       }
     },
     "input": "const A = <div className={a.b.c.clsx(\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={a.b.c.clsx(\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={a.b.c.clsx(\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={a.b.c.clsx(\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 13",
@@ -138,7 +151,8 @@
       }
     },
     "input": "const A = <div className={obj[key](\"p-4 flex\")}>Hello</div>;",
-    "output": "const A = <div className={obj[key](\"flex p-4\")}>Hello</div>;\n"
+    "output": "const A = <div className={obj[key](\"flex p-4\")}>Hello</div>;\n",
+    "prettier": "const A = <div className={obj[key](\"flex p-4\")}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 14",
@@ -147,7 +161,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"  p-4 flex  \">Hello</div>;",
-    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 15",
@@ -156,7 +171,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"flex p-4 flex p-4\">Hello</div>;",
-    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex p-4\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 16",
@@ -167,7 +183,8 @@
       }
     },
     "input": "const A = <div className=\"flex p-4 flex p-4\">Hello</div>;",
-    "output": "const A = <div className=\"flex flex p-4 p-4\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex flex p-4 p-4\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex flex p-4 p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 17",
@@ -176,7 +193,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`p-4${x}flex`}>Hello</div>;",
-    "output": "const A = <div className={`p-4${x}flex`}>Hello</div>;\n"
+    "output": "const A = <div className={`p-4${x}flex`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`p-4${x}flex`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 18",
@@ -185,7 +203,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`p-4 flex ${x} m-2 inline`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 19",
@@ -194,7 +213,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`p-4 flex ${x}m-2 inline`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${x}m-2 inline`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${x}m-2 inline`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${x}m-2 inline`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 20",
@@ -203,7 +223,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`flex ${variant}items-center p-4`}>Hello</div>;",
-    "output": "const A = <div className={`flex ${variant}items-center p-4`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex ${variant}items-center p-4`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex ${variant}items-center p-4`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 21",
@@ -212,7 +233,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`flex p-4${variant} items-center`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4${variant} items-center`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4${variant} items-center`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4${variant} items-center`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 22",
@@ -221,7 +243,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`p-4 flex`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 23",
@@ -232,7 +255,8 @@
       }
     },
     "input": "const A = <div className={clsx(`p-4 flex ${x} m-2 inline`)}>Hello</div>;",
-    "output": "const A = <div className={clsx(`flex p-4 ${x} m-2 inline`)}>Hello</div>;\n"
+    "output": "const A = <div className={clsx(`flex p-4 ${x} m-2 inline`)}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx(`flex p-4 ${x} m-2 inline`)}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 24",
@@ -241,7 +265,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`\n      p-4 flex\n      ${x}\n      m-2 inline\n    `}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 25",
@@ -250,7 +275,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;",
-    "output": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n"
+    "output": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 26",
@@ -259,7 +285,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`${a}   ${b}   ${c}`}>Hello</div>;",
-    "output": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n"
+    "output": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`${a} ${b} ${c}`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 27",
@@ -268,7 +295,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`   `}>Hello</div>;",
-    "output": "const A = <div className={` `}>Hello</div>;\n"
+    "output": "const A = <div className={` `}>Hello</div>;\n",
+    "prettier": "const A = <div className={` `}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 28",
@@ -277,7 +305,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`flex items-center   ${variant}   bg-blue-500 p-4`}>Hello</div>;",
-    "output": "const A = <div className={`flex items-center ${variant} bg-blue-500 p-4`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex items-center ${variant} bg-blue-500 p-4`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex items-center ${variant} bg-blue-500 p-4`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 29",
@@ -288,7 +317,8 @@
       }
     },
     "input": "const A = <div className={`\n      p-4 flex\n      ${x}\n      m-2 inline\n    `}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${x} m-2 inline`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 30",
@@ -299,7 +329,8 @@
       }
     },
     "input": "const A = <div className={`  p-4 flex ${x} m-2 inline  `}>Hello</div>;",
-    "output": "const A = <div className={`  flex p-4 ${x} m-2 inline  `}>Hello</div>;\n"
+    "output": "const A = <div className={`  flex p-4 ${x} m-2 inline  `}>Hello</div>;\n",
+    "prettier": "const A = <div className={`  flex p-4 ${x} m-2 inline  `}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 31",
@@ -310,7 +341,8 @@
       }
     },
     "input": "const A = <div className={`text-white flex bg-${color}`}>Hello</div>;",
-    "output": "const A = <div className={`flex text-white bg-${color}`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex text-white bg-${color}`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex text-white bg-${color}`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 32",
@@ -319,7 +351,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "<div className={`flex\nitems-center\nbg-blue-500\np-4\ntext-white\n${isActive ? `font-bold\nshadow-lg` : \"font-normal\"}`} />;",
-    "output": "<div\n  className={`flex items-center bg-blue-500 p-4 text-white ${\n    isActive ? `font-bold shadow-lg` : \"font-normal\"\n  }`}\n/>;\n"
+    "output": "<div\n  className={`flex items-center bg-blue-500 p-4 text-white ${\n    isActive ? `font-bold shadow-lg` : \"font-normal\"\n  }`}\n/>;\n",
+    "prettier": "<div\n  className={`flex items-center bg-blue-500 p-4 text-white ${\n    isActive ? `font-bold shadow-lg` : \"font-normal\"\n  }`}\n/>;\n"
   },
   {
     "name": "oxfmt 33",
@@ -331,7 +364,8 @@
     },
     "input": "<div className={`flex\nitems-center\nbg-blue-500\np-4\ntext-white\n${isActive ? `font-bold\nshadow-lg` : \"font-normal\"}`} />;",
     "output": "<div className={`flex\nitems-center\nbg-blue-500\np-4\ntext-white\n${isActive ? `font-bold\nshadow-lg` : \"font-normal\"}`} />;\n",
-    "todo": "With preserveWhitespace, a line break in a list of classes does not break the groups around it in oxfmt."
+    "todo": "With preserveWhitespace, a line break in a list of classes does not break the groups around it in oxfmt.",
+    "prettier": "<div\n  className={`flex\nitems-center\nbg-blue-500\np-4\ntext-white\n${\n  isActive\n    ? `font-bold\nshadow-lg`\n    : \"font-normal\"\n}`}\n/>;\n"
   },
   {
     "name": "oxfmt 34",
@@ -340,7 +374,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`header ${isExtendable ? ' active' : ''}`} />;",
-    "output": "const A = <div className={`header ${isExtendable ? \"active\" : \"\"}`} />;\n"
+    "output": "const A = <div className={`header ${isExtendable ? \"active\" : \"\"}`} />;\n",
+    "prettier": "const A = <div className={`header ${isExtendable ? \"active\" : \"\"}`} />;\n"
   },
   {
     "name": "oxfmt 35",
@@ -349,7 +384,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`header${isExtendable ? ' active' : ''}`} />;",
-    "output": "const A = <div className={`header${isExtendable ? \" active\" : \"\"}`} />;\n"
+    "output": "const A = <div className={`header${isExtendable ? \" active\" : \"\"}`} />;\n",
+    "prettier": "const A = <div className={`header${isExtendable ? \"active\" : \"\"}`} />;\n"
   },
   {
     "name": "oxfmt 36",
@@ -358,7 +394,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`${condition ? 'active ' : ''} suffix`} />;",
-    "output": "const A = <div className={`${condition ? \"active\" : \"\"} suffix`} />;\n"
+    "output": "const A = <div className={`${condition ? \"active\" : \"\"} suffix`} />;\n",
+    "prettier": "const A = <div className={`${condition ? \"active\" : \"\"} suffix`} />;\n"
   },
   {
     "name": "oxfmt 37",
@@ -367,7 +404,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`${condition ? 'active ' : ''}suffix`} />;",
-    "output": "const A = <div className={`${condition ? \"active \" : \"\"}suffix`} />;\n"
+    "output": "const A = <div className={`${condition ? \"active \" : \"\"}suffix`} />;\n",
+    "prettier": "const A = <div className={`${condition ? \"active\" : \"\"}suffix`} />;\n"
   },
   {
     "name": "oxfmt 38",
@@ -376,7 +414,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`prefix${condition ? ' middle ' : ''}suffix`} />;",
-    "output": "const A = <div className={`prefix${condition ? \" middle \" : \"\"}suffix`} />;\n"
+    "output": "const A = <div className={`prefix${condition ? \" middle \" : \"\"}suffix`} />;\n",
+    "prettier": "const A = <div className={`prefix${condition ? \"middle\" : \"\"}suffix`} />;\n"
   },
   {
     "name": "oxfmt 39",
@@ -385,7 +424,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`header${isExtendable ? ' header-extendable' : ''}`} />;",
-    "output": "const A = <div className={`header${isExtendable ? \" header-extendable\" : \"\"}`} />;\n"
+    "output": "const A = <div className={`header${isExtendable ? \" header-extendable\" : \"\"}`} />;\n",
+    "prettier": "const A = <div className={`header${isExtendable ? \"header-extendable\" : \"\"}`} />;\n"
   },
   {
     "name": "oxfmt 40",
@@ -394,7 +434,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={a + ' p-4 ' + b} />;",
-    "output": "const A = <div className={a + \" p-4 \" + b} />;\n"
+    "output": "const A = <div className={a + \" p-4 \" + b} />;\n",
+    "prettier": "const A = <div className={a + \" p-4 \" + b} />;\n"
   },
   {
     "name": "oxfmt 41",
@@ -403,7 +444,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={\"h-fit m-1 w-full \" + (flag1 ? \"block \" : \"hidden \") + (flag2 ? \"p-2\" : \"p-4\")} />;",
-    "output": "const A = (\n  <div className={\"m-1 h-fit w-full \" + (flag1 ? \"block \" : \"hidden \") + (flag2 ? \"p-2\" : \"p-4\")} />\n);\n"
+    "output": "const A = (\n  <div className={\"m-1 h-fit w-full \" + (flag1 ? \"block \" : \"hidden \") + (flag2 ? \"p-2\" : \"p-4\")} />\n);\n",
+    "prettier": "const A = (\n  <div className={\"m-1 h-fit w-full \" + (flag1 ? \"block \" : \"hidden \") + (flag2 ? \"p-2\" : \"p-4\")} />\n);\n"
   },
   {
     "name": "oxfmt 42",
@@ -412,7 +454,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={a + ` p-4 flex `} />;",
-    "output": "const A = <div className={a + ` flex p-4`} />;\n"
+    "output": "const A = <div className={a + ` flex p-4`} />;\n",
+    "prettier": "const A = <div className={a + ` flex p-4`} />;\n"
   },
   {
     "name": "oxfmt 43",
@@ -421,7 +464,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={` p-4 flex ` + b} />;",
-    "output": "const A = <div className={`flex p-4 ` + b} />;\n"
+    "output": "const A = <div className={`flex p-4 ` + b} />;\n",
+    "prettier": "const A = <div className={`flex p-4 ` + b} />;\n"
   },
   {
     "name": "oxfmt 44",
@@ -430,7 +474,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={a + ` p-4 flex ` + b} />;",
-    "output": "const A = <div className={a + ` flex p-4 ` + b} />;\n"
+    "output": "const A = <div className={a + ` flex p-4 ` + b} />;\n",
+    "prettier": "const A = <div className={a + ` flex p-4 ` + b} />;\n"
   },
   {
     "name": "oxfmt 45",
@@ -439,7 +484,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={a + ` p-4 ${x} flex ` + b} />;",
-    "output": "const A = <div className={a + ` p-4 ${x} flex ` + b} />;\n"
+    "output": "const A = <div className={a + ` p-4 ${x} flex ` + b} />;\n",
+    "prettier": "const A = <div className={a + ` p-4 ${x} flex ` + b} />;\n"
   },
   {
     "name": "oxfmt 46",
@@ -448,7 +494,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`MuiApi-item-root${isExtendable ? ' MuiApi-item-header-extendable' : ''}`} />;",
-    "output": "const A = (\n  <div className={`MuiApi-item-root${isExtendable ? \" MuiApi-item-header-extendable\" : \"\"}`} />\n);\n"
+    "output": "const A = (\n  <div className={`MuiApi-item-root${isExtendable ? \" MuiApi-item-header-extendable\" : \"\"}`} />\n);\n",
+    "prettier": "const A = (\n  <div className={`MuiApi-item-root${isExtendable ? \"MuiApi-item-header-extendable\" : \"\"}`} />\n);\n"
   },
   {
     "name": "oxfmt 47",
@@ -457,7 +504,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={condition ? `p-4 flex` : `m-2 grid`} />;",
-    "output": "const A = <div className={condition ? `flex p-4` : `m-2 grid`} />;\n"
+    "output": "const A = <div className={condition ? `flex p-4` : `m-2 grid`} />;\n",
+    "prettier": "const A = <div className={condition ? `flex p-4` : `m-2 grid`} />;\n"
   },
   {
     "name": "oxfmt 48",
@@ -466,7 +514,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={condition ? `p-4 flex ${x} m-2 inline` : `grid`} />;",
-    "output": "const A = <div className={condition ? `flex p-4 ${x} m-2 inline` : `grid`} />;\n"
+    "output": "const A = <div className={condition ? `flex p-4 ${x} m-2 inline` : `grid`} />;\n",
+    "prettier": "const A = <div className={condition ? `flex p-4 ${x} m-2 inline` : `grid`} />;\n"
   },
   {
     "name": "oxfmt 49",
@@ -475,7 +524,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={variant || `p-4 flex`} />;",
-    "output": "const A = <div className={variant || `flex p-4`} />;\n"
+    "output": "const A = <div className={variant || `flex p-4`} />;\n",
+    "prettier": "const A = <div className={variant || `flex p-4`} />;\n"
   },
   {
     "name": "oxfmt 50",
@@ -486,7 +536,8 @@
       }
     },
     "input": "const A = <div className={classNames(\n  \"bg-red-500\",\n  value.includes(\"\\n\") ? \"pt-2\" : \"pt-1\"\n)} />;",
-    "output": "const A = <div className={classNames(\"bg-red-500\", value.includes(\"\\n\") ? \"pt-2\" : \"pt-1\")} />;\n"
+    "output": "const A = <div className={classNames(\"bg-red-500\", value.includes(\"\\n\") ? \"pt-2\" : \"pt-1\")} />;\n",
+    "prettier": "const A = <div className={classNames(\"bg-red-500\", value.includes(\"\\n\") ? \"pt-2\" : \"pt-1\")} />;\n"
   },
   {
     "name": "oxfmt 51",
@@ -497,7 +548,8 @@
       }
     },
     "input": "const A = <div className={clsx(\n  \"flex p-4\",\n  arr.filter(x => x.startsWith(\"prefix\")).join(\" \")\n)} />;",
-    "output": "const A = <div className={clsx(\"flex p-4\", arr.filter((x) => x.startsWith(\"prefix\")).join(\" \"))} />;\n"
+    "output": "const A = <div className={clsx(\"flex p-4\", arr.filter((x) => x.startsWith(\"prefix\")).join(\" \"))} />;\n",
+    "prettier": "const A = <div className={clsx(\"flex p-4\", arr.filter((x) => x.startsWith(\"prefix\")).join(\" \"))} />;\n"
   },
   {
     "name": "oxfmt 52",
@@ -508,7 +560,8 @@
       }
     },
     "input": "const A = <div className={clsx(\"p-4 flex\", input.split(\" \").map(x => x))} />;",
-    "output": "const A = (\n  <div\n    className={clsx(\n      \"flex p-4\",\n      input.split(\" \").map((x) => x),\n    )}\n  />\n);\n"
+    "output": "const A = (\n  <div\n    className={clsx(\n      \"flex p-4\",\n      input.split(\" \").map((x) => x),\n    )}\n  />\n);\n",
+    "prettier": "const A = (\n  <div\n    className={clsx(\n      \"flex p-4\",\n      input.split(\" \").map((x) => x),\n    )}\n  />\n);\n"
   },
   {
     "name": "oxfmt 53",
@@ -519,7 +572,8 @@
       }
     },
     "input": "const A = <div className={clsx(\n  \"flex\",\n  str.includes(\"\\t\") && \"p-4\",\n  str.match(/\\s/) && \"m-2\"\n)} />;",
-    "output": "const A = <div className={clsx(\"flex\", str.includes(\"\\t\") && \"p-4\", str.match(/\\s/) && \"m-2\")} />;\n"
+    "output": "const A = <div className={clsx(\"flex\", str.includes(\"\\t\") && \"p-4\", str.match(/\\s/) && \"m-2\")} />;\n",
+    "prettier": "const A = <div className={clsx(\"flex\", str.includes(\"\\t\") && \"p-4\", str.match(/\\s/) && \"m-2\")} />;\n"
   },
   {
     "name": "oxfmt 54",
@@ -528,7 +582,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"\">Hello</div>;",
-    "output": "const A = <div className=\"\">Hello</div>;\n"
+    "output": "const A = <div className=\"\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 55",
@@ -537,7 +592,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"   \">Hello</div>;",
-    "output": "const A = <div className=\" \">Hello</div>;\n"
+    "output": "const A = <div className=\" \">Hello</div>;\n",
+    "prettier": "const A = <div className=\" \">Hello</div>;\n"
   },
   {
     "name": "oxfmt 56",
@@ -546,7 +602,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className={`p-4 flex ${a ? `m-2 grid ${b ? `inline-block` : \"\"}` : \"\"}`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${a ? `m-2 grid ${b ? `inline-block` : \"\"}` : \"\"}`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${a ? `m-2 grid ${b ? `inline-block` : \"\"}` : \"\"}`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${a ? `m-2 grid ${b ? `inline-block` : \"\"}` : \"\"}`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 57",
@@ -557,7 +614,8 @@
       }
     },
     "input": "const A = <div className={`p-4 flex ${clsx(`m-2 grid`)}`}>Hello</div>;",
-    "output": "const A = <div className={`flex p-4 ${clsx(`m-2 grid`)}`}>Hello</div>;\n"
+    "output": "const A = <div className={`flex p-4 ${clsx(`m-2 grid`)}`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`flex p-4 ${clsx(`m-2 grid`)}`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 58",
@@ -568,7 +626,8 @@
       }
     },
     "input": "const A = <div className={clsx(`p-4 flex`, cva(`m-2 grid`))}>Hello</div>;",
-    "output": "const A = <div className={clsx(`flex p-4`, cva(`m-2 grid`))}>Hello</div>;\n"
+    "output": "const A = <div className={clsx(`flex p-4`, cva(`m-2 grid`))}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx(`flex p-4`, cva(`m-2 grid`))}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 59",
@@ -579,7 +638,8 @@
       }
     },
     "input": "const A = <div className={clsx([`p-4 flex`, `m-2 grid`])}>Hello</div>;",
-    "output": "const A = <div className={clsx([`flex p-4`, `m-2 grid`])}>Hello</div>;\n"
+    "output": "const A = <div className={clsx([`flex p-4`, `m-2 grid`])}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx([`flex p-4`, `m-2 grid`])}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 60",
@@ -590,7 +650,8 @@
       }
     },
     "input": "const A = <div className={clsx({[`p-4 flex`]: true, [`m-2 grid`]: false})}>Hello</div>;",
-    "output": "const A = <div className={clsx({ [`flex p-4`]: true, [`m-2 grid`]: false })}>Hello</div>;\n"
+    "output": "const A = <div className={clsx({ [`flex p-4`]: true, [`m-2 grid`]: false })}>Hello</div>;\n",
+    "prettier": "const A = <div className={clsx({ [`flex p-4`]: true, [`m-2 grid`]: false })}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 61",
@@ -601,7 +662,8 @@
       }
     },
     "input": "const A = <div className={cn({ 'p-[2px] elevation-elevated-selected': true })}>Hello</div>;",
-    "output": "const A = <div className={cn({ \"elevation-elevated-selected p-[2px]\": true })}>Hello</div>;\n"
+    "output": "const A = <div className={cn({ \"elevation-elevated-selected p-[2px]\": true })}>Hello</div>;\n",
+    "prettier": "const A = <div className={cn({ \"elevation-elevated-selected p-[2px]\": true })}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 62",
@@ -612,7 +674,8 @@
       }
     },
     "input": "const A = <div className={clsx({\n      'p-4 flex': condition1,\n      'm-2 grid': condition2,\n      'text-white bg-red-500': condition3\n    })}>Hello</div>;",
-    "output": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": condition1,\n      \"m-2 grid\": condition2,\n      \"bg-red-500 text-white\": condition3,\n    })}\n  >\n    Hello\n  </div>\n);\n"
+    "output": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": condition1,\n      \"m-2 grid\": condition2,\n      \"bg-red-500 text-white\": condition3,\n    })}\n  >\n    Hello\n  </div>\n);\n",
+    "prettier": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": condition1,\n      \"m-2 grid\": condition2,\n      \"bg-red-500 text-white\": condition3,\n    })}\n  >\n    Hello\n  </div>\n);\n"
   },
   {
     "name": "oxfmt 63",
@@ -623,7 +686,8 @@
       }
     },
     "input": "const A = <div className={clsx({\n      'p-4 flex': value.includes(\" \"),\n      'error-class': true\n    })}>Hello</div>;",
-    "output": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": value.includes(\" \"),\n      \"error-class\": true,\n    })}\n  >\n    Hello\n  </div>\n);\n"
+    "output": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": value.includes(\" \"),\n      \"error-class\": true,\n    })}\n  >\n    Hello\n  </div>\n);\n",
+    "prettier": "const A = (\n  <div\n    className={clsx({\n      \"flex p-4\": value.includes(\" \"),\n      \"error-class\": true,\n    })}\n  >\n    Hello\n  </div>\n);\n"
   },
   {
     "name": "oxfmt 64",
@@ -632,14 +696,16 @@
       "experimentalTailwindcss": {}
     },
     "input": "<div class=\"p-4 flex bg-red-500 text-white\">Hello</div>",
-    "output": "<div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n"
+    "output": "<div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n",
+    "prettier": "<div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n"
   },
   {
     "name": "oxfmt 65",
     "filename": "test.html",
     "options": {},
     "input": "<div class=\"p-4 flex bg-red-500 text-white\">Hello</div>",
-    "output": "<div class=\"p-4 flex bg-red-500 text-white\">Hello</div>\n"
+    "output": "<div class=\"p-4 flex bg-red-500 text-white\">Hello</div>\n",
+    "prettier": "<div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n"
   },
   {
     "name": "oxfmt 66",
@@ -648,7 +714,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "<template>\n  <div class=\"p-4 flex bg-red-500 text-white\">Hello</div>\n</template>",
-    "output": "<template>\n  <div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n</template>\n"
+    "output": "<template>\n  <div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n</template>\n",
+    "prettier": "<template>\n  <div class=\"flex bg-red-500 p-4 text-white\">Hello</div>\n</template>\n"
   },
   {
     "name": "oxfmt 67",
@@ -657,7 +724,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "<div class=\"p-4 flex\">\n  <span class=\"text-white bg-red-500\">Title</span>\n</div>",
-    "output": "<div class=\"flex p-4\">\n  <span class=\"bg-red-500 text-white\">Title</span>\n</div>\n"
+    "output": "<div class=\"flex p-4\">\n  <span class=\"bg-red-500 text-white\">Title</span>\n</div>\n",
+    "prettier": "<div class=\"flex p-4\">\n  <span class=\"bg-red-500 text-white\">Title</span>\n</div>\n"
   },
   {
     "name": "oxfmt 68",
@@ -666,7 +734,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "<div class=\"p-4 flex\" data-classes=\"text-white bg-red-500\">Hello</div>",
-    "output": "<div class=\"flex p-4\" data-classes=\"text-white bg-red-500\">Hello</div>\n"
+    "output": "<div class=\"flex p-4\" data-classes=\"text-white bg-red-500\">Hello</div>\n",
+    "prettier": "<div class=\"flex p-4\" data-classes=\"text-white bg-red-500\">Hello</div>\n"
   },
   {
     "name": "oxfmt 69",
@@ -677,7 +746,8 @@
       }
     },
     "input": "<template>\n  <div :class=\"clsx('p-4 flex')\">Hello</div>\n</template>",
-    "output": "<template>\n  <div :class=\"clsx('flex p-4')\">Hello</div>\n</template>\n"
+    "output": "<template>\n  <div :class=\"clsx('flex p-4')\">Hello</div>\n</template>\n",
+    "prettier": "<template>\n  <div :class=\"clsx('flex p-4')\">Hello</div>\n</template>\n"
   },
   {
     "name": "oxfmt 70",
@@ -686,7 +756,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "<div class=\"flex p-4 flex p-4\">Hello</div>",
-    "output": "<div class=\"flex p-4\">Hello</div>\n"
+    "output": "<div class=\"flex p-4\">Hello</div>\n",
+    "prettier": "<div class=\"flex p-4\">Hello</div>\n"
   },
   {
     "name": "oxfmt 71",
@@ -697,7 +768,8 @@
       }
     },
     "input": "<div class=\"flex p-4 flex p-4\">Hello</div>",
-    "output": "<div class=\"flex flex p-4 p-4\">Hello</div>\n"
+    "output": "<div class=\"flex flex p-4 p-4\">Hello</div>\n",
+    "prettier": "<div class=\"flex flex p-4 p-4\">Hello</div>\n"
   },
   {
     "name": "oxfmt 72",
@@ -706,7 +778,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const A = <div className=\"p-4 flex bg-red-500 text-white\">Hello</div>;",
-    "output": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
+    "output": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n",
+    "prettier": "const A = <div className=\"flex bg-red-500 p-4 text-white\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 73",
@@ -728,7 +801,8 @@
       "singleQuote": true
     },
     "input": "\n      <div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n      <div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n      <div className={showLandingPage ? \"container pb-6\" : 'hidden'}>title</div>\n    ",
-    "output": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? 'container pb-6' : 'hidden'}>title</div>;\n"
+    "output": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? 'container pb-6' : 'hidden'}>title</div>;\n",
+    "prettier": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? 'container pb-6' : 'hidden'}>title</div>;\n"
   },
   {
     "name": "oxfmt 75",
@@ -739,7 +813,8 @@
       }
     },
     "input": "\n      <div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n      <div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n      <div className={showLandingPage ? \"container pb-6\" : 'hidden'}>title</div>\n    ",
-    "output": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? \"container pb-6\" : \"hidden\"}>title</div>;\n"
+    "output": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? \"container pb-6\" : \"hidden\"}>title</div>;\n",
+    "prettier": "<div className={clsx('text-md before:content-[\"hello\"]')}>Hello</div>;\n<div className={clsx(\"text-md before:content-['hello']\")}>Hello</div>;\n<div className={showLandingPage ? \"container pb-6\" : \"hidden\"}>title</div>;\n"
   },
   {
     "name": "oxfmt 76",
@@ -749,7 +824,8 @@
       "jsxSingleQuote": true
     },
     "input": "\n        <div className=\"text-md before:content-['hello']\">Hello</div>;\n        <div className='text-md before:content-[\"hello\"]'>Hello</div>;\n    ",
-    "output": "<div className=\"text-md before:content-['hello']\">Hello</div>;\n<div className='text-md before:content-[\"hello\"]'>Hello</div>;\n"
+    "output": "<div className=\"text-md before:content-['hello']\">Hello</div>;\n<div className='text-md before:content-[\"hello\"]'>Hello</div>;\n",
+    "prettier": "<div className=\"text-md before:content-['hello']\">Hello</div>;\n<div className='text-md before:content-[\"hello\"]'>Hello</div>;\n"
   },
   {
     "name": "oxfmt 77",
@@ -758,7 +834,8 @@
       "experimentalTailwindcss": {}
     },
     "input": "const view = html`<div class=\"p-4 flex bg-red-500\">Hello</div>`;",
-    "output": "const view = html`<div class=\"flex bg-red-500 p-4\">Hello</div>`;\n"
+    "output": "const view = html`<div class=\"flex bg-red-500 p-4\">Hello</div>`;\n",
+    "prettier": "const view = html`<div class=\"flex bg-red-500 p-4\">Hello</div>`;\n"
   },
   {
     "name": "oxfmt 78",
@@ -767,7 +844,8 @@
       "sortTailwindcss": {}
     },
     "input": ".btn { @apply p-4 flex; }",
-    "output": ".btn {\n  @apply flex p-4;\n}\n"
+    "output": ".btn {\n  @apply flex p-4;\n}\n",
+    "prettier": ".btn {\n  @apply flex p-4;\n}\n"
   },
   {
     "name": "oxfmt 79",
@@ -776,7 +854,8 @@
       "sortTailwindcss": {}
     },
     "input": ".y { @apply p-4 flex !important; }",
-    "output": ".y {\n  @apply flex p-4 !important;\n}\n"
+    "output": ".y {\n  @apply flex p-4 !important;\n}\n",
+    "prettier": ".y {\n  @apply flex p-4 !important;\n}\n"
   },
   {
     "name": "oxfmt 80",
@@ -785,7 +864,8 @@
       "sortTailwindcss": {}
     },
     "input": ".s { @apply p-4 flex #{!important}; }",
-    "output": ".s {\n  @apply flex p-4 #{!important};\n}\n"
+    "output": ".s {\n  @apply flex p-4 #{!important};\n}\n",
+    "prettier": ".s {\n  @apply flex p-4 #{!important};\n}\n"
   },
   {
     "name": "oxfmt 81",
@@ -794,7 +874,8 @@
       "sortTailwindcss": {}
     },
     "input": ".z { @apply ~\"p-4 flex\"; }",
-    "output": ".z {\n  @apply ~\"flex p-4\";\n}\n"
+    "output": ".z {\n  @apply ~\"flex p-4\";\n}\n",
+    "prettier": ".z {\n  @apply ~\"flex p-4\";\n}\n"
   },
   {
     "name": "oxfmt 82",
@@ -803,7 +884,8 @@
       "sortTailwindcss": {}
     },
     "input": ".d { @apply  p-4   flex  p-4; }",
-    "output": ".d {\n  @apply flex p-4;\n}\n"
+    "output": ".d {\n  @apply flex p-4;\n}\n",
+    "prettier": ".d {\n  @apply flex p-4;\n}\n"
   },
   {
     "name": "oxfmt 83",
@@ -812,7 +894,8 @@
       "sortTailwindcss": {}
     },
     "input": "const A = styled.div`\n  @apply p-4 flex;\n  color: red;\n`;",
-    "output": "const A = styled.div`\n  @apply flex p-4;\n  color: red;\n`;\n"
+    "output": "const A = styled.div`\n  @apply flex p-4;\n  color: red;\n`;\n",
+    "prettier": "const A = styled.div`\n  @apply flex p-4;\n  color: red;\n`;\n"
   },
   {
     "name": "oxfmt 84",
@@ -831,7 +914,8 @@
       "sortTailwindcss": {}
     },
     "input": "const A = <div className=\"p-4 flex\" />;\nconst B = styled.div`\n  @apply p-4 flex;\n`;\nconst C = <div className=\"text-sm grid\" />;",
-    "output": "const A = <div className=\"flex p-4\" />;\nconst B = styled.div`\n  @apply flex p-4;\n`;\nconst C = <div className=\"grid text-sm\" />;\n"
+    "output": "const A = <div className=\"flex p-4\" />;\nconst B = styled.div`\n  @apply flex p-4;\n`;\nconst C = <div className=\"grid text-sm\" />;\n",
+    "prettier": "const A = <div className=\"flex p-4\" />;\nconst B = styled.div`\n  @apply flex p-4;\n`;\nconst C = <div className=\"grid text-sm\" />;\n"
   },
   {
     "name": "oxfmt 86",
@@ -841,7 +925,8 @@
     },
     "input": "test.each`\n  a | b\n  ${<div className=\"p-4 flex\" />} | ${1}\n`('x', () => {});",
     "output": "test.each`\n  a                               | b\n  ${<div className=\"p-4 flex\" />} | ${1}\n`(\"x\", () => {});\n",
-    "todo": "oxfmt does not sort in the cells of a table of test.each."
+    "todo": "oxfmt does not sort in the cells of a table of test.each.",
+    "prettier": "test.each`\n  a                                 | b\n  ${(<div className=\"flex p-4\" />)} | ${1}\n`(\"x\", () => {});\n"
   },
   {
     "name": "oxfmt 87",
@@ -862,7 +947,8 @@
       }
     },
     "input": "const A = <div myClassProp=\"p-4 flex\">Hello</div>;",
-    "output": "const A = <div myClassProp=\"flex p-4\">Hello</div>;\n"
+    "output": "const A = <div myClassProp=\"flex p-4\">Hello</div>;\n",
+    "prettier": "const A = <div myClassProp=\"flex p-4\">Hello</div>;\n"
   },
   {
     "name": "oxfmt 89",
@@ -873,7 +959,8 @@
       }
     },
     "input": "const A = <div className=\"  p-4 flex  \">Hello</div>;",
-    "output": "const A = <div className=\"  flex p-4  \">Hello</div>;\n"
+    "output": "const A = <div className=\"  flex p-4  \">Hello</div>;\n",
+    "prettier": "const A = <div className=\"  flex p-4  \">Hello</div>;\n"
   },
   {
     "name": "oxfmt 90",
@@ -884,7 +971,8 @@
       }
     },
     "input": "const A = <div className={`mb-4 flex items-center rounded-full bg-${color}/10`}>Hello</div>;",
-    "output": "const A = <div className={`mb-4 flex items-center rounded-full bg-${color}/10`}>Hello</div>;\n"
+    "output": "const A = <div className={`mb-4 flex items-center rounded-full bg-${color}/10`}>Hello</div>;\n",
+    "prettier": "const A = <div className={`mb-4 flex items-center rounded-full bg-${color}/10`}>Hello</div>;\n"
   },
   {
     "name": "oxfmt 91",
@@ -895,7 +983,8 @@
       }
     },
     "input": "<div class=\"p-4 flex\" data-classes=\"text-white bg-red-500\">Hello</div>",
-    "output": "<div class=\"flex p-4\" data-classes=\"bg-red-500 text-white\">Hello</div>\n"
+    "output": "<div class=\"flex p-4\" data-classes=\"bg-red-500 text-white\">Hello</div>\n",
+    "prettier": "<div class=\"flex p-4\" data-classes=\"bg-red-500 text-white\">Hello</div>\n"
   },
   {
     "name": "oxfmt 92",
@@ -918,7 +1007,8 @@
       }
     },
     "input": "export const A = () => <div className=\"p-4  flex unknown-x m-2 hover:p-1 flex sm:m-1 ... text-red-500\">\n  <b className={cn(\"p-2 m-1\", x && \"text-sm font-bold\", `a ${y} p-1 m-1`, {\"p-1 m-1\": z})} class={\"b \" + c + \" p-1 m-1\"} />\n</div>;\nconst s = cn(\"p-2  m-1\") + other(\"p-2 m-1\");\n",
-    "output": "export const A = () => (\n  <div className=\"unknown-x m-2 flex p-4 text-red-500 hover:p-1 sm:m-1 ...\">\n    <b\n      className={cn(\"m-1 p-2\", x && \"text-sm font-bold\", `a ${y} m-1 p-1`, { \"m-1 p-1\": z })}\n      class={\"b \" + c + \" m-1 p-1\"}\n    />\n  </div>\n);\nconst s = cn(\"m-1 p-2\") + other(\"p-2 m-1\");\n"
+    "output": "export const A = () => (\n  <div className=\"unknown-x m-2 flex p-4 text-red-500 hover:p-1 sm:m-1 ...\">\n    <b\n      className={cn(\"m-1 p-2\", x && \"text-sm font-bold\", `a ${y} m-1 p-1`, { \"m-1 p-1\": z })}\n      class={\"b \" + c + \" m-1 p-1\"}\n    />\n  </div>\n);\nconst s = cn(\"m-1 p-2\") + other(\"p-2 m-1\");\n",
+    "prettier": "export const A = () => (\n  <div className=\"unknown-x m-2 flex p-4 text-red-500 hover:p-1 sm:m-1 ...\">\n    <b\n      className={cn(\"m-1 p-2\", x && \"text-sm font-bold\", `a ${y} m-1 p-1`, { \"m-1 p-1\": z })}\n      class={\"b \" + c + \" m-1 p-1\"}\n    />\n  </div>\n);\nconst s = cn(\"m-1 p-2\") + other(\"p-2 m-1\");\n"
   },
   {
     "name": "@apply",
@@ -929,7 +1019,8 @@
       }
     },
     "input": ".a { @apply p-4 flex   m-2 !important; }\n.b { @apply p-4 flex m-2; }\n",
-    "output": ".a {\n  @apply m-2 flex p-4 !important;\n}\n.b {\n  @apply m-2 flex p-4;\n}\n"
+    "output": ".a {\n  @apply m-2 flex p-4 !important;\n}\n.b {\n  @apply m-2 flex p-4;\n}\n",
+    "prettier": ".a {\n  @apply m-2 flex p-4 !important;\n}\n.b {\n  @apply m-2 flex p-4;\n}\n"
   },
   {
     "name": "class in HTML",
@@ -940,7 +1031,8 @@
       }
     },
     "input": "<div class=\"p-4  flex unknown-x m-2 hover:p-1 flex\"><p class=\"  p-1 m-1  \">x</p></div>\n",
-    "output": "<div class=\"unknown-x m-2 flex p-4 hover:p-1\"><p class=\"m-1 p-1\">x</p></div>\n"
+    "output": "<div class=\"unknown-x m-2 flex p-4 hover:p-1\"><p class=\"m-1 p-1\">x</p></div>\n",
+    "prettier": "<div class=\"unknown-x m-2 flex p-4 hover:p-1\"><p class=\"m-1 p-1\">x</p></div>\n"
   },
   {
     "name": "class, :class, v-bind:class and a script in Vue",
@@ -951,7 +1043,8 @@
       }
     },
     "input": "<template><div class=\"p-4 flex m-2\" :class=\"['p-1 m-1', a ? 'p-2 m-2' : '', {'p-3 m-3': b}]\" v-bind:class=\"`p-1 m-1 ${c}`\"></div></template>\n<script setup lang=\"tsx\">\nconst x = <div class=\"p-4 flex m-2\" />;\n</script>\n<style>\na{@apply p-4 flex}\n</style>\n",
-    "output": "<template>\n  <div\n    class=\"m-2 flex p-4\"\n    :class=\"['m-1 p-1', a ? 'm-2 p-2' : '', { 'm-3 p-3': b }]\"\n    v-bind:class=\"`m-1 p-1 ${c}`\"\n  ></div>\n</template>\n<script setup lang=\"tsx\">\nconst x = <div class=\"m-2 flex p-4\" />;\n</script>\n<style>\na {\n  @apply flex p-4;\n}\n</style>\n"
+    "output": "<template>\n  <div\n    class=\"m-2 flex p-4\"\n    :class=\"['m-1 p-1', a ? 'm-2 p-2' : '', { 'm-3 p-3': b }]\"\n    v-bind:class=\"`m-1 p-1 ${c}`\"\n  ></div>\n</template>\n<script setup lang=\"tsx\">\nconst x = <div class=\"m-2 flex p-4\" />;\n</script>\n<style>\na {\n  @apply flex p-4;\n}\n</style>\n",
+    "prettier": "<template>\n  <div\n    class=\"m-2 flex p-4\"\n    :class=\"['m-1 p-1', a ? 'm-2 p-2' : '', { 'm-3 p-3': b }]\"\n    v-bind:class=\"`m-1 p-1 ${c}`\"\n  ></div>\n</template>\n<script setup lang=\"tsx\">\nconst x = <div class=\"m-2 flex p-4\" />;\n</script>\n<style>\na {\n  @apply flex p-4;\n}\n</style>\n"
   },
   {
     "name": "blocks of code in Markdown",
@@ -962,7 +1055,8 @@
       }
     },
     "input": "```tsx\n<div className=\"p-4 flex m-2\" />;\n```\n\n```html\n<div class=\"p-4 flex m-2\"></div>\n```\n\n```css\na{@apply p-4 flex}\n```\n\n<div class=\"p-4 flex m-2\"></div>\n",
-    "output": "```tsx\n<div className=\"m-2 flex p-4\" />\n```\n\n```html\n<div class=\"m-2 flex p-4\"></div>\n```\n\n```css\na {\n  @apply flex p-4;\n}\n```\n\n<div class=\"p-4 flex m-2\"></div>\n"
+    "output": "```tsx\n<div className=\"m-2 flex p-4\" />\n```\n\n```html\n<div class=\"m-2 flex p-4\"></div>\n```\n\n```css\na {\n  @apply flex p-4;\n}\n```\n\n<div class=\"p-4 flex m-2\"></div>\n",
+    "prettier": "```tsx\n<div className=\"m-2 flex p-4\" />\n```\n\n```html\n<div class=\"m-2 flex p-4\"></div>\n```\n\n```css\na {\n  @apply flex p-4;\n}\n```\n\n<div class=\"p-4 flex m-2\"></div>\n"
   },
   {
     "name": "which expressions of Vue",
@@ -973,7 +1067,8 @@
       }
     },
     "input": "<template>\n  <div :foo=\"cn('p-4 flex')\" @click=\"cn('p-4 flex')\" v-if=\"cn('p-4 flex')\" v-for=\"a in cn('p-4 flex')\" #x=\"{a = cn('p-4 flex')}\">{{ cn('p-4 flex') }}</div>\n</template>\n",
-    "output": "<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('flex p-4')\"\n    v-if=\"cn('flex p-4')\"\n    v-for=\"a in cn('flex p-4')\"\n    #x=\"{ a = cn('p-4 flex') }\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n"
+    "output": "<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('flex p-4')\"\n    v-if=\"cn('flex p-4')\"\n    v-for=\"a in cn('flex p-4')\"\n    #x=\"{ a = cn('p-4 flex') }\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n",
+    "prettier": "<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('flex p-4')\"\n    v-if=\"cn('flex p-4')\"\n    v-for=\"a in cn('flex p-4')\"\n    #x=\"{ a = cn('flex p-4') }\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n"
   },
   {
     "name": "the same in TypeScript",
@@ -984,7 +1079,8 @@
       }
     },
     "input": "<script lang=\"ts\"></script>\n<template>\n  <div :foo=\"cn('p-4 flex')\" @click=\"cn('p-4 flex')\" v-if=\"cn('p-4 flex')\" v-for=\"a in cn('p-4 flex')\" :class=\"a + ' p-4 flex ' + b\">{{ cn('p-4 flex') }}</div>\n</template>\n",
-    "output": "<script lang=\"ts\"></script>\n<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('p-4 flex')\"\n    v-if=\"cn('p-4 flex')\"\n    v-for=\"a in cn('p-4 flex')\"\n    :class=\"a + ' flex p-4' + b\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n"
+    "output": "<script lang=\"ts\"></script>\n<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('p-4 flex')\"\n    v-if=\"cn('p-4 flex')\"\n    v-for=\"a in cn('p-4 flex')\"\n    :class=\"a + ' flex p-4' + b\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n",
+    "prettier": "<script lang=\"ts\"></script>\n<template>\n  <div\n    :foo=\"cn('p-4 flex')\"\n    @click=\"cn('p-4 flex')\"\n    v-if=\"cn('p-4 flex')\"\n    v-for=\"a in cn('p-4 flex')\"\n    :class=\"a + ' flex p-4' + b\"\n  >\n    {{ cn(\"p-4 flex\") }}\n  </div>\n</template>\n"
   },
   {
     "name": "a handler, a script and a style sheet in HTML",
@@ -995,7 +1091,8 @@
       }
     },
     "input": "<div onclick=\"cn('p-4 flex')\"><script>cn('p-4 flex'); x = <a className=\"p-4 flex\" /></script><style>a{@apply p-4 flex}</style></div>\n",
-    "output": "<div onclick=\"cn('flex p-4')\">\n  <script>\n    cn(\"flex p-4\");\n    x = <a className=\"flex p-4\" />;\n  </script>\n  <style>\n    a {\n      @apply flex p-4;\n    }\n  </style>\n</div>\n"
+    "output": "<div onclick=\"cn('flex p-4')\">\n  <script>\n    cn(\"flex p-4\");\n    x = <a className=\"flex p-4\" />;\n  </script>\n  <style>\n    a {\n      @apply flex p-4;\n    }\n  </style>\n</div>\n",
+    "prettier": "<div onclick=\"cn('flex p-4')\">\n  <script>\n    cn(\"flex p-4\");\n    x = <a className=\"flex p-4\" />;\n  </script>\n  <style>\n    a {\n      @apply flex p-4;\n    }\n  </style>\n</div>\n"
   },
   {
     "name": "behind prettier-ignore",
@@ -1006,7 +1103,8 @@
       }
     },
     "input": "<!-- prettier-ignore -->\n<div   class=\"p-4 flex\"><p class=\"p-4 flex\"></p></div>\n<div   class=\"p-4 flex\"></div>\n",
-    "output": "<!-- prettier-ignore -->\n<div   class=\"p-4 flex\"><p class=\"p-4 flex\"></p></div>\n<div class=\"flex p-4\"></div>\n"
+    "output": "<!-- prettier-ignore -->\n<div   class=\"p-4 flex\"><p class=\"p-4 flex\"></p></div>\n<div class=\"flex p-4\"></div>\n",
+    "prettier": "<!-- prettier-ignore -->\n<div   class=\"p-4 flex\"><p class=\"p-4 flex\"></p></div>\n<div class=\"flex p-4\"></div>\n"
   },
   {
     "name": "attributes in Vue",
@@ -1017,6 +1115,49 @@
       }
     },
     "input": "<template>\n  <p a=\"p-4 flex\" :a=\"'p-4 flex'\" b=\"p-4 flex\" :b=\"'p-4 flex'\" v-bind:c=\"'p-4 flex'\" c=\"p-4 flex\" v-d=\"'p-4 flex'\" v-e=\"'p-4 flex'\" e=\"p-4 flex\"></p>\n</template>\n",
-    "output": "<template>\n  <p\n    a=\"flex p-4\"\n    :a=\"'flex p-4'\"\n    b=\"flex p-4\"\n    :b=\"'flex p-4'\"\n    v-bind:c=\"'flex p-4'\"\n    c=\"flex p-4\"\n    v-d=\"'flex p-4'\"\n    v-e=\"'p-4 flex'\"\n    e=\"p-4 flex\"\n  ></p>\n</template>\n"
+    "output": "<template>\n  <p\n    a=\"flex p-4\"\n    :a=\"'flex p-4'\"\n    b=\"flex p-4\"\n    :b=\"'flex p-4'\"\n    v-bind:c=\"'flex p-4'\"\n    c=\"flex p-4\"\n    v-d=\"'flex p-4'\"\n    v-e=\"'p-4 flex'\"\n    e=\"p-4 flex\"\n  ></p>\n</template>\n",
+    "prettier": "<template>\n  <p\n    a=\"flex p-4\"\n    :a=\"'flex p-4'\"\n    b=\"flex p-4\"\n    :b=\"'flex p-4'\"\n    v-bind:c=\"'flex p-4'\"\n    c=\"flex p-4\"\n    v-d=\"'flex p-4'\"\n    v-e=\"'p-4 flex'\"\n    e=\"p-4 flex\"\n  ></p>\n</template>\n"
+  },
+  {
+    "name": "Handlebars",
+    "filename": "a.hbs",
+    "options": {
+      "sortTailwindcss": {}
+    },
+    "input": "<div class=\"p-4 flex m-2\"></div>\n<div class=\"p-4 {{a}} flex m-2 {{if b \"p-4 flex\"}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"p-4 flex\" \"m-2  p-1 \"}}></div>\n<div class={{concat \"p-4 flex\" a \" m-2 p-1 \"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"p-4 flex\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"  p-4   flex  \" />\n{{foo class=\"p-4 flex\"}}\n",
+    "output": "<div class=\"m-2 flex p-4\"></div>\n<div class=\"p-4 {{a}} m-2 flex {{if b 'flex p-4'}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"flex p-4\" \"m-2 p-1\"}}></div>\n<div class={{concat \"flex p-4\" a \" m-2 p-1\"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"flex p-4\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"flex p-4\" />\n{{foo class=\"p-4 flex\"}}",
+    "prettier": "<div class=\"m-2 flex p-4\"></div>\n<div class=\"p-4 {{a}} m-2 flex {{if b 'flex p-4'}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"flex p-4\" \"m-2 p-1\"}}></div>\n<div class={{concat \"flex p-4\" a \" m-2 p-1\"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"flex p-4\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"flex p-4\" />\n{{foo class=\"p-4 flex\"}}"
+  },
+  {
+    "name": "Angular",
+    "filename": "a.component.html",
+    "options": {
+      "sortTailwindcss": {}
+    },
+    "input": "<div class=\"p-4 flex\" [class]=\"'p-4 flex'\" [ngClass]=\"{'p-4 flex': a, b: c + ' p-4 flex ' + d}\" [attr.x]=\"'p-4 flex'\"></div>\n",
+    "output": "<div\n  class=\"flex p-4\"\n  [class]=\"'flex p-4'\"\n  [ngClass]=\"{ 'flex p-4': a, b: c + ' flex p-4 ' + d }\"\n  [attr.x]=\"'p-4 flex'\"\n></div>\n",
+    "prettier": "<div\n  class=\"flex p-4\"\n  [class]=\"'flex p-4'\"\n  [ngClass]=\"{ 'flex p-4': a, b: c + ' flex p-4 ' + d }\"\n  [attr.x]=\"'p-4 flex'\"\n></div>\n"
+  },
+  {
+    "name": "calls in calls, chains, templates of HTML and of Angular",
+    "filename": "a.tsx",
+    "options": {
+      "sortTailwindcss": {
+        "functions": ["cn"]
+      }
+    },
+    "input": "const a = html`<div class=\"p-4 ${x} flex m-2\"><p class=\"${y} p-4 flex\">${z}</p><b class=\"p-4 flex${w}\"></b></div>`;\nconst b = html`<style>a{@apply p-4 flex}</style><script>cn(\"p-4 flex\")</script>`;\n@Component({ template: `<div class=\"p-4 flex\" [class]=\"'p-4 flex'\" [ngClass]=\"{'p-4 flex': a}\"></div>` })\nclass C {}\nconst c = cn.a(\"p-4 flex\"), d = cn(\"p-4 flex\").b(\"p-4 flex\"), e = x.cn(\"p-4 flex\"), f = cn(y(\"p-4 flex\"), `p-4 flex ${y(\"p-4 flex\")}`, y(`p-4 flex`));\nconst g = <a className={x ? \"p-4 flex\" : y(\"p-4 flex\")} class={`p-4 flex ${a} m-2 p-1`} other=\"p-4 flex\" />;\nconst h = cn([\"p-4 flex\", { \"p-4 flex\": 1, [\"p-4 flex\"]: 2 }], () => \"p-4 flex\", function () { return \"p-4 flex\"; });\nconst i = tw`p-4 flex`, j = cn`p-4 flex ${a}m-2 p-1`, k = cn(\"p-4\\\n flex\", 'p-4 \"flex\"', \"p-4 \\n flex\", \"  \", \" p-4 \");\n",
+    "output": "const a = html`<div class=\"${x} m-2 flex p-4\">\n  <p class=\"${y} flex p-4\">${z}</p>\n  <b class=\"flex${w} p-4\"></b>\n</div>`;\nconst b = html`<style>\n    a {\n      @apply flex p-4;\n    }\n  </style>\n  <script>\n    cn(\"flex p-4\");\n  </script>`;\n@Component({\n  template: `<div class=\"flex p-4\" [class]=\"'flex p-4'\" [ngClass]=\"{ 'flex p-4': a }\"></div>`,\n})\nclass C {}\nconst c = cn.a(\"p-4 flex\"),\n  d = cn(\"flex p-4\").b(\"p-4 flex\"),\n  e = x.cn(\"p-4 flex\"),\n  f = cn(y(\"p-4 flex\"), `flex p-4 ${y(\"p-4 flex\")}`, y(`flex p-4`));\nconst g = (\n  <a className={x ? \"flex p-4\" : y(\"p-4 flex\")} class={`flex p-4 ${a} m-2 p-1`} other=\"p-4 flex\" />\n);\nconst h = cn(\n  [\"flex p-4\", { \"flex p-4\": 1, [\"flex p-4\"]: 2 }],\n  () => \"flex p-4\",\n  function () {\n    return \"flex p-4\";\n  },\n);\nconst i = tw`p-4 flex`,\n  j = cn`flex p-4 ${a}m-2 p-1`,\n  k = cn(\"p-4\\ flex\", '\"flex\" p-4', \"\\n flex p-4\", \" \", \"p-4\");\n",
+    "prettier": "const a = html`<div class=\"${x} m-2 flex p-4\">\n  <p class=\"${y} flex p-4\">${z}</p>\n  <b class=\"flex${w} p-4\"></b>\n</div>`;\nconst b = html`<style>\n    a {\n      @apply flex p-4;\n    }\n  </style>\n  <script>\n    cn(\"flex p-4\");\n  </script>`;\n@Component({\n  template: `<div class=\"flex p-4\" [class]=\"'flex p-4'\" [ngClass]=\"{ 'flex p-4': a }\"></div>`,\n})\nclass C {}\nconst c = cn.a(\"flex p-4\"),\n  d = cn(\"flex p-4\").b(\"flex p-4\"),\n  e = x.cn(\"p-4 flex\"),\n  f = cn(y(\"flex p-4\"), `flex p-4 ${y(\"flex p-4\")}`, y(`flex p-4`));\nconst g = (\n  <a className={x ? \"flex p-4\" : y(\"flex p-4\")} class={`flex p-4 ${a} m-2 p-1`} other=\"p-4 flex\" />\n);\nconst h = cn(\n  [\"flex p-4\", { \"flex p-4\": 1, [\"flex p-4\"]: 2 }],\n  () => \"flex p-4\",\n  function () {\n    return \"flex p-4\";\n  },\n);\nconst i = tw`p-4 flex`,\n  j = cn`flex p-4 ${a}m-2 p-1`,\n  k = cn(\"p-4\\ flex\", '\"flex\" p-4', \"\\n flex p-4\", \" \", \"p-4\");\n"
+  },
+  {
+    "name": "a template with strings in it, in Vue",
+    "filename": "a.vue",
+    "options": {
+      "sortTailwindcss": {}
+    },
+    "input": "<template>\n  <a :class=\"`p-4 flex ${x ? 'm-2 flex' : ''} p-1 m-1`\"></a>\n</template>\n",
+    "output": "<template>\n  <a :class=\"`flex p-4 ${x ? 'm-2 flex' : ''} m-1 p-1`\"></a>\n</template>\n",
+    "prettier": "<template>\n  <a :class=\"`flex p-4 ${x ? 'm-2 flex' : ''} m-1 p-1`\"></a>\n</template>\n"
   }
 ]

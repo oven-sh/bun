@@ -13,6 +13,7 @@ mod lexer;
 mod parser;
 mod positions;
 mod printer;
+mod tailwind;
 mod tokenizer;
 
 use crate::css::doc::{self, Elements};
@@ -143,6 +144,9 @@ pub fn format(
             out,
         );
         return Ok(());
+    }
+    if let Some(tailwind) = &options.tailwind {
+        tailwind::sort_classes(&mut scratch.tree, &content, tailwind);
     }
     scratch.elements.clear();
     let mut printer = printer::Printer {

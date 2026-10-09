@@ -377,16 +377,6 @@ pub fn format_with(
 }
 
 /// The same for MDX.
-pub fn format_mdx(
-    text: &[u8],
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-) -> Result<(), FormatError> {
-    format_mdx_with(text, options, scratch, out, None)
-}
-
-/// The same. `format_block` takes the place of `FormatOptions::format_javascript`.
 pub fn format_mdx_with(
     text: &[u8],
     options: &FormatOptions,
@@ -498,6 +488,7 @@ fn with_document<R>(
         original,
         wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
         is_mdx: mode.is_mdx,
+        is_for_oxfmt: options.flavor.is_oxfmt(),
         tree,
         tab_width: usize::from(options.indent_width.value()),
         stack_check: bun_core::StackCheck::init(),

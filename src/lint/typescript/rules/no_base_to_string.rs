@@ -399,7 +399,9 @@ impl NoBaseToString {
             Usefulness::Never => "will",
             Usefulness::Sometimes => "may",
         };
-        cx.report(node, message).data("name", node.text()).data("certainty", certainty);
+        // oxlint points at the parentheses around it.
+        let place = if cx.language().is_oxlint { node.outer_span() } else { node.span() };
+        cx.report(place, message).data("name", node.text()).data("certainty", certainty);
     }
 
     fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {

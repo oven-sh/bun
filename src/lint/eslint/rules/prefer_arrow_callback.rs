@@ -1,4 +1,4 @@
-use super::no_extra_bind::own_keywords;
+use super::no_extra_bind::{OwnKeywords, own_keywords};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
@@ -56,6 +56,44 @@ fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>
         }
         current = bound;
     }
+}
+
+/// oxlint's `ScopeScanner`: it looks at the body alone, and at nothing of a class in it.
+fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
+    let mut found = OwnKeywords::default();
+    let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
+    while let Some(node) = pending.pop() {
+        match node {
+            Node::Expr(e) if e.tag() == ExprTag::This => found.this = true,
+            Node::Expr(e) if e.tag() == ExprTag::Super => found.has_super = true,
+            Node::Expr(e) if e.tag() == ExprTag::NewTarget => found.new_target = true,
+            Node::Class(_) => {}
+            Node::Func(inner) if !inner.is_arrow() => {}
+            _ => node.for_each_child(|child| pending.push(child)),
+        }
+    }
+    found
+}
+
+/// In what oxc takes for a script, the `await` of `await (function () {})()` that is in no function is a function,
+/// which is called with `function`.
+fn is_argument_of_await<'a>(function: Expr<'a>) -> bool {
+    let mut leftmost = function;
+    while let Node::Expr(parent) = leftmost.parent() {
+        let is_leftmost_of_parent = match parent.kind() {
+            ExprKind::Await(_) => {
+                return utils::oxlint::is_script(function.file()) && Node::Expr(parent).enclosing_function().is_none();
+            }
+            ExprKind::Call(call) => call.callee() == leftmost,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == leftmost,
+            _ => false,
+        };
+        if !is_leftmost_of_parent || parent.is_parenthesized() {
+            return false;
+        }
+        leftmost = parent;
+    }
+    false
 }
 
 /// The name of a parameter that is nothing but a name.
@@ -136,10 +174,13 @@ impl PreferArrowCallback {
         {
             return;
         }
-        let Some(is_lexical_this) = is_callback_with_lexical_this(e, &mut cx.state) else {
-            return;
+        let is_oxlint = cx.language().is_oxlint;
+        let is_lexical_this = match is_callback_with_lexical_this(e, &mut cx.state) {
+            Some(is_lexical_this) => is_lexical_this,
+            None if is_oxlint && e.is_parenthesized() && is_argument_of_await(e) => false,
+            None => return,
         };
-        let own = own_keywords(func, false);
+        let own = if is_oxlint { own_keywords_as_oxlint(func) } else { own_keywords(func, false) };
         if own.has_super
             || own.new_target
             || self.allow_unbound_this && own.this && !is_lexical_this

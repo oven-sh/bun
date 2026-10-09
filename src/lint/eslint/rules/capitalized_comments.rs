@@ -75,13 +75,43 @@ fn is_maybe_url(value: &[u8]) -> bool {
         && rest.next().is_some_and(|c| !matches!(u8::try_from(c), Ok(b'?' | b'#')))
 }
 
-/// It has a token or a comment before it and one after it, on the lines where it starts and ends.
-/// What oxlint passes over and ESLint does not.
-fn oxlint_is_directive(value: &[u8]) -> bool {
-    let rest = text::trim_start(value);
-    [&b"oxlint-"[..], b"prettier-ignore", b"oxfmt-ignore"].iter().any(|it| rest.starts_with(it))
+/// oxlint's `is_url`: `text` starts with a scheme and `://`.
+fn oxlint_is_url(text: &[u8]) -> bool {
+    let colon = strings::index_of_char(text, b':').map_or(0, |it| it as usize);
+    let is_in_scheme = |c: &u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.');
+    colon > 0
+        && text.get(colon..).is_some_and(|it| it.starts_with(b"://"))
+        && text.get(..colon).is_some_and(|it| it.iter().all(is_in_scheme))
 }
 
+/// What oxlint passes over: its `is_directive_comment`. In a block the URL can come after the `*` of a line.
+fn oxlint_is_directive(comment: Token) -> bool {
+    const DIRECTIVES: [&[u8]; 11] = [
+        b"eslint-",
+        b"eslint ",
+        b"oxlint-",
+        b"jshint",
+        b"jscs",
+        b"istanbul",
+        b"global ",
+        b"globals ",
+        b"exported",
+        b"prettier-ignore",
+        b"oxfmt-ignore",
+    ];
+    let value = comment.comment_value();
+    let rest = text::trim_start(value);
+    if DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
+        return true;
+    }
+    let mut lines = strings::split(value, b"\n").map(|line| {
+        let line = text::trim_start(line);
+        text::trim_start(line.strip_prefix(b"*").unwrap_or(line))
+    });
+    comment.kind() == TokenKind::Block && lines.find(|it| !it.is_empty()).is_some_and(oxlint_is_url)
+}
+
+/// It has a token or a comment before it and one after it, on the lines where it starts and ends.
 fn is_inline_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
     let previous = file.tokens_before(comment).with_comments().next();
     let next = file.tokens_after(comment).with_comments().next();
@@ -117,13 +147,15 @@ impl CapitalizedComments {
             true => text::to_upper_case(letter),
             false => text::to_lower_case(letter),
         };
+        let is_directive = match cx.language().is_oxlint {
+            true => oxlint_is_directive(comment),
+            false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
+        };
         if *expected == *letter
-            || ast_utils::matches_comments_ignore_pattern(value)
-            || cx.language().is_oxlint && oxlint_is_directive(value)
+            || is_directive
             || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)
-            || is_maybe_url(value)
         {
             return;
         }

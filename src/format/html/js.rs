@@ -10,7 +10,7 @@ use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
 use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
 use crate::prelude::*;
-use crate::tailwind::{Ends, Tailwind};
+use crate::tailwind::{Ends, Tailwind, plugin};
 use crate::{format_args, text, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
@@ -146,8 +146,8 @@ enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
-    /// The parameters of a function, or of a type.
-    Binding,
+    /// The parameters of a function, or of a type, and whose output they are.
+    Binding(Flavor),
     Other,
 }
 
@@ -157,6 +157,8 @@ enum Attempt {
     Refused,
     /// Nothing has been written: this is to be parsed in its place.
     Sorted(Vec<u8>),
+    /// The same, and its classes are sorted.
+    WithSortedClasses(Vec<u8>),
     /// What `write` has returned.
     Written(bool),
 }
@@ -179,19 +181,24 @@ fn with_file(
     let mut options = options_in_html(f.options(), in_html);
     // To Prettier the name of the file is still that of the HTML, so `<T,>() => {}` keeps its comma: it is not `.ts`.
     // oxfmt prints a script like a file of its own.
-    if !matches!(piece, Piece::Script(flavor) if flavor.is_oxfmt()) {
+    if !matches!(piece, Piece::Script(flavor) | Piece::Binding(flavor) if flavor.is_oxfmt()) {
         options.filepath.clone_from(&f.options().filepath);
     }
     // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. Bindings are
     // oxfmt's own, and it does not sort there.
+    let follows_plugin = (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin);
     let sorts_classes = match (piece, in_html.root) {
-        (Piece::Binding, _) => false,
+        (Piece::Binding(_), _) => follows_plugin,
         (_, HtmlRoot::Program) => true,
         (_, HtmlRoot::JsExpression) => paths == [EXPRESSION_JSX],
         _ => false,
     };
     if !sorts_classes {
         options.tailwind = None;
+    }
+    let tailwind = options.tailwind.clone();
+    if let Piece::Binding(flavor) = piece {
+        options.flavor = flavor;
     }
     // A plugin of Prettier sorts the imports of the text before it is parsed.
     let mut sorts_text = None;
@@ -210,7 +217,9 @@ fn with_file(
     };
     for path in paths {
         for &is_script in kinds {
-            let mut attempt = |code: &[u8], sorts_text: Option<&SortImports>| {
+            let mut attempt = |code: &[u8],
+                               sorts_text: Option<&SortImports>,
+                               tailwind: Option<&Tailwind>| {
                 let mut result = Attempt::Refused;
                 parse.call(path, code, is_script, &mut |file| {
                     if file.has_parse_errors()
@@ -238,14 +247,22 @@ fn with_file(
                         result = Attempt::Sorted(sorted);
                         return;
                     }
+                    if let Some(sorted) = tailwind.and_then(|it| plugin::sorted_text(file, it)) {
+                        result = Attempt::WithSortedClasses(sorted);
+                        return;
+                    }
                     let context = JsFormatContext::new(file, options.clone(), comments);
                     let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
                     result = Attempt::Written(is_written);
                 });
                 result
             };
-            let result = match attempt(code, sorts_text.as_deref()) {
-                Attempt::Sorted(sorted) => attempt(&sorted, None),
+            let result = match attempt(code, sorts_text.as_deref(), tailwind.as_deref()) {
+                Attempt::Sorted(sorted) => attempt(&sorted, None, tailwind.as_deref()),
+                result => result,
+            };
+            let result = match result {
+                Attempt::WithSortedClasses(sorted) => attempt(&sorted, None, None),
                 result => result,
             };
             if let Attempt::Written(is_written) = result {
@@ -275,21 +292,30 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
 /// Finds the strings and the templates of a program, and sorts the classes in them.
 struct ClassSorter<'t> {
     tailwind: &'t Tailwind,
-    /// The operands of each `+` around what is visited.
-    concatenations: Vec<(Span, Span)>,
+    /// The plugin's `canCollapseWhitespaceIn`: every `+` around a text counts. If not, the nearest does.
+    is_angular: bool,
+    /// The operands of each `+` around what is visited, and on which sides of those further out it is.
+    concatenations: Vec<(Span, Span, (bool, bool))>,
     /// What is written in the place of what, in the order of the text.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
 impl ClassSorter<'_> {
+    /// Whether what is at `span` is on the left, and on the right, of a `+` that counts.
+    fn sides_of(&self, span: Span) -> (bool, bool) {
+        let is_in = |operand: Span| operand.start <= span.start && span.end <= operand.end;
+        self.concatenations
+            .last()
+            .map_or((false, false), |&(left, right, outer)| {
+                (outer.0 || is_in(left), outer.1 || is_in(right))
+            })
+    }
+
     /// `text`, which is at `span`, is text of a template, or what is between the quotes of a string. `index`, `count`: which of
     /// how many texts of the template.
     fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize)) {
         // What is added to has to stay apart.
-        let (is_left, is_right) = self.concatenations.last().map_or((false, false), |it| {
-            let is_in = |operand: Span| operand.start <= span.start && span.end <= operand.end;
-            (is_in(it.0), is_in(it.1))
-        });
+        let (is_left, is_right) = self.sides_of(span);
         let ends = Ends {
             ignores_first: index > 0 && !text::starts_with_white_space(text),
             ignores_last: index + 1 < count && text::trim_end(text).len() == text.len(),
@@ -318,7 +344,13 @@ impl<'a> Visitor<'a> for ClassSorter<'_> {
                     op: BinOp::Add,
                     left,
                     right,
-                } => self.concatenations.push((left.span(), right.span())),
+                } => {
+                    let outer = match self.is_angular {
+                        true => self.sides_of(e.span()),
+                        false => (false, false),
+                    };
+                    self.concatenations.push((left.span(), right.span(), outer));
+                }
                 ExprKind::String(_) if !e.is_jsx_text() => self.sort_literal(e.file(), e.span()),
                 ExprKind::Template(template) => {
                     let count = template.quasi_count();
@@ -351,12 +383,13 @@ impl<'a> Visitor<'a> for ClassSorter<'_> {
     }
 }
 
-/// What `prettier-plugin-tailwindcss` makes of `code`, an expression in an attribute of Vue: `transformDynamicJsAttribute`.
-/// `None`: it is the same, or cannot be parsed.
+/// What `prettier-plugin-tailwindcss` makes of `code`, an expression in an attribute of Vue or Angular:
+/// `transformDynamicJsAttribute`, `transformDynamicAngularAttribute`. `None`: it is the same, or cannot be parsed.
 pub(crate) fn with_sorted_classes(
     parse: Parse<'_>,
     code: &[u8],
     tailwind: &Tailwind,
+    is_angular: bool,
 ) -> Option<Vec<u8>> {
     const BEFORE: &[u8] = b"let __prettier_temp__ = ";
     let source = [BEFORE, code].concat();
@@ -366,6 +399,7 @@ pub(crate) fn with_sorted_classes(
             if !file.has_parse_errors() {
                 let mut sorter = ClassSorter {
                     tailwind,
+                    is_angular,
                     concatenations: Vec::new(),
                     changes: Vec::new(),
                 };
@@ -377,7 +411,9 @@ pub(crate) fn with_sorted_classes(
             break;
         }
     }
-    let changes = changes.filter(|it| !it.is_empty())?;
+    let mut changes = changes.filter(|it| !it.is_empty())?;
+    // The texts of a template come before what is between them.
+    crate::sort::sort_by_key(&mut changes[..], |it| it.0.start);
     let (mut sorted, mut from) = (Vec::with_capacity(code.len()), BEFORE.len());
     for (span, text) in changes {
         sorted.extend_from_slice(source.get(from..span.start as usize)?);
@@ -419,7 +455,16 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
         return write!(f, FormatDanglingComments::Comments { comments, indent });
     }
     write!(f, FormatStatements(file.body()));
-    let rest = f.comments().unprinted_comments();
+    let mut rest = f.comments().unprinted_comments();
+    // The empty lines before the first thing in a script go.
+    if let Some((first, others)) = rest.split_first()
+        && (file.text().get(..first.span.start as usize))
+            .is_some_and(|before| before.trim_ascii().is_empty())
+    {
+        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
+        write!(f, FormatDanglingComments::Comments { comments, indent });
+        rest = others;
+    }
     write!(f, FormatTrailingComments::Comments(rest));
 }
 
@@ -695,7 +740,11 @@ pub(crate) fn write_angular_expression(
     let Some(parse) = Parse::of(f) else {
         return false;
     };
-    let options = options_in_html(f.options(), in_html);
+    // The plugin that sorts classes does not take over the parsers of Angular.
+    let options = FormatOptions {
+        tailwind: None,
+        ..options_in_html(f.options(), in_html)
+    };
     let mut is_written = false;
     parse.call(EXPRESSION_TS, expression.code, false, &mut |file| {
         let Some(e) = expression_of(file).filter(|_| !file.has_parse_errors()) else {
@@ -766,13 +815,14 @@ pub(crate) enum Binding {
     TypeParameters,
 }
 
-/// `group(printHtmlBinding(..))`, for `before`, `code` and `after` put together. Returns whether it has been written.
+/// `group(printHtmlBinding(..))`, for `before`, `code` and `after` put together. `flavor`: whose output it is. Returns whether
+/// it has been written.
 pub(crate) fn write_binding(
     f: &mut Formatter<'_>,
     code: &[u8],
     is_typescript: bool,
     in_html: InHtml,
-    binding: Binding,
+    (binding, flavor): (Binding, Flavor),
 ) -> bool {
     let (before, after): (&[u8], &[u8]) = match binding {
         Binding::Parameters | Binding::ForLeft => (b"function _(", b") {}"),
@@ -790,7 +840,7 @@ pub(crate) fn write_binding(
         paths_of(syntax, &program),
         SourceType::Unknown,
         in_html,
-        Piece::Binding,
+        Piece::Binding(flavor),
         &mut |file, f| {
             let Some(statement) = file.body().iter().next() else {
                 return false;

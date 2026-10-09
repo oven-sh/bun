@@ -285,7 +285,11 @@ fn parse_and_print<'o>(
         }
     }
 
-    let tree = postcss::parse(&blanked, parser).map_err(FormatError::SyntaxErrorAt)?;
+    let placeholder = match options.flavor.is_oxfmt() {
+        true => postcss::Placeholder::Statement,
+        false => postcss::Placeholder::AtRule,
+    };
+    let tree = postcss::parse(&blanked, parser, placeholder).map_err(FormatError::SyntaxErrorAt)?;
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.

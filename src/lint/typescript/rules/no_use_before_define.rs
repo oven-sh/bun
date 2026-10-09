@@ -41,6 +41,27 @@ fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
     }
 }
 
+/// Of a reference that is the name in the opening tag of a JSX element, or the first part of it: the same in the closing tag.
+fn name_in_closing_tag(reference: Reference) -> Option<Span> {
+    let mut tag = reference.expr()?;
+    while let Node::Expr(parent) = tag.parent()
+        && matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == tag)
+    {
+        tag = parent;
+    }
+    let Node::Expr(element) = tag.parent() else {
+        return None;
+    };
+    let ExprKind::Jsx(jsx) = element.kind() else {
+        return None;
+    };
+    let mut first = jsx.close_tag().filter(|_| jsx.tag() == Some(tag))?;
+    while let ExprKind::Dot { obj, .. } = first.kind() {
+        first = obj;
+    }
+    Some(first.span())
+}
+
 impl NoUseBeforeDefine {
     /// typescript-eslint's `isForbidden`.
     fn is_forbidden<'a>(&self, variable: Symbol<'a>, kind: DeclarationKind, reference: Reference<'a>) -> bool {
@@ -98,6 +119,12 @@ impl NoUseBeforeDefine {
                     && reference.scope().kind() != ScopeKind::FunctionType
             {
                 report(reference, cx);
+                // For oxlint that is a reference too.
+                if cx.language().is_oxlint
+                    && let Some(closing) = name_in_closing_tag(reference).filter(|it| it.end < definition_end)
+                {
+                    cx.report(closing, NO_USE_BEFORE_DEFINE).data("name", reference.name());
+                }
             }
         }
     }

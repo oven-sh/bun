@@ -4,6 +4,7 @@ use bun_lint::utils::ast_utils::{
     is_literal, is_logical_assignment_operator, is_same_reference,
 };
 use bun_lint::utils::estree_compat::is_assignment_target;
+use bun_lint_oxlint::same_expression::is_same_member_expression;
 
 /// Require or disallow assignment operator shorthand where possible.
 pub struct OperatorAssignment {
@@ -57,6 +58,17 @@ fn can_be_fixed(e: Expr) -> bool {
     }
 }
 
+/// oxlint's `check_is_same_reference`. An index can be any expression, written twice: `a[i - 1] = a[i - 1] + b`.
+fn is_same_reference_for_oxlint<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
+    match target.kind() {
+        ExprKind::Ident(name) => e.as_ident() == Some(name) && !e.is_parenthesized(),
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+            target.tag() == e.tag() && is_same_member_expression(target, e)
+        }
+        _ => false,
+    }
+}
+
 impl OperatorAssignment {
     /// `"always"`: an assignment uses the shorthand where it can.
     fn verify<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -76,7 +88,12 @@ impl OperatorAssignment {
             return;
         }
         let replacement = assign_op_text(Some(op));
-        if is_same_reference(target, left, true) {
+        let is_oxlint = cx.language().is_oxlint;
+        let is_same_reference = |e: Expr<'a>| match is_oxlint {
+            true => is_same_reference_for_oxlint(target, e),
+            false => is_same_reference(target, e, true),
+        };
+        if is_same_reference(left) {
             // A default value in a destructuring assignment.
             if is_assignment_target(e) {
                 return;
@@ -94,7 +111,7 @@ impl OperatorAssignment {
                 let right_text = file.slice(Span::new(operator.end, value.span().end));
                 Some(fixer.replace(e, [left_text, replacement.as_bytes(), right_text].concat()))
             });
-        } else if is_commutative && is_same_reference(target, right, true) && !is_assignment_target(e)
+        } else if is_commutative && is_same_reference(right) && !is_assignment_target(e)
         {
             // `a = b * a` is not fixed to `a *= b`: that changes the order of the `valueOf` calls.
             cx.report(e, REPLACED).data("operator", replacement);

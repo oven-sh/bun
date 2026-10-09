@@ -307,6 +307,29 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
+/// The `<source>` of a problem, for an agent: `lines`, which are not none and of which the first has the number `first`, and
+/// carets below the line with the number `at`, from the column `from` up to the column `to`, both counted from 0. `None`: up to the
+/// end of the line.
+pub fn write_agent_source(
+    out: &mut Vec<u8>,
+    first: u32,
+    lines: &[&[u8]],
+    at: u32,
+    (from, to): (usize, Option<usize>),
+) {
+    out.extend_from_slice(b"<source>\n");
+    let gutter = bun_core::fmt::digit_count(first as usize + lines.len() - 1);
+    for (line, text) in (first..).zip(lines) {
+        let text = strings::replace_owned(text, b"\t", b" ");
+        let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
+        if line == at {
+            let carets = "^".repeat(to.unwrap_or(text.len()).saturating_sub(from).max(1));
+            let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
+        }
+    }
+    out.extend_from_slice(b"</source>\n");
+}
+
 fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
     let _ = write!(out, "<{}", d.category.name());
     if !d.path.is_empty() {
@@ -332,7 +355,6 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         .iter()
         .any(|line| line.len() > crate::MAX_SHOWN_LINE);
     if !d.source.is_empty() && !has_long_line {
-        out.extend_from_slice(b"<source>\n");
         // For an error that spans many lines, only its start. Leading and trailing blank lines
         // carry no information.
         let at = (d.line - d.source_line) as usize;
@@ -344,22 +366,15 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let first = blank(&mut d.source[..at].iter());
         let end = d.source.len().min(at + 3);
         let end = end - blank(&mut d.source[at + 1..end].iter().rev());
-        let gutter = bun_core::fmt::digit_count(d.source_line as usize + end - 1);
-        for (line, text) in (d.source_line + first as u32..).zip(&d.source[first..end]) {
-            let text = strings::replace_owned(text, b"\t", b" ");
-            let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
-            if line == d.line {
-                let (from, end) = (d.column as usize - 1, d.end_column as usize - 1);
-                let to = if d.end_line == d.line {
-                    end
-                } else {
-                    text.len()
-                };
-                let carets = "^".repeat(to.saturating_sub(from).max(1));
-                let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
-            }
-        }
-        out.extend_from_slice(b"</source>\n");
+        let lines: Vec<&[u8]> = d.source[first..end].iter().map(Vec::as_slice).collect();
+        let to = (d.end_line == d.line).then(|| d.end_column as usize - 1);
+        write_agent_source(
+            out,
+            d.source_line + first as u32,
+            &lines,
+            d.line,
+            (d.column as usize - 1, to),
+        );
     }
     for note in &d.related {
         out.extend_from_slice(b"<related");

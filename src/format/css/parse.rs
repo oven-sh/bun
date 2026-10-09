@@ -184,6 +184,42 @@ fn value_root_offset(node: &CssNode<'_>) -> u32 {
     (node.start + 1 + node.name.len() + after_name_prefix_len(node.after_name)) as u32
 }
 
+/// `.a-#{ $b }` is `.a-#{$b}` for oxfmt, in a selector as in a value. Prettier leaves a selector as it is there.
+fn without_blanks_at_the_ends_of_interpolations(selector: &[u8]) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::with_capacity(selector.len());
+    // How many `{` are open in the interpolation. 0: it is not in one.
+    let mut depth = 0u32;
+    let mut quote = 0u8;
+    let mut at = 0;
+    while let Some(&byte) = selector.get(at) {
+        at += 1;
+        if quote != 0 || (depth == 0 && matches!(byte, b'"' | b'\'')) {
+            quote = match quote {
+                0 => byte,
+                _ if byte == quote => 0,
+                _ => quote,
+            };
+            result.push(byte);
+        } else if depth == 0 && byte == b'#' && selector.get(at) == Some(&b'{') {
+            result.extend_from_slice(b"#{");
+            depth = 1;
+            at += 1 + text::leading_white_space_len(&selector[at + 1..]);
+        } else if depth > 0 && byte == b'{' {
+            depth += 1;
+            result.push(byte);
+        } else if depth > 0 && byte == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                result.truncate(text::trim_end(&result).len());
+            }
+            result.push(byte);
+        } else {
+            result.push(byte);
+        }
+    }
+    result
+}
+
 /// `isScssNestedPropertyNode`. `selector`: as `postcss` has cleaned it.
 fn is_scss_nested_property(selector: &[u8]) -> bool {
     let mut selector = Cow::Borrowed(selector);
@@ -407,6 +443,14 @@ impl<'a> Context<'a> {
                     true => Cow::Borrowed(self.of(raw.selector)),
                     false => self.concat(&[raw.selector, raw.between]),
                 };
+                if self.is_oxfmt
+                    && self.syntax == Syntax::Scss
+                    && text::includes(&node.raw_selector, b"#{")
+                {
+                    node.raw_selector = Cow::Owned(without_blanks_at_the_ends_of_interpolations(
+                        &node.raw_selector,
+                    ));
+                }
                 // Prettier has no way to print a selector that is still a string.
                 if text::trim(&node.raw_selector).is_empty()
                     || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))

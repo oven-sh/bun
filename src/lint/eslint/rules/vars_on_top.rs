@@ -72,7 +72,7 @@ impl Rule for VarsOnTop {
             if declarations.first().is_none_or(|it| it.var_kind() != VarKind::Var) {
                 return;
             }
-            let parent = statement.parent();
+            let (parent, is_oxlint) = (statement.parent(), cx.language().is_oxlint);
             let is_on_top = match parent {
                 Node::File(file) => is_var_on_top(statement, parent, file.body(), true, &mut cx.state),
                 Node::Func(func) => func.body_statements().is_some_and(|body| {
@@ -80,9 +80,18 @@ impl Rule for VarsOnTop {
                     is_var_on_top(statement, parent, body, skips_prologue, &mut cx.state)
                 }),
                 // Only an `export` makes ESLint look at the body of a namespace.
-                Node::Stmt(namespace) => match namespace.kind() {
+                Node::Stmt(around) => match around.kind() {
+                    // oxlint says nothing about it.
+                    StmtKind::Module(_) if statement.is_exported() && is_oxlint => true,
                     StmtKind::Module(module) if statement.is_exported() => {
                         is_var_on_top(statement, parent, module.body(), true, &mut cx.state)
+                    }
+                    // For oxlint a block that is a statement of the body of a function has a top too.
+                    StmtKind::Block(body)
+                        if is_oxlint
+                            && matches!(around.parent(), Node::Func(func) if func.kind() != FnKind::StaticBlock) =>
+                    {
+                        is_var_on_top(statement, parent, body, true, &mut cx.state)
                     }
                     _ => false,
                 },
@@ -92,7 +101,7 @@ impl Rule for VarsOnTop {
                 return;
             }
             // oxlint says nothing about ambient declarations.
-            if cx.language().is_oxlint && cx.state.ambient.has_ambient_typescript_ancestor(statement.into()) {
+            if is_oxlint && cx.state.ambient.has_ambient_typescript_ancestor(statement.into()) {
                 return;
             }
             cx.report(statement, TOP);

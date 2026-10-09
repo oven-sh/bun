@@ -158,6 +158,7 @@ pub(crate) struct Node {
     /// `checked` of an item: 0 is `null`, 1 `false`, 2 `true`.
     pub(crate) checked: u8,
     pub(crate) reference_type: ReferenceType,
+    /// For oxfmt: 1 for HTML that a certain text ends (`-->`, `</script>` ..), 1 for indented code.
     /// `depth` of a heading, `start` of an ordered list, the number of columns of a table, which are
     /// at `Tree::aligns[first_align..]`, the number of tokens of a sentence, which are at
     /// `Tree::tokens[first_align..]`. Of a list: how many lists of its kind are right before it.

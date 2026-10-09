@@ -9,6 +9,12 @@ const USE_TOP_LEVEL_QUALIFIER: Message = Message::new(
     "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
 );
 
+/// `import {} from "a"`, which oxlint reports in TypeScript as it reports what has only `type` specifiers.
+fn has_braces(statement: Stmt) -> bool {
+    let (file, after_keyword) = (statement.file(), statement.span().start + "import".len() as u32);
+    !file.is_javascript() && file.text().get(skip_trivia(file.text(), after_keyword) as usize) == Some(&b'{')
+}
+
 impl Rule for NoImportTypeSideEffects {
     const META: Meta =
         Meta::typescript("no-import-type-side-effects", Kind::Problem).fixable(Fixable::Code);
@@ -27,7 +33,7 @@ impl Rule for NoImportTypeSideEffects {
             if import.is_type_only()
                 || import.default().is_some()
                 || import.namespace().is_some()
-                || named.is_empty()
+                || named.is_empty() && !(cx.language().is_oxlint && has_braces(statement))
                 || !named.iter().all(ImportSpec::is_type_only)
             {
                 return;

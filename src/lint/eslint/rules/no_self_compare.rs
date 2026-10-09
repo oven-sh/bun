@@ -48,14 +48,21 @@ impl Rule for NoSelfCompare {
                     | BinOp::Ge
                     | BinOp::Le
             );
-            // The same tokens are the same kind of expression.
-            if is_comparison
-                && left.tag() == right.tag()
-                && can_have_equal_tokens(left.text(), right.text())
-                && ast_utils::equal_tokens(cx.file(), left, right)
-            {
+            let is_oxlint = cx.language().is_oxlint;
+            let is_same = || match (left.kind(), right.kind()) {
+                // oxlint compares what literals stand for: `"a" === 'a'`, `1.0 === 1`.
+                (ExprKind::String(left), ExprKind::String(right)) if is_oxlint => left == right,
+                (ExprKind::Number(left), ExprKind::Number(right)) if is_oxlint => left == right,
+                // The same tokens are the same kind of expression.
+                _ => {
+                    left.tag() == right.tag()
+                        && can_have_equal_tokens(left.text(), right.text())
+                        && ast_utils::equal_tokens(cx.file(), left, right)
+                }
+            };
+            if is_comparison && is_same() {
                 // oxlint points at the left side.
-                cx.report(if cx.language().is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF);
+                cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF);
             }
         });
     }

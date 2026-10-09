@@ -382,33 +382,10 @@ fn write_agent_problem<'r>(
             shown.pop();
         }
         if shown.iter().all(|line| line.len() <= 1000) && !shown.is_empty() {
-            out.extend_from_slice(b"<source>\n");
-            let gutter = bun_core::fmt::digit_count(first as usize + shown.len() - 1);
-            for (number, text) in (first..).zip(&shown) {
-                let text = strings::replace_owned(text, b"\t", b" ");
-                let _ = writeln!(
-                    out,
-                    "{number:>gutter$} | {}",
-                    BStr::new(text.trim_ascii_end())
-                );
-                if number == line {
-                    let from = message.column.saturating_sub(1) as usize;
-                    let to = match message.end {
-                        Some((end_line, end_column)) if end_line == line => {
-                            end_column.saturating_sub(1) as usize
-                        }
-                        _ => text.len(),
-                    };
-                    let _ = writeln!(
-                        out,
-                        "{:1$}{2}",
-                        "",
-                        gutter + 3 + from,
-                        "^".repeat(to.saturating_sub(from).max(1))
-                    );
-                }
-            }
-            out.extend_from_slice(b"</source>\n");
+            let from = message.column.saturating_sub(1) as usize;
+            let to = (message.end.filter(|end| end.0 == line))
+                .map(|(_, end_column)| end_column.saturating_sub(1) as usize);
+            bun_sema_driver::format::write_agent_source(out, first, &shown, line, (from, to));
         }
     }
     if let Some(details) = &message.details {

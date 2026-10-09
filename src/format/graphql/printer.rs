@@ -275,12 +275,10 @@ impl<'t> Builder<'t, '_, '_> {
         {
             self.leading_comment(self.comment_span(attached));
         }
+        let flavor = self.f.options().flavor;
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            matches!(
-                comment.get(1..).unwrap_or_default().trim_ascii(),
-                b"prettier-ignore" | b"oxfmt-ignore"
-            )
+            flavor.is_ignore_comment(comment.get(1..).unwrap_or_default().trim_ascii())
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),

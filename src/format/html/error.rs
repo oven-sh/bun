@@ -1,8 +1,5 @@
 //! The errors of `angular-html-parser`, with its messages.
 
-use crate::text::utf16_len;
-use bun_core::strings;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ErrorKind {
     UnexpectedCharacter,
@@ -23,6 +20,19 @@ pub(crate) enum ErrorKind {
     IncompleteLet,
     /// None of the parser's: Prettier fails over what has been parsed.
     Other,
+}
+
+impl ErrorKind {
+    /// The lexer finds it. Its errors come before those of the parser.
+    pub(crate) fn is_of_lexer(self) -> bool {
+        matches!(
+            self,
+            ErrorKind::UnexpectedCharacter
+                | ErrorKind::UnknownEntity
+                | ErrorKind::DecimalEntityWithoutSemicolon
+                | ErrorKind::HexadecimalEntityWithoutSemicolon
+        )
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -50,7 +60,7 @@ impl<'a> SyntaxError<'a> {
     }
 
     /// `error.msg`
-    fn message(&self) -> Vec<u8> {
+    pub(crate) fn message(&self) -> Vec<u8> {
         use ErrorKind::*;
         let name = match self.prefix {
             b"" => self.name.to_vec(),
@@ -129,17 +139,5 @@ impl<'a> SyntaxError<'a> {
             false => "",
         };
         [before.as_bytes(), name, after.as_bytes(), hint.as_bytes()].concat()
-    }
-
-    /// `SyntaxError: Unexpected character "a" (1:2)`, as Prettier shows it. `text`: what has been parsed.
-    pub(crate) fn describe(&self, text: &[u8]) -> Vec<u8> {
-        let before = text.get(..self.at as usize).unwrap_or(text);
-        let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
-        let place = format!(
-            " ({}:{})",
-            strings::count_char(before, b'\n') + 1,
-            utf16_len(&before[line_start..]) + 1
-        );
-        [&b"SyntaxError: "[..], &self.message(), place.as_bytes()].concat()
     }
 }

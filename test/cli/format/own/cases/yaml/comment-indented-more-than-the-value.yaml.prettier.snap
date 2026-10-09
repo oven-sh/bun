@@ -8,6 +8,14 @@ parts:
       # cd ~ && rm -rf ~/squashfs-root && unsquashfs a.snap
     stage-packages:
       - a
+long:
+  "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z"
+  # behind a value that does not fit
+
+plain:
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  # the same
+last: 1
 
 -------------------
 { printWidth: 100 }
@@ -19,5 +27,13 @@ parts:
       # cd ~ && rm -rf ~/squashfs-root && unsquashfs a.snap
     stage-packages:
       - a
+long:
+  "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z"
+  # behind a value that does not fit
+
+plain:
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  # the same
+last: 1
 
 ===================== End =====================

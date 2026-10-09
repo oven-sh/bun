@@ -74,6 +74,51 @@ fn direction_of(update: Expr<'_>) -> i32 {
     }
 }
 
+/// oxlint's rule, which points at the test. It knows one counter, the left one if both sides are names, and an update
+/// clause that is one expression. Of what is added it looks at how it is written: a number, or an operator before
+/// something. In parentheses it knows nothing.
+fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirection>) {
+    let ExprKind::Binary { op, left, right } = test.kind() else {
+        return;
+    };
+    let is_less = match op {
+        BinOp::Lt | BinOp::Le => true,
+        BinOp::Gt | BinOp::Ge => false,
+        _ => return,
+    };
+    let as_counter = |side: Expr<'a>| side.as_ident().filter(|_| !side.is_parenthesized());
+    let (counter, is_left) = match (as_counter(left), as_counter(right)) {
+        (Some(counter), _) => (counter, true),
+        (None, Some(counter)) => (counter, false),
+        (None, None) => return,
+    };
+    if test.is_parenthesized() || update.is_parenthesized() {
+        return;
+    }
+    let is_forward = match update.kind() {
+        ExprKind::Unary { op, operand } if operand.as_ident() == Some(counter) => match op {
+            UnOp::PreInc | UnOp::PostInc => true,
+            UnOp::PreDec | UnOp::PostDec => false,
+            _ => return,
+        },
+        ExprKind::Assign { op: Some(assigned @ (BinOp::Add | BinOp::Sub)), target, value }
+            if target.as_ident() == Some(counter) && !value.is_parenthesized() =>
+        {
+            let is_positive = match value.kind() {
+                ExprKind::Number(n) if n != 0.0 => true,
+                ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => return,
+                ExprKind::Unary { op, .. } => op != UnOp::Minus,
+                _ => return,
+            };
+            is_positive == (assigned == BinOp::Add)
+        }
+        _ => return,
+    };
+    if is_forward != (is_less == is_left) {
+        cx.report(test, INCORRECT_DIRECTION);
+    }
+}
+
 impl ForDirection {
     fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::For {
@@ -84,6 +129,9 @@ impl ForDirection {
         else {
             return;
         };
+        if cx.language().is_oxlint {
+            return check_as_oxlint(test, update, cx);
+        }
         let ExprKind::Binary { op, left, right } = test.kind() else {
             return;
         };
@@ -104,12 +152,7 @@ impl ForDirection {
                 && direction_of(last) == wrong
             {
                 let close_paren = skip_trivia(cx.text(), update.outer_span().end);
-                // oxlint points at the test.
-                let place = match cx.language().is_oxlint {
-                    true => test.span(),
-                    false => Span::new(stmt.span().start, close_paren + 1),
-                };
-                cx.report(place, INCORRECT_DIRECTION);
+                cx.report(Span::new(stmt.span().start, close_paren + 1), INCORRECT_DIRECTION);
             }
         }
     }

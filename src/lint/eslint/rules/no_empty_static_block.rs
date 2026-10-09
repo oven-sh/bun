@@ -34,7 +34,9 @@ impl Rule for NoEmptyStaticBlock {
             };
             // Without statements, all that can be between the braces is whitespace and comments.
             let inside = braces.shrink(1, 1);
-            if text::is_blank(cx.slice(inside)) {
+            // For oxlint a comment before the `{` fills it too.
+            let is_filled = cx.language().is_oxlint && cx.file().comments_in(member.span()).next().is_some();
+            if !is_filled && text::is_blank(cx.slice(inside)) {
                 // oxlint points at the `static`.
                 cx.report(if cx.language().is_oxlint { member.span() } else { braces }, UNEXPECTED)
                     .suggest(SUGGEST_COMMENT, |fixer| fixer.replace(inside, " /* empty */ "));

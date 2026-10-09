@@ -59,7 +59,18 @@ impl IdDenylist {
         if !self.is_restricted(name) {
             return;
         }
-        let is_checked = match e.parent() {
+        // oxlint sees through what only concerns types: `a as T`, `a!`.
+        let mut subject = e;
+        while cx.language().is_oxlint
+            && let Node::Expr(parent) = subject.parent()
+            && matches!(
+                parent.tag(),
+                ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
+            )
+        {
+            subject = parent;
+        }
+        let is_checked = match subject.parent() {
             Node::Expr(parent) => !matches!(parent.tag(), ExprTag::Call | ExprTag::New),
             // The key of `{ a }` is at the same place, and `check_property` decides.
             Node::Prop(prop) if prop.kind() == PropKind::Shorthand => {
@@ -239,7 +250,16 @@ impl Rule for IdDenylist {
             if let Some(name) = pat.as_ident()
                 && rule.is_restricted(name)
             {
-                report(utils::estree_span(pat.into()), name.bytes(), cx);
+                if !cx.language().is_oxlint {
+                    return report(utils::estree_span(pat.into()), name.bytes(), cx);
+                }
+                // For oxlint the type annotation is not part of it, and the parameter of an index signature has no
+                // name.
+                let is_of_index_signature = matches!(pat.parent(), Node::Param(param)
+                    if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature));
+                if !is_of_index_signature {
+                    report(pat.span(), name.bytes(), cx);
+                }
             }
         });
         on.props(Self::check_property);

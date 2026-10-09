@@ -100,6 +100,39 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
     })
 }
 
+/// typescript-eslint has what an `infer` declares in scope in all of the conditional type. For oxlint, as for
+/// TypeScript, it is in scope where the condition holds: `type A<T> = B<T> extends { c: infer T } ? T : never` uses its
+/// parameter. These are the variables that are used in that way.
+fn oxlint_used_beside_infer<'a>(file: &'a File<'a>) -> SymbolSet {
+    let mut used = SymbolSet::default();
+    for symbol in file.symbols() {
+        let Some(Declaration::TypeParam(param)) = symbol.declarations().next() else {
+            continue;
+        };
+        let Node::Type(infer) = param.parent() else {
+            continue;
+        };
+        if infer.tag() != TypeTag::Infer {
+            continue;
+        }
+        let in_scope = Node::Type(infer).ancestors().find_map(|it| match it.as_type()?.kind() {
+            TypeKind::Cond { extends, yes, .. } if extends.outer_span().contains(infer.span()) => {
+                Some([extends.outer_span(), yes.outer_span()])
+            }
+            _ => None,
+        });
+        let (Some(in_scope), Some(around)) = (in_scope, symbol.scope().parent()) else {
+            continue;
+        };
+        if symbol.references().any(|it| !in_scope.iter().any(|span| span.contains(it.span())))
+            && let Some(outer) = around.resolve_name(symbol.name())
+        {
+            used.insert(outer);
+        }
+    }
+    used
+}
+
 /// `typeof a` in a type, outside of what declares `a`. oxlint has an option for it, `reportVarsOnlyUsedAsTypes`, which is off.
 fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> bool {
     is_type_only_reference(variable.symbol(), reference)
@@ -1161,10 +1194,14 @@ impl NoUnusedVars {
             }
         }
 
+        let mut used_beside_infer = None;
         for unused_var in unused_vars {
             if file.language().is_oxlint
                 && (oxlint_leaves_alone(unused_var)
-                    || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types))
+                    || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types)
+                    || unused_var.defs().any(|it| matches!(it, Declaration::TypeParam(_)))
+                        && (used_beside_infer.get_or_insert_with(|| oxlint_used_beside_infer(file)))
+                            .contains(unused_var.symbol()))
             {
                 continue;
             }

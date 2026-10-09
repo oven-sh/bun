@@ -114,6 +114,7 @@ impl Parser<'_> {
     pub(crate) fn note_await(&mut self) {
         if self.has_context(ctx::TOP_LEVEL) {
             self.has_top_level_await = true;
+            self.has_await_in_statement = true;
         }
     }
 
@@ -1657,7 +1658,9 @@ impl Parser<'_> {
             T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
             T::Import if self.is_ecmascript => self.import_expression(),
             _ if self.is_identifier() => {
-                self.lx.has_escape = false;
+                if self.lx.has_escape {
+                    self.forget_escaped_keyword();
+                }
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
@@ -1686,6 +1689,10 @@ impl Parser<'_> {
         }
         self.next();
         let end = self.prev_end();
+        let expression = match self.reads_jsdoc {
+            true => self.parenthesized_jsdoc(open, expression),
+            false => expression,
+        };
         self.f.parens.push((expression, open, end));
         expression
     }
@@ -1698,7 +1705,12 @@ impl Parser<'_> {
         }
         self.expected(T::CloseParen);
         if self.recovers {
+            let expression = match self.reads_jsdoc {
+                true => self.parenthesized_jsdoc(open, expression),
+                false => expression,
+            };
             self.f.parens.push((expression, open, self.prev_end()));
+            return expression;
         }
         expression
     }
@@ -1958,6 +1970,9 @@ impl Parser<'_> {
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start));
         let props: Span<PropId> = take_span!(self, props, base);
+        if self.reads_jsdoc {
+            self.take_property_types(base, props);
+        }
         for index in modifiers..self.s.prop_modifiers.len() {
             let (prop, list) = self.s.prop_modifiers[index];
             self.f
@@ -2043,7 +2058,7 @@ impl Parser<'_> {
                 (PropKey::Name(self.lx.atom), NameKind::Identifier)
             }
             _ => {
-                let (name, pos) = self.missing_identifier(0, 0);
+                let (name, pos) = self.missing_name();
                 let key = match name.is_none() {
                     true => PropKey::None,
                     false => PropKey::Name(name),
@@ -2234,6 +2249,10 @@ impl Parser<'_> {
         if self.options.is_javascript && is_function {
             self.check_js_method_of_object(&prop, modifiers);
         }
+        let prop = match self.reads_jsdoc {
+            true => self.property_jsdoc(prop),
+            false => prop,
+        };
         self.s.props.push(prop);
     }
 

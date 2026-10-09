@@ -386,11 +386,20 @@ impl<'a> Printer<'a, '_> {
             ),
             _ => return None,
         };
-        match comment {
-            b"prettier-ignore" | b"oxfmt-ignore" => Some(Ignore::Next),
-            b"prettier-ignore-start" | b"oxfmt-ignore-start" => Some(Ignore::Start),
-            b"prettier-ignore-end" | b"oxfmt-ignore-end" => Some(Ignore::End),
-            _ => None,
+        let flavor = self.options.flavor;
+        let is_ignore = |suffix: &[u8]| {
+            comment
+                .strip_suffix(suffix)
+                .is_some_and(|it| flavor.is_ignore_comment(it))
+        };
+        if is_ignore(b"") {
+            Some(Ignore::Next)
+        } else if is_ignore(b"-start") {
+            Some(Ignore::Start)
+        } else if is_ignore(b"-end") {
+            Some(Ignore::End)
+        } else {
+            None
         }
     }
 
@@ -447,6 +456,29 @@ impl<'a> Printer<'a, '_> {
         is_first_alternate ^ !index.is_multiple_of(2)
     }
 
+    /// Whether a hard line break is in `id`.
+    fn has_hard_break(&self, id: NodeId) -> bool {
+        let mut next = self.node(id).map_or(NONE, |it| it.first_child);
+        while let Some(node) = self.node(next) {
+            if node.kind == Kind::Break {
+                return true;
+            }
+            next = node.first_child;
+            let mut at = node;
+            while next == NONE && at.parent != NONE {
+                next = at.next;
+                if at.parent == id && next == NONE {
+                    return false;
+                }
+                let Some(parent) = self.node(at.parent) else {
+                    return false;
+                };
+                at = parent;
+            }
+        }
+        false
+    }
+
     /// Prettier's `isLooseListItem`
     fn is_loose_list_item(&self, id: NodeId) -> bool {
         let Some(node) = self.node(id).filter(|node| node.kind == Kind::ListItem) else {
@@ -465,11 +497,19 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `isLooseListItemLegacy`, with what remark-parse 8 says about an item: it is spread out if there
     /// is an empty line in it that something follows, and it ends behind the empty lines before the next item.
     fn is_loose_list_item_legacy(&self, item: &Node) -> bool {
-        let source = self.source(item);
+        let source = crate::text::trim_end(self.source(item));
+        // The indentation of the item is taken away from its lines first, also from one with nothing else on it.
+        let indent = self
+            .node(item.first_child)
+            .map_or(0, |first| self.column(first.start)) as usize;
         let mut from = 0;
-        while let Some(at) = bun_core::strings::index_of(&source[from..], b"\n\n") {
-            from += at + 2;
-            if !crate::text::trim_start(&source[from..]).is_empty() {
+        while let Some(at) = bun_core::strings::index_of_char_usize(&source[from..], b'\n') {
+            from += at + 1;
+            let blanks = source[from..]
+                .iter()
+                .take_while(|it| matches!(it, b' ' | b'\t'))
+                .count();
+            if blanks <= indent && source.get(from + blanks) == Some(&b'\n') {
                 return true;
             }
         }
@@ -507,7 +547,9 @@ impl<'a> Printer<'a, '_> {
         let is_inline_node =
             Self::is_inline(node.kind) && !(node.kind == Kind::LiquidNode && !is_in_wrapper);
         let is_inline_html = node.kind == Kind::Html && is_in_wrapper;
-        !is_inline_node && !is_inline_html
+        // Prettier takes text that it has not split into words for a block.
+        let is_text = node.kind == Kind::Text && self.options.flavor.is_oxfmt();
+        !is_inline_node && !is_inline_html && !is_text
     }
 
     fn should_pre_print_double_hardline(&self, node: &Node) -> bool {
@@ -525,7 +567,10 @@ impl<'a> Printer<'a, '_> {
         if self.is_loose_list_item(node.previous)
             || (node.kind == Kind::List
                 && parent.kind == Kind::ListItem
-                && matches!(previous.kind, Kind::Code | Kind::Paragraph)
+                && (matches!(previous.kind, Kind::Code | Kind::Paragraph)
+                    || (previous.kind == Kind::Html
+                        && previous.number == 0
+                        && self.options.flavor.is_oxfmt()))
                 && self.end_line(previous) + 1 < self.start_line(node))
         {
             return true;
@@ -539,7 +584,9 @@ impl<'a> Printer<'a, '_> {
             && follows_directly
             && match previous.kind {
                 Kind::Html => true,
-                Kind::Paragraph => !self.is_mdx || parent.kind == Kind::ListItem,
+                Kind::Paragraph => {
+                    (!self.is_mdx || parent.kind == Kind::ListItem) && !self.is_lazy_html(node)
+                }
                 _ => false,
             };
         let is_liquid_without_blank_line = (node.kind == Kind::LiquidNode
@@ -552,22 +599,64 @@ impl<'a> Printer<'a, '_> {
             || is_liquid_without_blank_line)
     }
 
+    /// oxfmt's `front_matter_risk`: the first paragraph of the document starts with `---` or `+++`, and what follows
+    /// would end front matter when it is read again.
+    fn would_be_front_matter(&self, paragraph: &Node) -> bool {
+        if !self.options.flavor.is_oxfmt()
+            || self
+                .kind(paragraph.previous)
+                .is_some_and(|it| it != Kind::FrontMatter)
+            || self.kind(paragraph.parent) != Some(Kind::Root)
+        {
+            return false;
+        }
+        let head = self
+            .original
+            .get(paragraph.start as usize..)
+            .unwrap_or_default();
+        if !head.starts_with(b"---") && !head.starts_with(b"+++") {
+            return false;
+        }
+        if super::front_matter::parse(head).is_some() {
+            return true;
+        }
+        let mut sibling = paragraph.next;
+        while let Some(node) = self.node(sibling) {
+            if node.kind == Kind::ThematicBreak && head.starts_with(b"---") {
+                return true;
+            }
+            sibling = node.next;
+        }
+        false
+    }
+
     /// oxfmt: HTML right behind a paragraph of a list item, on a line that is not indented as the item is, is in the
     /// item only as long as that line is not. See `compat::complete_tag_ends_lazy_paragraph` of `bun_md`.
     fn is_lazy_html_in_tight_item(&self, node: &Node) -> bool {
+        self.is_lazy_html(node)
+            && self.kind(node.parent) == Some(Kind::ListItem)
+            && !self.is_loose_list_item(node.parent)
+    }
+
+    /// oxfmt: HTML right behind a paragraph of a container, on a line without what the lines of the container start
+    /// with. With that before it, only an empty line keeps it from being a line of the paragraph.
+    fn is_lazy_html(&self, node: &Node) -> bool {
         if !self.options.flavor.is_oxfmt() || node.kind != Kind::Html {
             return false;
         }
-        let (Some(previous), Some(item)) = (self.node(node.previous), self.node(node.parent))
+        let (Some(previous), Some(parent)) = (self.node(node.previous), self.node(node.parent))
         else {
             return false;
         };
-        item.kind == Kind::ListItem
-            && previous.kind == Kind::Paragraph
+        previous.kind == Kind::Paragraph
             && self.end_line(previous) + 1 == self.start_line(node)
-            && self
-                .node(item.first_child)
-                .is_some_and(|first| self.column(node.start) < self.column(first.start))
+            && match parent.kind {
+                Kind::ListItem => self
+                    .node(parent.first_child)
+                    .is_some_and(|first| self.column(node.start) < self.column(first.start)),
+                Kind::Blockquote => self.column(node.start) <= self.column(parent.start),
+                _ => false,
+            }
     }
 
     // ───────────────────────────── children ─────────────────────────────
@@ -624,7 +713,7 @@ impl<'a> Printer<'a, '_> {
         let mut source = self.source(node);
         if node.kind == Kind::List
             && !self.is_mdx
-            && self.options.prose_wrap != ProseWrap::Always
+            && (self.options.prose_wrap != ProseWrap::Always || self.options.flavor.is_oxfmt())
             && self.has_ancestor(id, |it| it.kind == Kind::Blockquote)
         {
             // `/\n>\s*$/`
@@ -1094,7 +1183,14 @@ impl<'a> Printer<'a, '_> {
                 false => Some((word.has_leading_punctuation, first_char(value)?.0)),
             }
         };
-        let is_word = |it: (bool, char)| !it.0 && !is_commonmark_whitespace(it.1);
+        let is_word = |it: (bool, char)| {
+            let is_punctuation = match self.options.flavor.is_oxfmt() {
+                // It asks its parser, to which symbols are punctuation.
+                true => bun_md::helpers::is_unicode_punctuation(it.1 as u32),
+                false => it.0,
+            };
+            !is_punctuation && !is_commonmark_whitespace(it.1)
+        };
         word(node.previous, true).is_some_and(is_word)
             || word(node.next, false).is_some_and(is_word)
     }
@@ -1304,7 +1400,10 @@ impl<'a> Printer<'a, '_> {
                     parts.flatten(doc);
                     child = next;
                 }
-                parts.finish()
+                match self.would_be_front_matter(node) {
+                    true => docs!["\\", parts.finish()],
+                    false => parts.finish(),
+                }
             }
             Kind::Sentence => self.print_sentence(id, node),
             Kind::Emphasis => {
@@ -1399,6 +1498,9 @@ impl<'a> Printer<'a, '_> {
                 let mut value = self.str(node.value);
                 if self.kind(node.parent) == Some(Kind::Root) && node.next == NONE {
                     value = crate::text::trim_end(value);
+                }
+                if self.options.flavor.is_oxfmt() {
+                    value = value.strip_suffix(b"\n").unwrap_or(value);
                 }
                 let is_comment =
                     value.len() >= 7 && value.starts_with(b"<!--") && value.ends_with(b"-->");
@@ -1525,6 +1627,9 @@ impl<'a> Printer<'a, '_> {
                 });
                 let is_inline =
                     only_paragraph.is_some_and(|paragraph| match self.options.prose_wrap {
+                        ProseWrap::Never if self.options.flavor.is_oxfmt() => {
+                            !self.has_hard_break(node.first_child)
+                        }
                         ProseWrap::Never => true,
                         ProseWrap::Preserve => {
                             self.start_line(paragraph) == self.end_line(paragraph)
@@ -1632,13 +1737,27 @@ impl<'a> Printer<'a, '_> {
 
     /// What is behind the opening fence of the block of code `node`.
     fn print_info(&self, node: &Node) -> Doc<'a> {
-        let meta = self.str(node.third);
+        let part = |text: Str| -> Doc<'a> {
+            let text = self.str(text);
+            if !self.options.flavor.is_oxfmt() || !bun_core::strings::contains_char(text, b'\\') {
+                return Doc::from(text);
+            }
+            // oxfmt: or it would escape what follows it when it is read again.
+            let mut escaped = Vec::with_capacity(text.len() + 2);
+            for &byte in text {
+                if byte == b'\\' {
+                    escaped.push(b'\\');
+                }
+                escaped.push(byte);
+            }
+            Doc::from(escaped)
+        };
         docs![
-            self.str(node.second),
-            if meta.is_empty() {
+            part(node.second),
+            if self.str(node.third).is_empty() {
                 Doc::EMPTY
             } else {
-                docs![" ", meta]
+                docs![" ", part(node.third)]
             }
         ]
     }
@@ -1715,13 +1834,14 @@ impl<'a> Printer<'a, '_> {
             if has_line_ranges(self.str(node.third)) {
                 return None;
             }
-            // Nothing but white space in a language that is formatted: nothing.
+            // Nothing but white space in a language that is formatted: an empty line.
             if crate::text::trim_end(code).is_empty() && super::parser_of_oxfmt(language).is_some()
             {
                 let style = vec![self.fence_unit(node); 3];
                 return Some(docs![
                     style.clone(),
                     self.print_info(node),
+                    hardline(),
                     hardline(),
                     style
                 ]);

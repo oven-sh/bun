@@ -14,14 +14,16 @@ use bun_core::StackCheck;
 use bun_core::lexer as identifier;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
-use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
-use std::simd::u8x16;
 
 use crate::json::JSONOptions;
 use crate::json_index::{IndexError, is_ls_ps};
 use crate::json_stage2::is_exotic_whitespace;
 
 type PResult<T = ()> = crate::Result<T>;
+
+/// AN EXPERIMENT ON CYCLES, for a build or two. Bits: 1 the lines of a text are touched before it is
+/// read, 2 a branch on whether a string has 8 bytes, 4 the indentation is not guessed.
+pub(crate) static VARIANT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
@@ -38,6 +40,7 @@ pub(crate) struct Parser<'a, 's> {
     /// What is wrong with a `/`. There are no tokens from there on.
     pub(crate) index_error: Option<IndexError>,
     opts: JSONOptions,
+    variant: u8,
     is_json5: bool,
     /// Where the first token of a text of JSON5 starts.
     first_token: usize,
@@ -104,6 +107,28 @@ fn is_rare(c: u8) -> bool {
     c >= 0x80 || c == 0x0B || c == 0x0C
 }
 
+/// With what a line starts.
+#[derive(Clone, Copy)]
+struct Indentation {
+    /// The first 8 bytes of the line.
+    bytes: u64,
+    /// How many of them are before the first token. 8 if that is not known, or if they are more.
+    len: usize,
+}
+
+impl Indentation {
+    const UNKNOWN: Indentation = Indentation { bytes: 0, len: 8 };
+
+    /// Of the line that starts at `start`, with `bytes`, and has its first token at `token`.
+    #[inline(always)]
+    fn between(bytes: u64, start: usize, token: usize) -> Indentation {
+        match token - start {
+            len @ ..8 => Indentation { bytes, len },
+            _ => Indentation::UNKNOWN,
+        }
+    }
+}
+
 /// What is before the place from which a token is looked for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Before {
@@ -115,30 +140,49 @@ enum Before {
     Backslash,
 }
 
-/// A bit for each of `bytes` that is `quote`, a backslash or a control character.
-#[inline(always)]
-fn special_bytes(bytes: &[u8; 16], quote: u8) -> u32 {
-    let bytes = u8x16::from_array(*bytes);
-    let special = bytes.simd_eq(u8x16::splat(quote))
-        | bytes.simd_eq(u8x16::splat(b'\\'))
-        | bytes.simd_lt(u8x16::splat(0x20));
-    special.to_bitmask() as u32
-}
+const ONES: u64 = 0x0101_0101_0101_0101;
+const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
 
-/// The index of the lowest bit of `bits`, which are 16. 16 if there is none.
+/// A bit in each of `bytes` that is `quote`, a backslash or a control character, exact up to the first.
 #[inline(always)]
-fn first_of_16(bits: u32) -> usize {
-    (bits | (1 << 16)).trailing_zeros() as usize
+fn special_bytes(bytes: &[u8; 8], quote: u8) -> u64 {
+    let word = u64::from_le_bytes(*bytes);
+    // A byte that is zero, or less than 0x20, borrows. What is not ASCII is never meant.
+    let is_quote = (word ^ (ONES * u64::from(quote))).wrapping_sub(ONES);
+    let is_backslash = (word ^ (ONES * u64::from(b'\\'))).wrapping_sub(ONES);
+    let is_control = word.wrapping_sub(ONES * 0x20);
+    (is_quote | is_backslash | is_control) & !word & HIGH_BITS
 }
 
 /// How many of the first 16 bytes of `text` are before the first `quote`, backslash or control
 /// character. 0 if `text` is shorter.
 #[inline(always)]
 fn short_plain_len(text: &[u8], quote: u8) -> usize {
-    match text.first_chunk::<16>() {
-        Some(bytes) => first_of_16(special_bytes(bytes, quote)),
-        None => 0,
+    let Some((first, rest)) = text.split_first_chunk::<8>() else {
+        return 0;
+    };
+    let Some(second) = rest.first_chunk::<8>() else {
+        return 0;
+    };
+    // Without a branch: whether a string has 8 bytes is a coin toss. 64 zeros if there is none.
+    let in_first = special_bytes(first, quote).trailing_zeros() / 8;
+    let in_second = special_bytes(second, quote).trailing_zeros() / 8;
+    (in_first + if in_first == 8 { in_second } else { 0 }) as usize
+}
+
+#[inline(always)]
+fn short_plain_len_with_a_branch(text: &[u8], quote: u8) -> usize {
+    let Some((first, rest)) = text.split_first_chunk::<8>() else {
+        return 0;
+    };
+    let Some(second) = rest.first_chunk::<8>() else {
+        return 0;
+    };
+    let found = special_bytes(first, quote);
+    if found != 0 {
+        return (found.trailing_zeros() / 8) as usize;
     }
+    8 + (special_bytes(second, quote).trailing_zeros() / 8) as usize
 }
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. It can also
@@ -148,7 +192,7 @@ fn plain_len(text: &[u8], quote: u8) -> Option<usize> {
     if bun_core::env::IS_NATIVE {
         bun_highway::index_of_interesting_character_in_string_literal(text, quote)
     } else {
-        plain_len_of_any_text(text, quote)
+        plain_len_by_words(text, quote)
     }
 }
 
@@ -156,18 +200,17 @@ fn plain_len(text: &[u8], quote: u8) -> Option<usize> {
 #[inline]
 fn plain_ascii_len(text: &[u8]) -> usize {
     let is_plain = |b: &&u8| (0x20..0x80).contains(*b) && **b != b'\\';
-    let Some((first, rest)) = text.split_first_chunk::<16>() else {
+    let Some((first, rest)) = text.split_first_chunk::<8>() else {
         return text.iter().take_while(is_plain).count();
     };
-    let is_not_ascii = u8x16::from_array(*first).simd_ge(u8x16::splat(0x80));
-    let found = special_bytes(first, b'\\') | is_not_ascii.to_bitmask() as u32;
-    if found != 0 {
-        return first_of_16(found);
-    }
     if !bun_core::env::IS_NATIVE {
-        return 16 + rest.iter().take_while(is_plain).count();
+        return text.iter().take_while(is_plain).count();
     }
-    16 + plain_len(rest, b'\\').unwrap_or(rest.len())
+    let found = special_bytes(first, b'\\') | (u64::from_le_bytes(*first) & HIGH_BITS);
+    if found != 0 {
+        return (found.trailing_zeros() / 8) as usize;
+    }
+    8 + plain_len(rest, b'\\').unwrap_or(rest.len())
 }
 
 #[inline(always)]
@@ -178,14 +221,14 @@ fn loc_at(p: usize) -> Loc {
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. For text
 /// that is not ASCII, at which the kernel stops.
-fn plain_len_of_any_text(text: &[u8], quote: u8) -> Option<usize> {
+fn plain_len_by_words(text: &[u8], quote: u8) -> Option<usize> {
     let mut i = 0;
-    while let Some(bytes) = text.get(i..).and_then(|rest| rest.first_chunk::<16>()) {
+    while let Some(bytes) = text.get(i..).and_then(|rest| rest.first_chunk::<8>()) {
         let found = special_bytes(bytes, quote);
         if found != 0 {
-            return Some(i + first_of_16(found));
+            return Some(i + (found.trailing_zeros() / 8) as usize);
         }
-        i += 16;
+        i += 8;
     }
     while let Some(&b) = text.get(i) {
         if b == quote || b == b'\\' || b < 0x20 {
@@ -227,6 +270,7 @@ impl<'a, 's> Parser<'a, 's> {
             first_comment: None,
             index_error: None,
             opts,
+            variant: VARIANT.load(core::sync::atomic::Ordering::Relaxed),
             is_json5: false,
             first_token: 0,
             token_start: 0,
@@ -243,6 +287,11 @@ impl<'a, 's> Parser<'a, 's> {
             dup_maps: Vec::new(),
             spill_depth: 0,
         };
+        if parser.variant & 1 != 0 {
+            // All at once: what reads the text waits for each line in turn.
+            let lines = parser.contents.chunks(64).take(64);
+            core::hint::black_box(lines.fold(0u8, |all, line| all | line[0]));
+        }
         parser.skip_from(0);
         parser
     }
@@ -258,29 +307,23 @@ impl<'a, 's> Parser<'a, 's> {
 
     // ───────────────────────────── tokens ─────────────────────────────
 
-    /// To the token that starts at `from` or behind it. `from` is behind a token.
+    /// To the token that starts at `from` or behind it, which is returned. `from` is behind a token.
+    ///
+    /// What reads objects, arrays and strings hands the place on as a value. `at` has it too, for all
+    /// that is rare, but to load it again is to wait for the store.
     #[inline(always)]
-    fn skip_from(&mut self, from: usize) {
+    fn skip_from(&mut self, from: usize) -> usize {
         let contents = self.contents;
         let mut at = from;
+        // By comparisons only. Where the next token starts is not computed from what is loaded: white
+        // space repeats from line to line, so the branches are predicted and nothing waits for a load.
         while let Some(&b) = contents.get(at) {
             if b > b' ' {
                 if b != b'/' {
                     break;
                 }
                 at = self.comment_end(at);
-            } else if b == b'\n' {
-                at += 1;
-                // The indentation of the line, 16 blanks at a time.
-                while let Some(bytes) = contents.get(at..).and_then(|it| it.first_chunk::<16>()) {
-                    let other = u8x16::from_array(*bytes).simd_ne(u8x16::splat(b' '));
-                    let other = other.to_bitmask() as u32;
-                    at += first_of_16(other);
-                    if other != 0 {
-                        break;
-                    }
-                }
-            } else if matches!(b, b' ' | b'\t' | b'\r') {
+            } else if matches!(b, b' ' | b'\n' | b'\t' | b'\r') {
                 at += 1;
             } else {
                 break;
@@ -288,6 +331,7 @@ impl<'a, 's> Parser<'a, 's> {
         }
         self.gap_start = from;
         self.at = at;
+        at
     }
 
     /// Whether there is a `\n` or a `\r` between the token before and `at`.
@@ -316,10 +360,38 @@ impl<'a, 's> Parser<'a, 's> {
         true
     }
 
-    /// Past a token of one byte.
+    /// Past the comma at `p`. `indentation`: what was between the line break behind the comma before, or
+    /// behind the bracket, and the token behind it.
+    ///
+    /// The lines of an object start alike. So where the next token starts is a guess that is checked,
+    /// and nothing waits for what is loaded. The same bytes from the same start are skipped alike.
     #[inline(always)]
-    fn bump(&mut self) {
-        self.skip_from(self.at + 1);
+    fn bump_comma(&mut self, p: usize, indentation: &mut Indentation) -> usize {
+        let Indentation { bytes, len } = *indentation;
+        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 10)
+            && let Some(line) = line.first_chunk::<8>()
+        {
+            let line = u64::from_le_bytes(*line);
+            if len < 8 && self.variant & 4 == 0 {
+                let other = (line ^ bytes) & ((1 << (8 * len)) - 1);
+                let first = (line >> (8 * len)) as u8;
+                if other == 0 && first > b' ' && first != b'/' {
+                    self.gap_start = p + 1;
+                    self.at = p + 2 + len;
+                    return p + 2 + len;
+                }
+            }
+            let next = self.skip_from(p + 1);
+            *indentation = Indentation::between(line, p + 2, next);
+            return next;
+        }
+        self.skip_from(p + 1)
+    }
+
+    /// Past the token of one byte at `p`.
+    #[inline(always)]
+    fn bump(&mut self, p: usize) -> usize {
+        self.skip_from(p + 1)
     }
 
     /// The end of the comment that starts at `start`, where there is a `/`. The end of the text if it is
@@ -440,7 +512,7 @@ impl<'a, 's> Parser<'a, 's> {
             let rest = contents.get(i..)?;
             i += match is_ascii {
                 true => plain_len(rest, quote)?,
-                false => plain_len_of_any_text(rest, quote)?,
+                false => plain_len_by_words(rest, quote)?,
             };
             let b = contents[i];
             if b == quote {
@@ -600,15 +672,11 @@ impl<'a, 's> Parser<'a, 's> {
         (p < self.contents.len()).then_some(p)
     }
 
+    /// The first byte at `p`, which is `at`, or behind it that is no white space, 0xFF at the end of the
+    /// text, and the start of its token.
     #[inline(always)]
-    fn peek_byte(&mut self) -> u8 {
-        self.peek().0
-    }
-
-    /// The first byte that is no white space, 0xFF at the end of the text, and the start of its token.
-    #[inline(always)]
-    fn peek(&mut self) -> (u8, usize) {
-        let p = self.at;
+    fn peek(&mut self, p: usize) -> (u8, usize) {
+        debug_assert_eq!(p, self.at);
         let Some(&b) = self.contents.get(p) else {
             return (0xFF, p);
         };
@@ -679,7 +747,7 @@ impl<'a, 's> Parser<'a, 's> {
             b'{' => self.parse_object(loc),
             b'[' => self.parse_array(loc),
             b'"' | b'\'' => {
-                let s = E::EString::init(self.parse_string_utf8()?.slice());
+                let s = E::EString::init(self.parse_string_utf8(start)?.0.slice());
                 Ok(Expr::init(s, loc))
             }
             _ => self.parse_scalar(loc),
@@ -734,8 +802,8 @@ impl<'a, 's> Parser<'a, 's> {
     }
 
     #[inline(always)]
-    fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
-        let start = self.at;
+    fn parse_json_value(&mut self, start: usize) -> PResult<(E::JsonValue, Loc, usize)> {
+        debug_assert_eq!(start, self.at);
         if start >= self.contents.len() {
             return Err(self.unexpected_end());
         }
@@ -746,16 +814,19 @@ impl<'a, 's> Parser<'a, 's> {
                 let Data::EObjectJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok((E::JsonValue::Object(r), e.loc))
+                Ok((E::JsonValue::Object(r), e.loc, self.at))
             }
             b'[' => {
                 let e = self.parse_array(loc)?;
                 let Data::EArrayJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok((E::JsonValue::Array(r), e.loc))
+                Ok((E::JsonValue::Array(r), e.loc, self.at))
             }
-            b'"' | b'\'' => Ok((E::JsonValue::String(self.parse_string_utf8()?), loc)),
+            b'"' | b'\'' => {
+                let (string, next) = self.parse_string_utf8(start)?;
+                Ok((E::JsonValue::String(string), loc, next))
+            }
             _ => {
                 let e = self.parse_scalar(loc)?;
                 let value_loc = e.loc;
@@ -770,43 +841,64 @@ impl<'a, 's> Parser<'a, 's> {
                         _ => unreachable!("not a JSON leaf"),
                     },
                     value_loc,
+                    self.at,
                 ))
             }
         }
     }
 
-    /// The string at `at`, which is in double quotes. `IS_NAME`: a colon that follows at once is passed
-    /// too, and that is returned.
+    /// The string at `open`, which is in double quotes, and the token behind it. `IS_NAME`: a colon that
+    /// follows at once is passed too, and that is returned.
     #[inline(always)]
-    fn parse_short_string<const IS_NAME: bool>(&mut self) -> PResult<(E::Str, bool)> {
-        let open = self.at;
+    fn parse_short_string<const IS_NAME: bool>(
+        &mut self,
+        open: usize,
+    ) -> PResult<(E::Str, bool, usize)> {
         let rest = &self.contents[open + 1..];
-        let len = short_plain_len(rest, b'"');
+        let len = match self.variant & 2 != 0 {
+            true => short_plain_len_with_a_branch(rest, b'"'),
+            false => short_plain_len(rest, b'"'),
+        };
         if rest.get(len) == Some(&b'"') {
-            let has_colon = IS_NAME && rest.get(len + 1) == Some(&b':');
-            self.skip_from(open + len + 2 + usize::from(has_colon));
-            return Ok((E::Str::new(&rest[..len]), has_colon));
+            let string = E::Str::new(&rest[..len]);
+            // A branch, which is predicted, and not a sum.
+            if IS_NAME && rest.get(len + 1) == Some(&b':') {
+                return Ok((string, true, self.skip_from(open + len + 3)));
+            }
+            return Ok((string, false, self.skip_from(open + len + 2)));
         }
-        Ok((self.parse_long_string(open, open + 1 + len)?, false))
+        let (string, next) = self.parse_long_string(open, open + 1 + len)?;
+        Ok((string, false, next))
     }
 
-    /// The string at `at`.
+    /// The string at `open`, and the token behind it.
     #[inline(always)]
-    fn parse_string_utf8(&mut self) -> PResult<E::Str> {
-        match self.contents[self.at] {
-            b'"' => Ok(self.parse_short_string::<false>()?.0),
-            _ => self.parse_long_string(self.at, self.at + 1),
+    fn parse_string_utf8(&mut self, open: usize) -> PResult<(E::Str, usize)> {
+        match self.contents[open] {
+            b'"' => {
+                let (string, _, next) = self.parse_short_string::<false>(open)?;
+                Ok((string, next))
+            }
+            _ => self.parse_long_string(open, open + 1),
         }
     }
 
     /// A string of more than 16 bytes, at the end of the text, or with a backslash or a control
     /// character in it. None of them, and no quote, is before `from`.
     #[inline(never)]
-    fn parse_long_string(&mut self, open: usize, from: usize) -> PResult<E::Str> {
+    fn parse_long_string(&mut self, open: usize, from: usize) -> PResult<(E::Str, usize)> {
         if self.is_json5 {
             let (string, end) = self.json5_string(open)?;
-            self.skip_from(end);
-            return Ok(string);
+            return Ok((string, self.skip_from(end)));
+        }
+        // Printable ASCII up to the quote, as a rule.
+        let quote = self.contents[open];
+        let rest = self.contents.get(from..).unwrap_or_default();
+        if let Some(len) = plain_len(rest, quote)
+            && rest[len] == quote
+        {
+            let string = E::Str::new(&self.contents[open + 1..from + len]);
+            return Ok((string, self.skip_from(from + len + 1)));
         }
         self.token_start = open;
         let Some((close, first_special)) = self.string_close_from(open, from) else {
@@ -814,9 +906,9 @@ impl<'a, 's> Parser<'a, 's> {
             unreachable!()
         };
         let body = &self.contents[open + 1..close];
-        self.skip_from(close + 1);
+        let next = self.skip_from(close + 1);
         let Some(first_special) = first_special else {
-            return Ok(E::Str::new(body));
+            return Ok((E::Str::new(body), next));
         };
         let special = self.contents[first_special];
         if special != b'\\' {
@@ -827,7 +919,7 @@ impl<'a, 's> Parser<'a, 's> {
         self.decode_escapes(body, &mut buf)?;
         let owned = self.alloc_owned_str(&buf);
         self.scratch_str = buf;
-        Ok(owned)
+        Ok((owned, next))
     }
 
     fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
@@ -866,7 +958,8 @@ impl<'a, 's> Parser<'a, 's> {
 
     #[inline(always)]
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
-        let start = self.at;
+        let start = loc.start as usize;
+        debug_assert_eq!(start, self.at);
         let rest = &self.contents[start..];
         match rest[0] {
             b't' if rest.starts_with(b"true") && self.ends_at(start + 4) => {
@@ -955,13 +1048,14 @@ impl<'a, 's> Parser<'a, 's> {
                 false => self.too_deeply_nested(loc),
             });
         }
-        self.bump();
+        let mut next = self.bump(loc.start as usize);
+        let mut indentation = Indentation::UNKNOWN;
         let mark = self.scratch_json_items.len();
-        self.peek();
+        next = self.peek(next).1;
         let mut is_single_line = !self.is_after_newline();
         let mut close_loc = Loc::EMPTY;
         let result: PResult = loop {
-            let (b, p) = self.peek();
+            let (b, mut p) = self.peek(next);
             if p >= self.contents.len() {
                 if self.is_json5 {
                     break Err(match self.scratch_json_items.len() != mark {
@@ -976,7 +1070,7 @@ impl<'a, 's> Parser<'a, 's> {
             if b == b']' {
                 is_single_line = is_single_line && !self.is_after_newline();
                 close_loc = loc_at(p);
-                self.bump();
+                self.bump(p);
                 break Ok(());
             }
             if self.scratch_json_items.len() != mark {
@@ -992,8 +1086,8 @@ impl<'a, 's> Parser<'a, 's> {
                     break Err(crate::Error::ParserError);
                 }
                 is_single_line = is_single_line && !self.is_after_newline();
-                self.bump();
-                let (after_b, after) = self.peek();
+                let after_comma = self.bump_comma(p, &mut indentation);
+                let (after_b, after) = self.peek(after_comma);
                 is_single_line = is_single_line && !self.is_after_newline();
                 if after_b == b']' {
                     if !self.opts.allow_trailing_commas {
@@ -1007,16 +1101,18 @@ impl<'a, 's> Parser<'a, 's> {
                         );
                     }
                     close_loc = loc_at(after);
-                    self.bump();
+                    self.bump(after);
                     break Ok(());
                 }
+                p = after;
             }
-            match self.parse_json_value() {
-                Ok((item, item_loc)) => {
+            match self.parse_json_value(p) {
+                Ok((item, item_loc, behind)) => {
                     if self.opts.record_value_locs {
                         self.scratch_item_locs.push(item_loc);
                     }
-                    self.scratch_json_items.push(item)
+                    self.scratch_json_items.push(item);
+                    next = behind;
                 }
                 Err(e) => break Err(e),
             }
@@ -1046,16 +1142,17 @@ impl<'a, 's> Parser<'a, 's> {
                 false => self.too_deeply_nested(loc),
             });
         }
-        self.bump();
+        let mut next = self.bump(loc.start as usize);
+        let mut indentation = Indentation::UNKNOWN;
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
-        self.peek();
+        next = self.peek(next).1;
         let mut is_single_line = !self.is_after_newline();
         let mut close_loc = Loc::EMPTY;
         let warn_dup = self.opts.json_warn_duplicate_keys;
 
         let result: PResult = loop {
-            let (mut b, mut p) = self.peek();
+            let (mut b, mut p) = self.peek(next);
             if p >= self.contents.len() {
                 if self.is_json5 {
                     break Err(match self.scratch_props.len() != mark {
@@ -1070,7 +1167,7 @@ impl<'a, 's> Parser<'a, 's> {
             if b == b'}' {
                 is_single_line = is_single_line && !self.is_after_newline();
                 close_loc = loc_at(p);
-                self.bump();
+                self.bump(p);
                 break Ok(());
             }
             if self.scratch_props.len() != mark {
@@ -1086,8 +1183,8 @@ impl<'a, 's> Parser<'a, 's> {
                     break Err(crate::Error::ParserError);
                 }
                 is_single_line = is_single_line && !self.is_after_newline();
-                self.bump();
-                let (after_b, after) = self.peek();
+                let after_comma = self.bump_comma(p, &mut indentation);
+                let (after_b, after) = self.peek(after_comma);
                 is_single_line = is_single_line && !self.is_after_newline();
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
@@ -1101,7 +1198,7 @@ impl<'a, 's> Parser<'a, 's> {
                         );
                     }
                     close_loc = loc_at(after);
-                    self.bump();
+                    self.bump(after);
                     break Ok(());
                 }
                 b = after_b;
@@ -1110,17 +1207,18 @@ impl<'a, 's> Parser<'a, 's> {
 
             let key_start = p;
             let key = if b == b'"' {
-                self.parse_short_string::<true>()
+                self.parse_short_string::<true>(key_start)
             } else if b == b'\'' {
                 self.parse_long_string(key_start, key_start + 1)
-                    .map(|key| (key, false))
+                    .map(|(key, next)| (key, false, next))
             } else if self.is_json5 {
-                self.parse_json5_name(key_start).map(|key| (key, false))
+                self.parse_json5_name(key_start)
+                    .map(|(key, next)| (key, false, next))
             } else {
                 self.expected(key_start, "string");
                 break Err(self.unexpected(key_start));
             };
-            let (key, has_colon) = match key {
+            let (key, has_colon, mut value_start) = match key {
                 Ok(key) => key,
                 Err(e) => break Err(e),
             };
@@ -1132,20 +1230,22 @@ impl<'a, 's> Parser<'a, 's> {
             }
 
             if !has_colon {
-                if self.peek_byte() != b':' {
+                let (c, colon) = self.peek(value_start);
+                if c != b':' {
                     if self.is_json5 {
                         break Err(self.json5_expected_colon());
                     }
                     self.expected(self.at, "\":\"");
                     break Err(crate::Error::ParserError);
                 }
-                self.bump();
+                value_start = self.bump(colon);
             }
 
-            let (value, value_loc) = match self.parse_json_value() {
+            let (value, value_loc, behind) = match self.parse_json_value(value_start) {
                 Ok(v) => v,
                 Err(e) => break Err(e),
             };
+            next = behind;
             if self.opts.record_value_locs {
                 self.scratch_prop_value_locs.push(value_loc);
             }
@@ -1623,7 +1723,7 @@ impl<'a, 's> Parser<'a, 's> {
     /// From now on the text is read as JSON5.
     pub(crate) fn read_as_json5(&mut self) {
         self.is_json5 = true;
-        self.peek();
+        self.peek(self.at);
         self.first_token = self.at;
     }
 
@@ -1681,7 +1781,7 @@ impl<'a, 's> Parser<'a, 's> {
 
     /// Nothing but white space and comments follows the value.
     pub(crate) fn json5_end(&mut self) -> PResult {
-        let (_, p) = self.peek();
+        let (_, p) = self.peek(self.at);
         if self.index_error.is_none() && self.json5_is_end(p) {
             return Ok(());
         }
@@ -1766,7 +1866,7 @@ impl<'a, 's> Parser<'a, 's> {
 
     /// The name at `p`, which is not in double quotes.
     #[cold]
-    fn parse_json5_name(&mut self, p: usize) -> PResult<E::Str> {
+    fn parse_json5_name(&mut self, p: usize) -> PResult<(E::Str, usize)> {
         match self.contents.get(p) {
             None | Some(0) => return Err(self.json5_error(Json5Error::UnexpectedEof, p)),
             Some(b'{' | b'}' | b'[' | b']' | b':' | b',') => {
@@ -1784,8 +1884,7 @@ impl<'a, 's> Parser<'a, 's> {
                 return Err(self.json5_error(Json5Error::InvalidIdentifier, end));
             }
         };
-        self.skip_from(end);
-        Ok(name)
+        Ok((name, self.skip_from(end)))
     }
 
     /// The token at `p`, which is no punctuation and not the end of the text, and where it ends.
@@ -1918,7 +2017,7 @@ impl<'a, 's> Parser<'a, 's> {
         let mut copied_to = open + 1;
         let mut pos = open + 1;
         let end = loop {
-            let plain = plain_len_of_any_text(contents.get(pos..).unwrap_or_default(), quote);
+            let plain = plain_len_by_words(contents.get(pos..).unwrap_or_default(), quote);
             let Some(plain) = plain else {
                 break Err((Json5Error::UnterminatedString, contents.len()));
             };

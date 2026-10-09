@@ -1,7 +1,8 @@
 //! Where micromark, which Prettier parses Markdown with, does not do what
 //! CommonMark says, and what `bun format` prints for real documents depends on
-//! it. Each is behind `Options::micromark`, which only the formatter sets (one
-//! behind `Options::code_units`: a parser that follows micromark need not). And
+//! it. Each is behind `Options::micromark`, which only the formatter sets, or
+//! behind `Options::micromark_to_the_letter`: what oxfmt's parser, which follows
+//! micromark, leaves out on purpose. And
 //! what Prettier makes of MDX, with remark-parse 8: `Options::mdx`.
 
 use crate::types::Flags;
@@ -37,7 +38,7 @@ pub(crate) fn marker_next_to_marker_flanks(flags: &Flags) -> bool {
 /// 😀_a_
 /// ```
 pub(crate) fn astral_is_a_letter(flags: &Flags) -> bool {
-    flags.code_units
+    flags.micromark_to_the_letter
 }
 
 /// Two blanks at the end of a line are a hard break. To micromark they are not
@@ -65,7 +66,17 @@ pub(crate) fn tab_before_the_blanks_is_no_hard_break(flags: &Flags) -> bool {
 /// - +
 /// ```
 pub(crate) fn what_interrupts_does_so_for_the_whole_line(flags: &Flags) -> bool {
-    flags.micromark
+    flags.micromark_to_the_letter
+}
+
+/// A title in parentheses has no `(` in it that is not escaped. To micromark it
+/// can: the first `)` ends it.
+///
+/// ```markdown
+/// [a](b ((c))
+/// ```
+pub(crate) fn parenthesis_can_be_in_a_title(flags: &Flags) -> bool {
+    flags.micromark_to_the_letter
 }
 
 /// The last line of a paragraph is the header of a table if a delimiter row
@@ -128,6 +139,15 @@ pub(crate) fn tag_does_not_end_a_list(flags: &Flags) -> bool {
 /// a
 /// ```
 pub(crate) fn text_goes_on_in_an_empty_item(flags: &Flags) -> bool {
+    flags.mdx
+}
+
+/// remark-parse 8: `*` starts and ends emphasis whatever is next to it.
+///
+/// ```markdown
+/// **a **b, /* c */
+/// ```
+pub(crate) fn asterisks_do_not_look_around(flags: &Flags) -> bool {
     flags.mdx
 }
 

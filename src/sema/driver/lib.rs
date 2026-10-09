@@ -2243,7 +2243,7 @@ impl Host for WithOutputs<'_> {
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &bun_sema::resolve::Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }

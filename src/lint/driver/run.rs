@@ -90,6 +90,35 @@ const INITIAL_OXLINTRC: &[u8] = br#"{
   }
 }"#;
 
+/// The variables that tell oxlint that an agent runs it. Any value counts but an empty one.
+const AGENTS_FOR_OXLINT: [&[u8]; 12] = [
+    b"AI_AGENT",
+    b"CLAUDECODE",
+    b"CLAUDE_CODE",
+    b"REPL_ID",
+    b"GEMINI_CLI",
+    b"CODEX_SANDBOX",
+    b"CODEX_THREAD_ID",
+    b"COPILOT_CLI",
+    b"OPENCODE",
+    b"JUNIE_DATA",
+    b"JUNIE_SHIM_PATH",
+    b"CURSOR_AGENT",
+];
+
+/// Whether `agent` would be oxlint's format. `AGENT` alone decides if it is set, as everywhere in Bun.
+fn is_agent_for_oxlint() -> bool {
+    let get = |name: &[u8]| bun_core::getenv_z(&bun_core::ZBox::from_bytes(name));
+    let has = |name: &[u8], part: &[u8]| get(name).is_some_and(|it| strings::contains(it, part));
+    let is_set = |&name: &&[u8]| get(name).is_some_and(|it| !it.is_empty());
+    get(b"AGENT").is_none()
+        && (AGENTS_FOR_OXLINT.iter().any(is_set)
+            || has(b"PATH", b".pi/agent")
+            || has(b"PATH", b".pi\\agent")
+            || has(b"EDITOR", b"devin")
+            || has(b"TERM_PROGRAM", b"kiro"))
+}
+
 /// Why nothing can be linted: the message. ESLint throws, and exits with 2.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Fatal(pub(crate) Vec<u8>);
@@ -110,7 +139,8 @@ enum Needs {
     Nothing,
     /// A rule or a processor in JavaScript.
     Engine,
-    /// One for which the engine has to run the configuration file, with all that it imports.
+    /// One for which the engine has to run the configuration file, with all that it imports. These come first, so that what the
+    /// start of an engine is measured to take has that in it.
     Configuration,
 }
 
@@ -213,6 +243,8 @@ struct Run<'r> {
     environment: &'r Environment<'r>,
     out: Outcome,
     began: Instant,
+    /// Whether it stands in for oxlint, once that is known.
+    is_for_oxlint: Option<bool>,
 }
 
 /// What there is to say about the file of suppressions.
@@ -250,7 +282,7 @@ impl Run<'_> {
 
     /// Fails with the exit code that ESLint has for that, or oxlint, which says why on standard output.
     fn fail(mut self, text: &[u8]) -> Outcome {
-        match configs::is_for_oxlint(self.options.flavor, &self.environment.cwd) {
+        match self.is_for_oxlint() {
             true => {
                 let colors = (self.options.color).unwrap_or(self.environment.stdout.colors);
                 format::summary::write_error(&mut self.out.stdout, colors, text);
@@ -267,12 +299,16 @@ impl Run<'_> {
     /// Refuses the command line, which both do on standard error.
     fn refuse(mut self, text: &[u8]) -> Outcome {
         self.error(text);
-        self.out.exit_code =
-            match configs::is_for_oxlint(self.options.flavor, &self.environment.cwd) {
-                true => 1,
-                false => 2,
-            };
+        self.out.exit_code = match self.is_for_oxlint() {
+            true => 1,
+            false => 2,
+        };
         self.out
+    }
+
+    fn is_for_oxlint(&self) -> bool {
+        self.is_for_oxlint
+            .unwrap_or_else(|| configs::is_for_oxlint(self.options.flavor, &self.environment.cwd))
     }
 
     /// oxlint's `--init`, which however writes over a file that is there.
@@ -295,6 +331,7 @@ impl Run<'_> {
             Some(name) => &name[..],
             // An agent is saved from opening the files.
             None if self.environment.is_ai_agent => b"agent",
+            None if is_oxlint && is_agent_for_oxlint() => b"agent",
             None if is_oxlint && self.environment.is_github_action => b"github",
             None if is_oxlint => b"default",
             None => b"stylish",
@@ -636,8 +673,7 @@ impl Run<'_> {
             };
             loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
         }
-        // One engine is enough to run the configuration file.
-        let with_engine = (supported.iter()).filter(|it| needs(it) == Needs::Engine);
+        let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let most_engines = (pool.threads())
             .min(MOST_ENGINES)
             .min(context.js_plugins.most_realms());
@@ -662,11 +698,7 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (with_configuration, with_engine) = with_engine.split_at(count(Needs::Configuration));
-        let units: Vec<&[&Target]> = std::iter::once(with_configuration)
-            .chain(with_engine.chunks(1))
-            .collect();
-        let (next_unit, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let (next_with_engine, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
@@ -676,19 +708,20 @@ impl Run<'_> {
             }
         };
         pool.for_each(pool.threads(), 1, &|worker| {
-            let lint_units = || {
-                while let Some(unit) = units.get(next_unit.fetch_add(1, Ordering::Relaxed)) {
-                    unit.iter().for_each(|target| lint(target));
+            let lint_with_engine = || {
+                let next = || next_with_engine.fetch_add(1, Ordering::Relaxed);
+                while let Some(target) = with_engine.get(next()) {
+                    lint(target);
                 }
             };
             // A thread can have to wait for an engine, so every other one begins with what needs none.
             if worker % 2 == 0 {
-                lint_units();
+                lint_with_engine();
             }
             while let Some(target) = plain.get(next_plain.fetch_add(1, Ordering::Relaxed)) {
                 lint(target);
             }
-            lint_units();
+            lint_with_engine();
         });
         phases.linting = started.elapsed().as_secs_f64();
         if let Some(error) = failure.get_mut().take() {
@@ -750,6 +783,7 @@ impl Run<'_> {
         let is_oxlint = of_cwd
             .as_ref()
             .is_some_and(|it| it.flavor == Flavor::Oxlint);
+        self.is_for_oxlint = Some(is_oxlint || of_cwd.is_none() && loader.is_for_oxlint());
         let format = match self.format(is_oxlint) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),
@@ -775,7 +809,9 @@ impl Run<'_> {
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
+        let skipped_in_comments = Guarded::new(Vec::new());
         let context = Context {
+            skipped_in_comments: &skipped_in_comments,
             memory: &memory,
             atoms: &atoms,
             linter: &linter,
@@ -834,6 +870,20 @@ impl Run<'_> {
                 noun,
                 b" in JavaScript did not run, only the built-in rules have types: ",
                 &ids.join(&b", "[..]),
+            ]);
+        }
+        let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
+        if !in_comments.is_empty() {
+            bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
+            let noun: &[u8] = match in_comments.len() {
+                1 => b" rule that a comment turns on",
+                _ => b" rules that comments turn on",
+            };
+            loader.cannot_do(&[
+                in_comments.len().to_string().as_bytes(),
+                noun,
+                b" did not run, the configuration has to turn on a rule of the plugin: ",
+                &in_comments.join(&b", "[..]),
             ]);
         }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
@@ -1102,10 +1152,10 @@ impl Run<'_> {
         let updated = (writes || (options.prune_suppressions && exists)).then_some(exists);
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
-            suppressed.suppress(results, cwd, options.suppress_rule.as_deref());
+            suppressed.suppress(results, cwd, options.suppress_rule.as_deref(), is_oxlint);
             suppressed.save(&path)?;
         }
-        let unused = suppressed.apply(results, cwd);
+        let unused = suppressed.apply(results, cwd, is_oxlint);
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
             suppressed.save(&path)?;
@@ -1114,7 +1164,9 @@ impl Run<'_> {
                 ..Suppressed::default()
             });
         }
-        let is_new = |it: &LintMessage| it.severity == Severity::Error && it.rule_id.is_some();
+        let is_new = |it: &LintMessage| {
+            it.severity == Severity::Error && suppressions::rule_of(it, true).is_some()
+        };
         Ok(Suppressed {
             has_unused: !unused.is_empty(),
             has_new: is_oxlint
@@ -1153,6 +1205,13 @@ impl Run<'_> {
                 _ => ", ",
             };
             let _ = write!(self.out.stderr, "{before}{}", BStr::new(plugin));
+        }
+        if loading.linted_by_eslint > 0 {
+            let _ = write!(
+                self.out.stderr,
+                "; the package eslint has linted {} texts",
+                loading.linted_by_eslint
+            );
         }
         self.out.stderr.push(b'\n');
         // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
@@ -1202,6 +1261,7 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
         environment,
         out: Outcome::default(),
         began: Instant::now(),
+        is_for_oxlint: None,
     };
     let mut out = run.refuse(message);
     pretty!(
@@ -1218,6 +1278,7 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
         environment,
         out: Outcome::default(),
         began: Instant::now(),
+        is_for_oxlint: None,
     };
     run.execute()
 }

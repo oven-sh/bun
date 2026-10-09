@@ -115,6 +115,10 @@ pub struct Options {
     /// Goes on after a syntax error as TypeScript's parser does, and reports it. Not finished: what
     /// is not written yet is refused as without it.
     pub recovers: bool,
+    /// The tags of JSDoc comments are read as TypeScript's parser reads them: in a JavaScript file
+    /// they become types, casts and declarations, in a TypeScript file they are only looked at for
+    /// what the checker asks about them. Only [`parse`] does it, and only for TypeScript's dialect.
+    pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
 }
 
@@ -126,6 +130,9 @@ pub struct Scratch {
     stacks: parser::Stacks,
     /// The emptied lists of a file that is no longer needed.
     recycled: FileBuilder,
+    /// What `parser::jsdoc::read_by_checker` says of the TypeScript file that is parsed for the
+    /// second time. Otherwise 0.
+    jsdoc_wanted: u8,
 }
 
 impl Scratch {
@@ -154,7 +161,22 @@ pub fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    parser::Parser::run(text, options, Some(atoms), scratch)
+    let parsed = parser::Parser::run(text, options, Some(atoms), scratch)?;
+    if !options.reads_jsdoc || options.is_javascript {
+        return Ok(parsed);
+    }
+    // Which comments of a TypeScript file are read depends on all of them.
+    let is_declaration_file = options.is_declaration_file;
+    let comments = &parsed.file.comments;
+    let wanted = parser::jsdoc::read_by_checker(text, comments, is_declaration_file);
+    if wanted == 0 {
+        return Ok(parsed);
+    }
+    scratch.recycle(parsed.file);
+    scratch.jsdoc_wanted = wanted;
+    let parsed = parser::Parser::run(text, options, Some(atoms), scratch);
+    scratch.jsdoc_wanted = 0;
+    parsed
 }
 
 /// The HIR of `text`, with atoms that are the file's own: `Scratch::atoms` knows them until the next

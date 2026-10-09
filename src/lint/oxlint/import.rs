@@ -6,6 +6,7 @@
 use crate::ast_util::{is_specific_id, scope_made_by};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+pub use bun_lint::utils::oxlint::{has_module_syntax, is_script};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
@@ -74,60 +75,6 @@ pub fn common_js_require(call: Call<'_>) -> Option<Expr<'_>> {
         .first()
         .filter(|it| args.len() == 1 && it.tag() == ExprTag::String && !it.is_parenthesized())?;
     is_specific_id(call.callee(), "require").then_some(first)
-}
-
-/// An `await` that is in no function, in a file that can be a script or a module, makes it a module if what follows cannot be anything
-/// but its operand.
-fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>) -> bool {
-    let (file, after) = (e.file(), e.span().start + 5);
-    let next = skip_trivia(file.text(), after);
-    let rest = file.text().get(next as usize..).unwrap_or_default();
-    let starts_operand = match rest.first() {
-        Some(b'"' | b'\'' | b'0'..=b'9') => true,
-        Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80..) => !matches!(
-            rest.get(..bun_lint::tokens::token_len(rest)),
-            Some(b"of" | b"using" | b"in" | b"instanceof")
-        ),
-        _ => false,
-    };
-    starts_operand
-        && !text::has_line_break(file.slice(Span::new(after, next)))
-        && in_function
-            .find(Node::Expr(e), |_, parent| parent.as_func().map(|_| ()))
-            .is_none()
-}
-
-/// By its name the file can be a script or a module.
-fn is_either(file: &File) -> bool {
-    !matches!(file.path(), [.., b'.', b'm' | b'c', b'j' | b't', b's'])
-}
-
-/// oxc takes the file for a script, in which the `await` of `await (a)` that is in no function is the name of a function.
-pub fn is_script<'a>(file: &'a File<'a>) -> bool {
-    is_either(file) && !has_module_syntax(file)
-}
-
-/// `ModuleRecord::has_module_syntax`
-pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
-    let is_module_declaration = |stmt: Stmt| {
-        matches!(
-            stmt.tag(),
-            StmtTag::Import
-                | StmtTag::ExportNamed
-                | StmtTag::ExportStar
-                | StmtTag::ExportDefault
-                | StmtTag::ExportAssign
-                | StmtTag::ExportAsNamespace
-        ) || stmt.is_exported()
-    };
-    let mut in_function = AncestorMemo::default();
-    file.body().iter().any(is_module_declaration)
-        || file.has_exprs([ExprTag::ImportMeta])
-        || file.has_exprs([ExprTag::Await])
-            && is_either(file)
-            && file
-                .exprs_of_kind(ExprTag::Await)
-                .any(|it| is_unambiguous_await(it, &mut in_function))
 }
 
 /// The statements at the top level and in the namespaces, which is where an `import` or an `export` can be, in the order of the source.

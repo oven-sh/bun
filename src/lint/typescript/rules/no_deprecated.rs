@@ -47,6 +47,8 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 /// `getJsDocDeprecation` of what has been asked about in the file: the same few symbols are used over and over.
 #[derive(Default)]
 pub struct Deprecations<'a> {
+    /// tsgolint has no reason for a variable, whose comment is at the statement.
+    has_no_reasons_for_variables: bool,
     of_symbols: FxHashMap<TsSymbol<'a>, Option<&'a [u8]>>,
     of_signatures: FxHashMap<Signature<'a>, Option<&'a [u8]>>,
 }
@@ -55,7 +57,13 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
-        *self.of_symbols.entry(symbol).or_insert_with(|| symbol.deprecation())
+        let has_no_reasons_for_variables = self.has_no_reasons_for_variables;
+        *self.of_symbols.entry(symbol).or_insert_with(|| {
+            let reason = symbol.deprecation()?;
+            let is_variable =
+                || symbol.declarations().next().is_some_and(|it| it.kind() == SyntaxKind::VariableDeclaration);
+            Some(if has_no_reasons_for_variables && is_variable() { &b""[..] } else { reason })
+        })
     }
 
     /// `getJsDocDeprecation(signature)`
@@ -203,6 +211,27 @@ fn with_number_as_string<R>(n: f64, then: impl FnOnce(&[u8]) -> R) -> R {
     then(digits.get(at..).unwrap_or_default())
 }
 
+/// What tsgolint has of a reason: of `{@link a.b text}` the `text`.
+fn without_names_of_links(reason: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(reason.len());
+    let mut rest = reason;
+    while let Some(at) = strings::index_of(rest, b"{@link") {
+        let after = rest.get(at + b"{@link".len()..).unwrap_or_default();
+        let after = after.strip_prefix(b"code").or_else(|| after.strip_prefix(b"plain")).unwrap_or(after);
+        let Some(end) = strings::index_of_char_usize(after, b'}') else {
+            break;
+        };
+        let inside = text::trim_start(after.get(..end).unwrap_or_default());
+        let is_in_name = |c: &&u8| c.is_ascii_alphanumeric() || matches!(**c, b'_' | b'$' | b'.');
+        let name_len = inside.iter().take_while(is_in_name).count();
+        out.extend_from_slice(rest.get(..at).unwrap_or_default());
+        out.extend_from_slice(text::trim_start(inside.get(name_len..).unwrap_or_default()));
+        rest = after.get(end + 1..).unwrap_or_default();
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
 impl NoDeprecated {
     /// What `checkIdentifier` does once it has the reason.
     fn report<'a>(&self, node: IdentifierLike<'a>, reason: Option<&'a [u8]>, cx: &Cx<'a, Self>) {
@@ -219,6 +248,10 @@ impl NoDeprecated {
     }
 
     fn report_at<'a>(at: Span, name: Cow<'a, [u8]>, reason: &'a [u8], cx: &Cx<'a, Self>) {
+        let reason = match cx.language().is_oxlint && strings::contains(reason, b"{@link") {
+            true => Cow::Owned(without_names_of_links(reason)),
+            false => Cow::Borrowed(reason),
+        };
         match reason.is_empty() {
             true => cx.report(at, DEPRECATED).data("name", name),
             false => cx.report(at, DEPRECATED_WITH_REASON).data("name", name).data("reason", reason),
@@ -535,7 +568,7 @@ impl Rule for NoDeprecated {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Deprecations<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Deprecations<'a> {
         on.exprs([ExprTag::Ident], Self::check_identifier);
         on.exprs([ExprTag::Dot], Self::check_property);
         on.exprs([ExprTag::Index], Self::check_member_expression);
@@ -553,6 +586,6 @@ impl Rule for NoDeprecated {
         on.stmts([StmtTag::Try, StmtTag::ImportEquals, StmtTag::Module], Self::check_statement);
         on.members(Self::check_member);
         on.export_specs(Self::check_export_specifier);
-        Deprecations::default()
+        Deprecations { has_no_reasons_for_variables: file.language().is_oxlint, ..Deprecations::default() }
     }
 }

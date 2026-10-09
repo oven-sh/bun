@@ -12,7 +12,7 @@
 //! the order of a list, [`render`] has those of the plugin.
 
 use crate::finding::{Detail, Finding, Suggestion};
-use crate::oxlint::find;
+use crate::oxlint::{find, property_around};
 use bun_core::strings;
 use bun_lint::ast::{BinOp, File};
 use bun_lint::span::{Position, Span};
@@ -66,7 +66,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
     let Some(Detail::Error { span: Some(at), .. }) = details.get(first) else {
         return None;
     };
-    let at = *at;
+    let at = place_of(file, finding, *at);
     let reason = reason_of(file, finding, at);
     let is_error_detail = is_error_detail(finding, reason);
     if is_error_detail {
@@ -100,7 +100,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
             Detail::Error {
                 span: Some(span),
                 message: said,
-            } => (*span, said.as_deref()),
+            } => (place_of(file, finding, *span), said.as_deref()),
         };
         // `CompilerError.invariant()` says the reason where nothing else is to be said.
         let said = match said {
@@ -168,6 +168,17 @@ fn suggested(suggestion: &Suggestion) -> Suggested {
 }
 
 // ───────────────────────────── where the plugin's compiler has other words ─────────────────────────────
+
+/// A computed key in a pattern: the compiler there marks the property.
+fn place_of<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
+    let is_computed_key = finding.category == ErrorCategory::Todo
+        && finding.reason
+            == "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern";
+    match is_computed_key {
+        true => property_around(file, at).unwrap_or(at),
+        false => at,
+    }
+}
 
 fn reason_of<'a, 'f>(file: &'a File<'a>, finding: &'f Finding, at: Span) -> &'f str {
     match (finding.category, finding.reason.as_str()) {

@@ -176,6 +176,26 @@ fn report_useless<'a>(message: Message, right: Expr<'a>, removal: Span, ty: &'st
     report.suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
 }
 
+/// `value`: the type of what has the default, if it is known as one type.
+fn report_useless_default<'a>(
+    right: Expr<'a>,
+    removal: Span,
+    ty: &'static str,
+    value: Option<Type<'a>>,
+    cx: &Context<'a>,
+) {
+    let mut report = cx.report(right, USELESS_DEFAULT_ASSIGNMENT).data("type", ty);
+    if cx.language().is_oxlint {
+        // tsgolint names a type that is no union.
+        let why = match value.filter(|it| !it.has_flags(TypeFlags::UNION)) {
+            Some(value) => [&b" has type `"[..], &value.to_text(), b"` (not nullish)"].concat(),
+            None => b" is not nullish".to_vec(),
+        };
+        report = report.data("why", why);
+    }
+    report.suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
+}
+
 fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     let Some(right) = param.default() else {
         return;
@@ -230,7 +250,8 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
         is_type_parameter(param_type) || can_be_undefined(param_type)
     });
     if !default_can_be_used {
-        report_useless(USELESS_DEFAULT_ASSIGNMENT, right, removal, "parameter", cx);
+        let first = signatures.iter().find_map(|it| it.get_parameters().get(param_index));
+        report_useless_default(right, removal, "parameter", first.map(|it| it.get_type()), cx);
     }
 }
 
@@ -241,8 +262,8 @@ fn check_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) {
     let removal = Span::new(property.value().span().end, property.span().end);
     if right.is_ident("undefined") {
         report_useless(USELESS_UNDEFINED, right, removal, "property", cx);
-    } else if get_type_of_property(property, cx).is_some_and(|ty| !can_be_undefined(ty)) {
-        report_useless(USELESS_DEFAULT_ASSIGNMENT, right, removal, "property", cx);
+    } else if let Some(ty) = get_type_of_property(property, cx).filter(|ty| !can_be_undefined(*ty)) {
+        report_useless_default(right, removal, "property", Some(ty), cx);
     }
 }
 
@@ -280,7 +301,8 @@ fn check_element<'a>(
         false => tuple_args.iter().skip(target.fixed_length()).any(can_be_undefined),
     };
     if !is_used {
-        report_useless(USELESS_DEFAULT_ASSIGNMENT, right, removal, "property", cx);
+        let value = tuple_args.get(element_index).filter(|_| element_index < target.fixed_length());
+        report_useless_default(right, removal, "property", value, cx);
     }
 }
 

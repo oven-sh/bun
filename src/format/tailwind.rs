@@ -1,8 +1,10 @@
-//! oxfmt's `sortTailwindcss`: the classes of Tailwind CSS in a string are put in the order in which Tailwind writes
-//! their rules.
+//! oxfmt's `sortTailwindcss` and `prettier-plugin-tailwindcss`: the classes of Tailwind CSS in a string are put in the order
+//! in which Tailwind writes their rules.
 //!
 //! A port of `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which oxfmt calls. The order is known to
 //! Tailwind alone, which is JavaScript, so whoever calls the formatter brings it: [`Orders`].
+
+pub mod plugin;
 
 use bun_core::strings;
 use rustc_hash::FxHashSet;
@@ -27,6 +29,8 @@ pub struct Tailwind {
     pub attributes: Vec<Vec<u8>>,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
+    /// It is the plugin of Prettier, which finds the classes of a program in another way than oxfmt: [`plugin`].
+    pub follows_plugin: bool,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,

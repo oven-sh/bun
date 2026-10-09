@@ -1,0 +1,7 @@
+.text #{ $name } { a: b }
+.text-#{ $name } { a: b }
+.a-#{  $b  +  1 }-c { a: b }
+#{ $a }, #{$b } { a: b }
+.a { &-#{ $b } { c: d } }
+.a[b="#{ $c }"] { d: e }
+.x { #{ $prop }: 1; width: #{ $w }; #{ $p }-top: 2 }

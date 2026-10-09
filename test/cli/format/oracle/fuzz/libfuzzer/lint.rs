@@ -38,10 +38,18 @@ const VARIANTS: [(&str, Parser, SourceType); 20] = [
     ("a.stories.tsx", Parser::TypeScript, SourceType::Module),
 ];
 
+/// What rules of plugins read beside their options.
+const SETTINGS: &[u8] = br#"{"settings":{
+"react":{"version":"16.0","linkComponents":["Link",{"name":"A","linkAttribute":"to"}],"formComponents":["Form"]},
+"jsx-a11y":{"components":{"Button":"button","Img":"img"},"polymorphicPropName":"as","attributes":{"for":["htmlFor","for"]}},
+"next":{"rootDir":"app"},
+"jsdoc":{"tagNamePreference":{"returns":"return","param":"arg"},"ignorePrivate":true,"ignoreInternal":true},
+"vitest":{"typecheck":true}}}"#;
+
 struct Setup {
     linter: Linter,
-    /// For each of `VARIANTS`, as ESLint and as oxlint have it.
-    configs: Vec<[ResolvedConfig; 2]>,
+    /// For each of `VARIANTS`, as ESLint and as oxlint have it, without and with `SETTINGS`.
+    configs: Vec<[ResolvedConfig; 4]>,
 }
 
 fn setup() -> &'static Setup {
@@ -65,8 +73,11 @@ fn setup() -> &'static Setup {
             })
             .collect();
         let configs = VARIANTS.map(|(path, parser, source_type)| {
-            [false, true].map(|is_oxlint| {
-                let mut config = ResolvedConfig::from_json(linter.registry(), &Json::Null, &mut Vec::new());
+            [0, 1, 2, 3].map(|which| {
+                let is_oxlint = which & 1 != 0;
+                let json = if which & 2 != 0 { bun_lint::json::parse(SETTINGS) } else { None };
+                let json = json.unwrap_or(Json::Null);
+                let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
                 config.rules = rules.clone();
                 // How the comments of a text name rules.
                 config.prefers_typescript_rules = is_oxlint;
@@ -123,7 +134,7 @@ fn run(data: &[u8]) {
     };
     let which = input.variant as usize % VARIANTS.len();
     let (path, parser, source_type) = VARIANTS[which];
-    let config = &setup().configs[which][usize::from(input.has(0))];
+    let config = &setup().configs[which][usize::from(input.has(0)) + 2 * usize::from(input.has(5))];
     let fixes = input.has(1);
     let options = LintOptions {
         allow_inline_config: !input.has(2),
@@ -133,8 +144,9 @@ fn run(data: &[u8]) {
     };
     let mut run = Run::new(data);
     run.how = format!(
-        "{path} {parser:?} {source_type:?} oxlint={} fix={fixes} inline={} fixes={} suppressions={}",
+        "{path} {parser:?} {source_type:?} oxlint={} settings={} fix={fixes} inline={} fixes={} suppressions={}",
         input.has(0),
+        input.has(5),
         options.allow_inline_config,
         options.wants_fixes,
         options.wants_suppressions

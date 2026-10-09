@@ -1,4 +1,4 @@
-//! oxfmt's `sortTailwindcss` in HTML and Vue.
+//! oxfmt's `sortTailwindcss` in HTML, Vue and Angular.
 //!
 //! oxfmt leaves it to `prettier-plugin-tailwindcss`, which rewrites the values of attributes in the tree that Prettier has
 //! parsed: `transformHtml`. A value is a piece of the text, so here the text is rewritten before it is parsed.
@@ -11,12 +11,13 @@ use bun_core::strings;
 
 /// The plugin's `nameFromDynamicAttr`
 fn name_of_binding(name: &[u8], parser: Parser) -> Option<&[u8]> {
-    if parser != Parser::Vue {
-        return None;
+    match parser {
+        Parser::Vue => (name.strip_prefix(b":"))
+            .or_else(|| name.strip_prefix(b"v-bind:"))
+            .or_else(|| name.starts_with(b"v-").then_some(name)),
+        Parser::Angular => name.strip_prefix(b"[")?.strip_suffix(b"]"),
+        _ => None,
     }
-    (name.strip_prefix(b":"))
-        .or_else(|| name.strip_prefix(b"v-bind:"))
-        .or_else(|| name.starts_with(b"v-").then_some(name))
 }
 
 /// What the value of an attribute is to the plugin.
@@ -47,6 +48,7 @@ fn value_of(name: &[u8], parser: Parser, tailwind: &Tailwind) -> Value {
     };
     match name_of_binding(name, parser) {
         None if is_plain(name) => Value::Classes,
+        Some(b"ngClass") if parser == Parser::Angular => Value::Expression,
         Some(bound) if is_plain(bound) || options.iter().any(|it| it == name) => Value::Expression,
         _ => Value::Other,
     }
@@ -69,7 +71,7 @@ fn sorted_value(
     let sorted = match value_of(attr.name_span.of(text), parser, tailwind) {
         Value::Classes => tailwind.sorted(value).into_owned(),
         Value::Expression if strings::index_of_any(value, b"`'\"").is_some() => {
-            js::with_sorted_classes(parse?, value, tailwind)?
+            js::with_sorted_classes(parse?, value, tailwind, parser == Parser::Angular)?
         }
         _ => return None,
     };

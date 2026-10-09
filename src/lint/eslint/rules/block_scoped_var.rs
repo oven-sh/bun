@@ -49,7 +49,9 @@ impl BlockScopedVar {
         let Some(context) = Self::binding_context(statement, cx) else {
             return;
         };
-        let has_one_name = first.pat().tag() == PatTag::Ident && declarations.iter().nth(1).is_none();
+        // oxlint goes through them all.
+        let is_oxlint = cx.language().is_oxlint;
+        let has_one_name = is_oxlint || first.pat().tag() == PatTag::Ident && declarations.iter().nth(1).is_none();
         let mut check_binding = |pat: Pat<'a>| {
             let Some(symbol) = pat.symbol() else {
                 return;
@@ -78,10 +80,29 @@ impl BlockScopedVar {
             // They are in source order, but for those in one pattern, which is not partly in a block.
             // So those outside the block are at the two ends.
             let mut references = symbol.references();
-            if !references.any(&mut is_inside) {
+            if references.any(&mut is_inside) {
+                let _ = references.rfind(|&it| is_inside(it));
+            }
+            if !is_oxlint || symbol.declaration_count() < 2 {
                 return;
             }
-            let _ = references.rfind(|&it| is_inside(it));
+            // For oxlint another declaration is a use. One that gives the variable a value is a reference here.
+            let mut is_declared_inside = |declaration: Declaration<'a>| {
+                let Some(name) = declaration.name_span() else {
+                    return false;
+                };
+                if context.contains(name) || cx.has_reported_too_much() {
+                    return true;
+                }
+                if cx.file().reference_at(name.start).is_none() {
+                    cx.report(name, OUT_OF_SCOPE).data("name", symbol.name());
+                }
+                false
+            };
+            let mut declarations = symbol.declarations();
+            if declarations.any(&mut is_declared_inside) {
+                let _ = declarations.rfind(|&it| is_declared_inside(it));
+            }
         };
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut check_binding);

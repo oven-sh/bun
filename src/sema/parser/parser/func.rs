@@ -108,6 +108,9 @@ impl Parser<'_> {
         if !has_body(&self.f[func]) {
             self.fail_unless_recovering();
         }
+        if self.reads_jsdoc {
+            self.function_jsdoc(func, start);
+        }
         self.finish_expr(ExprKind::Fn(func), start)
     }
 
@@ -405,6 +408,9 @@ impl Parser<'_> {
             self.f.decorators.push((owner, decorator));
         }
         self.s.decorators.truncate(decorators);
+        if self.reads_jsdoc {
+            self.parameters_jsdoc(params);
+        }
         Some(params)
     }
 
@@ -813,7 +819,9 @@ impl Parser<'_> {
             }
             // `parseIdentifier`
             _ if self.is_identifier() => {
-                self.lx.has_escape = false;
+                if self.lx.has_escape {
+                    self.forget_escaped_keyword();
+                }
                 let name = self.note_identifier(self.lx.atom, self.lx.start);
                 (FnBody::Expr(self.token_expr(ExprKind::Ident(name))), 0)
             }
@@ -845,6 +853,9 @@ impl Parser<'_> {
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
+        }
+        if self.reads_jsdoc {
+            self.function_jsdoc(func, start);
         }
         Some(self.finish_expr(ExprKind::Fn(func), start))
     }
@@ -938,6 +949,9 @@ impl Parser<'_> {
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
+        }
+        if self.reads_jsdoc {
+            self.function_jsdoc(func, start);
         }
         self.finish_expr(ExprKind::Fn(func), start)
     }

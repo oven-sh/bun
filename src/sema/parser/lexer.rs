@@ -15,8 +15,6 @@ use std::simd::u8x16;
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
-    /// What [`Lexer::scan`] reads: `src`, or nothing. See [`Lexer::end_of_window`].
-    window: &'a [u8],
     pub(crate) token: T,
     /// A line break precedes the token.
     pub(crate) newline_before: bool,
@@ -59,6 +57,10 @@ pub(crate) struct Lexer<'a> {
     /// What [`Lexer::error`] has reported and the parser has not taken yet
     /// (`Parser::take_errors_of_scanner`), in the order of events.
     pub(crate) errors: Vec<Diagnostic>,
+    /// `skipJSDocLeadingAsterisks`: the lexer is in a type of a JSDoc comment.
+    pub(crate) skips_jsdoc_asterisks: bool,
+    /// `hir::File::jsdoc_asterisks`, in the order of events: not sorted, and one more than once.
+    pub(crate) jsdoc_asterisks: Vec<u32>,
     /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
     origins: Vec<u32>,
     /// Where values with escapes are decoded.
@@ -165,7 +167,6 @@ impl<'a> Lexer<'a> {
     pub(crate) fn new(src: &'a [u8], atoms: &'a dyn Intern, names: &'a mut Names) -> Self {
         Lexer {
             src,
-            window: src,
             token: T::Eof,
             newline_before: false,
             has_escape: false,
@@ -188,6 +189,8 @@ impl<'a> Lexer<'a> {
             flagged: Vec::new(),
             recovers: false,
             errors: Vec::new(),
+            skips_jsdoc_asterisks: false,
+            jsdoc_asterisks: Vec::new(),
             origins: Vec::new(),
             buffer: Vec::new(),
             stack_check: bun_core::StackCheck::init(),
@@ -272,6 +275,39 @@ impl<'a> Lexer<'a> {
         true
     }
 
+    /// What has been reported. "Keywords cannot contain escape characters." about the token itself
+    /// stays: `nextToken` reports it when it leaves the token.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn take_errors(&mut self) -> Vec<Diagnostic> {
+        let mut taken = std::mem::take(&mut self.errors);
+        let is_waiting = (taken.last()).is_some_and(|it| it.code == 1260 && it.start == self.start);
+        if is_waiting && let Some(waiting) = taken.pop() {
+            let origin = self
+                .origins
+                .get(taken.len())
+                .copied()
+                .unwrap_or(self.full_start);
+            self.origins.clear();
+            self.origins.push(origin);
+            self.errors.push(waiting);
+        }
+        taken
+    }
+
+    /// `nextTokenWithoutCheck`: the token is taken as a name. Returns whether that error about it
+    /// was still here.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forget_escaped_keyword(&mut self) -> bool {
+        let is_waiting =
+            (self.errors.last()).is_some_and(|it| it.code == 1260 && it.start == self.start);
+        if is_waiting {
+            self.errors.pop();
+        }
+        is_waiting
+    }
+
     /// [`Lexer::error`], where only recovery gets.
     #[cold]
     #[inline(never)]
@@ -327,6 +363,11 @@ impl<'a> Lexer<'a> {
         self.end = self.start;
     }
 
+    /// From here on the text ends where `src` ends: before the `*/` of a comment, or with the file.
+    pub(crate) fn set_src(&mut self, src: &'a [u8]) {
+        self.src = src;
+    }
+
     /// The text of the token.
     #[inline]
     pub(crate) fn text(&self) -> &'a [u8] {
@@ -359,11 +400,11 @@ impl<'a> Lexer<'a> {
     /// Scans the token at `pos`, or after the blanks and comments there. Every call in it is the
     /// last thing it does, so it saves no register.
     fn scan(&mut self, mut pos: usize) {
-        let src = self.window;
+        let src = self.src;
         let at = |pos: usize| src.get(pos).copied().unwrap_or(0);
         loop {
             let Some(&byte) = src.get(pos) else {
-                return self.end_of_window(pos);
+                return self.set(T::Eof, src.len(), src.len());
             };
             let next = pos + 1;
             match byte {
@@ -472,6 +513,9 @@ impl<'a> Lexer<'a> {
                     (b'*', b'=') => self.set(T::AsteriskAsteriskEquals, pos, pos + 3),
                     (b'*', _) => self.set(T::AsteriskAsterisk, pos, pos + 2),
                     (b'=', _) => self.set(T::AsteriskEquals, pos, pos + 2),
+                    _ if self.newline_before && self.skips_jsdoc_asterisks => {
+                        return self.scan_at_jsdoc_asterisk(pos);
+                    }
                     _ => self.set(T::Asterisk, pos, next),
                 },
                 b'%' => match at(next) {
@@ -519,26 +563,6 @@ impl<'a> Lexer<'a> {
         }
         self.refuse(Refusal::TooDeep);
         true
-    }
-
-    /// Where `window` ends: the end of the text, or any place once a keyword had an escape.
-    #[cold]
-    #[inline(never)]
-    fn end_of_window(&mut self, pos: usize) {
-        let src = self.src;
-        if self.window.len() == src.len() {
-            return self.set(T::Eof, src.len(), src.len());
-        }
-        if self.is_too_deep() {
-            return;
-        }
-        // `nextToken`. For `nextTokenWithoutCheck` the parser says that the word has no escape.
-        if self.has_escape && self.token > T::PrivateIdentifier {
-            self.report(1260, (self.start as usize, self.end as usize), &[]);
-        }
-        self.window = src;
-        self.scan(pos);
-        self.window = &[];
     }
 
     /// The `default:` of `Scan`, at what starts no token. Go reads invalid UTF-8 as U+FFFD.
@@ -600,6 +624,24 @@ impl<'a> Lexer<'a> {
                 None => return,
             }
         }
+    }
+
+    /// `Scan`, at a `*` behind a line break, with `skipJSDocLeadingAsterisks`: the first one in the
+    /// trivia of a token is trivia too (`TokenFlagsPrecedingJSDocLeadingAsterisks`).
+    #[cold]
+    #[inline(never)]
+    fn scan_at_jsdoc_asterisk(&mut self, pos: usize) {
+        if self.is_too_deep() {
+            return;
+        }
+        let (at, full_start) = (pos as u32, self.full_start);
+        // A trivia can be scanned again: then the last one is this one, or one behind it.
+        let is_in_trivia = |&last: &u32| full_start <= last && last < at;
+        if self.jsdoc_asterisks.last().is_some_and(is_in_trivia) {
+            return self.set(T::Asterisk, pos, pos + 1);
+        }
+        self.jsdoc_asterisks.push(at);
+        self.scan(pos + 1)
     }
 
     /// At a character that is not ASCII: its end, if it is a blank or a line break. Otherwise it
@@ -855,9 +897,9 @@ impl<'a> Lexer<'a> {
             return self.set(T::PrivateIdentifier, start, pos);
         }
         if self.has_escape && kind != T::Identifier {
-            // `GetIdentifierToken`. See `end_of_window`.
+            // `GetIdentifierToken`. See `take_errors`.
             if self.recovers {
-                self.window = &[];
+                self.report(1260, (start, pos), &[]);
                 return self.set(kind, start, pos);
             }
             if matches!(kind, T::Await | T::Yield | T::Async) {

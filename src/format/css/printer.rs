@@ -139,6 +139,64 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
     true
 }
 
+/// Whether `text`, which is in parentheses, is more than a name and a value: `(width>=1px)`, `((color) or (hover))`. Not what
+/// starts with a variable or an interpolation, which oxfmt does not read either.
+fn is_range_or_condition(text: &[u8]) -> bool {
+    let inner = text.get(1..).unwrap_or_default();
+    !matches!(text::trim_start(inner).first(), Some(b'$' | b'@' | b'#'))
+        && bun_core::strings::index_of_any(inner, b"<>=(").is_some()
+}
+
+/// For oxfmt there is a blank on both sides of `<`, `>`, `=`, `<=` and `>=` in a media query, one behind a `:`, and none
+/// behind a `(` or before a `)`. Prettier knows a name, a `:` and a value, and leaves the rest as it is.
+fn with_blanks_in_media_feature(text: &[u8]) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::with_capacity(text.len() + 8);
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        let mut len = 1;
+        match byte {
+            b'"' | b'\'' => {
+                while text.get(at + len).is_some_and(|it| *it != byte) {
+                    len += 1 + usize::from(text[at + len] == b'\\');
+                }
+                len = (len + 1).min(text.len() - at);
+                result.extend_from_slice(&text[at..at + len]);
+            }
+            _ if byte.is_ascii_whitespace() => {
+                if !matches!(result.last(), None | Some(b'(' | b' ')) {
+                    result.push(b' ');
+                }
+            }
+            b')' => {
+                if result.last() == Some(&b' ') {
+                    result.pop();
+                }
+                result.push(byte);
+            }
+            b'<' | b'>' | b'=' => {
+                len = text[at..]
+                    .iter()
+                    .take_while(|&&it| matches!(it, b'<' | b'>' | b'='))
+                    .count();
+                if !matches!(result.last(), None | Some(b'(' | b' ')) {
+                    result.push(b' ');
+                }
+                result.extend_from_slice(&text[at..at + len]);
+                result.push(b' ');
+            }
+            b':' => {
+                if result.last() == Some(&b' ') {
+                    result.pop();
+                }
+                result.extend_from_slice(b": ");
+            }
+            _ => result.push(byte),
+        }
+        at += len;
+    }
+    result
+}
+
 /// `f($a)-1` in a media query of SCSS is `f($a) - 1` for oxfmt, as it is in a value. Prettier leaves it as it is.
 ///
 /// - `*` always has blanks around it.
@@ -494,10 +552,11 @@ impl<'a> Printer<'a, '_> {
         let start = (raw.start as usize).min(text.len());
         if previous.is_some_and(|it| {
             it.kind == Kind::Comment
-                && matches!(
-                    text::trim(self.context.of(it.text)),
-                    b"prettier-ignore" | b"oxfmt-ignore"
-                )
+                && match text::trim(self.context.of(it.text)) {
+                    b"prettier-ignore" => true,
+                    b"oxfmt-ignore" => self.is_oxfmt,
+                    _ => false,
+                }
         }) {
             let end = self.context.end_of(tree, id, parsed);
             return self.sink.text(text.get(start..end).unwrap_or_default());
@@ -673,6 +732,19 @@ impl<'a> Printer<'a, '_> {
                     if is_without_lines {
                         printer.sink.end_without_lines();
                     }
+                    // `$a: 1,` is a list of one in SCSS, and for oxfmt it stays one.
+                    if printer.is_oxfmt
+                        && node.prop.starts_with(b"$")
+                        && text::trim_end(printer.context.of(raw.value)).ends_with(b",")
+                        && top_level_group(statement.values, *value).is_none_or(|group| {
+                            let it = statement.values.node(group);
+                            it.kind != ValueKind::ParenGroup
+                                || it.open != 0
+                                || statement.values.groups(group).len() == 1
+                        })
+                    {
+                        printer.sink.token(",");
+                    }
                 }
             }
             if is_on_its_own_line {
@@ -780,11 +852,18 @@ impl<'a> Printer<'a, '_> {
     /// What follows the value, up to the `{` if there is a block.
     fn print_rest_of_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node) {
         let node = scope.node;
+        // `!default /* comment */ ;`: for oxfmt there is nothing before a `;`. Prettier has the text from `postcss` as it is.
+        let is_oxfmt = self.is_oxfmt;
         let mut bang =
             |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
-                Some(raw) => self
-                    .sink
-                    .text(&normalize_bang(raw, word.as_bytes(), allows_space)),
+                Some(raw) => self.sink.text(&normalize_bang(
+                    match is_oxfmt {
+                        true => text::trim_end(raw),
+                        false => raw,
+                    },
+                    word.as_bytes(),
+                    allows_space,
+                )),
                 None if is_set => {
                     self.sink.token(" !");
                     self.sink.token(word);
@@ -818,7 +897,8 @@ impl<'a> Printer<'a, '_> {
                 scope.node.start as u32,
             ));
         }
-        parent.is_some_and(|parent| !parent.semicolon)
+        // For oxfmt it is a statement of its own, wherever it is.
+        (self.is_oxfmt || parent.is_some_and(|parent| !parent.semicolon))
             && scope
                 .node
                 .end
@@ -1055,6 +1135,14 @@ impl<'a> Printer<'a, '_> {
             }
             MediaKind::FeatureExpression => match &node.nodes {
                 None => self.sink.text(node.value),
+                Some(_) if self.is_oxfmt && is_range_or_condition(node.value) => {
+                    let text = with_blanks_in_media_feature(node.value);
+                    self.sink
+                        .text(&adjust_numbers(&maybe_to_lower_case(&adjust_strings(
+                            &text,
+                            self.single_quote,
+                        ))));
+                }
                 Some(children) => {
                     self.sink.token("(");
                     for child in children {

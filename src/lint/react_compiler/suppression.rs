@@ -169,22 +169,33 @@ pub(crate) fn suppressions_to_diagnostics(suppressions: &[SuppressionRange]) -> 
     suppressions.iter().map(diagnostic).collect()
 }
 
+/// Of the matches of `/\$FlowFixMe\[([^\]]*)\]/g`, one is for the two rules.
+fn has_flow_suppression(mut comment: &[u8]) -> bool {
+    const START: &[u8] = b"$FlowFixMe[";
+    while let Some(start) = strings::index_of(comment, START) {
+        let code = comment.get(start + START.len()..).unwrap_or_default();
+        let Some(end) = strings::index_of_char_usize(code, b']') else {
+            return false;
+        };
+        if matches!(
+            code.get(..end),
+            Some(b"react-rule-hook" | b"react-rule-unsafe-ref")
+        ) {
+            return true;
+        }
+        comment = code.get(end + 1..).unwrap_or_default();
+    }
+    false
+}
+
 /// The plugin's `getFlowSuppressions` and `hasFlowSuppression`: a diagnostic that starts on the line after the one on which a
 /// comment with `$FlowFixMe[react-rule-hook]` or `$FlowFixMe[react-rule-unsafe-ref]` ends is not reported. In any file, of Flow or
 /// not.
 pub(crate) fn remove_what_flow_suppresses<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
-    const SUPPRESSIONS: [&[u8]; 2] = [
-        b"$FlowFixMe[react-rule-hook]",
-        b"$FlowFixMe[react-rule-unsafe-ref]",
-    ];
     if diagnostics.is_empty() || !strings::contains(file.text(), b"$FlowFixMe[react-rule-") {
         return;
     }
-    let suppresses = |comment: &Token<'a>| {
-        SUPPRESSIONS
-            .iter()
-            .any(|it| strings::contains(comment.text(), it))
-    };
+    let suppresses = |comment: &Token<'a>| has_flow_suppression(comment.text());
     // In the order of the file.
     let lines: Vec<u32> = (file.comments().filter(suppresses))
         .map(|comment| file.line_of(comment.end()))

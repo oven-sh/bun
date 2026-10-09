@@ -1,0 +1,297 @@
+//! What `prettier-plugin-tailwindcss` does to a program: `transformJavaScript`.
+//!
+//! The plugin changes the strings and the templates of the tree before Prettier prints it. Here the text is changed and
+//! parsed again, as for the plugins that sort imports. oxfmt has rules of its own: `js/utils/tailwindcss.rs`.
+
+use super::{Ends, Tailwind};
+use crate::text;
+use bun_core::strings;
+use bun_lint::ast::walk::{Visitor, walk};
+use bun_lint::ast::{BinOp, Expr, ExprKind, File, KeyKind, Node, Prop, Template};
+use bun_lint::span::Span;
+
+/// Which of the white space at the ends of a text has to stay, because of what is around it.
+#[derive(Copy, Clone, Default)]
+struct Kept {
+    start: bool,
+    end: bool,
+}
+
+/// Something around what is visited that `canCollapseWhitespaceIn` looks at.
+enum Around<'a> {
+    /// `left + right`
+    Concatenation(Span, Span),
+    /// A template: where each expression in it starts, and what has to be kept in it.
+    Template(Vec<(u32, Kept)>),
+    /// What `sortInside` has been called with. What is further out does not count: it is sorted once for each, and
+    /// white space that one of them takes away is gone.
+    Root(Expr<'a>),
+}
+
+struct Sorter<'a, 't> {
+    tailwind: &'t Tailwind,
+    /// With each, what has to be kept because of those further out.
+    around: Vec<(Around<'a>, Kept)>,
+    /// How many of them are a `Root`.
+    roots: usize,
+    /// What is written in the place of what.
+    changes: Vec<(Span, Vec<u8>)>,
+}
+
+/// To Babel what is in an optional chain is no `CallExpression` and no `MemberExpression`.
+fn is_other_node_to_babel(e: Expr<'_>) -> bool {
+    e.file().is_javascript() && e.is_in_optional_chain()
+}
+
+/// `isSortableExpression`
+fn is_sortable(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
+    let mut node = callee;
+    loop {
+        if is_other_node_to_babel(node) {
+            return false;
+        }
+        node = match node.kind() {
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Ident(_) => return tailwind.functions.iter().any(|it| it == node.text()),
+            _ => return false,
+        };
+    }
+}
+
+/// `matcher.hasStaticAttr(attribute.name.name)`
+fn has_classes(attribute: Prop<'_>, tailwind: &Tailwind) -> bool {
+    let file = attribute.file();
+    attribute.is_jsx_attribute()
+        && attribute.key().is_some_and(|key| {
+            let name = file.slice(key.span(file));
+            matches!(name, b"class" | b"className")
+                || tailwind.attributes.iter().any(|it| it == name)
+        })
+}
+
+/// What has to be kept in the expressions of `template`. To the plugin an expression is next to the text before it, if
+/// there is nothing in between, and to all texts behind it. The white space at the start can go if each of them starts
+/// with white space, that at the end if each of those behind it ends with some.
+fn kept_in(template: Template<'_>) -> Vec<(u32, Kept)> {
+    // Where a text ends, by the parser.
+    let gap = if template
+        .exprs()
+        .iter()
+        .next()
+        .is_some_and(|it| it.file().is_javascript())
+    {
+        0
+    } else {
+        2
+    };
+    let mut behind = Kept::default();
+    let mut all: Vec<(u32, Kept)> = (template.exprs().iter().enumerate())
+        .map(|(index, it)| {
+            let is_next_to = it.span().start <= template.quasi_span(index).end + gap;
+            let start = is_next_to && !text::starts_with_white_space(template.raw(index));
+            (it.span().start, Kept { start, end: false })
+        })
+        .collect();
+    for (index, (_, kept)) in all.iter_mut().enumerate().rev() {
+        let text = template.raw(index + 1);
+        behind.start |= !text::starts_with_white_space(text);
+        behind.end |= text::trim_end(text).len() == text.len();
+        kept.start |= behind.start;
+        kept.end = behind.end;
+    }
+    all
+}
+
+impl<'a> Sorter<'a, '_> {
+    /// `canCollapseWhitespaceIn`, the other way around, for what is at `span`.
+    fn kept_at(&self, span: Span) -> Kept {
+        let Some((around, outer)) = self.around.last() else {
+            return Kept::default();
+        };
+        let is_in = |operand: &Span| operand.start <= span.start && span.end <= operand.end;
+        let here = match around {
+            Around::Root(_) => Kept::default(),
+            Around::Concatenation(left, right) => Kept {
+                start: is_in(right),
+                end: is_in(left),
+            },
+            Around::Template(expressions) => {
+                let behind = expressions.partition_point(|it| it.0 <= span.start);
+                (behind.checked_sub(1).and_then(|at| expressions.get(at)))
+                    .map_or(Kept::default(), |it| it.1)
+            }
+        };
+        Kept {
+            start: outer.start || here.start,
+            end: outer.end || here.end,
+        }
+    }
+
+    /// `span`: of what `around` is.
+    fn push(&mut self, around: Around<'a>, span: Span) {
+        let outer = match around {
+            Around::Root(_) => Kept::default(),
+            _ => self.kept_at(span),
+        };
+        self.around.push((around, outer));
+    }
+
+    /// `text`, which is at `span`, is text of a template, or what is between the quotes of a string. `index`, `count`: which of
+    /// how many texts of the template.
+    fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize), kept: Kept) {
+        let ends = Ends {
+            ignores_first: index > 0 && !text::starts_with_white_space(text),
+            ignores_last: index + 1 < count && text::trim_end(text).len() == text.len(),
+            collapses_start: !kept.start && index == 0,
+            collapses_end: !kept.end && index + 1 == count,
+        };
+        let sorted = self.tailwind.sorted_between(text, ends);
+        if *sorted != *text {
+            self.changes.push((span, sorted.into_owned()));
+        }
+    }
+
+    /// `sortStringLiteral`. `span`: of a string with its quotes, or of a template without expressions.
+    fn sort_string(&mut self, file: &File<'_>, span: Span, kept: Kept) {
+        if let [b'"' | b'\'' | b'`', content @ .., _] = file.slice(span) {
+            let span = Span::new(span.start + 1, span.end - 1);
+            self.sort(content, span, (0, 1), kept);
+        }
+    }
+
+    /// `sortTemplateLiteral`
+    fn sort_template(&mut self, template: Template<'_>, kept: Kept) {
+        let count = template.quasi_count();
+        for index in 0..count {
+            let span = template.quasi_span(index);
+            let end = span.end - if index + 1 == count { 1 } else { 2 };
+            let span = Span::new(span.start + 1, end);
+            self.sort(template.raw(index), span, (index, count), kept);
+        }
+    }
+
+    /// Whether `sortInside` is called with `e`: it is an argument of a function for classes, or in the braces of an
+    /// attribute for classes.
+    fn is_root(&self, e: Expr<'a>) -> bool {
+        match e.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Call(call) => {
+                    call.callee() != e
+                        && !is_other_node_to_babel(parent)
+                        && is_sortable(call.callee(), self.tailwind)
+                }
+                _ => false,
+            },
+            Node::Prop(attribute) => {
+                e.jsx_container_span().is_some() && has_classes(attribute, self.tailwind)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<'a> Visitor<'a> for Sorter<'a, '_> {
+    fn enter(&mut self, node: Node<'a>) {
+        let e = match node {
+            Node::Expr(e) => e,
+            // The key of a property is a string like another.
+            Node::Prop(property) if self.roots > 0 => {
+                if let Some(key) = property.key()
+                    && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
+                {
+                    let file = property.file();
+                    let span = key.inner_span(file);
+                    self.sort_string(file, span, self.kept_at(span));
+                }
+                return;
+            }
+            _ => return,
+        };
+        if self.is_root(e) {
+            self.push(Around::Root(e), e.span());
+            self.roots += 1;
+        }
+        match e.kind() {
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => self.push(Around::Concatenation(left.span(), right.span()), e.span()),
+            ExprKind::String(_) if e.is_jsx_text() => {}
+            ExprKind::String(_) if self.roots > 0 => {
+                self.sort_string(e.file(), e.span(), self.kept_at(e.span()));
+            }
+            // The value of an attribute, without braces.
+            ExprKind::String(_) => {
+                if matches!(e.parent(), Node::Prop(it) if has_classes(it, self.tailwind)) {
+                    self.sort_string(e.file(), e.span(), Kept::default());
+                }
+            }
+            ExprKind::Template(template) => {
+                let has_tag = || {
+                    matches!(e.parent(), Node::Expr(parent)
+                        if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
+                            if call.template() == Some(e) && is_sortable(call.callee(), self.tailwind)))
+                };
+                if self.roots > 0 || has_tag() {
+                    self.sort_template(template, self.kept_at(e.span()));
+                }
+                self.push(Around::Template(kept_in(template)), e.span());
+            }
+            _ => {}
+        }
+    }
+
+    fn exit(&mut self, node: Node<'a>) {
+        let Node::Expr(e) = node else {
+            return;
+        };
+        if matches!(
+            e.kind(),
+            ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template(_)
+        ) {
+            self.around.pop();
+        }
+        if matches!(self.around.last(), Some((Around::Root(root), _)) if *root == e) {
+            self.around.pop();
+            self.roots -= 1;
+        }
+    }
+}
+
+/// The text of `file` with the classes in it sorted. `None`: it is the same.
+pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8>> {
+    let text = file.text();
+    let mut names = [&b"class"[..]]
+        .into_iter()
+        .chain((tailwind.functions.iter().chain(&tailwind.attributes)).map(|it| &it[..]));
+    if !tailwind.follows_plugin
+        || file.has_parse_errors()
+        || !names.any(|name| strings::contains(text, name))
+    {
+        return None;
+    }
+    let mut sorter = Sorter {
+        tailwind,
+        around: Vec::new(),
+        roots: 0,
+        changes: Vec::new(),
+    };
+    walk(file, &mut sorter);
+    let mut changes = sorter.changes;
+    if changes.is_empty() {
+        return None;
+    }
+    // The texts of a template come before what is between them.
+    crate::sort::sort_by_key(&mut changes[..], |it| it.0.start);
+    let mut sorted = Vec::with_capacity(text.len());
+    let mut from = 0;
+    for (span, classes) in &changes {
+        sorted.extend_from_slice(text.get(from..span.start as usize)?);
+        sorted.extend_from_slice(classes);
+        from = span.end as usize;
+    }
+    sorted.extend_from_slice(text.get(from..)?);
+    Some(sorted)
+}

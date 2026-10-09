@@ -25,9 +25,3 @@ interface I {
 		base: Base,
 	): Base
 }
-renderer.events["_onPointerMove"]( // <-- v8 equivalent?
-  new PointerEvent("pointermove", { clientX: 25, clientY: 25 }),
-);
-renderer.events.onPointerMove( // <-- v8 equivalent?
-  new PointerEvent("pointermove", { clientX: 25, clientY: 25 }),
-);

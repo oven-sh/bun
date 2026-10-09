@@ -270,15 +270,29 @@ fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> 
     })
 }
 
-/// Why `text` cannot be parsed, as Prettier says it: `SyntaxError: Unexpected character "a" (1:2)`. `None`: it can be.
-pub fn syntax_error(text: &[u8], parser: Parser) -> Option<Vec<u8>> {
-    let text = normalize_end_of_line(text.strip_prefix(BOM).unwrap_or(text));
+/// Why `text` cannot be parsed: Prettier's message, and at which byte of `text`, not counting a byte order mark. `None`: it can
+/// be.
+pub fn syntax_error(text: &[u8], parser: Parser) -> Option<(Vec<u8>, u32)> {
+    let original = text.strip_prefix(BOM).unwrap_or(text);
+    let text = normalize_end_of_line(original);
     let (content, front_matter_len) = without_front_matter(&text);
     let mut tree = ast::Tree::default();
-    match parse::parse(&content, front_matter_len, parser, &mut tree) {
-        Err(parse::ParseError::Syntax(error)) => Some(error.describe(&content)),
-        _ => None,
+    let Err(parse::ParseError::Syntax(error)) =
+        parse::parse(&content, front_matter_len, parser, &mut tree)
+    else {
+        return None;
+    };
+    // A line break of two bytes is one in what has been parsed.
+    let (mut at, mut left) = (0, error.at as usize);
+    while left > 0 && at < original.len() {
+        at += if original[at..].starts_with(b"\r\n") {
+            2
+        } else {
+            1
+        };
+        left -= 1;
     }
+    Some((error.message(), at as u32))
 }
 
 /// Whether `text`, in which every line break is `\n`, has no syntax error.
@@ -462,7 +476,7 @@ pub fn format(
 
 /// The same. Returns where the cursor, which is at `options.cursor_offset` in `text`, is in what is appended, in UTF-16 code
 /// units like the option.
-pub fn format_with_cursor(
+fn format_with_cursor(
     path: &[u8],
     text: &[u8],
     parser: Parser,

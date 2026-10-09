@@ -24,7 +24,8 @@ impl Rule for ClassMethodsUseThis {
             _ => IgnoreClassesWithImplements::None,
         };
         ClassMethodsUseThis {
-            checker: Checker::new(options, ignore_classes_with_implements, true),
+            // As for ESLint, a private name is not public there.
+            checker: Checker::new(options, ignore_classes_with_implements, of_eslint.is_none()),
         }
     }
 

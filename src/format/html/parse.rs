@@ -219,17 +219,19 @@ impl<'a> Context<'a, '_> {
             };
             if is_void {
                 has_errors_of_second = true;
-            } else if let Some(&error) = second
-                .errors
-                .get(
-                    second
-                        .errors
-                        .partition_point(|it| it.at <= start_span.start),
-                )
-                .filter(|it| end_span.is_none_or(|span| it.at < span.end))
-            {
+            } else {
                 // Without an end tag, Prettier fails when it asks where that ends.
-                return Err(ParseError::Syntax(error));
+                let first = second
+                    .errors
+                    .partition_point(|it| it.at <= start_span.start);
+                let mut errors = (second.errors.get(first..).unwrap_or_default().iter())
+                    .take_while(|it| end_span.is_none_or(|span| it.at < span.end));
+                if let Some(&first) = errors.clone().next() {
+                    let error = errors
+                        .find(|it| it.kind.is_of_lexer())
+                        .map_or(first, |it| *it);
+                    return Err(ParseError::Syntax(error));
+                }
             }
             // `getElementWithSameLocation`. Both lists are in the order of the text.
             while let Some(other) =

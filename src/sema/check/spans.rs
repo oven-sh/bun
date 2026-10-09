@@ -318,7 +318,7 @@ pub(super) fn word_end(text: &[u8], at: usize) -> usize {
 }
 
 /// `tokenValue` of the identifier `text`: its escapes are decoded.
-pub(crate) fn unescaped_identifier(text: &[u8]) -> Cow<'_, [u8]> {
+pub fn unescaped_identifier(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains_char(text, b'\\') {
         return Cow::Borrowed(text);
     }

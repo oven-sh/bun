@@ -32,7 +32,22 @@ fn without_unary_prefix<'a>(init: Expr<'a>, operators: &[UnOp]) -> Expr<'a> {
 /// typescript-eslint's `isInferrable`: the name of the type `annotation`, if that is what `init`
 /// is inferred to be.
 fn inferrable_type(annotation: TypeNode<'_>, init: Expr<'_>) -> Option<&'static str> {
-    let (name, is_inferrable) = match annotation.kind() {
+    // oxlint takes the type of a literal for the type that it is one of, and but for strings it looks at what is
+    // asserted to have a type.
+    let is_oxlint = init.file().language().is_oxlint;
+    let kind = match annotation.kind() {
+        TypeKind::StringLit(_) if is_oxlint => TypeKind::Keyword(Keyword::String),
+        TypeKind::NumberLit(value) if is_oxlint && value.is_sign_positive() => TypeKind::Keyword(Keyword::Number),
+        TypeKind::BigIntLit { negative: false, .. } if is_oxlint => TypeKind::Keyword(Keyword::BigInt),
+        TypeKind::BoolLit(_) if is_oxlint => TypeKind::Keyword(Keyword::Boolean),
+        kind => kind,
+    };
+    let init = match kind {
+        TypeKind::Keyword(Keyword::String) => init,
+        _ if is_oxlint => init.skip_type_wrappers(),
+        _ => init,
+    };
+    let (name, is_inferrable) = match kind {
         TypeKind::Keyword(Keyword::BigInt) => {
             let unwrapped = without_unary_prefix(init, &[UnOp::Minus]);
             ("bigint", is_function_call(unwrapped, "BigInt") || ast_utils::is_literal(unwrapped))

@@ -1,11 +1,12 @@
 //! `bun-hir`: the test harness of `bun_sema_parser`.
 //!
 //! - `compare <file or directory>.. [--jobs=n] [--show=n] [--decorators] [--list]
-//!   [--dialect=tsc|estree|espree|babel] [--script] [--recover]`: parses every file with both parsers and
-//!   compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
+//!   [--dialect=tsc|estree|espree|babel] [--script] [--recover] [--jsdoc]`: parses every file with both
+//!   parsers and compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
 //!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as
-//!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it.
-//! - `dump <inputs as for compare>`: what the reference makes of each.
+//!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it. `--jsdoc`: both
+//!   read the JSDoc comments, as `bun check` has it.
+//! - `dump <inputs as for compare> [--jsdoc]`: what the reference makes of each.
 //! - `bench <file or directory>.. [--reference] [--repeat=n]`: parses every file on one thread.
 //! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
 
@@ -51,6 +52,7 @@ fn options_for(path: &[u8], dialect: Dialect) -> Options {
         is_json,
         await_is_a_name: is_json || is_javascript && dialect.ecmascript && dialect.script,
         recovers: false,
+        reads_jsdoc: false,
         dialect,
     }
 }
@@ -90,6 +92,7 @@ struct Reading {
     dialect: Dialect,
     decorators: bool,
     recovers: bool,
+    reads_jsdoc: bool,
 }
 
 fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> Outcome {
@@ -97,6 +100,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
         dialect,
         decorators,
         recovers,
+        reads_jsdoc,
     } = how;
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -105,7 +109,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
     let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
     let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
         dialect,
-        false,
+        reads_jsdoc,
         (arena, &session),
         path,
         None,
@@ -121,6 +125,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
         || reference.ran_out_of_stack;
     let mut options = options_for(path, dialect);
     options.recovers = recovers;
+    options.reads_jsdoc = reads_jsdoc;
     let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     // `parseSourceFileWorker`: only a module has an await context at its top level.
     if let Ok(first) = &parsed
@@ -152,6 +157,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
         Ok(parsed) => {
             let outcome = if is_refused_by_reference && parsed.file.has_parse_diagnostics {
                 let mut comparison = compare::Comparison::new(&reference, &parsed.file);
+                comparison.compares_jsdoc = reads_jsdoc;
                 comparison.run();
                 match comparison.difference.take() {
                     Some(difference) => Outcome::RecoveredDifferently(difference),
@@ -165,6 +171,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
                 ))
             } else {
                 let mut comparison = compare::Comparison::new(&reference, &parsed.file);
+                comparison.compares_jsdoc = reads_jsdoc;
                 comparison.run();
                 match comparison.difference.take() {
                     Some(difference) => Outcome::Different(difference),
@@ -181,12 +188,14 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
 }
 
 /// Parses `text` with the atoms of an interner that has seen nothing else, and with atoms of its
-/// own. Both number a text where it first occurs, so the results have to be the same.
+/// own. Both number a text where it first occurs, so the results have to be the same. No comment is
+/// read: that takes an interner.
 fn difference_with_own_atoms(
     text: &[u8],
-    options: Options,
+    mut options: Options,
     scratch: &mut Scratch,
 ) -> Option<String> {
+    options.reads_jsdoc = false;
     let session = Session::new();
     let interner = Interner::new_in(&session);
     let shared = bun_sema_parser::parse(text, options, &interner, scratch)
@@ -434,6 +443,7 @@ fn compare(args: &[String]) {
     let inputs = inputs_of(args);
     let decorators = args.iter().any(|arg| arg == "--decorators");
     let recovers = args.iter().any(|arg| arg == "--recover");
+    let reads_jsdoc = args.iter().any(|arg| arg == "--jsdoc");
     let mut totals = Guarded::new(Totals::default());
     bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
         thread_local! {
@@ -456,6 +466,7 @@ fn compare(args: &[String]) {
                 dialect: input.dialect,
                 decorators,
                 recovers,
+                reads_jsdoc,
             };
             compare_one(input.path.as_bytes(), text, how, scratch)
         });
@@ -477,7 +488,7 @@ fn dump(args: &[String]) {
         let dialect = input.dialect;
         let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
             dialect,
-            false,
+            args.iter().any(|arg| arg == "--jsdoc"),
             (session.arena(), &session),
             input.path.as_bytes(),
             None,
@@ -491,7 +502,8 @@ fn dump(args: &[String]) {
     }
 }
 
-/// `fuzz <file or directory>.. [--rounds=n] [--seed=n] [--jobs=n] [--keep=directory] [--dialect=..]`
+/// `fuzz <file or directory>.. [--rounds=n] [--seed=n] [--jobs=n] [--keep=directory] [--dialect=..]
+/// [--jsdoc]`
 fn fuzz(args: &[String]) {
     let files = files_of(args);
     let how = (
@@ -502,6 +514,7 @@ fn fuzz(args: &[String]) {
     let option = |name: &str| args.iter().find_map(|arg| arg.strip_prefix(name));
     let script = args.iter().any(|arg| arg == "--script");
     let dialect = dialect_of(option("--dialect=").unwrap_or("tsc"), script).expect("a dialect");
+    let reads_jsdoc = args.iter().any(|arg| arg == "--jsdoc");
     fuzz::run(
         &files,
         how,
@@ -514,6 +527,7 @@ fn fuzz(args: &[String]) {
                 dialect,
                 decorators: false,
                 recovers: false,
+                reads_jsdoc,
             };
             match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, how, scratch)) {
                 Outcome::Identical(_) => fuzz::Verdict::Identical,

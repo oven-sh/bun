@@ -176,10 +176,12 @@ fn write_trailing_comments_in<'a>(
     parent: impl FnOnce() -> AstNodes<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if f.comments().next_start() == u32::MAX {
-        return;
+    if f.comments().next_start() != u32::MAX {
+        write_trailing_comments_of_child(span, parent(), f);
     }
-    let parent = parent();
+}
+
+fn write_trailing_comments_of_child<'a>(span: Span, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
     let enclosing = span_for_comments(parent, f);
     if f.comments().next_start() < enclosing.end {
         let following = following_span_start_in(span, parent, f.options().flavor);

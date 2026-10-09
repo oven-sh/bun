@@ -641,6 +641,7 @@ dependencies = [
  "bun_core",
  "bun_sema",
  "bun_threading",
+ "smallvec",
 ]
 
 [[package]]

@@ -23,6 +23,7 @@ use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::resolve::ScriptKind;
 use bun_sema::session::Session;
+use bun_threading::Guarded;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -43,6 +44,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) reads_suppressions: bool,
     /// Runs the rules that are written in JavaScript.
     pub(crate) js_plugins: &'c Host<'c>,
+    /// The rules that comments turn on and that did not run: they are of plugins that are not loaded.
+    pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,
@@ -397,6 +400,14 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
+        if !result.skipped_rules.is_empty() {
+            let mut all = self.skipped_in_comments.lock();
+            for rule in result.skipped_rules {
+                if !all.contains(&rule) {
+                    all.push(rule);
+                }
+            }
+        }
         FileResult {
             path,
             counts,

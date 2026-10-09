@@ -2,6 +2,7 @@ use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
 
+use crate::compat;
 use crate::helpers;
 use crate::links::{ParsedDest, scan_link_destination};
 use crate::parser::{BlockHeader, Parser};
@@ -278,7 +279,10 @@ impl Parser<'_> {
                 p += 2;
             } else {
                 // For () titles, nested ( is not allowed
-                if open_char == b'(' && text[p] == b'(' {
+                if open_char == b'('
+                    && text[p] == b'('
+                    && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                {
                     return None;
                 }
                 p += 1;

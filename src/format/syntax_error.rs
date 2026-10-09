@@ -9,6 +9,9 @@ impl SyntaxError {
     /// `self` is in what `normalizeEndOfLine` has made of `original`. The same in `original`.
     #[cold]
     pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> SyntaxError {
+        if !bun_core::strings::contains_char(original, b'\r') {
+            return self;
+        }
         let mut left = self.1 as usize;
         let mut at = 0;
         while left > 0 && at < original.len() {

@@ -24,3 +24,16 @@ each(@b, {
 @property --angle {
     syntax: "<angle>";
 }
+
+each(@c, {
+    .z { color: red; }
+})
+
+each(@d, {
+    each(@e, {
+        .w-@{value} { color: red; }
+    })
+})
+.v {
+    color: red;
+}

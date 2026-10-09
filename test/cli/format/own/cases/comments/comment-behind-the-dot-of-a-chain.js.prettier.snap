@@ -6,9 +6,6 @@ return1 = Customer.createCollection()
   .then(() => Customer.findOne({ name: "Test" }))
   // another
   .then(() => session.commitTransaction());
-await expect(foo())
-  .rejects// It would be great
-  .toThrow("x");
 
 -------------------
 { printWidth: 100 }
@@ -18,8 +15,5 @@ return1 = Customer.createCollection()
   .then(() => Customer.findOne({ name: "Test" }))
   // another
   .then(() => session.commitTransaction());
-await expect(foo())
-  .rejects// It would be great
-  .toThrow("x");
 
 ===================== End =====================

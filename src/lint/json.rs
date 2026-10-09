@@ -101,6 +101,8 @@ pub mod comparison {
             .map_err(|error| error.name())
     }
 
+    pub use bun_parsers::json::set_variant_of_the_reader;
+
     /// Returns whether `text` is taken.
     pub fn read_and_drop(name: &str, is_one_pass: bool, text: &[u8]) -> bool {
         if name == "json5" && !is_one_pass {

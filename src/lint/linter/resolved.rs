@@ -267,29 +267,16 @@ impl ResolvedConfig {
 
     /// Whether there are files that [`Route::Eslint`] is the way of.
     pub(crate) fn is_for_eslint(&self) -> bool {
-        !self.is_javascript() || (self.language.parser == Parser::Other && !self.has_scripts())
-    }
-
-    /// Whether the parser is one that finds JavaScript in a file of another language, and has it parsed by another parser.
-    fn has_scripts(&self) -> bool {
-        let name = self.parser_name.as_deref().unwrap_or_default();
-        let version = bun_core::strings::last_index_of_char(name, b'@').filter(|at| *at > 0);
-        matches!(
-            &name[..version.unwrap_or(name.len())],
-            b"vue-eslint-parser" | b"svelte-eslint-parser" | b"astro-eslint-parser" | b"eslint-mdx"
-        )
+        !self.is_javascript() || self.language.parser == Parser::Other
     }
 
     /// How the file at `path` is linted after a processor, or if there is none.
     pub fn route_as_it_is(&self, path: &[u8]) -> Route {
         let is_read_here = self.language.parser != Parser::Other
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
-        if self.is_javascript() && is_read_here {
-            Route::Native
-        } else if self.is_for_eslint() {
-            Route::Eslint
-        } else {
-            Route::Unsupported
+        match self.is_javascript() && is_read_here {
+            true => Route::Native,
+            false => Route::Eslint,
         }
     }
 

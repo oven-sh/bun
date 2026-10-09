@@ -39,13 +39,29 @@ fn literal_type(e: Expr) -> Option<&'static str> {
     })
 }
 
+/// The sorts of literals that oxlint tells apart, by how they are written. A template can have substitutions.
+fn literal_type_of_oxlint(e: Expr) -> Option<&'static str> {
+    match e.kind() {
+        _ if e.is_parenthesized() => None,
+        ExprKind::Template(_) => Some("template"),
+        ExprKind::Null => Some("null"),
+        ExprKind::Regex(_) => Some("regex"),
+        _ => literal_type(e),
+    }
+}
+
 impl Eqeqeq {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
-        let is_null = matches!(left.kind(), ExprKind::Null) || matches!(right.kind(), ExprKind::Null);
-        let is_typeof = is_typeof(left) || is_typeof(right);
+        let is_oxlint = cx.language().is_oxlint;
+        // oxlint sees nothing in parentheses.
+        let is_seen = |it: Expr<'a>| !(is_oxlint && it.is_parenthesized());
+        let is_null = [left, right].into_iter().any(|it| it.tag() == ExprTag::Null && is_seen(it));
+        let is_typeof = [left, right].into_iter().any(|it| is_typeof(it) && is_seen(it));
+        let literal_type: fn(Expr<'a>) -> Option<&'static str> =
+            if is_oxlint { literal_type_of_oxlint } else { literal_type };
         let are_literals_of_same_type =
             literal_type(left).is_some() && literal_type(left) == literal_type(right);
         let expected = match op {
@@ -60,18 +76,26 @@ impl Eqeqeq {
             BinOp::EqEqEq | BinOp::NotEqEq if is_null && self.null == Null::Never => {
                 if op == BinOp::EqEqEq { "==" } else { "!=" }
             }
+            // oxlint says it of every operator, and expects the operator without its last character.
+            _ if is_oxlint && is_null && self.null == Null::Never => {
+                let text = bin_op_text(op);
+                text.get(..text.len().saturating_sub(1)).unwrap_or_default()
+            }
             _ => return,
         };
         let Some(operator) = e.operator_span() else {
             return;
         };
         let actual = bin_op_text(op);
-        // oxlint points at the whole of `a === null`.
-        let is_whole = cx.language().is_oxlint && matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
+        // oxlint points at the whole of `a === null`, and changes nothing there.
+        let is_whole = is_oxlint && !matches!(op, BinOp::EqEq | BinOp::NotEq);
         let report = cx
             .report(if is_whole { e.span() } else { operator }, UNEXPECTED)
             .data("expectedOperator", expected)
             .data("actualOperator", actual);
+        if is_whole {
+            return;
+        }
         // The change is safe if both sides are known to have the same type.
         if is_typeof || are_literals_of_same_type {
             report.fix(|fixer| fixer.replace(operator, expected));
@@ -107,10 +131,33 @@ impl Rule for Eqeqeq {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         on.binaries([BinOp::EqEq, BinOp::NotEq], Self::check);
         if self.null == Null::Never {
             on.binaries([BinOp::EqEqEq, BinOp::NotEqEq], Self::check);
+        }
+        if self.null == Null::Never && file.language().is_oxlint {
+            let others = [
+                BinOp::Add,
+                BinOp::Sub,
+                BinOp::Mul,
+                BinOp::Div,
+                BinOp::Rem,
+                BinOp::Pow,
+                BinOp::Shl,
+                BinOp::Shr,
+                BinOp::UShr,
+                BinOp::BitAnd,
+                BinOp::BitOr,
+                BinOp::BitXor,
+                BinOp::Lt,
+                BinOp::Le,
+                BinOp::Gt,
+                BinOp::Ge,
+                BinOp::In,
+                BinOp::Instanceof,
+            ];
+            on.binaries(others, Self::check);
         }
     }
 }

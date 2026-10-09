@@ -228,6 +228,15 @@ fn check_members<'a>(
     let (Some(key), Some(value)) = (parameter.ty(), func.return_type()) else {
         return;
     };
+    // oxlint's `contains_convertible_index_signature`: of two it reports the inner one.
+    if cx.language().is_oxlint
+        && !value.is_parenthesized()
+        && let TypeKind::Object(inner) = value.kind()
+        && inner.len() == 1
+        && inner.first().is_some_and(|it| it.kind() == MemberKind::IndexSignature)
+    {
+        return;
+    }
     if let Some((declaration, name)) = parent
         && let Some(super_var) = Node::Stmt(declaration).scope().resolve_name(name.name())
         && is_deeply_referencing_type([node], super_var, &mut cx.state)

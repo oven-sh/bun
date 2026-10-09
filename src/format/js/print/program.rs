@@ -57,8 +57,11 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         rest = others;
     }
     // Behind the comments, if that is all there is in the file.
-    let ends_with_empty_line = !rest.is_empty()
-        && (file.body().last()).is_some_and(|last| is_directive_before_empty_line(last, f));
+    let ends_with_empty_line = (file.body().last()).is_some_and(|last| {
+        is_directive_before_empty_line(last, f)
+            && (source.get(last.span().end as usize..))
+                .is_some_and(|behind| !behind.trim_ascii().is_empty())
+    });
     write!(f, FormatTrailingComments::Comments(rest));
     match ends_with_empty_line {
         true => write!(f, empty_line()),
@@ -234,8 +237,8 @@ impl<'a> Format<'a> for FormatStatements<'a> {
         }
         imports.finish(f);
         if let Some(last) = previous
-            && matches!(last.parent(), Node::Func(_))
             && is_directive_before_empty_line(last, f)
+            && matches!(last.parent(), Node::Func(_))
         {
             write!(f, empty_line());
         }

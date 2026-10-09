@@ -18,6 +18,7 @@ type Options = {
   reads?: string[];
   /** Called with the directory before the command runs. */
   before?: (dir: string) => void;
+  env?: Record<string, string>;
 };
 
 async function format(files: Record<string, string>, args: string[], options: Options = {}) {
@@ -25,7 +26,7 @@ async function format(files: Record<string, string>, args: string[], options: Op
   options.before?.(String(dir));
   await using proc = Bun.spawn({
     cmd: [...command, ...args],
-    env,
+    env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
     stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
     stdout: "pipe",
@@ -117,6 +118,189 @@ describe.concurrent("bun format", () => {
     expect(result.stderr).toContain("[error] a.js: SyntaxError:");
     expect(result.stderr).toContain("(1:7)");
     expect(result.exitCode).toBe(2);
+  });
+
+  test("a syntax error says what is wrong and where, in every language", async () => {
+    // One for each language and kind of refusal: the file, and what is said about it.
+    const cases: [string, string, string][] = [
+      ["string.css", 'a {\n  b: "x\n}\n', "This string is not closed (2:6)"],
+      ["block.css", "a {\n  b: c;\n", "This block is not closed (1:1)"],
+      ["brace.css", "a {\n}\n}\n", 'Unexpected "}" (3:1)'],
+      ["comment.css", "a {\n  /* b\n}\n", "This comment is not closed (2:3)"],
+      ["bracket.css", "a {\n  b: c(1;\n}\n", "This bracket is not closed (2:7)"],
+      ["url.css", "a {\n  b: url(c;\n}\n", "This bracket is not closed (2:9)"],
+      ["word.css", "a {\n  b c;\n}\n", "This is neither a declaration nor a rule (2:3)"],
+      ["at.css", "@ a;\n", 'Expected a name after "@" (1:1)'],
+      ["colon.css", "a {\n  b: c: d;\n}\n", 'Unexpected ":" (2:7)'],
+      ["first-colon.css", "a {\n  : b;\n  c: d:\n}\n", 'Unexpected ":" (3:7)'],
+      ["no-name.css", "a {\n  (): ;\n}\n", "Expected the name of a property (2:3)"],
+      ["two-words.css", "a {\n  b c: d;\n}\n", 'Expected ":" (2:5)'],
+      ["selector.css", "{\n  a: b;\n}\n", "Expected a selector (1:1)"],
+      ["custom-selector.css", "@custom-selector a;\n", "The parameters of this at-rule cannot be read (1:1)"],
+      ["value.css", "a {\n  b: c);\n}\n", "This value cannot be read (2:6)"],
+      ["deep.css", "a{".repeat(300) + "\n", "It is nested too deeply (1:513)"],
+      ["interpolation.scss", "a {\n  b: #{$c;\n", "This interpolation is not closed (2:6)"],
+      ["string.scss", 'a {\n  b: "x;\n}\n', "This string is not closed (2:6)"],
+      ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":" (2:7)'],
+      ["mixin.less", "a {\n  .b(;\n}\n", "This bracket is not closed (2:5)"],
+      ["each.less", "each(@a, {\n", "This bracket is not closed (1:5)"],
+      ["word.less", "a {\n  b c;\n}\n", "This is neither a declaration nor a rule (2:3)"],
+      ["end.graphql", "query {\n  a\n", "Unexpected end of file (3:1)"],
+      ["name.graphql", "query {\n}\n", "Expected a name (2:1)"],
+      ["value.graphql", "query { a(b: ) }\n", "Expected a value (1:14)"],
+      ["string.graphql", 'query { a(b: "x) }\n', "This string is not closed (1:14)"],
+      ["block-string.graphql", '"""\na\n', "This string is not closed (1:1)"],
+      ["escape.graphql", 'query { a(b: "\\x") }\n', "Invalid escape sequence (1:15)"],
+      ["definition.graphql", "foo A { b }\n", "Expected a definition (1:1)"],
+      ["colon.graphql", "query ($a) { b }\n", 'Expected ":" (1:10)'],
+      ["character.graphql", "query { a ? }\n", "Unexpected character (1:11)"],
+      ["number.graphql", "query { a(b: 01) }\n", "Invalid number (1:14)"],
+      ["digit.graphql", "query { a(b: 1.) }\n", "Expected a digit (1:16)"],
+      ["extension.graphql", "extend type A\n", "This extension adds nothing (1:14)"],
+      ["location.graphql", "directive @a on B\n", "Expected a place where a directive can be (1:17)"],
+      ["brace.graphql", "fragment A on B\n@c d\n", 'Expected "{" (2:4)'],
+      ["parenthesis.graphql", "query { a(b: 1 }\n", "Expected a name (1:16)"],
+      ["bracket.graphql", "type A { b: [C }\n", 'Expected "]" (1:16)'],
+      ["closing-brace.graphql", "schema { query: A ]\n", "Expected a name (1:19)"],
+      ["block.hbs", "<div>\n  {{#if a}}\n</div>\n", "This block is not closed (2:3)"],
+      ["mustache.hbs", "<div>\n  {{a\n</div>\n", "Unexpected character (3:1)"],
+      ["end.hbs", "{{a", "Unexpected end of file (1:4)"],
+      ["end-tag.hbs", "<div>\n<p>\n</div>\n", "This end tag does not close the element that is open (3:1)"],
+      ["name.hbs", "{{#if a}}b{{/each}}\n", "This is not the name of the block that is open (1:11)"],
+      ["no-start.hbs", "</div>\n", "This end tag has no start tag (1:1)"],
+      ["hash.hbs", "{{a b=}}\n", "Unexpected token (1:6)"],
+      ["in-tag.hbs", "<div {{#if a}}b{{/if}}></div>\n", "A block can only be in an element or in another block (1:6)"],
+      ["partial.hbs", "{{> a}}\n", "Partials, decorators and raw blocks are not supported (1:1)"],
+      ["void.hbs", "<input></input>\n", "This element has no end tag (1:8)"],
+      ["element.hbs", "{{#if a}}<div>{{/if}}\n", "This element is not closed (1:10)"],
+      ["comment.hbs", "{{!-- a\n", "This comment is not closed (1:1)"],
+      ["short-comment.hbs", "{{! a\n", "This comment is not closed (1:1)"],
+      ["string.hbs", '{{a "b}}\n', "This string is not closed (1:5)"],
+      ["segment.hbs", "{{a [b}}\n", "This bracket is not closed (1:5)"],
+      ["path.hbs", "{{a/../b}}\n", '"..", "." and "this" can only be at the start of a path (1:8)'],
+      ["params.hbs", "{{#each a as ||}}{{/each}}\n", "Expected a name (1:15)"],
+      ["tag-params.hbs", "<A as |b>\n</A>\n", "These block parameters cannot be read (1:9)"],
+      ["attribute.hbs", '<div></div a="b">\n', "An end tag cannot have attributes (1:12)"],
+      ["self-closing.hbs", "<div></div/>\n", "An end tag cannot close itself (1:6)"],
+      ["unquoted.hbs", "<div a=b{{c}}></div>\n", "A value with a mustache and text in it needs quotes (1:8)"],
+      ["tag-name.hbs", "<{{a}}></a>\n", "A mustache cannot be here (1:2)"],
+      ["equals.hbs", "<div =a></div>\n", "Unexpected character (1:6)"],
+      ["sexpr.hbs", "{{a (b}}\n", 'Expected ")" (1:7)'],
+      ["doctype.hbs", "<!DOCTYPE a PUBLIC b>\n", "This doctype cannot be read (1:20)"],
+      ["close.hbs", "{{a b=c d}}\n", 'Expected "}}" (1:9)'],
+      ["mustache-comment.hbs", "<div a={{! b }}></div>\n", "A comment cannot be here (1:8)"],
+      ["raw.hbs", "{{{{a}}}} b\n", "This block is not closed (1:10)"],
+      ["colon.hbs", "<:></:>\n", "This is not the name of an element (1:1)"],
+      ["mapping.yaml", "a: b: c\n", "A mapping cannot start on the line of the key that it is the value of (1:4)"],
+      ["flow.yaml", "a: [1, 2\nb: 3\n", "This bracket is not closed (1:4)"],
+      ["string.yaml", 'a: "x\n', "This string is not closed (1:4)"],
+      ["single.yaml", "a: 'x\n", "This string is not closed (1:4)"],
+      ["tab.yaml", "\ta: 1\n", "A tab cannot be indentation (1:1)"],
+      ["anchors.yaml", "a: &x &y 1\n", "A node has one anchor and one tag at most (1:7)"],
+      ["token.yaml", "- a\nb: 1\n", "Unexpected token (2:2)"],
+      ["directive.yaml", "%YAML 1.2\na: 1\n", 'Expected "---" after the directives (2:1)'],
+      ["directive-end.yaml", "%YAML 1.2\n", 'Expected "---" after the directives (2:1)'],
+      ["bad-directive.yaml", "%YAML a b\n---\n", "This directive cannot be read (1:1)"],
+      ["header.yaml", "a: |x\n  b\n", 'This is not what can follow "|" or ">" (1:4)'],
+      ["tag.yaml", "a: !b!c d\n", "This tag cannot be resolved (1:4)"],
+      ["alias.yaml", "a: &b *c\n", "An alias has a name, and neither an anchor nor a tag (1:7)"],
+      ["anchor.yaml", "a: & b\n", 'Expected a name after "&" (1:4)'],
+      ["plain.yaml", "a: @b\n", "A plain scalar cannot start with this character (1:4)"],
+      ["escape.yaml", 'a: "\\q"\n', "This string has an invalid escape sequence or indentation (1:4)"],
+      ["comma.yaml", "a: [b c: d e]\n[a b]\n", 'Expected ":" (2:6)'],
+      ["missing-comma.yaml", "[a: b c: d]\n", "A block collection or scalar cannot be between brackets (1:5)"],
+      ["comment.yaml", 'a: "b"#c\n', "Expected white space (1:7)"],
+      ["key.yaml", "[a\nb: c]\n", 'A key without "?" has to be on one line (1:2)'],
+      ["colon.yaml", "a: 1\nb\n", 'Expected ":" (2:2)'],
+      ["indent.yaml", "a:\n  - b\n - c\n", "This is not indented as it has to be (3:2)"],
+      ["block-in-flow.yaml", "[a: |\n  b\n]\n", "A plain scalar cannot start with this character (1:5)"],
+      ["seq-prop.yaml", "a: &b - c\n", "Unexpected token (1:7)"],
+      ["doc-start.yaml", "--- a: b\n", "Expected a line break (1:5)"],
+      ["binary.yaml", 'a: !!binary "?"\n', "The value is not what its tag says (1:13)"],
+      ["indicator.yaml", "&a ? b\n: c\n", "This has to come before the anchor and the tag, and once (1:4)"],
+      ["long-key.yaml", "a".repeat(1030) + ": b\n", 'A key without "?" cannot be longer than 1024 characters (1:1)'],
+      ["scalar-indent.yaml", "a: |2\n b\n", "This is not indented as it has to be (2:2)"],
+      ["no-comma.yaml", "[: ? 1]\n", 'Expected "," (1:6)'],
+      ["comma-or-colon.yaml", '["a" "b"]\n', 'Expected "," or ":" (1:6)'],
+      ["set.yaml", "{!!set}\n", "This cannot be formatted (1:1)"],
+      ["token.json", '{"a": }\n', "Unexpected token (1:7)"],
+      ["end.json", '{"a": 1\n', "Unexpected end of file (2:1)"],
+      ["string.json", '{"a": "x\n}\n', "This string is not closed (1:7)"],
+      ["escape.json", '{"a": "\\x"}\n', "Invalid escape sequence (1:7)"],
+      ["comment.json", '{"a": 1} /* b\n', "This comment is not closed (1:10)"],
+      ["more.json", '{"a": 1} 2\n', "Expected the end of the file (1:10)"],
+      ["only-comments.json", "// a\n", "Unexpected end of file (2:1)"],
+    ];
+    const result = await format(Object.fromEntries(cases.map(([name, text]) => [name, text])), []);
+    const said = [...result.stderr.matchAll(/^\[error\] ([^:\n]+): SyntaxError: (.+)$/gm)].map(it => [it[1], it[2]]);
+    expect(Object.fromEntries(said)).toEqual(Object.fromEntries(cases.map(([name, , message]) => [name, message])));
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("under a syntax error are the lines around it, as Prettier shows them", async () => {
+    const files = {
+      // A byte order mark does not count, `\r\n` is one line break, and a column is a UTF-16 code unit.
+      "a.css": '\uFEFFa {\r\n  /* é😀 */ b: "x\r\n}\r\n',
+      "b.css": 'a {\n  b: c;\n}\n\n\nd {\n  e: "f\n}\n\ng {\n  h: i;\n}\nj {\n}\n',
+      "c.js": "const a = ;\n",
+      "d.yaml": "a:\n\t- b\n",
+      // Not lines that nobody has written, which fill the screen.
+      "e.css": `a{b:${"c ".repeat(600)}"}\n`,
+    };
+    const result = await format(files, []);
+    expect(result.stderr).toMatchInlineSnapshot(`
+      "[error] a.css: SyntaxError: This string is not closed (2:16)
+      [error]   1 | a {
+      [error] > 2 |   /* é😀 */ b: "x
+      [error]     |                ^
+      [error]   3 | }
+      [error]   4 |
+      [error] b.css: SyntaxError: This string is not closed (7:6)
+      [error]    5 |
+      [error]    6 | d {
+      [error] >  7 |   e: "f
+      [error]      |      ^
+      [error]    8 | }
+      [error]    9 |
+      [error]   10 | g {
+      [error] c.js: SyntaxError: Expression expected. (1:11)
+      [error] > 1 | const a = ;
+      [error]     |           ^
+      [error]   2 |
+      [error] d.yaml: SyntaxError: A tab cannot be indentation (2:1)
+      [error]   1 | a:
+      [error] > 2 | 	- b
+      [error]     | ^
+      [error]   3 |
+      [error] e.css: SyntaxError: This string is not closed (1:1205)
+      Formatted 0 files, 0 unchanged"
+    `);
+    expect(result.exitCode).toBe(2);
+    const stdin = await format({}, ["--stdin-filepath", "a.css"], { stdin: "a {\n" });
+    expect(stdin.stderr).toMatchInlineSnapshot(`
+      "[error] a.css: SyntaxError: This block is not closed (1:1)
+      [error] > 1 | a {
+      [error]     | ^
+      [error]   2 |"
+    `);
+    expect(stdin.exitCode).toBe(2);
+  });
+
+  test("a syntax error in TOML is in the words of Bun's parser, and a warning: oxfmt passes over such a file", async () => {
+    const files = { "a.toml": 'a = 1\nb = "c\n', ".oxfmtrc.json": "{}\n" };
+    const warning = [
+      "[warn] a.toml: SyntaxError: Unterminated string; newlines must be escaped in basic strings (2:5)",
+      "[warn]   1 | a = 1",
+      '[warn] > 2 | b = "c',
+      "[warn]     |     ^",
+      "[warn]   3 |",
+    ].join("\n");
+    for (const flags of [[], ["--check"], ["-l"]]) {
+      const result = await format(files, flags, { reads: ["a.toml"] });
+      expect(result.stderr).toContain(warning);
+      expect(result.files["a.toml"]).toBe(files["a.toml"]);
+      expect(result.exitCode).toBe(0);
+    }
   });
 
   test("a file is left as it is if what would be written is another program", async () => {
@@ -506,7 +690,7 @@ describe.concurrent("bun format", () => {
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
     expect(broken.stderr).toMatch(/b\.toml: SyntaxError: .+ \(1:\d+\)/);
-    expect(broken.exitCode).toBe(2);
+    expect(broken.exitCode).toBe(0);
   });
 
   test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
@@ -573,7 +757,7 @@ describe.concurrent("bun format", () => {
     expect(result.stderr).not.toContain("$schema");
     expect(result.exitCode).toBe(0);
     const withPlugin = await format(
-      { ".prettierrc": `{ "plugins": ["prettier-plugin-tailwindcss"], ${unknown} }`, "a.js": ugly },
+      { ".prettierrc": `{ "plugins": ["prettier-plugin-brace-style"], ${unknown} }`, "a.js": ugly },
       ["--allow-unsupported", "a.js"],
       { reads: ["a.js"] },
     );
@@ -704,6 +888,29 @@ describe.concurrent("bun format", () => {
       ).toBe(asPrettier);
     });
 
+    test("no registry is asked for what a configuration file imports", async () => {
+      let requests = 0;
+      using registry = Bun.serve({
+        port: 0,
+        fetch() {
+          requests++;
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const result = await format(
+        {
+          "package.json": '{ "devDependencies": { "vite-plus": "1.0.0" } }\n',
+          "vite.config.ts":
+            'import { defineConfig } from "vite-plus";\nexport default defineConfig({ fmt: { semi: false } });\n',
+          "a.js": "a;\n",
+        },
+        ["a.js"],
+        { reads: ["a.js"], env: { BUN_CONFIG_REGISTRY: registry.url.href, NPM_CONFIG_REGISTRY: registry.url.href } },
+      );
+      expect(result.files["a.js"]).toBe("a\n");
+      expect(requests).toBe(0);
+    });
+
     test("a project that depends on Vite+ has its options in the fmt of the nearest vite.config.ts that has one", async () => {
       const files = {
         "package.json": '{ "devDependencies": { "vite-plus": "1.0.0" } }\n',
@@ -770,27 +977,6 @@ describe.concurrent("bun format", () => {
     const result = await format(files, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe("a\n");
     expect(result.exitCode).toBe(0);
-  });
-
-  test("sortTailwindcss, where it has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
-    const html = '<p class="b c">{{d}}</p>\n';
-    const files = {
-      ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
-      "a.js": ugly,
-      "b.hbs": html,
-      "c.hbs": "<p></p>\n",
-    };
-    const result = await format(files, [], { reads: ["a.js"] });
-    expect(result.files["a.js"]).toBe(formatted);
-    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .hbs";
-    expect(result.stderr).toContain(`[error] ${text}. With --allow-unsupported this is a warning.`);
-    expect(result.exitCode).toBe(2);
-    const allowed = await format(files, ["--allow-unsupported"], { reads: ["a.js"] });
-    expect(allowed.stderr).toContain(`[warn] ${text}`);
-    expect(allowed.exitCode).toBe(0);
-    const off = await format({ ...files, ".oxfmtrc.json": '{ "sortTailwindcss": false }\n' }, [], { reads: ["a.js"] });
-    expect(off.stderr).not.toContain("sortTailwindcss");
-    expect(off.exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("a named pipe with the name of a script is passed over, as by Prettier", async () => {

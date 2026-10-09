@@ -90,7 +90,9 @@ impl FuncStyle {
             Some(style) if is_exported => style == Style::Expression,
             _ => !self.enforce_declarations,
         };
-        if expects_expression && !is_overloaded_function(statement, func, is_exported, cx) {
+        // oxlint leaves alone what is declared more than once: with a namespace, an interface, a type of the same name.
+        let is_merged = cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
+        if expects_expression && !is_merged && !is_overloaded_function(statement, func, is_exported, cx) {
             cx.report(statement.span_without_export(), EXPRESSION);
         }
     }

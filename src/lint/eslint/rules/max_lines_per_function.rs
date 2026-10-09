@@ -35,10 +35,38 @@ fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
     lines
 }
 
+/// For each comment where it starts, and how many lines oxlint's `count_comment_lines` finds in the comments up to it:
+/// the lines that a comment has for itself. A line with two comments is a line of code.
+fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
+    let mut count = 0;
+    let counts = file.comments().map(|comment| {
+        let (first, last) = (file.line_of(comment.start()), file.line_of(comment.end()));
+        let is_first = text::is_blank(file.slice(Span::new(file.line_span(first).start, comment.start())));
+        count += match comment.kind() {
+            TokenKind::Block => {
+                let is_last = text::is_blank(file.slice(Span::new(comment.end(), file.line_span(last).end)));
+                (last + u32::from(is_last)).saturating_sub(first + u32::from(!is_first))
+            }
+            _ => u32::from(is_first),
+        };
+        (comment.start(), count)
+    });
+    counts.collect()
+}
+
+/// What is counted once in a file, when it is needed.
+#[derive(Default)]
+pub struct Counts {
+    /// What [`MaxLinesPerFunction::count_lines`] returns.
+    lines: Option<Vec<u32>>,
+    /// What [`count_comment_lines_as_oxlint`] returns.
+    comments: Option<Vec<(u32, u32)>>,
+}
+
 impl MaxLinesPerFunction {
     /// For each line, and for 0, how many lines up to it count.
     fn count_lines<'a>(&self, file: &'a File<'a>) -> Vec<u32> {
-        let comment_only_lines = match self.skips_comments {
+        let comment_only_lines = match self.skips_comments && !file.language().is_oxlint {
             true => get_comment_only_lines(file),
             false => Vec::new(),
         };
@@ -63,6 +91,9 @@ impl MaxLinesPerFunction {
             (Node::Expr(e), _) if !self.counts_iifes && ast_utils::is_callee(e) => return,
             _ => func.estree_span(),
         };
+        // oxlint counts from where the function starts, which is after the name of a method.
+        let is_oxlint = cx.language().is_oxlint;
+        let span = if is_oxlint { func.estree_span() } else { span };
         let file = cx.file();
         let (first, last) = (file.line_of(span.start), file.line_of(span.end));
         if last - first < self.max {
@@ -70,9 +101,17 @@ impl MaxLinesPerFunction {
         }
         let mut line_count = last - first + 1;
         if self.skips_comments || self.skips_blank_lines {
-            let counted = cx.state.get_or_insert_with(|| self.count_lines(file));
+            let counted = cx.state.lines.get_or_insert_with(|| self.count_lines(file));
             let up_to = |line: u32| counted.get(line as usize).map_or(0, |&it| it);
             line_count = up_to(last).saturating_sub(up_to(first.saturating_sub(1)));
+            if is_oxlint && self.skips_comments {
+                let comments = cx.state.comments.get_or_insert_with(|| count_comment_lines_as_oxlint(file));
+                let before = |offset: u32| {
+                    let at = comments.partition_point(|it| it.0 < offset);
+                    at.checked_sub(1).and_then(|it| comments.get(it)).map_or(0, |it| it.1)
+                };
+                line_count = line_count.saturating_sub(before(span.end).saturating_sub(before(span.start)));
+            }
             if line_count <= self.max {
                 return;
             }
@@ -94,8 +133,7 @@ impl MaxLinesPerFunction {
 
 impl Rule for MaxLinesPerFunction {
     const META: Meta = Meta::eslint("max-lines-per-function", Kind::Suggestion);
-    /// What [`MaxLinesPerFunction::count_lines`] returns, once it is needed.
-    type State<'a> = Option<Vec<u32>>;
+    type State<'a> = Counts;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -107,8 +145,8 @@ impl Rule for MaxLinesPerFunction {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<Vec<u32>> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Counts {
         on.funcs(Self::check);
-        None
+        Counts::default()
     }
 }

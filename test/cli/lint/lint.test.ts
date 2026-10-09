@@ -57,6 +57,8 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   const read = (name: string) =>
     existsSync(join(String(dir), name)) ? readFileSync(join(String(dir), name), "utf8") : null;
   return {
@@ -794,6 +796,55 @@ describe.concurrent("bun lint", () => {
           unpruned: 1,
           unprunedForGitlab: 1,
         });
+      });
+
+      test("without --format: what tells oxlint that an agent runs it makes `agent` the format, before GITHUB_ACTIONS", async () => {
+        const run = (env: Record<string, string | undefined>) => lint(files, [], { env: { AGENT: undefined, ...env } });
+        const [agent, named, both, off, github] = await Promise.all([
+          lint(files, ["-f", "agent"]),
+          run({ AI_AGENT: "something" }),
+          run({ CURSOR_AGENT: "0", GITHUB_ACTIONS: "true" }),
+          run({ AI_AGENT: "something", AGENT: "0", GITHUB_ACTIONS: "true" }),
+          lint(files, ["-f", "github"]),
+        ]);
+        const first = (it: { raw: string }) => it.raw.split("\n")[0];
+        expect([named.raw, both.raw]).toEqual([agent.raw, agent.raw]);
+        expect(first(off)).toBe(first(github));
+      });
+
+      test("oxlint-suppressions.json has oxlint's names of the rules", async () => {
+        const project = {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            plugins: ["typescript", "node", "nextjs"],
+            rules: {
+              "no-console": "error",
+              "typescript/no-explicit-any": "error",
+              "node/no-new-require": "error",
+              "nextjs/no-img-element": "error",
+            },
+          }),
+          "a.tsx": 'console.log(1 as any);\nnew require("x");\n<img src="a" />;\n',
+        };
+        // What oxlint 1.87 writes with --suppress-all.
+        const names = ["next/no-img-element", "no-console", "node/no-new-require", "typescript/no-explicit-any"];
+        const written = Object.fromEntries(names.map(name => [name, { count: 1 }]));
+        const suppressed = await lint(
+          { ...project, "oxlint-suppressions.json": JSON.stringify({ "a.tsx": written }) },
+          ["-f", "json"],
+        );
+        expect(JSON.parse(suppressed.raw).diagnostics).toEqual([]);
+        expect(suppressed.exitCode).toBe(0);
+        using dir = tempDir("bun-lint-suppressions", project);
+        await using proc = Bun.spawn({
+          cmd: [...command, "--suppress-all", "-f", "json"],
+          env,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        expect(await proc.exited).toBe(0);
+        expect(await Bun.file(join(String(dir), "oxlint-suppressions.json")).json()).toEqual({ "a.tsx": written });
       });
 
       test("--silent and no file to lint: a format prints what oxlint's prints", async () => {

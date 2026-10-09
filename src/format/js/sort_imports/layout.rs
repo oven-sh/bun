@@ -74,7 +74,7 @@ pub(super) fn is_unchanged(
         return false;
     }
     let text = model.text;
-    let is_ignore = |piece: &Piece| matches!(piece.kind, PieceKind::Comment(id) if matches!(model.comment_value(id).trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore"));
+    let is_ignore = |piece: &Piece| matches!(piece.kind, PieceKind::Comment(id) if model.comment_value(id).trim_ascii() == b"prettier-ignore");
     let is_exact = pieces.iter().any(is_ignore);
 
     // The pieces of the file, in order.

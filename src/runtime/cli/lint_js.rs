@@ -351,12 +351,16 @@ impl Start {
     }
 }
 
-/// What the thread of an engine does.
+/// What the thread of an engine does. Nobody joins it: once its VM is freed it waits for a turn that never comes, until the
+/// process exits.
 fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
-    let name = format!("Bun Lint JS {number}\0");
-    bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
-        name.as_bytes(),
-    ));
+    // What is still owned where the loop begins is never freed.
+    {
+        let name = format!("Bun Lint JS {number}\0");
+        bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
+            name.as_bytes(),
+        ));
+    }
     let started = start.start_vm();
     loop {
         let Turn::Call { kind, content } =
@@ -464,8 +468,8 @@ impl Engines {
         }
     }
 
-    /// Waits for one of the first `among` engines.
-    fn borrow(&self, among: usize) -> Result<Borrowed<'_>, Vec<u8>> {
+    /// Waits for an engine.
+    fn borrow(&self) -> Result<Borrowed<'_>, Vec<u8>> {
         let me = std::thread::current().id();
         let mut state = self.state.lock();
         // Nothing is asked of it at the moment: this thread would be waiting for the answer.
@@ -479,12 +483,14 @@ impl Engines {
             });
         }
         let at = loop {
-            if let Some(position) = state.idle.iter().rposition(|&at| at < among) {
-                break state.idle.remove(position);
+            if let Some(at) = state.idle.pop() {
+                break at;
             }
-            if state.all.len() < among && self.demand.is_worth_another(state.all.len()) {
+            if self.demand.is_worth_another(state.all.len()) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
+                // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
+                // thread has no VM. The new one makes its own, and frees it itself before `end_all` returns.
                 std::thread::Builder::new()
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
@@ -506,8 +512,8 @@ impl Engines {
 }
 
 impl Engine for Engines {
-    fn with_vm(&self, among: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        then(&mut self.borrow(among)?);
+    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        then(&mut self.borrow()?);
         Ok(())
     }
 

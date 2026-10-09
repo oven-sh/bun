@@ -1,3 +1,4 @@
+use crate::compat;
 use crate::helpers;
 use crate::inlines::Walk;
 use crate::parser::{self, MARK_CLOSER, MARK_HIDES, MARK_OPENER, Parser};
@@ -415,7 +416,10 @@ impl Parser<'_> {
                         continue;
                     }
                     // A ()-delimited title may not contain an unescaped '('
-                    if close_char == b')' && content[pos] == b'(' {
+                    if close_char == b')'
+                        && content[pos] == b'('
+                        && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                    {
                         title_valid = false;
                         break;
                     }
@@ -588,7 +592,10 @@ impl Parser<'_> {
                         continue;
                     }
                     // A ()-delimited title may not contain an unescaped '('
-                    if close_ch == b')' && content[p] == b'(' {
+                    if close_ch == b')'
+                        && content[p] == b'('
+                        && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                    {
                         title_valid = false;
                         break;
                     }

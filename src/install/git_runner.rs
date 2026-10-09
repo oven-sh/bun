@@ -148,34 +148,37 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
         }
     };
     let _ = dir.delete_tree(b".git");
-    // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
-    let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
-
     // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
     let _ = dir.delete_tree(b".bun-tag");
-    let tagged = bun_sys::File::openat(
-        dir.fd(),
-        bun_core::zstr!(".bun-tag"),
-        bun_sys::O::WRONLY
-            | bun_sys::O::CREAT
-            | bun_sys::O::EXCL
-            | if cfg!(windows) {
-                0
-            } else {
-                bun_sys::O::NOFOLLOW
-            },
-        0o664,
-    )
-    .and_then(|f| f.write_all(&resolved));
+    let prepared = strip_node_modules(staging.cache_dir, &dir)
+        .map_err(|err| ("cleaning \"node_modules\"", err))
+        .and_then(|()| {
+            bun_sys::File::openat(
+                dir.fd(),
+                bun_core::zstr!(".bun-tag"),
+                bun_sys::O::WRONLY
+                    | bun_sys::O::CREAT
+                    | bun_sys::O::EXCL
+                    | if cfg!(windows) {
+                        0
+                    } else {
+                        bun_sys::O::NOFOLLOW
+                    },
+                0o664,
+            )
+            .and_then(|f| f.write_all(&resolved))
+            .map_err(|err| ("writing \".bun-tag\"", err))
+        });
     // Windows cannot rename a directory with an open handle inside it.
     dir.close();
-    if let Err(err) = tagged {
+    if let Err((what, err)) = prepared {
         staging.discard();
         task.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "writing \".bun-tag\" for \"{}\" failed: {}",
+                "{} for \"{}\" failed: {}",
+                what,
                 BStr::new(&name),
                 BStr::new(err.name())
             ),
@@ -257,6 +260,288 @@ fn read_package_json(
         }),
         ..Default::default()
     })
+}
+
+/// What a checkout keeps of the `node_modules` its repository committed.
+///
+/// bun installs a package's dependencies into `<package>/node_modules`, except the
+/// ones `package.json` bundles: those come with the package. So the checkout keeps the
+/// bundled packages and the committed packages those depend on, which is what
+/// `npm pack` keeps. Everything else there is removed, and so is every link inside a
+/// kept package.
+///
+/// `cache_dir` is where a removed entry goes first (`remove_entry`).
+fn strip_node_modules(cache_dir: Fd, checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
+    use bun_sys::{E, EntryKind};
+
+    // Most repositories commit nothing here, and that costs one call.
+    match entry_kind(checkout, bun_core::zstr!("node_modules")) {
+        Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
+        Err(err) => return Err(err),
+        Ok(EntryKind::Directory) => {}
+        Ok(_) => return remove_entry(cache_dir, checkout, b"node_modules"),
+    }
+    let node_modules = match checkout.open_at_with(b"node_modules", REAL_DIR) {
+        Ok(node_modules) => node_modules,
+        // Another install removed it after the call above.
+        Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
+        Err(err) => return Err(err),
+    };
+
+    let mut kept = bun_collections::StringSet::new();
+    let mut names = Vec::new();
+    manifest_names(checkout, Manifest::Bundled, &mut names);
+    while let Some(name) = names.pop() {
+        if kept.contains(&name) {
+            continue;
+        }
+        let Some(package) = open_package(&node_modules, &name) else {
+            continue;
+        };
+        bun_core::handle_oom(kept.insert(&name));
+        clean_kept_package(package, &mut names)?;
+    }
+
+    if kept.keys().is_empty() {
+        // Windows cannot move a directory with an open handle to it.
+        node_modules.close();
+        return remove_entry(cache_dir, checkout, b"node_modules");
+    }
+    remove_unkept(cache_dir, &node_modules, b"", &kept)
+}
+
+/// Moves `name` out of `dir` to a temporary name in `cache_dir`, then deletes it there.
+/// The move is one step, so an install that reads the checkout at the same time finds
+/// the entry whole or not at all. An entry that another install moved first is removed.
+fn remove_entry(cache_dir: Fd, dir: &bun_sys::Dir, name: &[u8]) -> bun_sys::Maybe<()> {
+    use bun_sys::E;
+
+    let mut buf = [0u8; 64];
+    let aside = Path::fs::FileSystem::tmpname(b"tmp", &mut buf, bun_core::fast_random())
+        .expect("infallible: the name is 30 bytes");
+    let moved = bun_sys::renameat(
+        dir.fd(),
+        &bun_core::ZBox::from_bytes(name),
+        cache_dir,
+        aside,
+    );
+    match moved {
+        Ok(()) => {
+            // A failure leaves it under a name that no install looks up.
+            let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(aside.as_bytes());
+            Ok(())
+        }
+        Err(err) => match err.get_errno() {
+            E::ENOENT => Ok(()),
+            // overlayfs does not move a directory that a lower layer holds.
+            E::EXDEV => dir.delete_tree(name),
+            _ => Err(err),
+        },
+    }
+}
+
+/// Opens a directory itself, never the directory a link points at.
+const REAL_DIR: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+
+type Entries = Vec<(Vec<u8>, bun_sys::EntryKind)>;
+
+/// The entries of `dir`, read before any of them is deleted: a directory that changes
+/// under its iterator can skip entries.
+fn read_entries(dir: &bun_sys::Dir) -> bun_sys::Maybe<Entries> {
+    let mut entries = Vec::new();
+    let mut iter = bun_sys::iterate_dir(dir.fd());
+    while let Some(entry) = iter.next()? {
+        entries.push((entry.name.slice_u8().to_vec(), entry.kind));
+    }
+    Ok(entries)
+}
+
+/// What `name` in `dir` is. A link is a link, not its target.
+fn entry_kind(dir: &bun_sys::Dir, name: &bun_core::ZStr) -> bun_sys::Maybe<bun_sys::EntryKind> {
+    let stat = bun_sys::lstatat(dir.fd(), name)?;
+    Ok(bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode))
+}
+
+/// `kind`, looked up when the filesystem did not report it with the entry.
+fn known_kind(
+    dir: &bun_sys::Dir,
+    name: &[u8],
+    kind: bun_sys::EntryKind,
+) -> bun_sys::Maybe<bun_sys::EntryKind> {
+    match kind {
+        bun_sys::EntryKind::Unknown => entry_kind(dir, &bun_core::ZBox::from_bytes(name)),
+        known => Ok(known),
+    }
+}
+
+/// Opens `node_modules/<name>` or `node_modules/@scope/<name>` when it is a real
+/// directory, which is what a committed package is.
+fn open_package(node_modules: &bun_sys::Dir, name: &[u8]) -> Option<bun_sys::Dir> {
+    let open_real_dir = |parent: &bun_sys::Dir, name: &[u8]| {
+        let kind = entry_kind(parent, &bun_core::ZBox::from_bytes(name));
+        matches!(kind, Ok(bun_sys::EntryKind::Directory))
+            .then(|| parent.open_at_with(name, REAL_DIR).ok())
+            .flatten()
+    };
+    if !crate::dependency::is_safe_install_folder_name(name) {
+        return None;
+    }
+    match strings::split_once_char(name, b'/') {
+        None => open_real_dir(node_modules, name),
+        Some((scope, package))
+            if scope.first() == Some(&b'@') && !strings::contains_char(package, b'/') =>
+        {
+            open_real_dir(&open_real_dir(node_modules, scope)?, package)
+        }
+        Some(_) => None,
+    }
+}
+
+/// Walks a kept package: deletes every link in it, and adds to `names` what each
+/// `package.json` in it depends on.
+fn clean_kept_package(package: bun_sys::Dir, names: &mut Vec<Box<[u8]>>) -> bun_sys::Maybe<()> {
+    use bun_sys::EntryKind;
+
+    let mut stack = vec![(read_entries(&package)?, package)];
+    while let Some((entries, dir)) = stack.last_mut() {
+        let Some((name, kind)) = entries.pop() else {
+            stack.pop();
+            continue;
+        };
+        match known_kind(dir, &name, kind)? {
+            EntryKind::Directory => {
+                let child = dir.open_at_with(&name, REAL_DIR)?;
+                stack.push((read_entries(&child)?, child));
+            }
+            EntryKind::SymLink => dir.delete_tree(&name)?,
+            EntryKind::File if name == b"package.json" => {
+                manifest_names(dir, Manifest::Dependencies, names);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Removes every entry of `node_modules`, or of the scope directory `scope` in it, that
+/// `kept` does not name.
+fn remove_unkept(
+    cache_dir: Fd,
+    dir: &bun_sys::Dir,
+    scope: &[u8],
+    kept: &bun_collections::StringSet,
+) -> bun_sys::Maybe<()> {
+    let mut path = scope.to_vec();
+    for (name, kind) in read_entries(dir)? {
+        path.truncate(scope.len());
+        path.extend_from_slice(&name);
+        if kept.contains(&path) {
+            continue;
+        }
+        // A scope directory stays for the kept packages in it.
+        path.push(b'/');
+        if scope.is_empty()
+            && kept.keys().iter().any(|kept| kept.starts_with(&path))
+            && known_kind(dir, &name, kind)? == bun_sys::EntryKind::Directory
+        {
+            let scope_dir = dir.open_at_with(&name, REAL_DIR)?;
+            remove_unkept(cache_dir, &scope_dir, &path, kept)?;
+        } else {
+            remove_entry(cache_dir, dir, &name)?;
+        }
+    }
+    Ok(())
+}
+
+/// Which names of a `package.json` to collect.
+enum Manifest {
+    /// The checkout's own: the dependencies it bundles.
+    Bundled,
+    /// A kept package's: everything it depends on.
+    Dependencies,
+}
+
+/// Adds to `names` the package names the `package.json` in `dir` lists. A missing or
+/// broken file lists none.
+fn manifest_names(dir: &bun_sys::Dir, which: Manifest, names: &mut Vec<Box<[u8]>>) {
+    use crate::bun_json::E::JsonValue;
+
+    let Ok((file, contents)) = bun_sys::File::read_file_from(dir.fd(), b"package.json") else {
+        return;
+    };
+    let _ = file.close();
+    // Not `crate::initialize_store()`: that one resets the store, and a caller on the
+    // install thread can be in the middle of a parse of its own.
+    bun_ast::initialize_store();
+    let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
+    let mut log = bun_ast::Log::init();
+    let Ok(parsed) = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log) else {
+        return;
+    };
+    let bun_ast::expr::Data::EObjectJSON(manifest) = &parsed.root.data else {
+        return;
+    };
+    let manifest = manifest.get();
+
+    if matches!(which, Manifest::Bundled) {
+        match manifest
+            .get(b"bundleDependencies")
+            .or_else(|| manifest.get(b"bundledDependencies"))
+        {
+            // `true` bundles every dependency.
+            Some(JsonValue::Boolean(true)) => {}
+            Some(JsonValue::Array(list)) => {
+                let listed = list.get().items().iter().filter_map(|name| name.as_str());
+                names.extend(listed.map(Box::from));
+                return;
+            }
+            _ => return,
+        }
+    }
+    // The groups bun resolves for a dependency, and so can mark as bundled.
+    for group in [
+        b"dependencies".as_slice(),
+        b"optionalDependencies",
+        b"peerDependencies",
+    ] {
+        if let Some(group) = manifest.get(group).and_then(|group| group.as_object()) {
+            names.extend(
+                group
+                    .properties()
+                    .iter()
+                    .map(|row| Box::from(row.key.slice())),
+            );
+        }
+    }
+}
+
+/// Whether `checkout` is a cache hit: `.bun-tag` is written last. A checkout that an
+/// older bun published can hold a `node_modules` that was not cleaned. It is cleaned
+/// here before it counts as a hit.
+fn is_finished_checkout(cache_dir: Fd, checkout: &bun_sys::Dir) -> bool {
+    bun_sys::exists_at(checkout.fd(), bun_core::zstr!(".bun-tag"))
+        && strip_node_modules(cache_dir, checkout).is_ok()
+}
+
+/// `is_finished_checkout` for `<cache_dir>/<folder>`, which it opens only when there
+/// is a `node_modules` to clean.
+pub(crate) fn is_cached_checkout(cache_dir: Fd, folder: &[u8]) -> bool {
+    let mut buf = Path::path_buffer_pool::get();
+    let tag =
+        Path::resolve_path::join_z_buf::<Path::platform::Auto>(&mut buf.0, &[folder, b".bun-tag"]);
+    if !bun_sys::exists_at(cache_dir, tag) {
+        return false;
+    }
+    let node_modules = Path::resolve_path::join_z_buf::<Path::platform::Auto>(
+        &mut buf.0,
+        &[folder, b"node_modules"],
+    );
+    match bun_sys::lstatat(cache_dir, node_modules) {
+        Err(err) => err.get_errno() == bun_sys::E::ENOENT,
+        Ok(_) => bun_sys::Dir::borrow(&cache_dir)
+            .open_at(folder)
+            .is_ok_and(|checkout| is_finished_checkout(cache_dir, &checkout)),
+    }
 }
 
 /// `@G@<resolved>`: the cache folder of a checkout.
@@ -560,7 +845,7 @@ impl GitSubprocess {
 
         match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
             Ok(dir) => {
-                if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
+                if is_finished_checkout(this.cache_dir, &dir) {
                     Self::finish_on_pool(this, Finalize::CachedCheckout(dir));
                     return Ok(());
                 }

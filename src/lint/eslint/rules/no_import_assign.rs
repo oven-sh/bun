@@ -86,6 +86,15 @@ fn get_write_node(reference: Reference) -> Span {
     }
 }
 
+/// oxlint points at the name, or at the member that is written to.
+fn oxlint_place(reference: Reference) -> Span {
+    let id = reference.expr().filter(|_| !reference.is_write());
+    match id.map(Expr::parent) {
+        Some(Node::Expr(parent)) if ast_utils::member_object(parent) == id => parent.span(),
+        _ => reference.span(),
+    }
+}
+
 impl Rule for NoImportAssign {
     const META: Meta = Meta::eslint("no-import-assign", Kind::Problem).recommended();
     /// Whether an import that is not of a namespace can have something to report: something is assigned to what one imports,
@@ -114,8 +123,13 @@ impl Rule for NoImportAssign {
                 }
                 // `[a = 0] = b` writes to `a` twice.
                 let mut previous = None;
+                let is_oxlint = cx.language().is_oxlint;
                 for reference in variable.references() {
                     if previous.replace(reference.span()) == Some(reference.span()) {
+                        continue;
+                    }
+                    // `import type { A } from "a"; const A = 0`: for oxlint a declaration assigns nothing.
+                    if is_oxlint && reference.is_init() {
                         continue;
                     }
                     let message = if reference.is_write() {
@@ -125,7 +139,8 @@ impl Rule for NoImportAssign {
                     } else {
                         continue;
                     };
-                    cx.report(get_write_node(reference), message).data("name", reference.name());
+                    let place = if is_oxlint { oxlint_place(reference) } else { get_write_node(reference) };
+                    cx.report(place, message).data("name", reference.name());
                 }
             }
         });

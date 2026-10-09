@@ -311,15 +311,11 @@ fn limit_of_the_groups() -> Option<usize> {
     None
 }
 
-/// What all engines together may take: a quarter of the memory.
-fn memory_for_engines() -> usize {
+/// The memory of the machine, or of the container.
+fn memory() -> usize {
     let machine = bun_core::get_total_memory_size();
-    limit_of_the_groups().map_or(machine, |it| it.min(machine)) / 4
+    limit_of_the_groups().map_or(machine, |it| it.min(machine))
 }
-
-/// A heap that is under a quarter of what JavaScriptCore takes for the RAM doubles between two collections. With this much that is a
-/// heap under 1 GB: every engine but one with a giant file, which then grows by a half and by a quarter instead.
-const MOST_RAM_FOR_A_HEAP: usize = 4 << 30;
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. With
 /// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
@@ -397,9 +393,9 @@ struct Start {
 }
 
 impl Start {
-    /// [`memory_for_engines`]
+    /// [`memory`]
     fn memory(&self) -> usize {
-        *self.memory.get_or_init(memory_for_engines)
+        *self.memory.get_or_init(memory)
     }
 
     /// Makes a VM for this thread.
@@ -411,7 +407,9 @@ impl Start {
             if !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
-            jsc::expect_ram_size(self.memory().min(MOST_RAM_FOR_A_HEAP));
+            // It does not look at the limit of a container. Less than there is makes every heap collect more often: with under
+            // 16 GB it goes by what the process takes, which is all engines together.
+            jsc::expect_ram_size(self.memory());
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {
@@ -546,15 +544,15 @@ impl Engines {
         }
     }
 
-    /// Whether one more engine fits in the memory that is for them, if it gets as large as the largest of those after the first, which
-    /// has the heavy files. Nobody knows before one of these has been given back: so long there are two.
+    /// Whether one more engine fits in the memory that is for them, a quarter of all, if it gets as large as the largest of those
+    /// after the first, which has the heavy files. Nobody knows before one of these has been given back: so long there are two.
     fn has_room_for_another(&self, state: &State) -> bool {
         let [first, others @ ..] = &state.all[..] else {
             return true;
         };
         let largest = others.iter().map(|it| it.2).max().unwrap_or(0);
         others.is_empty()
-            || (largest > 0 && first.2 + (others.len() + 1) * largest <= self.start.memory())
+            || (largest > 0 && first.2 + (others.len() + 1) * largest <= self.start.memory() / 4)
     }
 
     /// Waits for an engine.

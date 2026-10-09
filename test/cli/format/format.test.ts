@@ -478,6 +478,37 @@ describe.concurrent("bun format", () => {
     },
   );
 
+  // What a file is like while it is being written. TypeScript's parser goes on and leaves these to its checker.
+  test.each([
+    "let x = 1;\nconst",
+    "var",
+    "export const",
+    "export var;",
+    "function f() { const }",
+    "for (const of a);",
+    "for (var of a);",
+    "for (const in a);",
+    "for (var;;);",
+    "class extends A {}",
+    "class A extends {}",
+    "x = class extends {}",
+    "class A<> {}",
+    "function f<>() {}",
+  ])("JavaScript in which a name is missing is a syntax error, and the file stays as it is: %j", async code => {
+    const files = { "a.js": code + "\n", "b.mjs": code + "\n", "c.jsx": code + "\n" };
+    const result = await format(files, [], { reads: Object.keys(files) });
+    expect(result.files).toEqual(files);
+    for (const name of Object.keys(files)) expect(result.stderr).toContain(`[error] ${name}: SyntaxError: `);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("a block of JavaScript in Markdown in which a name is missing stays as it is", async () => {
+    const files = { "a.md": "```js\nlet   x = 1;\nconst\n```\n" };
+    const result = await format(files, [], { reads: ["a.md"] });
+    expect(result.files).toEqual(files);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("YAML, GraphQL, Markdown", async () => {
     const result = await format(
       {

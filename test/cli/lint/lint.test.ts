@@ -141,7 +141,17 @@ describe.concurrent("bun lint", () => {
     ["eslint.config.js", config({})],
     [".oxlintrc.json", "{}"],
   ])("JavaScript in which a name is missing is a parsing error, with %s", async (name, text) => {
-    const codes = ["let x = 1;\nconst", "export var", "for (const of a);", "class extends A {}", "class A extends {}"];
+    const codes = [
+      "let x = 1;\nconst",
+      "export var",
+      "for (const of a);",
+      "class extends A {}",
+      "class A extends {}",
+      "x = {a?: 1}",
+      "x = {async a}",
+      "class A { async a }",
+      "try {} catch (a = 1) {}",
+    ];
     const files = Object.fromEntries(codes.map((code, i) => [`a${i}.js`, code + "\n"]));
     const { stdout, exitCode } = await lint({ [name]: text, ...files }, ["-f", "unix", ...Object.keys(files)]);
     expect(

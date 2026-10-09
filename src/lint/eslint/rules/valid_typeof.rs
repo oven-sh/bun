@@ -59,7 +59,10 @@ impl ValidTypeof {
             | ExprKind::True
             | ExprKind::False
             | ExprKind::Null
-            | ExprKind::Regex(_) => {
+            | ExprKind::Regex(_)
+                // For oxlint they are like any other expression.
+                if !cx.language().is_oxlint =>
+            {
                 cx.report(sibling, INVALID_VALUE);
             }
             ExprKind::Ident(name) if name.is("undefined") && ast_utils::is_global_reference(sibling) => {

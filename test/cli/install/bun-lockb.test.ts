@@ -1,8 +1,17 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { readFileSync } from "fs";
+import { chmodSync, readFileSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, textLockfile, VerdaccioRegistry } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  runBunInstall,
+  tempDir,
+  textLockfile,
+  VerdaccioRegistry,
+} from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -149,32 +158,59 @@ it("bun.lockb and bun.lockb --hash read only the lockfile", async () => {
   ).toEqual([printed, printed, printed, hashed, parseError, parseError]);
 });
 
+const textBunLock = textLockfile(1, {
+  workspaces: { "": { name: "lockb-text", dependencies: { "no-deps": "1.0.0" } } },
+  packages: {
+    "no-deps": [
+      "no-deps@1.0.0",
+      "",
+      {},
+      "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+    ],
+  },
+});
+const printedTextBunLock = {
+  stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:\n  version "1\.0\.0"$/m),
+  stderr: "",
+  exitCode: 0,
+};
+
 it("bun.lockb prints a text bun.lock without opening .env", async () => {
-  using dir = tempDir("lockb-text", {
-    "bun.lock": textLockfile(1, {
-      workspaces: { "": { name: "lockb-text", dependencies: { "no-deps": "1.0.0" } } },
-      packages: {
-        "no-deps": [
-          "no-deps@1.0.0",
-          "",
-          {},
-          "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
-        ],
-      },
-    }),
-  });
+  using dir = tempDir("lockb-text", { "bun.lock": textBunLock });
   const cwd = String(dir);
   await writeUnopenableEnv(cwd);
 
-  const printed = {
-    stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:\n  version "1\.0\.0"$/m),
-    stderr: "",
-    exitCode: 0,
-  };
   expect(await Promise.all([run(cwd, "bun.lockb"), run(cwd, "--no-env-file", "bun.lockb")])).toEqual([
-    printed,
-    printed,
+    printedTextBunLock,
+    printedTextBunLock,
   ]);
+});
+
+// Root can list any directory, so the command runs as "nobody".
+const canRunAsNobody =
+  isLinux &&
+  process.getuid?.() === 0 &&
+  !!Bun.which("runuser") &&
+  /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+
+it.skipIf(!canRunAsNobody)("bun.lockb prints a lockfile in a directory that cannot be listed", async () => {
+  using dir = tempDir("lockb-unlistable", { "project/bun.lock": textBunLock });
+  const project = join(String(dir), "project");
+  chmodSync(String(dir), 0o755);
+  chmodSync(join(project, "bun.lock"), 0o644);
+  chmodSync(project, 0o111);
+  try {
+    await using proc = spawn({
+      cmd: ["runuser", "-m", "-u", "nobody", "--", "/bin/sh", "-c", `cd '${project}' && exec '${bunExe()}' bun.lockb`],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(printedTextBunLock);
+  } finally {
+    chmodSync(project, 0o755);
+  }
 });
 
 it("should continue using a binary lockfile if it exists", async () => {

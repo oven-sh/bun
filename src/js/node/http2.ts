@@ -5704,7 +5704,10 @@ class ClientHttp2Session extends Http2Session {
       this.#authority = needsBrackets ? `[${authorityHost}]:${port}` : `${authorityHost}:${port}`;
     }
 
+    // Set when the constructor throws: nobody holds this session.
+    let abandoned = false;
     function onConnect() {
+      if (abandoned) return;
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
       if (this.#parser === undefined) {
@@ -5756,21 +5759,31 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
-    this.#encrypted = socket instanceof TLSSocket;
-    const nativeSocket = socket._handle;
-    this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
-
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
+    try {
+      this.#encrypted = socket instanceof TLSSocket;
+      const nativeSocket = socket._handle;
+      this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
+      if (options?.settings !== undefined) {
+        validateSettings(options.settings);
+      }
+      const nativeSettings = { ...options, ...options?.settings };
+      this.#localSettings = initialLocalSettings(nativeSettings);
+      // #onConnect attaches the native socket; frames written before that (the preface) queue.
+      this.#parser = new H2FrameParser({
+        context: this,
+        settings: nativeSettings,
+        handlers: ClientHttp2Session.#Handlers,
+      });
+    } catch (e) {
+      abandoned = true;
+      this[bunHTTP2Socket] = null;
+      try {
+        socket.destroy();
+      } catch {
+        // A createConnection socket whose destroy() throws must not replace `e`.
+      }
+      throw e;
     }
-    const nativeSettings = { ...options, ...options?.settings };
-    this.#localSettings = initialLocalSettings(nativeSettings);
-    // #onConnect attaches the native socket; frames written before that (the preface) queue.
-    this.#parser = new H2FrameParser({
-      context: this,
-      settings: nativeSettings,
-      handlers: ClientHttp2Session.#Handlers,
-    });
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));

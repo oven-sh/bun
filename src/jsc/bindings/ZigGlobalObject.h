@@ -861,6 +861,9 @@ public:
 
 namespace Bun {
 
+// Panics when JSC cannot allocate the VM.
+Ref<JSC::VM> createVM(JSC::HeapType);
+
 void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)

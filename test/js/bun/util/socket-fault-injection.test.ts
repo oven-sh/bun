@@ -1,5 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const skip = !fault.available();
 
@@ -21,10 +22,10 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   });
 
   // Only recv/send/writev have a byte count to clamp; arming "short" on any other
-  // syscall used to succeed silently and never fire. ssl_loop_buffer is an
-  // allocation, so it has no byte count either.
+  // syscall used to succeed silently and never fire. ssl_loop_buffer and
+  // vm_create are allocations, so they have no byte count either.
   test("set() rejects 'short' for syscalls that cannot clamp a byte count", () => {
-    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer"] as const) {
+    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer", "vm_create"] as const) {
       expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
     }
     expect(fault.set({ syscall: "recv", action: "short", bytes: 1 })).toBe(true);
@@ -35,7 +36,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // A zero return only means something for the data syscalls (EOF on the read
   // side, backpressure on the write side); connect's wrapper returns errno.
   test("set() rejects 'zero' for syscalls with no zero-return semantics", () => {
-    for (const syscall of ["connect", "accept", "ssl_loop_buffer"] as const) {
+    for (const syscall of ["connect", "accept", "ssl_loop_buffer", "vm_create"] as const) {
       expect(() => fault.set({ syscall, action: "zero" })).toThrow(/only supported for syscall/);
     }
     for (const syscall of ["recv", "send", "writev", "sendmsg", "recvmsg"] as const) {
@@ -57,6 +58,15 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM", fd: -1 })).toBe(true);
     // Descriptor-pinned rules still work for the real syscalls.
     expect(fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", fd: 3 })).toBe(true);
+  });
+
+  // vm_create's hook is the creation of a JSC::VM, so it checks with fd = -1 too.
+  test("set() accepts vm_create and rejects 'fd' for it", () => {
+    expect(() => fault.set({ syscall: "vm_create", action: "errno", errno: "ENOMEM", fd: 3 })).toThrow(
+      /rule\.fd is not supported for syscall "vm_create"/,
+    );
+    // "none", because an armed rule ends this process when it next creates a VM.
+    expect(fault.set({ syscall: "vm_create", action: "none" })).toBe(true);
   });
 
   test("set() rejects unknown errno name", () => {
@@ -124,6 +134,53 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(() => fault.set({ syscall: "send", action: "short", bytes: 0 })).toThrow(/rule\.bytes must be > 0/);
   });
 });
+
+// JSC::VM::tryCreate returns null only when the VM constructor cannot allocate one of its BigInt constants, so the
+// "vm_create" rule is the only way to that null from a test.
+test.skipIf(skip)(
+  "vm_create: a bytecode build that cannot create its VM is a panic with a message",
+  async () => {
+    using dir = tempDir("fault-injection-vm-create", {
+      "index.js": `console.log("hello");`,
+      "build-fixture.ts": `
+        import { socketFaultInjection as fault } from "bun:internal-for-testing";
+
+        fault.set({ syscall: "vm_create", action: "errno", errno: "ENOMEM" });
+        console.log("ARMED");
+        const build = await Bun.build({
+          entrypoints: ["./index.js"],
+          outdir: "./out",
+          target: "bun",
+          format: "cjs",
+          bytecode: true,
+        });
+        console.log("BUILT " + build.outputs.map(output => output.kind).join(","));
+      `,
+    });
+    // The flag keeps a debug build from symbolizing the trace.
+    const cmd = [bunExe(), "build-fixture.ts", "--debug-crash-handler-use-trace-string"];
+    await using proc = Bun.spawn({
+      // This crash is deliberate: it must leave no core file for the CI lane that collects them.
+      cmd: isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd],
+      // For the same reason it must not be uploaded as a crash report.
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const panicked = /panic.*: Failed to allocate JavaScriptCore Virtual Machine/.test(stderr);
+    expect({
+      markers: stdout.split(/\r?\n/).filter(line => line === "ARMED" || line.startsWith("BUILT")),
+      panicked,
+      // Only filled when the assertion is about to fail, so that the diff shows why.
+      stderr: panicked ? "" : stderr.slice(-2000),
+    }).toEqual({ markers: ["ARMED"], panicked: true, stderr: "" });
+    expect(exitCode).not.toBe(0);
+  },
+  // The child is a debug or ASAN build that writes a crash report: 2 to 9 s, and 34 s once, right after a link.
+  60_000,
+);
 
 test.skipIf(fault.available())("set() throws helpfully when compiled out", () => {
   expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET" })).toThrow(

@@ -78,6 +78,14 @@ export const cases: Case[] = [
     matches: /'a' is constant|nested too deeply/,
     exitCode: 1,
   },
+  {
+    name: "100,000 signs that begin a decorator",
+    file: "a.js",
+    text: () => `${rep("@", 100_000)}\n`,
+    rules: { "no-debugger": "error" },
+    matches: /nested too deeply/,
+    exitCode: 1,
+  },
 
   {
     name: "a constant behind 27,000 operators, and one that 44,000 assignments pass on",

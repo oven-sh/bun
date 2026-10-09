@@ -410,6 +410,10 @@ impl Parser<'_> {
 
     /// `tryParseDecorator`: pushes it on the stack of modifiers.
     fn decorator(&mut self) {
+        // The expression can be a class with decorators.
+        if self.is_too_deep() {
+            return;
+        }
         let pos = self.pos();
         self.expect(T::At);
         let saved = self.enter_context(ctx::DECORATOR, 0);

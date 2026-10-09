@@ -331,7 +331,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
                 && has_call_on_left_edge(e)
         }
         ExprKind::Instantiation { .. } => is_member_object(e, parent),
-        ExprKind::Jsx(_) => jsx_needs_parentheses(e, parent),
+        ExprKind::Jsx(_) => jsx_needs_parentheses(e, parent, f),
         _ => false,
     }
 }
@@ -745,12 +745,34 @@ fn has_call_on_left_edge(e: Expr<'_>) -> bool {
     }
 }
 
-fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
+/// Prettier has a list of what JSX needs no parentheses in, oxfmt has one of what it needs them in. In neither:
+/// `class A { b = (<c />); }`, `` `${(<a />)}` ``, `if ((<a />)) {}`.
+fn lists_what_jsx_needs_parentheses_in(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     match parent {
         N::BinaryExpression(binary) => {
             binary.binary_operator() == Some(BinOp::Lt) && binary.left() == Some(e)
         }
         N::CallExpression(_) | N::NewExpression(_) => parent.is_call_like_callee(e),
+        _ if lists_what_jsx_needs_parentheses_in(f) => matches!(
+            parent,
+            N::Class(_)
+                | N::TSAsExpression(_)
+                | N::TSSatisfiesExpression(_)
+                | N::AwaitExpression(_)
+                | N::StaticMemberExpression(_)
+                | N::ComputedMemberExpression(_)
+                | N::SequenceExpression(_)
+                | N::UnaryExpression(_)
+                | N::TSNonNullExpression(_)
+                | N::SpreadElement(_)
+                | N::TaggedTemplateExpression(_)
+                | N::JSXSpreadAttribute(_)
+                | N::JSXSpreadChild(_)
+        ),
         N::ArrayExpression(_)
         | N::PrivateInExpression(_)
         | N::AssignmentExpression(_)

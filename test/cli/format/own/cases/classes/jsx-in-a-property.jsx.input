@@ -1,0 +1,5 @@
+class A {
+  children = <Child parent={this} />;
+  static b = <div />;
+  accessor c = <div />;
+}

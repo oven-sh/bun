@@ -1926,7 +1926,7 @@ pub fn init(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
-    let env: &mut dot_env::Loader = if cli.env_files.is_empty() {
+    let (env, env_files): (&mut dot_env::Loader, options::EnvFiles) = if cli.env_files.is_empty() {
         let env = new_env_loader();
         env.load_process()?;
         let env_suffix = default_env_file_suffix(env);
@@ -1944,11 +1944,17 @@ pub fn init(
             )
         };
         env.load(&env_probe_keys, &[], env_suffix, skip_default_env)?;
-        env
+        let env_files = if skip_default_env {
+            options::EnvFiles::Disabled
+        } else {
+            options::EnvFiles::Default
+        };
+        (env, env_files)
     } else {
         // SAFETY: `load_explicit_env_files` stored this loader when `init()`
         // started; nothing else holds a reference to it yet.
-        unsafe { &mut *holder::ENV_LOADER.load() }
+        let env = unsafe { &mut *holder::ENV_LOADER.load() };
+        (env, options::EnvFiles::Explicit)
     };
 
     initialize_store();
@@ -2008,6 +2014,7 @@ pub fn init(
         max_concurrent_lifecycle_scripts: cli
             .concurrent_scripts
             .unwrap_or((cpu_count * 2) as usize),
+        env_files,
         ..Default::default()
     };
 

@@ -9,6 +9,9 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+use core::ffi::CStr;
+use std::ffi::CString;
+
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
@@ -29,14 +32,14 @@ use bun_ptr::{RefCount, RefPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::package_manager_options::{Do, EnvFiles};
 
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
@@ -255,6 +258,33 @@ pub fn perform_security_scan_for_all(
     )
 }
 
+/// What the scanner child, a `bun -e` in the project root, is told about `.env` files.
+enum ScannerEnv {
+    /// Nothing: it loads the default files itself.
+    Default,
+    /// `--no-env-file`.
+    NoEnvFile,
+    /// `--no-env-file`, and the environment with the `--env-file` values.
+    Resolved(bun_dotenv::NullDelimitedEnvMap),
+}
+
+impl ScannerEnv {
+    fn new(manager: &PackageManager) -> Result<Self, Error> {
+        Ok(match manager.options.env_files {
+            EnvFiles::Default => Self::Default,
+            EnvFiles::Disabled => Self::NoEnvFile,
+            EnvFiles::Explicit => {
+                let env = manager.env_mut();
+                // `--env-file` copies the environment before bunfig `[run] noOrphans` sets this.
+                if bun_io::parent_death_watchdog::is_enabled() {
+                    env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
+                }
+                Self::Resolved(env.map.create_null_delimited_env_map()?)
+            }
+        })
+    }
+}
+
 fn scan_installing_scanner_if_needed(
     manager: &mut PackageManager,
     security_scanner: &[u8],
@@ -263,6 +293,9 @@ fn scan_installing_scanner_if_needed(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
+    // Built once: the partial install below can add script variables to the loader.
+    let env = ScannerEnv::new(manager)?;
+
     let result = attempt_security_scan(
         manager,
         security_scanner,
@@ -270,6 +303,7 @@ fn scan_installing_scanner_if_needed(
         seeds,
         command_ctx,
         original_cwd,
+        &env,
     )?;
 
     match result {
@@ -288,6 +322,7 @@ fn scan_installing_scanner_if_needed(
                 command_ctx,
                 original_cwd,
                 true,
+                &env,
             )?;
             match retry_result {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
@@ -793,6 +828,7 @@ fn attempt_security_scan(
     seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    env: &ScannerEnv,
 ) -> Result<ScanAttemptResult, Error> {
     attempt_security_scan_with_retry(
         manager,
@@ -802,6 +838,7 @@ fn attempt_security_scan(
         command_ctx,
         original_cwd,
         false,
+        env,
     )
 }
 
@@ -813,6 +850,7 @@ fn attempt_security_scan_with_retry(
     command_ctx: CommandContext,
     original_cwd: &[u8],
     is_retry: bool,
+    env: &ScannerEnv,
 ) -> Result<ScanAttemptResult, Error> {
     if manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
         bun_core::pretty_errorln!(
@@ -910,7 +948,7 @@ fn attempt_security_scan_with_retry(
     });
     // Cleanup of code/json_data/process handled by `Drop for SecurityScanSubprocess` when Box drops.
 
-    scanner.spawn()?;
+    scanner.spawn(env)?;
 
     // `sleep_until` takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
     // boxed scanner as the closure context and a fn pointer that probes `is_done`.
@@ -1004,7 +1042,7 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 impl<'a> SecurityScanSubprocess<'a> {
-    pub(crate) fn spawn(&mut self) -> Result<(), Error> {
+    fn spawn(&mut self, env: &ScannerEnv) -> Result<(), Error> {
         self.ipc_data = Vec::new();
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
@@ -1025,36 +1063,32 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Build
-        // owned NUL-terminated buffers so the pointers stay valid across the
-        // `spawn_process` FFI boundary.
-        let mut argv0_buf: Vec<u8> = exec_path.as_bytes().to_vec();
-        argv0_buf.push(0);
-        let mut argv3_buf: Vec<u8> = self.code.to_vec();
-        argv3_buf.push(0);
-        // Element type MUST be bare `*const c_char` (null sentinel), never
-        // `Option<*const c_char>`: raw pointers are already nullable, and
-        // `Option<*const T>` is a 2-word (tag, ptr) pair — casting that to
-        // `Argv` interleaves discriminant words and EFAULTs in the kernel.
-        let mut argv: [*const core::ffi::c_char; 5] = [
-            argv0_buf.as_ptr().cast(),
-            c"--no-install".as_ptr(),
-            c"-e".as_ptr(),
-            argv3_buf.as_ptr().cast(),
-            core::ptr::null(),
-        ];
-        const _: () = assert!(
-            core::mem::size_of::<[*const core::ffi::c_char; 5]>()
-                == 5 * core::mem::size_of::<usize>()
-        );
+        let code = CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
+        let mut argv: Vec<&CStr> = Vec::with_capacity(5);
+        argv.push(exec_path.as_cstr());
+        argv.push(c"--no-install");
+        if !matches!(env, ScannerEnv::Default) {
+            argv.push(c"--no-env-file");
+        }
+        argv.push(c"-e");
+        argv.push(&code);
+
+        let resolved: Vec<&CStr>;
+        let env = match env {
+            ScannerEnv::Default | ScannerEnv::NoEnvFile => SpawnEnv::Inherit,
+            ScannerEnv::Resolved(envp) => {
+                resolved = envp.iter().collect();
+                SpawnEnv::Strings(&resolved)
+            }
+        };
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&mut argv, ipc_output_fds)?;
+            self.spawn_windows(&argv, env, ipc_output_fds)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&mut argv, ipc_output_fds)?;
+            self.spawn_posix(&argv, env, ipc_output_fds)?;
         }
 
         Ok(())
@@ -1067,7 +1101,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        env: SpawnEnv<'_>,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1084,16 +1119,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned =
+            spawn::spawn_process_cstr(&spawn_options, argv, env)?.map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1117,7 +1144,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        env: SpawnEnv<'_>,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -1196,16 +1224,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned =
+            spawn::spawn_process_cstr(&spawn_options, argv, env)?.map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();

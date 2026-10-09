@@ -242,7 +242,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("noIterator", "Reserved name `__iterator__`"),
     ]),
     ("eslint", "no-label-var", &[
-        m("identifierClashWithLabel", "Found identifier 'x' with the same name as a label."),
+        m("identifierClashWithLabel", "Found identifier '{{name}}' with the same name as a label."),
     ]),
     ("eslint", "no-labels", &[
         m("unexpectedLabel", "Labeled statement is not allowed"),

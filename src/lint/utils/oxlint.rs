@@ -34,9 +34,14 @@ fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>)
             .is_none()
 }
 
-/// By its name the file can be a script or a module.
+/// By its name the file can be a script or a module. The scripts in `.vue` and `.svelte` files are modules.
 fn is_either(file: &File) -> bool {
-    !matches!(file.path(), [.., b'.', b'm' | b'c', b'j' | b't', b's'])
+    !matches!(
+        file.path(),
+        [.., b'.', b'm' | b'c', b'j' | b't', b's']
+            | [.., b'.', b'v', b'u', b'e']
+            | [.., b'.', b's', b'v', b'e', b'l', b't', b'e']
+    )
 }
 
 /// oxc takes the file for a script, in which the `await` of `await (a)` that is in no function is the name of a function.

@@ -67,6 +67,24 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
   `--flavor=<their tool>`, as who switches would, and marked (`needsFlavor`).
 - **A run of ours that did not end is never a difference**: killed at the time limit or by the memory limit, in any stage, it is
   "cannot run: ours".
+- **A second run must say what the first said**: every stage runs on a fresh copy, so it only ever sees a first run. `bun lint`
+  is therefore run twice and `bun format --list-different` three times in ONE copy (`warm`): other output or another exit code
+  is "differs"; other lines on stderr alone are kept beside it (`stderrSame`).
+- **What "identical" means.** ESLint: the file, the rule, the severity, line, column, end line, end column, the text, whether a
+  comment suppresses it, and the fix and the suggestions of each pair. oxlint: the file, the code, the severity, line and column;
+  `strict` counts what has no partner if the length, then the text, then every label, and the help, have to be the same too.
+  Lists, not sets: two reports at one place are two. The files linted and the exit code belong to both.
+- **Which program a judge takes from where.** A judge is called by its path in `.tools`, never through `npx` or `bunx`, so a
+  project's `.npmrc` and `packageManager` only matter for the installation. The rest of what runs:
+  - Node is this machine's, for their tool and for the judge: not what `.nvmrc` or `engines` ask for.
+  - oxlint takes `tsgolint` from the project's `node_modules` if there is one: the judge gets `OXLINT_TSGOLINT_PATH` of its own
+    package. JS plugins, packages that a configuration extends and the `oxlint` that an `oxlint.config.ts` imports are the project's.
+  - ESLint's judge reads their configuration, so the plugins, the parsers, `typescript` and `@eslint/js` (what "recommended" is)
+    are the project's. What these load by `require("eslint")` is the PROJECT's ESLint, in the same process as the judge: a rule
+    of a plugin that wraps a core rule wraps their version of it.
+  - Prettier's judge loads their plugins in their versions, and a plugin that imports `prettier` gets the project's.
+  - oxfmt brings its own Prettier for the languages it hands on. For `sortTailwindcss` it takes `tailwindcss` from the project
+    and falls back on the one it bundles.
 - **What cannot be done yet**: a configuration that names rules which are not built in, or wants files linted that cannot be
   read, ends `bun lint` with exit code 2 after the report. The comparison is made with `--allow-unsupported`; the lines are
   kept with each run (`unsupported`), and say what stops that project from switching.

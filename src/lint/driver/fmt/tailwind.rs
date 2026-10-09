@@ -117,7 +117,8 @@ struct Known {
     /// [`version_of_plugin`], by the directory.
     plugins: FxHashMap<Vec<u8>, Option<(u64, u64)>>,
     groups: FxHashMap<Which, Group>,
-    /// A directory with files that have classes, from which there is no Tailwind to be found.
+    /// The first, in the order of their names, of the directories with files that have classes from which there is no
+    /// Tailwind to be found.
     without_package: Option<Vec<u8>>,
     /// It is the plugin of Prettier that sorts.
     follows_plugin: bool,
@@ -151,7 +152,13 @@ impl Orders for OfGroup {
         let which = match &self.which {
             Ok(which) => which,
             Err(directory) => {
-                known.without_package = Some(directory.clone());
+                if known
+                    .without_package
+                    .as_ref()
+                    .is_none_or(|it| directory < it)
+                {
+                    known.without_package = Some(directory.clone());
+                }
                 return None;
             }
         };
@@ -217,6 +224,8 @@ impl Known {
                 group.known.insert(class.clone(), rank);
             }
         }
+        // Whatever the order of the answers is.
+        bun_collections::index_sort::sort_slice(&mut failures[..]);
         failures
     }
 
@@ -308,6 +317,7 @@ pub(crate) fn for_file(
         preserves_whitespace: is_on(b"preserveWhitespace") || is_before(6),
         preserves_duplicates: is_on(b"preserveDuplicates") || is_before(6),
         follows_plugin: is_on(b"followsPlugin"),
+        is_plugin_before_0_7: is_before(7),
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
             which: which.ok_or_else(|| directory.to_vec()),

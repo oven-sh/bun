@@ -3,6 +3,7 @@
 
 use crate::rules::react_hooks_rules_of_hooks::{Memo, Ranges};
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::static_property_name;
 
 const FUNCTION: Message = Message::new(
     "",
@@ -118,9 +119,11 @@ fn get_declaration_identifier(func: Func) -> Option<Name> {
                 op: None,
                 target,
                 value,
-            } if value == e && !parent.is_assignment_target() => {
-                target.as_ident().filter(|_| !target.is_parenthesized())
-            }
+            } if value == e && !parent.is_assignment_target() => match target.as_ident() {
+                Some(name) => (!target.is_parenthesized()).then_some(name),
+                // The `b` of `a.b = () => {}`.
+                None => static_property_name(target),
+            },
             _ => None,
         },
         Node::PatElem(element) => element.pat()?.as_ident(),

@@ -268,7 +268,7 @@ function record(rule: Listed) {
               label: label.label ?? null,
             };
           });
-          const { label: _, ...at } = labels[0] ?? { line: 1, column: 1, endLine: null, endColumn: null, label: null };
+          const { label: _, ...at } = labels[0] ?? { line: 0, column: 0, endLine: null, endColumn: null, label: null };
           return {
             messageId: "",
             message: it.message,

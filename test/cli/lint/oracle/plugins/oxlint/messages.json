@@ -1380,9 +1380,9 @@
   "rule": "eslint/no-label-var",
   "id": "identifierClashWithLabel",
   "file": "a.js",
-  "code": "function bar(x) { x: for(;;) { break x; } }",
+  "code": "function bar(baz) { baz: for(;;) { break baz; } }",
   "options": [],
-  "message": "Found identifier 'x' with the same name as a label."
+  "message": "Found identifier 'baz' with the same name as a label."
  },
  {
   "rule": "eslint/no-labels",

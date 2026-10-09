@@ -729,20 +729,23 @@ pub struct State<'a> {
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
 
-fn has_overriding_export_statement<'a>(body: List<'a, Stmt<'a>>) -> bool {
+/// `any_default`: oxlint's `has_explicit_exports`.
+fn has_overriding_export_statement<'a>(body: List<'a, Stmt<'a>>, any_default: bool) -> bool {
     body.iter().any(|statement| match statement.kind() {
         StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } | StmtKind::ExportAssign(_) => true,
-        StmtKind::ExportDefault(declaration) => declaration.tag() == ExprTag::Ident,
+        StmtKind::ExportDefault(declaration) => any_default || declaration.tag() == ExprTag::Ident,
         _ => false,
     })
 }
 
-/// Sets `variable.eslintUsed`, which other rules see as well: ESLint's own `no-unused-vars`.
-fn mark_declaration_child_as_used(node: Stmt) {
+/// Sets `variable.eslintUsed`, which other rules see as well: ESLint's own `no-unused-vars`. `only_types`: as oxlint,
+/// which reports the variables, classes and enums of an ambient namespace.
+fn mark_declaration_child_as_used(node: Stmt, only_types: bool) {
     match node.kind() {
         // A `FunctionDeclaration` is not ambient, a `TSDeclareFunction` is.
         StmtKind::Fn(function) if function.has_body() => {}
         StmtKind::Fn(function) => function.symbol().into_iter().for_each(Symbol::mark_used),
+        StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Var(_) if only_types => {}
         StmtKind::Class(class) => class.symbol().into_iter().for_each(Symbol::mark_used),
         StmtKind::Interface(_)
         | StmtKind::TypeAlias(_)
@@ -756,13 +759,13 @@ fn mark_declaration_child_as_used(node: Stmt) {
 }
 
 /// Marks what the statements of a declaration file or of an ambient namespace declare, unless
-/// something there says what is exported.
-fn mark_ambient_declarations<'a>(body: List<'a, Stmt<'a>>) {
-    if has_overriding_export_statement(body) {
+/// something there says what is exported. `as_oxlint`: that was asked of the namespace that has the `declare`.
+fn mark_ambient_declarations<'a>(body: List<'a, Stmt<'a>>, as_oxlint: bool) {
+    if !as_oxlint && has_overriding_export_statement(body, false) {
         return;
     }
     for statement in body.iter().filter(|it| !it.is_exported()) {
-        mark_declaration_child_as_used(statement);
+        mark_declaration_child_as_used(statement, as_oxlint);
     }
 }
 
@@ -1474,11 +1477,18 @@ impl NoUnusedVars {
         let StmtKind::Module(module) = node.kind() else {
             return;
         };
+        // oxlint does not look at a declaration file.
+        let as_oxlint = cx.language().is_oxlint && !cx.state.is_definition_file;
+        let counts = |it: Node<'a>| match it {
+            Node::Stmt(it) if as_oxlint => matches!(it.kind(), StmtKind::Module(module)
+                if is_declared_module(it.into()) && !has_overriding_export_statement(module.innermost().body(), true)),
+            it => is_declared_module(it),
+        };
         if cx.state.is_definition_file
-            || is_declared_module(Node::Stmt(node))
-            || (cx.state.declared.find(Node::Stmt(node), |_, it| is_declared_module(it).then_some(()))).is_some()
+            || counts(Node::Stmt(node))
+            || (cx.state.declared.find(Node::Stmt(node), |_, it| counts(it).then_some(()))).is_some()
         {
-            mark_ambient_declarations(module.innermost().body());
+            mark_ambient_declarations(module.innermost().body(), as_oxlint);
         }
     }
 
@@ -1648,7 +1658,7 @@ impl Rule for NoUnusedVars {
         }
         let is_definition_file = is_definition_file(file.path());
         if is_definition_file {
-            mark_ambient_declarations(file.body());
+            mark_ambient_declarations(file.body(), false);
         }
         State {
             is_definition_file,

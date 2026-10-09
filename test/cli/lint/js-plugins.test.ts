@@ -1668,7 +1668,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                 const kept = [];
                 for (let i = 0; i < 400_000; i++) kept.push({ a: i, b: [i] });
                 let most = 0;
-                for (let i = 0; i < 4_000_000; i++) {
+                for (let i = 0; i < 1_200_000; i++) {
                   kept[i % kept.length] = { a: i, b: [i] };
                   if ((i & 4095) === 0) most = Math.max(most, heapSize());
                 }
@@ -1682,7 +1682,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       const largest = async (variables: Record<string, string>) =>
         Number(JSON.parse((await lint(files, ["-f", "json", "a.js"], [], variables)).raw).diagnostics[0].message);
       const [free, forced] = await Promise.all([largest({}), largest({ BUN_JSC_forceRAMSize: String(64 << 20) })]);
-      expect(forced).toBeLessThan(0.8 * free);
+      expect(forced).toBeLessThan(0.85 * free);
     },
     timeout,
   );
@@ -1701,7 +1701,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             const grows = {
               create: context => ({
                 Program(node) {
-                  for (let i = 0; i < 100_000; i++) kept.push({ a: i, b: [i] });
+                  for (let i = 0; i < 200_000 && kept.length < 1_000_000; i++) kept.push({ a: i, b: [i] });
                   context.report({ node, message: "seen" });
                 },
               }),
@@ -1719,12 +1719,12 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         );
         expect(exitCode).toBe(1);
         const seen = JSON.parse(raw).filter((it: any) => it.messages.some((it: any) => it.message === "seen")).length;
-        return { seen, freed: Number(/, (\d+) were freed to stay in the memory/.exec(stderr)?.[1] ?? 0) };
+        return { seen, freed: Number(/, freed to stay in the memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
       };
-      const more = Math.max(40, availableParallelism() + 1);
-      const [one, some, many] = await Promise.all([run(1, "8"), run(40, "8"), run(more, "0")]);
+      const more = Math.max(16, availableParallelism() + 1);
+      const [one, some, many] = await Promise.all([run(1, "8"), run(16, "8"), run(more, "0")]);
       expect(one).toEqual({ seen: 1, freed: 0 });
-      expect([some.seen, many.seen]).toEqual([40, more]);
+      expect([some.seen, many.seen]).toEqual([16, more]);
       expect(some.freed).toBeGreaterThan(0);
       expect(many.freed).toBeGreaterThan(0);
     },

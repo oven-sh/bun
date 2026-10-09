@@ -3,7 +3,8 @@
 //
 //   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare.ts [--record] [name..]
 //
-// Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes.
+// Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes: from oxlint 1.87.0 with tsgolint 7.0.2003.
+// A report is `file:line:column+length rule`, and is there as often as it is made: two reports can begin at one place.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -19,7 +20,7 @@ const [ours, ...oursArgs] = (process.env.BUN_LINT ?? "bun lint").split(" ");
 // With names, `--record` leaves what is recorded for the other projects as it is.
 const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
 
-/** `file:line:column rule` of each diagnostic, at its first label, which is what oxlint prints. */
+/** `file:line:column+length rule` of each diagnostic, at its first label, which is what oxlint prints. */
 function run(command: string, before: string[], cwd: string): string[] {
   const { stdout, stderr, error } = spawnSync(command, [...before, "-f", "json", "."], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 28 });
   if (error) throw new Error(`${command} ${before.join(" ")}: ${error.message}`);
@@ -36,8 +37,19 @@ function run(command: string, before: string[], cwd: string): string[] {
   }
   return diagnostics
     .filter((it: any) => it.code)
-    .map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`)
+    .map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column}+${it.labels[0].span.length} ${it.code}`)
     .sort();
+}
+
+/** What is in `some` more often than in `others`. */
+function more(some: string[], others: string[]): string[] {
+  const left = new Map<string, number>();
+  for (const it of others) left.set(it, (left.get(it) ?? 0) + 1);
+  return some.filter(it => {
+    const count = left.get(it) ?? 0;
+    left.set(it, count - 1);
+    return count <= 0;
+  });
 }
 
 let failed = 0;
@@ -56,8 +68,8 @@ for (const project of projects) {
     // With one thread, with fewer threads than files, and with as many as there are.
     for (const threads of project.name.startsWith("no-cycle/") ? ["--threads=1", "--threads=2", ""] : [""]) {
       const actual = run(ours, [...oursArgs, ...typed, ...(threads ? [threads] : [])], cwd);
-      const missing = wanted.filter(it => !actual.includes(it));
-      const extra = actual.filter(it => !wanted.includes(it));
+      const missing = more(wanted, actual);
+      const extra = more(actual, wanted);
       if (missing.length + extra.length > 0) {
         failed++;
         console.log(`FAIL ${project.name} ${threads}: ${project.about}`);

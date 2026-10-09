@@ -158,6 +158,17 @@ impl<'a, R: Rule> Cx<'a, R> {
     pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
         self.base.report_at(offset, message)
     }
+
+    /// Reports `message` about the file as a whole, at no place in it: a diagnostic of oxlint without a label. Where a format
+    /// wants numbers it has line 0 and column 0, and there is no excerpt.
+    #[inline]
+    pub fn report_file(&self, message: Message) -> Report<'a> {
+        let nowhere = Position {
+            line: 0,
+            column: u32::MAX,
+        };
+        self.base.report_at(0, message).start_at(nowhere)
+    }
 }
 
 impl<'a> CxBase<'a> {

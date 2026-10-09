@@ -1334,10 +1334,7 @@ impl Run<'_> {
             let largest = largest as f64 / 1e6;
             let _ = write!(self.out.stderr, "; the largest took {largest:.0} MB");
             if freed > 0 {
-                let _ = write!(
-                    self.out.stderr,
-                    ", {freed} were freed to stay in the memory"
-                );
+                let _ = write!(self.out.stderr, ", freed to stay in the memory: {freed}");
             }
         }
         self.out.stderr.push(b'\n');

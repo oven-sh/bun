@@ -67,7 +67,7 @@ fn is_sortable(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
             return false;
         }
         node = match node.kind() {
-            ExprKind::Call(call) => call.callee(),
+            ExprKind::Call(call) if !tailwind.is_plugin_before_0_7 => call.callee(),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
             ExprKind::Ident(_) => return tailwind.functions.has(node.text()),
             _ => return false,

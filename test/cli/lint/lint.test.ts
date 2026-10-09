@@ -19,7 +19,7 @@ import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
 import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
-import { directoryOf, filesOf, cases as fixCases } from "./oracle/plugins/oxlint/fixes";
+import { directoryOf, filesOf, cases as fixCases, flagSets } from "./oracle/plugins/oxlint/fixes";
 import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
 import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import { filesOf as filesOfMessages, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
@@ -1505,10 +1505,20 @@ describe.concurrent("bun lint", () => {
         }
         return Object.fromEntries(names.map(it => [it, [...byProject[it]].sort()]));
       };
+      // With the length of what is pointed at, and each report as often as it is made: two can begin at one place.
+      const foundExactly = (raw: string, names: string[]) => {
+        const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
+        for (const it of JSON.parse(raw).diagnostics) {
+          // A syntax error.
+          if (!it.code) continue;
+          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const { line, column, length } = it.labels[0].span;
+          byProject[name].push(`${it.filename.slice(name.length + 1)}:${line}:${column}+${length} ${it.code}`);
+        }
+        return Object.fromEntries(names.map(it => [it, byProject[it].sort()]));
+      };
       const expected = (names: string[]) =>
-        Object.fromEntries(
-          names.map(it => [it, [...new Set(whatOxlintReports[it as keyof typeof whatOxlintReports])]]),
-        );
+        Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
 
       test("the rules report what oxlint's report, where they report it", async () => {
         const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
@@ -1519,23 +1529,27 @@ describe.concurrent("bun lint", () => {
         }
         const names = some.map(it => it.name);
         const { raw } = await lint(files, ["-f", "json"]);
-        expect(found(raw, names)).toEqual(expected(names));
+        expect(foundExactly(raw, names)).toEqual(expected(names));
       });
 
       // Each project is a program of its own. In four runs, which run at the same time: one takes seconds in a debug build.
-      test.each([0, 1, 2, 3])("the rules that need types report what tsgolint's report: part %d", async part => {
-        const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
-        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
-        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-        for (const { name, config, files: texts } of some) {
-          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
-          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
-          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
-        }
-        const names = some.map(it => it.name);
-        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
-        expect(found(raw, names)).toEqual(expected(names));
-      });
+      test.each([0, 1, 2, 3])(
+        "the rules that need types report what tsgolint's report: part %d",
+        async part => {
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          for (const { name, config, files: texts } of some) {
+            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+            files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+            for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+          }
+          const names = some.map(it => it.name);
+          const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+          expect(foundExactly(raw, names)).toEqual(expected(names));
+        },
+        isDebug || isASAN ? 120_000 : undefined,
+      );
 
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
@@ -1749,28 +1763,36 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      test.each([false, true])("--fix changes what oxlint --fix changes (rules that need types: %p)", async typed => {
-        // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
-        const differs = (directory: string) => (fixDifferences as Record<string, string[]>)[directory]?.includes("fix");
-        const some = fixCases
-          .map((it, index) => ({ it, directory: directoryOf(index) }))
-          .filter(({ it, directory }) => !!it.typed === typed && !differs(directory));
-        expect(some.length).toBeGreaterThan(5);
-        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-        for (const { it, directory } of some) {
-          for (const [path, text] of Object.entries(filesOf(it))) files[`${directory}/${path}`] = text;
-        }
-        const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
-        const result = await lint(files, ["--fix", ...(typed ? ["--type-aware"] : [])], { reads });
-        expect(result.files).toEqual(
-          Object.fromEntries(
-            some.map(({ it, directory }) => [
-              `${directory}/${it.file}`,
-              whatOxlintFixes[directory as keyof typeof whatOxlintFixes].fix,
-            ]),
-          ),
-        );
-      });
+      const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
+        [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
+      );
+      test.each(kindsOfFixes)(
+        "the flags of %s change what they change with oxlint (rules that need types: %p)",
+        async (flags, typed) => {
+          // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
+          const differs = (directory: string) =>
+            (fixDifferences as Record<string, string[]>)[directory]?.includes(flags);
+          const some = fixCases
+            .map((it, index) => ({ it, directory: directoryOf(index) }))
+            .filter(({ it, directory }) => !!it.typed === typed && !differs(directory));
+          expect(some.length).toBeGreaterThan(5);
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          for (const { it, directory } of some) {
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${directory}/${path}`] = text;
+          }
+          const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
+          const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
+          expect(result.files).toEqual(
+            Object.fromEntries(
+              some.map(({ it, directory }) => [
+                `${directory}/${it.file}`,
+                whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
+              ]),
+            ),
+          );
+        },
+        isDebug || isASAN ? 120_000 : undefined,
+      );
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has

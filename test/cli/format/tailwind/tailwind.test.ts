@@ -149,6 +149,10 @@ describe.concurrent("sortTailwindcss", () => {
     expect(result.stderr).toContain("[error] sortTailwindcss: It needs the package tailwindcss");
     expect(result.files).toEqual([`${input}a  ;\n`, "b;\n"]);
     expect(result.exitCode).toBe(2);
+    // The first directory in the order of the names, not the one whose file has come first.
+    const many = Object.fromEntries(["z", "c", "x", "b", "y"].map(name => [`${name}/a.jsx`, input]));
+    const inMany = await format({ ".oxfmtrc.json": files[".oxfmtrc.json"], ...many }, []);
+    expect(inMany.stderr).toMatch(/which cannot be found from \S*[\\/]b\. Install it\./);
     const allowed = await format(files, ["a.jsx", "b.js"], ["--allow-unsupported"]);
     expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
@@ -212,6 +216,13 @@ describe.concurrent("sortTailwindcss", () => {
       "three/tailwind.config.js": 'throw new Error("It has no such plugin.");\n',
       "three/a.jsx": '<a className="p-4 flex" />;\na  ;\n',
       "four/a.jsx": '<a className="p-4 flex" />;\n',
+      // More of them. Nothing but the order of the classes could change in their files.
+      ...Object.fromEntries(
+        ["z", "c", "x", "b", "y", "a"].flatMap(name => [
+          [`${name}/tailwind.config.js`, 'throw new Error("Nor has it this one.");\n'],
+          [`${name}/a.jsx`, '<a className="p-4 flex" />;\n'],
+        ]),
+      ),
     };
     const names = ["one/a.jsx", "two/a.jsx", "three/a.jsx", "four/a.jsx"];
     const expected = [
@@ -236,7 +247,18 @@ describe.concurrent("sortTailwindcss", () => {
       expect(lists[0].stderr).toContain(
         `[${allows ? "warn" : "error"}] sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
       );
-      expect(lists[0].stderr).toContain(allows ? "The classes are not sorted in 1 file." : "Left as they are: 1 file.");
+      expect(lists[0].stderr).toContain(
+        allows ? "The classes are not sorted in 7 files." : "Left as they are: 7 files.",
+      );
+      expect(Array.from(lists[0].stderr.matchAll(/(\w+)\/tailwind\.config\.js: /g), it => it[1])).toEqual([
+        "a",
+        "b",
+        "c",
+        "three",
+        "x",
+        "y",
+        "z",
+      ]);
       expect(lists[1]).toEqual(lists[0]);
       expect(lists[2]).toEqual(lists[0]);
       const written = await formatIn(String(dir), names, flags);
@@ -268,6 +290,21 @@ describe.concurrent("sortTailwindcss", () => {
       });
     }
     expect(await format(files, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
+    // Nor did it look at a call on what a call returns, or at the quotes of these.
+    const more = {
+      ...files,
+      ".prettierrc": '{ "plugins": ["prettier-plugin-tailwindcss"], "tailwindFunctions": ["cn"] }',
+      "a.js": 'cn("p-4 flex").b("p-4 flex");\ncn.c("p-4 flex");\n',
+      "a.css": "@plugin 'a';\n@config 'b';\n@source 'c';\n",
+    };
+    expect((await format({ ...more, ...plugin("0.6.14") }, ["a.js", "a.css"])).files).toEqual([
+      'cn("flex p-4").b("p-4 flex");\ncn.c("flex p-4");\n',
+      more["a.css"],
+    ]);
+    expect((await format({ ...more, ...plugin("0.7.0") }, ["a.js", "a.css"])).files).toEqual([
+      'cn("flex p-4").b("flex p-4");\ncn.c("flex p-4");\n',
+      '@plugin "a";\n@config "b";\n@source "c";\n',
+    ]);
     // Before 0.6.0 it did nothing but sort.
     const twice = { ...files, "a.jsx": '<a className="p-4  flex   p-4" />;\n' };
     expect((await format({ ...twice, ...plugin("0.5.14") }, ["a.jsx"])).files).toEqual([

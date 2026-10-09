@@ -329,7 +329,10 @@ impl ConsistentIndexedObjectStyle {
         if mapped.param().symbol().is_some_and(|key| key.references().any(Reference::is_type)) {
             return;
         }
+        // oxlint looks for a circle only if the mapped type is all of the alias.
+        let is_all_of_alias = matches!(ty.parent(), Node::Stmt(_)) && !ty.is_parenthesized();
         if let Some(alias) = find_parent_declaration(ty)
+            && (is_all_of_alias || !cx.language().is_oxlint)
             && let Some(super_var) = Node::Type(ty).scope().resolve_name(alias.name().name())
         {
             let visited = &mut cx.state;

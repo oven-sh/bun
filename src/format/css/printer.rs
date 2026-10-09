@@ -1088,7 +1088,8 @@ impl<'a> Printer<'a, '_> {
                 // `prettier-plugin-tailwindcss` has them parsed like those of `@import`.
                 Params::Text(params) | Params::Unknown(params)
                     if !self.is_oxfmt
-                        && self.tailwind.is_some()
+                        && (self.tailwind.as_deref())
+                            .is_some_and(|it| !it.is_plugin_before_0_7)
                         && matches!(node.name, b"plugin" | b"config" | b"source") =>
                 {
                     self.sink.text(&adjust_strings(params, self.single_quote));

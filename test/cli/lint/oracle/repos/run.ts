@@ -347,6 +347,9 @@ function commandOf(run: Run, before: string[], after: string[]) {
 /** A run of ours that takes four times as long as theirs, and more than three minutes, hangs. */
 const patience = (theirs: Outcome) => Math.max(180, Math.ceil((theirs.seconds ?? 0) * 4));
 
+/** oxlint takes the tsgolint of the project's node_modules if there is one: the latest oxlint with an older tsgolint is no judge. */
+const judgeEnv = (run: Run) => ({ ...run.env, OXLINT_TSGOLINT_PATH: join(tools, "node_modules", ".bin", "tsgolint") });
+
 /** In a package that has a `lint` or a `format` script, `bun lint` runs the script, except in that script. */
 const asScript = (command: "lint" | "format") => ({ npm_lifecycle_event: command });
 
@@ -447,6 +450,20 @@ async function lint(entry: Entry, run: Run) {
     if (!flags.has("keep")) removeRuns(ours.out);
     ours = await oursWith([`--flavor=${run.tool}`]);
   }
+  // The same command twice in ONE copy: what a first run keeps on disk (an evaluated configuration) must not change the reports.
+  const ourWarm = await inCopy(entry, "ours-warm", {
+    cmd: [
+      "bash",
+      "-c",
+      'say() { "${@:2}" 2> /tmp/warm-$1.err | sed -E "s/\\"start_time\\": ?[0-9.e-]+//" > /tmp/warm-$1; echo "exit ${PIPESTATUS[0]}" >> /tmp/warm-$1; sed -E -i "s/\\[[0-9.]+ ?m?s\\]//" /tmp/warm-$1.err; }; say 1 "$@"; say 2 "$@"; if cmp -s /tmp/warm-1 /tmp/warm-2; then echo SAME; else echo DIFFERENT; diff /tmp/warm-1 /tmp/warm-2 | cut -c1-300 | head -40; fi; if cmp -s /tmp/warm-1.err /tmp/warm-2.err; then echo STDERR-SAME; else echo STDERR-DIFFERENT; diff /tmp/warm-1.err /tmp/warm-2.err | cut -c1-300 | head -10; fi; true',
+      "bash",
+      ...commandOf(run, [bun, "lint"], [...json, ...allowUnsupported, ...(needsFlavor ? [`--flavor=${run.tool}`] : []), ...(run.ourArgs ?? [])]),
+    ],
+    cwd: run.cwd,
+    env: { ...run.env, ...asScript("lint") },
+    seconds: patience(theirs) * 2,
+  });
+  const warm = read(ourWarm.stdout).split("\n").filter(Boolean);
   const compare = (a: any, b: any) =>
     run.tool === "eslint"
       ? compareEslint(a, b, cloneOf(entry.repo))
@@ -455,7 +472,8 @@ async function lint(entry: Entry, run: Run) {
     comparison.messages.onlyTheirs + comparison.messages.onlyOurs + comparison.fixes.different === 0 &&
     comparison.files.theirs === comparison.files.ours &&
     comparison.files.onlyTheirs.length + comparison.files.onlyOurs.length === 0 &&
-    theirCode === ours.code
+    theirCode === ours.code &&
+    warm[0] === "SAME"
       ? "identical"
       : "differs";
   // A report in the format of the other linter is no report: `bun lint` chooses by the configuration file, not by the flags.
@@ -476,7 +494,7 @@ async function lint(entry: Entry, run: Run) {
     const it = await inCopy(entry, "judge", {
       cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], [...json, ...(run.theirArgs ?? [])]),
       cwd: run.cwd,
-      env: run.env,
+      env: judgeEnv(run),
     });
     const judgeReport = report(it.stdout);
     const judged = judgeReport && b ? compare(judgeReport, b) : null;
@@ -497,6 +515,8 @@ async function lint(entry: Entry, run: Run) {
     warnings: warnings(read(ours.stderr)),
     unsupported: unsupported(read(ours.stderr)),
     needsFlavor,
+    /** Does a second run in the same copy report the same as the first? If not: the lines of `diff`. */
+    warm: { same: warm[0] === "SAME", stderrSame: warm.includes("STDERR-SAME"), code: ourWarm.code, lines: warm.slice(1, 51) },
     plugins: run.tool === "eslint" && a ? await pluginsOf(entry, run, their.path, a) : undefined,
     // What `--timing` prints, above all how much JavaScript the plugins are.
     timing: read(ours.stderr)
@@ -507,7 +527,7 @@ async function lint(entry: Entry, run: Run) {
     verdict: !a ? "cannot run: theirs" : !b ? "cannot run: ours" : verdictOf(comparison!, theirs.code),
     judge,
   };
-  if (!flags.has("keep")) for (const it of [theirs, ours]) removeRuns(it.out);
+  if (!flags.has("keep")) for (const it of [theirs, ours, ourWarm]) removeRuns(it.out);
   return result;
 }
 
@@ -585,7 +605,7 @@ async function fix(entry: Entry, run: Run) {
       ? await inCopy(entry, "judge-fix", {
           cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], ["--fix", ...(run.theirArgs ?? [])]),
           cwd: run.cwd,
-          env: run.env,
+          env: judgeEnv(run),
         })
       : null;
   const c = latest && changedFiles(entry, latest.upper);
@@ -661,6 +681,19 @@ async function format(entry: Entry, run: Run) {
     env,
     perf: true,
   });
+  // The same command three times in ONE copy: what a first run leaves behind (a cache) must not change what the next one says.
+  const ourWarm = await inCopy(entry, "ours-warm", {
+    cmd: [
+      "bash",
+      "-c",
+      'say() { "${@:2}" > /tmp/warm-$1 2> /tmp/warm-$1.err; echo "exit $?" >> /tmp/warm-$1; sed -E -i "s/\\[[0-9.]+ ?m?s\\]//" /tmp/warm-$1.err; }; for i in 1 2 3; do say $i "$@"; done; if cmp -s /tmp/warm-1 /tmp/warm-2 && cmp -s /tmp/warm-2 /tmp/warm-3; then echo SAME; else echo DIFFERENT; diff /tmp/warm-1 /tmp/warm-2 | cut -c1-300 | head -30; diff /tmp/warm-2 /tmp/warm-3 | cut -c1-300 | head -10; fi; if cmp -s /tmp/warm-1.err /tmp/warm-2.err && cmp -s /tmp/warm-2.err /tmp/warm-3.err; then echo STDERR-SAME; else echo STDERR-DIFFERENT; diff /tmp/warm-1.err /tmp/warm-2.err | cut -c1-300 | head -10; fi; true',
+      "bash",
+      ...commandOf(run, [bun, "format"], ["--list-different", ...ourArgs]),
+    ],
+    cwd: run.cwd,
+    env,
+  });
+  const warm = read(ourWarm.stdout).split("\n").filter(Boolean);
   const theirWrite = await inCopy(entry, "theirs-write", {
     cmd: commandOf(run, [their.path], [...write, ...theirArgs]),
     cwd: run.cwd,
@@ -736,15 +769,17 @@ async function format(entry: Entry, run: Run) {
     },
     warnings: warnings(read(ourWrite.stderr)),
     againstTheirs: treeResult(againstTheirs, trees[0], trees[2], entry),
+    /** Does a second and a third run in the same copy list the same files as the first? If not: the lines of `diff`. */
+    warm: { same: warm[0] === "SAME", stderrSame: warm.includes("STDERR-SAME"), lines: warm.slice(1, 51) },
     againstJudge: judged ? treeResult(againstJudge, trees[1], trees[2], entry) : null,
     verdict:
       // Prettier that cannot load a plugin or a configuration file reads no file.
       theirWrite.code > 2 || theirWrite.code < 0 || (judgeWrite.code !== 0 && read_.theirs.length === 0)
         ? "cannot run: theirs"
         : // A run that did not end is never a difference.
-          [ourCheck, ourWrite, ourFiles].some(it => it.code > 2 || it.code < 0)
+          [ourCheck, ourWrite, ourFiles, ourWarm].some(it => it.code > 2 || it.code < 0)
           ? "cannot run: ours"
-          : !clean(againstJudge) || judgeWrite.code !== ourWrite.code
+          : !clean(againstJudge) || judgeWrite.code !== ourWrite.code || warm[0] !== "SAME"
             ? "differs"
             : theirSet.size === ourSet.size && [...theirSet].every(it => ourSet.has(it))
               ? "identical"
@@ -752,7 +787,7 @@ async function format(entry: Entry, run: Run) {
     verdictAgainstTheirs: clean(againstTheirs) && theirWrite.code === ourWrite.code ? "identical" : "differs",
   };
   if (!flags.has("keep")) {
-    for (const it of [theirCheck, ourCheck, theirWrite, judgeWrite, ourWrite, perturbed, ourFiles, theirFiles]) {
+    for (const it of [theirCheck, ourCheck, ourWarm, theirWrite, judgeWrite, ourWrite, perturbed, ourFiles, theirFiles]) {
       if (it) removeRuns(it.out);
     }
   }

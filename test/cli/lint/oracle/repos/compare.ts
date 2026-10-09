@@ -23,6 +23,8 @@ export type LintComparison = {
   /** The messages that are the same, by rule: what a rule gets right counts as much as what it gets wrong. */
   sameByRule: Record<string, number>;
   buckets: Bucket[];
+  /** oxlint: what has no partner if the length, then the text too, then every label too, have to be the same; and the help alone. */
+  strict?: { length: Strict; text: Strict; labels: Strict; help: Strict };
 };
 
 const EXAMPLES = 4;
@@ -186,14 +188,39 @@ type OxlintDiagnostic = {
   code?: string;
   severity: string;
   filename: string;
-  labels: { span: { line: number; column: number; length: number } }[];
+  help?: string | null;
+  labels: { label?: string; span: { offset?: number; line: number; column: number; length: number } }[];
 };
+export type Strict = { onlyTheirs: number; onlyOurs: number; byRule: Record<string, number>; examples: string[] };
 export type OxlintReport = { diagnostics: OxlintDiagnostic[]; number_of_files: number; number_of_rules: number | null };
 
 /**
- * `oxlint -f json` of both. The rule, the severity and where a diagnostic starts are compared: with an `.oxlintrc.json` the texts
- * of `bun lint` are ESLint's, and so is where a diagnostic ends.
+ * `oxlint -f json` of both. The verdict goes by the rule, the severity and where a diagnostic starts; `strict` counts what else differs.
  */
+/** Lists, not sets: how many diagnostics have no partner if more than where they start has to be the same. */
+function strictly(theirs: OxlintReport, ours: OxlintReport, more: (it: OxlintDiagnostic) => unknown[]): Strict {
+  const key = (it: OxlintDiagnostic) => {
+    const span = it.labels[0]?.span;
+    return JSON.stringify([it.filename, it.code ?? "(no rule)", it.severity, span?.line, span?.column, ...more(it)]);
+  };
+  const left = new Map<string, number>();
+  for (const it of ours.diagnostics) left.set(key(it), (left.get(key(it)) ?? 0) + 1);
+  const result: Strict = { onlyTheirs: 0, onlyOurs: 0, byRule: {}, examples: [] };
+  for (const it of theirs.diagnostics) {
+    const count = left.get(key(it)) ?? 0;
+    if (count > 0) {
+      left.set(key(it), count - 1);
+      continue;
+    }
+    result.onlyTheirs++;
+    const rule = it.code ?? "(no rule)";
+    result.byRule[rule] = (result.byRule[rule] ?? 0) + 1;
+    if (result.examples.length < 6) result.examples.push(key(it).slice(0, 500));
+  }
+  for (const count of left.values()) result.onlyOurs += count;
+  return result;
+}
+
 export function compareOxlint(theirs: OxlintReport, ours: OxlintReport): LintComparison {
   const entries = (report: OxlintReport) => {
     const byFile = new Map<string, Entry[]>();
@@ -213,6 +240,12 @@ export function compareOxlint(theirs: OxlintReport, ours: OxlintReport): LintCom
     return byFile;
   };
   const result = compareEntries([entries(theirs), entries(ours)], false);
+  result.strict = {
+    length: strictly(theirs, ours, it => [it.labels[0]?.span.length]),
+    text: strictly(theirs, ours, it => [it.labels[0]?.span.length, it.message]),
+    labels: strictly(theirs, ours, it => [it.message, it.labels.map(label => [label.span, label.label ?? null])]),
+    help: strictly(theirs, ours, it => [it.help ?? null]),
+  };
   result.files.theirs = theirs.number_of_files;
   result.files.ours = ours.number_of_files;
   return result;

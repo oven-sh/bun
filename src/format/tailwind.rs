@@ -83,6 +83,8 @@ pub struct Tailwind {
     pub preserves_duplicates: bool,
     /// It is the plugin of Prettier, which finds the classes of a program in another way than oxfmt: [`plugin`].
     pub follows_plugin: bool,
+    /// And one before 0.7.0, which does not look for classes in `a("..").b("..")` and leaves the quotes of `@plugin 'a'` alone.
+    pub is_plugin_before_0_7: bool,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,

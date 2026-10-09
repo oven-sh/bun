@@ -59,7 +59,7 @@ impl Rule for ConsistentTestFilename {
             on.finish(|_, cx| {
                 let file_path = cx.file().path();
                 let file_name = strings::last_index_of_any(file_path, b"/\\").and_then(|at| file_path.get(at + 1..));
-                cx.report_at(0, CONSISTENT_TEST_FILENAME).data("file_path", file_name.unwrap_or(file_path));
+                cx.report_file(CONSISTENT_TEST_FILENAME).data("file_path", file_name.unwrap_or(file_path));
             });
         }
     }

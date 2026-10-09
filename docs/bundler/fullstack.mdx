@@ -514,6 +514,8 @@ PUBLIC_API_URL=http://localhost:3000
 
 Bun loads `.env` files before it inlines variables, and a variable that is set in the environment takes precedence over the `.env` file. The server's own `process.env` also has the value.
 
+`process.env.NODE_ENV` is the exception when `development` is `false`. Bun sets it to `"production"`, or to the value of `NODE_ENV` in the environment when `env` inlines that variable. A `define` entry for `process.env.NODE_ENV` has no effect on that bundle.
+
 See [HTML & static sites](/bundler/html-static#inline-environment-variables) for build-time configuration and examples.
 
 ## Sourcemaps

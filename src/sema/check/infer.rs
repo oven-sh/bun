@@ -1141,6 +1141,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(member),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     let source = Self::copy_of(TypeId::ANY, &[&declared], true, self.arena);
                     (PropFlags::empty(), source)
@@ -1152,6 +1153,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             if let Some(&earlier) = index_of_name.get(&value) {
                 shape.props[earlier] = literal_prop;
@@ -2205,6 +2207,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.list_of(Self::declared_properties(&[prop], self.arena)),
                 ),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         shape

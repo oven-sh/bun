@@ -142,7 +142,7 @@ impl SharedFile {
             .collect();
         let mut name = |atom: Atom| {
             let name = names.get((atom.0 - FIXED) as usize);
-            name.copied().unwrap_or(atom)
+            *name.expect("`SharedFile::new` has numbered it")
         };
         let mut file = file_in_arena(&self.file, arena, atoms);
         each_atom_of_file(&mut file, &mut name);

@@ -784,6 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: PropFlags::empty(),
                 source: PropSource::Symbol(self.files().sym(sym.file, property)),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             return self.synth(Shape {
                 props: vec_from_iter_in([prop], self.arena),
@@ -2169,6 +2170,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
             source: Self::copy_of(missing, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
+            name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
         };
         self.undefined_properties
             .insert(prop.name, result.clone_in(self.arena));
@@ -2332,6 +2334,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags: prop.flags,
             source: Self::copy_of(widened, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
+            name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
         }
     }
 
@@ -3920,6 +3923,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::OPTIONAL,
                         source: PropSource::Type(ty),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     });
                 }
                 for info in &members.shape().index {

@@ -1112,7 +1112,7 @@ impl Host for Disk {
             let mut shared = self.shared.lock();
             shared.files.get_or_insert_default();
             shared.variants |= variants;
-            shared.programs += programs;
+            shared.programs = shared.programs.saturating_add(programs);
         }
     }
     fn stays_loaded(&self) {

@@ -2809,5 +2809,313 @@
     ]
    }
   }
+ },
+ "eslint": {
+  "eslint": "10.12.0",
+  "plugin": "7.1.1",
+  "without": [
+   "todo/02.invalid.tsx",
+   "fbt/error.todo-locally-require-fbt.js"
+  ],
+  "cases": {
+   "capitalized-calls/02.invalid.tsx": [
+    "react-hooks/capitalized-calls 5:6-5:13 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "capitalized-calls/03.invalid.tsx": [
+    "react-hooks/capitalized-calls 5:6-5:22 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "capitalized-calls/04.invalid.tsx": [
+    "react-hooks/capitalized-calls 6:6-6:14 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config",
+    "react-hooks/capitalized-calls 7:6-7:23 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "error-boundaries/02.invalid.tsx": [
+    "react-hooks/error-boundaries 5:10-5:19 Error: Avoid constructing JSX within try/catch"
+   ],
+   "globals/02.invalid.tsx": [
+    "react-hooks/globals 5:5-5:15 Error: Cannot reassign variables declared outside of the component/hook"
+   ],
+   "hooks/02.invalid.tsx": [
+    "react-hooks/hooks 4:5-4:23 Error: Hooks must always be called in a consistent order, and may not be called conditionally. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)"
+   ],
+   "immutability/02.invalid.tsx": [
+    "react-hooks/immutability 7:11-7:16 Error: This value cannot be modified"
+   ],
+   "immutability/03.invalid.tsx": [
+    "react-hooks/immutability 6:15-6:26 Error: Cannot access variable before it is declared",
+    "react-hooks/memo-dependencies 6:15-6:26 Error: Found missing memoization dependencies"
+   ],
+   "immutability/04.invalid.tsx": [
+    "react-hooks/immutability 3:11-3:16 Error: This value cannot be modified"
+   ],
+   "incompatible-library/02.invalid.tsx": [
+    "react-hooks/incompatible-library 4:17-4:30 Compilation Skipped: Use of incompatible library"
+   ],
+   "memo-dependencies/03.invalid.tsx": [
+    "react-hooks/memo-dependencies 4:24-4:29 Error: Found missing memoization dependencies"
+   ],
+   "memo-dependencies/04.invalid.tsx": [
+    "react-hooks/memo-dependencies 4:39-4:44 Error: Found extra memoization dependencies"
+   ],
+   "no-deriving-state-in-effects/02.invalid.tsx": [
+    "react-hooks/no-deriving-state-in-effects 8:5-8:16 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 8:5-8:16 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "preserve-manual-memoization/02.invalid.tsx": [
+    "react-hooks/preserve-manual-memoization 7:22-11:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "purity/03.invalid.tsx": [
+    "react-hooks/purity 3:16-3:26 Error: Cannot call impure function during render",
+    "react-hooks/purity 4:15-4:32 Error: Cannot call impure function during render",
+    "react-hooks/purity 5:16-5:29 Error: Cannot call impure function during render"
+   ],
+   "refs/02.invalid.tsx": [
+    "react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"
+   ],
+   "refs/03.invalid.tsx": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "refs/04.invalid.tsx": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "set-state-in-effect/02.invalid.tsx": [
+    "react-hooks/set-state-in-effect 6:5-6:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "set-state-in-render/02.invalid.tsx": [
+    "react-hooks/set-state-in-render 5:3-5:11 Error: Cannot call setState during render"
+   ],
+   "static-components/02.invalid.tsx": [
+    "react-hooks/static-components 4:11-4:20 Error: Cannot create components during render"
+   ],
+   "syntax/02.invalid.tsx": [
+    "react-hooks/syntax 4:3-4:4 Error: Cannot reassign a `const` variable"
+   ],
+   "todo/03.invalid.tsx": [
+    "react-hooks/todo 4:21-8:22 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause"
+   ],
+   "unsupported-syntax/02.invalid.tsx": [
+    "react-hooks/unsupported-syntax 3:3-3:7 Compilation Skipped: The 'eval' function is not supported"
+   ],
+   "use-memo/02.invalid.tsx": [
+    "react-hooks/use-memo 4:21-6:4 Error: useMemo() callbacks may not be async or generator functions",
+    "react-hooks/void-use-memo 4:21-6:4 Error: useMemo() callbacks must return a value"
+   ],
+   "void-use-memo/02.invalid.tsx": [
+    "react-hooks/void-use-memo 4:25-4:33 Error: useMemo() callbacks must return a value"
+   ]
+  },
+  "fixtures": {
+   "allow-global-reassignment-in-effect.js": [
+    "react-hooks/set-state-in-effect 13:5-13:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "context-variable-as-jsx-element-tag.js": [
+    "react-hooks/immutability 8:3-8:12 Error: This value cannot be modified",
+    "react-hooks/preserve-manual-memoization 8:15-10:18 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "effect-derived-computations/derived-state-from-prop-setter-call-outside-effect-no-error.js": [
+    "react-hooks/no-deriving-state-in-effects 8:5-8:12 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 8:5-8:12 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "effect-derived-computations/effect-with-global-function-call-no-error.js": [
+    "react-hooks/no-deriving-state-in-effects 7:5-7:13 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 7:5-7:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "error.assign-global-in-component-tag-function.js": [
+    "react-hooks/globals 3:5-3:15 Error: Cannot reassign variables declared outside of the component/hook",
+    "react-hooks/static-components 5:11-5:14 Error: Cannot create components during render"
+   ],
+   "error.bug-invariant-couldnt-find-binding-for-decl.js": [
+    "react-hooks/invariant 7:15-7:21 Invariant: (BuildHIR::lowerAssignment) Could not find binding for declaration."
+   ],
+   "error.bug-invariant-expected-consistent-destructuring.js": [
+    "react-hooks/invariant 9:10-9:11 Invariant: Expected consistent kind for destructuring"
+   ],
+   "error.function-expression-references-variable-its-assigned-to.js": [
+    "react-hooks/immutability 3:5-3:13 Error: Cannot reassign variable after render completes"
+   ],
+   "error.hoist-optional-member-expression-with-conditional.js": [
+    "react-hooks/preserve-manual-memoization 4:24-11:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "error.invalid-array-push-frozen.js": [
+    "react-hooks/immutability 4:3-4:4 Error: This value cannot be modified"
+   ],
+   "error.invalid-disallow-mutating-ref-in-render.js": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "error.invalid-eval-unsupported.js": [
+    "react-hooks/unsupported-syntax 2:3-2:7 Compilation Skipped: The 'eval' function is not supported"
+   ],
+   "error.invalid-impure-functions-in-render.js": [
+    "react-hooks/purity 4:16-4:26 Error: Cannot call impure function during render",
+    "react-hooks/purity 5:15-5:32 Error: Cannot call impure function during render",
+    "react-hooks/purity 6:16-6:29 Error: Cannot call impure function during render"
+   ],
+   "error.invalid-optional-member-expression-as-memo-dep-non-optional-in-body.js": [
+    "react-hooks/preserve-manual-memoization 3:24-7:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "error.invalid-pass-hook-as-prop.js": [
+    "react-hooks/hooks 2:22-2:28 Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values"
+   ],
+   "error.invalid-props-mutation-in-effect-indirect.js": [
+    "react-hooks/immutability 3:5-3:10 Error: This value cannot be modified"
+   ],
+   "error.invalid-reassign-variable-in-usememo.js": [
+    "react-hooks/use-memo 5:5-5:6 Error: useMemo() callbacks may not reassign variables declared outside of the callback"
+   ],
+   "error.invalid-ref-value-as-props.js": [
+    "react-hooks/refs 4:20-4:31 Error: Cannot access refs during render"
+   ],
+   "error.invalid-setState-in-useMemo.js": [
+    "react-hooks/void-use-memo 5:11-8:4 Error: useMemo() callbacks must return a value",
+    "react-hooks/set-state-in-render 6:5-6:15 Error: Calling setState from useMemo may trigger an infinite loop",
+    "react-hooks/set-state-in-render 7:5-7:13 Error: Calling setState from useMemo may trigger an infinite loop"
+   ],
+   "error.invalid-unconditional-set-state-in-render.js": [
+    "react-hooks/set-state-in-render 6:3-6:7 Error: Cannot call setState during render",
+    "react-hooks/set-state-in-render 7:3-7:10 Error: Cannot call setState during render"
+   ],
+   "error.mutate-global-increment-op-invalid-react.js": [
+    "react-hooks/todo 4:3-4:16 Todo: (BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
+   ],
+   "error.todo-invalid-jsx-in-try-with-finally.js": [
+    "react-hooks/todo 4:3-8:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause"
+   ],
+   "error.useMemo-non-literal-depslist.ts": [
+    "react-hooks/use-memo 10:5-10:28 Error: Expected the dependency list for useMemo to be an array literal"
+   ],
+   "exhaustive-deps/error.invalid-dep-on-ref-current-value.js": [
+    "react-hooks/memo-dependencies 7:7-7:24 Error: Found extra memoization dependencies"
+   ],
+   "invalid-jsx-in-catch-in-outer-try-with-catch.js": [
+    "react-hooks/error-boundaries 11:12-11:33 Error: Avoid constructing JSX within try/catch"
+   ],
+   "invalid-jsx-in-try-with-catch.js": [
+    "react-hooks/error-boundaries 5:10-5:17 Error: Avoid constructing JSX within try/catch"
+   ],
+   "invalid-set-state-in-effect-verbose-non-local-derived.js": [
+    "react-hooks/no-deriving-state-in-effects 7:5-7:16 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 7:5-7:16 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "invalid-unused-usememo.js": [
+    "react-hooks/void-use-memo 3:3-3:10 Error: useMemo() result is unused"
+   ],
+   "preserve-memo-validation/error.useMemo-property-call-dep.ts": [
+    "react-hooks/memo-dependencies 6:12-6:17 Error: Found missing/extra memoization dependencies"
+   ],
+   "rules-of-hooks/error.invalid-conditionally-call-prop-named-like-hook.js": [
+    "react-hooks/hooks 3:5-3:11 Error: Hooks must always be called in a consistent order, and may not be called conditionally. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)"
+   ],
+   "rules-of-hooks/error.invalid-hook-as-prop.js": [
+    "react-hooks/hooks 2:3-2:9 Error: Hooks must be the same function on every render, but this value may change over time to a different function. See https://react.dev/reference/rules/react-calls-components-and-hooks#dont-dynamically-use-hooks"
+   ],
+   "rules-of-hooks/error.invalid-hook-for.js": [
+    "react-hooks/invariant 3:3-5:4 Invariant: Unexpected empty block with `goto` terminal"
+   ],
+   "should-bailout-without-compilation-infer-mode.js": [
+    "react-hooks/globals 5:3-5:13 Error: Cannot reassign variables declared outside of the component/hook"
+   ],
+   "static-components/invalid-dynamically-constructed-component-method-call.js": [
+    "react-hooks/static-components 4:11-4:20 Error: Cannot create components during render"
+   ],
+   "timers.js": [
+    "react-hooks/purity 2:17-2:34 Error: Cannot call impure function during render",
+    "react-hooks/purity 3:15-3:25 Error: Cannot call impure function during render",
+    "react-hooks/purity 4:16-4:33 Error: Cannot call impure function during render"
+   ],
+   "use-no-forget-with-eslint-suppression.js": [
+    "react-hooks/refs 7:3-7:14 Error: Cannot access refs during render"
+   ],
+   "useMemo-if-else-multiple-return.js": [
+    "react-hooks/memo-dependencies 5:25-5:32 Error: Found missing memoization dependencies"
+   ],
+   "useMemo-named-function.ts": [
+    "react-hooks/use-memo 6:21-6:30 Error: Expected the first argument to be an inline function expression"
+   ]
+  },
+  "small": {
+   "disabled.jsx": {
+    "messages": [],
+    "suppressed": [
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  2 |   const ref = useRef(null);\n  3 |   // eslint-disable-next-line react-hooks/refs\n> 4 |   const value = ref.current;\n    |                 ^^^^^^^^^^^ Cannot access ref value during render\n  5 |   return <div>{value}</div>;\n  6 | }\n  7 |",
+      "line": 4,
+      "column": 17,
+      "endLine": 4,
+      "endColumn": 28,
+      "suggestions": []
+     }
+    ]
+   },
+   "flow-other.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  2 |   const ref = useRef(null);\n  3 |   // $FlowFixMe[other]\n> 4 |   const value = ref.current;\n    |                 ^^^^^^^^^^^ Cannot access ref value during render\n  5 |   return <div>{value}</div>;\n  6 | }\n  7 |",
+      "line": 4,
+      "column": 17,
+      "endLine": 4,
+      "endColumn": 28,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "javascript.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found extra memoization dependencies\n\nExtra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.\n\n  1 | function Component({ a, b }) {\n> 2 |   const value = useMemo(() => [a], [a, b]);\n    |                                        ^ Unnecessary dependency `b`\n  3 |   return <div>{value}</div>;\n  4 | }\n  5 |",
+      "line": 2,
+      "column": 40,
+      "endLine": 2,
+      "endColumn": 41,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "long.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause\n\n   1 | function Component(props) {\n   2 |   let value = 0;\n>  3 |   try {\n     |   ^^^^^\n>  4 |     value += props.a;\n     | ^^^^^^^^^^^^^^^^^^^^^\n>  5 |     value += props.b;\n     …\n     | ^^^^^^^^^^^^^^^^^^^^^\n> 14 |     props.done();\n     | ^^^^^^^^^^^^^^^^^^^^^\n> 15 |   }\n     | ^^^^ (BuildHIR::lowerStatement) Handle TryStatement without a catch clause\n  16 |   return <div>{value}</div>;\n  17 | }\n  18 |\n\n",
+      "line": 3,
+      "column": 3,
+      "endLine": 15,
+      "endColumn": 4,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "typescript.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found extra memoization dependencies\n\nExtra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.\n\n<dir>/typescript.tsx:2:40\n  1 | function Component({ a, b }: { a: number; b: number }) {\n> 2 |   const value = useMemo(() => [a], [a, b]);\n    |                                        ^ Unnecessary dependency `b`\n  3 |   return <div>{value}</div>;\n  4 | }\n  5 |\n\nInferred dependencies: `[a]`",
+      "line": 2,
+      "column": 40,
+      "endLine": 2,
+      "endColumn": 41,
+      "suggestions": [
+       {
+        "desc": "Update dependencies",
+        "range": [
+         92,
+         98
+        ],
+        "text": "[a]"
+       }
+      ]
+     }
+    ],
+    "suppressed": []
+   }
+  }
  }
 }

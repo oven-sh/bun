@@ -15,7 +15,7 @@ use bun_lint::fix::SuggestionKind;
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
-    apply_fixes,
+    apply_fixes, grows_too_much, max_fixed_len,
 };
 use bun_lint::rule::Kind;
 use bun_lint_graph::Graph;
@@ -83,10 +83,10 @@ impl Context<'_, '_> {
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,
             wants_suppressions: self.reads_suppressions,
-            // Warnings have to be counted for `--max-warnings`.
+            // Warnings have to be counted for `--max-warnings`, and for oxlint, from whose report `--quiet` only hides them.
             rule_filter: match self.options.quiet
                 && self.options.max_warnings == -1
-                && !self.fixes_warnings()
+                && self.of_oxlint.is_none()
             {
                 true => Some(&only_errors),
                 false => None,
@@ -362,6 +362,11 @@ impl Context<'_, '_> {
                 let mut result = verify(&text);
                 let messages = std::mem::take(&mut result.messages);
                 let fixed = apply_fixes(&text, messages, &|message| self.should_fix(message));
+                if fixed.output.len() > max_fixed_len(text.len()) {
+                    let mut result = verify(&text);
+                    result.messages.insert(0, grows_too_much(text.len()));
+                    return self.result(path, result, text, false, config);
+                }
                 result.messages = fixed.remaining;
                 let mut result = self.result(path, result, text, fixed.is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);

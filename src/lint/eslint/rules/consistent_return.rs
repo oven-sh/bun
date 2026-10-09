@@ -7,7 +7,7 @@ pub struct ConsistentReturn {
     treat_undefined_as_unspecified: bool,
 }
 
-pub const MISSING_RETURN: Message = Message::new(
+const MISSING_RETURN: Message = Message::new(
     "missingReturn",
     "Expected to return a value at the end of {{name}}.",
 );

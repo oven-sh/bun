@@ -124,9 +124,14 @@ impl GroupedAccessorPairs {
         let head = ast_utils::get_function_head_loc(at);
         // For oxlint it ends with the key: before the `]`.
         let end = if cx.language().is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
+        // Of a pair that is not grouped oxlint names the getter first.
+        let (first, second) = match cx.language().is_oxlint && message.id == NOT_GROUPED.id {
+            true => (getter, setter),
+            false => (former, latter),
+        };
         cx.report(Span::new(head.start, end), message)
-            .data("formerName", ast_utils::get_function_name_with_kind(former.func))
-            .data("latterName", ast_utils::get_function_name_with_kind(latter.func));
+            .data("formerName", ast_utils::get_function_name_with_kind(first.func))
+            .data("latterName", ast_utils::get_function_name_with_kind(second.func));
     }
 
     /// `TSMethodSignature`s

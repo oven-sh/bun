@@ -17,6 +17,7 @@ use crate::js::utils::string::{
     is_canonical_simple_number, is_es5_identifier_name, is_simple_number,
 };
 use crate::options::{QuoteProperties, QuoteStyle};
+use crate::syntax_error::{Message, SyntaxError as Reason};
 use crate::text::{is_next_line_empty, make_string};
 use bun_highway::index_of_interesting_character_in_string_literal;
 use bun_lint::utils::text::{
@@ -233,11 +234,11 @@ pub(super) fn parse(
     tree.open.clear();
     tree.is_nested_too_deeply = false;
     if u32::try_from(text.len()).is_err() {
-        return Err(FormatError::SyntaxError);
+        return Err(FormatError::SyntaxErrorAt(Reason(Message::TooLarge, 0)));
     }
     // A node for every six bytes is what minified JSON has.
     tree.nodes.reserve(text.len() / 6);
-    Reader {
+    let mut reader = Reader {
         text,
         at: 0,
         config,
@@ -245,15 +246,44 @@ pub(super) fn parse(
         line_breaks: 0,
         line_separators: 0,
         unresolved: 0,
-    }
-    .run()
-    .map_err(|SyntaxError| match tree.is_nested_too_deeply {
-        true => FormatError::NestedTooDeeply,
-        false => FormatError::SyntaxError,
-    })
+    };
+    reader
+        .run()
+        .map_err(|SyntaxError| match reader.tree.is_nested_too_deeply {
+            true => FormatError::NestedTooDeeply,
+            false => FormatError::SyntaxErrorAt(reader.reason()),
+        })
 }
 
 impl Reader<'_, '_> {
+    /// What is wrong where the reader has stopped: before what it refuses.
+    #[cold]
+    fn reason(&self) -> Reason {
+        let rest = self.text.get(self.at..).unwrap_or_default();
+        let message = match *rest {
+            [] => Message::UnexpectedEnd,
+            [quote @ (b'"' | b'\''), ref string @ ..] => {
+                let mut at = 0;
+                while string
+                    .get(at)
+                    .is_some_and(|it| !matches!(*it, b'\n') && *it != quote)
+                {
+                    at += 1 + usize::from(string[at] == b'\\');
+                }
+                match string.get(at) == Some(&quote) {
+                    true => Message::InvalidEscapeSequence,
+                    false => Message::UnclosedString,
+                }
+            }
+            [b'/', b'*', ..] => Message::UnclosedComment,
+            _ if self.tree.open.is_empty() && !self.tree.nodes.is_empty() => {
+                Message::ExpectedEndOfFile
+            }
+            _ => Message::UnexpectedToken,
+        };
+        Reason(message, self.at as u32)
+    }
+
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.text.get(self.at).copied()

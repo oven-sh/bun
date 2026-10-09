@@ -1,5 +1,5 @@
 #!/bin/sh
-# build.sh [asan | plain | coverage]: builds fuzz_format, fuzz_lint, fuzz_parser, fuzz_config, fuzz_regex and fuzz_glob into
+# build.sh [asan | plain | coverage]: builds fuzz_format, fuzz_lint, fuzz_parser, fuzz_config, fuzz_regex, fuzz_glob and fuzz_readers into
 # $CARGO_TARGET_DIR/<mode> (default: target/fuzz/<mode> at the root of the repository).
 #   asan      libFuzzer's instrumentation, AddressSanitizer, overflow checks, debug assertions
 #   plain     the same without AddressSanitizer: twice as fast, and frames on the stack of the size they have in Bun
@@ -13,21 +13,23 @@ mode=${1:-asan}
 host=$(rustc -vV | sed -n 's/^host: //p')
 flags="--cap-lints warn --cfg fuzzing --cfg bun_sema_mimalloc -Clink-arg=-fuse-ld=lld -A linker_messages"
 profile=fuzz
+INSTRUMENT="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table -Cllvm-args=-sanitizer-coverage-trace-compares -Cllvm-args=-simplifycfg-branch-fold-threshold=0"
 case $mode in
   asan) flags="$flags -Zsanitizer=address --cfg bun_asan" ;;
   plain) ;;
-  coverage) profile=coverage ;;
+  coverage) profile=coverage INSTRUMENT=-Cinstrument-coverage ;;
   *) echo "usage: build.sh [asan | plain | coverage]"; exit 2 ;;
 esac
 triple=$(echo "$host" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${triple}_LINKER=${CXX:-clang++}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/fuzz}/$mode"
+export INSTRUMENT RUSTC_WRAPPER="$here/rustc-wrapper.sh"
 cd "$here"
 if [ -n "$KERNELS" ]; then
   # Only the programs are linked again.
   objects=
   for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
-  for program in fuzz_format fuzz_lint fuzz_parser fuzz_config fuzz_regex fuzz_glob; do
+  for program in fuzz_format fuzz_lint fuzz_parser fuzz_config fuzz_regex fuzz_glob fuzz_readers; do
     RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects -Clink-arg=-lstdc++
   done
 else

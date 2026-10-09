@@ -17,10 +17,6 @@
   "suggestions",
   "dangerously"
  ],
- "26-no-var": [
-  "fix",
-  "dangerously"
- ],
  "32-no-implicit-coercion": [
   "fix",
   "suggestions"
@@ -34,62 +30,6 @@
   "dangerously"
  ],
  "35-no-negated-condition": [
-  "fix",
-  "dangerously"
- ],
- "56-no-var": [
-  "fix",
-  "dangerously"
- ],
- "57-no-var": [
-  "fix",
-  "dangerously"
- ],
- "62-no-var": [
-  "fix",
-  "dangerously"
- ],
- "64-no-var": [
-  "fix",
-  "dangerously"
- ],
- "67-no-var": [
-  "fix",
-  "dangerously"
- ],
- "68-no-var": [
-  "fix",
-  "dangerously"
- ],
- "69-no-var": [
-  "fix",
-  "dangerously"
- ],
- "71-no-var": [
-  "fix",
-  "dangerously"
- ],
- "72-no-var": [
-  "fix",
-  "dangerously"
- ],
- "73-no-var": [
-  "fix",
-  "dangerously"
- ],
- "77-no-var": [
-  "fix",
-  "dangerously"
- ],
- "78-no-var": [
-  "fix",
-  "dangerously"
- ],
- "79-no-var": [
-  "fix",
-  "dangerously"
- ],
- "80-no-var": [
   "fix",
   "dangerously"
  ]

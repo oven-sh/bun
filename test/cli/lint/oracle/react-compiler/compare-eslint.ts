@@ -8,7 +8,8 @@
 //   - reports of ESLint's `-f json`                              [{"filePath", "messages": [..]}]
 //   - the compiler's findings as they are, a line for each file  {"path", "findings": [{"category", "reason", ..}]}
 //
-// Messages: the same if ruleId, severity, message, line, column, endLine, endColumn and the suggestions (desc, range, text) are.
+// Messages: the same if ruleId, severity, message, line, column, endLine, endColumn and the suggestions (desc, range, text) are,
+// and both or neither are suppressed by a comment.
 //
 // Findings: the plugin's message is read back into what it was printed from, the heading, the reason, the description, the places
 // of the code frames with their texts, and the hints, and that is compared with the finding, so that what is found can be judged
@@ -54,7 +55,7 @@ const ruleOfCategory = new Map([
 
 const short = (text: string, length = 110) => JSON.stringify(text.length > length ? text.slice(0, length) + "…" : text);
 
-function ofMessage(message: Message): Item {
+function ofMessage(message: Message, isSuppressed: boolean): Item {
   const place = `${message.line}:${message.column}-${message.endLine}:${message.endColumn}`;
   const firstLine = message.message.split("\n")[0];
   return {
@@ -66,8 +67,9 @@ function ofMessage(message: Message): Item {
       ["message", message.message],
       ["place", place],
       ["suggestions", JSON.stringify(message.suggestions ?? [])],
+      ["suppressed by a comment", String(isSuppressed)],
     ]),
-    shown: `${message.ruleId} ${place} ${short(firstLine)}`,
+    shown: `${message.ruleId} ${place} ${short(firstLine)}${isSuppressed ? " (suppressed)" : ""}`,
   };
 }
 
@@ -164,21 +166,27 @@ for (const document of jsonDocuments(readFileSync(rest[0], "utf8"))) {
 }
 
 const ourMessages = new Map<string, Message[]>();
+const ourSuppressed = new Map<string, Message[]>();
 const ourFindings = new Map<string, Finding[]>();
 const ourText = readFileSync(rest[1], "utf8");
 if (ourText.startsWith("[")) {
   // One report on each line that starts with `[`.
   for (const line of ourText.split("\n")) {
     if (!line.startsWith("[")) continue;
-    for (const file of JSON.parse(line) as { filePath: string; messages: Message[] }[]) {
+    type Result = { filePath: string; messages: Message[]; suppressedMessages?: Message[] };
+    for (const file of JSON.parse(line) as Result[]) {
       ourMessages.set(name(file.filePath), file.messages);
+      ourSuppressed.set(name(file.filePath), file.suppressedMessages ?? []);
     }
   }
 } else {
   for (const document of jsonDocuments(ourText)) {
-    const record = document as { path: string; messages?: Message[]; findings?: Finding[] };
+    const record = document as { path: string; messages?: Message[]; suppressed?: Message[]; findings?: Finding[] };
     if (record.findings !== undefined) ourFindings.set(name(record.path), record.findings);
-    else if (record.messages !== undefined) ourMessages.set(name(record.path), record.messages);
+    else if (record.messages !== undefined) {
+      ourMessages.set(name(record.path), record.messages);
+      ourSuppressed.set(name(record.path), record.suppressed ?? []);
+    }
   }
 }
 const raw = ourFindings.size > 0;
@@ -220,11 +228,13 @@ for (const path of [...new Set([...theirs.keys(), ...ourMessages.keys(), ...ourF
   // Not what ESLint itself says: that the file does not parse, that a comment names a rule that does not exist.
   const ofThePlugin = (message: Message) => message.ruleId?.startsWith("react-hooks/") === true;
   const theirMessages = (record?.messages ?? []).filter(ofThePlugin);
+  const theirSuppressed = (record?.suppressed ?? []).filter(ofThePlugin);
   let left: Item[];
   let right: Item[];
   if (raw) {
     const source = new Source(readFileSync(join(sources, path), "utf8"));
-    const a = theirMessages.flatMap(message => partsOfMessage(path, source, message) ?? []);
+    // A finding knows nothing of comments.
+    const a = [...theirMessages, ...theirSuppressed].flatMap(message => partsOfMessage(path, source, message) ?? []);
     const b = (ourFindings.get(path) ?? []).flatMap(finding => partsOfFinding(source, finding) ?? []);
     for (const parts of a) {
       const twin = b.find(other => other.rule === parts.rule && other.places[0].start === parts.places[0]?.start);
@@ -232,7 +242,12 @@ for (const path of [...new Set([...theirs.keys(), ...ourMessages.keys(), ...ourF
     }
     [left, right] = [a.map(ofParts), b.map(ofParts)];
   } else {
-    [left, right] = [theirMessages.map(ofMessage), (ourMessages.get(path) ?? []).filter(ofThePlugin).map(ofMessage)];
+    const items = (messages: Message[], suppressed: Message[]) => [
+      ...messages.filter(ofThePlugin).map(message => ofMessage(message, false)),
+      ...suppressed.filter(ofThePlugin).map(message => ofMessage(message, true)),
+    ];
+    left = items(theirMessages, theirSuppressed);
+    right = items(ourMessages.get(path) ?? [], ourSuppressed.get(path) ?? []);
   }
   if (onlyRule !== undefined) [left, right] = [left, right].map(items => items.filter(item => item.rule === onlyRule));
 

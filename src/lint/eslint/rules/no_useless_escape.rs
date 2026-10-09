@@ -66,7 +66,10 @@ fn report<'a>(
     };
     // What ESLint suggests is a fix in oxlint, which points at the character too.
     if cx.language().is_oxlint {
-        (cx.report(Span::new(backslash, range.end + character.len() as u32), UNNECESSARY_ESCAPE).data("character", character))
+        // As Rust writes a `char`.
+        let written: &[u8] = if character == b"'" { b"\\'" } else { character };
+        cx.report(Span::new(backslash, range.end + character.len() as u32), UNNECESSARY_ESCAPE)
+            .data("character", written)
             .fix(|fixer| fixer.remove(range));
         return;
     }

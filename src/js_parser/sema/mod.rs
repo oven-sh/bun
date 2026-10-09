@@ -578,8 +578,12 @@ fn summarize_directly<'s>(
         atoms,
         experimental_decorators,
         every_file_is_a_module,
+        Json::Parsed,
     )?;
-    let in_arena = Summary::InPlace(&mut file).into_arena(memory);
+    let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
+    if in_arena.kind == bun_sema::hir::FileKind::Json {
+        bun_sema::json::validate_json(&mut in_arena, text);
+    }
     // A very large file would leave its capacity to every later file.
     if text.len() < 4 << 20 {
         scratch.recycle(file);
@@ -613,6 +617,14 @@ impl<'s> Summary<'_, 's> {
     }
 }
 
+/// What `parse_directly` does with a JSON file.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Json {
+    /// The caller goes on with `validate_json`.
+    Parsed,
+    Refused,
+}
+
 /// The file as `bun_sema_parser` leaves it.
 fn parse_directly(
     scratch: &mut bun_sema_parser::Scratch,
@@ -623,6 +635,7 @@ fn parse_directly(
     atoms: Option<&dyn bun_sema::atom::Intern>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    json: Json,
 ) -> Option<bun_sema::hir::FileBuilder> {
     use bun_sema::resolve::ScriptKind;
     use core::sync::atomic::Ordering::Relaxed;
@@ -639,10 +652,12 @@ fn parse_directly(
     };
     let options = bun_sema_parser::Options {
         is_declaration_file: by_name && bun_sema::resolve::is_declaration_file_name(path),
-        is_jsx: is_js || script_kind == Some(ScriptKind::Tsx),
-        is_javascript: is_js,
+        is_jsx: is_js || is_json || script_kind == Some(ScriptKind::Tsx),
+        is_javascript: is_js || is_json,
+        is_json,
         // `flow-parser` reads it as a name outside an async function, in a module too.
-        await_is_a_name: is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
+        await_is_a_name: is_json
+            || is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
         recovers: false,
         dialect,
     };
@@ -652,7 +667,7 @@ fn parse_directly(
     };
     let attempt = |mut options: bun_sema_parser::Options,
                    scratch: &mut bun_sema_parser::Scratch| {
-        if is_json {
+        if is_json && json == Json::Refused {
             return Err((bun_sema_parser::Refusal::Json, 0));
         }
         let first = parse(options, scratch).map_err(|it| (it.why, it.at))?;
@@ -847,6 +862,7 @@ pub fn with_summary_in_place<'s, R>(
         None,
         experimental_decorators,
         every_file_is_a_module,
+        Json::Refused,
     );
     let Some(mut file) = directly else {
         give_back_scratch(scratch);

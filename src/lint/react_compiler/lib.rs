@@ -13,6 +13,7 @@
 
 mod compile;
 mod convert;
+mod eslint;
 mod finding;
 mod host;
 mod oxlint;

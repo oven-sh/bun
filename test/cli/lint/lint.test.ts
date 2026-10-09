@@ -501,9 +501,9 @@ describe.concurrent("bun lint", () => {
         ["-f", "unix", "-D", "eqeqeq"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-        "<dir>/a.test.ts:1:27: Unexpected \`any\`. Specify a different type. [Warning/@typescript-eslint/no-explicit-any]
-        <dir>/a.ts:1:1: \`debugger\` statement is not allowed [Error/no-debugger]
-        <dir>/a.ts:1:17: Expected === and instead saw == [Error/eqeqeq]
+        "a.test.ts:1:27: Unexpected \`any\`. Specify a different type. [Warning/typescript(no-explicit-any)]
+        a.ts:1:1: \`debugger\` statement is not allowed [Error/eslint(no-debugger)]
+        a.ts:1:17: Expected === and instead saw == [Error/eslint(eqeqeq)]
 
         3 problems"
       `);
@@ -667,6 +667,7 @@ describe.concurrent("bun lint", () => {
               message: "`debugger` statement is not allowed",
               code: "eslint(no-debugger)",
               severity: "error",
+              url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
               filename: "a.js",
               labels: [{ span: { offset: 0, length: 9, line: 1, column: 1 } }],
             },
@@ -674,6 +675,7 @@ describe.concurrent("bun lint", () => {
               message: "Expected === and instead saw ==",
               code: "eslint(eqeqeq)",
               severity: "warning",
+              url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/eqeqeq.html",
               filename: "a.js",
               labels: [{ span: { offset: 17, length: 2, line: 2, column: 8 } }],
             },
@@ -684,6 +686,138 @@ describe.concurrent("bun lint", () => {
         });
         expect(start_time).toBeNumber();
         expect(exitCode).toBe(1);
+      });
+
+      test("unix, stylish, github and agent are oxlint's: the path from the working directory, columns in bytes, plugin(rule)", async () => {
+        const [json, unix, stylish, github, agent] = await Promise.all(
+          ["json", "unix", "stylish", "github", "agent"].map(format =>
+            lint(files, ["-f", format, "--threads", "2"], { env: { NO_COLOR: "1" } }),
+          ),
+        );
+        const [first, second] = JSON.parse(json.raw).diagnostics;
+        const help = (it: { help?: string }) => (it.help === undefined ? "" : ` help: ${it.help}`);
+        expect(unix.raw).toBe(
+          `a.js:1:1: ${first.message} [Error/eslint(no-debugger)]\n` +
+            `a.js:2:8: ${second.message} [Warning/eslint(eqeqeq)]\n` +
+            "\n2 problems\n",
+        );
+        expect(stylish.stdout).toBe(
+          "<dir>/a.js\n" +
+            `  1:1  error  ${first.message}  eslint(no-debugger)\n` +
+            `  2:8  warning  ${second.message}  eslint(eqeqeq)\n` +
+            "\n✖ 2 problems (1 error, 1 warning)",
+        );
+        expect(github.raw.replace(/in \d+ms|in [\d.]+s/, "in 1ms")).toBe(
+          `::error file=a.js,line=1,endLine=1,col=1,endColumn=10,title=eslint(no-debugger)::a.js:1:1: ${first.message}\n` +
+            `::warning file=a.js,line=2,endLine=2,col=8,endColumn=10,title=eslint(eqeqeq)::a.js:2:8: ${second.message}\n` +
+            "\nFound 1 warning and 1 error.\n" +
+            "Finished in 1ms on 2 files with 2 rules using 2 threads.\n",
+        );
+        expect(agent.raw).toBe(
+          `a.js:1:1: error eslint(no-debugger): ${first.message}${help(first)}\n` +
+            `a.js:2:8: warning eslint(eqeqeq): ${second.message}${help(second)}\n`,
+        );
+        expect([unix, stylish, github, agent].map(it => [it.stderr, it.exitCode])).toEqual(
+          Array.from({ length: 4 }, () => ["", 1]),
+        );
+      });
+
+      test("number_of_rules has what an override turns on, not what needs types, and is null with a nested configuration", async () => {
+        const count = async (more: Record<string, string>, ...flags: string[]) =>
+          JSON.parse((await lint({ ...files, ...more }, ["-f", "json", ...flags])).raw).number_of_rules;
+        const overrides = [
+          { files: ["*.ts"], rules: { "no-var": "warn", "no-debugger": "off" } },
+          { files: ["*.nothing"], rules: { "no-empty": "error", "no-eval": "off" } },
+        ];
+        const typed = { rules: { "no-debugger": "error", "typescript/no-floating-promises": "error" } };
+        expect({
+          overrides: await count({ ".oxlintrc.json": rc({ overrides }) }),
+          typed: await count({ ".oxlintrc.json": rc(typed) }),
+          nested: await count({ "src/.oxlintrc.json": rc() }),
+          notNested: await count({ "src/.oxlintrc.json": rc() }, "--disable-nested-config"),
+        }).toEqual({ overrides: 4, typed: 1, nested: null, notNested: 2 });
+      });
+
+      test("all that is said is on stdout", async () => {
+        const warns = { ".oxlintrc.json": rc(), "a.js": "if (a == b) {}\n" };
+        const stale = { "oxlint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) };
+        const runs = {
+          plain: lint(files, []),
+          silent: lint(files, ["--silent"]),
+          limited: lint(files, ["--max-warnings", "0"]),
+          clean: lint(files, ["src"]),
+          quiet: lint(warns, ["--quiet"]),
+          denied: lint(warns, ["--quiet", "--deny-warnings"]),
+          none: lint(files, ["nothing.js"]),
+          tolerated: lint(files, ["--no-error-on-unmatched-pattern", "nothing.js"]),
+          refused: lint({ ...files, ".oxlintrc.json": "{" }, []),
+          unpruned: lint({ ...files, ...stale }, ["--quiet"]),
+          unprunedForGitlab: lint({ ...files, ...stale }, ["--quiet", "-f", "gitlab"]),
+        };
+        const results = Object.fromEntries(
+          await Promise.all(Object.entries(runs).map(async ([name, run]) => [name, await run] as const)),
+        );
+        expect(Object.values(results).map(it => it.stderr)).toEqual(Object.values(results).map(() => ""));
+        expect(results.plain.stdout).toEndWith("\n\nLinted 2 files");
+        expect(results.silent.stdout).toBe("Linted 2 files");
+        expect(results.limited.stdout).toEndWith("\n\nerror: Found too many warnings (maximum: 0).\nLinted 2 files");
+        expect(results.clean.stdout).toBe("✓ No problems in 1 file");
+        expect(results.quiet.stdout).toBe("Linted 1 file");
+        expect(results.denied.stdout).toBe("Linted 1 file");
+        expect(results.none.stdout).toBe("error: No files found to lint. Please check your paths and ignore patterns.");
+        expect(results.tolerated.stdout).toBe("✓ No problems in 0 files");
+        expect(results.refused.stdout).toStartWith("error: ");
+        expect(results.unpruned.stdout).toBe(
+          "error: There are suppressions that do not occur anymore.\n\n" +
+            "note: Run `oxlint --prune-suppressions` to remove unused suppressions.\n\nLinted 2 files",
+        );
+        // oxlint has nothing but the rule of what has no place. The fingerprint is Rust's `DefaultHasher` of that.
+        expect(JSON.parse(results.unprunedForGitlab.raw)).toEqual([
+          {
+            description: "",
+            check_name: "",
+            fingerprint: "498befe408aeb3ad",
+            severity: "major",
+            location: { path: "", lines: { begin: 0, end: 0 } },
+          },
+        ]);
+        expect(Object.fromEntries(Object.entries(results).map(([name, it]) => [name, it.exitCode]))).toEqual({
+          plain: 1,
+          silent: 1,
+          limited: 1,
+          clean: 0,
+          quiet: 0,
+          denied: 1,
+          none: 1,
+          tolerated: 0,
+          refused: 1,
+          unpruned: 1,
+          unprunedForGitlab: 1,
+        });
+      });
+
+      test("--silent and no file to lint: a format prints what oxlint's prints", async () => {
+        const formats = ["unix", "checkstyle", "junit", "gitlab", "sarif", "json"];
+        const [silent, none] = await Promise.all(
+          [["--silent"], ["nothing.js"]].map(flags =>
+            Promise.all(formats.map(format => lint(files, ["-f", format, ...flags]))),
+          ),
+        );
+        const line = "No files found to lint. Please check your paths and ignore patterns.\n";
+        const [unix, checkstyle, junit, gitlab, sarif, json] = silent.map(it => it.raw);
+        expect(unix).toBe("");
+        expect(checkstyle).toBe('<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"></checkstyle>\n');
+        expect(junit).toBe(
+          '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="Oxlint" tests="0" failures="0" errors="0">\n\n</testsuites>\n',
+        );
+        expect(gitlab).toBe("[]");
+        expect(JSON.parse(sarif).runs[0].results).toEqual([]);
+        expect(JSON.parse(json).diagnostics).toEqual([]);
+        expect(none.slice(0, 5).map(it => it.raw)).toEqual(Array.from({ length: 5 }, () => line));
+        expect(none[5].raw).toStartWith(line + '{ "diagnostics": [],\n');
+        expect([...silent, ...none].map(it => [it.stderr, it.exitCode])).toEqual(
+          Array.from({ length: 12 }, () => ["", 1]),
+        );
       });
 
       test("--rules -f json", async () => {
@@ -709,7 +843,7 @@ describe.concurrent("bun lint", () => {
           ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "a.js"])),
         );
         expect(checkstyle.stdout).toMatchInlineSnapshot(
-          `"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="\`debugger\` statement is not allowed" source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected === and instead saw ==" source="eslint(eqeqeq)" /></file></checkstyle>"`,
+          `"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="\`debugger\` statement is not allowed" source="eslint(no-debugger)" /><error line="2" column="8" severity="warning" message="Expected === and instead saw ==" source="eslint(eqeqeq)" /></file></checkstyle>"`,
         );
         expect(junit.stdout).toMatchInlineSnapshot(`
           "<?xml version="1.0" encoding="UTF-8"?>
@@ -719,11 +853,12 @@ describe.concurrent("bun lint", () => {
                       <error message="\`debugger\` statement is not allowed">line 1, column 1, \`debugger\` statement is not allowed</error>
                   </testcase>
                   <testcase name="eslint(eqeqeq)">
-                      <failure message="Expected === and instead saw ==">line 2, column 7, Expected === and instead saw ==</failure>
+                      <failure message="Expected === and instead saw ==">line 2, column 8, Expected === and instead saw ==</failure>
                   </testcase>
               </testsuite>
           </testsuites>"
         `);
+        expect(gitlab.raw.endsWith("]")).toBe(true);
         expect(JSON.parse(gitlab.raw).map(({ fingerprint, ...it }: any) => it)).toEqual([
           {
             description: "`debugger` statement is not allowed",
@@ -738,10 +873,35 @@ describe.concurrent("bun lint", () => {
             location: { path: "a.js", lines: { begin: 2, end: 2 } },
           },
         ]);
+        expect(sarif.raw.endsWith("}")).toBe(true);
         const run = JSON.parse(sarif.raw).runs[0];
-        expect(run.results.map((it: any) => [it.ruleId, it.level, it.locations[0].physicalLocation.region])).toEqual([
-          ["eslint(no-debugger)", "error", { startLine: 1, startColumn: 1, endLine: 1, endColumn: 10 }],
-          ["eslint(eqeqeq)", "warning", { startLine: 2, startColumn: 7, endLine: 2, endColumn: 9 }],
+        expect(run.tool.driver).toEqual({
+          name: "oxlint",
+          version: "1.87.0",
+          semanticVersion: "1.87.0",
+          informationUri: "https://oxc.rs/docs/guide/usage/linter.html",
+          rules: [
+            {
+              id: "eslint(no-debugger)",
+              name: "no-debugger",
+              helpUri: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+              properties: { category: "correctness", plugin: "eslint", fix: "fixable_suggestion" },
+            },
+            {
+              id: "eslint(eqeqeq)",
+              name: "eqeqeq",
+              helpUri: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/eqeqeq.html",
+              properties: { category: "pedantic", plugin: "eslint", fix: "conditional_dangerous_fix" },
+            },
+          ],
+        });
+        expect(run.artifacts).toEqual([{ location: { uri: "a.js" } }]);
+        expect(run.columnKind).toBe("unicodeCodePoints");
+        expect(
+          run.results.map((it: any) => [it.ruleId, it.ruleIndex, it.level, it.locations[0].physicalLocation.region]),
+        ).toEqual([
+          ["eslint(no-debugger)", 0, "error", { startLine: 1, startColumn: 1, endLine: 1, endColumn: 10 }],
+          ["eslint(eqeqeq)", 1, "warning", { startLine: 2, startColumn: 8, endLine: 2, endColumn: 10 }],
         ]);
       });
 
@@ -756,7 +916,7 @@ describe.concurrent("bun lint", () => {
           none: 1,
           tolerated: 0,
         });
-        expect(none.stderr).toContain("No files found to lint. Please check your paths and ignore patterns.");
+        expect(none.stdout).toContain("No files found to lint. Please check your paths and ignore patterns.");
       });
 
       test("options in the file: denyWarnings, maxWarnings", async () => {
@@ -796,7 +956,7 @@ describe.concurrent("bun lint", () => {
           ["-c", "configs/x.json", "-f", "unix"],
         );
         expect(stdout).toMatchInlineSnapshot(`
-          "<dir>/src/a.js:1:1: \`debugger\` statement is not allowed [Error/no-debugger]
+          "src/a.js:1:1: \`debugger\` statement is not allowed [Error/eslint(no-debugger)]
 
           1 problem"
         `);
@@ -815,7 +975,7 @@ describe.concurrent("bun lint", () => {
           lint({ ".oxlintrc.json": "{}", "a.ts": `export class A {\n${unused}}\n` }, ["-f", "unix"]),
         ]);
         expect(named.stdout).toMatchInlineSnapshot(`
-          "<dir>/a.ts:5:3: '#d' is defined but never used. [Error/no-unused-private-class-members]
+          "a.ts:5:3: 'd' is defined but never used. [Error/eslint(no-unused-private-class-members)]
 
           1 problem"
         `);
@@ -1126,9 +1286,9 @@ describe.concurrent("bun lint", () => {
           files[`${index}/.oxlintrc.json`] = JSON.stringify(config);
           files[`${index}/a.ts`] = "export {};\n";
         });
-        const { raw, stderr } = await lint(files, ["-f", "json"]);
-        // What is refused is said there.
-        expect(raw === "" ? stderr : JSON.parse(raw).number_of_files).toBe(configs.length);
+        const { raw } = await lint(files, ["-f", "json"]);
+        // What is refused is said instead.
+        expect(raw.startsWith("{") ? JSON.parse(raw).number_of_files : raw).toBe(configs.length);
       });
     });
 

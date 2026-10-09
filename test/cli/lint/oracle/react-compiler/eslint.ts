@@ -67,7 +67,8 @@ export function configOf(modules: string, isOn = true): { config: object[]; rule
   return { config, rules };
 }
 
-const plain = (raw: RawMessage, directory: string): Message => ({
+/** The fields of a message that are compared. The name of the file in it is made relative to `directory`. */
+export const plain = (raw: RawMessage, directory: string): Message => ({
   ruleId: raw.ruleId,
   severity: raw.severity,
   message: raw.message.replaceAll(`${directory}/`, ""),

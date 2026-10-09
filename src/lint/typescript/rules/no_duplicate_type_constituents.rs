@@ -376,7 +376,7 @@ fn report<'a>(
 
     // oxlint points at the first of the two.
     let place = match previous.filter(|_| cx.language().is_oxlint) {
-        Some((_, previous)) => previous.span(),
+        Some((_, previous)) => previous.outer_span(),
         None => Span::new(constituent_node.span().start, end),
     };
     let mut report = cx.report(place, message);

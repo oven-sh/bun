@@ -442,6 +442,10 @@ fn get_unified_type_text<'a>(type0: Option<TypeNode<'a>>, type1: Option<TypeNode
 fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
     match other {
         None => "These overloads can be combined into one signature".to_owned(),
+        // oxlint does not say which it is.
+        Some(_) if file.language().is_oxlint => {
+            "This overload can be combined with another overload into one signature".to_owned()
+        }
         Some(other) => format!(
             "This overload and the one on line {} can be combined into one signature",
             file.line_of(other.start)

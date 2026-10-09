@@ -1858,36 +1858,6 @@
   "a.ts:10:4 typescript(no-unnecessary-type-assertion)",
   "a.ts:8:49 typescript(no-unnecessary-type-assertion)"
  ],
- "no-unnecessary-type-assertion/what-a-call-infers-from-the-assertion": [
-  "a.ts:11:18 typescript(no-unnecessary-type-assertion)",
-  "a.ts:13:18 typescript(no-unnecessary-type-assertion)",
-  "a.ts:8:18 typescript(no-unnecessary-type-assertion)",
-  "a.ts:8:20 typescript(no-unnecessary-type-assertion)",
-  "a.ts:9:18 typescript(no-unnecessary-type-assertion)"
- ],
- "places/the-first-label-of-tsgolint-3": [
-  "a.ts:10:39 typescript(no-misused-promises)",
-  "a.ts:11:101 typescript(no-misused-promises)",
-  "a.ts:11:77 typescript(no-misused-promises)",
-  "a.ts:11:84 typescript(no-misused-promises)",
-  "a.ts:12:51 typescript(no-misused-promises)",
-  "a.ts:14:31 typescript(no-misused-promises)",
-  "a.ts:14:55 typescript(no-misused-promises)",
-  "a.ts:15:23 typescript(no-misused-promises)",
-  "a.ts:16:25 typescript(no-unnecessary-type-parameters)",
-  "a.ts:17:19 typescript(no-unnecessary-type-parameters)",
-  "a.ts:18:51 typescript(no-unnecessary-type-parameters)",
-  "a.ts:19:17 typescript(no-duplicate-type-constituents)",
-  "a.ts:20:17 typescript(no-duplicate-type-constituents)",
-  "a.ts:21:32 typescript(no-duplicate-type-constituents)",
-  "a.ts:3:12 typescript(no-misused-promises)",
-  "a.ts:4:13 typescript(no-misused-promises)",
-  "a.ts:5:3 typescript(no-misused-promises)",
-  "a.ts:6:13 typescript(no-misused-promises)",
-  "a.ts:7:3 typescript(no-misused-promises)",
-  "a.ts:8:5 typescript(no-misused-promises)",
-  "a.ts:9:21 typescript(no-misused-promises)"
- ],
  "places/tsgolint-reports-the-node-2": [
   "a.ts:10:3 typescript(prefer-readonly)",
   "a.ts:11:15 typescript(prefer-readonly)",

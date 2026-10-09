@@ -3,7 +3,7 @@
 //! with the kernel that the lexer of JavaScript reads its strings with.
 //!
 //! A *token* starts at a `{ } [ ] : ,`, at a quote, or at the first byte of a run of bytes that are
-//! none of these, no ` \t\n\r` and in no comment. So a run can be `true`, `12`, `true`, or white
+//! none of these, no ` \t\n\r` and in no comment. So a run can be `true`, `12`, `nul\u006c`, or white
 //! space that is not ASCII with what follows it. `at` is always at the start of a token or at the end
 //! of the text.
 use bun_alloc::Arena as Bump;
@@ -11,9 +11,9 @@ use bun_ast::LexerLog;
 use bun_ast::expr::Data;
 use bun_ast::{E, Expr, Loc, Log, Range, Source};
 use bun_core::StackCheck;
+use bun_core::lexer as identifier;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
-use bun_highway::index_of_interesting_character_in_string_literal as plain_len;
 
 use crate::json::JSONOptions;
 use crate::json_index::{IndexError, is_ls_ps};
@@ -36,6 +36,9 @@ pub(crate) struct Parser<'a, 's> {
     /// What is wrong with a `/`. There are no tokens from there on.
     pub(crate) index_error: Option<IndexError>,
     opts: JSONOptions,
+    is_json5: bool,
+    /// Where the first token of a text of JSON5 starts.
+    first_token: usize,
     token_start: usize,
     prev_error_loc: Loc,
     stack_check: StackCheck,
@@ -134,21 +137,33 @@ fn short_plain_len(text: &[u8], quote: u8) -> usize {
     let Some(second) = rest.first_chunk::<8>() else {
         return 0;
     };
-    let found = special_bytes(first, quote);
-    if found != 0 {
-        return (found.trailing_zeros() / 8) as usize;
+    // Without a branch: whether a string has 8 bytes is a coin toss. 64 zeros if there is none.
+    let in_first = special_bytes(first, quote).trailing_zeros() / 8;
+    let in_second = special_bytes(second, quote).trailing_zeros() / 8;
+    (in_first + if in_first == 8 { in_second } else { 0 }) as usize
+}
+
+/// How many bytes of `text` are before the first `quote`, backslash or control character. It can also
+/// stop at a byte that is not printable ASCII.
+#[inline(always)]
+fn plain_len(text: &[u8], quote: u8) -> Option<usize> {
+    if bun_core::env::IS_NATIVE {
+        bun_highway::index_of_interesting_character_in_string_literal(text, quote)
+    } else {
+        plain_len_by_words(text, quote)
     }
-    // 64 zeros if there is none.
-    8 + (special_bytes(second, quote).trailing_zeros() / 8) as usize
 }
 
 /// How many bytes at the start of `text` are ASCII, no backslash and no control character.
 #[inline]
 fn plain_ascii_len(text: &[u8]) -> usize {
+    let is_plain = |b: &&u8| (0x20..0x80).contains(*b) && **b != b'\\';
     let Some((first, rest)) = text.split_first_chunk::<8>() else {
-        let is_plain = |b: &&u8| (0x20..0x80).contains(*b) && **b != b'\\';
         return text.iter().take_while(is_plain).count();
     };
+    if !bun_core::env::IS_NATIVE {
+        return text.iter().take_while(is_plain).count();
+    }
     let found = special_bytes(first, b'\\') | (u64::from_le_bytes(*first) & HIGH_BITS);
     if found != 0 {
         return (found.trailing_zeros() / 8) as usize;
@@ -213,6 +228,8 @@ impl<'a, 's> Parser<'a, 's> {
             first_comment: None,
             index_error: None,
             opts,
+            is_json5: false,
+            first_token: 0,
             token_start: 0,
             prev_error_loc: Loc::EMPTY,
             stack_check: StackCheck::init(),
@@ -604,6 +621,9 @@ impl<'a, 's> Parser<'a, 's> {
 
     #[cold]
     fn peek_behind_rare_white_space(&mut self, b: u8) -> (u8, usize) {
+        if self.is_json5 {
+            return self.json5_peek();
+        }
         if !is_rare(b) {
             return (b, self.at);
         }
@@ -631,6 +651,17 @@ impl<'a, 's> Parser<'a, 's> {
         }
     }
 
+    /// A value is expected at the end of the text.
+    #[cold]
+    fn unexpected_end(&mut self) -> crate::Error {
+        let end = self.contents.len();
+        if self.is_json5 {
+            return self.json5_error(Json5Error::UnexpectedEof, end);
+        }
+        self.token_start = end;
+        self.unexpected(end)
+    }
+
     pub(crate) fn unexpected_here(&mut self) -> crate::Error {
         self.unexpected(self.at)
     }
@@ -640,8 +671,7 @@ impl<'a, 's> Parser<'a, 's> {
     pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
         let start = self.at;
         if start >= self.contents.len() {
-            self.token_start = self.contents.len();
-            return Err(self.unexpected(start));
+            return Err(self.unexpected_end());
         }
         let loc = loc_at(start);
         self.token_start = start;
@@ -707,8 +737,7 @@ impl<'a, 's> Parser<'a, 's> {
     fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
         let start = self.at;
         if start >= self.contents.len() {
-            self.token_start = self.contents.len();
-            return Err(self.unexpected(start));
+            return Err(self.unexpected_end());
         }
         let loc = loc_at(start);
         match self.contents[start] {
@@ -774,6 +803,11 @@ impl<'a, 's> Parser<'a, 's> {
     /// character in it. None of them, and no quote, is before `from`.
     #[inline(never)]
     fn parse_long_string(&mut self, open: usize, from: usize) -> PResult<E::Str> {
+        if self.is_json5 {
+            let (string, end) = self.json5_string(open)?;
+            self.skip_from(end);
+            return Ok(string);
+        }
         self.token_start = open;
         let Some((close, first_special)) = self.string_close_from(open, from) else {
             self.add_default_error(b"Unterminated string literal")?;
@@ -852,6 +886,9 @@ impl<'a, 's> Parser<'a, 's> {
     /// A run that is no number, or not followed by what usually follows.
     #[cold]
     fn parse_rare_scalar(&mut self, loc: Loc) -> PResult<Expr> {
+        if self.is_json5 {
+            return self.parse_json5_scalar(loc);
+        }
         self.token_start = self.at;
         let run = self.run(self.at);
         let next = self.at + run.len();
@@ -913,7 +950,10 @@ impl<'a, 's> Parser<'a, 's> {
 
     fn parse_array(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(self.too_deeply_nested(loc));
+            return Err(match self.is_json5 {
+                true => crate::Error::StackOverflow,
+                false => self.too_deeply_nested(loc),
+            });
         }
         self.bump();
         let mark = self.scratch_json_items.len();
@@ -923,6 +963,12 @@ impl<'a, 's> Parser<'a, 's> {
         let result: PResult = loop {
             let (b, p) = self.peek();
             if p >= self.contents.len() {
+                if self.is_json5 {
+                    break Err(match self.scratch_json_items.len() != mark {
+                        true => self.json5_expected_comma(p, b']'),
+                        false => self.unexpected_end(),
+                    });
+                }
                 self.token_start = self.contents.len();
                 self.expected(p, "\"]\"");
                 break Err(crate::Error::ParserError);
@@ -935,6 +981,9 @@ impl<'a, 's> Parser<'a, 's> {
             }
             if self.scratch_json_items.len() != mark {
                 if b != b',' {
+                    if self.is_json5 {
+                        break Err(self.json5_expected_comma(p, b']'));
+                    }
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
                         break Err(crate::Error::SyntaxError);
@@ -982,14 +1031,20 @@ impl<'a, 's> Parser<'a, 's> {
         Ok(Expr::init(
             // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
             // tape outlives the AST (`take_tape` hands it to the caller).
-            unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
+            unsafe {
+                let is_single_line = is_single_line && !self.is_json5;
+                E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc)
+            },
             loc,
         ))
     }
 
     fn parse_object(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(self.too_deeply_nested(loc));
+            return Err(match self.is_json5 {
+                true => crate::Error::StackOverflow,
+                false => self.too_deeply_nested(loc),
+            });
         }
         self.bump();
         let mark = self.scratch_props.len();
@@ -1002,6 +1057,12 @@ impl<'a, 's> Parser<'a, 's> {
         let result: PResult = loop {
             let (mut b, mut p) = self.peek();
             if p >= self.contents.len() {
+                if self.is_json5 {
+                    break Err(match self.scratch_props.len() != mark {
+                        true => self.json5_expected_comma(p, b'}'),
+                        false => self.unexpected_end(),
+                    });
+                }
                 self.token_start = self.contents.len();
                 self.expected(p, "\"}\"");
                 break Err(crate::Error::ParserError);
@@ -1014,6 +1075,9 @@ impl<'a, 's> Parser<'a, 's> {
             }
             if self.scratch_props.len() != mark {
                 if b != b',' {
+                    if self.is_json5 {
+                        break Err(self.json5_expected_comma(p, b'}'));
+                    }
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
                         break Err(crate::Error::SyntaxError);
@@ -1050,6 +1114,8 @@ impl<'a, 's> Parser<'a, 's> {
             } else if b == b'\'' {
                 self.parse_long_string(key_start, key_start + 1)
                     .map(|key| (key, false))
+            } else if self.is_json5 {
+                self.parse_json5_name(key_start).map(|key| (key, false))
             } else {
                 self.expected(key_start, "string");
                 break Err(self.unexpected(key_start));
@@ -1067,6 +1133,9 @@ impl<'a, 's> Parser<'a, 's> {
 
             if !has_colon {
                 if self.peek_byte() != b':' {
+                    if self.is_json5 {
+                        break Err(self.json5_expected_colon());
+                    }
                     self.expected(self.at, "\":\"");
                     break Err(crate::Error::ParserError);
                 }
@@ -1101,7 +1170,10 @@ impl<'a, 's> Parser<'a, 's> {
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
             // SAFETY: see `parse_array`.
-            unsafe { E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
+            unsafe {
+                let is_single_line = is_single_line && !self.is_json5;
+                E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc)
+            },
             loc,
         ))
     }
@@ -1158,6 +1230,9 @@ impl<'a, 's> Parser<'a, 's> {
     }
 
     fn parse_number(&mut self, loc: Loc) -> PResult<Expr> {
+        if self.is_json5 {
+            return self.parse_json5_scalar(loc);
+        }
         let start = self.at;
         let rest = &self.contents[start..];
 
@@ -1537,6 +1612,536 @@ impl<'a, 's> Parser<'a, 's> {
         self.pass_run(next);
         Ok(value)
     }
+
+    // ───────────────────────────── JSON5 ─────────────────────────────
+    //
+    // Objects, arrays, strings in double quotes without a backslash, `true`, `false` and `null` are read
+    // by what reads JSON. What follows is the rest of https://spec.json5.org/, and what is said about a
+    // text that is not JSON5. A token is looked at as a whole before it is said that it is in the
+    // wrong place: what is wrong in it comes first.
+
+    /// From now on the text is read as JSON5.
+    pub(crate) fn read_as_json5(&mut self) {
+        self.is_json5 = true;
+        self.peek();
+        self.first_token = self.at;
+    }
+
+    #[cold]
+    fn json5_error(&mut self, error: Json5Error, pos: usize) -> crate::Error {
+        // Nothing has been read behind a `/` that starts no comment, nor in a comment without an end.
+        let (error, pos) = match self.index_error {
+            Some(IndexError::UnexpectedSlash { pos }) => (Json5Error::UnexpectedCharacter, pos),
+            Some(IndexError::UnterminatedBlockComment { .. }) => {
+                (Json5Error::UnterminatedComment, self.contents.len())
+            }
+            _ => (error, pos),
+        };
+        self.log
+            .add_error(Some(self.source), loc_at(pos), error.message());
+        crate::Error::SyntaxError
+    }
+
+    /// Whether the text ends at `p`. A NUL ends it too.
+    fn json5_is_end(&self, p: usize) -> bool {
+        matches!(self.contents.get(p), None | Some(0))
+    }
+
+    /// How many bytes of white space that is not ASCII are at `p`.
+    fn json5_white_space_len(&self, p: usize) -> usize {
+        match self.contents.get(p..).unwrap_or_default() {
+            // U+00A0
+            [0xC2, 0xA0, ..] => 2,
+            // U+FEFF, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+            [0xEF, 0xBB, 0xBF, ..]
+            | [0xE1, 0x9A, 0x80, ..]
+            | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
+            | [0xE2, 0x81, 0x9F, ..]
+            | [0xE3, 0x80, 0x80, ..] => 3,
+            _ => 0,
+        }
+    }
+
+    /// [`Self::peek`] where white space of JSON5 that is not ` \t\n\r` can be.
+    #[cold]
+    fn json5_peek(&mut self) -> (u8, usize) {
+        loop {
+            let p = self.at;
+            let len = match self.contents.get(p) {
+                Some(0x0B | 0x0C) => 1,
+                Some(0x80..) => self.json5_white_space_len(p),
+                _ => 0,
+            };
+            if len == 0 {
+                return (self.contents.get(p).copied().unwrap_or(0xFF), p);
+            }
+            self.skip_from(p + len);
+        }
+    }
+
+    /// Nothing but white space and comments follows the value.
+    pub(crate) fn json5_end(&mut self) -> PResult {
+        let (_, p) = self.peek();
+        if self.index_error.is_none() && self.json5_is_end(p) {
+            return Ok(());
+        }
+        self.json5_can_start_value()?;
+        Err(self.json5_error(Json5Error::TrailingData, p))
+    }
+
+    /// Looks at the token at `at`, which is not what is expected there. Returns whether a value can
+    /// start with it.
+    #[cold]
+    fn json5_can_start_value(&mut self) -> PResult<bool> {
+        let p = self.at;
+        match self.contents.get(p) {
+            None | Some(0 | b'}' | b']' | b':' | b',') => Ok(false),
+            Some(b'{' | b'[') => Ok(true),
+            Some(_) => self.json5_leaf(p).map(|_| true),
+        }
+    }
+
+    /// What is said where a `,` or `close` is expected, at `p`.
+    #[cold]
+    fn json5_expected_comma(&mut self, p: usize, close: u8) -> crate::Error {
+        let (unterminated, expected_close) = match close {
+            b'}' => (
+                Json5Error::UnterminatedObject,
+                Json5Error::ExpectedClosingBrace,
+            ),
+            _ => (
+                Json5Error::UnterminatedArray,
+                Json5Error::ExpectedClosingBracket,
+            ),
+        };
+        if self.json5_is_end(p) {
+            return self.json5_error(unterminated, p);
+        }
+        match self.json5_can_start_value() {
+            Ok(true) => self.json5_error(Json5Error::ExpectedComma, p),
+            Ok(false) => self.json5_error(expected_close, p),
+            Err(error) => error,
+        }
+    }
+
+    /// What is said where a `:` is expected, at `at`.
+    #[cold]
+    fn json5_expected_colon(&mut self) -> crate::Error {
+        let p = self.at;
+        match self.json5_can_start_value() {
+            Ok(_) => self.json5_error(Json5Error::ExpectedColon, p),
+            Err(error) => error,
+        }
+    }
+
+    /// The value at `at`, which is no object, no array and no string.
+    #[cold]
+    fn parse_json5_scalar(&mut self, loc: Loc) -> PResult<Expr> {
+        let p = self.at;
+        if self.contents.get(p).is_some_and(|c| is_rare(*c)) && self.json5_peek().1 != p {
+            return self.parse_value();
+        }
+        match self.contents.get(p) {
+            None | Some(0) => return Err(self.json5_error(Json5Error::UnexpectedEof, p)),
+            Some(b'}' | b']' | b':' | b',') => {
+                return Err(self.json5_error(Json5Error::UnexpectedToken, p));
+            }
+            Some(_) => {}
+        }
+        let (leaf, end) = self.json5_leaf(p)?;
+        let value = match leaf {
+            Json5Leaf::String(it) => Expr::init(E::EString::init(it.slice()), loc),
+            Json5Leaf::Number(it) => Expr::init(E::Number::new(it), loc),
+            Json5Leaf::Boolean(value) => Expr::init(E::Boolean { value }, loc),
+            Json5Leaf::Null => Expr::init(E::Null {}, loc),
+            Json5Leaf::Identifier(it) => match it.slice() {
+                b"NaN" => Expr::init(E::Number::new(f64::NAN), loc),
+                b"Infinity" => Expr::init(E::Number::new(f64::INFINITY), loc),
+                _ => return Err(self.json5_error(Json5Error::UnexpectedToken, p)),
+            },
+        };
+        self.skip_from(end);
+        Ok(value)
+    }
+
+    /// The name at `p`, which is not in double quotes.
+    #[cold]
+    fn parse_json5_name(&mut self, p: usize) -> PResult<E::Str> {
+        match self.contents.get(p) {
+            None | Some(0) => return Err(self.json5_error(Json5Error::UnexpectedEof, p)),
+            Some(b'{' | b'}' | b'[' | b']' | b':' | b',') => {
+                return Err(self.json5_error(Json5Error::InvalidIdentifier, p + 1));
+            }
+            Some(_) => {}
+        }
+        let (leaf, end) = self.json5_leaf(p)?;
+        let name = match leaf {
+            Json5Leaf::String(it) | Json5Leaf::Identifier(it) => it,
+            Json5Leaf::Boolean(true) => E::Str::new(b"true"),
+            Json5Leaf::Boolean(false) => E::Str::new(b"false"),
+            Json5Leaf::Null => E::Str::new(b"null"),
+            Json5Leaf::Number(_) => {
+                return Err(self.json5_error(Json5Error::InvalidIdentifier, end));
+            }
+        };
+        self.skip_from(end);
+        Ok(name)
+    }
+
+    /// The token at `p`, which is no punctuation and not the end of the text, and where it ends.
+    #[cold]
+    fn json5_leaf(&mut self, p: usize) -> PResult<(Json5Leaf, usize)> {
+        let c = self.contents[p];
+        let keyword = match c {
+            b't' => Some((b"true".as_slice(), Json5Leaf::Boolean(true))),
+            b'f' => Some((b"false".as_slice(), Json5Leaf::Boolean(false))),
+            b'n' => Some((b"null".as_slice(), Json5Leaf::Null)),
+            _ => None,
+        };
+        if let Some((keyword, leaf)) = keyword
+            && self.json5_is_keyword(p, keyword)
+        {
+            return Ok((leaf, p + keyword.len()));
+        }
+        match c {
+            b'"' | b'\'' => {
+                let (string, end) = self.json5_string(p)?;
+                Ok((Json5Leaf::String(string), end))
+            }
+            b'+' | b'-' => {
+                let (number, end) = self.json5_signed(p)?;
+                Ok((Json5Leaf::Number(number), end))
+            }
+            b'0'..=b'9' | b'.' => {
+                let (number, end) = self.json5_number(p)?;
+                Ok((Json5Leaf::Number(number), end))
+            }
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' => {
+                let (name, end) = self.json5_identifier(p)?;
+                Ok((Json5Leaf::Identifier(name), end))
+            }
+            0x80.. if identifier::is_identifier_start(self.json5_code_point(p).0 as u32) => {
+                let (name, end) = self.json5_identifier(p)?;
+                Ok((Json5Leaf::Identifier(name), end))
+            }
+            _ => Err(self.json5_error(Json5Error::UnexpectedCharacter, p)),
+        }
+    }
+
+    /// Whether `keyword` is at `p`, and no name that starts with it.
+    fn json5_is_keyword(&self, p: usize, keyword: &[u8]) -> bool {
+        let rest = &self.contents[p..];
+        rest.starts_with(keyword)
+            && !rest
+                .get(keyword.len())
+                .is_some_and(|c| is_identifier_continue(*c) || *c == b'\\' || *c >= 0x80)
+    }
+
+    /// The number behind the sign at `p`.
+    fn json5_signed(&mut self, p: usize) -> PResult<(f64, usize)> {
+        let is_negative = self.contents[p] == b'-';
+        let (number, end) = match self.contents.get(p + 1) {
+            Some(b'0'..=b'9' | b'.') => self.json5_number(p + 1)?,
+            Some(b'I') if self.json5_is_keyword(p + 1, b"Infinity") => (f64::INFINITY, p + 9),
+            Some(b'N') if self.json5_is_keyword(p + 1, b"NaN") => (f64::NAN, p + 4),
+            None | Some(0) => {
+                let error = match p == self.first_token {
+                    true => Json5Error::UnexpectedEof,
+                    false => Json5Error::UnexpectedToken,
+                };
+                return Err(self.json5_error(error, p));
+            }
+            Some(_) => return Err(self.json5_error(Json5Error::UnexpectedCharacter, p + 1)),
+        };
+        Ok((if is_negative { -number } else { number }, end))
+    }
+
+    fn json5_number(&mut self, start: usize) -> PResult<(f64, usize)> {
+        let contents = self.contents;
+        let digits = |from: usize| {
+            let rest = contents.get(from..).unwrap_or_default();
+            rest.iter().take_while(|c| c.is_ascii_digit()).count()
+        };
+        if contents[start] == b'0' {
+            match contents.get(start + 1) {
+                Some(b'x' | b'X') => return self.json5_hex_number(start),
+                Some(b'0'..=b'9') => {
+                    return Err(self.json5_error(Json5Error::LeadingZeros, start));
+                }
+                _ => {}
+            }
+        }
+        let integer = digits(start);
+        let mut pos = start + integer;
+        let mut has_digits = integer > 0;
+        if contents.get(pos) == Some(&b'.') {
+            let fraction = digits(pos + 1);
+            pos += 1 + fraction;
+            has_digits |= fraction > 0;
+        }
+        if !has_digits {
+            return Err(self.json5_error(Json5Error::InvalidNumber, pos));
+        }
+        if matches!(contents.get(pos), Some(b'e' | b'E')) {
+            pos += 1;
+            pos += usize::from(matches!(contents.get(pos), Some(b'+' | b'-')));
+            let exponent = digits(pos);
+            if exponent == 0 {
+                return Err(self.json5_error(Json5Error::InvalidNumber, pos));
+            }
+            pos += exponent;
+        }
+        match bun_core::wtf::parse_double(&contents[start..pos]) {
+            Ok(number) => Ok((number, pos)),
+            Err(_) => Err(self.json5_error(Json5Error::InvalidNumber, pos)),
+        }
+    }
+
+    fn json5_hex_number(&mut self, start: usize) -> PResult<(f64, usize)> {
+        let digits = &self.contents[start + 2..];
+        let len = digits.iter().take_while(|c| c.is_ascii_hexdigit()).count();
+        let end = start + 2 + len;
+        match bun_core::fmt::parse_int::<u64>(&digits[..len], 16) {
+            Ok(value) if len > 0 => Ok((value as f64, end)),
+            _ => Err(self.json5_error(Json5Error::InvalidHexNumber, end)),
+        }
+    }
+
+    /// The string that starts at `open`, and where it ends.
+    fn json5_string(&mut self, open: usize) -> PResult<(E::Str, usize)> {
+        let contents = self.contents;
+        let quote = contents[open];
+        let mut buf = core::mem::take(&mut self.scratch_str);
+        buf.clear();
+        let mut has_escape = false;
+        // What is in `buf` is the value up to here.
+        let mut copied_to = open + 1;
+        let mut pos = open + 1;
+        let end = loop {
+            let plain = plain_len_by_words(contents.get(pos..).unwrap_or_default(), quote);
+            let Some(plain) = plain else {
+                break Err((Json5Error::UnterminatedString, contents.len()));
+            };
+            pos += plain;
+            match contents[pos] {
+                b'\\' => {
+                    has_escape = true;
+                    buf.extend_from_slice(&contents[copied_to..pos]);
+                    match json5_escape(contents, pos + 1, &mut buf) {
+                        Ok(end) => pos = end,
+                        Err(error) => break Err(error),
+                    }
+                    copied_to = pos;
+                }
+                b'\n' | b'\r' => break Err((Json5Error::UnterminatedString, pos)),
+                c if c == quote => break Ok(pos),
+                // Other control characters are allowed.
+                _ => pos += 1,
+            }
+        };
+        let string = end.map(|end| match has_escape {
+            false => (E::Str::new(&contents[open + 1..end]), end + 1),
+            true => {
+                buf.extend_from_slice(&contents[copied_to..end]);
+                (self.alloc_owned_str(&buf), end + 1)
+            }
+        });
+        self.scratch_str = buf;
+        string.map_err(|(error, pos)| self.json5_error(error, pos))
+    }
+
+    /// The code point at `p`, and how many bytes it has. A byte that starts none counts for itself.
+    fn json5_code_point(&self, p: usize) -> (i32, usize) {
+        let first = self.contents[p];
+        let len = usize::from(strings::wtf8_byte_sequence_length(first));
+        let Some(sequence) = self.contents.get(p..p + len).filter(|_| first >= 0x80) else {
+            return (i32::from(first), 1);
+        };
+        let mut bytes = [0u8; 4];
+        bytes[..len].copy_from_slice(sequence);
+        match strings::decode_wtf8_rune_t(bytes, len as u8, -1i32) {
+            ..0 => (i32::from(first), 1),
+            decoded => (decoded, len),
+        }
+    }
+
+    /// The name without quotes that starts at `start`, and where it ends.
+    fn json5_identifier(&mut self, start: usize) -> PResult<(E::Str, usize)> {
+        let contents = self.contents;
+        // All of it is ASCII, as a rule.
+        let rest = &contents[start..];
+        let len = rest
+            .iter()
+            .take_while(|c| is_identifier_continue(**c))
+            .count();
+        let goes_on = rest.get(len).is_some_and(|c| *c == b'\\' || *c >= 0x80);
+        if len > 0 && !goes_on && !rest[0].is_ascii_digit() {
+            return Ok((E::Str::new(&rest[..len]), start + len));
+        }
+        let mut buf = core::mem::take(&mut self.scratch_str);
+        buf.clear();
+        let mut pos = start;
+        let error = loop {
+            if pos >= contents.len() {
+                break None;
+            }
+            let is_first = pos == start;
+            let is_allowed = |cp: i32| match is_first {
+                true => identifier::is_identifier_start(cp as u32),
+                false => identifier::is_identifier_part(cp as u32),
+            };
+            let (mut cp, len) = self.json5_code_point(pos);
+            if cp == i32::from(b'\\') {
+                if contents.get(pos + 1) != Some(&b'u') {
+                    break Some((Json5Error::InvalidUnicodeEscape, pos + 1));
+                }
+                let (value, digits) = bun_core::fmt::parse_hex_prefix(&contents[pos + 2..], 4);
+                pos += 2 + digits;
+                if digits < 4 {
+                    break Some((Json5Error::InvalidUnicodeEscape, pos));
+                }
+                cp = value as i32;
+            } else if is_allowed(cp) {
+                pos += len;
+            }
+            if !is_allowed(cp) {
+                match is_first {
+                    true => break Some((Json5Error::InvalidIdentifier, pos)),
+                    false => break None,
+                }
+            }
+            push_codepoint(&mut buf, cp);
+        };
+        let name = match buf == contents[start..pos] {
+            true => E::Str::new(&contents[start..pos]),
+            false => self.alloc_owned_str(&buf),
+        };
+        self.scratch_str = buf;
+        match error {
+            Some((error, pos)) => Err(self.json5_error(error, pos)),
+            None => Ok((name, pos)),
+        }
+    }
+}
+
+/// What is wrong with a text that is not JSON5.
+#[derive(Clone, Copy)]
+enum Json5Error {
+    UnexpectedCharacter,
+    UnexpectedToken,
+    UnexpectedEof,
+    UnterminatedString,
+    UnterminatedComment,
+    UnterminatedObject,
+    UnterminatedArray,
+    UnterminatedEscape,
+    InvalidNumber,
+    LeadingZeros,
+    InvalidHexNumber,
+    InvalidHexEscape,
+    InvalidUnicodeEscape,
+    OctalEscape,
+    ExpectedColon,
+    ExpectedComma,
+    ExpectedClosingBrace,
+    ExpectedClosingBracket,
+    InvalidIdentifier,
+    TrailingData,
+}
+
+impl Json5Error {
+    fn message(self) -> &'static [u8] {
+        match self {
+            Json5Error::UnexpectedCharacter => b"Unexpected character",
+            Json5Error::UnexpectedToken => b"Unexpected token",
+            Json5Error::UnexpectedEof => b"Unexpected end of input",
+            Json5Error::UnterminatedString => b"Unterminated string",
+            Json5Error::UnterminatedComment => b"Unterminated multi-line comment",
+            Json5Error::UnterminatedObject => b"Unterminated object",
+            Json5Error::UnterminatedArray => b"Unterminated array",
+            Json5Error::UnterminatedEscape => b"Unexpected end of input in escape sequence",
+            Json5Error::InvalidNumber => b"Invalid number",
+            Json5Error::LeadingZeros => b"Leading zeros are not allowed in JSON5",
+            Json5Error::InvalidHexNumber => b"Invalid hex number",
+            Json5Error::InvalidHexEscape => b"Invalid hex escape",
+            Json5Error::InvalidUnicodeEscape => b"Invalid unicode escape: expected 4 hex digits",
+            Json5Error::OctalEscape => b"Octal escape sequences are not allowed in JSON5",
+            Json5Error::ExpectedColon => b"Expected ':' after object key",
+            Json5Error::ExpectedComma => b"Expected ','",
+            Json5Error::ExpectedClosingBrace => b"Expected '}'",
+            Json5Error::ExpectedClosingBracket => b"Expected ']'",
+            Json5Error::InvalidIdentifier => b"Invalid identifier start character",
+            Json5Error::TrailingData => b"Unexpected token after JSON5 value",
+        }
+    }
+}
+
+/// A token of JSON5 that is no punctuation.
+enum Json5Leaf {
+    String(E::Str),
+    Number(f64),
+    Boolean(bool),
+    Null,
+    Identifier(E::Str),
+}
+
+/// Appends what the escape sequence means whose backslash is before `pos`. Returns where it ends.
+fn json5_escape(
+    contents: &[u8],
+    pos: usize,
+    buf: &mut Vec<u8>,
+) -> Result<usize, (Json5Error, usize)> {
+    let Some(&c) = contents.get(pos) else {
+        return Err((Json5Error::UnterminatedEscape, pos));
+    };
+    let mut pos = pos + 1;
+    let hex = |pos: &mut usize, count: usize, error: Json5Error| {
+        let rest = contents.get(*pos..).unwrap_or_default();
+        let (value, digits) = bun_core::fmt::parse_hex_prefix(rest, count);
+        *pos += digits;
+        match digits < count {
+            true => Err((error, *pos)),
+            false => Ok(value),
+        }
+    };
+    match c {
+        b'b' => buf.push(0x08),
+        b'f' => buf.push(0x0C),
+        b'n' => buf.push(b'\n'),
+        b'r' => buf.push(b'\r'),
+        b't' => buf.push(b'\t'),
+        b'v' => buf.push(0x0B),
+        b'0' if !contents.get(pos).is_some_and(u8::is_ascii_digit) => buf.push(0),
+        b'0'..=b'9' => return Err((Json5Error::OctalEscape, pos)),
+        b'x' => {
+            let value = hex(&mut pos, 2, Json5Error::InvalidHexEscape)?;
+            push_codepoint(buf, value as CodePoint);
+        }
+        b'u' => {
+            let lead = hex(&mut pos, 4, Json5Error::InvalidUnicodeEscape)?;
+            if strings::u16_is_lead(lead as u16)
+                && contents.get(pos..pos + 2) == Some(b"\\u".as_slice())
+            {
+                pos += 2;
+                let trail = hex(&mut pos, 4, Json5Error::InvalidUnicodeEscape)?;
+                match strings::decode_surrogate_pair(lead as u16, trail as u16) {
+                    Some(pair) => push_codepoint(buf, pair as CodePoint),
+                    None => {
+                        push_codepoint(buf, lead as CodePoint);
+                        push_codepoint(buf, trail as CodePoint);
+                    }
+                }
+            } else {
+                push_codepoint(buf, lead as CodePoint);
+            }
+        }
+        // The line goes on.
+        b'\r' => pos += usize::from(contents.get(pos) == Some(&b'\n')),
+        b'\n' => {}
+        0xE2 if matches!(contents.get(pos..pos + 2), Some([0x80, 0xA8 | 0xA9])) => pos += 2,
+        _ => buf.push(c),
+    }
+    Ok(pos)
 }
 
 #[inline]

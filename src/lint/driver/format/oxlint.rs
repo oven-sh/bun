@@ -1,7 +1,5 @@
-//! The formats of oxlint that programs read: `json`, `checkstyle`, `junit`, `gitlab`, `sarif`, and
-//! what `--rules` prints.
-//!
-//! The shape is oxlint's. The messages are ESLint's, and only the rules that say it as oxlint does have a `help`.
+//! What the formats of oxlint share, what its `--rules` prints, and `gitlab` and `sarif` as they are without a configuration of
+//! oxlint: in the shape of oxlint's, with the places and the paths of ESLint.
 
 use super::Meta;
 use crate::paths;
@@ -9,22 +7,23 @@ use crate::print_config::{object, text, write_indented};
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Registry, parse_rule_id, write_json_string};
+use bun_lint::linter::{LintMessage, Registry, parse_rule_id};
 use bun_lint::options::Json;
 use bun_lint::rule::Fixable;
 use std::io::Write;
 
-/// What else oxlint's `json` has.
+/// What oxlint says about a run.
 pub(crate) struct Run {
     pub(crate) files: usize,
-    /// How many rules are on in the working directory.
+    /// [`Config::number_of_rules_of_oxlint`](bun_lint::linter::Config::number_of_rules_of_oxlint). `None`: it does not say, as
+    /// with nested configurations.
     pub(crate) rules: Option<usize>,
     pub(crate) threads: usize,
     pub(crate) seconds: f64,
 }
 
 /// `eslint(no-debugger)`, `typescript(no-explicit-any)`
-fn code(message: &LintMessage) -> Option<Vec<u8>> {
+pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
     let id = message.rule_id.as_ref()?.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope(plugin), b"(", name, b")"].concat())
@@ -41,11 +40,11 @@ fn scope(prefix: &[u8]) -> &[u8] {
     }
 }
 
-fn is_error(message: &LintMessage) -> bool {
+pub(super) fn is_error(message: &LintMessage) -> bool {
     message.is_fatal || message.severity == Severity::Error
 }
 
-fn file_name(result: &FileResult, meta: &Meta) -> Vec<u8> {
+pub(super) fn file_name(result: &FileResult, meta: &Meta) -> Vec<u8> {
     let path = paths::from_native(&result.path);
     if paths::is_absolute(&path) {
         paths::relative(meta.cwd, &path)
@@ -55,7 +54,7 @@ fn file_name(result: &FileResult, meta: &Meta) -> Vec<u8> {
 }
 
 /// Finds the offsets of the lines and columns that ESLint counts.
-struct Offsets<'t> {
+pub(super) struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
     lines: Vec<usize>,
@@ -84,7 +83,7 @@ fn sizes(first: u8) -> Sizes {
 }
 
 impl<'t> Offsets<'t> {
-    fn new(text: &'t [u8]) -> Offsets<'t> {
+    pub(super) fn new(text: &'t [u8]) -> Offsets<'t> {
         let mut lines = vec![text.len() - strings::without_utf8_bom(text).len()];
         let mut at = 0;
         // `\r`, `\n`, and the first byte of U+2028 and U+2029.
@@ -136,7 +135,7 @@ impl<'t> Offsets<'t> {
 
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
-    fn at(&self, line: u32, column: u32) -> (usize, usize) {
+    pub(super) fn at(&self, line: u32, column: u32) -> (usize, usize) {
         let start =
             (self.lines.get((line as usize).saturating_sub(1)).copied()).unwrap_or(self.text.len());
         let after_start = (column as usize).saturating_sub(1);
@@ -173,176 +172,7 @@ impl<'t> Offsets<'t> {
     }
 }
 
-/// miette's `JSONReportHandler`, in `lint_command_info` of oxlint's `JsonOutputFormatter`.
-pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    out.extend_from_slice(b"{ \"diagnostics\": [");
-    let mut is_first = true;
-    for result in results.iter().filter(|it| !it.messages.is_empty()) {
-        let name = file_name(result, meta);
-        let offsets = Offsets::new(result.text.as_deref().unwrap_or_default());
-        for message in &result.messages {
-            if !std::mem::replace(&mut is_first, false) {
-                out.extend_from_slice(b",\n");
-            }
-            out.extend_from_slice(b"{\"message\": ");
-            write_json_string(out, &message.message);
-            if let Some(code) = code(message) {
-                out.extend_from_slice(b",\"code\": ");
-                write_json_string(out, &code);
-            }
-            out.extend_from_slice(if is_error(message) {
-                b",\"severity\": \"error\""
-            } else {
-                b",\"severity\": \"warning\""
-            });
-            let details = message.details.as_deref();
-            let texts = details.map(|it| [("help", &it.help), ("note", &it.note)]);
-            for (key, text) in texts.into_iter().flatten() {
-                if !text.is_empty() {
-                    let _ = write!(out, ",\"{key}\": ");
-                    write_json_string(out, text.as_bytes());
-                }
-            }
-            out.extend_from_slice(b",\"filename\": ");
-            write_json_string(out, &name);
-            out.extend_from_slice(b",\"labels\": [");
-            let write_label = |out: &mut Vec<u8>,
-                               from: (u32, u32),
-                               to: Option<(u32, u32)>,
-                               text: &str| {
-                let (start, column) = offsets.at(from.0, from.1);
-                let end = to.map_or(start, |(line, column)| offsets.at(line, column).0);
-                let length = end.saturating_sub(start);
-                let line = from.0;
-                out.push(b'{');
-                if !text.is_empty() {
-                    out.extend_from_slice(b"\"label\": ");
-                    write_json_string(out, text.as_bytes());
-                    out.push(b',');
-                }
-                let _ = write!(
-                    out,
-                    "\"span\": {{\"offset\": {start},\"length\": {length},\"line\": {line},\"column\": {column}}}}}"
-                );
-            };
-            if message.line > 0 {
-                let text = details.map_or("", |it| &*it.first_label);
-                write_label(out, (message.line, message.column), message.end, text);
-                for (from, to, text) in details.into_iter().flat_map(|it| &it.labels) {
-                    out.push(b',');
-                    write_label(out, *from, Some(*to), text);
-                }
-            }
-            out.extend_from_slice(b"]}");
-        }
-    }
-    let run = &meta.run;
-    let rules = run
-        .rules
-        .map_or_else(|| "null".to_owned(), |it| it.to_string());
-    let _ = write!(
-        out,
-        "],\n              \"number_of_files\": {},\n              \"number_of_rules\": {rules},\n              \"threads_count\": {},\n              \"start_time\": {}\n            }}\n            ",
-        run.files, run.threads, run.seconds,
-    );
-}
-
-fn write_xml_escaped(out: &mut Vec<u8>, text: &[u8]) {
-    for byte in text {
-        match byte {
-            b'<' => out.extend_from_slice(b"&lt;"),
-            b'>' => out.extend_from_slice(b"&gt;"),
-            b'\'' => out.extend_from_slice(b"&apos;"),
-            b'&' => out.extend_from_slice(b"&amp;"),
-            b'"' => out.extend_from_slice(b"&quot;"),
-            byte => out.push(*byte),
-        }
-    }
-}
-
-pub(super) fn write_checkstyle(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    out.extend_from_slice(
-        b"<?xml version=\"1.0\" encoding=\"utf-8\"?><checkstyle version=\"4.3\">",
-    );
-    for (i, result) in results
-        .iter()
-        .filter(|it| !it.messages.is_empty())
-        .enumerate()
-    {
-        out.extend_from_slice(if i > 0 {
-            b" <file name=\""
-        } else {
-            b"<file name=\""
-        });
-        out.extend_from_slice(&file_name(result, meta));
-        out.extend_from_slice(b"\">");
-        for message in &result.messages {
-            let severity = if is_error(message) {
-                "error"
-            } else {
-                "warning"
-            };
-            let _ = write!(
-                out,
-                "<error line=\"{}\" column=\"{}\" severity=\"{severity}\" message=\"",
-                message.line, message.column
-            );
-            write_xml_escaped(out, &message.message);
-            out.extend_from_slice(b"\" source=\"");
-            write_xml_escaped(out, &code(message).unwrap_or_default());
-            out.extend_from_slice(b"\" />");
-        }
-        out.extend_from_slice(b"</file>");
-    }
-    out.extend_from_slice(b"</checkstyle>\n");
-}
-
-pub(super) fn write_junit(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    let count = |of: &dyn Fn(&FileResult) -> usize| results.iter().map(of).sum::<usize>();
-    let errors_of = |result: &FileResult| result.messages.iter().filter(|it| is_error(it)).count();
-    let (all, errors) = (count(&|it| it.messages.len()), count(&errors_of));
-    let _ = write!(
-        out,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"Oxlint\" tests=\"{all}\" failures=\"{}\" errors=\"{errors}\">\n",
-        all - errors,
-    );
-    for (i, result) in results
-        .iter()
-        .filter(|it| !it.messages.is_empty())
-        .enumerate()
-    {
-        out.extend_from_slice(if i > 0 {
-            b"\n    <testsuite name=\""
-        } else {
-            b"    <testsuite name=\""
-        });
-        out.extend_from_slice(&file_name(result, meta));
-        let (all, errors) = (result.messages.len(), errors_of(result));
-        let _ = write!(
-            out,
-            "\" tests=\"{all}\" disabled=\"0\" errors=\"{errors}\" failures=\"{}\">",
-            all - errors
-        );
-        for message in &result.messages {
-            let tag = if is_error(message) {
-                "error"
-            } else {
-                "failure"
-            };
-            out.extend_from_slice(b"\n        <testcase name=\"");
-            out.extend_from_slice(&code(message).unwrap_or_default());
-            let _ = write!(out, "\">\n            <{tag} message=\"");
-            write_xml_escaped(out, &message.message);
-            let _ = write!(out, "\">line {}, column {}, ", message.line, message.column);
-            write_xml_escaped(out, &message.message);
-            let _ = write!(out, "</{tag}>\n        </testcase>");
-        }
-        out.extend_from_slice(b"\n    </testsuite>");
-    }
-    out.extend_from_slice(b"\n</testsuites>\n");
-}
-
-fn number(value: usize) -> Json {
+pub(super) fn number(value: usize) -> Json {
     Json::Number(value as f64)
 }
 
@@ -479,7 +309,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
 }
 
 /// The plugin of oxlint that has the rules with the prefix `prefix`.
-fn plugin(prefix: &[u8]) -> &[u8] {
+pub(super) fn plugin(prefix: &[u8]) -> &[u8] {
     match prefix {
         b"react-hooks" => b"react",
         b"react-perf" => b"react_perf",

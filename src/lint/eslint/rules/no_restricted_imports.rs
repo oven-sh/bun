@@ -470,6 +470,16 @@ impl Restriction {
             }
             .data("importSource", imported.source)
         };
+        // oxlint has the names with commas between them, and a pattern as it is in the configuration.
+        let is_oxlint = cx.language().is_oxlint;
+        let list = |names: &[Box<[u8]>]| match is_oxlint {
+            true => names.join(&b", "[..]),
+            false => format_import_names(names),
+        };
+        let written = |pattern: &NamePattern| match is_oxlint {
+            true => pattern.text.get(1..pattern.text.len().saturating_sub(2)).unwrap_or_default().to_vec(),
+            false => pattern.text.clone(),
+        };
         let is_path = matches!(self.matcher, Matcher::Path(_));
         let restricted = self.import_names.as_deref();
         let restricted_pattern = self.import_name_pattern.as_ref();
@@ -491,18 +501,18 @@ impl Restriction {
                 }
                 if let Some(names) = restricted {
                     report(specifier.span, if is_path { EVERYTHING } else { PATTERN_AND_EVERYTHING })
-                        .data("importNames", format_import_names(names))
+                        .data("importNames", list(names))
                         .data("isOrAre", is_or_are(names));
                 } else if let Some(names) = allowed {
                     report(specifier.span, EVERYTHING_WITH_ALLOW_IMPORT_NAMES)
-                        .data("allowedImportNames", format_import_names(names))
+                        .data("allowedImportNames", list(names))
                         .data("isOrAre", is_or_are(names));
                 } else if let Some(pattern) = allowed_pattern {
                     report(specifier.span, EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN)
-                        .data("allowedImportNamePattern", pattern.text.clone());
+                        .data("allowedImportNamePattern", written(pattern));
                 } else if let Some(pattern) = restricted_pattern {
                     report(specifier.span, PATTERN_AND_EVERYTHING_WITH_REGEX_IMPORT_NAME)
-                        .data("importNames", pattern.text.clone());
+                        .data("importNames", written(pattern));
                 }
                 continue;
             }
@@ -520,12 +530,12 @@ impl Restriction {
             if let Some(names) = allowed.filter(|names| !includes(names, name)) {
                 report(specifier.span, ALLOWED_IMPORT_NAME)
                     .data("importName", name)
-                    .data("allowedImportNames", format_import_names(names))
+                    .data("allowedImportNames", list(names))
                     .data("isOrAre", is_or_are(names));
             } else if let Some(pattern) = allowed_pattern.filter(|it| !it.regex.test(name)) {
                 report(specifier.span, ALLOWED_IMPORT_NAME_PATTERN)
                     .data("importName", name)
-                    .data("allowedImportNamePattern", pattern.text.clone());
+                    .data("allowedImportNamePattern", written(pattern));
             }
         }
     }

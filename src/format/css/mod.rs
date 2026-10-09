@@ -336,6 +336,7 @@ fn parse_and_print<'o>(
             is_original_text: matches!(blanked, Cow::Borrowed(_)),
             extra: &tree.extra,
             syntax: parser,
+            refusal: Default::default(),
         },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),

@@ -293,8 +293,13 @@ impl<'a> Context<'_, 'a> {
                 let units = |from: u32, to: u32| {
                     let between = self.text.get(from as usize..to as usize);
                     let between = between.unwrap_or_default();
-                    let count = between.iter().filter(|&&b| b & 0xC0 != 0x80).count()
-                        + between.iter().filter(|&&b| b >= 0xF0).count();
+                    let count = match between.is_ascii() {
+                        true => between.len(),
+                        false => {
+                            between.iter().filter(|&&b| b & 0xC0 != 0x80).count()
+                                + between.iter().filter(|&&b| b >= 0xF0).count()
+                        }
+                    };
                     count as u32
                 };
                 let (place, before_place) = self.last_place.get();

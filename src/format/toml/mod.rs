@@ -31,6 +31,18 @@ pub fn is_toml_path(path: &[u8]) -> bool {
         || name.ends_with(b".toml.example")
 }
 
+/// Why [`format`] takes `text` for something else than TOML, in the words of Bun's parser, and at which byte, not counting
+/// a byte order mark. The text is read once more for it.
+#[cold]
+pub fn syntax_error(text: &[u8]) -> Option<(Vec<u8>, u32)> {
+    let (message, offset) = TOML::tokens(text).err()?;
+    let bom = match text.starts_with(BOM) {
+        true => BOM.len(),
+        false => 0,
+    };
+    Some((message, offset.saturating_sub(bom) as u32))
+}
+
 /// Appends the formatted `text` to `out`.
 pub fn format(text: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> Result<(), FormatError> {
     // Of a text that is nothing but white space, oxfmt makes nothing.

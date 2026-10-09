@@ -41,9 +41,11 @@ pub fn parse(text: &[u8]) -> Option<Json> {
 /// can be seen of a parse, as text, and a parse that is dropped, for measuring.
 #[cfg(bun_sema_mimalloc)]
 pub mod comparison {
-    use super::{ASTMemoryAllocator, Data, JsonValue, Log, Source};
+    use super::{ASTMemoryAllocator, Data, Expr, JSON5Parser, JsonValue, Log, Source};
     use bun_ast::Loc;
-    use bun_parsers::json::{JSONOptions, ParsedJson, parse_rows_for_comparison};
+    use bun_parsers::json::{
+        JSONOptions, ParsedJson, parse_json5_rows_for_comparison, parse_rows_for_comparison,
+    };
     use std::io::Write as _;
 
     /// `json`, `jsonc`, `document` (JSONC and nothing behind it), `manifest` (no warnings), `locs`
@@ -91,6 +93,9 @@ pub mod comparison {
         source: &Source,
         log: &mut Log,
     ) -> Result<ParsedJson, &'static str> {
+        if name == "json5" {
+            return parse_json5_rows_for_comparison(source, log).map_err(|error| error.name());
+        }
         let (options, check_len) = options(name);
         parse_rows_for_comparison(source, log, options, check_len, is_one_pass)
             .map_err(|error| error.name())
@@ -98,6 +103,13 @@ pub mod comparison {
 
     /// Returns whether `text` is taken.
     pub fn read_and_drop(name: &str, is_one_pass: bool, text: &[u8]) -> bool {
+        if name == "json5" && !is_one_pass {
+            let arena = bun_alloc::Arena::new();
+            let mut allocator = ASTMemoryAllocator::borrowing(&arena);
+            let _scope = allocator.enter();
+            let source = Source::init_path_string(b"".as_slice(), text);
+            return JSON5Parser::parse(&source, &mut Log::init(), &arena).is_ok();
+        }
         let mut allocator = ASTMemoryAllocator::default();
         let _scope = allocator.enter();
         let source = Source::init_path_string(b"".as_slice(), text);
@@ -154,27 +166,98 @@ pub mod comparison {
         }
     }
 
+    /// A value of `json5.rs`, as [`write_json5_rows`] writes the same value.
+    fn write_json5_expr(out: &mut Vec<u8>, expr: &Expr, depth: usize) {
+        match &expr.data {
+            Data::ENull(_) => out.extend_from_slice(b"null"),
+            Data::EBoolean(it) => {
+                let _ = write!(out, "{}", it.value);
+            }
+            Data::ENumber(it) => {
+                let _ = write!(out, "{:016x}", it.value().to_bits());
+            }
+            Data::EString(it) => {
+                let _ = write!(out, "{:?}", bstr::BStr::new(it.slice8()));
+            }
+            _ if depth > 400 => out.extend_from_slice(b"deep"),
+            Data::EArray(it) => {
+                out.push(b'[');
+                for item in it.slice() {
+                    write_json5_expr(out, item, depth + 1);
+                    out.push(b',');
+                }
+                out.push(b']');
+            }
+            Data::EObject(it) => {
+                out.push(b'{');
+                for property in it.properties.iter() {
+                    let (Some(key), Some(value)) = (&property.key, &property.value) else {
+                        continue;
+                    };
+                    let _ = write!(out, "@{} ", key.loc.start);
+                    match &key.data {
+                        Data::EString(it) => {
+                            let _ = write!(out, "{:?}:", bstr::BStr::new(it.slice8()));
+                        }
+                        Data::EBoolean(it) => {
+                            let _ = write!(out, "\"{}\":", it.value);
+                        }
+                        _ => out.extend_from_slice(b"\"null\":"),
+                    }
+                    write_json5_expr(out, value, depth + 1);
+                    out.push(b',');
+                }
+                out.push(b'}');
+            }
+            _ => out.extend_from_slice(b"?"),
+        }
+    }
+
+    fn write_json5_rows(out: &mut Vec<u8>, value: &JsonValue, depth: usize) {
+        match value {
+            _ if depth > 400 && matches!(value, JsonValue::Array(_) | JsonValue::Object(_)) => {
+                out.extend_from_slice(b"deep")
+            }
+            JsonValue::Array(it) => {
+                out.push(b'[');
+                for item in it.get().items() {
+                    write_json5_rows(out, item, depth + 1);
+                    out.push(b',');
+                }
+                out.push(b']');
+            }
+            JsonValue::Object(it) => {
+                out.push(b'{');
+                for property in it.get().properties() {
+                    let key = bstr::BStr::new(property.key.slice());
+                    let _ = write!(out, "@{} {key:?}:", property.key_loc.start);
+                    write_json5_rows(out, &property.value, depth + 1);
+                    out.push(b',');
+                }
+                out.push(b'}');
+            }
+            leaf => write_value(out, leaf, None, depth),
+        }
+    }
+
     /// The error or the rows, with all their places, and every message with its place.
     pub fn describe(name: &str, is_one_pass: bool, text: &[u8]) -> Vec<u8> {
-        let mut allocator = ASTMemoryAllocator::default();
+        let arena = bun_alloc::Arena::new();
+        let mut allocator = ASTMemoryAllocator::borrowing(&arena);
         let _scope = allocator.enter();
         let source = Source::init_path_string(b"".as_slice(), text);
         let mut log = Log::init();
         let mut out = Vec::new();
-        match parse(name, is_one_pass, &source, &mut log) {
-            Err(error) => out.extend_from_slice(error.as_bytes()),
-            Ok(parsed) => {
-                let root = match parsed.root.data {
-                    Data::ENull(_) => JsonValue::Null,
-                    Data::EBoolean(it) => JsonValue::Boolean(it.value),
-                    Data::ENumber(it) => JsonValue::Number(it),
-                    Data::EString(it) => JsonValue::String(it.get().data),
-                    Data::EArrayJSON(it) => JsonValue::Array(it),
-                    Data::EObjectJSON(it) => JsonValue::Object(it),
-                    _ => JsonValue::Null,
-                };
-                write_value(&mut out, &root, Some(parsed.root.loc), 0);
+        if name == "json5" && !is_one_pass {
+            match JSON5Parser::parse(&source, &mut log, &arena) {
+                Err(error) => out.extend_from_slice(<&str>::from(error).as_bytes()),
+                Ok(root) => {
+                    let _ = write!(out, "@{} ", root.loc.start);
+                    write_json5_expr(&mut out, &root, 0);
+                }
             }
+        } else {
+            describe_rows(name, is_one_pass, &source, &mut log, &mut out);
         }
         let _ = write!(out, " | {} errors {} warnings", log.errors, log.warnings);
         for message in &log.msgs {
@@ -189,6 +272,35 @@ pub mod comparison {
             }
         }
         out
+    }
+
+    fn describe_rows(
+        name: &str,
+        is_one_pass: bool,
+        source: &Source,
+        log: &mut Log,
+        out: &mut Vec<u8>,
+    ) {
+        match parse(name, is_one_pass, source, log) {
+            Err(error) => out.extend_from_slice(error.as_bytes()),
+            Ok(parsed) => {
+                let root = match parsed.root.data {
+                    Data::ENull(_) => JsonValue::Null,
+                    Data::EBoolean(it) => JsonValue::Boolean(it.value),
+                    Data::ENumber(it) => JsonValue::Number(it),
+                    Data::EString(it) => JsonValue::String(it.get().data),
+                    Data::EArrayJSON(it) => JsonValue::Array(it),
+                    Data::EObjectJSON(it) => JsonValue::Object(it),
+                    _ => JsonValue::Null,
+                };
+                if name == "json5" {
+                    let _ = write!(out, "@{} ", parsed.root.loc.start);
+                    write_json5_rows(out, &root, 0);
+                } else {
+                    write_value(out, &root, Some(parsed.root.loc), 0);
+                }
+            }
+        }
     }
 }
 

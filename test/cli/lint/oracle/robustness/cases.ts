@@ -319,7 +319,8 @@ export const cases: Case[] = [
   ...[false, true].flatMap((eslint): Case[] => {
     const flavor = eslint ? "ESLint" : "oxlint";
     // With a line for each part, and each `?` indented by four more than the one before: 4n² + 12n + 7 bytes.
-    const ternaries = (n: number) => `x = ${rep("a ? b : ", n)}c;\n`;
+    // oxlint fixes once, so there each part has its line already, and `indent` does the rest.
+    const ternaries = (n: number) => `x = ${rep(eslint ? "a ? b : " : "a\n? b\n: ", n)}c;\n`;
     const rules = { indent: "error", "multiline-ternary": "error", "brace-style": "error" };
     const given = /Fixes would grow this file from \d+ KB to more than 64 MB\. It is left as it is\./;
     return [
@@ -363,7 +364,7 @@ export const cases: Case[] = [
       {
         name: `${flavor}: 9,000 statements in each other are not indented`,
         file: "a.js",
-        text: () => `${rep("if (a) { ", 9_000)}b();${rep(" }", 9_000)}\n`,
+        text: () => `${rep(eslint ? "if (a) { " : "if (a) {\n", 9_000)}b();${rep(eslint ? " }" : "\n}", 9_000)}\n`,
         eslint,
         rules,
         isSlow: true,
@@ -506,6 +507,8 @@ export const cases: Case[] = [
     file: "a.js",
     text: () => rep("a == b;\n", 60_000),
     rules: { eqeqeq: "error" },
+    // oxlint's `agent` has a line for a problem, without the code.
+    eslint: true,
     args: ["-f", "agent", "--all"],
     matches: /line="60000" column="3"/,
     exitCode: 1,
@@ -572,11 +575,13 @@ export const cases: Case[] = [
       text: () =>
         "export {};\ndeclare const a: boolean, b: number, c: number; let x: number;\nawait b;\nx = b as number;\n" +
         rep(`x = ${rep("a ? b : ", 200)}c;\n`, count),
+      // With oxlint's configuration there is one pass.
+      eslint: true,
       rules: {
         indent: "error",
         "multiline-ternary": "error",
-        "typescript/await-thenable": "error",
-        "typescript/no-unnecessary-type-assertion": "error",
+        "@typescript-eslint/await-thenable": "error",
+        "@typescript-eslint/no-unnecessary-type-assertion": "error",
       },
       isSlow: true,
       args: ["--type-aware", "--fix", "-f", "unix"],

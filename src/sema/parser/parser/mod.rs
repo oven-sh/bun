@@ -6,6 +6,7 @@ mod expr;
 mod flow;
 mod func;
 mod js_syntax;
+mod json;
 mod jsx;
 mod module;
 mod pattern;
@@ -224,11 +225,12 @@ impl<'a> Parser<'a> {
         lx.is_jsx = options.is_jsx;
         lx.recovers = options.recovers;
         lx.comments = std::mem::take(&mut file.comments);
-        let is_ecmascript = options.dialect.ecmascript && options.is_javascript;
+        let is_script = options.is_javascript && !options.is_json;
+        let is_ecmascript = options.dialect.ecmascript && is_script;
         lx.is_ecmascript = is_ecmascript;
         lx.is_typescript_5 = options.dialect.typescript_5;
         lx.is_script = is_ecmascript && options.dialect.script;
-        let is_flow = options.dialect.flow && options.is_javascript;
+        let is_flow = options.dialect.flow && is_script;
         let mut context = ctx::TOP_LEVEL;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
@@ -315,18 +317,25 @@ impl<'a> Parser<'a> {
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
-        self.f.kind = if self.options.is_declaration_file {
+        self.f.kind = if self.options.is_json {
+            FileKind::Json
+        } else if self.options.is_declaration_file {
             FileKind::Declaration
         } else if self.options.is_jsx {
             FileKind::Tsx
         } else {
             FileKind::Ts
         };
-        self.f.is_js = self.options.is_javascript;
+        self.f.is_js = self.options.is_javascript && !self.options.is_json;
         self.f.is_flow = self.is_flow;
         self.next();
         let base = self.s.ids.len();
         self.lists = 1 << ListKind::SourceElements as u32;
+        if self.options.is_json {
+            let value = self.json_text();
+            self.f.has_module_syntax = true;
+            self.s.ids.push(value.0);
+        }
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = self.statement();
             if self.is_an_external_module_indicator(statement) {

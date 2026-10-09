@@ -20,12 +20,15 @@ const env = {
 
 type Options = { cwd?: string; env?: Record<string, string | undefined>; before?: (dir: string) => void };
 
-/** What is reported, as `file:line:column rule`, what is printed on standard error, and the exit code. */
+/**
+ * What is reported, as `file:line:column rule`, what else is printed, and the exit code. The format is one that is the same
+ * whosever the configuration is.
+ */
 async function lint(files: Record<string, string>, args: string[] = ["."], options: Options = {}) {
   using dir = tempDir("bun-lint-config-files", files);
   options.before?.(String(dir));
   await using proc = Bun.spawn({
-    cmd: [...command, "--threads", "2", "-f", "unix", ...args],
+    cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args],
     env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
     stdin: "ignore",
@@ -33,11 +36,15 @@ async function lint(files: Record<string, string>, args: string[] = ["."], optio
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const problems = [
-    ...normalizeBunSnapshot(stdout, String(dir)).matchAll(/^<dir>\/(.+?):(\d+):(\d+): .* \[\w+(?:\/(.+))?\]$/gm),
-  ];
+  type Result = { filePath: string; messages: { ruleId: string | null; line?: number; column?: number }[] };
+  const results: Result[] = stdout.startsWith('{"results":') ? JSON.parse(stdout).results : [];
+  const problems = results.flatMap(({ filePath, messages }) => {
+    const file = normalizeBunSnapshot(filePath, String(dir)).replace("<dir>/", "");
+    return messages.map(it => `${file}:${it.line ?? 0}:${it.column ?? 0} ${it.ruleId ?? "-"}`);
+  });
   return {
-    problems: problems.map(([, file, line, column, rule]) => `${file}:${line}:${column} ${rule ?? "-"}`).sort(),
+    problems: problems.sort(),
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
   };
@@ -268,15 +275,15 @@ describe.concurrent("an .oxlintrc.json", () => {
   test.each(["nowhere.json", "./nowhere.json", "shared", "@scope/shared", "configs/base"])(
     "`extends` %j, which is no file or the name of a package, is an error",
     async name => {
-      const { problems, stderr, exitCode } = await lint({
+      const { problems, stdout, exitCode } = await lint({
         ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, extends: [name] }),
         "node_modules/shared/index.json": JSON.stringify(noVar),
         "configs/base": JSON.stringify(noVar),
         "a.js": code,
       });
       expect(problems).toEqual([]);
-      expect(stderr).toContain("<dir>/.oxlintrc.json");
-      expect(stderr).toContain(JSON.stringify(name));
+      expect(stdout).toContain("<dir>/.oxlintrc.json");
+      expect(stdout).toContain(JSON.stringify(name));
       expect(exitCode).toBe(1);
     },
   );
@@ -503,10 +510,10 @@ describe.concurrent("an .oxlintrc.json", () => {
     [{ settings: 1 }, "invalid type: integer `1`, expected struct WellKnownOxlintSettings"],
     [{ $schema: 1 }, "invalid type: integer `1`, expected a string"],
   ])("%j is refused, as by oxlint", async (config, why) => {
-    const { problems, stderr, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
+    const { problems, stdout, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
     expect(problems).toEqual([]);
-    expect(stderr).toContain("Cannot use the configuration file <dir>/.oxlintrc.json:\n");
-    expect(stderr).toContain(why);
+    expect(stdout).toContain("Cannot use the configuration file <dir>/.oxlintrc.json:\n");
+    expect(stdout).toContain(why);
     expect(exitCode).toBe(1);
   });
 
@@ -523,13 +530,13 @@ describe.concurrent("an .oxlintrc.json", () => {
       { ".oxlintrc.json": JSON.stringify({ jsPlugins: ["./plugin.js"] }), "plugin.js": plugin, "a.js": code },
       ["a.js"],
     );
-    expect(byItself.stderr).toContain("Plugin name 'unicorn' is reserved, and cannot be used for JS plugins.");
+    expect(byItself.stdout).toContain("Plugin name 'unicorn' is reserved, and cannot be used for JS plugins.");
     expect(byItself.exitCode).toBe(1);
     const jsPlugins = [{ name: "react", specifier: "./plugin.js" }];
     const byAlias = await lint({ ".oxlintrc.json": JSON.stringify({ jsPlugins }), "plugin.js": plugin, "a.js": code }, [
       "a.js",
     ]);
-    expect(byAlias.stderr).toContain(`"jsPlugins": [{ "name": "react-js", "specifier": "eslint-plugin-react" }]`);
+    expect(byAlias.stdout).toContain(`"jsPlugins": [{ "name": "react-js", "specifier": "eslint-plugin-react" }]`);
     expect(byAlias.exitCode).toBe(1);
   });
 
@@ -539,7 +546,7 @@ describe.concurrent("an .oxlintrc.json", () => {
       "a.js:1:1 no-var",
     ]);
     const two = await lint({ ".oxlintrc.json": "{}", "oxlint.config.ts": program, "a.js": code }, ["a.js"]);
-    expect(two.stderr).toContain("Both '.oxlintrc.json' and 'oxlint.config.ts' found in <dir>.");
+    expect(two.stdout).toContain("Both '.oxlintrc.json' and 'oxlint.config.ts' found in <dir>.");
     expect(two.exitCode).toBe(1);
     const below = await lint({
       ".oxlintrc.json": "{}",
@@ -547,7 +554,7 @@ describe.concurrent("an .oxlintrc.json", () => {
       "sub/oxlint.config.mts": program,
       "sub/a.js": code,
     });
-    expect(below.stderr).toContain("Both '.oxlintrc.jsonc' and 'oxlint.config.mts' found in <dir>/sub.");
+    expect(below.stdout).toContain("Both '.oxlintrc.jsonc' and 'oxlint.config.mts' found in <dir>/sub.");
     expect(below.exitCode).toBe(1);
   });
 
@@ -568,7 +575,7 @@ describe.concurrent("an .oxlintrc.json", () => {
       "sub/.oxlintrc.json": JSON.stringify({ ...warns, options: { denyWarnings: true } }),
       "sub/a.js": code,
     });
-    expect(nested.stderr).toContain(
+    expect(nested.stdout).toContain(
       "Cannot use the configuration file <dir>/sub/.oxlintrc.json:\nThe `options.denyWarnings` option is only supported in the root config.",
     );
     expect(nested.exitCode).toBe(1);
@@ -1062,7 +1069,8 @@ describe.concurrent("the command line of oxlint", () => {
     ],
   ])("%j is refused with 1 beside an .oxlintrc.json, with 2 beside an eslint.config.js", async (args, why) => {
     const forOxlint = await lint({ ".oxlintrc.json": oxlintrc, "a.js": code }, args);
-    expect(forOxlint.stderr).toContain(why);
+    // oxlint says on standard output what is wrong with a configuration, and on standard error what is wrong with the command line.
+    expect(args[0] === "-c" ? forOxlint.stdout : forOxlint.stderr).toContain(why);
     expect(forOxlint.problems).toEqual([]);
     expect(forOxlint.exitCode).toBe(1);
     const forEslint = await lint({ "eslint.config.js": "module.exports = [];", "a.js": code }, args);
@@ -1109,7 +1117,7 @@ describe.concurrent("the command line of oxlint", () => {
       "a.ts:7:1 no-var",
     ]);
     const alone = await lint({ ...files, ".oxlintrc.json": oxlintrc }, ["--type-check"]);
-    expect(alone.stderr).toContain("The `--type-check` option requires type-aware linting.");
+    expect(alone.stdout).toContain("The `--type-check` option requires type-aware linting.");
     expect(alone.exitCode).toBe(1);
   });
 
@@ -1218,7 +1226,7 @@ describe.concurrent("the command line of oxlint", () => {
       env: { builtin: true },
     });
     const again = await run("--init");
-    expect(again.stderr).toContain("<dir>/.oxlintrc.json exists already.");
+    expect(normalizeBunSnapshot(again.stdout, String(dir))).toContain("<dir>/.oxlintrc.json exists already.");
     expect(again.exitCode).toBe(1);
     // It is one that can be used.
     expect((await run("--allow-unsupported", "a.js")).exitCode).toBe(1);

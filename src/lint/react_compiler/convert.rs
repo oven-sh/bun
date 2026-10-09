@@ -119,6 +119,9 @@ pub(crate) enum Recorded {
     ImplicitArguments(Span),
     /// The `import` of `import(..)`.
     DynamicImport(Span),
+    /// JSX that is the default of a parameter or in a pattern. Bun's lowering sees a call, which can be evaluated earlier
+    /// if its operands can.
+    DefaultIsJsx { span: Span, is_fragment: bool },
 }
 
 impl Converted {
@@ -301,12 +304,22 @@ impl<'a> Converter<'a, '_> {
             }),
             Some(Declaration::ImportSpec(spec)) => {
                 let module = StoreStr::new(spec.import().spec().bytes());
+                let imported: &[u8] = match spec.imported().bytes() {
+                    // oxc's compiler knows that it is as incompatible as the other.
+                    b"useWindowVirtualizer"
+                        if self.flavor == Flavor::Oxlint
+                            && spec.import().spec().is("@tanstack/react-virtual") =>
+                    {
+                        b"useVirtualizer"
+                    }
+                    imported => imported,
+                };
                 Some(match spec.imported().name().is("default") {
                     true => VariableBinding::ImportDefault { name, module },
                     false => VariableBinding::ImportSpecifier {
                         name,
                         module,
-                        imported: StoreStr::new(spec.imported().bytes()),
+                        imported: StoreStr::new(imported),
                     },
                 })
             }
@@ -392,29 +405,39 @@ impl<'a> Converter<'a, '_> {
         let default = self.default(param.default())?;
         if self.flavor == Flavor::Oxlint && !param.is_rest() && is_assigned_pattern(param.pat()) {
             // oxc's lowering takes a parameter apart as a declaration does, which can have a variable
-            // that a function in it assigns. `({ a }) => ..` is `(t) => { let { a } = t; .. }`.
-            let loc = binding.loc;
-            let r#ref = self.new_symbol(b"t", SymbolKind::Hoisted, false);
-            let mut decls: G::DeclList = AstAlloc::vec_with_capacity(1);
-            decls.push(G::Decl {
-                binding,
-                value: Some(JsExpr::init_identifier(r#ref, loc)),
-            });
-            first.push(JsStmt::alloc(
-                S::Local {
-                    kind: S::Kind::KLet,
-                    decls,
-                    ..S::Local::default()
-                },
-                loc,
-            ));
-            binding = Binding::alloc(self.arena, B::Identifier { r#ref }, loc);
+            // that a function in it assigns.
+            binding = self.declared_in_body(binding, SymbolKind::Hoisted, first);
         }
         Ok(G::Arg {
             binding,
             default,
             ..G::Arg::default()
         })
+    }
+
+    /// `({ a }) => ..` as `(t) => { let { a } = t; .. }`: the `t`. The declaration is added to `first`.
+    fn declared_in_body(
+        &mut self,
+        binding: Binding,
+        kind: SymbolKind,
+        first: &mut AstVec<JsStmt>,
+    ) -> Binding {
+        let loc = binding.loc;
+        let r#ref = self.new_symbol(b"t", kind, false);
+        let mut decls: G::DeclList = AstAlloc::vec_with_capacity(1);
+        decls.push(G::Decl {
+            binding,
+            value: Some(JsExpr::init_identifier(r#ref, loc)),
+        });
+        first.push(JsStmt::alloc(
+            S::Local {
+                kind: S::Kind::KLet,
+                decls,
+                ..S::Local::default()
+            },
+            loc,
+        ));
+        Binding::alloc(self.arena, B::Identifier { r#ref }, loc)
     }
 
     /// The body, after `first`, and whether it is an expression. The `Loc` of the body is what the
@@ -425,22 +448,17 @@ impl<'a> Converter<'a, '_> {
         loc: Loc,
         first: AstVec<JsStmt>,
     ) -> Converts<(G::FnBody, bool)> {
-        let mut stmts = first;
-        let is_expression = stmts.is_empty() && matches!(func.body(), FnBody::Expr(_));
-        match func.body() {
-            FnBody::None => {}
-            FnBody::Block(statements) => {
-                stmts.reserve(statements.len());
-                for statement in statements {
-                    stmts.push(self.stmt(statement)?);
-                }
-            }
+        let is_expression = first.is_empty() && matches!(func.body(), FnBody::Expr(_));
+        let stmts = match func.body() {
+            FnBody::None => leak(first),
+            FnBody::Block(statements) => self.stmts_after(first, statements)?,
             FnBody::Expr(value) => {
+                let mut stmts = first;
                 let value = self.expr(value)?;
                 stmts.push(JsStmt::alloc(S::Return { value: Some(value) }, value.loc));
+                leak(stmts)
             }
-        }
-        let stmts = leak(stmts);
+        };
         Ok((G::FnBody { loc, stmts }, is_expression))
     }
 
@@ -530,6 +548,12 @@ impl<'a> Converter<'a, '_> {
             return Ok(None);
         };
         self.branch()?;
+        if let ExprKind::Jsx(jsx) = value.skip_type_wrappers().kind() {
+            self.recorded.push(Recorded::DefaultIsJsx {
+                span: value.span(),
+                is_fragment: jsx.is_fragment(),
+            });
+        }
         Ok(Some(self.expr(value)?))
     }
 
@@ -1173,7 +1197,16 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── statements ─────────────────────────────
 
     fn stmts(&mut self, list: List<'a, Stmt<'a>>) -> Converts<StoreSlice<JsStmt>> {
-        let mut converted: AstVec<JsStmt> = AstAlloc::vec_with_capacity(list.len());
+        self.stmts_after(AstAlloc::vec(), list)
+    }
+
+    fn stmts_after(
+        &mut self,
+        first: AstVec<JsStmt>,
+        list: List<'a, Stmt<'a>>,
+    ) -> Converts<StoreSlice<JsStmt>> {
+        let mut converted = first;
+        converted.reserve(list.len());
         for stmt in list {
             converted.push(self.stmt(stmt)?);
         }
@@ -1405,13 +1438,28 @@ impl<'a> Converter<'a, '_> {
                 let body_loc = self.loc(block.span())?;
                 let body = self.block(block)?;
                 let catch = match handler {
-                    Some(handler) => Some(Catch {
-                        loc: self
-                            .loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()))?,
-                        binding: param.map(|it| self.binding(it.pat())).transpose()?,
-                        body_loc: self.loc(handler.span())?,
-                        body: self.block(handler)?,
-                    }),
+                    Some(handler) => {
+                        let loc =
+                            self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()))?;
+                        let mut binding = param.map(|it| self.binding(it.pat())).transpose()?;
+                        let mut first: AstVec<JsStmt> = AstAlloc::vec();
+                        // Upstream's compiler fails on a parameter that a function refers to. oxc's does not.
+                        if self.flavor == Flavor::Oxlint
+                            && param.is_some_and(|it| is_captured_pattern(it.pat(), stmt))
+                        {
+                            let kind = SymbolKind::CatchIdentifier;
+                            binding = binding.map(|it| self.declared_in_body(it, kind, &mut first));
+                        }
+                        Some(Catch {
+                            loc,
+                            binding,
+                            body_loc: self.loc(handler.span())?,
+                            body: match handler.as_block() {
+                                Some(statements) => self.stmts_after(first, statements)?,
+                                None => leak(first),
+                            },
+                        })
+                    }
                     None => None,
                 };
                 let finally = match finalizer {
@@ -1488,6 +1536,18 @@ fn is_assigned_pattern(pat: Pat<'_>) -> bool {
         });
     }
     is_assigned
+}
+
+/// A pattern of `stmt` with a variable that a function in `stmt` refers to.
+fn is_captured_pattern<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> bool {
+    let around = Node::Stmt(stmt).enclosing_function().map(Func::span);
+    let mut is_captured = false;
+    pat.for_each_binding(&mut |name| {
+        is_captured |= (name.symbol().into_iter())
+            .flat_map(Symbol::references)
+            .any(|it| it.node().enclosing_function().map(Func::span) != around);
+    });
+    is_captured
 }
 
 /// `new Date()`, `Date()`. To oxlint's compiler it is as impure as `Date.now()`, which is the one that Bun's knows.

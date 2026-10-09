@@ -323,6 +323,113 @@ describe.concurrent("bun lint with processors", () => {
   );
 });
 
+// Enough of the package `eslint` to lint a text in the language of a plugin: `Linter.verify` with one object of configuration.
+const eslintPackage = {
+  "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
+  "node_modules/eslint/index.js": `
+    exports.Linter = class Linter {
+      #suppressed = [];
+      verify(text, [config], { filename, disableFixes }) {
+        const [prefix, name] = config.language.split("/");
+        const { ast } = config.plugins[prefix].languages[name].parse({ body: text, path: filename }, config);
+        const messages = [];
+        for (const [ruleId, [severity, ...options]] of Object.entries(config.rules)) {
+          const [plugin, rule] = ruleId.split("/");
+          const report = ({ line, message, fix }) =>
+            messages.push({ ruleId, severity, message, line, column: 1, ...(fix && !disableFixes ? { fix } : {}) });
+          config.plugins[plugin].rules[rule].create({ options, filename, settings: config.settings, report }).Line?.(ast);
+        }
+        const isOff = it => ast.lines[it.line - 1].endsWith("# off");
+        this.#suppressed = messages.filter(isOff).map(it => ({ ...it, suppressions: [{ kind: "directive", justification: "" }] }));
+        return messages.filter(it => !isOff(it));
+      }
+      getSuppressedMessages() {
+        return this.#suppressed;
+      }
+    };`,
+};
+
+const lines = {
+  "lines.mjs": `
+    import noTabs from "./no-tabs.mjs";
+    globalThis.loaded = [...(globalThis.loaded ?? []), "lines"];
+    export default {
+      languages: { text: { parse: ({ body }, { languageOptions }) => ({ ok: true, ast: { lines: body.split("\\n"), languageOptions } }) } },
+      rules: { "no-tabs": noTabs },
+    };`,
+  "no-tabs.mjs": `
+    export default {
+      create: context => ({
+        Line({ lines, languageOptions }) {
+          let start = 0;
+          for (const [i, line] of lines.entries()) {
+            const at = line.indexOf("\\t");
+            if (at !== -1) {
+              const message = ["tab", context.options[0], languageOptions.width, context.settings.name, context.filename.split(/[\\\\/]/).at(-1)].join(" ");
+              context.report({ line: i + 1, message, fix: { range: [start + at, start + at + 1], text: " " } });
+            }
+            start += line.length + 1;
+          }
+        },
+      }),
+    };`,
+  "eslint.config.mjs": `
+    import lines from "./lines.mjs";
+    export default [
+      { rules: { "no-var": "error" } },
+      {
+        files: ["**/*.txt"],
+        plugins: { lines },
+        language: "lines/text",
+        languageOptions: { width: 4 },
+        settings: { name: "s" },
+        rules: { "no-var": "off", "lines/no-tabs": ["error", "o"] },
+      },
+    ];`,
+  "a.js": "var a;\n",
+  "b.txt": "one\n\ttwo\t\n\tthree # off\n",
+};
+
+describe.concurrent("bun lint with languages", () => {
+  test(
+    "a file in the language of a plugin is linted by the Linter of the eslint that is installed",
+    async () => {
+      const result = await lint({ ...eslintPackage, ...lines }, ["-f", "json", "a.js", "b.txt"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,6 "let a;"]
+        b.txt: 2:1 lines/no-tabs tab o 4 s b.txt [fix 4,5 " "]
+        b.txt: 3:1 lines/no-tabs tab o 4 s b.txt [fix 10,11 " "] [suppressed: ]"
+      `);
+      expect(result.stderr).not.toContain("not linted");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "--fix goes on until nothing is left to fix",
+    async () => {
+      const result = await lint({ ...eslintPackage, ...lines }, ["--fix", "b.txt"], ["b.txt"]);
+      expect(result.files).toEqual({ "b.txt": "one\n two \n\tthree # off\n" });
+      expect(result.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "without the package eslint such files are named, and the others are linted",
+    async () => {
+      const result = await lint(lines, ["-f", "unix", "a.js", "b.txt"]);
+      expect(result.stdout).toContain("a.js:1:1: Unexpected var, use let or const instead. [Error/no-var]");
+      expect(result.stderr).toContain(
+        `1 file was not linted, only JavaScript and TypeScript can be (1 *.txt): b.txt. The package "eslint" lints other languages, if it is installed`,
+      );
+      expect(result.exitCode).toBe(2);
+    },
+    timeout,
+  );
+});
+
 const oxlintrc = JSON.stringify({
   categories: { correctness: "off" },
   rules: {
@@ -427,6 +534,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
 
   test("--fix fixes the scripts where they are", async () => {
     const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
+    // The bytes that oxlint 1.87 writes.
     expect(result.files).toMatchInlineSnapshot(`
       {
         "a.vue": 
@@ -436,7 +544,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       </template>
 
       <script lang="ts">
-      let a: number = 1;
+      const a: number = 1;
       debugger;
       export default { name: "a" };
       </script>
@@ -444,7 +552,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       <script setup lang="ts" generic="T extends Record<string, string>">
       import { ref } from "vue";
       const props = defineProps<{ x: number }>();
-      let msg = ref("é"); let unused = 2;
+      let msg = ref("é"); const unused = 2;
       if (msg.value == "1") undefinedThing();
       // oxlint-disable-next-line no-debugger
       debugger;
@@ -457,13 +565,13 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       ,
         "b.svelte": 
       "<script module lang="ts">
-        export var m: number = 1;
+        export const m: number = 1;
       </script>
       <script-like>var no = 1;</script-like>
       <script>
         let count = 0;
         $: doubled = count * 2;
-        let v = 1; debugger;
+        const v = 1; debugger;
       </script>
       <button on:click={() => count == 1}>{doubled}</button>
       "

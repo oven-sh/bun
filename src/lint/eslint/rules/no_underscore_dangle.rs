@@ -188,8 +188,13 @@ impl NoUnderscoreDangle {
             _ => return,
         };
         if self.is_unexpected(without_hash(name.bytes())) {
-            let place = if cx.language().is_oxlint { key.inner_span(cx.file()) } else { at };
-            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
+            // oxlint has the name without the `#`.
+            match cx.language().is_oxlint {
+                true => cx
+                    .report(key.inner_span(cx.file()), UNEXPECTED_UNDERSCORE)
+                    .data("identifier", without_hash(name.bytes())),
+                false => cx.report(at, UNEXPECTED_UNDERSCORE).data("identifier", name),
+            };
         }
     }
 

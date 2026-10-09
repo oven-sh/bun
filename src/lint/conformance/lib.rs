@@ -501,7 +501,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 continue;
             }
             let id = format!("{directory}/{}", BStr::new(name));
-            let Some(entry) = host.linter().registry().get(*plugin, name) else {
+            // oxlint has `react-hooks/exhaustive-deps` as `react/exhaustive-deps`.
+            let is_of_oxlint = directory.starts_with("oxlint/");
+            let registry = host.linter().registry();
+            let Some(entry) = registry.get_preferring(*plugin, name, is_of_oxlint) else {
                 missing += 1;
                 continue;
             };

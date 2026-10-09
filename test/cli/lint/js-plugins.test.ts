@@ -92,11 +92,11 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:1:1: No foo in a CallExpression. [Error/demo/no-foo]
-      <dir>/a.js:2:19: No foo in a MemberExpression. [Error/demo/no-foo]
-      <dir>/a.js:2:23: No foo in a MemberExpression. [Error/demo/no-foo]
-      <dir>/b.ts:1:10: No foo in a TSTypeReference! [Warning/demo/no-foo]
-      <dir>/b.ts:1:21: No foo in a TSTypeReference! [Warning/demo/no-foo]
+      "a.js:1:1: No foo in a CallExpression. [Error/demo(no-foo)]
+      a.js:2:22: No foo in a MemberExpression. [Error/demo(no-foo)]
+      a.js:2:26: No foo in a MemberExpression. [Error/demo(no-foo)]
+      b.ts:1:10: No foo in a TSTypeReference! [Warning/demo(no-foo)]
+      b.ts:1:21: No foo in a TSTypeReference! [Warning/demo(no-foo)]
 
       5 problems"
     `);
@@ -135,7 +135,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:4:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
+      "a.js:4:1: No foo in a ExpressionStatement. [Error/demo(no-foo)]
 
       1 problem"
     `);
@@ -179,7 +179,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:1:1: *@0 *@0 *@0 call@0 a()@0 *@0 child@0 leaf:exit@0 *@2 call@2 *@2 child@2 leaf:exit@2 *@4 leaf:exit@4 call:exit@2 call:exit@0 [Error/order/trace]
+      "a.js:1:1: *@0 *@0 *@0 call@0 a()@0 *@0 child@0 leaf:exit@0 *@2 call@2 *@2 child@2 leaf:exit@2 *@4 leaf:exit@4 call:exit@2 call:exit@0 [Error/order(trace)]
 
       1 problem"
     `);
@@ -296,8 +296,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         ["-f", "unix"],
       );
-      expect(stdout).toContain("'b' is assigned a value but never used");
-      expect(stdout).not.toContain("'a' is assigned");
+      expect(stdout.split("\n").filter(it => it.includes("no-unused-vars"))).toEqual([
+        expect.stringMatching(/a\.js:2:7: .*'b'/),
+      ]);
     },
     timeout,
   );
@@ -341,8 +342,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix", "--threads", "1"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:1:1: 1 identifiers, created 1 time [Error/once/count]
-      <dir>/b.js:1:1: 2 identifiers, created 1 time [Error/once/count]
+      "a.js:1:1: 1 identifiers, created 1 time [Error/once(count)]
+      b.js:1:1: 2 identifiers, created 1 time [Error/once(count)]
 
       2 problems"
     `);
@@ -370,9 +371,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix", "a.js"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:1:1: typescript [Error/local/a]
-      <dir>/a.js:1:1: package [Error/packaged/b]
-      <dir>/a.js:1:1: alias [Error/other/c]
+      "a.js:1:1: typescript [Error/local(a)]
+      a.js:1:1: package [Error/packaged(b)]
+      a.js:1:1: alias [Error/other(c)]
 
       3 problems"
     `);
@@ -391,14 +392,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         [],
       );
-      expect(wrongOptions.stderr).toContain("demo/no-foo");
-      expect(wrongOptions.stderr).toContain("nope");
+      expect(wrongOptions.stdout).toContain("demo/no-foo");
+      expect(wrongOptions.stdout).toContain("nope");
       expect(wrongOptions.exitCode).toBe(1);
       const unknown = await lint(
         { ...files, ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/nope": "error" } }) },
         [],
       );
-      expect(unknown.stderr).toContain("Rule 'nope' not found in plugin 'demo'");
+      expect(unknown.stdout).toContain("Rule 'nope' not found in plugin 'demo'");
       expect(unknown.exitCode).toBe(1);
     },
     timeout,
@@ -431,11 +432,11 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           "b.js": "\nboom;\n",
           "c.js": "ok;\n",
         },
-        ["-f", "unix"],
+        ["-f", "agent"],
       );
       expect(stdout).toContain("It went wrong.");
-      expect(stdout).toContain("<dir>/a.js:1:1: fine [Error/throws/sometimes]");
-      expect(stdout).toContain("<dir>/c.js:1:1: fine [Error/throws/sometimes]");
+      expect(stdout).toContain("a.js:1:1: error throws(sometimes): fine");
+      expect(stdout).toContain("c.js:1:1: error throws(sometimes): fine");
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -454,19 +455,19 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         run("export default { rules: {} };"),
         run("", "eslint-plugin-that-is-not-installed"),
       ]);
-      expect(syntax.stderr).toContain("Failed to load JS plugin: ./broken.mjs");
-      expect(throws.stderr).toMatchInlineSnapshot(`
+      expect(syntax.stdout).toContain("Failed to load JS plugin: ./broken.mjs");
+      expect(throws.stdout).toMatchInlineSnapshot(`
       "error: Cannot use the configuration file <dir>/.oxlintrc.json:
       Failed to load JS plugin: ./broken.mjs
         Error: It cannot start.
           at <dir>/broken.mjs:1:11"
     `);
-      expect(nameless.stderr).toMatchInlineSnapshot(`
+      expect(nameless.stdout).toMatchInlineSnapshot(`
       "error: Cannot use the configuration file <dir>/.oxlintrc.json:
       Failed to load JS plugin: ./broken.mjs
         Error: Plugin must either define \`meta.name\`, be loaded from an NPM package with a \`name\` field in \`package.json\`, or be given an alias in config"
     `);
-      expect(missing.stderr).toMatchInlineSnapshot(`
+      expect(missing.stdout).toMatchInlineSnapshot(`
       "error: Cannot use the configuration file <dir>/.oxlintrc.json:
       Failed to load JS plugin: eslint-plugin-that-is-not-installed
         ResolveMessage: Cannot find module 'eslint-plugin-that-is-not-installed'"
@@ -543,8 +544,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       const lines = stdout.split("\n");
       expect(lines.slice(0, 4)).toEqual([
-        "<dir>/a.js:1:1: reported [Error/counts/files]",
-        "<dir>/b.js:1:1: reported [Error/counts/files]",
+        "a.js:1:1: reported [Error/counts(files)]",
+        "b.js:1:1: reported [Error/counts(files)]",
         "",
         "2 problems",
       ]);
@@ -588,8 +589,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix", "--threads", "1"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-      "<dir>/a.js:1:1: known: undefined, seen: false [Error/caches/first]
-      <dir>/b.js:1:1: known: undefined, seen: false [Error/caches/first]
+      "a.js:1:1: known: undefined, seen: false [Error/caches(first)]
+      b.js:1:1: known: undefined, seen: false [Error/caches(first)]
 
       2 problems"
     `);
@@ -638,9 +639,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       // The events are what ESLint 10 gives this rule.
       const events = "start program s1_1 start function s2_1 s2_2 s2_4 unreachable s2_6";
       expect(stdout.split("\n").slice(0, 3)).toEqual([
-        `<dir>/a.js:1:1: paths/a a Infinity ${events} [Error/paths/a]`,
-        `<dir>/a.js:1:1: paths/b b Infinity ${events} [Error/paths/b]`,
-        `<dir>/a.js:1:1: paths/c c Infinity ${events} [Error/paths/c]`,
+        `a.js:1:1: paths/a a Infinity ${events} [Error/paths(a)]`,
+        `a.js:1:1: paths/b b Infinity ${events} [Error/paths(b)]`,
+        `a.js:1:1: paths/c c Infinity ${events} [Error/paths(c)]`,
       ]);
     },
     timeout,

@@ -56,6 +56,7 @@ mod for_eslint;
 mod glob_part;
 mod merge;
 mod minimatch;
+mod number_of_rules;
 mod path;
 mod presets;
 mod rc;

@@ -57,7 +57,7 @@ Rule names, options, messages, locations, fixes, and `eslint-disable` comments a
 
 ### Plugins
 
-The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks` and some of `import`, `n`, and `oxc`. They run as native code. With an `.oxlintrc.json`, so do [the rules of oxlint's plugins](#replace-oxlint).
+The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks`, including its React Compiler rules, and some of `import`, `n`, and `oxc`. They run as native code. With an `.oxlintrc.json`, so do [the rules of oxlint's plugins](#replace-oxlint).
 
 A built-in plugin runs as native code under its usual name: `@typescript-eslint`, `react-hooks`, `import`, `n`. Under another name, such as `ts` or `node` in `@antfu/eslint-config`, it runs in JavaScript like any other plugin.
 
@@ -86,10 +86,11 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
 - The rules in JavaScript run on one thread at first. More such threads are started, 16 at most, if the files that are left take long enough for that to pay: each has to load the plugins again.
 
-Two things are not there for a rule in JavaScript:
+Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 
-- Types. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
-- Parsers other than those of ESLint and typescript-eslint, and languages other than JavaScript.
+### Other languages
+
+A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another language, such as `yaml-eslint-parser`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. Keep `eslint` in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
 
 ### Processors
 
@@ -138,7 +139,12 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 - It skips what `.gitignore` ignores, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
 - A configuration file with a key that oxlint does not know is an error.
 - If the command line or a configuration file cannot be used, the exit code is `1`.
-- The default format is `pretty`, and `-f json` prints oxlint's JSON, so scripts that read `diagnostics` keep working.
+- Every format but `pretty` and `json-with-metadata` prints what oxlint prints: paths from the working directory, columns in bytes, rules as `eslint(no-var)`. Scripts and problem matchers written for oxlint keep working.
+- The default format is `pretty`. In GitHub Actions it is `github`, and no annotations are added to another format.
+- Everything is printed on stdout: the report, the summary line, `No files found to lint`, and why a configuration file cannot be used. Only a command line that cannot be read, and warnings about what `bun lint` leaves out, go to stderr.
+- `--quiet` and `--silent` hide problems. They still count, for `--max-warnings`, `--deny-warnings`, and the exit code.
+- Suppressions in `oxlint-suppressions.json` that no longer occur are an error in the report, so the exit code is `1`.
+- Rules that need types are skipped without `--type-aware`, and nothing is said about it.
 - An argument that matches nothing is not an error, as long as there is a file to lint. If there is none, the exit code is `1`.
 - `--report-unused-disable-directives` warns.
 - The `<script>` blocks of `.vue` and `.svelte` files are linted, and the frontmatter and the `<script>` blocks of `.astro` files. Each block is linted by itself. The template is not read, so `no-unused-vars` is off in these files, and `prefer-const` is off in `.vue` and `.svelte` files.
@@ -164,7 +170,7 @@ The rules that oxlint shares with ESLint and typescript-eslint are ports of the 
 
 ## What cannot be linted
 
-A configuration can ask for more than `bun lint` can do: a rule of oxlint that is not built in, or files in a language other than JavaScript and TypeScript. `bun lint` lints everything else, prints the report, and then fails with exit code `2` and an error that names what it left out. It never reports less than the tool it replaces without saying so.
+A configuration can ask for more than `bun lint` can do: a rule of oxlint that is not built in, or files in [another language](#other-languages) without the `eslint` package. `bun lint` lints everything else, prints the report, and then fails with exit code `2` and an error that names what it left out. It never reports less than the tool it replaces without saying so.
 
 ```txt
 error: The configuration asks for what cannot be done yet. All else was linted.
@@ -356,7 +362,7 @@ Choose a format with `-f`.
 | `gitlab`             | GitLab's Code Quality report                                        |
 | `sarif`              | SARIF 2.1.0                                                         |
 
-`stylish` and `json` are byte for byte what ESLint prints, so problem matchers, editors, and scripts written for ESLint keep working.
+`stylish` and `json` are byte for byte what ESLint prints, so problem matchers, editors, and scripts written for ESLint keep working. With an `.oxlintrc.json`, the formats are [oxlint's](#replace-oxlint).
 
 ```txt
 2 | export function total(items) {
@@ -370,7 +376,7 @@ Above 50 problems, `pretty` and `agent` show each distinct problem once, with ho
 
 ### AI agents
 
-When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `agent`.
+When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `agent`. With an `.oxlintrc.json` that is oxlint's `agent`: one line per problem.
 
 ```txt
 <error file="src/index.ts" line="3" column="7" rule="prefer-const" fixable="true">
@@ -391,7 +397,7 @@ When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `ag
 These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
-- **Custom parsers, languages, and custom formatters do not load.** Files that need them, such as `.vue` files with `vue-eslint-parser` or JSON files with `@eslint/json`, [cannot be linted](#what-cannot-be-linted). The rules and the processors of plugins run.
+- **Parsers that find JavaScript in another language, and custom formatters, do not load.** `.vue` files with `vue-eslint-parser`, and `.svelte`, `.astro` and `.mdx` files with their parsers, [cannot be linted](#what-cannot-be-linted). The rules, the processors and the [languages](#other-languages) of plugins run.
 - **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
 - **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.

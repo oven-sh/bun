@@ -1,7 +1,7 @@
-// The inputs of ../../react-compiler.test.ts, which expected.ts gives to oxlint: directories of files, each linted in one run
-// without arguments but `-f json`. Those that are not written for this test are in expected.json.
+// The inputs of ../../react-compiler.test.ts, which expected.ts gives to oxlint and to ESLint: directories of files, each linted in
+// one run without arguments but `-f json`. Those that are not written for this test are in expected.json.
 
-import { RULE_NAMES } from "./shared.ts";
+import { ESLINT_ONLY, RULE_NAMES, RULES } from "./shared.ts";
 
 /** An `.oxlintrc.json` with nothing on but `rules`. */
 export const rc = (rules: readonly string[] = RULE_NAMES) =>
@@ -146,3 +146,112 @@ export function byFile(report: { diagnostics: RawDiagnostic[] }): Record<string,
   const sorted = [...files].sort(([a], [b]) => (a < b ? -1 : 1));
   return Object.fromEntries(sorted.map(([path, found]) => [path, found.sort().map(it => JSON.parse(it))]));
 }
+
+// ── ESLint, with eslint-plugin-react-hooks ──
+
+/** The rules of the plugin that report what the compiler finds. */
+export const ESLINT_RULES = [
+  ...RULES.map(([rule]) => `react-hooks/${rule}`),
+  ...ESLINT_ONLY.map(([rule]) => `react-hooks/${rule}`),
+  "react-hooks/component-hook-factories",
+];
+
+/** An `eslint.config.js`. By their names: the rules of the plugin and the parser of typescript-eslint are built in. */
+export const eslintConfig = `export default [
+  {
+    files: ["**/*.{js,jsx,ts,tsx}"],
+    plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
+    rules: ${JSON.stringify(Object.fromEntries(ESLINT_RULES.map(rule => [rule, "error"])))},
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+    linterOptions: { reportUnusedDisableDirectives: "off" },
+  },
+  { files: ["**/*.{ts,tsx}"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+];
+`;
+
+const extraDependency = (parameters: string) => `function Component(${parameters}) {
+  const value = useMemo(() => [a], [a, b]);
+  return <div>{value}</div>;
+}
+`;
+
+export const eslintSmall: Files = {
+  // The plugin parses a `.ts` or `.tsx` file with Babel, which knows the name of the file and where in the text a node is.
+  "typescript.tsx": extraDependency("{ a, b }: { a: number; b: number }"),
+  // All others with Hermes, which knows neither: no line with the name, and no suggestion that needs the place of the list.
+  "javascript.jsx": extraDependency("{ a, b }"),
+  // A place of more than ten lines.
+  "long.jsx": `function Component(props) {
+  let value = 0;
+  try {
+${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.${name};\n`).join("")}  } finally {
+    props.done();
+  }
+  return <div>{value}</div>;
+}
+`,
+  "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
+  "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
+  "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),
+  "flow-other.jsx": readsRef("// $FlowFixMe[other]"),
+  // typescript-eslint parses it. Babel, as the plugin calls it, does not.
+  "decorator.tsx": `@sealed\nclass Store {}\n\n${readsRef("")}`,
+  // No function has the name of a component or a hook, so the plugin does not look further.
+  "memo.jsx": `export default memo(props => {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <div>{value}</div>;
+});
+`,
+};
+
+type EslintMessage = {
+  ruleId: string | null;
+  severity: number;
+  message: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  suggestions?: { desc: string; fix: { range: [number, number]; text: string } }[];
+};
+type EslintResult = { filePath: string; messages: EslintMessage[]; suppressedMessages: EslintMessage[] };
+
+/**
+ * The results of ESLint's `-f json` for each file that has messages, suppressed ones too. The paths are relative to one of
+ * `directories`, which is `<dir>` in the messages.
+ */
+export function byEslintFile(results: EslintResult[], directories: string[]) {
+  const inside = (path: string) => {
+    const directory = directories.find(it => path.startsWith(it));
+    return directory === undefined ? null : path.slice(directory.length + 1).replaceAll("\\", "/");
+  };
+  const plain = (it: EslintMessage) => ({
+    ruleId: it.ruleId,
+    severity: it.severity,
+    // The line above a code frame: `path:line:column`.
+    message: it.message.replace(/^.+(?=:\d+:\d+$)/gm, path => (inside(path) === null ? path : `<dir>/${inside(path)}`)),
+    line: it.line,
+    column: it.column,
+    endLine: it.endLine,
+    endColumn: it.endColumn,
+    suggestions: (it.suggestions ?? []).map(({ desc, fix }) => ({ desc, range: fix.range, text: fix.text })),
+  });
+  const files: Record<string, { messages: ReturnType<typeof plain>[]; suppressed: ReturnType<typeof plain>[] }> = {};
+  for (const { filePath, messages, suppressedMessages } of results) {
+    if (messages.length + suppressedMessages.length === 0) continue;
+    files[inside(filePath) ?? filePath] = { messages: messages.map(plain), suppressed: suppressedMessages.map(plain) };
+  }
+  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
+/** Of each message the rule, the place and the first line. */
+export const briefly = (files: ReturnType<typeof byEslintFile>) =>
+  Object.fromEntries(
+    Object.entries(files).map(([path, { messages }]) => [
+      path,
+      messages.map(
+        it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message.split("\n")[0]}`,
+      ),
+    ]),
+  );

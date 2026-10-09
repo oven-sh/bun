@@ -152,6 +152,20 @@ fn parse_reg_exp_text(pattern: &[u8], unicode: bool) -> Option<Vec<u8>> {
     Some(string_from_code_points(chars.filter_map(value)))
 }
 
+/// Whether tsgolint's `parseRegExpText` can read `content`, a pattern without its `^` or `$`: it has no parser for
+/// regular expressions, and gives up at every character that can have a meaning, also where it has none.
+fn tsgolint_can_read(content: &[u8]) -> bool {
+    let mut is_escaped = false;
+    for &byte in content {
+        let not_read: &[u8] = if is_escaped { b"dDwWsSbBcxukpP123456789" } else { b".*+?|^$[](){}" };
+        if strings::contains_char(not_read, byte) {
+            return false;
+        }
+        is_escaped = !is_escaped && byte == b'\\';
+    }
+    !is_escaped
+}
+
 /// What `node` matches, if it is a `RegExp` for a string at the start or at the end.
 fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     let evaluated = static_value(node)?;
@@ -163,6 +177,12 @@ fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
         backslashes % 2 == 0 && backslashes < before.len()
     });
     if is_starts_with == is_ends_with || strings::index_of_any(flags, b"im").is_some() {
+        return None;
+    }
+    let content = if is_starts_with { source.get(1..) } else { source.get(..source.len().saturating_sub(1)) };
+    if node.file().language().is_oxlint
+        && (strings::index_of_any(flags, b"gy").is_some() || !tsgolint_can_read(content.unwrap_or_default()))
+    {
         return None;
     }
     let text = parse_reg_exp_text(source, strings::contains_char(flags, b'u'))?;

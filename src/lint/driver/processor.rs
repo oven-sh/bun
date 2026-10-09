@@ -154,7 +154,9 @@ impl Context<'_, '_> {
     /// ESLint's `_verifyWithFlatConfigArrayAndWithoutProcessors`.
     fn verify_as_it_is(&self, loaded: &Loaded, it: Text, config: &ResolvedConfig) -> LintResult {
         match config.route_as_it_is(it.path) {
-            Route::Eslint => self.verify_with_eslint(loaded, it, config).0,
+            Route::Eslint if loaded.for_eslint.is_some() => {
+                self.verify_with_eslint(loaded, it, config).0
+            }
             _ => self.verify_natively(it, it.path, it.text, config),
         }
     }

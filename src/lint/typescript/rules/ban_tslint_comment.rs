@@ -59,7 +59,12 @@ impl Rule for BanTslintComment {
                 if !is_enable_disable(comment.comment_value()) {
                     continue;
                 }
-                cx.report(comment, COMMENT_DETECTED).data("text", to_text(comment)).fix(|fixer| {
+                // oxlint has what is in the comment.
+                let text = match cx.language().is_oxlint {
+                    true => trim(comment.comment_value()).to_vec(),
+                    false => to_text(comment),
+                };
+                cx.report(comment, COMMENT_DETECTED).data("text", text).fix(|fixer| {
                     let file = fixer.file();
                     let (start, end) = (file.position(comment.start()), file.position(comment.end()));
                     let range_start = file.offset(Position {

@@ -23,6 +23,7 @@ use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
+use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::hir::Diagnostic;
@@ -200,15 +201,47 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     }
     let at = file.position(first.map_or(0, |it| it.start));
     let _ = write!(out, " ({}:{})", at.line, at.column + 1);
+    write_frame(&mut out, file, at.line, at.column);
     out
 }
 
 /// `SyntaxError: This string is not closed (3:6)`, of a file that is not a script.
 #[cold]
 fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
+    syntax_error_in_words(text, message.text().as_bytes(), offset)
+}
+
+/// What Prettier appends to a syntax error: the lines around it. `column`: counted from 0.
+fn write_frame<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), line: u32, column: u32) {
+    let frame = Frame {
+        version: Version::Eight,
+        start: Place {
+            line,
+            column: Some(column),
+        },
+        end: None,
+        message: b"",
+        lines_above: 2,
+        lines_below: 3,
+    };
+    // Not lines that nobody has written, which fill the screen.
+    let first = line.saturating_sub(frame.lines_above).max(1);
+    let last = line.saturating_add(frame.lines_below).min(lines.count());
+    if (first..=last).all(|it| lines.line(it).len() <= 1000) {
+        let len = out.len();
+        out.push(b'\n');
+        if !code_frame::write(out, lines, &frame) {
+            out.truncate(len);
+        }
+    }
+}
+
+/// `offset`: not counting a byte order mark.
+#[cold]
+fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
     let text = strings::without_utf8_bom(text);
     let before = &text[..text.len().min(offset as usize)];
-    let (mut line, mut line_start, mut from) = (1, 0, 0);
+    let (mut line, mut line_start, mut from) = (1u32, 0, 0);
     while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
         from += found + 1;
         // The `\n` of `\r\n` ends the line.
@@ -217,8 +250,16 @@ fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Ve
         }
     }
     // As Prettier counts them: in UTF-16 code units.
-    let column = 1 + strings::element_length_utf8_into_utf16(&before[line_start..]);
-    format!("SyntaxError: {} ({line}:{column})", message.text()).into_bytes()
+    let column = strings::element_length_utf8_into_utf16(&before[line_start..]) as u32;
+    let mut out = format!(
+        "SyntaxError: {} ({line}:{})",
+        BStr::new(message),
+        column + 1
+    )
+    .into_bytes();
+    let lines: Vec<&[u8]> = bun_lint::utils::text::lines(text).collect();
+    write_frame(&mut out, &lines[..], line, column);
+    out
 }
 
 /// What is allocated to format a file, and used again for the next.
@@ -397,6 +438,13 @@ fn format(
         }
         Some(Kind::Toml) => {
             let done = bun_format::toml::format(text, options, &mut out);
+            if done == Err(FormatError::SyntaxError)
+                && let Some((message, offset)) = bun_format::toml::syntax_error(text)
+            {
+                return Err(Failure::Syntax(syntax_error_in_words(
+                    text, &message, offset,
+                )));
+            }
             if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
                 return Err(Failure::Loss(
                     "formatting it the way oxfmt does would change what is in it",
@@ -533,15 +581,15 @@ fn print<'a>(
     };
     if let Some(why) = refusal {
         let at = file.position(why.at);
-        return Err(Failure::Syntax(
-            format!(
-                "SyntaxError: {} ({}:{})",
-                BStr::new(&why.message),
-                at.line,
-                at.column + 1
-            )
-            .into_bytes(),
-        ));
+        let mut out = format!(
+            "SyntaxError: {} ({}:{})",
+            BStr::new(&why.message),
+            at.line,
+            at.column + 1
+        )
+        .into_bytes();
+        write_frame(&mut out, file, at.line, at.column);
+        return Err(Failure::Syntax(out));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {

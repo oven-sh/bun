@@ -1393,11 +1393,17 @@ impl References {
     /// The references to `name` that resolve to nothing.
     pub(crate) fn unresolved_named(&self, name: Atom) -> &[u32] {
         let sorted = self.unresolved_by_name.get_or_init(|| {
-            let mut sorted = self.unresolved().to_vec();
-            crate::utils::sort::sort_indices(&mut sorted, &mut |a, b| {
-                (self.all[a as usize].name.0).cmp(&self.all[b as usize].name.0)
-            });
-            sorted
+            // The name and the place in the list in one number: those with one name keep their order, and the sort of such
+            // numbers is compiled for other lists too.
+            let unresolved = self.unresolved();
+            let keys = unresolved.iter().enumerate();
+            let keys =
+                keys.map(|(at, &it)| (u64::from(self.all[it as usize].name.0) << 32) | at as u64);
+            let mut keys: Vec<u64> = keys.collect();
+            keys.sort();
+            keys.iter()
+                .map(|&key| unresolved[key as u32 as usize])
+                .collect()
         });
         let start = sorted.partition_point(|&it| self.all[it as usize].name.0 < name.0);
         let len = sorted[start..].partition_point(|&it| self.all[it as usize].name == name);

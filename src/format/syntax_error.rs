@@ -22,6 +22,37 @@ impl SyntaxError {
     }
 }
 
+/// Where a parser notes what it refuses. What it returns on the way, [`Refused`], has no size, so that nothing is paid for
+/// the reason where nothing is refused.
+pub(crate) struct Refusal(std::cell::Cell<SyntaxError>);
+
+impl Default for Refusal {
+    fn default() -> Self {
+        Refusal(std::cell::Cell::new(SyntaxError(
+            Message::UnexpectedToken,
+            0,
+        )))
+    }
+}
+
+/// A text has been refused, and the reason noted.
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct Refused(());
+
+impl Refusal {
+    #[cold]
+    pub(crate) fn note(&self, message: Message, offset: u32) -> Refused {
+        self.0.set(SyntaxError(message, offset));
+        Refused(())
+    }
+
+    /// What has been noted last.
+    #[cold]
+    pub(crate) fn reason(&self) -> SyntaxError {
+        self.0.get()
+    }
+}
+
 macro_rules! messages {
     ($($name:ident = $text:literal,)*) => {
         /// What is wrong.
@@ -75,6 +106,9 @@ messages! {
     InvalidEscapeSequence = "Invalid escape sequence",
     InvalidNumber = "Invalid number",
     UnexpectedCharacter = "Unexpected character",
+
+    // JSON
+    ExpectedEndOfFile = "Expected the end of the file",
 
     // Handlebars
     AttributeInEndTag = "An end tag cannot have attributes",

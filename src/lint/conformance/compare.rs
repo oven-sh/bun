@@ -202,6 +202,8 @@ pub(crate) fn problem_of_oxlint(
     let mut outcome = Outcome::new(entry, code, messages);
     for message in &mut outcome.messages {
         (message.fix, message.suggestions) = (None, Vec::new());
+        // Those of oxlint have none.
+        message.message_id.clear();
     }
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);

@@ -18,6 +18,7 @@ mod writer;
 pub use sort_package_json::{SortPackageJson, sort_package_json};
 
 use crate::options::{Expand, Flavor, IndentStyle, QuoteProperties, QuoteStyle};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
@@ -276,7 +277,7 @@ pub fn format(
         )
     };
     scratch.normalized = normalized;
-    result
+    result.map_err(|error| error.before_normalizing_end_of_line(text))
 }
 
 /// Prettier's `coreFormat`. `text` has no byte order mark and no `\r`.
@@ -310,7 +311,10 @@ fn format_normalized(
     if !tree.comments.is_empty()
         && (config.is_stringify() || (tree.nodes.is_empty() && config.parser != Parser::Jsonc))
     {
-        return Err(FormatError::SyntaxError);
+        return Err(FormatError::SyntaxErrorAt(match config.is_stringify() {
+            true => SyntaxError(Message::UnexpectedToken, tree.comments[0].start),
+            false => SyntaxError(Message::UnexpectedEnd, text.len() as u32),
+        }));
     }
     comments::attach(text, tree, attached);
     let root = document::build(text, tree, attached, config, document_frames, storage);

@@ -79,7 +79,11 @@ impl ExplicitMemberAccessibility {
         if !is_wrong || member.is_signature() || member.key().is_some_and(Key::is_private) {
             return;
         }
-        let name = get_name_from_member(member).name;
+        // oxlint has a key that is a string without quotes, and no name for one that is computed.
+        let name = match cx.language().is_oxlint {
+            true => Cow::Borrowed(utils::oxlint::member_key_name(member).unwrap_or_default()),
+            false => get_name_from_member(member).name,
+        };
         if member.kind() != MemberKind::Property && self.ignored_method_names.iter().any(|it| **it == *name) {
             return;
         }

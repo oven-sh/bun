@@ -190,8 +190,8 @@ pub struct TOML;
 impl TOML {
     /// The tokens of `text` in its order, for who wants a document as it is written. The syntax is
     /// what [`TOML::parse`] takes. What tables and keys mean is not looked at (a key can be there
-    /// twice), and an integer can have any size. `Err`: what is wrong with the syntax.
-    pub fn tokens(text: &[u8]) -> Result<Vec<Token>, Vec<u8>> {
+    /// twice), and an integer can have any size. `Err`: what is wrong with the syntax, and at which byte.
+    pub fn tokens(text: &[u8]) -> Result<Vec<Token>, (Vec<u8>, usize)> {
         let source = Source::init_path_string(b"".as_slice(), text);
         let mut log = Log::init();
         let bump = Bump::new();
@@ -213,8 +213,13 @@ impl TOML {
         if is_short_enough && tokenizer.document().is_ok() {
             return Ok(tokenizer.tokens);
         }
-        let message = log.msgs.first().map(|it| it.data.text.to_vec());
-        Err(message.unwrap_or_else(|| b"Syntax error".to_vec()))
+        Err(match log.msgs.first() {
+            Some(first) => (
+                first.data.text.to_vec(),
+                first.data.location.as_ref().map_or(0, |it| it.offset),
+            ),
+            None => (b"Syntax error".to_vec(), 0),
+        })
     }
 
     pub fn parse<'a>(

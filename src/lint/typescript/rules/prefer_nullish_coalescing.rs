@@ -496,7 +496,10 @@ impl PreferNullishCoalescing {
         ) {
             true
         } else {
-            let flags = get_type_flags(nullish_coalescing_left_node.ty());
+            // For an `if`, tsgolint asks for the type of what is assigned to: the type that it is declared with.
+            let is_assigned_to = node.is_none() && test.file().language().is_oxlint;
+            let declared = non_nullish_node.ts_symbol().filter(|_| is_assigned_to).map(|it| it.get_type());
+            let flags = get_type_flags(declared.unwrap_or_else(|| nullish_coalescing_left_node.ty()));
             if flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN) {
                 false
             } else if has_undefined_check && !flags.intersects(TypeFlags::NULL) {

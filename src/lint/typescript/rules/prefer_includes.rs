@@ -69,6 +69,57 @@ fn has_matching_includes_method(index_of_method_decl: TsNode) -> bool {
     })
 }
 
+/// tsgolint's `isSimpleLiteralPattern`, which goes by the character before.
+fn tsgolint_is_simple_literal_pattern(pattern: &[u8]) -> bool {
+    let mut before = 0;
+    for &byte in pattern {
+        let not_simple: &[u8] = if before == b'\\' { b"dDwWsSbBcxu" } else { b".*+?|^$[](){}" };
+        if strings::contains_char(not_simple, byte) {
+            return false;
+        }
+        before = byte;
+    }
+    !pattern.is_empty()
+}
+
+/// `/a/` without flags.
+fn tsgolint_is_simple_literal(e: Expr) -> bool {
+    matches!(
+        e.kind(),
+        ExprKind::Regex(it)
+            if !e.is_parenthesized() && it.flags().is_empty() && tsgolint_is_simple_literal_pattern(it.pattern())
+    )
+}
+
+/// tsgolint's `resolveRegexPattern`: it has no evaluation of expressions. It knows `/a/`, and a variable whose value is
+/// that or `new RegExp("a")`.
+fn tsgolint_resolves_regex_pattern(node: Expr) -> bool {
+    if tsgolint_is_simple_literal(node) {
+        return true;
+    }
+    if node.is_parenthesized() || node.tag() != ExprTag::Ident {
+        return false;
+    }
+    let mut declarations = node.symbol().into_iter().flat_map(Symbol::declarations);
+    let Some(Declaration::Var(pat)) = declarations.next() else {
+        return false;
+    };
+    let Node::VarDecl(declaration) = pat.parent() else {
+        return false;
+    };
+    declaration.init().is_some_and(|init| match init.kind() {
+        _ if init.is_parenthesized() => false,
+        ExprKind::New(call) => {
+            !call.callee().is_parenthesized()
+                && call.callee().is_ident("RegExp")
+                && (call.args().first().filter(|it| !it.is_parenthesized()))
+                    .and_then(|it| it.as_string())
+                    .is_some_and(|it| tsgolint_is_simple_literal_pattern(it.bytes()))
+        }
+        _ => tsgolint_is_simple_literal(init),
+    })
+}
+
 /// The one string that `node` matches, if it is a `RegExp` that matches only one.
 fn parse_reg_exp(node: Expr) -> Option<Vec<u8>> {
     let evaluated = get_static_value(node, Some(node.file().scope()))?;
@@ -204,6 +255,9 @@ impl PreferIncludes {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
+        if cx.language().is_oxlint && !tsgolint_resolves_regex_pattern(obj) {
+            return;
+        }
         let Some(text) = parse_reg_exp(obj) else {
             return;
         };

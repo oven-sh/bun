@@ -4,7 +4,7 @@ use crate::convert::{Converted, Recorded, Refusal, Root, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
-use bun_lint::ast::{File, Func};
+use bun_lint::ast::{BinOp, File, Func};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
@@ -120,13 +120,41 @@ impl<'a> Compiler<'a> {
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {
             Recorded::ImplicitArguments(span) => implicit_arguments(span),
-            Recorded::DynamicImport(span) => dynamic_import(span),
+            Recorded::DynamicImport(span) => todo(
+                "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
+                span,
+            ),
+            Recorded::DefaultIsJsx { span, is_fragment } => {
+                let kind = if is_fragment {
+                    "JSXFragment"
+                } else {
+                    "JSXElement"
+                };
+                todo(
+                    format!("{CANNOT_BE_REORDERED}{kind}` cannot be safely reordered"),
+                    span,
+                )
+            }
         });
+        // What the lowering says of the call that the JSX is in the tree.
+        let is_said_already = |it: &Finding| {
+            it.reason.starts_with(CANNOT_BE_REORDERED)
+                && converted.recorded.iter().any(|recorded| {
+                    matches!(recorded, Recorded::DefaultIsJsx { span, .. }
+                        if matches!(it.details.first(), Some(Detail::Error { span: Some(at), .. }) if at == span))
+                })
+        };
+        let file = self.file;
+        let said = |error| {
+            findings(&converted, error)
+                .filter(|it| !is_said_already(it))
+                .map(|it| with_kind_of_estree(file, it))
+        };
         match linted.result {
             Ok(()) if converted.recorded.is_empty() => Ok(()),
             Ok(()) => Err(recorded.collect()),
-            Err(error) if error.is_thrown => Err(findings(&converted, error).collect()),
-            Err(error) => Err(recorded.chain(findings(&converted, error)).collect()),
+            Err(error) if error.is_thrown => Err(said(error).collect()),
+            Err(error) => Err(recorded.chain(said(error)).collect()),
         }
     }
 }
@@ -150,11 +178,26 @@ fn implicit_arguments(span: Span) -> Finding {
     }
 }
 
-/// What upstream's lowering says of the callee of `import(..)`
-fn dynamic_import(span: Span) -> Finding {
+const CANNOT_BE_REORDERED: &str = "(BuildHIR::node.lowerReorderableExpression) Expression type `";
+
+/// `a || b` is a `BinaryExpression` in Bun's tree, by which the lowering calls it.
+fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding {
+    if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
+        && let Some(rest) = rest.strip_prefix("BinaryExpression")
+        && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first()
+        && crate::oxlint::find(file, *at, |node| node.as_expr()?.binary_op())
+            .is_some_and(|op| matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish))
+    {
+        finding.reason = format!("{CANNOT_BE_REORDERED}LogicalExpression{rest}");
+    }
+    finding
+}
+
+/// A `CompilerError.throwTodo()` or the like of upstream's lowering
+fn todo(reason: String, span: Span) -> Finding {
     Finding {
         category: ErrorCategory::Todo,
-        reason: "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
+        reason,
         description: None,
         details: vec![Detail::Error {
             span: Some(span),

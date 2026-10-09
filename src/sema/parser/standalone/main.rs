@@ -23,7 +23,7 @@ use bun_sema_standalone::host::{self, error_line, output_line};
 use bun_threading::Guarded;
 use std::collections::BTreeMap;
 
-const EXTENSIONS: [&str; 8] = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+const EXTENSIONS: [&str; 9] = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "json"];
 
 fn walk(path: &std::path::Path, files: &mut Vec<String>) {
     if path.is_dir() {
@@ -42,12 +42,14 @@ fn walk(path: &std::path::Path, files: &mut Vec<String>) {
 
 fn options_for(path: &[u8], dialect: Dialect) -> Options {
     let kind = ScriptKind::from_file_name(path);
-    let is_javascript = kind.is_some_and(ScriptKind::is_javascript);
+    let is_json = path.ends_with(b".json");
+    let is_javascript = kind.is_some_and(ScriptKind::is_javascript) || is_json;
     Options {
         is_declaration_file: bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_javascript || kind == Some(ScriptKind::Tsx),
         is_javascript,
-        await_is_a_name: is_javascript && dialect.ecmascript && dialect.script,
+        is_json,
+        await_is_a_name: is_json || is_javascript && dialect.ecmascript && dialect.script,
         recovers: false,
         dialect,
     }

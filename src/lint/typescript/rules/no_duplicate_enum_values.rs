@@ -87,10 +87,14 @@ fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumVal
         let before = seen.entry(value.key()).or_insert(here);
         if *before != here {
             let place = *before;
-            if matches!(value, Value::String(_)) {
-                *before = here;
-            }
-            report(place, value, cx);
+            // A number is said as it is written.
+            match value {
+                Value::Number(_) => cx.report(place, DUPLICATE_VALUE).data("value", initializer.text()),
+                Value::String(string) => {
+                    *before = here;
+                    cx.report(place, DUPLICATE_VALUE).data("value", [&b"'"[..], string.bytes(), b"'"].concat())
+                }
+            };
         }
     }
 }

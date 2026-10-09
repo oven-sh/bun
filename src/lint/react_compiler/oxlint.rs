@@ -232,8 +232,8 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Ren
         ErrorCategory::Syntax => syntax(file, finding, &mut out),
         ErrorCategory::UnsupportedSyntax => unsupported_syntax(finding, &mut out),
         ErrorCategory::Suppression => suppression(finding, &mut out),
-        ErrorCategory::IncompatibleLibrary
-        | ErrorCategory::Config
+        ErrorCategory::IncompatibleLibrary => incompatible_library(file, &mut out),
+        ErrorCategory::Config
         | ErrorCategory::Gating
         | ErrorCategory::EffectDependencies
         | ErrorCategory::FBT => {}
@@ -279,7 +279,11 @@ fn labels_of(finding: &Finding) -> Vec<Label> {
 // ───────────────────────────── from a place to the syntax ─────────────────────────────
 
 /// What `pick` makes of a node that is written exactly at `span`, the innermost first.
-fn find<'a, T>(file: &'a File<'a>, span: Span, pick: impl Fn(Node<'a>) -> Option<T>) -> Option<T> {
+pub(crate) fn find<'a, T>(
+    file: &'a File<'a>,
+    span: Span,
+    pick: impl Fn(Node<'a>) -> Option<T>,
+) -> Option<T> {
     let innermost = get_node_by_range_index(file, span.start);
     std::iter::once(innermost)
         .chain(innermost.ancestors())
@@ -1074,6 +1078,16 @@ fn set_state_in_render(finding: &Finding, out: &mut Rendered) {
             );
         }
         _ => {}
+    }
+}
+
+/// `useWindowVirtualizer` is `useVirtualizer` in the tree that the compiler is given.
+fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
+    if (out.place()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
+        && let Some(rest) = (out.text()).strip_prefix("TanStack Virtual's `useVirtualizer()`")
+    {
+        let text = format!("TanStack Virtual's `useWindowVirtualizer()`{rest}");
+        out.relabel(text);
     }
 }
 

@@ -74,15 +74,20 @@ function position(file, span) {
   return { line: lines.length, column: lines.at(-1).length + 1 };
 }
 
-function tuplesOfOxlint(stdout) {
+/** Of oxlint's `json`, which `bun lint` prints too with a configuration of oxlint. */
+function tuplesOf(stdout, isOurs) {
   const tuples = [];
   let parsed;
   try {
     parsed = JSON.parse(stdout);
   } catch {
     // It has refused the command line or the configuration, or found no file.
-    if (own.includes("--status")) return { tuples: [], files: 0 };
+    if (isOurs || own.includes("--status")) return { tuples: [], files: 0 };
     console.error("the output of oxlint is not JSON");
+    process.exit(2);
+  }
+  if (Array.isArray(parsed)) {
+    console.error("bun lint prints the json of ESLint: it does not take the configuration for oxlint's");
     process.exit(2);
   }
   for (const diagnostic of parsed.diagnostics ?? []) {
@@ -96,27 +101,10 @@ function tuplesOfOxlint(stdout) {
   return { tuples, files: parsed.number_of_files };
 }
 
-function tuplesOfBun(stdout) {
-  const tuples = [];
-  // `path:line:column: message [Error/rule]`. A message can have line breaks: only lines of this form count.
-  for (const line of stdout.split("\n")) {
-    const start = /^(.+?):(\d+):(\d+): /.exec(line);
-    const end = /\[(?:Error|Warning)\/([@\w/-]+)\]$/.exec(line);
-    if (!start) continue;
-    tuples.push({
-      file: path.relative(project, start[1]),
-      line: +start[2],
-      column: +start[3],
-      rule: end?.[1] ?? "(none)",
-    });
-  }
-  return tuples;
-}
-
 const theirs = run([oxlint], ["--format=json", ...extra]);
-const ours = run(bin, ["--format=unix", ...extra]);
-const expected = tuplesOfOxlint(theirs.stdout);
-const actual = tuplesOfBun(ours.stdout);
+const ours = run(bin, ["--format=json", ...extra]);
+const expected = tuplesOf(theirs.stdout, false);
+const actual = tuplesOf(ours.stdout, true).tuples;
 
 // The rules of a plugin in JavaScript are not in the list. Both have them if `bun lint` reports anything of that plugin.
 const prefixes = new Set(actual.map(it => it.rule.split("/")[0]).filter(it => it !== "@typescript-eslint"));

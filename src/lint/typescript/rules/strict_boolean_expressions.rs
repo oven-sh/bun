@@ -462,9 +462,19 @@ fn add_boolean_return_type<'a>(fixer: Fixer<'a>, predicate_node: Expr<'a>, funct
 }
 
 impl StrictBooleanExpressions {
-    fn determine_report_type(&self, types: VariantTypes) -> Option<ConditionError> {
+    fn determine_report_type(&self, types: VariantTypes, is_oxlint: bool) -> Option<ConditionError> {
         let is = |wanted_types: VariantTypes| types == wanted_types;
         let unless = |is_allowed: bool, error: ConditionError| (!is_allowed).then_some(error);
+
+        // tsgolint takes the members of an enum for strings or numbers, and says nothing about one beside other types.
+        if is_oxlint && types & ENUM != 0 {
+            return match (types & NULLISH != 0, types & !(ENUM | NULLISH)) {
+                (true, _) => unless(self.allow_nullable_enum, ConditionError::NullableEnum),
+                (false, STRING | TRUTHY_STRING) => unless(self.allow_string, ConditionError::String),
+                (false, NUMBER | TRUTHY_NUMBER) => unless(self.allow_number, ConditionError::Number),
+                (false, _) => None,
+            };
+        }
 
         // `boolean` and `never` are always okay.
         if is(BOOLEAN) || is(TRUTHY_BOOLEAN) || is(NEVER) {
@@ -531,7 +541,7 @@ impl StrictBooleanExpressions {
             return;
         }
         let types = inspect_variant_types(&mut union_constituents(ty).iter());
-        if let Some(report_type) = self.determine_report_type(types) {
+        if let Some(report_type) = self.determine_report_type(types, cx.language().is_oxlint) {
             let report = cx.report(node, report_type.message()).data("context", "conditional");
             suggest_for_condition_error(report, node, report_type);
         }
@@ -598,7 +608,7 @@ impl StrictBooleanExpressions {
             }
         }
         let types = inspect_variant_types(&mut flatten_types.iter().copied());
-        let Some(report_type) = self.determine_report_type(types) else {
+        let Some(report_type) = self.determine_report_type(types, cx.language().is_oxlint) else {
             return;
         };
 

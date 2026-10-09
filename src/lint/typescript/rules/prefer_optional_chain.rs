@@ -1412,8 +1412,9 @@ impl PreferOptionalChain {
         };
 
         let report_range = get_report_range(cx.file(), chain, node.span());
+        // oxlint points at the whole logical expression.
         get_fix_or_suggest(
-            cx.report(report_range, PREFER_OPTIONAL_CHAIN),
+            cx.report(if cx.language().is_oxlint { node.span() } else { report_range }, PREFER_OPTIONAL_CHAIN),
             if use_suggestion_fixer { FixOrSuggest::Suggest } else { FixOrSuggest::Fix },
             OPTIONAL_CHAIN_SUGGEST,
             |fixer| {

@@ -252,7 +252,7 @@ impl<'a> Printer<'a, '_> {
     pub(crate) fn print_root(&mut self, tree: &Tree, parsed: &mut Parsed) {
         let root = match self.context.convert(tree, 0, parsed) {
             Ok(root) => root,
-            Err(error) => return self.fail(error),
+            Err(_) => return self.fail(self.context.refusal.reason()),
         };
         let mut after = text::trim(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
@@ -524,13 +524,10 @@ impl<'a> Printer<'a, '_> {
         let mut own = None;
         let converted = converted.unwrap_or(&mut own);
         if converted.is_none() {
-            match self.context.convert(tree, id, parsed) {
-                Ok(node) => *converted = Some(node),
-                Err(error) => return self.fail(error),
-            }
+            *converted = self.context.convert(tree, id, parsed).ok();
         }
         let Some(node) = converted else {
-            return;
+            return self.fail(self.context.refusal.reason());
         };
         let scope = Scope {
             node,

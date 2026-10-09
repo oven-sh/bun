@@ -13,7 +13,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Engine, Host, Loading, Route};
-use bun_lint::linter::{FileConfig, Linter, Registry};
+use bun_lint::linter::{FileConfig, LintMessage, Linter, Registry};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
@@ -89,9 +89,6 @@ const INITIAL_OXLINTRC: &[u8] = br#"{
     "builtin": true
   }
 }"#;
-
-const NO_FILES_FOR_OXLINT: &[u8] =
-    b"No files found to lint. Please check your paths and ignore patterns.";
 
 /// Why nothing can be linted: the message. ESLint throws, and exits with 2.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -218,6 +215,17 @@ struct Run<'r> {
     began: Instant,
 }
 
+/// What there is to say about the file of suppressions.
+#[derive(Default)]
+struct Suppressed {
+    /// It has what does not occur.
+    has_unused: bool,
+    /// There are errors of rules that it does not have. Only oxlint says so.
+    has_new: bool,
+    /// It was written. `Some(true)`: it was there before.
+    updated: Option<bool>,
+}
+
 /// What was linted.
 struct Linted {
     results: Vec<FileResult>,
@@ -228,12 +236,7 @@ struct Linted {
 
 impl Run<'_> {
     fn error(&mut self, text: &[u8]) {
-        pretty!(
-            &mut self.out.stderr,
-            self.environment.stderr.colors,
-            "<red>error<r><d>:<r> {}\n",
-            BStr::new(text)
-        );
+        format::summary::write_error(&mut self.out.stderr, self.environment.stderr.colors, text);
     }
 
     fn warn(&mut self, text: &[u8]) {
@@ -245,8 +248,24 @@ impl Run<'_> {
         );
     }
 
-    /// Fails with the exit code that ESLint has for that, or oxlint.
+    /// Fails with the exit code that ESLint has for that, or oxlint, which says why on standard output.
     fn fail(mut self, text: &[u8]) -> Outcome {
+        match configs::is_for_oxlint(self.options.flavor, &self.environment.cwd) {
+            true => {
+                let colors = (self.options.color).unwrap_or(self.environment.stdout.colors);
+                format::summary::write_error(&mut self.out.stdout, colors, text);
+                self.out.exit_code = 1;
+            }
+            false => {
+                self.error(text);
+                self.out.exit_code = 2;
+            }
+        }
+        self.out
+    }
+
+    /// Refuses the command line, which both do on standard error.
+    fn refuse(mut self, text: &[u8]) -> Outcome {
         self.error(text);
         self.out.exit_code =
             match configs::is_for_oxlint(self.options.flavor, &self.environment.cwd) {
@@ -272,19 +291,18 @@ impl Run<'_> {
 
     /// `is_oxlint`: the configuration of the working directory is oxlint's.
     fn format(&self, is_oxlint: bool) -> Result<Format, Vec<u8>> {
-        let Some(name) = &self.options.format else {
-            return Ok(match is_oxlint {
-                // An agent is saved from opening the files.
-                _ if self.environment.is_ai_agent => Format::Agent,
-                // Like its `default`.
-                true => Format::Pretty,
-                false => Format::Stylish,
-            });
+        let name: &[u8] = match &self.options.format {
+            Some(name) => &name[..],
+            // An agent is saved from opening the files.
+            None if self.environment.is_ai_agent => b"agent",
+            None if is_oxlint && self.environment.is_github_action => b"github",
+            None if is_oxlint => b"default",
+            None => b"stylish",
         };
         Format::by_name(name, is_oxlint).ok_or_else(|| {
             [
                 b"There is no formatter \"",
-                &name[..],
+                name,
                 b"\". Those that exist: ",
                 Format::NAMES.as_bytes(),
                 b".",
@@ -494,14 +512,6 @@ impl Run<'_> {
             self.options.error_on_unmatched_pattern && !is_oxlint,
         )?;
         phases.discovery = started.elapsed().as_secs_f64();
-        if is_oxlint
-            && self.options.error_on_unmatched_pattern
-            && !targets
-                .iter()
-                .any(|it| matches!(it.status, Status::Matched(_)))
-        {
-            return Err(Fatal(NO_FILES_FOR_OXLINT.to_vec()));
-        }
         if self.options.list_files {
             let listed = targets
                 .into_iter()
@@ -555,6 +565,14 @@ impl Run<'_> {
                 .map(|it| paths::relative(&self.environment.cwd, &it.path))
                 .collect();
             let more: &[u8] = if unsupported.len() > 3 { b", .." } else { b"" };
+            let is_for_eslint = |it: &Target| match &it.status {
+                Status::Matched(config) => config.route_as_it_is(&it.path) == Route::Eslint,
+                _ => false,
+            };
+            let hint: &[u8] = match unsupported.iter().any(is_for_eslint) {
+                true => b". The package \"eslint\" lints other languages, if it is installed",
+                false => b"",
+            };
             loader.cannot_do(&[
                 &count,
                 noun,
@@ -563,6 +581,7 @@ impl Run<'_> {
                 b"): ",
                 &first.join(&b", "[..]),
                 more,
+                hint,
             ]);
         }
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
@@ -607,7 +626,8 @@ impl Run<'_> {
             }
             without_types.push(target);
         }
-        if !rules_without_types.is_empty() {
+        // oxlint leaves them out too, and says nothing.
+        if !rules_without_types.is_empty() && !is_oxlint {
             let count = format!("{}", rules_without_types.len()).into_bytes();
             let noun: &[u8] = if rules_without_types.len() == 1 {
                 b" rule needs"
@@ -701,7 +721,7 @@ impl Run<'_> {
             return self.out;
         }
         if let Some(refusal) = self.refusal() {
-            return self.fail(&refusal);
+            return self.refuse(&refusal);
         }
         if options.init {
             return self.write_initial_configuration();
@@ -727,13 +747,12 @@ impl Run<'_> {
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // One that cannot be read is reported when a file is linted with it.
         let of_cwd = loader.for_directory(&environment.cwd).ok();
-        let format = match self.format(
-            of_cwd
-                .as_ref()
-                .is_some_and(|it| it.flavor == Flavor::Oxlint),
-        ) {
+        let is_oxlint = of_cwd
+            .as_ref()
+            .is_some_and(|it| it.flavor == Flavor::Oxlint);
+        let format = match self.format(is_oxlint) {
             Ok(format) => format,
-            Err(error) => return self.fail(&error),
+            Err(error) => return self.refuse(&error),
         };
         let checks_types = options.type_check || of_cwd.as_ref().is_some_and(|it| it.checks_types);
         let of_file = of_cwd.as_ref().and_then(|it| it.wants_types);
@@ -829,13 +848,7 @@ impl Run<'_> {
             listed,
         } = match linted {
             Ok(linted) => linted,
-            Err(Fatal(error)) => {
-                let is_about_files = error == NO_FILES_FOR_OXLINT;
-                let mut out = self.fail(&error);
-                // As oxlint.
-                out.exit_code = if is_about_files { 1 } else { out.exit_code };
-                return out;
-            }
+            Err(Fatal(error)) => return self.fail(&error),
         };
         if let Some(listed) = listed {
             for path in listed {
@@ -904,21 +917,22 @@ impl Run<'_> {
             fixed = changed.len();
         }
 
-        let mut has_unused_suppressions = false;
-        if !options.stdin {
-            match self.apply_suppressions(
-                &mut results,
-                of_cwd
-                    .as_ref()
-                    .is_some_and(|it| it.flavor == Flavor::Oxlint),
-            ) {
-                Ok(has_unused) => has_unused_suppressions = has_unused,
+        let suppressed = match options.stdin {
+            true => Suppressed::default(),
+            false => match self.apply_suppressions(&mut results, is_oxlint) {
+                Ok(suppressed) => suppressed,
                 Err(Fatal(error)) => return self.fail(&error),
-            }
-        }
+            },
+        };
+        let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
+        // oxlint reports it like problems, after those of all files.
+        let about_suppressions = match is_oxlint {
+            true => format::summary::about_suppressions(has_unused, suppressed.has_new),
+            false => None,
+        };
 
         let mut counts = Counts::default();
-        results.iter().for_each(|it| counts.add(it.counts));
+        (results.iter().chain(&about_suppressions)).for_each(|it| counts.add(it.counts));
         if options.quiet {
             results.iter_mut().for_each(FileResult::keep_errors_only);
             results.retain(|it| !it.messages.is_empty());
@@ -937,6 +951,13 @@ impl Run<'_> {
                 bun_lint::utils::sort::sort_by(&mut results, |a, b| compare_paths(&a.path, &b.path))
             }
         }
+        results.extend(about_suppressions);
+        // oxlint's formats print what they print when there is no problem.
+        if is_oxlint && options.silent {
+            results.clear();
+        }
+        let has_no_files =
+            is_oxlint && files == 0 && !options.stdin && !options.pass_on_no_patterns;
 
         let started = Instant::now();
         let meta = format::Meta {
@@ -945,26 +966,19 @@ impl Run<'_> {
             color_option: options.color,
             max_warnings_exceeded: has_too_many_warnings.then_some((max_warnings, counts.warnings)),
             shows_all: options.all,
-            github_annotations: environment.is_github_action,
+            github_annotations: environment.is_github_action && !is_oxlint,
+            found: counts,
+            fixed,
+            updated_suppressions: suppressed.updated,
             run: format::oxlint::Run {
                 files,
                 rules: of_cwd
                     .as_ref()
-                    .filter(|_| format == Format::OxlintJson)
-                    .and_then(|it| {
-                        match it.config.get(
-                            linter.registry(),
-                            &paths::join(&environment.cwd, b"__placeholder__.js"),
-                        ) {
-                            FileConfig::Matched(config) => Some(
-                                config
-                                    .rules
-                                    .iter()
-                                    .filter(|it| it.severity != Severity::Off)
-                                    .count(),
-                            ),
-                            _ => None,
-                        }
+                    .filter(|_| is_oxlint && !loader.has_nested_configurations())
+                    .map(|it| {
+                        let with_types = options.type_aware.or(of_file) == Some(true);
+                        it.config
+                            .number_of_rules_of_oxlint(linter.registry(), with_types)
                     }),
                 threads: pool.threads(),
                 seconds: self.began.elapsed().as_secs_f64(),
@@ -972,7 +986,9 @@ impl Run<'_> {
             pool: &pool,
             version: environment.version,
         };
-        let output = if options.silent {
+        let output = if has_no_files {
+            format::summary::without_files(format, &meta, options.error_on_unmatched_pattern)
+        } else if options.silent && !is_oxlint {
             Vec::new()
         } else {
             format::format(format, &results, &meta)
@@ -1000,20 +1016,28 @@ impl Run<'_> {
             }
         } else if !output.is_empty() {
             self.out.stdout = output;
-            self.out.stdout.push(b'\n');
+            if !format.is_of_oxlint() {
+                self.out.stdout.push(b'\n');
+            }
         }
 
-        if counts.errors == 0 && has_too_many_warnings {
-            let text = format!("Found too many warnings (maximum: {max_warnings}).");
-            self.error(text.as_bytes());
+        if !is_oxlint && counts.errors == 0 && has_too_many_warnings {
+            self.error(&format::summary::too_many_warnings(max_warnings));
         }
-        if !options.stdin && !options.silent {
-            self.write_summary(counts, files, fixed);
+        if !is_oxlint && !options.stdin && !options.silent {
+            format::summary::write(
+                &mut self.out.stderr,
+                environment.stderr.colors,
+                counts,
+                files,
+                fixed,
+                self.began.elapsed().as_secs_f64() * 1000.0,
+            );
         }
         if options.timing {
             self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
         }
-        if has_unused_suppressions && !options.pass_on_unpruned_suppressions {
+        if has_unused && !is_oxlint {
             self.error(
                 b"There are suppressions left that do not occur anymore. To resolve this, re-run the command with `--prune-suppressions` to remove unused suppressions. To ignore unused suppressions, use `--pass-on-unpruned-suppressions`.",
             );
@@ -1034,23 +1058,26 @@ impl Run<'_> {
         }
         self.out.exit_code = if options.exit_on_fatal_error && counts.fatal_errors > 0 {
             2
+        } else if is_oxlint && options.suppress_all && !has_no_files {
+            // To have written the file is a success for oxlint, whatever is left.
+            0
         } else {
             u8::from(
                 counts.errors > 0
                     || has_too_many_warnings
-                    || (denies_warnings && counts.warnings > 0),
+                    || (denies_warnings && counts.warnings > 0)
+                    || (has_no_files && options.error_on_unmatched_pattern),
             )
         };
         self.out
     }
 
-    /// What ESLint's `cli.execute` does about `eslint-suppressions.json`. Returns whether that has
-    /// what does not occur.
+    /// What ESLint's `cli.execute` does about `eslint-suppressions.json`.
     fn apply_suppressions(
         &self,
         results: &mut [FileResult],
         is_oxlint: bool,
-    ) -> Result<bool, Fatal> {
+    ) -> Result<Suppressed, Fatal> {
         let (options, cwd) = (self.options, &self.environment.cwd);
         let location = options
             .suppressions_location
@@ -1070,8 +1097,9 @@ impl Run<'_> {
             ));
         }
         if !writes && !options.prune_suppressions && !exists {
-            return Ok(false);
+            return Ok(Suppressed::default());
         }
+        let updated = (writes || (options.prune_suppressions && exists)).then_some(exists);
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
             suppressed.suppress(results, cwd, options.suppress_rule.as_deref());
@@ -1081,46 +1109,19 @@ impl Run<'_> {
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
             suppressed.save(&path)?;
-            return Ok(false);
+            return Ok(Suppressed {
+                updated,
+                ..Suppressed::default()
+            });
         }
-        Ok(!unused.is_empty())
-    }
-
-    /// `fixed`: how many files were written.
-    fn write_summary(&mut self, counts: Counts, files: usize, fixed: usize) {
-        let colors = self.environment.stderr.colors;
-        let took = bun_core::output::Elapsed {
-            colors,
-            ms: self.began.elapsed().as_secs_f64() * 1000.0,
-        };
-        let noun = if files == 1 { "file" } else { "files" };
-        let fixed = if fixed > 0 {
-            format!(", fixed {fixed}")
-        } else {
-            String::new()
-        };
-        let out = &mut self.out.stderr;
-        if counts.errors + counts.warnings == 0 {
-            pretty!(
-                out,
-                colors,
-                "<green>\u{2713}<r> No problems<d> in {} {}{} {}<r>\n",
-                files,
-                noun,
-                fixed,
-                took
-            );
-        } else {
-            pretty!(
-                out,
-                colors,
-                "<d>Linted {} {}{} {}<r>\n",
-                files,
-                noun,
-                fixed,
-                took
-            );
-        }
+        let is_new = |it: &LintMessage| it.severity == Severity::Error && it.rule_id.is_some();
+        Ok(Suppressed {
+            has_unused: !unused.is_empty(),
+            has_new: is_oxlint
+                && !writes
+                && (results.iter()).any(|it| it.messages.iter().any(is_new)),
+            updated,
+        })
     }
 
     fn write_timing(&mut self, timing: &Timing, phases: &Phases, pool: &Pool, loading: &Loading) {
@@ -1202,7 +1203,7 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
         out: Outcome::default(),
         began: Instant::now(),
     };
-    let mut out = run.fail(message);
+    let mut out = run.refuse(message);
     pretty!(
         &mut out.stderr,
         environment.stderr.colors,

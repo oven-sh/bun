@@ -64,6 +64,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("eslint", "constructor-super", &[
         m("missingSome", "Lacked a call of `super()` in some code paths."),
         m("missingAll", "Expected to call `super()`."),
+        m("duplicate", "Unexpected duplicate `super()`."),
         m("badSuper", "Unexpected `super()` because `super` is not a constructor."),
     ]),
     ("eslint", "curly", &[
@@ -299,16 +300,25 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("pathWithCustomMessage", "'{{importSource}}' import is restricted from being used."),
         m("patternWithCustomMessage", "'{{importSource}}' import is restricted from being used by a pattern."),
         m("patternAndImportNameWithCustomMessage", "'{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern."),
-        m("patternAndEverythingWithRegexImportName", "* import is invalid because import name matching '^Foo' pattern from '{{importSource}}' is restricted from being used."),
-        m("patternAndEverythingWithRegexImportNameAndCustomMessage", "* import is invalid because import name matching '^Foo' pattern from '{{importSource}}' is restricted from being used."),
         m("importNameWithCustomMessage", "'{{importName}}' import from '{{importSource}}' is restricted."),
-        m("allowedImportNamePattern", "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '^Foo' are allowed from '{{importSource}}'."),
-        m("allowedImportNamePatternWithCustomMessage", "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '^Foo' are allowed from '{{importSource}}'."),
-        m("everythingWithAllowedImportNamePattern", "* import is invalid because only imports that match the pattern '^Allow' from '{{importSource}}' are allowed."),
-        m("everythingWithAllowedImportNamePatternWithCustomMessage", "* import is invalid because only imports that match the pattern '^Allow' from '{{importSource}}' are allowed."),
+        m("patternAndEverything", "* import is invalid because '{{importNames}}' from '{{importSource}}' is restricted from being used by a pattern."),
+        m("patternAndEverythingWithCustomMessage", "* import is invalid because '{{importNames}}' from '{{importSource}}' is restricted from being used by a pattern."),
+        m("patternAndEverythingWithRegexImportName", "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used."),
+        m("patternAndEverythingWithRegexImportNameAndCustomMessage", "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used."),
+        m("everything", "* import is invalid because '{{importNames}}' from '{{importSource}}' is restricted."),
+        m("everythingWithCustomMessage", "* import is invalid because '{{importNames}}' from '{{importSource}}' is restricted."),
+        m("allowedImportName", "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} import(s) is/are allowed."),
+        m("allowedImportNameWithCustomMessage", "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} import(s) is/are allowed."),
+        m("everythingWithAllowImportNames", "* import is invalid because only '{{allowedImportNames}}' from '{{importSource}}' is/are allowed."),
+        m("everythingWithAllowImportNamesAndCustomMessage", "* import is invalid because only '{{allowedImportNames}}' from '{{importSource}}' is/are allowed."),
+        m("allowedImportNamePattern", "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'."),
+        m("allowedImportNamePatternWithCustomMessage", "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'."),
+        m("everythingWithAllowedImportNamePattern", "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed."),
+        m("everythingWithAllowedImportNamePatternWithCustomMessage", "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed."),
     ]),
     ("eslint", "no-restricted-properties", &[
-        m("restrictedProperty", "'{{propertyName}}' is restricted from being used."),
+        m("restrictedObjectProperty", "'{{objectName}}' is restricted from being used.{{allowedPropertiesMessage}}"),
+        m("restrictedProperty", "'{{propertyName}}' is restricted from being used.{{allowedObjectsMessage}}"),
     ]),
     ("eslint", "no-return-assign", &[
         m("returnAssignment", "Returned expression contains an assignment."),
@@ -381,6 +391,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unnecessaryAssignment", "This assigned value is not used in subsequent statements."),
     ]),
     ("eslint", "no-useless-backreference", &[
+        m("forward", "Backreference '{{bref}}' will be ignored. It references group '{{group}}' which appears before in the same lookbehind."),
         m("backward", "Backreference '{{bref}}' will be ignored. It references group '{{group}}' which appears later in the pattern."),
         m("disjunctive", "Backreference '{{bref}}' will be ignored. It references group '{{group}}' which is in another alternative."),
         m("intoNegativeLookaround", "Backreference '{{bref}}' will be ignored. It references group '{{group}}' which is in a negative lookaround."),
@@ -516,12 +527,16 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ]),
     ("typescript", "no-confusing-non-null-assertion", &[
         m("confusingAssign", "Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`."),
+        m("confusingEqual", "Confusing combinations of non-null assertion and equal test like `a! {{operator}} b`, which looks very similar to not equal `a !{{operator}} b`."),
     ]),
     ("typescript", "no-confusing-void-expression", &[
         m("invalidVoidExpr", "Placing a void expression inside another expression is forbidden."),
         m("invalidVoidExprArrow", "Returning a void expression from an arrow function shorthand is forbidden."),
         m("invalidVoidExprReturn", "Returning a void expression from a function is forbidden."),
         m("invalidVoidExprReturnLast", "Returning a void expression from a function is forbidden."),
+    ]),
+    ("typescript", "no-duplicate-enum-values", &[
+        m("duplicateValue", "Duplicate enum value `{{value}}`"),
     ]),
     ("typescript", "no-duplicate-type-constituents", &[
         m("duplicate", "{{type}} type constituent is duplicated with  {{previous}}."),
@@ -591,6 +606,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("alwaysNullish", "Unnecessary conditional, value is always nullish."),
         m("comparisonBetweenLiteralTypes", "Unnecessary comparison between literal values."),
         m("neverNullish", "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined."),
+        m("noOverlapBooleanExpression", "This condition will always return the same value since the types have no overlap."),
         m("typeGuardAlreadyIsType", "Type predicate is unnecessary as the parameter type already satisfies the predicate."),
     ]),
     ("typescript", "no-unnecessary-parameter-property-assignment", &[
@@ -606,16 +622,10 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("typescript", "no-unnecessary-type-conversion", &[
         m("unnecessaryTypeConversion", "This type conversion does not change the type or value of the expression."),
     ]),
-    ("typescript", "no-unsafe-argument", &[
-        m("unsafeSpread", "Unsafe spread of an any type."),
-    ]),
     ("typescript", "no-unsafe-assignment", &[
-        m("anyAssignmentThis", "Unsafe assignment of an any value. `this` is typed as `any`.\n"),
-        m("unsafeArrayPattern", "Unsafe array destructuring of an any array value."),
-        m("unsafeArrayPatternFromTuple", "Unsafe array destructuring of a tuple element with an any value."),
-        m("unsafeArraySpread", "Unsafe spread of an any value in an array."),
         m("unsafeAssignment", "Unsafe assignment between incompatible types."),
-        m("unsafeObjectPattern", "Unsafe array destructuring of a tuple element with an any value."),
+        m("anyAssignmentThis", "Unsafe assignment of an any value. `this` is typed as `any`.\n"),
+        m("unsafeObjectPattern", "Unsafe array destructuring of a tuple element with an {{sender}} value."),
     ]),
     ("typescript", "no-unsafe-call", &[
         m("errorCall", "Unsafe call of a(n) `error` type typed value."),
@@ -636,7 +646,12 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unsafeReturnThis", "Unsafe return of a value of type `{{type}}`. `this` is typed as {{type}}."),
     ]),
     ("typescript", "no-unsafe-type-assertion", &[
+        m("unsafeOfAnyTypeAssertion", "Unsafe assertion from {{type}} detected."),
+        m("unsafeToAnyTypeAssertion", "Unsafe assertion to {{type}} detected."),
         m("unsafeToUnconstrainedTypeAssertion", "Unsafe type assertion: '{{type}}' could be instantiated with an arbitrary type which could be unrelated to the original type."),
+    ]),
+    ("typescript", "no-useless-default-assignment", &[
+        m("uselessUndefined", "Default value is useless because it is undefined. Optional {{types}} are already undefined by default."),
     ]),
     ("typescript", "no-useless-empty-export", &[
         m("uselessExport", "Empty exports do nothing in module files"),
@@ -705,6 +720,8 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("conditionErrorNullableString", "Unexpected nullable string value in conditional."),
         m("conditionErrorNullish", "Unexpected nullish value in conditional. The expression is always falsy."),
         m("conditionErrorNumber", "Unexpected number value in conditional. A number can be falsy (0, NaN) or truthy."),
+        m("conditionErrorObject", "Unexpected object value in conditional. An object is always truthy."),
+        m("conditionErrorOther", "Unexpected value in conditional. A union of different types has inconsistent truthiness."),
         m("conditionErrorString", "Unexpected string value in conditional. A string can be falsy (empty string) or truthy."),
     ]),
     ("typescript", "unbound-method", &[

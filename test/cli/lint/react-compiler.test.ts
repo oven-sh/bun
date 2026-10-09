@@ -1,9 +1,21 @@
-// The 22 rules `react/*` that report what the React Compiler finds, as oxlint has them. What oxlint reports for the same inputs
-// is in oracle/react-compiler/expected.json; expected.ts there writes it.
+// The rules that report what the React Compiler finds: the 22 `react/*` of oxlint, and the 27 `react-hooks/*` of
+// eslint-plugin-react-hooks. What oxlint and ESLint report for the same inputs is in oracle/react-compiler/expected.json;
+// expected.ts there writes it.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { realpathSync } from "node:fs";
 import expected from "./oracle/react-compiler/expected.json";
-import { byFile, type Files, rc, small, twoLabels } from "./oracle/react-compiler/inputs";
+import {
+  briefly,
+  byEslintFile,
+  byFile,
+  eslintConfig,
+  eslintSmall,
+  type Files,
+  rc,
+  small,
+  twoLabels,
+} from "./oracle/react-compiler/inputs";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -28,7 +40,13 @@ async function lint(files: Files, args: string[], more: Record<string, string> =
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { raw: stdout, stdout: normalizeBunSnapshot(stdout, String(dir)), stderr, exitCode };
+  return {
+    raw: stdout,
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr,
+    exitCode,
+    directories: [realpathSync(String(dir)), String(dir)],
+  };
 }
 
 /** What expected.json has for a directory. The order in a file is left out: oxlint's is by rule, ours is by position. */
@@ -155,30 +173,132 @@ describe.concurrent("bun lint: all labels, the help and the note of a diagnostic
       3 |   useEffect(() => {
             ^
       note: This is the containing effect
-         at a.jsx:3:3"
+         at a.jsx:3:3
+
+      Linted 1 file"
     `);
     expect(exitCode).toBe(1);
   });
 
-  test("agent, which is the default for an agent", async () => {
+  test("agent, which is the default for an agent, is oxlint's: a line, with the help", async () => {
     const [named, detected] = await Promise.all([lint(files, ["-f", "agent"]), lint(files, [], { AGENT: "1" })]);
-    expect(named.stdout).toMatchInlineSnapshot(`
-      "<error file="a.jsx" line="4" column="5" rule="react/set-state-in-effect">
-      Calling setState synchronously within an effect can trigger cascading renders
-      <source>
-      2 |   const [state, setState] = useState(0);
-      3 |   useEffect(() => {
-      4 |     setState(1);
-              ^^^^^^^^
-      5 |   }, []);
-      </source>
-      <label line="4" column="5">Avoid calling setState() directly within an effect</label>
-      <label line="3" column="3">This is the containing effect</label>
-      <help>Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.</help>
-      <note>React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect</note>
-      </error>"
-    `);
+    expect(named.stdout).toMatchInlineSnapshot(
+      `"a.jsx:4:5: error react(set-state-in-effect): Calling setState synchronously within an effect can trigger cascading renders help: Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system."`,
+    );
     expect(detected.stdout).toBe(named.stdout);
     expect({ named: named.exitCode, detected: detected.exitCode }).toEqual({ named: 1, detected: 1 });
   });
 });
+
+describe.concurrent(
+  `bun lint: the rules of the React Compiler report what eslint-plugin-react-hooks ${expected.eslint.plugin} reports`,
+  () => {
+    /** What ESLint's `-f json` has for each file that has messages. */
+    async function messages(files: Files) {
+      const { raw, stderr, exitCode, directories } = await lint({ "eslint.config.js": eslintConfig, ...files }, [
+        "-f",
+        "json",
+      ]);
+      if (!raw.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+      return { files: byEslintFile(JSON.parse(raw), directories), exitCode };
+    }
+    const linted = (files: Files) =>
+      Object.fromEntries(
+        Object.entries(files).filter(
+          ([name]) => !expected.eslint.without.includes(name) && !name.includes("node_modules/"),
+        ),
+      );
+
+    test(
+      "for oxlint's test cases: the rule, the place, the first line",
+      async () => {
+        const { files, exitCode } = await messages(linted(expected.cases));
+        expect(briefly(files)).toEqual(expected.eslint.cases);
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    test(
+      "for fixtures of the compiler: the rule, the place, the first line",
+      async () => {
+        const { files, exitCode } = await messages(linted(expected.fixtures));
+        expect(briefly(files)).toEqual(expected.eslint.fixtures);
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    test("the whole message, suggestions, comments, and files that the plugin does not compile", async () => {
+      const { files, exitCode } = await messages(eslintSmall);
+      expect(files).toEqual(expected.eslint.small);
+      // Nothing for `$FlowFixMe[react-rule-hook]` and `[react-rule-unsafe-ref]`, for a file with a decorator, and for a component
+      // without a name.
+      expect(briefly(files)).toEqual({
+        "disabled.jsx": [],
+        "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
+        "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
+        "long.jsx": [
+          "react-hooks/todo 3:3-15:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
+        ],
+        "typescript.tsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
+      });
+      expect(files["disabled.jsx"].suppressed.map(it => it.ruleId)).toEqual(["react-hooks/refs"]);
+      expect(files["typescript.tsx"].messages[0].suggestions).toEqual([
+        { desc: "Update dependencies", range: [92, 98], text: "[a]" },
+      ]);
+      expect(files["typescript.tsx"].messages[0].message).toMatchInlineSnapshot(`
+        "Error: Found extra memoization dependencies
+
+        Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.
+
+        <dir>/typescript.tsx:2:40
+          1 | function Component({ a, b }: { a: number; b: number }) {
+        > 2 |   const value = useMemo(() => [a], [a, b]);
+            |                                        ^ Unnecessary dependency \`b\`
+          3 |   return <div>{value}</div>;
+          4 | }
+          5 |
+
+        Inferred dependencies: \`[a]\`"
+      `);
+      expect(files["javascript.jsx"].messages[0].suggestions).toEqual([]);
+      expect(files["javascript.jsx"].messages[0].message).toMatchInlineSnapshot(`
+        "Error: Found extra memoization dependencies
+
+        Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.
+
+          1 | function Component({ a, b }) {
+        > 2 |   const value = useMemo(() => [a], [a, b]);
+            |                                        ^ Unnecessary dependency \`b\`
+          3 |   return <div>{value}</div>;
+          4 | }
+          5 |"
+      `);
+      // The middle of a place of more than ten lines is left out. A diagnostic of the older kind ends in two line breaks.
+      expect(files["long.jsx"].messages[0].message.split("\n")).toEqual([
+        "Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
+        "",
+        "   1 | function Component(props) {",
+        "   2 |   let value = 0;",
+        ">  3 |   try {",
+        "     |   ^^^^^",
+        ">  4 |     value += props.a;",
+        "     | ^^^^^^^^^^^^^^^^^^^^^",
+        ">  5 |     value += props.b;",
+        "     …",
+        "     | ^^^^^^^^^^^^^^^^^^^^^",
+        "> 14 |     props.done();",
+        "     | ^^^^^^^^^^^^^^^^^^^^^",
+        "> 15 |   }",
+        "     | ^^^^ (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
+        "  16 |   return <div>{value}</div>;",
+        "  17 | }",
+        "  18 |",
+        "",
+        "",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  },
+);

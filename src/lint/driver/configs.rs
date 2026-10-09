@@ -144,7 +144,7 @@ pub(crate) struct Loaded {
     pub(crate) respects_eslint_comments: bool,
     /// `options.typeCheck`
     pub(crate) checks_types: bool,
-    /// With an `eslint.config.js`: what ESLint's own `Linter` is told.
+    /// With an `eslint.config.js`, if the package `eslint` is installed: what ESLint's own `Linter` is told.
     pub(crate) for_eslint: Option<ForEslint>,
 }
 
@@ -165,7 +165,8 @@ impl Loaded {
     /// How the file at `path`, which has `config`, is linted. Only an `eslint.config.js` has processors.
     pub(crate) fn routes(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
         match config.route(path) {
-            Route::Processor | Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
+            Route::Processor if self.flavor != Flavor::Eslint => Route::Unsupported,
+            Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
             route => route,
         }
     }
@@ -405,6 +406,12 @@ impl<'l> Loader<'l> {
         self.options.config.is_some() || !self.options.config_lookup
     }
 
+    /// Whether a configuration file has been read besides that of the working directory. oxlint then does not say how many rules
+    /// there are.
+    pub(crate) fn has_nested_configurations(&self) -> bool {
+        self.by_file.lock().len() > 1
+    }
+
     /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line.
     fn override_config(&self) -> Vec<Json> {
         let options = self.options;
@@ -476,8 +483,18 @@ impl<'l> Loader<'l> {
         added
     }
 
-    /// `file`: the configuration file, if there is one.
-    fn for_eslint(&self, file: Option<&[u8]>, base_path: &[u8]) -> ForEslint {
+    /// `file`: the configuration file, if there is one. `None`: the package `eslint` is not installed.
+    fn for_eslint(&self, file: Option<&[u8]>, base_path: &[u8]) -> Option<ForEslint> {
+        let from = file.map_or_else(|| self.cwd(), paths::dirname);
+        let has_eslint =
+            |it: &[u8]| fs::is_file(&paths::join(it, b"node_modules/eslint/package.json"));
+        if !std::iter::successors(Some(from), |it| {
+            Some(paths::dirname(it)).filter(|up| up.len() < it.len())
+        })
+        .any(has_eslint)
+        {
+            return None;
+        }
         let options = self.options;
         let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
         let only_errors = options.quiet && options.max_warnings == -1;
@@ -485,7 +502,7 @@ impl<'l> Loader<'l> {
         bun_lint::linter::write_json(
             &mut run,
             &object(vec![
-                (b"from", native(file.map_or(self.cwd(), paths::dirname))),
+                (b"from", native(from)),
                 (b"basePath", native(base_path)),
                 (b"allowInlineConfig", Json::Bool(options.inline_config)),
                 (b"onlyErrors", Json::Bool(only_errors)),
@@ -494,10 +511,10 @@ impl<'l> Loader<'l> {
                 (b"added", Json::Array(self.added())),
             ]),
         );
-        ForEslint {
+        Some(ForEslint {
             run,
             whole: Configuration::whole(),
-        }
+        })
     }
 
     /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports.
@@ -835,7 +852,10 @@ impl<'l> Loader<'l> {
             max_warnings,
             respects_eslint_comments,
             checks_types,
-            for_eslint: (flavor == Flavor::Eslint).then(|| self.for_eslint(Some(path), base_path)),
+            for_eslint: match flavor {
+                Flavor::Eslint => self.for_eslint(Some(path), base_path),
+                _ => None,
+            },
         }))
     }
 
@@ -885,7 +905,7 @@ impl<'l> Loader<'l> {
                 max_warnings: None,
                 respects_eslint_comments: true,
                 checks_types: false,
-                for_eslint: Some(self.for_eslint(None, base_path)),
+                for_eslint: self.for_eslint(None, base_path),
             })),
             b"" => self.built_in(),
             path => self.read(path, base_path),

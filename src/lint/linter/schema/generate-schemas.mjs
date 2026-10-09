@@ -56,6 +56,36 @@ for (const plugin of ["react-hooks", "import", "n", "oxc"]) {
     });
   }
 }
+// The rules of the React Compiler in eslint-plugin-react-hooks, which have no fixtures there.
+for (const rule of [
+  "capitalized-calls",
+  "config",
+  "error-boundaries",
+  "exhaustive-effect-dependencies",
+  "fbt",
+  "gating",
+  "globals",
+  "hooks",
+  "immutability",
+  "incompatible-library",
+  "invariant",
+  "memo-dependencies",
+  "memoized-effect-dependencies",
+  "no-deriving-state-in-effects",
+  "preserve-manual-memoization",
+  "purity",
+  "refs",
+  "rule-suppression",
+  "set-state-in-effect",
+  "set-state-in-render",
+  "static-components",
+  "syntax",
+  "todo",
+  "unsupported-syntax",
+  "use-memo",
+  "void-use-memo",
+])
+  add(`react-hooks/${rule}`, { meta: { schema: [{ type: "object", additionalProperties: true }] } });
 rows.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 
 writeFileSync(

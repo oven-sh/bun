@@ -108,6 +108,8 @@ pub struct Options {
     pub is_jsx: bool,
     /// `.js`, `.jsx`, `.mjs`, `.cjs`
     pub is_javascript: bool,
+    /// `.json`: `parseJSONText`. With `is_javascript` and `is_jsx`, as `initializeState` has it.
+    pub is_json: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
     /// Goes on after a syntax error as TypeScript's parser does, and reports it. Not finished: what

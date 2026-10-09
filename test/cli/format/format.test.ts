@@ -493,7 +493,7 @@ describe.concurrent("bun format", () => {
     expect(await different(files, [])).toEqual(["c.js"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
-    expect(broken.stderr).toContain("b.toml: SyntaxError: It is not TOML.");
+    expect(broken.stderr).toMatch(/b\.toml: SyntaxError: .+ \(1:\d+\)/);
     expect(broken.exitCode).toBe(2);
   });
 
@@ -1200,6 +1200,80 @@ try {
     },
     60_000,
   );
+
+  test("a syntax error in HTML is what Prettier says it is, with its place", async () => {
+    const cases = [
+      [
+        ".html",
+        "<div>\n  <p></div>\n</span>\n",
+        'Unexpected closing tag "span". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags (3:1)',
+      ],
+      [".html", "<div>\n<span", 'Opening tag "span" not terminated. (2:1)'],
+      [".html", "<a b='c>", 'Unexpected character "EOF" (1:9)'],
+      [".html", "<p>&nope;</p>\n", 'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (1:4)'],
+      [
+        ".html",
+        "<p>\u00e9&#12 </p>\n",
+        'Unable to parse entity "&#12 " - decimal character reference entities must end with ";" (1:10)',
+      ],
+      [
+        ".html",
+        "<p>&#x110000000;</p>\n",
+        'Unknown entity "&#x110000000;" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (1:17)',
+      ],
+      [".html", "<br></br>\n", 'Void elements do not have end tags "br" (1:5)'],
+      [".html", "<svg><rect", 'Opening tag ":svg:rect" not terminated. (1:6)'],
+      [
+        ".vue",
+        "<template>\n  <div></template>\n",
+        'Unexpected closing tag "template". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags (2:8)',
+      ],
+      [
+        ".vue",
+        "<script>\n</script>\n<template>\n  <a>&nope;</a>\n</template>\n",
+        'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (4:6)',
+      ],
+      [".component.html", "@if (a) {\n  <b></b>\n", 'Unclosed block "if" (1:1)'],
+      [
+        ".component.html",
+        "<div>@if (a {</div>\n",
+        'Incomplete block "if". If you meant to write the @ character, you should use the "&#64;" HTML entity instead. (1:6)',
+      ],
+      [
+        ".component.html",
+        "<b>}</b>\n",
+        'Unexpected closing block. The block may have been closed earlier. If you meant to write the `}` character, you should use the "&#125;" HTML entity instead. (1:4)',
+      ],
+      [
+        ".component.html",
+        "@if (a) {<b>}</b>\n",
+        'Unexpected closing block. The block may have been closed earlier. Did you forget to close the <b> element? If you meant to write the `}` character, you should use the "&#125;" HTML entity instead. (1:13)',
+      ],
+      [
+        ".component.html",
+        "@let a;\n",
+        'Incomplete @let declaration "a". @let declarations must be written as `@let <name> = <value>;` (1:1)',
+      ],
+      [
+        ".component.html",
+        "@let \n",
+        "Incomplete @let declaration. @let declarations must be written as `@let <name> = <value>;` (1:1)",
+      ],
+      [".component.html", "{a, plural, =0 {b}\n", "Invalid ICU message. Missing '}'. (2:1)"],
+      [
+        ".component.html",
+        "{a, plural, =0 b}}\n",
+        'Unexpected character "EOF" (Do you have an unescaped "{" in your template? Use "{{ \'{\' }}") to escape it.) (2:1)',
+      ],
+    ];
+    const files = Object.fromEntries(cases.map(([ending, text], index) => [`${index}${ending}`, text]));
+    const result = await format(files, ["--check"]);
+    const errors = result.stderr.split("\n").filter(line => line.startsWith("[error]"));
+    expect(errors.sort()).toEqual(
+      cases.map(([ending, , message], index) => `[error] ${index}${ending}: SyntaxError: ${message}`).sort(),
+    );
+    expect(result.exitCode).toBe(2);
+  });
 
   test("an e after a dot or a digit is a letter like another, unless it is an exponent of zero", async () => {
     const result = await format(

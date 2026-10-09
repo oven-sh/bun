@@ -567,6 +567,36 @@ fn is_optionable_expression<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
         }
 }
 
+/// `a[b]`, not `a?.[b]`, unless it is an element of a tuple at an index that is written as a number.
+fn tsgolint_is_unguarded_element_access(e: Expr) -> bool {
+    match e.kind() {
+        ExprKind::Index { obj, index, .. } => {
+            !e.is_optional()
+                && !(index.tag() == ExprTag::Number && get_constrained_type_at_location(obj).is_tuple_type())
+        }
+        _ => false,
+    }
+}
+
+/// What tsgolint leaves alone: `e` is such an access, or it ends with an optional step and there is one before that.
+fn tsgolint_has_unguarded_element_access(e: Expr) -> bool {
+    if tsgolint_is_unguarded_element_access(e) {
+        return true;
+    }
+    let mut at = e;
+    while e.is_optional() {
+        if tsgolint_is_unguarded_element_access(at) {
+            return true;
+        }
+        at = match at.kind() {
+            ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => obj,
+            ExprKind::Call(call) => call.callee(),
+            _ => break,
+        };
+    }
+    false
+}
+
 fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     // Only this step of the chain is of interest.
     if !node.is_optional() {
@@ -580,7 +610,8 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     };
     // The type of an element of an array does not tell that the index may be out of bounds.
     if !cx.state.is_no_unchecked_indexed_access
-        && option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index)
+        && (cx.language().is_oxlint && tsgolint_has_unguarded_element_access(node_to_check)
+            || option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index))
     {
         return;
     }

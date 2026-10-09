@@ -534,6 +534,26 @@ pub fn parse_rows_for_comparison(
     })
 }
 
+/// JSON5, read by the reader of JSON. In the test harness only, until it takes the place of `json5.rs`.
+#[cfg(bun_sema_mimalloc)]
+pub fn parse_json5_rows_for_comparison(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> crate::Result<ParsedJson> {
+    let opts = JSONOptions {
+        json_warn_duplicate_keys: false,
+        ..TSCONFIG_OPTS
+    };
+    let mut parser = crate::json_reader::Parser::new(source, log, opts, E::TapeAlloc::Global);
+    parser.read_as_json5();
+    let root = parser.parse_value()?;
+    parser.json5_end()?;
+    Ok(ParsedJson {
+        root,
+        tape: parser.take_tape(),
+    })
+}
+
 fn parse_to_rows_in(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

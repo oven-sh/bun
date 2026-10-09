@@ -116,8 +116,14 @@ impl NoRestrictedProperties {
         match found {
             Found::ObjectProperty(matched) | Found::Object(matched) => {
                 let allowed = matched.allowed_message(&[&b" Only these properties are allowed: "[..]]);
+                let object = object_name.map_or(&b""[..], Name::bytes);
+                // oxlint names what is restricted, in one.
+                let object = match found {
+                    Found::ObjectProperty(_) if cx.language().is_oxlint => [object, b".", &property_name].concat(),
+                    _ => object.to_vec(),
+                };
                 cx.report(at, RESTRICTED_OBJECT_PROPERTY)
-                    .data("objectName", object_name.map_or(&b""[..], Name::bytes))
+                    .data("objectName", object)
                     .data("propertyName", property_name)
                     .data("message", matched.message())
                     .data("allowedPropertiesMessage", allowed);

@@ -1,8 +1,13 @@
-//! ESLint's `stylish` formatter, byte for byte.
+//! ESLint's `stylish` formatter, byte for byte, and what oxlint calls `stylish`.
 
+use super::Meta;
+use super::info::Source;
+use super::oxlint::is_error;
 use crate::results::{Counts, FileResult};
+use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::LintMessage;
 use bun_lint::regex::Regex;
 use bun_lint::utils::text::{trim_end, white_space_len};
 use std::io::Write;
@@ -126,7 +131,7 @@ fn pad(out: &mut Vec<u8>, count: usize) {
     out.resize(out.len() + count, b' ');
 }
 
-fn plural(count: usize) -> &'static str {
+pub(super) fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
@@ -244,4 +249,102 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
     if color {
         out.extend_from_slice(RESET.close);
     }
+}
+
+/// As oxlint styles a text: whatever it starts with, it ends with a reset.
+fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
+    let style = Style {
+        open: style.open,
+        close: RESET.close,
+    };
+    styled(out, color, &style, text);
+}
+
+/// A row of oxlint's.
+struct Placed<'r> {
+    line: usize,
+    /// `line:column`
+    position: Vec<u8>,
+    message: &'r LintMessage,
+    code: Vec<u8>,
+}
+
+/// `filename`: what oxlint calls the file. Empty for the problems without a place, which it puts under the working directory.
+fn write_file_as_oxlint(
+    out: &mut Vec<u8>,
+    color: bool,
+    cwd: &[u8],
+    filename: &[u8],
+    rows: &mut [Placed],
+) {
+    if rows.is_empty() {
+        return;
+    }
+    bun_lint::utils::sort::sort_by_key(rows, |it| it.line);
+    let path = fs::real_path(&paths::resolve(cwd, filename)).unwrap_or_else(|| filename.to_vec());
+    out.push(b'\n');
+    styled_until_reset(out, color, &UNDERLINE, &path);
+    out.push(b'\n');
+    let width = rows.iter().map(|it| it.position.len()).max().unwrap_or(0);
+    for row in rows {
+        row.position.resize(width, b' ');
+        out.extend_from_slice(b"  ");
+        styled_until_reset(out, color, &DIM, &row.position);
+        out.extend_from_slice(b"  ");
+        match is_error(row.message) {
+            true => styled_until_reset(out, color, &RED, b"error"),
+            false => styled_until_reset(out, color, &YELLOW, b"warning"),
+        }
+        out.extend_from_slice(b"  ");
+        out.extend_from_slice(&row.message.message);
+        out.extend_from_slice(b"  ");
+        styled_until_reset(out, color, &DIM, &row.code);
+        out.push(b'\n');
+    }
+}
+
+/// With the end of the last line.
+pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    // oxlint asks for nothing else: not whether it writes to a terminal, not for `FORCE_COLOR`.
+    let has_no_color = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"NO_COLOR")).is_some();
+    let color = meta.color_option.unwrap_or(!has_no_color);
+    let (mut total, mut errors) = (0, 0);
+    let mut without_place = Vec::new();
+    for result in results.iter().filter(|it| !it.messages.is_empty()) {
+        let source = Source::new(result, meta);
+        let mut rows = Vec::new();
+        for message in &result.messages {
+            total += 1;
+            errors += usize::from(is_error(message));
+            let info = source.info(message);
+            let group = if info.filename.is_empty() {
+                &mut without_place
+            } else {
+                &mut rows
+            };
+            group.push(Placed {
+                line: info.start.line,
+                position: format!("{}:{}", info.start.line, info.start.column).into_bytes(),
+                message,
+                code: info.code.unwrap_or_default(),
+            });
+        }
+        write_file_as_oxlint(out, color, meta.cwd, &source.name, &mut rows);
+    }
+    write_file_as_oxlint(out, color, meta.cwd, b"", &mut without_place);
+    if total == 0 {
+        return;
+    }
+    let mut text = Vec::new();
+    let _ = write!(
+        text,
+        "\u{2716} {total} problem{} ({errors} error{}, {} warning{})",
+        plural(total),
+        plural(errors),
+        total - errors,
+        plural(total - errors),
+    );
+    out.push(b'\n');
+    styled_until_reset(out, color, if errors > 0 { &RED } else { &YELLOW }, &text);
+    out.push(b'\n');
 }

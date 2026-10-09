@@ -56,7 +56,7 @@ class Server {
       while ((end = this.buffer.indexOf(10)) < 0) await this.fill();
       const line = new TextDecoder().decode(this.buffer.subarray(0, end));
       this.buffer = this.buffer.subarray(end + 1);
-      if (!line.startsWith("ok ")) return "rejected: " + line;
+      if (!line.startsWith("ok ")) return "rejected: " + line.replace(/SyntaxErrorAt\(.*$/, "SyntaxError");
       const length = Number(line.slice(3));
       while (this.buffer.length < length) await this.fill();
       const output = Buffer.from(this.buffer.subarray(0, length)).toString("latin1");

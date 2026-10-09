@@ -169,9 +169,11 @@ fn get_source_type_for_pattern<'a>(pattern: Pat<'a>, cx: &mut Context<'a>) -> Op
 
 /// `removal`: from the end of what has the default `right` to the end of the default.
 fn report_useless<'a>(message: Message, right: Expr<'a>, removal: Span, ty: &'static str, cx: &Context<'a>) {
-    cx.report(right, message)
-        .data("type", ty)
-        .suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
+    let mut report = cx.report(right, message).data("type", ty);
+    if cx.language().is_oxlint {
+        report = report.data("types", if ty == "property" { "properties" } else { "parameters" });
+    }
+    report.suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
 }
 
 fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {

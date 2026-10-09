@@ -23,6 +23,15 @@ const RESTRICTED_NAMED: Message = Message::new(
 );
 const RESTRICTED_DEFAULT: Message =
     Message::new("restrictedDefault", "Exporting 'default' is restricted.");
+/// What oxlint says instead where it is not `export default`.
+const RESTRICTED_NAMED_AS_DEFAULT: Message =
+    Message::new("restrictedDefault", "Exporting named value as default is restricted.");
+const RESTRICTED_DEFAULT_FROM: Message =
+    Message::new("restrictedDefault", "Reexporting 'default' export is restricted.");
+const RESTRICTED_NAMED_FROM: Message =
+    Message::new("restrictedDefault", "Reexporting named export as default is restricted.");
+const RESTRICTED_NAMESPACE_FROM: Message =
+    Message::new("restrictedDefault", "Reexporting namespace as default is restricted.");
 
 impl NoRestrictedExports {
     fn is_restricted_name(&self, name: Name) -> bool {
@@ -39,11 +48,12 @@ impl NoRestrictedExports {
         }
     }
 
-    /// `restricts_default`: whether this way of exporting something as `default` is restricted.
+    /// `restricts_default`: whether this way of exporting something as `default` is restricted. `said_by_oxlint`: what
+    /// oxlint says then.
     fn check_exported_name<'a>(
         &self,
         exported: Ident<'a>,
-        restricts_default: bool,
+        (restricts_default, said_by_oxlint): (bool, Message),
         statement: Stmt<'a>,
         cx: &Cx<'a, Self>,
     ) {
@@ -51,15 +61,15 @@ impl NoRestrictedExports {
         if self.is_restricted_name(exported.name()) {
             cx.report(place, RESTRICTED_NAMED).data("name", exported);
         } else if restricts_default && exported.name().is("default") {
-            cx.report(place, RESTRICTED_DEFAULT);
+            cx.report(place, if cx.language().is_oxlint { said_by_oxlint } else { RESTRICTED_DEFAULT });
         }
     }
 
     fn check_specifier<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
         let restricts_default = match specifier.export().has_from() {
-            false => self.named,
-            true if specifier.local().name().is("default") => self.default_from,
-            true => self.named_from,
+            false => (self.named, RESTRICTED_NAMED_AS_DEFAULT),
+            true if specifier.local().name().is("default") => (self.default_from, RESTRICTED_DEFAULT_FROM),
+            true => (self.named_from, RESTRICTED_NAMED_FROM),
         };
         self.check_exported_name(specifier.exported(), restricts_default, specifier.export().stmt(), cx);
     }
@@ -69,7 +79,7 @@ impl NoRestrictedExports {
         match kind {
             StmtKind::ExportStar { alias, .. } => {
                 if let Some(alias) = alias {
-                    self.check_exported_name(alias, self.namespace_from, statement, cx);
+                    self.check_exported_name(alias, (self.namespace_from, RESTRICTED_NAMESPACE_FROM), statement, cx);
                 }
                 return;
             }

@@ -2,7 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_flag_set;
 use bun_lint::types::{TsNode, Type, TypeFlags, tsutils};
 use bun_lint_eslint::rules::consistent_return::{
-    MISSING_RETURN, MISSING_RETURN_VALUE, UNEXPECTED_RETURN_VALUE, check, has_return_value, is_relevant,
+    MISSING_RETURN_VALUE, UNEXPECTED_RETURN_VALUE, check, has_return_value, is_relevant,
 };
 use std::cell::OnceCell;
 
@@ -36,6 +36,50 @@ fn is_return_void_or_thenable_void(func: Func<'_>) -> bool {
             false => is_type_flag_set(return_type, TypeFlags::VOID),
         }
     })
+}
+
+/// TypeScript's `getAssignedName`, as it is written: the name that a function expression has from where it is.
+fn assigned_name<'a>(e: Expr<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
+    let left = match e.parent() {
+        _ if e.is_parenthesized() => return None,
+        Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => {
+            return Some(file.slice(prop.key()?.span(file)));
+        }
+        Node::PatProp(prop) if prop.default() == Some(e) => return Some(prop.value().text()),
+        Node::PatElem(element) if element.default() == Some(e) => return Some(element.pat()?.text()),
+        Node::VarDecl(declarator) => return declarator.pat().as_ident().map(Name::bytes),
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Binary { left, right, .. } if right == e => left,
+            ExprKind::Assign { target, value, .. } if value == e => target,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    match left.kind() {
+        _ if left.is_parenthesized() => None,
+        ExprKind::Ident(name) => Some(name.bytes()),
+        ExprKind::Dot { name, .. } => Some(name.bytes()),
+        ExprKind::Index { index, .. } if matches!(index.tag(), ExprTag::String | ExprTag::Number) => Some(index.text()),
+        ExprKind::Index { .. } => Some(left.text()),
+        _ => None,
+    }
+}
+
+/// How tsgolint calls a function.
+fn tsgolint_function_name(func: Func) -> Vec<u8> {
+    let file = func.file();
+    let name = match (func.name(), func.owner()) {
+        (Some(name), _) => Some(name.bytes()),
+        (None, Node::Member(member)) => member.key().map(|it| file.slice(it.span(file))),
+        (None, Node::Prop(prop)) => prop.key().map(|it| file.slice(it.span(file))),
+        (None, Node::Expr(e)) => assigned_name(e, file),
+        _ => None,
+    };
+    let kind: &[u8] = if func.is_async() { b"Async function" } else { b"Function" };
+    match name {
+        Some(name) => [kind, b" '", name, b"'"].concat(),
+        None => kind.to_vec(),
+    }
 }
 
 impl ConsistentReturn {
@@ -77,12 +121,11 @@ impl ConsistentReturn {
             if *expected.get_or_insert(has_value) != has_value {
                 has_mismatch = true;
                 let message = if has_value { UNEXPECTED_RETURN_VALUE } else { MISSING_RETURN_VALUE };
-                let name = ast_utils::get_function_name_with_kind(func);
-                cx.report(statement, message).data("name", text::upper_case_first(&name).into_owned());
+                cx.report(statement, message).data("name", tsgolint_function_name(func));
             }
         }
         if expected == Some(true) && !has_mismatch && func.is_end_reachable() && !allows_void() {
-            cx.report(func.span(), MISSING_RETURN).data("name", ast_utils::get_function_name_with_kind(func));
+            cx.report(func.span(), MISSING_RETURN_VALUE).data("name", tsgolint_function_name(func));
         }
     }
 }

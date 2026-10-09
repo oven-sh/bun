@@ -217,7 +217,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                 || !call
                     .args()
                     .iter()
-                    .all(|argument| SimpleArgument::new(argument).is_simple());
+                    .all(|argument| SimpleArgument::new(argument, f).is_simple());
             if calls_count > 2 && has_complex_args {
                 return true;
             }

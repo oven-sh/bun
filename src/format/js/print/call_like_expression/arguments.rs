@@ -491,7 +491,7 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
 
 /// Prettier's `isHopefullyShortCallArgument`.
 fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let is_simple = |e: Expr<'_>| SimpleArgument::new(e).is_simple_with_depth(1);
+    let is_simple = |e: Expr<'a>| SimpleArgument::new(e, f).is_simple_with_depth(1);
     match argument.kind() {
         ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. }
             if !argument.is_angle_bracket_assertion() || f.file().is_flow() =>
@@ -505,7 +505,7 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
             is_simple(left) && is_simple(right)
         }
         ExprKind::Regex(_) => true,
-        _ => SimpleArgument::new(argument).is_simple(),
+        _ => SimpleArgument::new(argument, f).is_simple(),
     }
 }
 

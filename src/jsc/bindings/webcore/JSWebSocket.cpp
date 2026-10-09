@@ -205,30 +205,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
     return JSValue::encode(jsValue);
 }
 
-static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
+bool WebSocketOptions::parse(JSGlobalObject* lexicalGlobalObject, JSValue optionsObjectValue)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    auto* context = uncheckedDowncast<JSWebSocketDOMConstructor>(callFrame->jsCallee())->scriptExecutionContext();
-    if (!context) [[unlikely]]
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
-    auto url = convert<IDLUSVString>(*lexicalGlobalObject, urlValue);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    Vector<String> protocols;
-    int rejectUnauthorized = -1;
-    // Native heap SSLConfig. RAII — freed on any early return, moved into
-    // WebSocket::create() on success.
-    WebSocketSSLConfigPtr sslConfig;
-    auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
-    // Default true — matches Bun's existing behavior of always offering permessage-deflate.
-    // ws.WebSocket passes `perMessageDeflate: false` to opt out.
-    bool offerPerMessageDeflate = true;
-
-    // Proxy options
-    String proxyUrl;
-    auto proxyHeadersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
 
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
         const auto& builtinnames = WebCore::builtinNames(vm);
@@ -333,9 +314,25 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         }
     }
 
-    auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate);
+    return true;
+}
+
+static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* context = uncheckedDowncast<JSWebSocketDOMConstructor>(callFrame->jsCallee())->scriptExecutionContext();
+    if (!context) [[unlikely]]
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
+    auto url = convert<IDLUSVString>(*lexicalGlobalObject, urlValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    WebSocketOptions options;
+    options.parse(lexicalGlobalObject, optionsObjectValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto object = WebSocket::create(*context, WTF::move(url), WTF::move(options));
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

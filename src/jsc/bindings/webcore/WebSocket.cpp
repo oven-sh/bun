@@ -304,36 +304,22 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ALWAYS_INLINE ExceptionOr<void> WebSocket::dial(const String& url, WebSocketOptions&& options, std::optional<ProxyConfig>&& proxyConfig)
 {
-    if (url.isNull())
-        return Exception { SyntaxError };
+    if (options.rejectUnauthorized != -1)
+        setRejectUnauthorized(options.rejectUnauthorized);
+    m_sslConfig = WTF::move(options.sslConfig); // Set BEFORE connect() so it's available during connection
+    setOfferPerMessageDeflate(options.offerPerMessageDeflate);
 
-    auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
-    if (proxyConfigResult.hasException())
-        return proxyConfigResult.releaseException();
-
-    auto socket = adoptRef(*new WebSocket(context));
-    socket->suspendIfNeeded();
-    // Stopped at birth (its context's active objects were already stopped): stays a CLOSED socket.
-    if (socket->m_state == CLOSED)
-        return socket;
-    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
-    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
-
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
-    if (result.hasException())
-        return result.releaseException();
-
-    return socket;
+    return connect(url, options.protocols, WTF::move(options.headersInit), WTF::move(proxyConfig));
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, WebSocketOptions&& options)
 {
     if (url.isNull())
         return Exception { SyntaxError };
 
-    auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
+    auto proxyConfigResult = setupProxy(options.proxyUrl, WTF::move(options.proxyHeadersInit));
     if (proxyConfigResult.hasException())
         return proxyConfigResult.releaseException();
 
@@ -342,11 +328,8 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     // Stopped at birth (its context's active objects were already stopped): stays a CLOSED socket.
     if (socket->m_state == CLOSED)
         return socket;
-    socket->setRejectUnauthorized(rejectUnauthorized);
-    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
-    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
+    auto result = socket->dial(url, WTF::move(options), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
         return result.releaseException();
 
@@ -410,9 +393,8 @@ size_t WebSocket::memoryCost() const
     return cost;
 }
 
-__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
+ALWAYS_INLINE ExceptionOr<WebSocket::Transport> WebSocket::validate(const String& url, const Vector<String>& protocols)
 {
-    // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = URL { url };
 
     ASSERT(scriptExecutionContext());
@@ -460,6 +442,23 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         }
     }
 
+    // ws+unix:///path/to/sock.sock[:/request/path]: the socket path is the pathname up to its first ':'.
+    if (is_unix && (m_url.path().isEmpty() || m_url.path().startsWith(':'))) {
+        m_state = CLOSED;
+        return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+    }
+
+    return Transport { is_unix, is_secure };
+}
+
+__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
+{
+    // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
+    auto transport = validate(url, protocols);
+    if (transport.hasException())
+        return transport.releaseException();
+    auto [is_unix, is_secure] = transport.releaseReturnValue();
+
     String protocolString;
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
@@ -477,10 +476,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         // colon becomes the request path; if there is no colon the request
         // path is "/" (plus any query string).
         auto pathname = m_url.path();
-        if (pathname.isEmpty()) {
-            m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
-        }
         size_t colon = pathname.find(':');
         if (colon == notFound) {
             unixSocketPathString = pathname.toString();
@@ -496,10 +491,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
             } else {
                 resource = makeString('/', requestPath, m_url.queryWithLeadingQuestionMark());
             }
-        }
-        if (unixSocketPathString.isEmpty()) {
-            m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
         }
         // Host header defaults to "localhost" over a unix socket, matching
         // Node's http.request({ socketPath }) and the npm `ws` package.
@@ -652,15 +643,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     headerNames.clear();
 
     if (this->m_upgradeClient == nullptr) {
-        m_state = CLOSED;
-        if (scriptExecutionContext()) {
-            queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
-                auto eventInit = createErrorEventInit(ws, "Failed to connect"_s, ws.scriptExecutionContext()->jsGlobalObject());
-                auto message = eventInit.message;
-                ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-                ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
-            });
-        }
+        dispatchConnectFailure("Failed to connect"_s);
         // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
@@ -668,6 +651,19 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     m_state = CONNECTING;
     return {};
+}
+
+void WebSocket::dispatchConnectFailure(String&& reason)
+{
+    m_state = CLOSED;
+    if (!scriptExecutionContext())
+        return;
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [reason = WTF::move(reason)](WebSocket& ws) {
+        auto eventInit = createErrorEventInit(ws, reason, ws.scriptExecutionContext()->jsGlobalObject());
+        auto message = eventInit.message;
+        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
+    });
 }
 
 ExceptionOr<void> WebSocket::send(const String& message)

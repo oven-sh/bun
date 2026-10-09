@@ -107,6 +107,22 @@ private:
     void* m_ptr { nullptr };
 };
 
+// The `options` of `new WebSocket(url, options)`.
+struct WebSocketOptions {
+    Vector<String> protocols;
+    // -1 when the options do not say.
+    int rejectUnauthorized = -1;
+    WebSocketSSLConfigPtr sslConfig;
+    std::optional<FetchHeaders::Init> headersInit;
+    // ws.WebSocket passes `perMessageDeflate: false` to stop the permessage-deflate offer.
+    bool offerPerMessageDeflate = true;
+    String proxyUrl;
+    std::optional<FetchHeaders::Init> proxyHeadersInit;
+
+    // Defined in JSWebSocket.cpp. False when it leaves an exception pending.
+    bool parse(JSC::JSGlobalObject*, JSC::JSValue);
+};
+
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
@@ -122,9 +138,7 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    // With proxy support
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
     ~WebSocket();
 
     enum State {
@@ -309,6 +323,17 @@ private:
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
+
+    struct Transport {
+        bool isUnix;
+        bool isSecure;
+    };
+    // Sets m_url, then checks it and the subprotocols. Dials nothing. A rejected socket is CLOSED.
+    ExceptionOr<Transport> validate(const String& url, const Vector<String>& protocols);
+    // Takes the options, then connects.
+    ExceptionOr<void> dial(const String& url, WebSocketOptions&&, std::optional<struct ProxyConfig>&&);
+    // Reports a failure found before a socket exists like a refused connection: error event, then close 1006.
+    void dispatchConnectFailure(String&& reason);
 
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void failConnectingWebSocket();

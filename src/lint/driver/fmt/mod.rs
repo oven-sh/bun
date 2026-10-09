@@ -50,6 +50,11 @@ enum Failure {
     Loss(&'static str),
 }
 
+/// Prettier's message for a parser that it does not have.
+fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
+    [b"Couldn't resolve parser \"", parser, b"\"."].concat()
+}
+
 /// What the file at `path` is parsed as, one after the other until there is no error: whether as
 /// a script. A module, then a script, as the parsers of Prettier do.
 fn kinds(path: &[u8]) -> &'static [bool] {
@@ -293,7 +298,11 @@ fn format(
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
     let mut out = Vec::new();
-    match Kind::of(name, options.parser.as_deref()) {
+    let kind = Kind::of(name, options.parser.as_deref());
+    if let (None, Some(parser)) = (kind, &options.parser) {
+        return Err(Failure::Syntax(cannot_resolve_parser(parser)));
+    }
+    match kind {
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
             let mut sorted = Vec::new();
@@ -653,8 +662,10 @@ impl Run<'_> {
             .and_then(|scope| {
                 let of_config = configs.ignores_of(&scope);
                 let options = configs.options_for(&scope, &path)?;
-                let is_another_language = files::language_of(&path) == Language::Other
-                    && options.options.parser.is_none();
+                let is_another_language = match &options.options.parser {
+                    Some(parser) => Kind::of_parser(parser).is_none(),
+                    None => files::language_of(&path) == Language::Other,
+                };
                 Ok(
                     (!ignored.ignores_file(&path, of_config) && !is_another_language)
                         .then_some(options),
@@ -760,14 +771,14 @@ impl Run<'_> {
             let Expanded::File(target) = it else {
                 continue;
             };
-            match files::language_of(&target.path) {
+            // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
+            let language = match configs.parser_for(&target.scope, &target.path) {
+                Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
+                Some(_) => Language::Supported,
+                None => files::language_of(&target.path),
+            };
+            match language {
                 _ if !is_wanted(target) => {}
-                // The `parser` option says what it is.
-                Language::Other | Language::Unknown
-                    if configs.names_parser_for(&target.scope, &target.path) =>
-                {
-                    work.push((index, target))
-                }
                 Language::Supported => work.push((index, target)),
                 Language::Other => {
                     let name = paths::basename(&target.path);
@@ -1005,6 +1016,10 @@ impl Run<'_> {
         }
         if let Err(Fatal(error)) = configs.check() {
             return self.fail_to_start(configs.flavor, &error);
+        }
+        let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
+        if let Some((_, parser)) = from_flag.filter(|it| Kind::of_parser(&it.1).is_none()) {
+            return self.fail(&cannot_resolve_parser(parser));
         }
         let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
             Ok(ignored) => ignored,

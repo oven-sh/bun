@@ -216,7 +216,7 @@ These differences are intentional:
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
 - **No MDX, Svelte, or Astro.** Files in other languages are skipped with a warning.
-- **Plugins do not load.** The three that sort imports are built in.
+- **Plugins do not load.** The three that sort imports are built in. A file whose `parser` in the configuration is that of a plugin, like `svelte`, is skipped like a file in another language.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.

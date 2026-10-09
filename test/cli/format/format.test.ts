@@ -454,6 +454,71 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  describe("a parser that Prettier does not have", () => {
+    const files = {
+      "a.svelte": '<p   class="a">hi</p>\n',
+      "b.foo": "a:   1\n",
+      "c.js": "c  ;\n",
+      "d.js": "d  ;\n",
+    };
+    const reads = Object.keys(files);
+    const overrides = [
+      { files: "*.svelte", options: { parser: "svelte" } },
+      { files: ["*.foo", "c.js"], options: { parser: "nonsense" } },
+    ];
+
+    test("in the overrides of a .prettierrc: the files are left as they are, and counted", async () => {
+      const config = JSON.stringify({ plugins: ["prettier-plugin-svelte"], overrides });
+      const result = await format({ ...files, ".prettierrc": config }, [], { reads });
+      expect(result.files).toEqual({ ...files, "d.js": "d;\n" });
+      expect(result.stderr).toContain(
+        "3 files are in a language that bun format does not support yet, and left as they are: 1 .foo, 1 .js, 1 .svelte",
+      );
+      expect(result.exitCode).toBe(0);
+      const checked = await format({ ...files, ".prettierrc": config, "d.js": "d;\n" }, ["--check", ...reads], {
+        reads,
+      });
+      expect(checked.files).toEqual({ ...files, "d.js": "d;\n" });
+      expect(checked.stderr).toContain("3 files are in a language that bun format does not support yet");
+      expect(checked.exitCode).toBe(0);
+    });
+
+    test("at the top of a .prettierrc: every file is left as it is", async () => {
+      const result = await format({ ...files, ".prettierrc": '{ "parser": "nonsense" }\n' }, [], { reads });
+      expect(result.files).toEqual(files);
+      expect(result.stderr).toContain("files are in a language that bun format does not support yet");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("on standard input: what is read is printed", async () => {
+      const config = JSON.stringify({ overrides });
+      const result = await format({ ".prettierrc": config }, ["--stdin-filepath", "a.svelte"], {
+        stdin: files["a.svelte"],
+      });
+      expect(result.raw).toBe(files["a.svelte"]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("in an .oxfmtrc.json, which has no such option: it does not count", async () => {
+      for (const config of [{ parser: "nonsense" }, { overrides }]) {
+        const result = await format({ ...files, ".oxfmtrc.json": JSON.stringify(config) + "\n" }, [], { reads });
+        expect(result.files).toEqual({ ...files, "c.js": "c;\n", "d.js": "d;\n" });
+        expect(result.exitCode).toBe(0);
+      }
+    });
+
+    test("after --parser: an error, and nothing is written", async () => {
+      const result = await format(files, ["--parser", "nonsense"], { reads });
+      expect(result.files).toEqual(files);
+      expect(result.stderr).toContain(`[error] Couldn't resolve parser "nonsense".`);
+      expect(result.exitCode).toBe(2);
+      const piped = await format({}, ["--parser", "nonsense", "--stdin-filepath", "c.js"], { stdin: files["c.js"] });
+      expect(piped.raw).toBe("");
+      expect(piped.stderr).toContain(`[error] Couldn't resolve parser "nonsense".`);
+      expect(piped.exitCode).toBe(2);
+    });
+  });
+
   test.each([
     ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
     [

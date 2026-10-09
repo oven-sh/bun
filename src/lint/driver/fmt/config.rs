@@ -785,8 +785,8 @@ impl<'c> Configs<'c> {
         }
     }
 
-    /// Whether the option `parser` is set for the file at `path`, which has `scope`.
-    pub(crate) fn names_parser_for(&self, scope: &Scope, path: &[u8]) -> bool {
+    /// The option `parser` for the file at `path`, which has `scope`, if it is set.
+    pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
         let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
             || self.config_of(scope).ok().flatten().is_some_and(|config| {
@@ -796,10 +796,10 @@ impl<'c> Configs<'c> {
                         .iter()
                         .any(|it| it.settings.iter().any(is_about_parser))
             });
-        may_be_set
-            && self
-                .options_for(scope, path)
-                .is_ok_and(|it| it.options.parser.is_some())
+        match may_be_set {
+            true => self.options_for(scope, path).ok()?.options.parser,
+            false => None,
+        }
     }
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
@@ -828,6 +828,10 @@ impl<'c> Configs<'c> {
             let relative = paths::relative(paths::dirname(&config.path), path);
             for it in config.overrides.iter().filter(|it| it.matches(&relative)) {
                 from_files.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
+            }
+            // oxfmt has no such option.
+            if config.is_oxfmt {
+                from_files.retain(|it| it.0 != b"parser");
             }
         }
         let has_files = config.is_some() || !from_editorconfig.is_empty();

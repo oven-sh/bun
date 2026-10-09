@@ -82,27 +82,28 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
+    /// What Prettier's parser of that name reads. `None`: Prettier has none, so it is that of a plugin, or a mistake.
+    pub(crate) fn of_parser(parser: &[u8]) -> Option<Kind> {
+        let json = || bun_format::json::Parser::from_name(parser).map(Kind::Json);
+        let css = || bun_format::css::Parser::from_name(parser).map(Kind::Css);
+        let html = || bun_format::html::Parser::from_name(parser).map(Kind::Html);
+        let other = || match parser {
+            b"yaml" => Some(Kind::Yaml),
+            b"markdown" | b"remark" => Some(Kind::Markdown),
+            b"mdx" => Some(Kind::Mdx),
+            b"graphql" => Some(Kind::GraphQl),
+            b"glimmer" => Some(Kind::Handlebars),
+            b"babel" | b"babel-flow" | b"babel-ts" | b"flow" | b"typescript" | b"acorn"
+            | b"espree" | b"meriyah" | b"oxc" | b"oxc-ts" => Some(Kind::Script),
+            _ => None,
+        };
+        json().or_else(css).or_else(html).or_else(other)
+    }
+
     /// Of the file at `path`. `parser`: Prettier's option of that name, which decides if it is set.
     pub(crate) fn of(path: &[u8], parser: Option<&[u8]>) -> Option<Kind> {
         if let Some(parser) = parser {
-            let json = || bun_format::json::Parser::from_name(parser).map(Kind::Json);
-            let css = || bun_format::css::Parser::from_name(parser).map(Kind::Css);
-            let other = || match parser {
-                b"yaml" => Some(Kind::Yaml),
-                b"markdown" | b"remark" => Some(Kind::Markdown),
-                b"mdx" => Some(Kind::Mdx),
-                b"graphql" => Some(Kind::GraphQl),
-                b"glimmer" => Some(Kind::Handlebars),
-                _ => None,
-            };
-            let html = || bun_format::html::Parser::from_name(parser).map(Kind::Html);
-            return Some(
-                json()
-                    .or_else(css)
-                    .or_else(html)
-                    .or_else(other)
-                    .unwrap_or(Kind::Script),
-            );
+            return Kind::of_parser(parser);
         }
         let name = paths::basename(path);
         let extension =

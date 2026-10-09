@@ -29,12 +29,60 @@ fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
     declarations().any(is_lexical) || declarations().any(is_function_in_strict_mode)
 }
 
+/// The rule of oxlint 1.80. It is about every empty block that is not part of a `try` statement or the body of a loop,
+/// and about a block in the body of a function only if each of the two has one statement.
+fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBlocks>) {
+    let parent = block.parent();
+    let siblings = match parent {
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Block(siblings) => Some(siblings),
+            _ => None,
+        },
+        Node::Func(func) if func.kind() == FnKind::StaticBlock => func.body_statements(),
+        _ => None,
+    };
+    let message = if siblings.is_some() { REDUNDANT_NESTED_BLOCK } else { REDUNDANT_BLOCK };
+    if body.is_empty() {
+        let is_needed = matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Try || it.is_loop());
+        if !is_needed && cx.file().comments_in(block).next().is_none() {
+            cx.report(block, message);
+        }
+        return;
+    }
+    let is_lone = match parent {
+        Node::File(_) => true,
+        Node::Case(case) => !has_one(case.body()),
+        _ => siblings.is_some(),
+    };
+    let declares = |it: Stmt<'a>| match it.kind() {
+        StmtKind::Var(decls) => !it.is_exported() && decls.first().is_some_and(|it| it.var_kind() != VarKind::Var),
+        StmtKind::Class(_) | StmtKind::Fn(_) => !it.is_exported(),
+        _ => false,
+    };
+    let is_only_child = || match (parent, siblings) {
+        (_, Some(siblings)) => has_one(siblings),
+        (Node::Func(func), None) => func.body_statements().is_some_and(|statements| {
+            let start = block.span().start;
+            has_one(body)
+                && statements.after(start).is_none()
+                && statements.before(start).is_none_or(|it| it.directive().is_some())
+        }),
+        _ => false,
+    };
+    if is_lone && !body.iter().any(declares) || is_only_child() {
+        cx.report(block, message);
+    }
+}
+
 impl NoLoneBlocks {
     fn check<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // A `with` statement has the same tag.
         let StmtKind::Block(body) = block.kind() else {
             return;
         };
+        if cx.language().is_oxlint {
+            return check_as_oxlint(block, body, cx);
+        }
         // Whether it is in a block, which the body of a function is too, and alone in it.
         let (is_nested, is_only_child) = match block.parent() {
             Node::Stmt(parent) => match parent.kind() {

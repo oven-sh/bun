@@ -6,12 +6,13 @@ pub struct NoSetterReturn;
 const RETURNS_VALUE: Message = Message::new("returnsValue", "Setter cannot return a value.");
 
 /// ESLint's `isSetter`: a setter of an object literal or a class, or the `set` of a property
-/// descriptor.
-fn is_setter(func: Func) -> bool {
+/// descriptor. oxlint does not look at property descriptors.
+fn is_setter(func: Func, is_oxlint: bool) -> bool {
     if func.kind() == FnKind::Setter {
         return true;
     }
-    if let Node::Expr(e) = func.owner()
+    if !is_oxlint
+        && let Node::Expr(e) = func.owner()
         && let Node::Prop(prop) = e.parent()
         && prop.value() == Some(e)
         && prop.kind() != PropKind::Spread
@@ -33,7 +34,7 @@ impl Rule for NoSetterReturn {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.funcs(|_, func, cx| {
-            if !func.has_body() || !is_setter(func) {
+            if !func.has_body() || !is_setter(func, cx.language().is_oxlint) {
                 return;
             }
             if let FnBody::Expr(body) = func.body() {

@@ -356,11 +356,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
-  createQueryHandle(
-    sql: string,
-    values: unknown[] | Record<string, unknown> | undefined | null = [],
-  ): SQLiteQueryHandle {
-    return new SQLiteQueryHandle(sql, values ?? []);
+  createQueryHandle(sql: string, values: unknown[] | Record<string, unknown>): SQLiteQueryHandle {
+    return new SQLiteQueryHandle(sql, values);
   }
   escapeIdentifier(str: string) {
     if (str.includes("\0")) {

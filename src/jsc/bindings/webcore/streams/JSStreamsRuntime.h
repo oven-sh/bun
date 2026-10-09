@@ -87,9 +87,10 @@ namespace WebCore {
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow, whose context is
-// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement).
+// an InternalFieldTuple{op, originalError} (registered on the error tail's iter.return() settlement).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     V(onAsyncIterableSourceNextFulfilled)                              \
+    V(onAsyncIterableSourceNextRejected)                               \
     V(onAsyncIterableSourceFlushFulfilled)                             \
     V(onAsyncIterableSourceErrored)                                    \
     V(onAsyncIterableSourceEndFulfilled)                               \

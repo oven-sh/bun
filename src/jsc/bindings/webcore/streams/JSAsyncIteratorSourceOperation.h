@@ -55,7 +55,8 @@ public:
 
     // The consumer is done: iterator.return?.() and never throw(), which a body can catch and outlive.
     JSC::JSPromise* closeIterator(JSC::JSGlobalObject*);
-    void clearIterator() { internalField(Field::Iterator).clear(); }
+    // The iterator itself failed: nothing more is called on it.
+    void abandonIterator() { internalField(Field::Iterator).clear(); }
     void clearPullPromise() { internalField(Field::PullPromise).clear(); }
 
     bool m_cancelled : 1 { false };

@@ -1353,6 +1353,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     it.each([
       // A small write is buffered. Its failure comes back when the sink closes.
       ["small lines", `"tick\\n"`],
+      // A large write goes straight to the pipe and fails at once.
+      ["64 KiB lines", `Buffer.alloc(64 * 1024, "x").toString() + "\\n"`],
     ])(
       "Bun.write(Bun.stdout, new Response(asyncIterable)) closes the iterable when the reader of the pipe leaves: %s",
       async (_, line) => {
@@ -1406,6 +1408,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         it.each([
           // A small write is buffered. Its failure comes back when the sink closes.
           ["chunks of 6 bytes", "chunk\n"],
+          // A large write goes straight to the file and fails at once.
+          ["chunks of 64 KiB", Buffer.alloc(64 * 1024, "x")],
         ])("%s", async (_, chunk) => {
           const shape = make({ chunk, count: 100 });
           await expect(Bun.write("/dev/full", new Response(shape.body))).rejects.toThrow(
@@ -1413,6 +1417,31 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           );
           expect(await settledBody(shape)).toEqual(shape.expected);
         });
+      },
+    );
+
+    // The body ends in the same tick as its only chunk, so the only write is the flush at its end.
+    it.skipIf(process.platform !== "linux").each([
+      ["next() and return()", false],
+      ["next(), return() and throw()", true],
+    ])(
+      "a flush at the end of the body that fails with ENOSPC closes an iterator with %s with return()",
+      async (_, withThrow) => {
+        const calls = [];
+        let given = 0;
+        const iterator = {
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+          next: async () => (given++ === 0 ? { done: false, value: "chunk\n" } : { done: true, value: undefined }),
+          return: async () => (calls.push("return"), { done: true, value: undefined }),
+        };
+        if (withThrow) iterator.throw = async () => (calls.push("throw"), { done: true, value: undefined });
+        await expect(Bun.write("/dev/full", new Response(iterator))).rejects.toThrow(
+          expect.objectContaining({ code: "ENOSPC" }),
+        );
+        for (let turn = 0; turn < 50 && !calls.length; turn++) await new Promise(resolve => setImmediate(resolve));
+        expect(calls).toEqual(["return"]);
       },
     );
 

@@ -542,6 +542,60 @@ test.concurrent("Bun.serve: a timers/promises interval as the body is cleared wh
   expect(exitCode).toBe(0);
 });
 
+// The consumer failed, not the iterator: it refused a chunk. The iterator is closed the way
+// `for await` closes one when the loop body throws, and the body rejects with the consumer's error.
+describe.concurrent("an async-iterable body whose chunk the consumer refuses", () => {
+  const refused = () => Symbol("not a chunk");
+  const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  test.each(asyncIterableBodyShapes)("%s is closed with return()", async (_, make) => {
+    const shape = make({ chunk: refused() });
+    await expect(new Response(shape.body).text()).rejects.toBeInstanceOf(TypeError);
+    expect(await settled(shape)).toEqual(shape.expected);
+  });
+
+  test("an iterator with next() and throw() only gets no call", async () => {
+    const calls: string[] = [];
+    const body = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ done: false, value: refused() }),
+        throw: () => (calls.push("throw"), Promise.resolve({ done: true, value: undefined })),
+      }),
+    };
+    await expect(new Response(body as any).text()).rejects.toBeInstanceOf(TypeError);
+    await macrotask();
+    expect(calls).toEqual([]);
+  });
+
+  // What return() throws replaces the consumer's error. What its promise rejects with does not.
+  test.each([
+    [
+      "throws",
+      () => {
+        throw new Error("return() failed");
+      },
+      Error,
+    ],
+    ["rejects", () => Promise.reject(new Error("return() failed")), TypeError],
+  ])("a return() that %s", async (_, returns, expected) => {
+    let calls = 0;
+    const body = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ done: false, value: refused() }),
+        return() {
+          calls++;
+          return returns();
+        },
+      }),
+    };
+    const error = await new Response(body as any).text().then(
+      () => undefined,
+      e => e,
+    );
+    expect({ constructor: error?.constructor, calls }).toEqual({ constructor: expected, calls: 1 });
+  });
+});
+
 // return() can hand back something that only starts its work in then(), like a Bun.sql query.
 // Bun awaits what return() gives back, so that work runs and the body still settles.
 describe.concurrent("an async-iterable body whose return() gives back", () => {
@@ -586,6 +640,13 @@ describe.concurrent("an async-iterable body whose return() gives back", () => {
       expect(started).toBe(1);
     });
 
+    test("after a refused chunk", async () => {
+      let started = 0;
+      const body = bodyOf([Symbol("not a chunk")], () => make(() => started++));
+      await expect(new Response(body as any).text()).rejects.toBeInstanceOf(TypeError);
+      expect(started).toBe(1);
+    });
+
     test("after the client hung up", async () => {
       let started = 0;
       const aborted = Promise.withResolvers<void>();
@@ -611,5 +672,69 @@ describe.concurrent("an async-iterable body whose return() gives back", () => {
       for (let turn = 0; turn < 50 && !started; turn++) await macrotask();
       expect(started).toBe(1);
     });
+  });
+});
+
+// The iterator failed by itself. Like `for await`, nothing more is called on it.
+describe.concurrent("an async-iterable body whose iterator fails is not called again when", () => {
+  const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
+  const failed = () => new Error("next() failed");
+  // Bun reads `next` once when it makes the body, then once for each chunk.
+  const nextThatThrowsOnRead = (read: number) => {
+    let reads = 0;
+    return {
+      get next() {
+        if (++reads === read) throw failed();
+        return async () => ({ done: false, value: "chunk" });
+      },
+    };
+  };
+  test.each([
+    [
+      "next() throws",
+      {
+        next() {
+          throw failed();
+        },
+      },
+      "next() failed",
+    ],
+    ["next() rejects at once", { next: () => Promise.reject(failed()) }, "next() failed"],
+    [
+      "next() rejects later",
+      {
+        async next() {
+          await macrotask();
+          throw failed();
+        },
+      },
+      "next() failed",
+    ],
+    ["next() gives a result that is not an object", { next: async () => 1 }, "not an object"],
+    [
+      "the `done` getter of a result throws",
+      {
+        next: async () => ({
+          get done() {
+            throw failed();
+          },
+        }),
+      },
+      "next() failed",
+    ],
+    ["the `next` getter throws for the first chunk", nextThatThrowsOnRead(2), "next() failed"],
+    ["the `next` getter throws for the second chunk", nextThatThrowsOnRead(3), "next() failed"],
+  ])("%s", async (_, iterator, message) => {
+    const calls: string[] = [];
+    const body = {
+      [Symbol.asyncIterator]: () =>
+        Object.defineProperties(iterator, {
+          return: { value: () => (calls.push("return"), Promise.resolve({ done: true, value: undefined })) },
+          throw: { value: () => (calls.push("throw"), Promise.resolve({ done: true, value: undefined })) },
+        }),
+    };
+    await expect(new Response(body as any).text()).rejects.toThrow(message);
+    await macrotask();
+    expect(calls).toEqual([]);
   });
 });

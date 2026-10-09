@@ -516,6 +516,8 @@ describe("spawn stdin ReadableStream", () => {
       test.concurrent.each([
         // A small write is buffered. Its failure comes back when the sink closes.
         ["of 6 bytes", "chunk\n"],
+        // A large write goes straight to the pipe and fails at once.
+        ["of 64 KiB", Buffer.alloc(64 * 1024, "x")],
       ])("%s", async (_, chunk) => {
         const childClosedStdin = Promise.withResolvers<void>();
         const shape = make({ chunk, start: childClosedStdin.promise });

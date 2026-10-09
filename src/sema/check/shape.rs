@@ -347,6 +347,17 @@ impl<'s> Builder<'s> {
             declaring: None,
         }
     }
+    /// To add to `shape`.
+    fn of(shape: Shape<'s>, arena: &'s Arena) -> Builder<'s> {
+        let mut b = Builder {
+            shape,
+            ..Builder::new_in(arena)
+        };
+        if b.shape.props.len() > FEW {
+            b.reserve_names(b.shape.props.len());
+        }
+        b
+    }
     /// Position of the property `name`.
     #[inline]
     fn position(&self, name: Atom) -> Option<usize> {
@@ -1703,6 +1714,7 @@ impl<'p, 's> Checker<'p, 's> {
                             flags,
                             source: PropSource::Symbol(self.files().sym(file, symbol)),
                             mapper: MapperId::IDENTITY,
+                            name_type: TypeId::UNRESOLVED,
                         });
                     }
                 }
@@ -1761,6 +1773,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: self.flags_of_declarations(&list, symbol_flags),
                 source: PropSource::Symbol(sym),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             match b.position(name) {
                 None => b.add_new(prop),
@@ -3533,6 +3546,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Type(instance),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     });
                 }
                 let exports_from = b.shape.props.len();
@@ -3640,6 +3654,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: self.export_flags(member),
                         source: PropSource::Symbol(member),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     });
                 }
                 self.get_named_members(&mut b.shape.props, |_| true, &[]);
@@ -3674,6 +3689,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: self.export_flags(export),
                         source: PropSource::Symbol(export),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     });
                 }
             }
@@ -3720,6 +3736,7 @@ impl<'p, 's> Checker<'p, 's> {
                                         self.arena,
                                     ),
                                     mapper: MapperId::IDENTITY,
+                                    name_type: TypeId::UNRESOLVED,
                                 };
                             } else if prop.flags.contains(PropFlags::READONLY) {
                                 // A readonly property, an `export const`, is recreated too: with
@@ -3749,6 +3766,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Type(ty),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     });
                 }
             }
@@ -3775,6 +3793,7 @@ impl<'p, 's> Checker<'p, 's> {
                             flags,
                             source: PropSource::Symbol(sym),
                             mapper: MapperId::IDENTITY,
+                            name_type: TypeId::UNRESOLVED,
                         });
                     }
                 }
@@ -3863,13 +3882,15 @@ impl<'p, 's> Checker<'p, 's> {
                         files.sym(of, self.bound(of).symbol_of_declaration(first)),
                     ),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 });
             }
         }
     }
 
-    /// `shape`, which has no properties, extended with `getExportsOfSymbol(owner)`, which are
-    /// declared by assignments, in the order of `getNamedMembers`.
+    /// `shape`, of a function or of an object literal with its members, extended with
+    /// `getExportsOfSymbol(owner)`, which are declared by assignments, in the order of
+    /// `getNamedMembers`.
     pub(super) fn with_expandos(
         &mut self,
         shape: Shape<'s>,
@@ -3880,10 +3901,7 @@ impl<'p, 's> Checker<'p, 's> {
         if owner.is_none() || self.bound(file).symbols[owner.idx()].exports.is_none() {
             return shape;
         }
-        let mut b = Builder {
-            shape,
-            ..Builder::new_in(self.arena)
-        };
+        let mut b = Builder::of(shape, self.arena);
         let before = b.shape.props.len();
         let owner = self.files().sym(file, owner);
         self.add_namespace_exports(&mut b, owner);
@@ -3925,6 +3943,7 @@ impl<'p, 's> Checker<'p, 's> {
                     flags,
                     source: PropSource::Symbol(sym),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 });
             }
         }
@@ -3961,6 +3980,7 @@ impl<'p, 's> Checker<'p, 's> {
                     flags: self.export_flags(export),
                     source: PropSource::Symbol(export),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 });
             }
         }
@@ -4001,6 +4021,7 @@ impl<'p, 's> Checker<'p, 's> {
                     },
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         let length = if fixed == flags.len() {
@@ -4026,6 +4047,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
             source: PropSource::Type(length),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         });
         let array = self.tuple_base_type(elems, flags, readonly);
         let heir = match *self.data(array) {
@@ -4349,6 +4371,7 @@ impl<'p, 's> Checker<'p, 's> {
                     flags,
                     source: Self::copy_of(ty, &[prop], false, self.arena),
                     mapper: MapperId::IDENTITY,
+                    name_type: self.name_type_of_copy(owner, prop),
                 });
             }
             for info in &members.shape().index {
@@ -4469,6 +4492,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: flags | prop.flags & read_with,
                         source: prop.source.clone_in(self.arena),
                         mapper: composed,
+                        name_type: self.name_type_of_copy(owner, prop),
                     };
                 }
             }
@@ -4483,6 +4507,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags,
             source: Self::copy_of(ty, &[prop], is_same_symbol, self.arena),
             mapper: MapperId::IDENTITY,
+            name_type: self.name_type_of_copy(owner, prop),
         }
     }
 
@@ -4678,9 +4703,12 @@ impl<'p, 's> Checker<'p, 's> {
                 let existing = &b.shape.props[i];
                 let left_ty = self.type_of_prop(existing, MapperId::IDENTITY);
                 // It is recreated, and named like the one on the left.
-                let named = match l.resolved.prop(prop.name) {
-                    Some(original) => self.name_flag_of_copy(left, original, true),
-                    None => existing.flags & PropFlags::STRING_NAME,
+                let (named, name_type) = match l.resolved.prop(prop.name) {
+                    Some(original) => (
+                        self.name_flag_of_copy(left, original, true),
+                        self.name_type_of_copy(left, original),
+                    ),
+                    None => (existing.flags & PropFlags::STRING_NAME, existing.name_type),
                 };
                 let flags = existing.flags & PropFlags::OPTIONAL | named;
                 // `getSpreadType`: the type on the left, or the type on the right when that
@@ -4697,6 +4725,7 @@ impl<'p, 's> Checker<'p, 's> {
                     flags,
                     source: Self::copy_of(ty, &[&b.shape.props[i], prop], false, self.arena),
                     mapper: MapperId::IDENTITY,
+                    name_type,
                 }
             } else {
                 // `rightType := c.getTypeOfSymbol(rightProp)`, for a property that the left has too.
@@ -6466,6 +6495,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags: PropFlags::empty(),
             source: PropSource::Literal(file, written),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         };
         prop.source = Self::copy_of(ty, &[&prop], true, arena);
         prop
@@ -7099,12 +7129,14 @@ impl<'p, 's> Checker<'p, 's> {
             flags: PropFlags::WRITE_PARTIAL,
             source: PropSource::Type(t),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         }));
         Some(Prop {
             name,
             flags,
             source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         })
     }
 

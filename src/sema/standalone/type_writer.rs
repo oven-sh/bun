@@ -592,6 +592,7 @@ impl Checker<'_, '_> {
                 flags,
                 source: own.clone_in(self.arena),
                 mapper,
+                name_type: TypeId::UNRESOLVED,
             }
         };
         let Some((prop, _)) = prop else {

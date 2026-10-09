@@ -17,6 +17,7 @@ pub mod json;
 pub mod local;
 pub mod messages;
 pub mod node;
+pub mod portable;
 pub mod program;
 pub mod resolve;
 pub mod session;

@@ -51,17 +51,49 @@ pub(super) struct Reader<'r> {
     pub(super) js_locations: Vec<(Box<[u8]>, Json)>,
     /// How many of the objects are ESLint's own.
     pub(super) defaults: usize,
+    /// The names of the plugins of the configuration that are not [built in](is_built_in).
+    pub(super) foreign_prefixes: Vec<Box<[u8]>>,
 }
 
-fn is_typescript_plugin(name: &[u8]) -> bool {
-    let name = match bun_core::strings::last_index_of_char(name, b'@') {
-        Some(at) if at > 0 => &name[..at],
-        _ => name,
-    };
-    matches!(
-        name,
-        b"@typescript-eslint/eslint-plugin" | b"typescript-eslint" | b"@typescript-eslint"
-    )
+/// Whether the plugin that a configuration has as `prefix` is the one that is implemented here: it has the name that is usual
+/// for it. `name`: what the plugin says it is called, with its version, if it says so. Under another name, as `ts` or `node` in
+/// `@antfu/eslint-config`, or if another plugin has the name, as `import-x` has `import` there, it runs as what it is:
+/// JavaScript. So its rules are called what the configuration calls them, in reports and in comments.
+fn is_built_in(prefix: &[u8], name: Option<&[u8]>) -> bool {
+    let package = name.map(
+        |name| match bun_core::strings::last_index_of_char(name, b'@') {
+            Some(at) if at > 0 => &name[..at],
+            _ => name,
+        },
+    );
+    let is_called = |usual: &[u8]| package.is_none_or(|it| it == usual);
+    match prefix {
+        b"@" | b"@typescript-eslint" => true,
+        b"react-hooks" => is_called(b"eslint-plugin-react-hooks"),
+        b"import" => is_called(b"eslint-plugin-import"),
+        b"n" => is_called(b"eslint-plugin-n"),
+        _ => false,
+    }
+}
+
+/// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not
+/// [built in](is_built_in). An object can have the rules of a plugin that an object after it has.
+fn add_foreign_prefixes(json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
+    if let Json::Array(items) = json {
+        for item in items.iter().filter(|_| depth < 64) {
+            add_foreign_prefixes(item, depth + 1, into);
+        }
+        return;
+    }
+    let plugins = json.get(b"plugins").and_then(Json::as_object);
+    for (prefix, name) in plugins.unwrap_or_default() {
+        if !is_built_in(prefix, name.as_str()) && !into.iter().any(|it| **it == prefix[..]) {
+            into.push(prefix[..].into());
+        }
+    }
+    if let Some(extends) = json.get(b"extends") {
+        add_foreign_prefixes(extends, depth + 1, into);
+    }
 }
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
@@ -183,27 +215,15 @@ impl Reader<'_> {
         patterns.collect()
     }
 
-    /// The rules of an object. `typescript_prefixes`: other names under which the plugin of
-    /// typescript-eslint is configured.
-    pub(super) fn rules(
-        &mut self,
-        rules: &Json,
-        typescript_prefixes: &[&[u8]],
-    ) -> Result<Vec<RuleSetting>, ConfigError> {
+    /// The rules of an object.
+    pub(super) fn rules(&mut self, rules: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
         let mut settings = Vec::new();
         for (id, value) in rules.as_object().unwrap_or_default() {
             if id == b"__proto__" {
                 continue;
             }
+            let id = &id[..];
             let (prefix, name) = parse_rule_id(id);
-            let renamed;
-            let id: &[u8] = match typescript_prefixes.contains(&prefix) {
-                true => {
-                    renamed = [b"@typescript-eslint/", name].concat();
-                    &renamed
-                }
-                false => id,
-            };
             let Some(mut setting) = RuleSetting::new(id, value) else {
                 return Err(ConfigError::new(&[
                     b"Key \"rules\": Key \"",
@@ -226,17 +246,17 @@ impl Reader<'_> {
                 settings.push(setting);
                 continue;
             }
+            let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
             setting.written_for = match self.prefers_typescript_rules {
+                _ if is_foreign => None,
                 true => Plugin::of_oxlint_prefix(prefix),
                 false => Plugin::of_prefix(prefix),
             };
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
             }
-            match self
-                .registry
-                .find_preferring(id, self.prefers_typescript_rules)
-            {
+            let found = (self.registry).find_preferring(id, self.prefers_typescript_rules);
+            match found.filter(|_| !is_foreign) {
                 Some(entry) => {
                     setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into()
                 }
@@ -333,29 +353,14 @@ impl Reader<'_> {
             object.error = Some([&config_name(json)[..], &message].concat());
             return Ok(object);
         }
-        let mut typescript_prefixes: Vec<&[u8]> = Vec::new();
         for (prefix, name) in json
             .get(b"plugins")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            match name.as_str() {
-                _ if matches!(&prefix[..], b"@" | b"@typescript-eslint") => {
-                    object.plugins.push(prefix[..].into());
-                }
-                Some(name) if is_typescript_plugin(name) => {
-                    typescript_prefixes.push(prefix);
-                    object.plugins.push(b"@typescript-eslint"[..].into());
-                }
-                // `eslint` and `typescript` are names that oxlint has, not what a plugin is called here.
-                _ if matches!(
-                    Plugin::of_prefix(prefix),
-                    Some(plugin) if !matches!(plugin, Plugin::Eslint | Plugin::TypeScript)
-                ) =>
-                {
-                    object.plugins.push(prefix[..].into());
-                }
-                _ => object.foreign_plugins.push(prefix[..].into()),
+            match is_built_in(prefix, name.as_str()) {
+                true => object.plugins.push(prefix[..].into()),
+                false => object.foreign_plugins.push(prefix[..].into()),
             }
         }
         for (prefix, location) in json
@@ -368,15 +373,8 @@ impl Reader<'_> {
                     .push((prefix[..].into(), location.clone()));
             }
         }
-        for prefix in &typescript_prefixes {
-            self.note(&[
-                b"The rules of typescript-eslint are reported as \"@typescript-eslint/..\", not as \"",
-                prefix,
-                b"/..\". Comments have to name them so.",
-            ]);
-        }
         if let Some(rules) = json.get(b"rules") {
-            object.rules = self.rules(rules, &typescript_prefixes)?;
+            object.rules = self.rules(rules)?;
         }
         let part = |key: &[u8]| json.get(key).cloned().unwrap_or(Json::Null);
         object.language_options = part(b"languageOptions");
@@ -564,7 +562,9 @@ impl Config {
             js_plugins: Vec::new(),
             js_locations: Vec::new(),
             defaults: 0,
+            foreign_prefixes: Vec::new(),
         };
+        add_foreign_prefixes(json, 0, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
             reader.object_with_extends(object)?;

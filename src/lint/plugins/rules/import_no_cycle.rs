@@ -262,7 +262,7 @@ fn oxlint_finds_within(modules: &dyn Modules, start: ModuleId, needle: ModuleId,
             let is_followed = !is_in_node_modules(modules.path(import.module));
             entries.extend(import.declarations.iter().map(|it| (&it.specifier[..], import.module, is_followed && !it.is_only_importing_types)));
         }
-        entries.sort_unstable();
+        utils::sort::sort_unstable(&mut entries);
         entries.dedup();
         entries.into_iter()
     };
@@ -407,7 +407,7 @@ impl NoCycle {
             }
         }
         checks.retain(|check| !self.ignore.iter().any(|it| it.test(check.specifier)));
-        checks.sort_by_key(|it| (it.importer.start, std::cmp::Reverse(it.importer.end)));
+        utils::sort::sort_by_key(&mut checks, |it| (it.importer.start, std::cmp::Reverse(it.importer.end)));
         checks
     }
 

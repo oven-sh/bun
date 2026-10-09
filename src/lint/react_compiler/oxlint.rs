@@ -911,7 +911,7 @@ fn first_ref_access<'a>(file: &'a File<'a>, func: Func<'a>, memo: &mut Memo<'a>)
             .exprs_of_kind(ExprTag::Dot)
             .filter(is_current)
             .collect();
-        all.sort_unstable_by_key(|e| e.span());
+        bun_lint::utils::sort::sort_unstable_by_key(&mut all, |e| e.span());
         all
     });
     let whole = func.span();

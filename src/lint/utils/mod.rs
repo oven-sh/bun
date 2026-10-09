@@ -95,6 +95,7 @@ pub mod keywords;
 pub mod naming;
 pub mod oxlint;
 pub mod regular_expressions;
+pub mod sort;
 pub mod string_utils;
 pub mod text;
 pub mod token_key;

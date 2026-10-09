@@ -1,7 +1,7 @@
 //! Import and export declarations.
 
 use super::stmt::Start;
-use super::{Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::Atom;
@@ -284,8 +284,13 @@ impl Parser<'_> {
                 self.next();
             } else {
                 has_named_imports = true;
-                self.expect(T::OpenBrace);
-                while self.is_in_list(T::CloseBrace) {
+                let has_list = self.expect(T::OpenBrace);
+                let lists = self.enter_list(ListKind::ImportOrExportSpecifiers);
+                while has_list
+                    && self.is_in_list(T::CloseBrace)
+                    && self.is_at_element(ListKind::ImportOrExportSpecifiers)
+                {
+                    let element = self.full_start();
                     let specifier = self.import_or_export_specifier();
                     let name = specifier.name;
                     // The local name is an identifier that is not reserved.
@@ -306,11 +311,16 @@ impl Parser<'_> {
                         end: specifier.end,
                         import: declaration,
                     });
-                    if !self.eat(T::Comma) {
+                    if !self.eat(T::Comma)
+                        && !self.goes_on_without_comma(ListKind::ImportOrExportSpecifiers, element)
+                    {
                         break;
                     }
                 }
-                self.expect(T::CloseBrace);
+                self.lists = lists;
+                if has_list {
+                    self.expect(T::CloseBrace);
+                }
             }
         }
         if is_deferred && !has_clause {
@@ -454,9 +464,14 @@ impl Parser<'_> {
         }
         let declaration = ExportId(self.f.exports.len() as u32);
         let specs = self.s.export_specs.len();
-        self.expect(T::OpenBrace);
+        let has_list = self.expect(T::OpenBrace);
         let mut has_unusual_local = false;
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::ImportOrExportSpecifiers);
+        while has_list
+            && self.is_in_list(T::CloseBrace)
+            && self.is_at_element(ListKind::ImportOrExportSpecifiers)
+        {
+            let element = self.full_start();
             let specifier = self.import_or_export_specifier();
             let local = specifier.property_name.unwrap_or(specifier.name);
             has_unusual_local |= local.token == T::String || local.token.is_reserved_word();
@@ -473,11 +488,16 @@ impl Parser<'_> {
                 end: specifier.end,
                 export: declaration,
             });
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::ImportOrExportSpecifiers, element)
+            {
                 break;
             }
         }
-        self.expect(T::CloseBrace);
+        self.lists = lists;
+        if has_list {
+            self.expect(T::CloseBrace);
+        }
         let has_module_specifier = self.token() == T::From;
         let (spec, mode) = match has_module_specifier {
             true => {

@@ -68,8 +68,8 @@ impl Rule for NoUnusedLabels {
         });
         on.finish(|_, cx| {
             let Labels { mut all, mut jumps } = std::mem::take(&mut cx.state);
-            all.sort_unstable_by_key(|it| it.span().start);
-            jumps.sort_unstable_by_key(|it| it.0);
+            utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
+            utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0);
             let label_of = |statement: Stmt<'a>| match statement.kind() {
                 StmtKind::Labeled { label, .. } => Some(label),
                 _ => None,

@@ -77,6 +77,12 @@ pub(crate) fn read_sized(path: &[u8], size: u64) -> bun_sys::Result<Vec<u8>> {
     Ok(text)
 }
 
+/// Fills `start` from the start of the file at `path`, and returns what has been read.
+pub(crate) fn read_start<'a>(path: &[u8], start: &'a mut [u8]) -> &'a [u8] {
+    let read = File::openat(Fd::cwd(), path, O::RDONLY, 0).and_then(|file| file.read_all(start));
+    start.get(..read.unwrap_or(0)).unwrap_or_default()
+}
+
 /// Whether the file at `path` starts with the few bytes `prefix`.
 pub(crate) fn starts_with(path: &[u8], prefix: &[u8]) -> bool {
     let mut start = [0; 8];

@@ -6,6 +6,7 @@ use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
 use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None`: an access that instantiation or a constraint produces. `Other`: a name in a
@@ -1249,7 +1250,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }),
             );
         }
-        out.sort_unstable();
+        out.shared_sort_unstable();
     }
 
     /// `getConditionalTypeInstantiation` without an alias.

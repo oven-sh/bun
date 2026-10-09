@@ -1023,7 +1023,7 @@ impl Rule for NamingConvention {
             let mut configs: Vec<(i32, usize)> =
                 all_configs.iter().copied().filter(|it| it.0 & (1 << selector) != 0).collect();
             // Selectors go ahead of meta selectors, of which `method` and `property` are the first.
-            configs.sort_by_key(|&(selector, index)| {
+            utils::sort::sort_by_key(&mut configs, |&(selector, index)| {
                 (
                     META_SELECTORS.iter().any(|it| it.1 == selector),
                     selector != METHOD && selector != PROPERTY,

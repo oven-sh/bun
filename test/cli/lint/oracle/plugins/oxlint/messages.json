@@ -2725,6 +2725,15 @@
   "message": "Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read."
  },
  {
+  "rule": "typescript/prefer-promise-reject-errors",
+  "id": "rejectAnError",
+  "file": "a.ts",
+  "code": "Promise.reject();\nexport {};\n",
+  "options": [],
+  "typed": true,
+  "message": "Expected the Promise rejection reason to be an Error."
+ },
+ {
   "rule": "typescript/prefer-readonly",
   "id": "preferReadonly",
   "file": "a.ts",

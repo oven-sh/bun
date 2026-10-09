@@ -170,6 +170,37 @@ describe.concurrent("an eslint.config.js", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a plugin that is built in runs in JavaScript under another name, and so does another plugin under its name", async () => {
+    const plugin = (name: string, rule: string) => `{
+      meta: { name: "${name}", version: "1.0.0" },
+      rules: { "${rule}": { create: context => ({ DebuggerStatement: node => context.report({ node, message: "from JavaScript" }) }) } },
+    }`;
+    const { problems, stderr, exitCode } = await lint(
+      {
+        "eslint.config.mjs": `export default [
+          { files: ["**/*.js"], rules: { "ts/no-explicit-any": "error", "node/no-deprecated-api": "error", "import/first": "error" } },
+          {
+            plugins: {
+              ts: ${plugin("@typescript-eslint/eslint-plugin", "no-explicit-any")},
+              node: ${plugin("eslint-plugin-n", "no-deprecated-api")},
+              import: ${plugin("eslint-plugin-import-x", "first")},
+            },
+          },
+        ];`,
+        "a.js": "debugger;\ndebugger; // eslint-disable-line ts/no-explicit-any, import/first\n",
+      },
+      ["a.js"],
+    );
+    expect(stderr).not.toContain("Could not find plugin");
+    expect(problems).toEqual([
+      "a.js:1:1 import/first",
+      "a.js:1:1 node/no-deprecated-api",
+      "a.js:1:1 ts/no-explicit-any",
+      "a.js:2:1 node/no-deprecated-api",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("the options of the language of a plugin are not those of JavaScript", async () => {
     const { problems, stderr } = await lint({
       "eslint.config.mjs": `export default [

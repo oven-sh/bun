@@ -6,6 +6,7 @@ use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// The names of the discriminant properties of a union, each with the type of the value given for
@@ -473,7 +474,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let atoms = &self.atoms();
                 shape
                     .props
-                    .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
+                    .shared_sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
                 // `patternForType`
                 if for_context == IncludePatternInType::Yes {
                     shape.literal = if has_computed_names {

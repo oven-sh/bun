@@ -704,7 +704,7 @@ impl NoExtraParens {
             })
             .collect();
         // A loop in the initializer of another comes first.
-        initializers.sort_by_key(|init| init.span().end);
+        utils::sort::sort_by_key(&mut initializers, |init| init.span().end);
         for initializer in initializers {
             keep_parens_around_in_expressions(initializer, &mut reported);
         }

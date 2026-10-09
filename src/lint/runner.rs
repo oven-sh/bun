@@ -6,7 +6,7 @@ use crate::ast::{
     StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{Event, Step, steps};
-use crate::context::{Cx, Diagnostic, Severity};
+use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
 use crate::semantic::Symbol;
@@ -513,11 +513,14 @@ impl<R: Rule> AnyRule for R {
             entries: on.entries,
             cx: Cx {
                 state,
-                file: start.file,
-                rule: start.rule,
-                severity: start.severity,
-                reports: std::cell::Cell::new(0),
-                is_capped: std::cell::Cell::new(false),
+                base: CxBase {
+                    file: start.file,
+                    meta: &R::META,
+                    rule: start.rule,
+                    severity: start.severity,
+                    reports: std::cell::Cell::new(0),
+                    is_capped: std::cell::Cell::new(false),
+                },
             },
         };
         run.run_unordered();
@@ -596,7 +599,7 @@ impl<'a, R: Rule> Run<'_, 'a, R> {
     #[inline(never)]
     fn run_unordered(&mut self) {
         let (rule, cx) = (self.rule, &mut self.cx);
-        let file = cx.file;
+        let file = cx.base.file;
         for entry in &self.entries {
             match *entry {
                 Entry::Exprs(tag, listener) => {

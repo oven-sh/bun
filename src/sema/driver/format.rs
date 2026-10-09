@@ -12,6 +12,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
+use bun_sema::util::SharedSort;
 use std::io::Write;
 
 macro_rules! alloc_print {
@@ -228,7 +229,7 @@ fn write_occurrences(
     }
     let files = plural(by_file.len(), b"file", b"files");
     pretty!(out, style.color, "<d> in {}<r>\n", files);
-    by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+    by_file.shared_sort_by_key(|&(_, count)| std::cmp::Reverse(count));
     let width = with_commas(by_file[0].1).len();
     for (of, count) in &by_file {
         pretty!(
@@ -258,7 +259,7 @@ fn count_by_file<'a>(
         by_file[at].1 += 1;
     }
     // The sort is stable: the projects stay in build order.
-    by_file.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+    by_file.shared_sort_by(|a, b| a.0.path.cmp(&b.0.path));
     by_file
 }
 
@@ -517,7 +518,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
         groups[at].push(d);
     }
     // The sort is stable: ties stay in source order.
-    groups.sort_by_key(|group| std::cmp::Reverse(group.len()));
+    groups.shared_sort_by_key(|group| std::cmp::Reverse(group.len()));
     let shown = groups.len().min(MAX_GROUPS);
     for group in &groups[..shown] {
         match style.layout {
@@ -810,7 +811,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
     out.push(b'\n');
     // Never truncated. In a terminal the end of the output is what stays on screen, so the files with the most errors go last.
     if style.layout == Layout::Pretty {
-        by_file.sort_by_key(|&(_, count)| count);
+        by_file.shared_sort_by_key(|&(_, count)| count);
     }
     let width = by_file
         .iter()

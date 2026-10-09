@@ -4,6 +4,8 @@
 // A case says what is reported, not how long it takes. Its size is such that the code as it was before overflows the stack, exceeds
 // the memory limit or needs many times the time limit, and the code as it is needs a small part of a second in a release build.
 
+import { cases as reactCompiler } from "./shapes-react-compiler";
+
 /** `text` n times. `"".repeat` is slow in a debug build of JavaScriptCore. */
 const rep = (text: string, n: number) => Buffer.alloc(Buffer.byteLength(text) * n, text).toString();
 const seq = (n: number, f: (i: number) => string, separator = "") => {
@@ -932,4 +934,5 @@ export const cases: Case[] = [
       exitCode: 0,
     }),
   ),
+  ...reactCompiler,
 ];

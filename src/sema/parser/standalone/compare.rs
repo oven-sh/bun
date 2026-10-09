@@ -176,6 +176,13 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         if a.with_bodies[..] != b.with_bodies[..] {
             self.differ("with_bodies", &&a.with_bodies[..], &&b.with_bodies[..]);
         }
+        if a.after_skipped[..] != b.after_skipped[..] {
+            self.differ(
+                "after_skipped",
+                &&a.after_skipped[..],
+                &&b.after_skipped[..],
+            );
+        }
         self.stmt_list("body", a.body, b.body);
         if self.lens(
             "import_attributes",

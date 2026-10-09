@@ -80,10 +80,11 @@ process.env = new Proxy(process.env, {
   ownKeys: target => (isCalledByPackage() || giveUp(), Reflect.ownKeys(target)),
 });
 
-function finish(config) {
+// `dependencies`: what the result depends on besides what has been loaded or looked at.
+function finish(config, dependencies = [path]) {
   // A package is as good as its `package.json`, which is written when it is installed.
   const files = new Set();
-  for (const file of [path, ...Object.keys(require.cache), ...touched]) {
+  for (const file of [...dependencies, ...Object.keys(require.cache), ...touched]) {
     const match = /^(.*[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+)[\\/]/.exec(file);
     files.add(match ? resolve(match[1], "package.json") : file);
   }

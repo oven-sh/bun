@@ -205,6 +205,11 @@ fn empty_line_breaks_every_array(config: &Config) -> bool {
     config.flavor.is_oxfmt()
 }
 
+/// In oxfmt the numbers of an array with a comment in it are on a line each.
+fn comment_ends_filling(config: &Config) -> bool {
+    config.flavor.is_oxfmt()
+}
+
 /// oxfmt's `has_line_terminator_after_skipping_comments`.
 fn line_separator_after_the_brace_counts(config: &Config) -> bool {
     config.flavor.is_oxfmt()
@@ -682,6 +687,7 @@ impl Reader<'_, '_> {
         let config = self.config;
         let next = self.tree.nodes.len() as u32;
         let mut sum = open.width;
+        let last_comment = self.tree.comments.last().map_or(0, |it| it.start);
         let node = &mut self.tree.nodes[open.node as usize];
         node.end = self.at as u32;
         node.next = next;
@@ -696,7 +702,8 @@ impl Reader<'_, '_> {
             _ if config.is_stringify() => true,
             Kind::Object => open.has_blank || (config.preserves_wrap && node.has(BREAK_AFTER_OPEN)),
             _ => {
-                let is_concise = open.elements == ElementKinds::Numbers;
+                let is_concise = open.elements == ElementKinds::Numbers
+                    && !(comment_ends_filling(config) && last_comment > node.start);
                 if is_concise {
                     node.flags |= CONCISE;
                 }

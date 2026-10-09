@@ -108,8 +108,6 @@ FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 100 }
 FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 100 }
-FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 80 }
-FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 100 }
 FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 80 }
 FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 100 }
 FAIL oxfmt js/calls/issue-16125.js { printWidth: 80 }

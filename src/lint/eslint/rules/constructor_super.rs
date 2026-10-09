@@ -147,7 +147,7 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
     let (before, after) = (Span::new(whole.start, callee.start), Span::new(callee.end, whole.end));
     let callees = cx.state.super_callees.get_or_insert_with(|| {
         let mut callees: Vec<_> = file.exprs_of_kind(ExprTag::Super).filter(|&e| ast_utils::is_callee(e)).collect();
-        callees.sort_unstable_by_key(|e| e.span().start);
+        utils::sort::sort_unstable_by_key(&mut callees, |e| e.span().start);
         callees
     });
     if has_own(callees, before, constructor, Node::Expr) || has_own(callees, after, constructor, Node::Expr) {
@@ -157,7 +157,7 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
         let tags = [StmtTag::DoWhile, StmtTag::For, StmtTag::Try, StmtTag::Switch];
         let statements = tags.into_iter().flat_map(|tag| file.stmts_of_kind(tag));
         let mut winding: Vec<_> = statements.filter(|&it| is_winding(it)).collect();
-        winding.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut winding, |it| it.span().start);
         winding
     });
     !has_own(winding, after, constructor, Node::Stmt)

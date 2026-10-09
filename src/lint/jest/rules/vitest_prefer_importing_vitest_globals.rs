@@ -55,7 +55,7 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
         .collect();
     if missing_globals.len() > 1 {
         let order = OxlintOrder::new(file);
-        missing_globals.sort_by_cached_key(|name| order.rank(file.name_of(name)));
+        utils::sort::sort_by_cached_key(&mut missing_globals, |name| order.rank(file.name_of(name)));
     }
     // The first label.
     let mut first_span: Option<Span> = None;

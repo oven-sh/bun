@@ -96,7 +96,9 @@ pub(crate) mod prefer_hooks_in_order {
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // Every call counts: one that is no hook ends a run of hooks.
         let mut calls: Vec<Expr<'a>> = ctx.file.exprs_of_kind(ExprTag::Call).collect();
-        calls.sort_unstable_by_key(|it| (it.span().start, std::cmp::Reverse(it.span().end)));
+        utils::sort::sort_unstable_by_key(&mut calls, |it| {
+            (it.span().start, std::cmp::Reverse(it.span().end))
+        });
         let mut scopes = Scopes::default();
         let mut previous_hook_orders: FxHashMap<Option<Node<'a>>, usize> = FxHashMap::default();
         for node in calls {

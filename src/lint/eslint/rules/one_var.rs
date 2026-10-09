@@ -433,7 +433,7 @@ impl Rule for OneVar {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
         // Only what has to be declared together depends on what has been declared before.
         if !self.kinds.iter().any(|it| it.has(Mode::Always)) {
             on.stmts([StmtTag::Var], Self::check_variable_declaration);
@@ -465,6 +465,17 @@ impl Rule for OneVar {
         on.exit(blocks, |_, _, cx| {
             cx.state.blocks.pop();
         });
+        // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
+        if file.language().is_oxlint {
+            on.enter(StmtTag::Module, |_, _, cx| {
+                cx.state.functions.push(Seen::default());
+                cx.state.blocks.push(Default::default());
+            });
+            on.exit(StmtTag::Module, |_, _, cx| {
+                cx.state.functions.pop();
+                cx.state.blocks.pop();
+            });
+        }
         on.enter(StmtTag::Var, |rule, node, cx| {
             if let Node::Stmt(statement) = node {
                 rule.check_variable_declaration(statement, cx);

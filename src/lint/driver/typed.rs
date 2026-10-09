@@ -382,6 +382,14 @@ pub(crate) fn lint(
                 finish(result, text, state.is_fixed);
                 continue;
             }
+            // oxlint fixes once.
+            if file.config.language.is_oxlint {
+                finish(result, Some(text.clone()), true);
+                if let Some(done) = &mut done[index] {
+                    done.fixed_text = Some(fixed.output);
+                }
+                continue;
+            }
             if fixed.output.len() > max_fixed_len(state.original_len) {
                 *state = Fixing {
                     current: file.text.clone(),

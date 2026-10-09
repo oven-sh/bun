@@ -6,7 +6,7 @@ A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS, GraphQL, YAM
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
 - **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
 
-Not there: MDX unless it is asked for with `--parser mdx`, Tailwind class sorting, Svelte, Astro, Babel-only proposals, plugins. CSS, GraphQL, Markdown and HTML in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`, `html/in_js.rs`.
+Not there: MDX unless it is asked for with `--parser mdx`, Svelte, Astro, Babel-only proposals, plugins. CSS, GraphQL, Markdown and HTML in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`, `html/in_js.rs`.
 
 **Flow.** A file is Flow if `--parser flow` or `babel-flow` says so, if a comment before its code has `@flow` or `@noflow`, or if it is called `.js.flow` (`bun_lint::linter::goes_to_flow`). The caller picks the dialect: `Dialect::flow_parser` for Prettier's `flow`, `Dialect::flow` for `babel-flow`, for which `flow::uncommented` first makes code of `/*:: */` and `/*: */`. The HIR has no node of its own for Flow: `src/sema/parser/parser/flow.rs` has the table of what stands for what, `src/lint/ast/flow.rs` tells the nodes apart, `js/print/flow.rs` has all that is printed differently. The functions for the nodes of TypeScript call it behind `f.file().is_flow()`, after the dispatch on the kind of node: a file that is not Flow pays one load where a hook is. Tests: `--languages=flow`.
 
@@ -249,6 +249,19 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 ## The oxfmt flavor
 
 `f.options().flavor.is_oxfmt()`: whoever has an `.oxfmtrc.json` gets what oxfmt prints where that is not what Prettier 3.9.9 prints, so that switching gives no diff. oxfmt follows Prettier 3.8 in those places, or has a rule of its own. Each is behind a function next to its use that is named after the behaviour (`union_breaks_one_per_line(f)`), to be deleted when oxfmt catches up. The default flavor must not change because of one.
+
+## `sortTailwindcss`
+
+oxfmt's option: the classes of Tailwind CSS in a text are put in the order of their rules.
+
+- **One function**: `tailwind.rs::Tailwind::sorted_between` is `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which everything in oxfmt ends in. A language only says where a text with classes is, and what is at its ends (`Ends`).
+- **The order** is known to the Tailwind of the project alone, which is JavaScript. The formatter asks `Orders` for the ranks of a list of classes. The driver implements it (`src/lint/driver/fmt/tailwind.rs`): a list that is not known is noted, the text stays as it is, and `Tailwind::has_missed` says that what has been printed is of no use. The driver puts such a file aside, asks once for all lists (`tailwind.js`, run by `evaluate.rs`), and formats those files again. So the formatter is what collects the classes, and nothing is run for files without any. What is sorted is not sorted again further down: that would ask for a list that only the second pass knows of.
+- **JavaScript**: `js/utils/tailwindcss.rs`, a port of oxc's, with its stack of contexts (`JsFormatContext::tailwind_context`) and what follows from it: no context for the arguments of a call that is written as a member chain, a text of a template is sorted in a call of another function and a string is not.
+- **Style sheets**: `@apply`, in `print_at_rule_up_to_block`.
+- **HTML and Vue**: the plugin rewrites the values of attributes in the tree, so `html/tailwind.rs` rewrites the text before it is parsed. Of the code in HTML the plugin takes over programs and `__js_expression`, nothing else: `js.rs::with_file`.
+- **The checks before writing** know that words change places and that one that is there twice is there once: `verify/tree.rs::has_same_words`. HTML is compared without the option: `html::has_same_content`.
+- **Not there**: `[class]` and `[ngClass]` of Angular, Handlebars (a run with such a file ends with an error). With `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
+- **Tests**: `test/cli/format/tailwind`, with a stand-in for the package. `test/cli/format/oracle/tailwind/make-fixtures.ts` makes what is expected with the real tools.
 
 ## Pitfalls
 

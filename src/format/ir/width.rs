@@ -66,6 +66,12 @@ fn emoji_len(chars: &[u32]) -> usize {
     }
 }
 
+/// To the crate `unicode-width`, which oxfmt measures with, every character up to U+00A0 in a text is as wide as a letter.
+/// To Prettier a control character has no width.
+fn control_character_is_a_column(flavor: Flavor) -> bool {
+    flavor.is_oxfmt()
+}
+
 #[cold]
 fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     let mut width = 0;
@@ -80,7 +86,7 @@ fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
         };
         width += rest[..plain]
             .iter()
-            .filter(|&&byte| is_printable(byte))
+            .filter(|&&byte| is_printable(byte) || control_character_is_a_column(flavor))
             .count() as u32;
         rest = &rest[plain..];
         let mut len = ascii - plain;
@@ -124,7 +130,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
         }
         i += 1;
         width += match c {
-            0..=0x1F | 0x7F..=0x9F => 0,
+            0..=0x1F | 0x7F..=0x9F => u32::from(control_character_is_a_column(flavor)),
             0x20..=0x7E => 1,
             0x300..=0x36F | 0xFE00..=0xFE0F => 0,
             _ if is_alef_of_ligature => 0,
@@ -201,7 +207,7 @@ impl OddBlocks {
     }
 }
 
-/// `text` has no line breaks. Control characters count as nothing.
+/// `text` has no line breaks.
 #[inline]
 pub(crate) fn string_width(text: &[u8]) -> u32 {
     string_width_as(text, Flavor::Prettier)

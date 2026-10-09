@@ -720,7 +720,7 @@ impl EsSyntax {
                 _ => None,
             });
             let mut declarators: Vec<VarDecl<'a>> = declarators.filter(|it| it.var_kind() == VarKind::Var).collect();
-            declarators.sort_by_key(|it| it.binding_span().start);
+            utils::sort::sort_by_key(&mut declarators, |it| it.binding_span().start);
             declarators
         });
         let handler = handler.span();
@@ -991,7 +991,7 @@ impl EsSyntax {
                 subclasses.push((class, super_call, found));
             }
         }
-        subclasses.sort_by_key(|it| it.1.span().start);
+        utils::sort::sort_by_key(&mut subclasses, |it| it.1.span().start);
         // The first for what a class extends, and for whether that is `AggregateError`.
         let mut first_of_subclass: FxHashMap<(Expr<'a>, bool), Expr<'a>> = FxHashMap::default();
         for (class, super_call, found) in subclasses {

@@ -5,7 +5,7 @@ use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
 };
-use super::strings::{first_char, is_in, last_char};
+use super::strings::{character_reference, first_char, is_in, last_char};
 use super::unicode_tables::SPACE_SEPARATOR;
 use crate::FormatOptions;
 use crate::css::doc::{
@@ -99,6 +99,53 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
         parts.push(Doc::from(line.strip_suffix(b"\r").unwrap_or(line).to_vec()));
     }
     Doc::Array(parts)
+}
+
+/// oxfmt's `print_url`, which is that of Prettier after 3.9: a backslash that would escape something is doubled, `&`
+/// that would start a character reference is escaped, and between `<` and `>` those two are.
+fn url_of_oxfmt(url: &[u8], is_in_parentheses: bool) -> Vec<u8> {
+    let is_balanced = || {
+        let mut depth = 0i32;
+        for &byte in url {
+            match byte {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            if !(0..=3).contains(&depth) {
+                return false;
+            }
+        }
+        depth == 0
+    };
+    let needs_brackets = url
+        .iter()
+        .any(|byte| byte.is_ascii_control() || *byte == b' ')
+        || url.starts_with(b"<")
+        || match is_in_parentheses {
+            true => bun_core::strings::index_of_any(url, b"()").is_some(),
+            false => !is_balanced(),
+        };
+    let mut printed = Vec::with_capacity(url.len() + 2);
+    if needs_brackets {
+        printed.push(b'<');
+    }
+    for (index, &byte) in url.iter().enumerate() {
+        let is_escaped = match byte {
+            b'\\' => url.get(index + 1).is_none_or(u8::is_ascii_punctuation),
+            b'&' => character_reference(&url[index..], None).is_some(),
+            b'<' | b'>' => needs_brackets,
+            _ => false,
+        };
+        if is_escaped {
+            printed.push(b'\\');
+        }
+        printed.push(byte);
+    }
+    if needs_brackets {
+        printed.push(b'>');
+    }
+    printed
 }
 
 /// oxfmt's `has_line_ranges`: whether what is behind the language of a block of code names lines by their numbers:
@@ -1033,6 +1080,9 @@ impl<'a> Printer<'a, '_> {
         if url.is_empty() && !self.is_mdx {
             return Doc::from("<>");
         }
+        if self.options.flavor.is_oxfmt() {
+            return Doc::from(url_of_oxfmt(url, is_in_parentheses));
+        }
         let is_dangerous = bun_core::strings::contains_char(url, b' ')
             || (is_in_parentheses && bun_core::strings::contains_char(url, b')'));
         if !is_dangerous {
@@ -1076,6 +1126,44 @@ impl<'a> Printer<'a, '_> {
         let mut printed = Vec::with_capacity(title.len() + 3);
         if has_space {
             printed.push(b' ');
+        }
+        if self.options.flavor.is_oxfmt() {
+            let is_in_parentheses = has(b'"') && has(b'\'') && !has(b'(') && !has(b')');
+            let (preferred, alternate) = match self.options.quote_style.is_double() {
+                true => (b'"', b'\''),
+                false => (b'\'', b'"'),
+            };
+            let count = |quote: u8| bun_core::strings::count_char(title, quote);
+            let (open, close) = match count(preferred) > count(alternate) {
+                _ if is_in_parentheses => (b'(', b')'),
+                true => (alternate, alternate),
+                false => (preferred, preferred),
+            };
+            printed.push(open);
+            for (index, &byte) in title.iter().enumerate() {
+                let is_escaped = match byte {
+                    b'\\' => true,
+                    b'&' => character_reference(&title[index..], None).is_some(),
+                    _ => byte == open && !is_in_parentheses,
+                };
+                if is_escaped {
+                    printed.push(b'\\');
+                }
+                printed.push(byte);
+            }
+            printed.push(close);
+            // In a definition the lines of a title are printed as they are.
+            if !has_space || !has(b'\n') {
+                return Doc::from(printed);
+            }
+            let mut lines = Vec::new();
+            for (index, line) in bun_core::strings::split(&printed, b"\n").enumerate() {
+                if index > 0 {
+                    lines.push(verbatim_line());
+                }
+                lines.push(Doc::from(line.to_vec()));
+            }
+            return Doc::Array(lines);
         }
         if has(b'"') && has(b'\'') && !has(b')') {
             printed.push(b'(');

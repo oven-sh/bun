@@ -9,7 +9,7 @@
 use bun_alloc::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
-use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
+use bun_ast::{E, Expr, Loc, Log, Range, Source};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
@@ -104,33 +104,53 @@ fn is_rare(c: u8) -> bool {
 const ONES: u64 = 0x0101_0101_0101_0101;
 const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
 
-/// A bit in each byte that is zero, exact up to the first of them.
-#[inline(always)]
-fn zero_bytes(word: u64) -> u64 {
-    word.wrapping_sub(ONES) & !word & HIGH_BITS
-}
-
 /// A bit in each of `bytes` that is `quote`, a backslash or a control character, exact up to the first.
 #[inline(always)]
 fn special_bytes(bytes: &[u8; 8], quote: u8) -> u64 {
     let word = u64::from_le_bytes(*bytes);
-    zero_bytes(word ^ (ONES * u64::from(quote)))
-        | zero_bytes(word ^ (ONES * u64::from(b'\\')))
-        | (word.wrapping_sub(ONES * 0x20) & !word & HIGH_BITS)
+    // A byte that is zero, or less than 0x20, borrows. What is not ASCII is never meant.
+    let is_quote = (word ^ (ONES * u64::from(quote))).wrapping_sub(ONES);
+    let is_backslash = (word ^ (ONES * u64::from(b'\\'))).wrapping_sub(ONES);
+    let is_control = word.wrapping_sub(ONES * 0x20);
+    (is_quote | is_backslash | is_control) & !word & HIGH_BITS
 }
 
 /// How many of the first 16 bytes of `text` are before the first `quote`, backslash or control
-/// character. `None`: all of them, or `text` is shorter.
+/// character. 0 if `text` is shorter.
 #[inline(always)]
-fn short_plain_len(text: &[u8], quote: u8) -> Option<usize> {
-    let (first, rest) = text.split_first_chunk::<8>()?;
-    let second = rest.first_chunk::<8>()?;
+fn short_plain_len(text: &[u8], quote: u8) -> usize {
+    let Some((first, rest)) = text.split_first_chunk::<8>() else {
+        return 0;
+    };
+    let Some(second) = rest.first_chunk::<8>() else {
+        return 0;
+    };
     let found = special_bytes(first, quote);
     if found != 0 {
-        return Some((found.trailing_zeros() / 8) as usize);
+        return (found.trailing_zeros() / 8) as usize;
     }
-    let found = special_bytes(second, quote);
-    (found != 0).then(|| 8 + (found.trailing_zeros() / 8) as usize)
+    // 64 zeros if there is none.
+    8 + (special_bytes(second, quote).trailing_zeros() / 8) as usize
+}
+
+/// How many bytes at the start of `text` are ASCII, no backslash and no control character.
+#[inline]
+fn plain_ascii_len(text: &[u8]) -> usize {
+    let Some((first, rest)) = text.split_first_chunk::<8>() else {
+        let is_plain = |b: &&u8| (0x20..0x80).contains(*b) && **b != b'\\';
+        return text.iter().take_while(is_plain).count();
+    };
+    let found = special_bytes(first, b'\\') | (u64::from_le_bytes(*first) & HIGH_BITS);
+    if found != 0 {
+        return (found.trailing_zeros() / 8) as usize;
+    }
+    8 + plain_len(rest, b'\\').unwrap_or(rest.len())
+}
+
+#[inline(always)]
+fn loc_at(p: usize) -> Loc {
+    // No text has more than `i32::MAX` bytes.
+    Loc { start: p as i32 }
 }
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. For text
@@ -219,10 +239,23 @@ impl<'a, 's> Parser<'a, 's> {
         let contents = self.contents;
         let mut at = from;
         while let Some(&b) = contents.get(at) {
-            if matches!(b, b' ' | b'\n' | b'\t' | b'\r') {
-                at += 1;
-            } else if b == b'/' {
+            if b > b' ' {
+                if b != b'/' {
+                    break;
+                }
                 at = self.comment_end(at);
+            } else if b == b'\n' {
+                at += 1;
+                // The indentation of the line, by words.
+                while let Some(bytes) = contents.get(at..).and_then(|it| it.first_chunk::<8>()) {
+                    let other = u64::from_le_bytes(*bytes) ^ (ONES * u64::from(b' '));
+                    at += (other.trailing_zeros() / 8) as usize;
+                    if other != 0 {
+                        break;
+                    }
+                }
+            } else if matches!(b, b' ' | b'\t' | b'\r') {
+                at += 1;
             } else {
                 break;
             }
@@ -234,7 +267,8 @@ impl<'a, 's> Parser<'a, 's> {
     /// Whether there is a `\n` or a `\r` between the token before and `at`.
     #[inline(always)]
     fn is_after_newline(&self) -> bool {
-        self.gap_start != self.at && self.has_newline_in_gap()
+        self.gap_start != self.at
+            && (self.contents.get(self.gap_start) == Some(&b'\n') || self.has_newline_in_gap())
     }
 
     #[inline(never)]
@@ -293,7 +327,7 @@ impl<'a, 's> Parser<'a, 's> {
             }
         };
         self.first_comment.get_or_insert(Range {
-            loc: usize2loc(start),
+            loc: loc_at(start),
             len: (end - start) as i32,
         });
         end
@@ -365,15 +399,15 @@ impl<'a, 's> Parser<'a, 's> {
         }
     }
 
-    /// Where the string that starts at `open` ends: its closing quote, and whether there is a backslash
-    /// or a control character in it.
+    /// Where the string that starts at `open` ends: its closing quote, and the first backslash or control
+    /// character in it. There is none of the three before `from`.
     #[inline(never)]
-    fn string_close(&self, open: usize) -> Option<(usize, bool)> {
+    fn string_close_from(&self, open: usize, from: usize) -> Option<(usize, Option<usize>)> {
         let contents = self.contents;
         let quote = contents[open];
-        let mut is_dirty = false;
+        let mut first_special = None;
         let mut is_ascii = true;
-        let mut i = open + 1;
+        let mut i = from;
         loop {
             let rest = contents.get(i..)?;
             i += match is_ascii {
@@ -382,18 +416,23 @@ impl<'a, 's> Parser<'a, 's> {
             };
             let b = contents[i];
             if b == quote {
-                return Some((i, is_dirty));
+                return Some((i, first_special));
             }
             if b == b'\\' {
-                is_dirty = true;
+                first_special.get_or_insert(i);
                 i += 2;
             } else if b < 0x20 {
-                is_dirty = true;
+                first_special.get_or_insert(i);
                 i += 1;
             } else {
                 is_ascii = false;
             }
         }
+    }
+
+    /// The closing quote of the string that starts at `open`.
+    fn string_close(&self, open: usize) -> Option<usize> {
+        Some(self.string_close_from(open, open + 1)?.0)
     }
 
     /// Looks for comments and for what is wrong with a `/` in all that has not been read.
@@ -403,7 +442,7 @@ impl<'a, 's> Parser<'a, 's> {
         while let Some(&c) = self.contents.get(p) {
             p = match c {
                 b'"' | b'\'' => match self.string_close(p) {
-                    Some((close, _)) => self.token_from(close + 1, false, false),
+                    Some(close) => self.token_from(close + 1, false, false),
                     None => break,
                 },
                 _ => self.next_token(p),
@@ -414,14 +453,14 @@ impl<'a, 's> Parser<'a, 's> {
     fn token_range(&mut self, p: usize) -> Range {
         if p >= self.contents.len() {
             return Range {
-                loc: usize2loc(self.contents.len()),
+                loc: loc_at(self.contents.len()),
                 len: 0,
             };
         }
         let len = match self.contents[p] {
             b'{' | b'}' | b'[' | b']' | b':' | b',' => 1,
             b'"' | b'\'' => match self.string_close(p) {
-                Some((close, _)) => close + 1 - p,
+                Some(close) => close + 1 - p,
                 None => 1,
             },
             _ => {
@@ -434,7 +473,7 @@ impl<'a, 's> Parser<'a, 's> {
             }
         };
         Range {
-            loc: usize2loc(p),
+            loc: loc_at(p),
             len: len as i32,
         }
     }
@@ -593,7 +632,7 @@ impl<'a, 's> Parser<'a, 's> {
             self.token_start = self.contents.len();
             return Err(self.unexpected(start));
         }
-        let loc = usize2loc(start);
+        let loc = loc_at(start);
         self.token_start = start;
         match self.contents[start] {
             b'{' => self.parse_object(loc),
@@ -660,7 +699,7 @@ impl<'a, 's> Parser<'a, 's> {
             self.token_start = self.contents.len();
             return Err(self.unexpected(start));
         }
-        let loc = usize2loc(start);
+        let loc = loc_at(start);
         match self.contents[start] {
             b'{' => {
                 let e = self.parse_object(loc)?;
@@ -702,57 +741,42 @@ impl<'a, 's> Parser<'a, 's> {
         let open = self.at;
         let quote = self.contents[open];
         let rest = &self.contents[open + 1..];
-        if let Some(len) = short_plain_len(rest, quote)
-            && rest[len] == quote
-        {
+        let len = short_plain_len(rest, quote);
+        if rest.get(len) == Some(&quote) {
             self.skip_from(open + len + 2);
             return Ok(E::Str::new(&rest[..len]));
         }
-        self.parse_long_string(open)
+        self.parse_long_string(open, open + 1 + len)
     }
 
     /// A string of more than 16 bytes, at the end of the text, or with a backslash or a control
-    /// character in it.
+    /// character in it. None of them, and no quote, is before `from`.
     #[inline(never)]
-    fn parse_long_string(&mut self, open: usize) -> PResult<E::Str> {
+    fn parse_long_string(&mut self, open: usize, from: usize) -> PResult<E::Str> {
         self.token_start = open;
-        let Some((close, is_dirty)) = self.string_close(open) else {
+        let Some((close, first_special)) = self.string_close_from(open, from) else {
             self.add_default_error(b"Unterminated string literal")?;
             unreachable!()
         };
         let body = &self.contents[open + 1..close];
         self.skip_from(close + 1);
-        if is_dirty {
-            return Ok(self.parse_string_slow(body)?.data);
-        }
-        Ok(E::Str::new(body))
-    }
-
-    fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
-        self.tape_mut().alloc_str(bytes)
-    }
-
-    #[cold]
-    fn parse_string_slow(&mut self, body: &'s [u8]) -> PResult<E::EString> {
-        let mut first_special = None;
-        for (k, &b) in body.iter().enumerate() {
-            if b == b'\\' || b < 0x20 {
-                first_special = Some(k);
-                break;
-            }
-        }
-        let Some(k) = first_special else {
-            return Ok(E::EString::init(body));
+        let Some(first_special) = first_special else {
+            return Ok(E::Str::new(body));
         };
-        if body[k] != b'\\' {
-            return Err(self.string_control_char_error(body[k]));
+        let special = self.contents[first_special];
+        if special != b'\\' {
+            return Err(self.string_control_char_error(special));
         }
         let mut buf = core::mem::take(&mut self.scratch_str);
         buf.clear();
         self.decode_escapes(body, &mut buf)?;
         let owned = self.alloc_owned_str(&buf);
         self.scratch_str = buf;
-        Ok(E::EString::init(owned.slice()))
+        Ok(owned)
+    }
+
+    fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
+        self.tape_mut().alloc_str(bytes)
     }
 
     #[cold]
@@ -884,7 +908,7 @@ impl<'a, 's> Parser<'a, 's> {
             }
             if b == b']' {
                 is_single_line = is_single_line && !self.is_after_newline();
-                close_loc = usize2loc(p);
+                close_loc = loc_at(p);
                 self.bump();
                 break Ok(());
             }
@@ -904,7 +928,7 @@ impl<'a, 's> Parser<'a, 's> {
                 if after_b == b']' {
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
-                            loc: usize2loc(p),
+                            loc: loc_at(p),
                             len: 1,
                         };
                         let _ = self.add_range_error(
@@ -912,7 +936,7 @@ impl<'a, 's> Parser<'a, 's> {
                             format_args!("JSON does not support trailing commas"),
                         );
                     }
-                    close_loc = usize2loc(after);
+                    close_loc = loc_at(after);
                     self.bump();
                     break Ok(());
                 }
@@ -963,7 +987,7 @@ impl<'a, 's> Parser<'a, 's> {
             }
             if b == b'}' {
                 is_single_line = is_single_line && !self.is_after_newline();
-                close_loc = usize2loc(p);
+                close_loc = loc_at(p);
                 self.bump();
                 break Ok(());
             }
@@ -983,7 +1007,7 @@ impl<'a, 's> Parser<'a, 's> {
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
-                            loc: usize2loc(p),
+                            loc: loc_at(p),
                             len: 1,
                         };
                         let _ = self.add_range_error(
@@ -991,7 +1015,7 @@ impl<'a, 's> Parser<'a, 's> {
                             format_args!("JSON does not support trailing commas"),
                         );
                     }
-                    close_loc = usize2loc(after);
+                    close_loc = loc_at(after);
                     self.bump();
                     break Ok(());
                 }
@@ -1009,7 +1033,7 @@ impl<'a, 's> Parser<'a, 's> {
                 self.expected(key_start, "string");
                 break Err(self.unexpected(key_start));
             };
-            let key_loc = usize2loc(key_start);
+            let key_loc = loc_at(key_start);
 
             if warn_dup && self.check_duplicate_key(mark, hmark, key.slice()) {
                 let key_range = self.token_range(key_start);
@@ -1406,7 +1430,7 @@ impl<'a, 's> Parser<'a, 's> {
     fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr> {
         let next = self.next_token(self.at);
         let tail = &self.contents[pos..next];
-        let loc_tail = usize2loc(pos);
+        let loc_tail = loc_at(pos);
         self.token_start = pos;
         match tail[0] {
             b't' if tail.starts_with(b"true") && self.rest_is_ws_cold(&tail[4..]) => {
@@ -1432,7 +1456,7 @@ impl<'a, 's> Parser<'a, 's> {
             }
             c if is_identifier_start(c) => {
                 let r = Range {
-                    loc: usize2loc(pos),
+                    loc: loc_at(pos),
                     len: ident_len(tail) as i32,
                 };
                 let raw = &tail[..ident_len(tail)];
@@ -1501,7 +1525,7 @@ fn decode_string_escapes<'s, L: LexerLog<'s, Err = crate::Error>>(
         // Printable ASCII is copied as it is.
         let from = iter.i as usize + iter.width as usize;
         let rest = body.get(from..).unwrap_or_default();
-        let plain = plain_len(rest, b'\\').unwrap_or(rest.len());
+        let plain = plain_ascii_len(rest);
         if plain > 0 {
             buf.extend_from_slice(&rest[..plain]);
             iter.i = (from + plain - 1) as u32;

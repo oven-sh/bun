@@ -7,6 +7,7 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
+use crate::util::SharedSort;
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
@@ -4384,7 +4385,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Place::Nowhere => ((1, (false, 0, 0), name), prop),
             });
         }
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        keyed.shared_sort_by(|a, b| a.0.cmp(&b.0));
         let arena = self.c.arena;
         (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
     }

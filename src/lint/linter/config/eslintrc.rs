@@ -759,6 +759,7 @@ impl Config {
                 js_plugins: Vec::new(),
                 js_locations: Vec::new(),
                 defaults: 0,
+                foreign_prefixes: Vec::new(),
             },
             load,
             plugins: Vec::new(),

@@ -26,7 +26,7 @@ fn attributes_of<'a>(import: Import<'a>) -> Attributes<'a> {
     let entries = import.attributes().into_iter().flat_map(|it| it.entries());
     let key_and_value = |it: Prop<'a>| (bytes(it.key().and_then(Key::name)), bytes(it.value().and_then(Expr::as_string)));
     let mut attributes: Attributes<'a> = entries.map(key_and_value).collect();
-    attributes.sort_unstable();
+    utils::sort::sort_unstable(&mut attributes);
     attributes
 }
 

@@ -186,7 +186,7 @@ impl Rule for NoUnnecessaryQualifier {
         if declarations.is_empty() {
             return declarations;
         }
-        declarations.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end)));
+        utils::sort::sort_unstable_by_key(&mut declarations, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
         declarations.retain(|it| {
             let is_in_no_other = it.start >= end;

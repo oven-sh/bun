@@ -83,7 +83,7 @@ fn get_identifier_resolved_reference<'a>(identifier: Expr<'a>, cx: &Cx<'a, NoMul
                         by_name.entry(name).or_default().push((assignment.span().start, value));
                     }
                 }
-                by_name.values_mut().for_each(|it| it.sort_unstable_by_key(|it| it.0));
+                by_name.values_mut().for_each(|it| utils::sort::sort_unstable_by_key(it, |it| it.0));
                 by_name
             });
             let of_name = assignments.get(&identifier.as_ident()?)?;

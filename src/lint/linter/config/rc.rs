@@ -425,7 +425,7 @@ impl Rc<'_, '_> {
                 }
             }
         }
-        self.reader.rules(&rules, &[])
+        self.reader.rules(&rules)
     }
 
     /// Loads what `jsPlugins` of `json` names, which is a file in `directory` or one of its overrides.
@@ -983,6 +983,7 @@ impl Config {
                 js_plugins: Vec::new(),
                 js_locations: Vec::new(),
                 defaults: 0,
+                foreign_prefixes: Vec::new(),
             },
             flavor,
             load,

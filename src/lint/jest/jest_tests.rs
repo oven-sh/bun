@@ -826,7 +826,7 @@ pub(crate) mod no_identical_title {
         let mut order = None;
         for calls in title_to_calls.values_mut().filter(|it| it.len() > 1) {
             let order = order.get_or_insert_with(|| OxlintOrder::new(ctx.file));
-            calls.sort_by_cached_key(|it| order.key(it.possible_jest_node));
+            utils::sort::sort_by_cached_key(calls, |it| order.key(it.possible_jest_node));
             let mut kind_and_spans: Vec<(Span, bool, u32)> = calls
                 .iter()
                 .map(|it| (it.argument.span(), it.is_describe, it.parent))

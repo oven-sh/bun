@@ -925,6 +925,17 @@ impl Builder<'_> {
         let Some(first) = lines.first() else {
             return;
         };
+        // At the end of a line, micromark asks whether that line goes on without the markers of its containers, not
+        // the next: code that starts on the line that ends a container ends with that line.
+        let line_start = self.tree.line_start(first.beg);
+        if lines.len() > 1 && self.ended.iter().any(|it| it.1 == line_start) {
+            self.indented_code(&lines[..1]);
+            let blank = lines[1..]
+                .iter()
+                .take_while(|line| line.beg >= line.end)
+                .count();
+            return self.indented_code(&lines[1 + blank..]);
+        }
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
         // A blank line that is indented enough is part of the code, even at its end.
         let code_column = self.column(first.beg).saturating_sub(first.indent);
@@ -1675,7 +1686,14 @@ impl RendererImpl for Builder<'_> {
             return Ok(());
         };
         if matches!(kind, Kind::Image | Kind::ImageReference) {
-            let alt = std::mem::take(&mut self.alt);
+            let mut alt = std::mem::take(&mut self.alt);
+            // remark-parse 8: what is written between the brackets, whatever it is.
+            if self.is_mdx {
+                let mut written = Vec::new();
+                self.push_content_between(marker_end, closing_start, &mut written);
+                alt.clear();
+                unescape(&written, &mut alt);
+            }
             let value = self.tree.owned(|out| out.extend_from_slice(&alt));
             self.alt = alt;
             self.alt.clear();

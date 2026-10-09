@@ -218,7 +218,7 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
     if unsafe_refs.is_empty() {
         return;
     }
-    unsafe_refs.sort_by_key(|it| it.ident().start());
+    utils::sort::sort_by_key(&mut unsafe_refs, |it| it.ident().start());
     let mut named = FxHashSet::default();
     let names = unsafe_refs.iter().map(|it| it.name());
     let mut var_names = Vec::new();

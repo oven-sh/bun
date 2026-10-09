@@ -174,7 +174,7 @@ fn is_valid_regex_for_ecma_version(file: &File<'_>, pattern: &[u8], flags: &[u8]
 fn are_flags_equal(a: &[u8], b: &[u8]) -> bool {
     let sorted = |flags: &[u8]| {
         let mut flags = flags.to_vec();
-        flags.sort_unstable();
+        utils::sort::sort_unstable(&mut flags);
         flags
     };
     sorted(a) == sorted(b)

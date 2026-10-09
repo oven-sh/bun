@@ -31,6 +31,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
+use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
 
 /// State that is constant for a whole file.
@@ -98,7 +99,7 @@ impl Checker<'_, '_> {
         } else {
             let mut uses = hir.specifier_uses.to_vec();
             uses.retain(|u| !u.kind.is_call());
-            uses.sort_unstable_by_key(|u| u.pos);
+            uses.shared_sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted
         };

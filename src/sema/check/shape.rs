@@ -4,6 +4,7 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 /// `thisAssignmentDeclarationKind`, with its location.
@@ -2510,7 +2511,7 @@ impl<'p, 's> Checker<'p, 's> {
             let (nowhere, place) = self.order_of_property(&prop);
             keyed.push(((is_outside, nowhere, place, atoms.bytes(prop.name)), prop));
         }
-        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        keyed.shared_sort_by(|x, y| x.0.cmp(&y.0));
         props.extend(keyed.into_iter().map(|entry| entry.1));
     }
 
@@ -3838,7 +3839,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn exports_in_order(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let mut all = self.files().exports(sym);
-        all.sort_by_key(|e| e.1);
+        all.shared_sort_by_key(|e| e.1);
         all
     }
 

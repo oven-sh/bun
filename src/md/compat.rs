@@ -91,6 +91,17 @@ pub(crate) fn every_tag_starts_html(flags: &Flags) -> bool {
     flags.mdx
 }
 
+/// remark-parse 8: the header of a table is not a line of a paragraph.
+///
+/// ```markdown
+/// a
+/// b | c
+/// - | -
+/// ```
+pub(crate) fn table_does_not_interrupt_a_paragraph(flags: &Flags) -> bool {
+    flags.mdx
+}
+
 /// remark-parse 8: a line with nothing but blanks on it does not end HTML.
 pub(crate) fn only_a_line_without_blanks_ends_html(flags: &Flags) -> bool {
     flags.mdx

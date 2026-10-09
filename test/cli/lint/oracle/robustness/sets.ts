@@ -5,6 +5,7 @@ import * as eslint2 from "./shapes-eslint-2";
 import * as eslint3 from "./shapes-eslint-3";
 import * as eslint4 from "./shapes-eslint-4";
 import * as oxlint from "./shapes-oxlint";
+import * as reactCompiler from "./shapes-react-compiler";
 import * as typed from "./shapes-typed";
 import * as typescript from "./shapes-typescript";
 
@@ -16,6 +17,7 @@ const more = {
   typescript,
   typed,
   oxlint,
+  "react-compiler": reactCompiler,
 };
 
 /**

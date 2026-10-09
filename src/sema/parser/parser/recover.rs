@@ -8,7 +8,106 @@
 use super::Parser;
 use crate::Refusal;
 use crate::token::T;
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
+
+/// `GetViableKeywordSuggestions`: TypeScript's keywords of more than two letters.
+const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
+    b"abstract",
+    b"accessor",
+    b"any",
+    b"asserts",
+    b"assert",
+    b"bigint",
+    b"boolean",
+    b"break",
+    b"case",
+    b"catch",
+    b"class",
+    b"continue",
+    b"const",
+    b"constructor",
+    b"debugger",
+    b"declare",
+    b"default",
+    b"defer",
+    b"delete",
+    b"else",
+    b"enum",
+    b"export",
+    b"extends",
+    b"false",
+    b"finally",
+    b"for",
+    b"from",
+    b"function",
+    b"get",
+    b"immediate",
+    b"implements",
+    b"import",
+    b"infer",
+    b"instanceof",
+    b"interface",
+    b"intrinsic",
+    b"keyof",
+    b"let",
+    b"module",
+    b"namespace",
+    b"never",
+    b"new",
+    b"null",
+    b"number",
+    b"object",
+    b"package",
+    b"private",
+    b"protected",
+    b"public",
+    b"override",
+    b"out",
+    b"readonly",
+    b"require",
+    b"global",
+    b"return",
+    b"satisfies",
+    b"set",
+    b"static",
+    b"string",
+    b"super",
+    b"switch",
+    b"symbol",
+    b"this",
+    b"throw",
+    b"true",
+    b"try",
+    b"type",
+    b"typeof",
+    b"undefined",
+    b"unique",
+    b"unknown",
+    b"using",
+    b"var",
+    b"void",
+    b"while",
+    b"with",
+    b"yield",
+    b"async",
+    b"await",
+];
+
+/// The suggestion of `parseErrorForMissingSemicolonAfter` for `word`
+/// (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
+#[cold]
+#[inline(never)]
+pub fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
+    let keywords = KEYWORD_SUGGESTIONS.iter().copied();
+    match bun_sema::check::get_spelling_suggestion(word, keywords, |c| c, |a, b| a.cmp(b)) {
+        Some(keyword) => Some(keyword.to_vec()),
+        None => KEYWORD_SUGGESTIONS
+            .iter()
+            .find(|keyword| word.len() > keyword.len() + 2 && word.starts_with(keyword))
+            .map(|keyword| [keyword, &b" "[..], &word[keyword.len()..]].concat()),
+    }
+}
 
 /// `ParsingContext`
 #[repr(u8)]
@@ -67,7 +166,7 @@ const ALL_LISTS: [ListKind; 23] = [
 
 /// What the token at the top of the loop of a list is to the list.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ListStep {
+enum ListStep {
     /// It starts an element.
     Element,
     /// It was reported and skipped. The next one is looked at.
@@ -125,6 +224,230 @@ impl Parser<'_> {
         self.error_at_token(1005, &[token.text()]);
     }
 
+    /// `parseExpectedMatchingBrackets`, at another token than `close`.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn unmatched(&mut self, (open, close): (T, T), open_at: Option<u32>) {
+        let before = self.f.diagnostics.len();
+        self.expected(close);
+        if let Some(open_at) = open_at
+            && self.f.diagnostics.len() > before
+            && let Some(error) = self.f.diagnostics.last_mut()
+        {
+            let at = (open_at, Diagnostic::NO_LENGTH);
+            let texts = [open.text(), close.text()];
+            error
+                .related
+                .push(Diagnostic::new(DiagnosticKind::Parse, at, 1007, &texts));
+        }
+    }
+
+    /// Where TypeScript's parser reports nothing and leaves the token to its caller. Without recovery
+    /// the token is an error wherever it is left, and the parse ends here.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn fail_unless_recovering(&mut self) {
+        if !self.recovers {
+            self.fail();
+        }
+    }
+
+    /// `parseErrorAtRange`, about what is parsed all the same. Without recovery: `report`.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn error_and_go_on(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
+        match self.recovers {
+            true => self.error(code, at, args),
+            false => self.report(),
+        }
+    }
+
+    /// `createIdentifierWithDiagnostic`, at a token that is no identifier for the caller: the name
+    /// that stands for it, and the start of the token. `code`: `diagnosticMessage`, or 0.
+    /// `code_of_private_name`: `privateIdentifierDiagnosticMessage`, or 0.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn missing_identifier(
+        &mut self,
+        code: u32,
+        code_of_private_name: u32,
+    ) -> (Atom, u32) {
+        if !self.recovers {
+            self.fail();
+            return (Atom::NONE, self.pos());
+        }
+        if self.token() == T::PrivateIdentifier {
+            let code = match code_of_private_name {
+                0 => 18016,
+                code => code,
+            };
+            self.error_at_token(code, &[]);
+            let name = (self.lx.atom, self.pos());
+            self.next();
+            return name;
+        }
+        // "Only for end of file because the error gets reported incorrectly on embedded script tags."
+        let at = match self.token() {
+            T::Eof => (self.full_start(), Diagnostic::NO_LENGTH),
+            _ => self.range_of_token(),
+        };
+        let word = self.lx.text();
+        match code {
+            0 if self.token().is_reserved_word() => self.error(1359, at, &[word]),
+            0 => self.error(1003, at, &[]),
+            code => self.error(code, at, &[]),
+        }
+        (known::empty, self.pos())
+    }
+
+    /// `parseIdentifierWithDiagnostic(code)` as an expression, at a token that is no identifier.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn missing_expression(&mut self, code: u32) -> ExprId {
+        self.missing_identifier(code, 0);
+        match self.recovers {
+            true => self.add_expr(ExprKind::Missing, self.pos(), self.full_start()),
+            false => ExprId::NONE,
+        }
+    }
+
+    /// `TokenValue()`. `previous`: the one of the token before, which a punctuator leaves.
+    fn token_value(&self, previous: &[u8]) -> Vec<u8> {
+        match self.token() {
+            T::Number => bun_sema::atom::number_to_string(self.lx.number),
+            T::BigInt => bun_sema::json::bigint_token_value(self.lx.text()),
+            T::String | T::NoSubstitutionTemplate | T::TemplateHead => {
+                self.lx.text_of(self.lx.atom).to_vec()
+            }
+            token if token.is_identifier_or_keyword() => self.lx.text_of(self.lx.atom).to_vec(),
+            _ => previous.to_vec(),
+        }
+    }
+
+    /// `parseErrorForMissingSemicolonAfter`
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn missing_semicolon_after(&mut self, expression: ExprId) {
+        let Some(&Expr { kind, pos, end }) = self.f.exprs.get(expression.idx()) else {
+            return self.expected(T::Semicolon);
+        };
+        let is_parenthesized = self.is_parenthesized(expression);
+        match kind {
+            ExprKind::TaggedTemplate(call) if !is_parenthesized => {
+                let template = self.f[call].template;
+                let from = self.f.exprs.get(template.idx()).map_or(pos, |it| it.pos);
+                self.error(1443, (from, end), &[]);
+            }
+            ExprKind::Ident(name) if !is_parenthesized => {
+                self.missing_semicolon_after_identifier(name, (pos, end));
+            }
+            _ => self.expected(T::Semicolon),
+        }
+    }
+
+    /// `parseErrorForMissingSemicolonAfter`, of the identifier `name` from `pos` to `end`.
+    fn missing_semicolon_after_identifier(&mut self, name: Atom, (pos, end): (u32, u32)) {
+        let word = self.lx.text_of(name).to_vec();
+        let (here, token) = (self.range_of_token(), self.token());
+        // `parseErrorForInvalidName`
+        let invalid_name = |blank: T, code_if_blank: u32, code: u32| match token == blank {
+            true => (here, code_if_blank),
+            false => (here, code),
+        };
+        let mut suggestion = None;
+        let (at, code) = match &word[..] {
+            b"" => return self.expected(T::Semicolon),
+            b"const" | b"let" | b"var" => ((pos, end), 1440),
+            // "If a declared node failed to parse, it would have emitted a diagnostic already."
+            b"declare" => return,
+            b"interface" => invalid_name(T::OpenBrace, 1438, 2427),
+            b"is" => ((pos, self.pos()), 1228),
+            b"module" | b"namespace" => invalid_name(T::OpenBrace, 1437, 2819),
+            b"type" => invalid_name(T::Equals, 1439, 2457),
+            _ => {
+                suggestion = keyword_suggestion(&word);
+                match suggestion {
+                    Some(_) => ((pos, end), 1435),
+                    None => ((pos, end), 1434),
+                }
+            }
+        };
+        match suggestion {
+            Some(suggestion) => self.error(code, at, &[&suggestion]),
+            None if matches!(code, 2427 | 2457 | 2819) => {
+                let value = self.token_value(&word);
+                self.error(code, at, &[&value]);
+            }
+            None => self.error(code, at, &[]),
+        }
+    }
+
+    /// `parseSemicolonAfterPropertyName`. `name`: the name and its range, if it is an identifier.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn missing_semicolon_after_property(
+        &mut self,
+        name: Option<(Atom, (u32, u32))>,
+        has_type: bool,
+        has_initializer: bool,
+    ) {
+        if !self.recovers {
+            return self.fail();
+        }
+        if self.token() == T::At && !self.newline_before() {
+            return self.error_at_token(1436, &[]);
+        }
+        if self.token() == T::OpenParen {
+            self.error_at_token(1441, &[]);
+            return self.next();
+        }
+        match (has_initializer, has_type, name) {
+            (true, ..) => self.expected(T::Semicolon),
+            (false, true, _) => self.error_at_token(1442, &[]),
+            (false, false, Some((name, at))) => self.missing_semicolon_after_identifier(name, at),
+            (false, false, None) => self.expected(T::Semicolon),
+        }
+    }
+
+    /// The condition of the loop of `parseHeritageClauses`, which is a list only from the first
+    /// clause on.
+    pub(crate) fn is_at_heritage_clause(&mut self, is_first: bool) -> bool {
+        if is_first || !self.recovers {
+            return matches!(self.token(), T::Extends | T::Implements);
+        }
+        self.skip_to_element(ListKind::HeritageClauses)
+    }
+
+    /// The condition of the loops of `parseList` and `parseDelimitedList`, before each element:
+    /// whether the list of `kind` goes on, after the tokens that are reported and skipped. Only
+    /// recovery asks: without it, what is no element is an error where it is parsed.
+    #[inline(always)]
+    pub(crate) fn is_at_element(&mut self, kind: ListKind) -> bool {
+        !self.recovers || self.skip_to_element(kind)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn skip_to_element(&mut self, kind: ListKind) -> bool {
+        loop {
+            match self.list_step(kind) {
+                ListStep::Element => return true,
+                ListStep::Skipped => {}
+                ListStep::Over => return false,
+            }
+        }
+    }
+
+    /// `recover_missing_comma`, which only recovery needs.
+    #[inline(always)]
+    pub(crate) fn goes_on_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
+        self.recovers && self.recover_missing_comma(kind, element)
+    }
+
     /// A list of `kind` is open from here on. Returns `lists` as the caller restores it after the
     /// list.
     #[inline(always)]
@@ -134,10 +457,8 @@ impl Parser<'_> {
         saved
     }
 
-    /// The condition of the loops of `parseList` and `parseDelimitedList`, before each element.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn list_step(&mut self, kind: ListKind) -> ListStep {
+    /// What the token is to the list of `kind`, which the loop of the list is at the top of.
+    fn list_step(&mut self, kind: ListKind) -> ListStep {
         if self.is_list_element(kind, false) {
             return ListStep::Element;
         }
@@ -151,7 +472,7 @@ impl Parser<'_> {
     /// `element` and that no comma follows. Whether the list goes on.
     #[cold]
     #[inline(never)]
-    pub(crate) fn recover_missing_comma(&mut self, kind: ListKind, element: u32) -> bool {
+    fn recover_missing_comma(&mut self, kind: ListKind, element: u32) -> bool {
         if self.is_list_terminator(kind) {
             return false;
         }

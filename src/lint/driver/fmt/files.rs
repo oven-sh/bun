@@ -303,6 +303,36 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
     }
 }
 
+/// Prettier's `getLanguageByInterpreter`: the parser for a file whose name says nothing and has no `.`, by its first
+/// line: `#!/usr/bin/env node`.
+pub(crate) fn parser_by_interpreter(path: &[u8]) -> Option<&'static [u8]> {
+    if strings::contains_char(paths::basename(path), b'.') || Kind::of(path, None).is_some() {
+        return None;
+    }
+    let mut start = [0; 256];
+    let start = fs::read_start(path, &mut start);
+    let line = strings::split(start, b"\n").next()?;
+    let in_bin = (line.strip_prefix(b"#!/usr/local/bin/"))
+        .or_else(|| line.strip_prefix(b"#!/usr/bin/"))
+        .or_else(|| line.strip_prefix(b"#!/bin/"))?;
+    let word = |text: &'_ [u8]| -> usize {
+        text.iter()
+            .take_while(|it| !it.is_ascii_whitespace())
+            .count()
+    };
+    let after_env = (in_bin.strip_prefix(b"env"))
+        .filter(|rest| !line.starts_with(b"#!/usr/local/") && word(rest) == 0)
+        .map(<[u8]>::trim_ascii_start)
+        .filter(|rest| !rest.is_empty());
+    let rest = after_env.unwrap_or(in_bin);
+    match &rest[..word(rest)] {
+        b"bun" | b"chakra" | b"d8" | b"deno" | b"gjs" | b"js" | b"node" | b"nodejs" | b"qjs"
+        | b"rhino" | b"v8" | b"v8-shell" | b"zx" => Some(b"babel"),
+        b"ts-node" | b"tsx" => Some(b"typescript"),
+        _ => None,
+    }
+}
+
 pub(crate) fn language_of(path: &[u8]) -> Language {
     match Kind::of(path, None) {
         // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
@@ -719,14 +749,7 @@ pub(crate) fn expand(
             b"" => paths::relative(&written_base.1, &target.path),
             written => paths::join(written, &paths::relative(&written_base.1, &target.path)),
         };
-        let keys: Vec<_> = (found.iter())
-            .map(|target| collation_key(&key(target)))
-            .collect();
-        let mut order = index_sort::identity(found.len());
-        index_sort::sort_indices(&mut order, &mut |a, b| {
-            keys[a as usize].cmp(&keys[b as usize])
-        });
-        index_sort::apply_permutation_in_place(&mut found, &mut order);
+        index_sort::sort_slice_by_cached_key(&mut found[..], |target| collation_key(&key(target)));
         for target in found {
             if seen.insert(target.path.clone()) {
                 expanded.push(Expanded::File(target));
@@ -783,7 +806,7 @@ pub(crate) fn expand_as_oxfmt(
     if !globs.is_empty() || targets.is_empty() {
         targets.push(cwd);
     }
-    index_sort::sort_slice_by(&mut targets[..], |a, b| a.cmp(b));
+    index_sort::sort_slice(&mut targets[..]);
     targets.dedup();
 
     let mut found: Vec<Target> = Vec::new();

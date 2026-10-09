@@ -1,6 +1,6 @@
 //! Statements and declarations.
 
-use super::{ListKind, ListStep, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::Atom;
@@ -115,6 +115,7 @@ impl Parser<'_> {
             T::Switch => self.switch_statement(),
             T::Throw => self.throw_statement(),
             T::Try => self.try_statement(),
+            T::Catch | T::Finally if self.recovers => self.try_statement(),
             T::Debugger => {
                 self.next();
                 self.semicolon();
@@ -147,7 +148,9 @@ impl Parser<'_> {
             // `isStartOfStatement`: "they may be the start of a class member if an identifier
             // immediately follows. Otherwise they're an identifier in an expression statement."
             T::Private | T::Protected | T::Public | T::Accessor | T::Static | T::Readonly
-                if !self.is_ecmascript && self.is_followed_by_word_on_same_line() =>
+                if !self.is_ecmascript
+                    && !self.recovers
+                    && self.is_followed_by_word_on_same_line() =>
             {
                 self.fail();
                 StmtId::NONE
@@ -601,7 +604,8 @@ impl Parser<'_> {
             false => self.enter_context(0, ctx::DISALLOW_IN),
         };
         let base = self.s.var_decls.len();
-        loop {
+        let lists = self.enter_list(ListKind::VariableDeclarations);
+        while self.is_at_element(ListKind::VariableDeclarations) {
             // `isListElement`, `isListTerminator`: the list can be empty, and can end with a comma.
             // The checker reports both.
             if !self.is_binding_identifier()
@@ -616,7 +620,10 @@ impl Parser<'_> {
             }
             // `parseVariableDeclaration`
             let full = self.full_start();
-            let pat = self.identifier_or_pattern();
+            let pat = match self.token() {
+                T::PrivateIdentifier => self.missing_binding_identifier(18029),
+                _ => self.identifier_or_pattern(),
+            };
             let mut flags = flags;
             if !is_in_for
                 && self.token() == T::Exclamation
@@ -648,10 +655,13 @@ impl Parser<'_> {
                     end: self.prev_end(),
                 },
             });
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::VariableDeclarations, full)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
         take_span!(self, var_decls, base)
     }
@@ -676,10 +686,14 @@ impl Parser<'_> {
     fn enum_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         self.next();
         let (name, name_pos) = self.identifier();
-        self.expect(T::OpenBrace);
+        let has_members = self.expect(T::OpenBrace);
         let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
         let members = self.s.enum_members.len();
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::EnumMembers);
+        while has_members
+            && self.is_in_list(T::CloseBrace)
+            && self.is_at_element(ListKind::EnumMembers)
+        {
             // `parseEnumMember`
             let member = self.start();
             // The checker reports a number, a computed name and so on.
@@ -710,12 +724,17 @@ impl Parser<'_> {
                     end: self.prev_end(),
                 },
             });
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::EnumMembers, member.full)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
-        self.expect(T::CloseBrace);
+        if has_members {
+            self.expect(T::CloseBrace);
+        }
         let members = take_span!(self, enum_members, members);
         let declaration = self.f.add_enum(Enum {
             name,
@@ -822,7 +841,9 @@ impl Parser<'_> {
 
     /// `parseModuleBlock`
     fn module_block(&mut self) -> IdList<StmtId> {
-        self.expect(T::OpenBrace);
+        if !self.expect(T::OpenBrace) {
+            return IdList::EMPTY;
+        }
         let saved = self.enter_context(0, ctx::TOP_LEVEL | ctx::AWAIT | ctx::YIELD);
         let list = self.statements_until_close_brace();
         self.context = saved;
@@ -839,14 +860,7 @@ impl Parser<'_> {
         // Only a statement of the file makes it a module.
         let was_module = self.f.has_module_syntax;
         let lists = self.enter_list(ListKind::BlockStatements);
-        while self.is_in_list(T::CloseBrace) {
-            if self.recovers {
-                match self.list_step(ListKind::BlockStatements) {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
-                }
-            }
+        while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
             let statement = self.statement();
             self.s.ids.push(statement.0);
         }
@@ -858,17 +872,24 @@ impl Parser<'_> {
     /// `parseBlock`
     pub(crate) fn block(&mut self) -> StmtId {
         let start = self.start();
-        self.expect(T::OpenBrace);
+        if !self.expect(T::OpenBrace) {
+            return self.add_stmt(StmtKind::Block(IdList::EMPTY), start, Span::EMPTY);
+        }
         let list = self.statements_until_close_brace();
-        self.expect(T::CloseBrace);
+        self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start.pos));
+        if self.token() == T::Equals && self.recovers {
+            self.error_at_token(2809, &[]);
+            self.next();
+        }
         self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
     }
 
     /// `(` expression `)`
     fn parenthesized_condition(&mut self) -> ExprId {
-        self.expect(T::OpenParen);
+        let open = self.pos();
+        let open = self.expect(T::OpenParen).then_some(open);
         let test = self.expression_allowing_in();
-        self.expect(T::CloseParen);
+        self.expect_matching((T::OpenParen, T::CloseParen), open);
         test
     }
 
@@ -907,7 +928,8 @@ impl Parser<'_> {
     fn with_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
-        self.expect(T::OpenParen);
+        let open = self.pos();
+        let open = self.expect(T::OpenParen).then_some(open);
         let full = self.full_start();
         let object = self.expression_allowing_in();
         let object = self.add_stmt(StmtKind::Expr(object), start, Span::EMPTY);
@@ -915,7 +937,7 @@ impl Parser<'_> {
             statement.loc.pos = full;
         }
         let close = self.pos();
-        self.expect(T::CloseParen);
+        self.expect_matching((T::OpenParen, T::CloseParen), open);
         let body = self.embedded_statement();
         let end = self.f.stmts.get(body.idx()).map_or(0, |it| it.loc.end);
         self.f.with_bodies.push((close + 1, end));
@@ -955,12 +977,14 @@ impl Parser<'_> {
             };
             init = self.add_stmt(kind, at, Span::EMPTY);
         }
-        let kind = if is_await || self.token() == T::Of {
-            let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
-            if starts_with_let && self.f.stmts.get(init.idx()).is_some_and(is_expression) {
-                self.report();
-            }
-            self.expect(T::Of);
+        let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
+        if self.token() == T::Of
+            && starts_with_let
+            && self.f.stmts.get(init.idx()).is_some_and(is_expression)
+        {
+            self.report();
+        }
+        let kind = if (is_await || self.token() == T::Of) && self.expect(T::Of) {
             let saved = self.enter_context(0, ctx::DISALLOW_IN);
             let expr = self.assignment_expression();
             self.context = saved;
@@ -1002,7 +1026,7 @@ impl Parser<'_> {
             }
         };
         if init.is_none() && !matches!(kind, StmtKind::For { .. }) {
-            self.fail();
+            self.fail_unless_recovering();
         }
         self.add_stmt(kind, start, Span::EMPTY)
     }
@@ -1013,15 +1037,10 @@ impl Parser<'_> {
         self.next();
         let label = match self.can_parse_semicolon() {
             true => Atom::NONE,
+            false if !self.is_identifier() => self.missing_identifier(0, 0).0,
             false => {
                 // The reference notes the name at the start of the statement.
-                let (label, _) = (
-                    self.lx.atom,
-                    self.is_identifier() || {
-                        self.fail();
-                        false
-                    },
-                );
+                let label = self.lx.atom;
                 self.note_identifier(label, start.pos);
                 self.next();
                 label
@@ -1061,18 +1080,26 @@ impl Parser<'_> {
             }
             false => self.expression_allowing_in(),
         };
-        self.semicolon();
+        if !self.eat(T::Semicolon) && !self.can_parse_semicolon() {
+            match self.recovers {
+                true => self.missing_semicolon_after(value),
+                false => self.fail(),
+            }
+        }
         self.add_stmt(StmtKind::Throw(value), start, Span::EMPTY)
     }
 
     fn switch_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
-        let expr = self.parenthesized_condition();
+        self.expect(T::OpenParen);
+        let expr = self.expression_allowing_in();
+        self.expect(T::CloseParen);
         self.expect(T::OpenBrace);
         let base = self.s.cases.len();
         let mut defaults = 0;
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::SwitchClauses);
+        while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::SwitchClauses) {
             let pos = self.pos();
             let test = match self.token() {
                 T::Case => {
@@ -1096,10 +1123,14 @@ impl Parser<'_> {
                 self.flag(DiagnosticKind::Grammar, 1113, (pos, self.prev_end()), &[]);
             }
             let ids = self.s.ids.len();
-            while !matches!(self.token(), T::Case | T::Default | T::CloseBrace | T::Eof) {
+            let lists = self.enter_list(ListKind::SwitchClauseStatements);
+            while !matches!(self.token(), T::Case | T::Default | T::CloseBrace | T::Eof)
+                && self.is_at_element(ListKind::SwitchClauseStatements)
+            {
                 let statement = self.statement();
                 self.s.ids.push(statement.0);
             }
+            self.lists = lists;
             let body = self.take_ids(ids);
             self.s.cases.push(Case {
                 test,
@@ -1108,6 +1139,7 @@ impl Parser<'_> {
                 end: self.prev_end(),
             });
         }
+        self.lists = lists;
         self.expect(T::CloseBrace);
         let cases = take_span!(self, cases, base);
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
@@ -1115,7 +1147,7 @@ impl Parser<'_> {
 
     fn try_statement(&mut self) -> StmtId {
         let start = self.start();
-        self.next();
+        self.expect(T::Try);
         let block = self.block();
         let (mut param, mut handler, mut finalizer) = (VarDeclId::NONE, StmtId::NONE, StmtId::NONE);
         if self.eat(T::Catch) {
@@ -1142,16 +1174,16 @@ impl Parser<'_> {
             }
             handler = self.block();
         }
-        if self.token() == T::Finally {
+        if self.token() == T::Finally || handler.is_none() {
             // The block starts at the keyword.
             let keyword = self.start();
-            self.next();
+            if !self.eat(T::Finally) {
+                self.error_at_token(1472, &[]);
+            }
             finalizer = self.block();
             if let Some(block) = self.f.stmts.get_mut(finalizer.idx()) {
                 block.start = keyword.pos;
             }
-        } else if handler.is_none() {
-            self.fail();
         }
         let kind = StmtKind::Try {
             block,
@@ -1212,6 +1244,10 @@ impl Parser<'_> {
             && self.lx.text_of(name) == b"declare"
             && !self.is_parenthesized(expression)
         {
+            return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
+        }
+        if self.recovers {
+            self.missing_semicolon_after(expression);
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
         self.fail();

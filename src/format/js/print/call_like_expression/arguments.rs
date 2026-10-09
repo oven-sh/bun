@@ -570,6 +570,12 @@ fn can_group_arrow_function_expression_argument<'a>(
     }
 }
 
+/// `new A(b, function (c, d) {})`: for Prettier the parameters can break while the function is hugged. For oxfmt they
+/// cannot, as in a call.
+fn new_is_a_call_like_another(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 #[inline(never)]
 fn write_grouped_arguments<'a>(
     node: &FormatArguments<'a>,
@@ -578,9 +584,10 @@ fn write_grouped_arguments<'a>(
 ) {
     let last_index = node.len().saturating_sub(1);
     // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
+    let is_call = matches!(node.parent, AstNodes::CallExpression(_))
+        || (matches!(node.parent, AstNodes::NewExpression(_)) && new_is_a_call_like_another(f));
     let expands_parameters_of = |function: Func<'a>| {
-        matches!(node.parent, AstNodes::CallExpression(_))
-            && (last_index != 0 || has_only_simple_parameters(function, false))
+        is_call && (last_index != 0 || has_only_simple_parameters(function, false))
     };
     let mut non_grouped_breaks = false;
     let mut grouped_breaks = false;

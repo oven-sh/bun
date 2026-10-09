@@ -429,7 +429,7 @@ impl ConsistentTypeImports {
             return;
         }
         let mut imports = std::mem::take(&mut cx.state.imports);
-        imports.sort_unstable_by_key(|import| import.span().start);
+        utils::sort::sort_unstable_by_key(&mut imports, |import| import.span().start);
 
         let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::default();
         let mut reports: Vec<ReportValueImport<'a>> = Vec::new();

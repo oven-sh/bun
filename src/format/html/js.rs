@@ -146,6 +146,8 @@ enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
+    /// The parameters of a function, or of a type.
+    Binding,
     Other,
 }
 
@@ -179,6 +181,17 @@ fn with_file(
     // oxfmt prints a script like a file of its own.
     if !matches!(piece, Piece::Script(flavor) if flavor.is_oxfmt()) {
         options.filepath.clone_from(&f.options().filepath);
+    }
+    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. Bindings are
+    // oxfmt's own, and it does not sort there.
+    let sorts_classes = match (piece, in_html.root) {
+        (Piece::Binding, _) => false,
+        (_, HtmlRoot::Program) => true,
+        (_, HtmlRoot::JsExpression) => paths == [EXPRESSION_JSX],
+        _ => false,
+    };
+    if !sorts_classes {
+        options.tailwind = None;
     }
     // A plugin of Prettier sorts the imports of the text before it is parsed.
     let mut sorts_text = None;
@@ -777,7 +790,7 @@ pub(crate) fn write_binding(
         paths_of(syntax, &program),
         SourceType::Unknown,
         in_html,
-        Piece::Other,
+        Piece::Binding,
         &mut |file, f| {
             let Some(statement) = file.body().iter().next() else {
                 return false;

@@ -32,6 +32,14 @@ use rustc_hash::FxHashMap;
 /// along chains such as `a + b + c`, which the parser reads in a loop.
 const MAX_DEPTH: u32 = 192;
 
+/// How much stack the compiler can take for a level of the tree: twice what its lowering, which
+/// takes the most, was seen to take. A build that is not optimized takes ten times as much.
+const STACK_FOR_A_LEVEL: usize = if cfg!(any(debug_assertions, bun_asan)) {
+    80 << 10
+} else {
+    8 << 10
+};
+
 /// How much of each the tree can have. Passes of the compiler take time and memory that grow with the
 /// square or the cube of what a function has: of its instructions, of the blocks of its control
 /// flow graph, of the functions in it, of the arguments of a call. A function in a function is
@@ -137,6 +145,8 @@ pub(crate) struct Converter<'a, 'x> {
     squares: Counts,
     functions: u32,
     depth: u32,
+    /// [`MAX_DEPTH`], or less if the thread has not the stack for that.
+    max_depth: u32,
     stack: bun_core::StackCheck,
 }
 
@@ -146,6 +156,8 @@ pub(crate) fn convert<'a>(
     arena: &Arena,
     func: Func<'a>,
 ) -> Converts<Converted> {
+    let stack = bun_core::StackCheck::init();
+    let max_depth = (stack.remaining() / STACK_FOR_A_LEVEL).min(MAX_DEPTH as usize) as u32;
     let mut converter = Converter {
         file,
         arena,
@@ -164,7 +176,8 @@ pub(crate) fn convert<'a>(
         squares: Counts::default(),
         functions: 0,
         depth: 0,
-        stack: bun_core::StackCheck::init(),
+        max_depth,
+        stack,
     };
     converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
     converter.fragment = converter.new_symbol(b"Fragment", SymbolKind::Unbound, true);
@@ -220,7 +233,7 @@ impl<'a> Converter<'a, '_> {
 
     /// Calls `then` one level further down.
     fn nested<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
-        if self.depth >= MAX_DEPTH || !self.stack.is_safe_to_recurse() {
+        if self.depth >= self.max_depth || !self.stack.is_safe_to_recurse() {
             return Err(Refusal::TooDeep);
         }
         self.depth += 1;

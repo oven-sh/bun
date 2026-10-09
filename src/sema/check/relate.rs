@@ -11,6 +11,7 @@ use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
+use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -5940,7 +5941,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
             };
-            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+            in_order.shared_sort_by(|a, b| place(a).cmp(&place(b)));
         }
         for (i, tp) in tm.shape().props.iter().enumerate() {
             let tp = if REPORT {

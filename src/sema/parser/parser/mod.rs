@@ -18,7 +18,8 @@ use crate::token::T;
 use crate::{Options, Parsed, Refusal, Refused, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
-pub(crate) use recover::{ListKind, ListStep};
+pub(crate) use recover::ListKind;
+pub use recover::keyword_suggestion;
 
 /// `ParserContext`, as bits.
 pub(crate) mod ctx {
@@ -144,6 +145,7 @@ pub(crate) struct Checkpoint {
     file: FileLens,
     stacks: StackLens,
     context: u32,
+    lists: u32,
     classes_around: u32,
     has_top_level_await: bool,
     unclaimed_nullable_types: u32,
@@ -324,10 +326,7 @@ impl<'a> Parser<'a> {
         self.next();
         let base = self.s.ids.len();
         self.lists = 1 << ListKind::SourceElements as u32;
-        while self.token() != T::Eof {
-            if self.recovers && self.list_step(ListKind::SourceElements) != ListStep::Element {
-                continue;
-            }
+        while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = self.statement();
             if self.is_an_external_module_indicator(statement) {
                 self.f.has_module_syntax = true;
@@ -430,6 +429,10 @@ impl<'a> Parser<'a> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn fail(&mut self) {
+        // Where going on is not written yet. A speculative parse would go on too.
+        if self.recovers {
+            return self.refuse(Refusal::Unsupported);
+        }
         if !self.has_failed() {
             self.failed_at = (self.lx.token, self.lx.start);
         }
@@ -531,11 +534,23 @@ impl<'a> Parser<'a> {
     /// `parseExpected`
     #[inline(always)]
     #[track_caller]
-    pub(crate) fn expect(&mut self, token: T) {
+    pub(crate) fn expect(&mut self, token: T) -> bool {
         if self.lx.token == token {
             self.lx.next();
+            return true;
+        }
+        self.expected(token);
+        false
+    }
+
+    /// `parseExpectedMatchingBrackets`. `open_at`: where `open` is, if it is there.
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn expect_matching(&mut self, (open, close): (T, T), open_at: Option<u32>) {
+        if self.lx.token == close {
+            self.lx.next();
         } else {
-            self.expected(token);
+            self.unmatched((open, close), open_at);
         }
     }
 
@@ -628,6 +643,7 @@ impl<'a> Parser<'a> {
             file: file_lens(&self.f),
             stacks: self.s.lens(),
             context: self.context,
+            lists: self.lists,
             classes_around: self.classes_around,
             has_top_level_await: self.has_top_level_await,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
@@ -639,6 +655,7 @@ impl<'a> Parser<'a> {
         truncate_file(&mut self.f, &to.file);
         self.s.truncate(&to.stacks);
         self.context = to.context;
+        self.lists = to.lists;
         self.classes_around = to.classes_around;
         self.has_top_level_await = to.has_top_level_await;
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
@@ -736,8 +753,7 @@ impl<'a> Parser<'a> {
     #[inline]
     pub(crate) fn identifier(&mut self) -> (Atom, u32) {
         if !self.is_identifier() {
-            self.fail();
-            return (Atom::NONE, self.pos());
+            return self.missing_identifier(0, 0);
         }
         let (atom, pos) = (self.lx.atom, self.lx.start);
         self.note_identifier(atom, pos);
@@ -748,7 +764,10 @@ impl<'a> Parser<'a> {
     /// `parseIdentifierName`: any word.
     #[inline]
     pub(crate) fn identifier_name(&mut self) -> (Atom, u32) {
-        if !self.lx.token.is_identifier_or_keyword() || self.lx.token == T::PrivateIdentifier {
+        if !self.lx.token.is_identifier_or_keyword() {
+            return self.missing_identifier(0, 0);
+        }
+        if self.lx.token == T::PrivateIdentifier {
             self.fail();
             return (Atom::NONE, self.pos());
         }

@@ -5,6 +5,7 @@
 //! are in source order. Nothing here calls itself, and nothing is declared or resolved.
 
 use super::*;
+use crate::util::SharedSort;
 
 /// Makes `b` what [`bind_for_lint_in`] says. `false`: the file takes the binder.
 pub(super) fn fill_in<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
@@ -159,7 +160,7 @@ impl<'l, S: Storage> Yields<'l, S> {
                 }
             }
         }
-        found.sort_unstable_by_key(|it| (it.0.0, it.1));
+        found.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
         for of_one in found.chunk_by(|a, b| a.0 == b.0) {
             if let Some(info) = self.b.fns.get_mut(of_one[0].0.idx()) {
                 info.yields = IdList::new(self.b.ids.len() as u32, of_one.len() as u32);

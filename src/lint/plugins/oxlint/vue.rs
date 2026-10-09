@@ -1301,7 +1301,7 @@ pub(crate) fn calls_of<'a>(file: &'a File<'a>, name: &str) -> Vec<(Expr<'a>, Cal
     let mut calls: Vec<_> = calls
         .filter(|it| is_specific_id(it.1.callee(), name))
         .collect();
-    calls.sort_unstable_by_key(|it| it.0.span().start);
+    utils::sort::sort_unstable_by_key(&mut calls, |it| it.0.span().start);
     calls
 }
 

@@ -1,8 +1,9 @@
-// Prints where Tailwind CSS puts the classes of each list that it is asked about. The file at `path` has the question:
-// { groups: [{ directory, config, stylesheet, lists }] }. A list is classes with a blank between them. `directory`: of the
-// files that the lists are in.
+// Prints where Tailwind CSS puts the classes that it is asked about. The file at `path` has the question:
+// { groups: [{ root, config, stylesheet, classes }] }. `root`: the directory of the package.
 //
-// Which Tailwind is asked, and how, is what prettier-plugin-tailwindcss does: `getTailwindConfig`, `loadV3`, `loadV4`.
+// Where it puts a class does not depend on what else it is asked about. The numbers that it answers with do.
+//
+// How it is loaded is what prettier-plugin-tailwindcss does: `getTailwindConfig`, `loadV3`, `loadV4`.
 
 const { dirname, isAbsolute, join } = require("node:path");
 
@@ -80,34 +81,45 @@ async function loadV4(tailwind, stylesheet) {
     loadPlugin: id => load(id, dirname(stylesheet), () => {}),
     loadConfig: id => load(id, dirname(stylesheet), {}),
   });
-  // Where Tailwind 4 puts a class does not depend on what else it is asked about, and one question takes a thirtieth of the
-  // time of thousands.
-  return lists => {
-    const orders = new Map(design.getClassOrder([...new Set(lists.flat())]));
-    return lists.map(list => list.map(it => orders.get(it) ?? null));
-  };
+  return classes => design.getClassOrder(classes);
+}
+
+async function loadV3(root, config) {
+  const resolveConfig = require(join(root, "resolveConfig"));
+  const { createContext } = require(join(root, "lib/lib/setupContextUtils"));
+  const { generateRules } = require(join(root, "lib/lib/generateRules"));
+  const options = config ? await importDefault(config) : {};
+  options.content = ["no-op"];
+  const context = createContext(resolveConfig(options));
+  if (context.getClassOrder) return classes => context.getClassOrder(classes);
+  // Before 3.0.24.
+  const prefix = context.tailwindConfig.prefix;
+  const prefixed = name => (typeof prefix === "function" ? prefix(name) : prefix + name);
+  const parasites = new Set([prefixed("group"), prefixed("peer")]);
+  return classes =>
+    classes.map(name => {
+      const order =
+        generateRules(new Set([name]), context).sort(([a], [z]) => (z > a ? 1 : z < a ? -1 : 0))[0]?.[0] ?? null;
+      return [name, order === null && parasites.has(name) ? context.layerOrder.components : order];
+    });
 }
 
 const loaded = new Map();
-function orderFor({ directory, config, stylesheet }) {
-  let root;
-  try {
-    root = dirname(Bun.resolveSync("tailwindcss/package.json", directory));
-  } catch {
-    throw new Error(`It needs the package tailwindcss, which cannot be found from ${directory}. Install it.`);
+function orderFor({ root, config, stylesheet }) {
+  const isV4 = fs.existsSync(join(root, "theme.css"));
+  if (stylesheet) config = null;
+  if (isV4 ? config : stylesheet) {
+    const [option, major] = isV4 ? ["config", 3] : ["stylesheet", 4];
+    throw new Error(`\`${option}\` is for Tailwind CSS ${major}, and ${root} is another.`);
   }
   const key = JSON.stringify([root, config, stylesheet]);
   if (!loaded.has(key)) {
-    loaded.set(
-      key,
-      (async () => {
-        const tailwind = await import(pathToFileURL(Bun.resolveSync("tailwindcss", directory)).href);
-        if (!tailwind.__unstable__loadDesignSystem || (config && !config.endsWith(".css") && !stylesheet)) {
-          throw new Error(`Only Tailwind CSS 4 is supported yet. ${root} is another, or \`config\` is set.`);
-        }
-        return loadV4(tailwind, stylesheet ?? join(root, "theme.css"));
-      })(),
-    );
+    const load = async () => {
+      if (!isV4) return loadV3(root, config);
+      const tailwind = await import(pathToFileURL(Bun.resolveSync("tailwindcss", dirname(dirname(root)))).href);
+      return loadV4(tailwind, stylesheet ?? join(root, "theme.css"));
+    };
+    loaded.set(key, load());
   }
   return loaded.get(key);
 }
@@ -121,12 +133,15 @@ function ranks(orders) {
 
 const groups = [];
 for (const group of JSON.parse(read(path)).groups) {
-  const { lists, ...which } = group;
+  const { classes, ...which } = group;
   try {
-    const orders = (await orderFor(which))(lists.map(list => list.split(" ")));
-    groups.push({ ...which, ranks: Object.fromEntries(lists.map((list, index) => [list, ranks(orders[index])])) });
+    const orders = (await orderFor(which))(classes);
+    const numbers = ranks(orders.map(it => it[1]));
+    groups.push({ ...which, ranks: Object.fromEntries(orders.map((it, index) => [it[0], numbers[index]])) });
   } catch (error) {
     groups.push({ ...which, error: String(error?.message ?? error) });
   }
 }
-finish({ groups });
+// What is asked has just been written, and an answer is as good for the next question.
+touched.delete(path);
+finish({ groups }, []);

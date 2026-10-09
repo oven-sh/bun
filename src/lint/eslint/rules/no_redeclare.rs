@@ -81,7 +81,7 @@ fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(Decla
         let known = into.len();
         into.extend(declarations.filter_map(identifier_span).map(|span| (DeclarationType::Syntax, span)));
         if is_oxlint && let Some(added) = into.get_mut(known..) {
-            added.sort_unstable_by_key(|it| it.1.start);
+            utils::sort::sort_unstable_by_key(added, |it| it.1.start);
         }
     };
     let Some(ignore_declaration_merge) = config.ignore_declaration_merge else {

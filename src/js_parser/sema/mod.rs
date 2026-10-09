@@ -466,6 +466,21 @@ pub fn summarize<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
+    use bun_sema::resolve::ScriptKind;
+    let kind = script_kind.or_else(|| ScriptKind::from_file_name(path));
+    // `bun_sema_parser` reads no types from the comments of a JavaScript file yet.
+    if direct_mode() != DirectMode::Never && !kind.is_some_and(ScriptKind::is_javascript) {
+        return summarize_as(
+            Default::default(),
+            arena,
+            path,
+            script_kind,
+            text,
+            atoms,
+            experimental_decorators,
+            every_file_is_a_module,
+        );
+    }
     summarize_with_recovery(
         Default::default(),
         true,
@@ -498,6 +513,30 @@ fn give_back_scratch(scratch: Box<bun_sema_parser::Scratch>) {
             *free = Some(scratch);
         }
     });
+}
+
+/// What `bun_sema_parser` is asked for, until it is the only parser of the type checker.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum DirectMode {
+    /// [`summarize`] does not ask it. [`summarize_as`] does, and hands what it refuses to Bun's parser.
+    Never,
+    /// [`summarize`] is as [`summarize_as`], for what is not JavaScript.
+    First,
+    /// And what it refuses it parses again, with recovery. What it refuses then has one error, where it has given up, and no
+    /// statements. Bun's parser gets JSON only.
+    Alone,
+}
+
+/// [`DirectMode`], as a number. Only a harness sets it.
+pub static DIRECT_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+fn direct_mode() -> DirectMode {
+    match DIRECT_MODE.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => DirectMode::Never,
+        1 => DirectMode::First,
+        _ => DirectMode::Alone,
+    }
 }
 
 /// How many files `summarize_as` has handed to `bun_sema_parser`, and how many of them that parser
@@ -598,7 +637,7 @@ fn parse_directly(
         true => !dialect.script,
         false => every_file_is_a_module,
     };
-    let mut options = bun_sema_parser::Options {
+    let options = bun_sema_parser::Options {
         is_declaration_file: by_name && bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_js || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js,
@@ -611,7 +650,8 @@ fn parse_directly(
         Some(atoms) => bun_sema_parser::parse(text, options, atoms, scratch),
         None => bun_sema_parser::parse_with_own_atoms(text, options, scratch),
     };
-    let parsed = (|| {
+    let attempt = |mut options: bun_sema_parser::Options,
+                   scratch: &mut bun_sema_parser::Scratch| {
         if is_json {
             return Err((bun_sema_parser::Refusal::Json, 0));
         }
@@ -634,20 +674,36 @@ fn parse_directly(
         options.await_is_a_name = true;
         let second = parse(options, scratch);
         second.map(|it| it.file).map_err(|it| (it.why, it.at))
-    })();
+    };
+    let is_flow = dialect.flow && is_js;
+    let is_alone = direct_mode() == DirectMode::Alone && !is_json;
+    let parsed = attempt(options, scratch).or_else(|refused| match is_alone && !is_flow {
+        true => {
+            let recovers = true;
+            attempt(
+                bun_sema_parser::Options {
+                    recovers,
+                    ..options
+                },
+                scratch,
+            )
+            .or(Err(refused))
+        }
+        false => Err(refused),
+    });
     let mut file = match parsed {
         Ok(file) => file,
         Err((why, at)) => {
             DIRECT_PARSER_COUNTS.refused[why as usize].fetch_add(1, Relaxed);
             // No other parser reads Flow: what is refused is an error.
-            if !(dialect.flow && is_js) {
+            if !is_flow && !is_alone {
                 return None;
             }
             use bun_sema::hir::{Diagnostic, DiagnosticKind};
             return Some(bun_sema::hir::FileBuilder {
                 kind: bun_sema::hir::FileKind::Tsx,
                 is_js,
-                is_flow: true,
+                is_flow,
                 has_errors: true,
                 has_parse_diagnostics: true,
                 error_pos: at,

@@ -435,7 +435,7 @@ impl<'a> ModuleRecord<'a> {
         let owned = |name: Name<'a>| Box::<[u8]>::from(name.bytes());
         let mut exported_bindings: Vec<Box<[u8]>> =
             self.exported_bindings.keys().map(|it| owned(*it)).collect();
-        exported_bindings.sort_unstable();
+        utils::sort::sort_unstable(&mut exported_bindings);
         Record {
             has_module_syntax: has_module_syntax(file),
             has_export_default: self.export_default().is_some(),

@@ -55,7 +55,7 @@ impl<'a> Modifiers<'a> {
     fn new(references: impl Iterator<Item = Reference<'a>>) -> Self {
         let all: Vec<Reference<'a>> = references.filter(|it| is_write_reference(*it)).collect();
         let mut writes: Vec<Span> = all.iter().map(|it| it.span()).collect();
-        writes.sort_unstable_by_key(|it| it.start);
+        utils::sort::sort_unstable_by_key(&mut writes, |it| it.start);
         Modifiers {
             all,
             writes,
@@ -80,7 +80,7 @@ impl<'a> Modifiers<'a> {
                     calls.extend(variable.references().map(Reference::span));
                 }
             }
-            calls.sort_unstable_by_key(|it| it.start);
+            utils::sort::sort_unstable_by_key(&mut calls, |it| it.start);
             calls
         })
     }
@@ -241,7 +241,7 @@ impl NoUnmodifiedLoopCondition {
         if spans.is_empty() {
             return;
         }
-        spans.sort_unstable_by_key(|it| it.start);
+        utils::sort::sort_unstable_by_key(&mut spans, |it| it.start);
         // Only the references in the test of a loop are looked at.
         let mut conditions: Vec<Condition<'a>> = Vec::new();
         let (mut tests, mut end) = (spans.iter().peekable(), 0u32);

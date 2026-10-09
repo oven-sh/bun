@@ -559,6 +559,42 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(0);
       });
 
+      test("--fix makes one pass, and what is left is reported where it was", async () => {
+        const result = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              categories: { correctness: "off" },
+              jsPlugins: ["./plugin.js"],
+              rules: { "p/r": "error" },
+            }),
+            "plugin.js": `export default {
+              meta: { name: "p" },
+              rules: {
+                r: {
+                  meta: { fixable: "code" },
+                  create: context => ({
+                    Identifier(node) {
+                      const to = { a: "longer", longer: "c" }[node.name];
+                      if (to) context.report({ node, message: "m", fix: fixer => fixer.replaceText(node, to) });
+                      if (node.name === "stays") context.report({ node, message: "it stays" });
+                    },
+                  }),
+                },
+              },
+            };`,
+            "a.js": "a; stays;\n",
+          },
+          ["--fix", "-f", "json", "a.js"],
+          { reads: ["a.js"] },
+        );
+        expect(result.files["a.js"]).toBe("longer; stays;\n");
+        const { diagnostics } = JSON.parse(result.raw);
+        expect(diagnostics.map((it: any) => [it.message, it.labels[0].span])).toEqual([
+          ["it stays", { offset: 3, length: 5, line: 1, column: 4 }],
+        ]);
+        expect(result.exitCode).toBe(1);
+      });
+
       test("--fix applies the fixes of a rule that is about several files", async () => {
         const result = await lint(
           {

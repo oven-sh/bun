@@ -32,7 +32,7 @@ impl Rule for ValidDefineOptions {
             if !calls.is_empty() {
                 let all = cx.file().exprs_of_kind(ExprTag::Ident).filter(|it| !it.is_in_type_query());
                 identifiers.extend(all.filter_map(|it| Some((it, name_span_of_local_declaration(it)?))));
-                identifiers.sort_unstable_by_key(|it| it.0.span().start);
+                utils::sort::sort_unstable_by_key(&mut identifiers, |it| it.0.span().start);
             }
             for (call_expr, call) in &calls {
                 if calls.len() > 1 {

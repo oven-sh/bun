@@ -1,7 +1,7 @@
 //! Classes.
 
 use super::stmt::{ModifiersOf, Start};
-use super::{Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -89,7 +89,9 @@ impl Parser<'_> {
         let mut other_extends: Vec<ExprId> = Vec::new();
         let mut other_implements: Vec<TypeNodeId> = Vec::new();
         let (mut has_extends, mut has_implements) = (false, false);
-        while matches!(self.token(), T::Extends | T::Implements) {
+        let lists = self.enter_list(ListKind::HeritageClauses);
+        let mut is_first = true;
+        while self.is_at_heritage_clause(std::mem::take(&mut is_first)) {
             let keyword = (self.lx.start, self.lx.end);
             let is_extends = self.token() == T::Extends;
             let misplaced = match (is_extends, has_extends, has_implements) {
@@ -191,6 +193,7 @@ impl Parser<'_> {
                 }
             }
         }
+        self.lists = lists;
         heritage.other_extends = self.f.list(&other_extends);
         heritage.other_implements = self.f.list(&other_implements);
         heritage
@@ -224,17 +227,24 @@ impl Parser<'_> {
         {
             self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
         }
-        self.expect(T::OpenBrace);
+        let has_members = self.expect(T::OpenBrace);
         let members = self.s.members.len();
         let decorators = self.s.decorators.len();
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::ClassMembers);
+        while has_members
+            && self.is_in_list(T::CloseBrace)
+            && self.is_at_element(ListKind::ClassMembers)
+        {
             // A `SemicolonClassElement` is not a member.
             if self.eat(T::Semicolon) {
                 continue;
             }
             self.class_element(members);
         }
-        self.expect(T::CloseBrace);
+        self.lists = lists;
+        if has_members {
+            self.expect(T::CloseBrace);
+        }
         self.classes_around -= 1;
         let members: Span<MemberId> = take_span!(self, members, members);
         for index in decorators..self.s.decorators.len() {
@@ -390,7 +400,23 @@ impl Parser<'_> {
             self.flow_variance();
         }
         let name_token = self.token();
-        let (mut key, name_kind, name_pos) = self.property_name();
+        let name_end = self.lx.end;
+        let has_name = kind != MemberKind::Property
+            || is_generator
+            || name_token == T::OpenBracket
+            || self.is_literal_property_name();
+        let (mut key, name_kind, name_pos) = match has_name {
+            true => self.property_name(),
+            // "treat this as a property declaration with a missing name."
+            false => {
+                self.error(1146, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
+                (
+                    PropKey::Name(known::empty),
+                    NameKind::Identifier,
+                    self.pos(),
+                )
+            }
+        };
         if name_token == T::BigInt {
             key = PropKey::None;
             flags |= Flags::LITERAL_NAME;
@@ -463,7 +489,13 @@ impl Parser<'_> {
                 fn_flags |= Flags::GENERATOR;
             }
             let name = key.name().unwrap_or(Atom::NONE);
-            member.func = self.function_rest(fn_kind, fn_flags, name, name_pos, start.pos);
+            // "'{' or ';' expected."
+            let code = match fn_kind {
+                FnKind::Method | FnKind::Constructor => 1144,
+                _ => 1005,
+            };
+            member.func =
+                self.function_rest_or(code, fn_kind, fn_flags, (name, name_pos), start.pos);
         } else {
             // `tryParseConstructorDeclaration` takes the keyword whatever follows it.
             // The other parser does not go on at the `!` of `async a!`.
@@ -485,7 +517,17 @@ impl Parser<'_> {
             let inner = self.enter_context(0, cleared);
             member.init = self.optional_initializer();
             self.context = inner;
-            self.semicolon();
+            // `parseSemicolonAfterPropertyName`
+            if self.token() == T::OpenParen && self.recovers
+                || !self.eat(T::Semicolon) && !self.can_parse_semicolon()
+            {
+                let is_identifier =
+                    name_token.is_identifier_or_keyword() && name_token != T::PrivateIdentifier;
+                let name = key.name().filter(|_| is_identifier);
+                let name = name.map(|name| (name, (name_pos, name_end)));
+                let (has_type, has_initializer) = (member.ty.is_some(), member.init.is_some());
+                self.missing_semicolon_after_property(name, has_type, has_initializer);
+            }
         }
         self.context = saved;
         member.loc = TextRange {

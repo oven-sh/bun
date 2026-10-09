@@ -59,6 +59,8 @@ Rule names, options, messages, locations, fixes, and `eslint-disable` comments a
 
 The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks` and some of `import`, `n`, and `oxc`. They run as native code. With an `.oxlintrc.json`, so do [the rules of oxlint's plugins](#replace-oxlint).
 
+A built-in plugin runs as native code under its usual name: `@typescript-eslint`, `react-hooks`, `import`, `n`. Under another name, such as `ts` or `node` in `@antfu/eslint-config`, it runs in JavaScript like any other plugin.
+
 Every other plugin runs as it is. `bun lint` loads the plugins that your `eslint.config.js` has in `plugins`, and runs their rules in JavaScript, with the same `context`, `sourceCode`, scopes, and fixers that ESLint gives them.
 
 ```js eslint.config.js icon="file-code"

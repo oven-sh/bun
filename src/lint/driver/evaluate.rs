@@ -104,9 +104,21 @@ pub(crate) fn evaluate(
     keeps: bool,
 ) -> Result<Json, Fatal> {
     let cache_file = if keeps { cache_file(path) } else { None };
+    evaluate_at(environment, source, path, cache_file, true)
+}
+
+/// The same. `cache_file`: where the result is kept, if it is. `uses_kept`: what is kept there will do.
+pub(crate) fn evaluate_at(
+    environment: &Environment,
+    source: &'static str,
+    path: &[u8],
+    cache_file: Option<Vec<u8>>,
+    uses_kept: bool,
+) -> Result<Json, Fatal> {
     let version = version(environment, source);
     let kept = cache_file
         .as_ref()
+        .filter(|_| uses_kept)
         .and_then(|file| bun_lint::json::parse(&fs::read(file).ok()?));
     if let Some(config) = kept.and_then(|kept| still_valid(&version, kept)) {
         return Ok(config);

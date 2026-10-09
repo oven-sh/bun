@@ -17,6 +17,7 @@ use bun_sema::resolve::{
     is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
+use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
@@ -105,7 +106,7 @@ impl Listing {
             (&mut self.directories, &more.directories),
         ] {
             names.extend_from_slice(more);
-            names.sort_unstable();
+            names.shared_sort_unstable();
             names.dedup();
         }
         self
@@ -136,7 +137,7 @@ impl Listing {
                         .map(|n| (to_file_name_lower_case(n), n.clone(), true)),
                 )
                 .collect();
-            all.sort_unstable();
+            all.shared_sort_unstable();
             all
         });
         let lower = to_file_name_lower_case(name);
@@ -657,9 +658,9 @@ fn list(path: &[u8]) -> Directory {
             listing.files.push(name.to_vec());
         }
     }
-    listing.files.sort_unstable();
-    listing.directories.sort_unstable();
-    listing.links.sort_unstable();
+    listing.files.shared_sort_unstable();
+    listing.directories.shared_sort_unstable();
+    listing.links.shared_sort_unstable();
     Directory::Listed(listing)
 }
 

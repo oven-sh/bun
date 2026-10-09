@@ -308,9 +308,9 @@ fn collect_possible_jest_call_node<'a>(file: &'a File<'a>) -> PossibleJestNodes 
             .filter(is_global)
             .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX));
     }
-    found
-        .calls
-        .sort_unstable_by_key(|it| (it.span.start, std::cmp::Reverse(it.span.end)));
+    utils::sort::sort_unstable_by_key(&mut found.calls, |it| {
+        (it.span.start, std::cmp::Reverse(it.span.end))
+    });
     found
 }
 
@@ -1308,7 +1308,7 @@ impl<'a> OxlintOrder<'a> {
                 .map(|it| it.span().start)
                 .min();
             names.extend(first.map(|start| (start, arguments)));
-            names.sort_unstable_by_key(|it| it.0);
+            utils::sort::sort_unstable_by_key(&mut names, |it| it.0);
         }
         let mut table = HashOrder::new();
         names

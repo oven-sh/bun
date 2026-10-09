@@ -65,7 +65,7 @@ impl ExplicitModuleBoundaryTypes {
             return;
         }
         // The order in which upstream leaves them.
-        exports.sort_unstable_by_key(|statement| statement.span().end);
+        utils::sort::sort_unstable_by_key(&mut exports, |statement| statement.span().end);
         let mut checker = Checker {
             rule: self,
             cx,

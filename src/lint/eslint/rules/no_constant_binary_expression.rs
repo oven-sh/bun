@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{
-    Constants, is_constant, is_constant_in, is_ecmascript_global, is_literal, is_reference_to_global_variable,
+    Constants, is_constant, is_constant_in, is_ecmascript_global, is_global_reference, is_literal,
+    is_reference_to_global_variable,
 };
 
 /// Disallow expressions where the operation doesn't affect the value.
@@ -29,14 +30,35 @@ const CONSTANT_RELATIONAL_COMPARISON: Message = Message::new(
     "Unexpected constant relational comparison. Both sides of the `{{operator}}` are literal values.",
 );
 
-/// `e` is an identifier with one of `names` that refers to the global variable.
-fn is_global(e: Expr<'_>, names: &[&str]) -> bool {
-    e.as_ident().is_some_and(|name| name.is_any(names)) && is_reference_to_global_variable(e)
+#[inline]
+fn is_oxlint(e: Expr<'_>) -> bool {
+    e.file().language().is_oxlint
 }
 
+/// `e` refers to a global variable. oxlint finds the reference wherever it is.
+fn refers_to_global(e: Expr<'_>) -> bool {
+    if is_oxlint(e) { is_global_reference(e) } else { is_reference_to_global_variable(e) }
+}
+
+/// `e` is an identifier with one of `names` that refers to the global variable.
+fn is_global(e: Expr<'_>, names: &[&str]) -> bool {
+    e.as_ident().is_some_and(|name| name.is_any(names)) && refers_to_global(e)
+}
+
+/// For oxlint it is enough that the name is written.
 #[inline]
 fn is_undefined(e: Expr<'_>) -> bool {
-    is_global(e, &["undefined"])
+    e.is_ident("undefined") && (is_oxlint(e) || refers_to_global(e))
+}
+
+/// oxlint looks at what is asserted to have a type.
+fn inner(e: Expr<'_>) -> Expr<'_> {
+    if is_oxlint(e) { e.skip_type_wrappers() } else { e }
+}
+
+/// oxlint does not look into the parentheses around the operand that the other is compared with.
+fn oxlint_is_hidden_by_parentheses(e: Expr<'_>) -> bool {
+    is_oxlint(e) && e.is_parenthesized()
 }
 
 /// A `CallExpression` whose callee is one of these global functions. An optional call is a
@@ -53,6 +75,7 @@ fn is_constant_boolean_call(call: Call<'_>) -> bool {
 /// ESLint's `isNullOrUndefined` of this rule, which knows that `undefined` can be redefined.
 fn is_null_or_undefined(e: Expr<'_>) -> bool {
     match e.kind() {
+        _ if oxlint_is_hidden_by_parentheses(e) => false,
         ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => true,
         ExprKind::Ident(_) => is_undefined(e),
         _ => false,
@@ -64,6 +87,10 @@ fn has_constant_nullishness(e: Expr<'_>, non_nullish: bool) -> bool {
     if non_nullish && is_null_or_undefined(e) {
         return false;
     }
+    // oxlint does not know the last two.
+    let e = inner(e);
+    let functions = ["Boolean", "String", "Number", "Symbol", "BigInt"];
+    let known = if is_oxlint(e) { 3 } else { functions.len() };
     match e.kind() {
         ExprKind::Object(_)
         | ExprKind::Array(_)
@@ -72,7 +99,7 @@ fn has_constant_nullishness(e: Expr<'_>, non_nullish: bool) -> bool {
         | ExprKind::New(_)
         | ExprKind::Template(_)
         | ExprKind::Unary { .. } => true,
-        ExprKind::Call(call) => is_call_of_global(call, &["Boolean", "String", "Number", "Symbol", "BigInt"]),
+        ExprKind::Call(call) => is_call_of_global(call, functions.get(..known).unwrap_or_default()),
         ExprKind::Binary { op, right, .. } => match op {
             BinOp::Nullish => has_constant_nullishness(right, true),
             BinOp::And | BinOp::Or => false,
@@ -93,6 +120,7 @@ fn has_constant_nullishness(e: Expr<'_>, non_nullish: bool) -> bool {
 /// ESLint's `isStaticBoolean`: `e` is a boolean that never changes.
 fn is_static_boolean(e: Expr<'_>) -> bool {
     match e.kind() {
+        _ if oxlint_is_hidden_by_parentheses(e) => false,
         ExprKind::True | ExprKind::False => true,
         ExprKind::Call(call) => is_constant_boolean_call(call),
         ExprKind::Unary { op: UnOp::Not, operand } => is_constant(operand, true),
@@ -162,7 +190,9 @@ fn has_constant_strict_boolean_comparison(e: Expr<'_>) -> bool {
             Some(_) => true,
         },
         ExprKind::Call(call) => {
-            is_call_of_global(call, &["String", "Number", "BigInt", "Symbol"]) || is_constant_boolean_call(call)
+            let functions = ["String", "Number", "BigInt", "Symbol"];
+            let known = if is_oxlint(e) { 2 } else { functions.len() };
+            is_call_of_global(call, functions.get(..known).unwrap_or_default()) || is_constant_boolean_call(call)
         }
         _ => is_literal(e),
     }
@@ -175,8 +205,7 @@ fn is_always_new(e: Expr<'_>) -> bool {
         // A constructor that is not built in could return a sentinel object.
         ExprKind::New(call) => {
             let callee = call.callee();
-            callee.as_ident().is_some_and(|name| is_ecmascript_global(name.bytes()))
-                && is_reference_to_global_variable(callee)
+            callee.as_ident().is_some_and(|name| is_ecmascript_global(name.bytes())) && refers_to_global(callee)
         }
         ExprKind::Binary { op: BinOp::Comma, right, .. } => is_always_new(right),
         ExprKind::Assign { op: None, value, .. } => is_always_new(value),
@@ -198,12 +227,13 @@ fn is_constant_operand(a: Expr<'_>, b: Expr<'_>, is_strict: bool) -> bool {
 
 /// ESLint's `isStaticLiteral`.
 fn is_static_literal(e: Expr<'_>) -> bool {
+    let e = inner(e);
     match e.kind() {
         ExprKind::Unary {
             op: UnOp::Minus | UnOp::Plus | UnOp::BitNot,
             operand,
-        } => is_literal(operand),
-        ExprKind::Ident(_) => is_undefined(e),
+        } => is_literal(inner(operand)),
+        ExprKind::Ident(_) => is_global(e, &["undefined"]),
         ExprKind::Template(template) => template.exprs().is_empty(),
         _ => is_literal(e),
     }
@@ -215,32 +245,42 @@ impl NoConstantBinaryExpression {
             return;
         };
         let operator = bin_op_text(op);
+        // oxlint points at the whole.
+        let (left_place, right_place) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
         match op {
             BinOp::And | BinOp::Or => {
                 if is_constant_in(left, true, &mut cx.state) {
-                    cx.report(left, CONSTANT_SHORT_CIRCUIT).data("property", "truthiness").data("operator", operator);
+                    cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
+                        .data("property", "truthiness")
+                        .data("operator", operator);
                 }
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {
-                    cx.report(left, CONSTANT_SHORT_CIRCUIT).data("property", "nullishness").data("operator", operator);
+                    cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
+                        .data("property", "nullishness")
+                        .data("operator", operator);
                 }
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 let is_strict = matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
                 if is_constant_operand(left, right, is_strict) {
-                    cx.report(right, CONSTANT_BINARY_OPERAND).data("operator", operator).data("otherSide", "left");
+                    cx.report(right_place, CONSTANT_BINARY_OPERAND)
+                        .data("operator", operator)
+                        .data("otherSide", "left");
                 } else if is_constant_operand(right, left, is_strict) {
-                    cx.report(left, CONSTANT_BINARY_OPERAND).data("operator", operator).data("otherSide", "right");
+                    cx.report(left_place, CONSTANT_BINARY_OPERAND)
+                        .data("operator", operator)
+                        .data("otherSide", "right");
                 } else if is_strict {
                     if is_always_new(left) {
-                        cx.report(left, ALWAYS_NEW);
+                        cx.report(left_place, ALWAYS_NEW);
                     } else if is_always_new(right) {
-                        cx.report(right, ALWAYS_NEW);
+                        cx.report(right_place, ALWAYS_NEW);
                     }
                 } else if is_always_new(left) && is_always_new(right) {
                     // Both are objects, which `==` compares by reference too.
-                    cx.report(left, BOTH_ALWAYS_NEW);
+                    cx.report(left_place, BOTH_ALWAYS_NEW);
                 }
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {

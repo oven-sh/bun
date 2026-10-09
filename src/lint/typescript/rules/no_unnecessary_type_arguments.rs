@@ -49,7 +49,7 @@ fn get_type_parameters_from_type(
     let sym_at_location = sym_at_location?;
     let mut declarations: SmallVec<[TsNode; 4]> =
         sym_at_location.skip_alias().declarations().collect();
-    declarations.sort_by_key(|&decl| !is_type_context_declaration(decl));
+    utils::sort::sort_by_key(&mut declarations, |&decl| !is_type_context_declaration(decl));
     if !is_in_type_context {
         declarations.reverse();
     }

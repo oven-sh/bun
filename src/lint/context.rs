@@ -3,7 +3,7 @@
 
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
-use crate::rule::{Message, Rule};
+use crate::rule::{Message, Meta, Rule};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -82,7 +82,13 @@ pub(crate) struct Sink {
 pub struct Cx<'a, R: Rule> {
     /// What [`Rule::register`] returned.
     pub state: R::State<'a>,
+    pub(crate) base: CxBase<'a>,
+}
+
+/// What of a [`Cx`] is the same for all rules, so that what is done with it is compiled once and not for each rule.
+pub(crate) struct CxBase<'a> {
     pub(crate) file: &'a File<'a>,
+    pub(crate) meta: &'static Meta,
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
     /// How often the rule has reported in this file.
@@ -112,14 +118,14 @@ impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
     type Target = File<'a>;
     #[inline]
     fn deref(&self) -> &File<'a> {
-        self.file
+        self.base.file
     }
 }
 
 impl<'a, R: Rule> Cx<'a, R> {
     #[inline]
     pub fn file(&self) -> &'a File<'a> {
-        self.file
+        self.base.file
     }
 
     /// Reports `message` at a node, a token, a comment or a [`Span`].
@@ -134,10 +140,32 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///
     /// After [`MAX_REPORTS`] reports, or [`MAX_REPORTED_BYTES`] bytes, one more says so where the next would be, and nothing is
     /// made of the rest.
-    #[cold]
+    #[inline]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+        self.base.report(at.span(), message)
+    }
+
+    /// Whether the rule has reported as much as it can in this file: whatever else it finds is not shown. For a rule that can
+    /// find many times as much, to stop looking.
+    #[inline]
+    pub fn has_reported_too_much(&self) -> bool {
+        self.base.is_capped.get()
+    }
+
+    /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
+    /// range.
+    #[inline]
+    pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+        self.base.report_at(offset, message)
+    }
+}
+
+impl<'a> CxBase<'a> {
+    #[cold]
+    #[inline(never)]
+    fn report(&self, span: Span, message: Message) -> Report<'a> {
         let message = match self.file.language().is_oxlint {
-            true => crate::oxlint_messages::of(&R::META, message),
+            true => crate::oxlint_messages::of(self.meta, message),
             false => message,
         };
         let diagnostic = |message: Message| Diagnostic {
@@ -145,7 +173,7 @@ impl<'a, R: Rule> Cx<'a, R> {
             severity: self.severity,
             message_id: message.id,
             message: Vec::new(),
-            span: at.span(),
+            span,
             has_no_end: false,
             start_position: None,
             end_position: None,
@@ -188,17 +216,9 @@ impl<'a, R: Rule> Cx<'a, R> {
         }
     }
 
-    /// Whether the rule has reported as much as it can in this file: whatever else it finds is not shown. For a rule that can
-    /// find many times as much, to stop looking.
-    #[inline]
-    pub fn has_reported_too_much(&self) -> bool {
-        self.is_capped.get()
-    }
-
-    /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
-    /// range.
     #[cold]
-    pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+    #[inline(never)]
+    fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
         let mut report = self.report(Span::empty(offset), message);
         if let Some(diagnostic) = &mut report.diagnostic {
             diagnostic.has_no_end = true;
@@ -342,9 +362,24 @@ impl<'a> Report<'a> {
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
         if self.file.sink.wants_fixes.get()
-            && let Some(diagnostic) = &mut self.diagnostic
+            && self.diagnostic.is_some()
             && let Some(fix) = fix(Fixer::new(self.file)).into_fix(self.file)
         {
+            self.push_suggestion(kind, message, data, fix);
+        }
+        self
+    }
+
+    /// What of [`Report::suggest_as`] is the same for all closures.
+    #[inline(never)]
+    fn push_suggestion(
+        &mut self,
+        kind: SuggestionKind,
+        message: Message,
+        data: &[(&'static str, &[u8])],
+        fix: Fix,
+    ) {
+        if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.suggestions.push(Suggestion {
                 message_id: message.id,
                 message: interpolate(message, |name| {
@@ -355,7 +390,6 @@ impl<'a> Report<'a> {
                 kind,
             });
         }
-        self
     }
 }
 

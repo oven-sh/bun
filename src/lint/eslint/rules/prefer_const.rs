@@ -445,7 +445,7 @@ impl PreferConst {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
-        statements.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
         let (mut groups, mut known) = (Groups::default(), Known::default());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {

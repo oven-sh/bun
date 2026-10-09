@@ -117,9 +117,18 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    fn print_soft_newline(&mut self) {
+    /// `print_soft_newline` and `print_indent`
+    pub fn print_soft_newline(&mut self) {
         self.code.push(b'\n');
         self.code.extend(std::iter::repeat_n(b'\t', self.indent));
+    }
+
+    pub fn indent(&mut self) {
+        self.indent += 1;
+    }
+
+    pub fn dedent(&mut self) {
+        self.indent = self.indent.saturating_sub(1);
     }
 
     pub fn print_expression(&mut self, e: Expr) {

@@ -199,7 +199,7 @@ impl SortTypeConstituents {
         .data("type", if is_intersection { "Intersection" } else { "Union" });
         let fix = |fixer: Fixer<'a>| {
             let mut sorted: Vec<TypeNode<'a>> = types.iter().collect();
-            sorted.sort_by(|a, b| self.compare(*a, *b));
+            utils::sort::sort_by(&mut sorted, |a, b| self.compare(*a, *b));
             let mut replacement = Vec::new();
             for (i, constituent) in sorted.into_iter().enumerate() {
                 if i > 0 {

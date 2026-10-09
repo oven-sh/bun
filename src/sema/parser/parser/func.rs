@@ -1,7 +1,7 @@
 //! Functions: declarations, expressions, arrow functions, parameters.
 
 use super::stmt::{ModifiersOf, Start};
-use super::{Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -13,6 +13,14 @@ enum Tristate {
     False,
     True,
     Unknown,
+}
+
+/// `allowAmbiguity`
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Ambiguity {
+    Allowed,
+    /// What is not surely a list of parameters is none.
+    Refused,
 }
 
 /// The context of the parameters and the body of a function with `flags`.
@@ -51,10 +59,13 @@ impl Parser<'_> {
             self.note_identifier(name.0, name.1);
             self.next();
             name
-        } else {
-            if !flags.contains(Flags::DEFAULT) {
-                self.fail();
+        } else if !flags.contains(Flags::DEFAULT) {
+            let full = self.full_start();
+            match self.missing_identifier(0, 0) {
+                (known::empty, _) => (known::empty, full),
+                name => name,
             }
+        } else {
             // A default export without a name is placed at `export`.
             let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
@@ -95,7 +106,7 @@ impl Parser<'_> {
         let func = self.function_rest(FnKind::Expr, flags, name, name_pos, start);
         self.context = saved;
         if !has_body(&self.f[func]) {
-            self.fail();
+            self.fail_unless_recovering();
         }
         self.finish_expr(ExprKind::Fn(func), start)
     }
@@ -109,8 +120,29 @@ impl Parser<'_> {
         name_pos: u32,
         start: u32,
     ) -> FnId {
+        // "'{' or ';' expected."
+        let code = match kind {
+            FnKind::Decl => 1144,
+            _ => 1005,
+        };
+        self.function_rest_or(code, kind, flags, (name, name_pos), start)
+    }
+
+    /// The same. `code`: the error about a token that neither starts nor stands for the body.
+    pub(crate) fn function_rest_or(
+        &mut self,
+        code: u32,
+        kind: FnKind,
+        mut flags: Flags,
+        (name, name_pos): (Atom, u32),
+        start: u32,
+    ) -> FnId {
         let type_params = self.type_parameters();
-        let anchor = self.pos();
+        let anchor = match self.token() {
+            T::OpenParen => self.pos(),
+            // `createMissingList`
+            _ => self.full_start().saturating_sub(1),
+        };
         let (this_param, params) = self.parameters(signature_context(flags));
         let ret = match self.token() {
             T::Colon => {
@@ -122,6 +154,15 @@ impl Parser<'_> {
         // `parseFunctionBlockOrSemicolon`
         let (body, open) = match self.token() {
             T::OpenBrace => self.function_block(signature_context(flags)),
+            // `parseBlock` without its `{`
+            _ if kind == FnKind::Expr || self.recovers && !self.can_parse_semicolon() => {
+                match code {
+                    1005 => self.expected(T::OpenBrace),
+                    code => self.error_at_token(code, &[]),
+                }
+                flags |= Flags::MISSING_BODY;
+                (FnBody::None, 0)
+            }
             _ => {
                 // Flow has a function without a body only where it is declared.
                 if self.is_flow && !self.has_context(ctx::AMBIENT) {
@@ -132,7 +173,9 @@ impl Parser<'_> {
             }
         };
         // Without a body the whole is reported.
-        if self.options.is_javascript && !matches!(body, FnBody::None) {
+        if self.options.is_javascript
+            && (!matches!(body, FnBody::None) || flags.contains(Flags::MISSING_BODY))
+        {
             self.js_error_at_type(ret, 8010);
         }
         let func = self.f.add_fn(Func {
@@ -160,10 +203,11 @@ impl Parser<'_> {
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
-        self.next();
+        // Only a block whose `{` is put up with has none.
+        let open_at = self.expect(T::OpenBrace).then_some(open);
         let list = self.statements_until_close_brace();
         self.context = saved;
-        self.expect(T::CloseBrace);
+        self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
         (FnBody::Block(list), open)
     }
 
@@ -179,12 +223,14 @@ impl Parser<'_> {
         }
         self.next();
         let base = self.s.type_params.len();
-        while self.is_in_list(T::GreaterThan) {
+        let lists = self.enter_list(ListKind::TypeParameters);
+        while self.is_in_list(T::GreaterThan) && self.is_at_element(ListKind::TypeParameters) {
             // `isListElement`
             if !matches!(self.token(), T::In | T::Const) && !self.is_identifier() {
                 self.fail();
             }
             // `parseTypeParameter`
+            let element = self.full_start();
             let start = self.pos();
             let modifiers = self.s.modifiers.len();
             let flags = match self.token().is_modifier() {
@@ -219,10 +265,12 @@ impl Parser<'_> {
                 flags,
                 modifiers,
             });
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::TypeParameters, element)
+            {
                 break;
             }
         }
+        self.lists = lists;
         if self.options.is_javascript
             && let [first, .., last] | [first @ last] = self.s.type_params[base..]
         {
@@ -237,9 +285,24 @@ impl Parser<'_> {
     /// `parseParameters`, at the `(`: the `this` parameter, and the others. `context`: that of the
     /// function.
     pub(crate) fn parameters(&mut self, context: u32) -> (ParamId, Span<ParamId>) {
-        self.expect(T::OpenParen);
-        let list = self.parameter_list(context, T::CloseParen);
-        self.expect(T::CloseParen);
+        self.parameters_if(context, Ambiguity::Allowed)
+            .unwrap_or((ParamId::NONE, Span::EMPTY))
+    }
+
+    /// The same, as `parseParenthesizedArrowFunctionExpression` has it.
+    fn parameters_if(
+        &mut self,
+        context: u32,
+        ambiguity: Ambiguity,
+    ) -> Option<(ParamId, Span<ParamId>)> {
+        if !self.expect(T::OpenParen) {
+            // `createMissingList`
+            return (ambiguity == Ambiguity::Allowed).then_some((ParamId::NONE, Span::EMPTY));
+        }
+        let list = self.parameter_list_if(context, T::CloseParen, ambiguity)?;
+        if !self.expect(T::CloseParen) && ambiguity == Ambiguity::Refused {
+            return None;
+        }
         // `GetThisParameter`: the first, if it is named `this`.
         let first = self
             .f
@@ -247,17 +310,29 @@ impl Parser<'_> {
             .get(list.start as usize)
             .filter(|_| !list.is_empty());
         let name = first.and_then(|first| self.f.pats.get(first.pat.idx()));
-        match name {
+        Some(match name {
             Some(Pat {
                 kind: PatKind::Ident(known::this),
                 ..
             }) => (ParamId(list.start), Span::new(list.start + 1, list.len - 1)),
             _ => (ParamId::NONE, list),
-        }
+        })
     }
 
     /// `parseParametersWorker`
     pub(crate) fn parameter_list(&mut self, context: u32, close: T) -> Span<ParamId> {
+        self.parameter_list_if(context, close, Ambiguity::Allowed)
+            .unwrap_or(Span::EMPTY)
+    }
+
+    /// `parseParametersWorker`. `None`: it is no list of parameters, and what was built is left to
+    /// the speculative parse that is going on.
+    fn parameter_list_if(
+        &mut self,
+        context: u32,
+        close: T,
+        ambiguity: Ambiguity,
+    ) -> Option<Span<ParamId>> {
         let outer_await = self.context & ctx::AWAIT;
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
@@ -265,12 +340,17 @@ impl Parser<'_> {
         let base = self.s.params.len();
         let modifiers = self.s.param_modifiers.len();
         let decorators = self.s.decorators.len();
-        while self.is_in_list(close) {
-            self.parameter(base, outer_await);
-            if !self.eat(T::Comma) {
+        let lists = self.enter_list(ListKind::Parameters);
+        while self.is_in_list(close) && self.is_at_element(ListKind::Parameters) {
+            let element = self.full_start();
+            if !self.parameter(base, outer_await, ambiguity) {
+                return None;
+            }
+            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::Parameters, element) {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
         let params: Span<ParamId> = take_span!(self, params, base);
         for index in modifiers..self.s.param_modifiers.len() {
@@ -284,12 +364,12 @@ impl Parser<'_> {
             self.f.decorators.push((owner, decorator));
         }
         self.s.decorators.truncate(decorators);
-        params
+        Some(params)
     }
 
     /// `parseParameterEx`: pushes it on the stack of parameters, of which the list's start at
-    /// `base`.
-    fn parameter(&mut self, base: usize, outer_await: u32) {
+    /// `base`. False: it is none.
+    fn parameter(&mut self, base: usize, outer_await: u32, ambiguity: Ambiguity) -> bool {
         const PROPERTY_MODIFIERS: Flags = Flags::PUBLIC
             .union(Flags::PRIVATE)
             .union(Flags::PROTECTED)
@@ -297,6 +377,7 @@ impl Parser<'_> {
             .union(Flags::OVERRIDE);
         let start = self.start();
         let mut flags = Flags::empty();
+        let mut has_modifiers = false;
         let token = self.token();
         if token.is_modifier() || token == T::At {
             // "Decorators are parsed in the outer [Await] context, the rest of the parameter is
@@ -327,6 +408,7 @@ impl Parser<'_> {
             }
             let list = self.take_modifiers(first);
             if !list.is_empty() {
+                has_modifiers = true;
                 self.s.param_modifiers.push((index, list));
             }
         }
@@ -345,7 +427,26 @@ impl Parser<'_> {
             if self.eat(T::DotDotDot) {
                 flags |= Flags::REST;
             }
-            pat = self.identifier_or_pattern();
+            // `isParameterNameStart`
+            if ambiguity == Ambiguity::Refused
+                && !self.is_binding_identifier()
+                && !matches!(self.token(), T::OpenBracket | T::OpenBrace)
+            {
+                return false;
+            }
+            // `parseNameOfParameter`
+            pat = match self.token() {
+                T::PrivateIdentifier => self.missing_binding_identifier(18009),
+                _ => self.identifier_or_pattern(),
+            };
+            // "to avoid this we'll advance cursor to the next token."
+            if self.recovers
+                && !has_modifiers
+                && self.token().is_modifier()
+                && (self.f.pats.get(pat.idx())).is_some_and(|it| it.pos == it.end)
+            {
+                self.next();
+            }
             if self.token() == T::Question {
                 self.js_error((self.pos(), 0), 8009, b"?");
                 self.question_of_parameter = self.pos();
@@ -370,6 +471,7 @@ impl Parser<'_> {
                 end: self.prev_end(),
             },
         });
+        true
     }
 
     /// `checkJSSyntax` for the modifiers of the parameter that starts at `start`, which are on the
@@ -550,7 +652,12 @@ impl Parser<'_> {
             flags |= Flags::ASYNC;
         }
         let type_params = self.type_parameters();
-        let (this_param, params) = self.parameters(signature_context(flags));
+        let ambiguity = match allow_ambiguity {
+            true => Ambiguity::Allowed,
+            false => Ambiguity::Refused,
+        };
+        let (this_param, params) = self.parameters_if(signature_context(flags), ambiguity)?;
+        let errors = self.f.diagnostics.len();
         let has_return_colon = self.token() == T::Colon;
         let ret = match has_return_colon {
             true if self.is_flow => {
@@ -563,9 +670,17 @@ impl Parser<'_> {
             }
             false => TypeNodeId::NONE,
         };
-        if self.token() != T::EqualsGreaterThan {
+        if !allow_ambiguity
+            && self.recovers
+            && self.f.diagnostics.len() > errors
+            && self.has_arrow_function_blocking_parse_error(ret)
+        {
+            return None;
+        }
+        let last = self.token();
+        if last != T::EqualsGreaterThan && !self.recovers {
             // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
-            if self.token() == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
+            if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
                 self.refuse(Refusal::Reported);
             }
             if allow_ambiguity {
@@ -573,9 +688,22 @@ impl Parser<'_> {
             }
             return None;
         }
+        if !allow_ambiguity && !matches!(last, T::EqualsGreaterThan | T::OpenBrace) {
+            return None;
+        }
         let anchor = self.pos();
-        self.next();
-        let (body, open) = self.arrow_function_body(flags, allow_return_type);
+        self.expect(T::EqualsGreaterThan);
+        let (body, open) = match last {
+            T::EqualsGreaterThan | T::OpenBrace => {
+                self.arrow_function_body(flags, allow_return_type)
+            }
+            // `parseIdentifier`
+            _ if self.is_identifier() => {
+                let name = self.note_identifier(self.lx.atom, self.lx.start);
+                (FnBody::Expr(self.token_expr(ExprKind::Ident(name))), 0)
+            }
+            _ => (FnBody::Expr(self.missing_expression(0)), 0),
+        };
         // "Given: x ? y => ({ y }) : z => ({ z }) .. we only allow a return type if it is followed
         // by a colon"
         if !allow_return_type && has_return_colon && self.token() != T::Colon {
@@ -606,6 +734,23 @@ impl Parser<'_> {
         Some(self.finish_expr(ExprKind::Fn(func), start))
     }
 
+    /// `typeHasArrowFunctionBlockingParseError`, of a type in which an error was reported.
+    #[cold]
+    fn has_arrow_function_blocking_parse_error(&mut self, ty: TypeNodeId) -> bool {
+        match self.f.types.get(ty.idx()).map(|it| it.kind) {
+            Some(TypeNodeKind::Ref { name, .. }) => {
+                let first = self.f.names.get(name.start as usize);
+                name.len == 1 && first.is_some_and(|it| it.text == known::empty)
+            }
+            // Whether its list of parameters is missing is not kept.
+            Some(TypeNodeKind::Fn(_)) => {
+                self.refuse(Refusal::Unsupported);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `parseArrowFunctionExpressionBody`: the body, and the position of its `{`.
     fn arrow_function_body(&mut self, flags: Flags, allow_return_type: bool) -> (FnBody, u32) {
         let context = signature_context(flags);
@@ -615,6 +760,13 @@ impl Parser<'_> {
         // It starts a statement and no expression statement: a block whose `{` is missing.
         if self.token() == T::At {
             self.fail();
+        }
+        if self.recovers
+            && !matches!(self.token(), T::Semicolon | T::Function | T::Class)
+            && self.is_start_of_statement()
+            && !self.is_start_of_expression()
+        {
+            return self.function_block(context);
         }
         let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
         let body = self.assignment_expression_or_higher(allow_return_type);

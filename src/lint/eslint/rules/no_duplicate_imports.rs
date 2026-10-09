@@ -114,7 +114,7 @@ impl NoDuplicateImports {
         if is_oxlint && entries.iter().any(is_import_of_names) {
             entries.retain(|it| it.is_export || it.ty != Type::SideEffectImport);
         }
-        entries.sort_unstable_by(|a, b| {
+        utils::sort::sort_unstable_by(&mut entries, |a, b| {
             (a.module.cmp(b.module)).then_with(|| a.statement.span().start.cmp(&b.statement.span().start))
         });
         for of_module in entries.chunk_by(|a, b| a.module == b.module) {

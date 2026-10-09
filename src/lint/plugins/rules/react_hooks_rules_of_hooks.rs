@@ -939,8 +939,8 @@ impl RulesOfHooks {
         if functions.is_empty() {
             return;
         }
-        effects.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end)));
-        functions.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut effects, |it| (it.start, std::cmp::Reverse(it.end)));
+        utils::sort::sort_unstable_by_key(&mut functions, |it| it.span().start);
         functions.dedup();
         for reference in functions {
             let Some(e) = reference.expr().filter(|it| !it.is_jsx_tag_name()) else {

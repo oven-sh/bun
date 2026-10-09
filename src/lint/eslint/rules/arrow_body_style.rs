@@ -62,7 +62,7 @@ impl<'a> State<'a> {
     fn object_at(&self, file: &'a File<'a>, offset: u32) -> Option<Expr<'a>> {
         let objects = self.objects.get_or_init(|| {
             let mut objects: Vec<_> = file.exprs_of_kind(ExprTag::Object).collect();
-            objects.sort_unstable_by_key(|it| it.span().start);
+            utils::sort::sort_unstable_by_key(&mut objects, |it| it.span().start);
             objects
         });
         let at = objects.binary_search_by_key(&offset, |it| it.span().start).ok()?;

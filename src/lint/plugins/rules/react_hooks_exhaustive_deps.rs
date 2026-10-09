@@ -520,7 +520,7 @@ impl Rule for ExhaustiveDeps {
         on.finish(|rule, cx| {
             // What is learned from one call is used for the next ones.
             let mut calls = std::mem::take(&mut cx.state.calls);
-            calls.sort_unstable_by_key(|it| (it.span().start, std::cmp::Reverse(it.span().end)));
+            utils::sort::sort_unstable_by_key(&mut calls, |it| (it.span().start, std::cmp::Reverse(it.span().end)));
             for call in calls {
                 rule.visit_call_expression(call, cx);
             }
@@ -1102,7 +1102,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             suggested_deps = collect_recommendations(&dependencies, &[], is_effect).suggested;
         }
         if declared_dependencies.is_sorted_by(|a, b| a.key <= b.key) {
-            suggested_deps.sort();
+            utils::sort::sort(&mut suggested_deps);
         }
 
         let format_dependency = |path: &[u8]| optional_chains.format(path);
@@ -1113,7 +1113,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             }
             let is_many = deps.len() > 1;
             let mut sorted = deps.to_vec();
-            sorted.sort();
+            utils::sort::sort(&mut sorted);
             let quoted: Vec<Vec<u8>> = sorted.iter().map(|it| text(&[b"'", &format_dependency(it), b"'"])).collect();
             Some(text(&[
                 if is_many { b"" } else { single_prefix.as_bytes() },

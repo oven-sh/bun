@@ -281,7 +281,9 @@ pub(crate) mod prefer_mock_return_shorthand {
             .filter_map(as_mock)
             .collect();
         // What is returned by one can have others in it. These come first, and are not looked at again.
-        mocks.sort_unstable_by_key(|it| std::cmp::Reverse(it.return_expression.span().start));
+        utils::sort::sort_unstable_by_key(&mut mocks, |it| {
+            std::cmp::Reverse(it.return_expression.span().start)
+        });
         let mut visitor = ReturnedExpressionVisitor::default();
         for Mock {
             property_span,

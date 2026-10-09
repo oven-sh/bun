@@ -10,6 +10,7 @@ use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymbolId, UNREACHABLE,
 };
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 /// See `Checker::access_key`.
@@ -5089,7 +5090,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
         }
-        call_statements_by_symbol.sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
+        call_statements_by_symbol.shared_sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
         let memo = &mut self.flow_memo;
         memo.narrowing_index_file = Some(file);
         (

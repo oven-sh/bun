@@ -17,10 +17,10 @@ const SORT_KEYS: Message = Message::new(
     "Expected object keys to be in {{natural}}{{insensitive}}{{order}}ending order. '{{thisName}}' should be before '{{prevName}}'.",
 );
 
-/// The static name of the property, or else the name of the identifier in `[name]`.
-fn get_property_name(key: Key<'_>) -> Option<Cow<'_, [u8]>> {
+/// The static name of the property, or else the name of the identifier in `[name]`, which oxlint passes over.
+fn get_property_name(key: Key<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
     ast_utils::get_static_key_name(key).or_else(|| match key.kind() {
-        KeyKind::Computed(e) => e.as_ident().map(|name| Cow::Borrowed(name.bytes())),
+        KeyKind::Computed(e) if !is_oxlint => e.as_ident().map(|name| Cow::Borrowed(name.bytes())),
         _ => None,
     })
 }
@@ -80,7 +80,7 @@ impl SortKeys {
                     || prev_node.is_some_and(|previous| is_blank_line_between(cx.file(), previous, prop)));
             prev_node = Some(prop);
 
-            let Some(this_name) = get_property_name(key) else {
+            let Some(this_name) = get_property_name(key, cx.language().is_oxlint) else {
                 prev_blank_line |= starts_group;
                 continue;
             };

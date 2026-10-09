@@ -85,13 +85,13 @@ impl Rule for NoUnsafeFinally {
             if jumps.is_empty() {
                 return;
             }
-            jumps.sort_unstable_by_key(|it| it.0.span().start);
+            utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0.span().start);
             let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| match it.kind() {
                 StmtKind::Labeled { label, .. } => Some((it.span(), label)),
                 _ => None,
             });
             let mut labeled: Vec<(Span, Name<'a>)> = labeled.collect();
-            labeled.sort_unstable_by_key(|it| it.0.start);
+            utils::sort::sort_unstable_by_key(&mut labeled, |it| it.0.start);
             // One pass through the labeled statements and the jumps, in the order of the source: the labeled statements
             // around the place, the outermost first, and where those of them with each label start.
             let mut around: Vec<(Span, Name<'a>)> = Vec::new();

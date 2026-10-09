@@ -47,7 +47,7 @@ impl Rule for NoRestrictedSyntax {
                 restrictions.push(Restriction { selector, message });
             }
         }
-        restrictions.sort_by(|a, b| a.selector.compare(&b.selector));
+        utils::sort::sort_by(&mut restrictions, |a, b| a.selector.compare(&b.selector));
         NoRestrictedSyntax { restrictions }
     }
 

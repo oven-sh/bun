@@ -12,6 +12,7 @@ use crate::resolve::{
     supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
+use crate::util::SharedSort;
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -1323,9 +1324,9 @@ fn base_paths(path: &[u8], includes: &[Vec<u8>], case_sensitive: bool) -> Vec<Ve
         })
         .collect();
     if case_sensitive {
-        include_bases.sort();
+        include_bases.shared_sort();
     } else {
-        include_bases.sort_by(|a, b| compare_strings_case_insensitive(a, b));
+        include_bases.shared_sort_by(|a, b| compare_strings_case_insensitive(a, b));
     }
     // `ContainsPath` is relative to `path` and reduces the components.
     let contains = |parent: &[u8], child: &[u8]| {

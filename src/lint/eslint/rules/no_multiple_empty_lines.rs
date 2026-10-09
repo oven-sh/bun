@@ -47,7 +47,7 @@ impl NoMultipleEmptyLines {
 
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        cx.state.sort_unstable_by_key(|quasi| quasi.start);
+        utils::sort::sort_unstable_by_key(&mut cx.state, |quasi| quasi.start);
         let quasis: &[Span] = &cx.state;
         // An empty line in the text of a template means something.
         let is_in_template = |offset: u32| {

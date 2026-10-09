@@ -208,6 +208,10 @@ static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 fn main() {
     bun_sema_standalone::native::set_stack_size(7 << 20);
+    // `bun_js_parser::sema::DirectMode`, as a number.
+    if let Some(mode) = host::variable("BUN_SEMA_DIRECT").and_then(|it| it.parse().ok()) {
+        bun_js_parser::sema::DIRECT_MODE.store(mode, std::sync::atomic::Ordering::Relaxed);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("conformance") => conformance_cmd::run(&args[1..]),

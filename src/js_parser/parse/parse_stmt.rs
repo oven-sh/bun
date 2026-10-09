@@ -2805,7 +2805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             b"module" | b"namespace" => (here, if token == T::TOpenBrace { 1437 } else { 2819 }),
             b"type" => (here, if token == T::TEquals { 1439 } else { 2457 }),
             _ if {
-                suggestion = keyword_suggestion(word);
+                suggestion = bun_sema_parser::keyword_suggestion(word);
                 suggestion.is_some()
             } =>
             {
@@ -3249,103 +3249,5 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.note_flag(&mut stmt.loc, crate::sema::Mark::HasParen);
         }
         Ok(stmt)
-    }
-}
-
-/// `GetViableKeywordSuggestions`: TypeScript's keywords of more than two letters.
-const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
-    b"abstract",
-    b"accessor",
-    b"any",
-    b"asserts",
-    b"assert",
-    b"bigint",
-    b"boolean",
-    b"break",
-    b"case",
-    b"catch",
-    b"class",
-    b"continue",
-    b"const",
-    b"constructor",
-    b"debugger",
-    b"declare",
-    b"default",
-    b"defer",
-    b"delete",
-    b"else",
-    b"enum",
-    b"export",
-    b"extends",
-    b"false",
-    b"finally",
-    b"for",
-    b"from",
-    b"function",
-    b"get",
-    b"immediate",
-    b"implements",
-    b"import",
-    b"infer",
-    b"instanceof",
-    b"interface",
-    b"intrinsic",
-    b"keyof",
-    b"let",
-    b"module",
-    b"namespace",
-    b"never",
-    b"new",
-    b"null",
-    b"number",
-    b"object",
-    b"package",
-    b"private",
-    b"protected",
-    b"public",
-    b"override",
-    b"out",
-    b"readonly",
-    b"require",
-    b"global",
-    b"return",
-    b"satisfies",
-    b"set",
-    b"static",
-    b"string",
-    b"super",
-    b"switch",
-    b"symbol",
-    b"this",
-    b"throw",
-    b"true",
-    b"try",
-    b"type",
-    b"typeof",
-    b"undefined",
-    b"unique",
-    b"unknown",
-    b"using",
-    b"var",
-    b"void",
-    b"while",
-    b"with",
-    b"yield",
-    b"async",
-    b"await",
-];
-
-/// The suggestion of `parseErrorForMissingSemicolonAfter` for `word`
-/// (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
-#[cold]
-#[inline(never)]
-fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
-    let keywords = KEYWORD_SUGGESTIONS.iter().copied();
-    match bun_sema::check::get_spelling_suggestion(word, keywords, |c| c, |a, b| a.cmp(b)) {
-        Some(keyword) => Some(keyword.to_vec()),
-        None => KEYWORD_SUGGESTIONS
-            .iter()
-            .find(|keyword| word.len() > keyword.len() + 2 && word.starts_with(keyword))
-            .map(|keyword| [keyword, &b" "[..], &word[keyword.len()..]].concat()),
     }
 }

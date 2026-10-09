@@ -142,10 +142,10 @@ fn import_of(definition: Declaration<'_>) -> Option<Import<'_>> {
 }
 
 /// Whether the `node` of a definition is a function without a body: a signature, a function type,
-/// an overload, an ambient or an abstract function.
+/// an overload, an ambient or an abstract function. For oxlint that holds for its parameters and not for its name.
 fn is_defined_by_function_without_body(definition: Declaration) -> bool {
     match definition {
-        Declaration::Fn(func) => !func.has_body(),
+        Declaration::Fn(func) => !func.has_body() && !func.file().language().is_oxlint,
         Declaration::Param(pat) => {
             Node::Pat(pat).enclosing_function().is_some_and(|func| !func.has_body())
         }

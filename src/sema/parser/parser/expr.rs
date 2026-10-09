@@ -1,10 +1,10 @@
 //! Expressions.
 
 use super::stmt::ModifiersOf;
-use super::{ListKind, ListStep, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
 fn binary_operator(token: T) -> BinOp {
@@ -103,7 +103,7 @@ impl Parser<'_> {
 
     /// An expression that is the token, which is consumed.
     #[inline(always)]
-    fn token_expr(&mut self, kind: ExprKind) -> ExprId {
+    pub(crate) fn token_expr(&mut self, kind: ExprKind) -> ExprId {
         let id = self.add_expr(kind, self.lx.start, self.lx.end);
         self.next();
         id
@@ -277,12 +277,12 @@ impl Parser<'_> {
                     allow_return_type,
                 );
             }
-            self.fail();
+            self.fail_unless_recovering();
             return expression;
         }
         if token.is_assignment_operator() {
             if !self.is_left_hand_side(expression) {
-                self.fail();
+                self.fail_unless_recovering();
                 return expression;
             }
             if let Some(Expr {
@@ -308,8 +308,10 @@ impl Parser<'_> {
             let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
             let yes = self.assignment_expression_or_higher(false);
             self.context = saved;
-            self.expect(T::Colon);
-            let no = self.assignment_expression_or_higher(allow_return_type);
+            let no = match self.expect(T::Colon) {
+                true => self.assignment_expression_or_higher(allow_return_type),
+                false => self.add_expr(ExprKind::Missing, self.pos(), self.full_start()),
+            };
             let kind = ExprKind::Cond {
                 test: expression,
                 yes,
@@ -708,14 +710,32 @@ impl Parser<'_> {
             T::Import => self.import_expression(),
             T::Super => {
                 let expression = self.token_expr(ExprKind::Super);
-                if !matches!(self.token(), T::OpenParen | T::Dot | T::OpenBracket) {
-                    self.fail();
+                match self.token() {
+                    T::OpenParen | T::Dot | T::OpenBracket => expression,
+                    _ => self.super_without_access(start, expression),
                 }
-                expression
             }
             _ => self.primary_expression(),
         };
         self.expression_rest(start, expression, true)
+    }
+
+    /// What `parseSuperExpression` does after a `super` that neither `(`, `.` nor `[` follows.
+    #[cold]
+    fn super_without_access(&mut self, start: u32, obj: ExprId) -> ExprId {
+        // Type arguments are looked for.
+        if self.token() == T::LessThan {
+            self.fail();
+        }
+        self.error_at_token(1034, &[]);
+        let (name, name_pos) = self.right_side_of_dot();
+        let kind = ExprKind::Dot {
+            obj,
+            name,
+            name_pos,
+            chain: Chain::No,
+        };
+        self.finish_expr(kind, start)
     }
 
     /// `import(..)`, `import.meta`
@@ -747,7 +767,11 @@ impl Parser<'_> {
                 let parens = self.f.parens.len();
                 // `checkGrammarImportCallExpression` reports a spread, and any number of arguments but
                 // one or two.
-                while self.is_in_list(T::CloseParen) {
+                let lists = self.enter_list(ListKind::ArgumentExpressions);
+                while self.is_in_list(T::CloseParen)
+                    && self.is_at_element(ListKind::ArgumentExpressions)
+                {
+                    let element = self.full_start();
                     let argument = match self.token() {
                         T::DotDotDot => self.spread_element(),
                         _ => self.assignment_expression(),
@@ -757,10 +781,13 @@ impl Parser<'_> {
                     if self.s.ids.len() == base + 1 && self.f.parens.len() == parens {
                         self.call_specifier(argument, SpecifierKind::ImportCall);
                     }
-                    if !self.eat(T::Comma) {
+                    if !self.eat(T::Comma)
+                        && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
+                    {
                         break;
                     }
                 }
+                self.lists = lists;
                 self.context = saved;
                 let close = self.pos();
                 self.expect(T::CloseParen);
@@ -859,10 +886,15 @@ impl Parser<'_> {
                 && !self.is_ecmascript
                 && self.is_followed_by_word_on_same_line()
             {
+                if self.recovers {
+                    let after_dot = self.full_start();
+                    self.error(1003, (after_dot, Diagnostic::NO_LENGTH), &[]);
+                    return (known::empty, after_dot);
+                }
                 self.refuse(Refusal::Reported);
             }
-        } else if token != T::PrivateIdentifier {
-            self.fail();
+        } else {
+            return self.missing_identifier(0, 0);
         }
         let name = (self.lx.atom, self.lx.start);
         self.next();
@@ -1039,14 +1071,20 @@ impl Parser<'_> {
                 (self.lx.start, self.lx.end),
                 &[],
             ),
-            false => self.report(),
+            false => self.error_and_go_on(18030, (self.lx.start, self.lx.end), &[]),
         }
     }
 
     /// `parseElementAccessExpressionRest`, at the `[`.
     fn element_access(&mut self, start: u32, obj: ExprId, chain: Chain) -> ExprId {
         self.next();
-        let index = self.expression_allowing_in();
+        let index = match self.token() {
+            T::CloseBracket => {
+                self.error(1011, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
+                self.add_expr(ExprKind::Missing, self.pos(), self.full_start())
+            }
+            _ => self.expression_allowing_in(),
+        };
         self.expect(T::CloseBracket);
         self.finish_expr(ExprKind::Index { obj, index, chain }, start)
     }
@@ -1057,14 +1095,7 @@ impl Parser<'_> {
         let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
         let base = self.s.ids.len();
         let lists = self.enter_list(ListKind::ArgumentExpressions);
-        while self.is_in_list(T::CloseParen) {
-            if self.recovers {
-                match self.list_step(ListKind::ArgumentExpressions) {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
-                }
-            }
+        while self.is_in_list(T::CloseParen) && self.is_at_element(ListKind::ArgumentExpressions) {
             let element = self.full_start();
             let argument = match self.token() {
                 T::DotDotDot => self.spread_element(),
@@ -1072,8 +1103,7 @@ impl Parser<'_> {
             };
             self.s.ids.push(argument.0);
             if !self.eat(T::Comma)
-                && !(self.recovers
-                    && self.recover_missing_comma(ListKind::ArgumentExpressions, element))
+                && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
             {
                 break;
             }
@@ -1310,10 +1340,7 @@ impl Parser<'_> {
                 self.note_identifier(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
             }
-            _ => {
-                self.fail();
-                ExprId::NONE
-            }
+            _ => self.missing_expression(1109),
         }
     }
 
@@ -1345,7 +1372,10 @@ impl Parser<'_> {
         if self.token() == T::Colon && self.is_flow {
             return self.flow_type_cast(open, expression);
         }
-        self.fail();
+        self.expected(T::CloseParen);
+        if self.recovers {
+            self.f.parens.push((expression, open, self.prev_end()));
+        }
         expression
     }
 
@@ -1356,7 +1386,10 @@ impl Parser<'_> {
         let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
         let saved = self.enter_context(0, cleared);
         let base = self.s.ids.len();
-        while self.is_in_list(T::CloseBracket) {
+        let lists = self.enter_list(ListKind::ArrayLiteralMembers);
+        while self.is_in_list(T::CloseBracket) && self.is_at_element(ListKind::ArrayLiteralMembers)
+        {
+            let full = self.full_start();
             let element = match self.token() {
                 T::DotDotDot => self.spread_element(),
                 // `NewOmittedExpression`
@@ -1364,12 +1397,15 @@ impl Parser<'_> {
                 _ => self.assignment_expression(),
             };
             self.s.ids.push(element.0);
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::ArrayLiteralMembers, full)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
-        self.expect(T::CloseBracket);
+        self.expect_matching((T::OpenBracket, T::CloseBracket), Some(start));
         let elements = self.take_ids(base);
         self.finish_expr(ExprKind::Array(elements), start)
     }
@@ -1525,14 +1561,19 @@ impl Parser<'_> {
         let saved = self.enter_context(0, cleared);
         let base = self.s.props.len();
         let modifiers = self.s.prop_modifiers.len();
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::ObjectLiteralMembers);
+        while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ObjectLiteralMembers) {
+            let element = self.full_start();
             self.object_literal_element(base);
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::ObjectLiteralMembers, element)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
-        self.expect(T::CloseBrace);
+        self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start));
         let props: Span<PropId> = take_span!(self, props, base);
         for index in modifiers..self.s.prop_modifiers.len() {
             let (prop, list) = self.s.prop_modifiers[index];
@@ -1615,8 +1656,12 @@ impl Parser<'_> {
                 (PropKey::Name(self.lx.atom), NameKind::Identifier)
             }
             _ => {
-                self.fail();
-                (PropKey::None, NameKind::Identifier)
+                let (name, pos) = self.missing_identifier(0, 0);
+                let key = match name.is_none() {
+                    true => PropKey::None,
+                    false => PropKey::Name(name),
+                };
+                return (key, NameKind::Identifier, pos);
             }
         };
         self.next();

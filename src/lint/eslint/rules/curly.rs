@@ -163,7 +163,7 @@ impl Curly {
     /// body. So the outermost come first: a rule that reports more than it can loses what it reports last.
     fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut checks = std::mem::take(&mut cx.state);
-        checks.sort_unstable_by_key(|it| it.body.span().start);
+        utils::sort::sort_unstable_by_key(&mut checks, |it| it.body.span().start);
         for check in &checks {
             self.report(check, cx);
         }

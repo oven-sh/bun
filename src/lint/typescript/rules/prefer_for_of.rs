@@ -70,7 +70,7 @@ fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, arra
         true => {
             let all = references.entry(index_var).or_insert_with(|| {
                 let mut all: Vec<Reference<'a>> = index_var.references().collect();
-                all.sort_unstable_by_key(|it| it.span().start);
+                utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
                 all
             });
             let first = all.partition_point(|it| it.span().start < body.start);

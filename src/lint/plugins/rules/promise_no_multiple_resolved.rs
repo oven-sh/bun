@@ -497,7 +497,7 @@ impl<'a> Blocks<'a> {
             }
         }
         for found in &mut blocks.found {
-            found.resolved.sort_unstable_by_key(|it| it.span().start);
+            utils::sort::sort_unstable_by_key(&mut found.resolved, |it| it.span().start);
         }
         Some(blocks)
     }

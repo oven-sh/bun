@@ -232,7 +232,7 @@ fn should_inline_in<'a>(
         // The parentheses of a type cast are a node for Prettier, which is neither.
         && !is_cast_target(object, f)
         && (matches!(strip_chain_element_wrappers(object).kind(), ExprKind::Call(call) if !call.args().is_empty())
-            || (is_member_chain_or_member_of_one(object)
+            || (is_member_chain_or_member_of_one(object, f)
                 && f.elements_from(object_start).has_label(LabelId::of(JsLabels::MemberChain))))
     {
         return true;
@@ -291,12 +291,18 @@ fn never_breaks_before_private_name(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `a.b().c!.d`: for Prettier what is written for `a.b().c!` has no label. oxfmt looks at how it starts.
+fn non_null_mark_keeps_label(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Whether what is written for `object` has the label of what is at its left edge: it is a call
 /// of a member, which may be written as a member chain, or a member of that.
-fn is_member_chain_or_member_of_one(mut object: Expr<'_>) -> bool {
+fn is_member_chain_or_member_of_one(mut object: Expr<'_>, f: &Formatter<'_>) -> bool {
     loop {
         match object.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => object = obj,
+            ExprKind::NonNull(operand) if non_null_mark_keeps_label(f) => object = operand,
             ExprKind::Call(call) => {
                 return matches!(
                     call.callee().kind(),

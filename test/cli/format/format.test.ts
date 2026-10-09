@@ -1098,6 +1098,32 @@ try {
     expect(result.exitCode).toBe(0);
   }, 60_000);
 
+  test("the first line says what a file without an extension is", async () => {
+    const files = {
+      "bin/a": "#!/usr/bin/env node\na  ;\n",
+      "bin/b": "#!/usr/bin/env tsx\nlet a : number;\n",
+      "bin/c": "#!/bin/sh\necho  a\n",
+      "bin/d": "#!/usr/local/bin/node\na  ;\n",
+      "bin/e": "#!/usr/bin/env -S node --x\na  ;\n",
+    };
+    const after = {
+      ...files,
+      "bin/a": "#!/usr/bin/env node\na;\n",
+      "bin/b": "#!/usr/bin/env tsx\nlet a: number;\n",
+      "bin/d": "#!/usr/local/bin/node\na;\n",
+    };
+    const reads = Object.keys(files);
+    // In a directory the others are passed over.
+    const directory = await format(files, ["bin"], { reads });
+    expect(directory.files).toEqual(after);
+    expect(directory.stderr).toBe("");
+    expect(directory.exitCode).toBe(0);
+    const named = await format(files, reads, { reads });
+    expect(named.files).toEqual(after);
+    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(2);
+    expect(named.exitCode).toBe(2);
+  });
+
   test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {
     const result = await format({ "a.md": "```mdx\n<hi/>\n<hello\n/>\n```\n" }, [], { reads: ["a.md"] });
     expect(result.files["a.md"]).toBe("```mdx\n<hi />\n<hello />\n```\n");

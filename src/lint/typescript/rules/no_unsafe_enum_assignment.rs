@@ -288,7 +288,7 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
                 .map(|property| property.get_type()),
         );
     }
-    enum_names.sort_unstable();
+    utils::sort::sort_unstable(&mut enum_names);
     enum_names.dedup();
     let mut description = Vec::new();
     for enum_name in &enum_names {
@@ -922,7 +922,7 @@ impl Rule for NoUnsafeEnumAssignment {
         });
         on.finish(|_, cx| {
             let mut pending = std::mem::take(&mut cx.state.pending);
-            pending.sort_unstable_by_key(|literal| literal.span().start);
+            utils::sort::sort_unstable_by_key(&mut pending, |literal| literal.span().start);
             for literal in pending {
                 if !cx.state.checked_nodes.contains(&literal) {
                     check_literal(cx, literal, true);

@@ -15,6 +15,7 @@ use bun_lint::fix::SuggestionKind;
 use bun_lint::js_plugin::Host;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
+    apply_fixes,
 };
 use bun_lint::rule::Kind;
 use bun_lint_graph::Graph;
@@ -250,6 +251,7 @@ impl Context<'_, '_> {
             None => self.verify_as(&path, &text, &config, &how),
         };
         let (had_types, was_fixed) = (result.had_types, result.is_fixed);
+        let fixed_text = result.fixed_text.take();
         let shown = std::mem::take(&mut result.path);
         // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
         let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
@@ -263,6 +265,7 @@ impl Context<'_, '_> {
             false => self.result(shown, linted, text, was_fixed, &config),
         };
         result.is_fixed |= was_fixed;
+        result.fixed_text = result.fixed_text.take().or(fixed_text);
         result.had_types = had_types;
         Ok(())
     }
@@ -355,6 +358,15 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let (result, text, is_fixed) = match self.fixes() {
             false => (verify(&text), text, false),
+            true if config.language.is_oxlint => {
+                let mut result = verify(&text);
+                let messages = std::mem::take(&mut result.messages);
+                let fixed = apply_fixes(&text, messages, &|message| self.should_fix(message));
+                result.messages = fixed.remaining;
+                let mut result = self.result(path, result, text, fixed.is_fixed, config);
+                result.fixed_text = fixed.is_fixed.then_some(fixed.output);
+                return result;
+            }
             true => {
                 let report = bun_lint::linter::verify_and_fix(
                     &text,
@@ -389,6 +401,7 @@ impl Context<'_, '_> {
             thrown: result.thrown,
             had_types: false,
             is_fixed,
+            fixed_text: None,
             linted: Some(Linted {
                 config: Arc::clone(config),
                 has_source: !is_fixed && counts.errors + counts.warnings > 0,

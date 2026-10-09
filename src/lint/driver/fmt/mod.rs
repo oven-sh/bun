@@ -640,6 +640,9 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         }
         None => match files::language_of(path) {
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if files::parser_by_interpreter(path).is_some() => {
+                Language::Supported
+            }
             language => language,
         },
     }

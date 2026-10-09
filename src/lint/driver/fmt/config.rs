@@ -12,7 +12,7 @@ use super::{editorconfig, tailwind};
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
-use bun_collections::index_sort::sort_slice_by;
+use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
@@ -902,7 +902,7 @@ impl<'c> Configs<'c> {
         let mut config = above.and_then(|it| it.config.clone());
         if self.named.is_none() && self.options.config_lookup {
             // One after the other: a `package.json` need not have a configuration.
-            sort_slice_by(&mut candidates[..], |a, b| a.cmp(b));
+            sort_slice(&mut candidates[..]);
             if let [first, second, ..] = candidates[..]
                 && second < NAMES_OF_OXFMT
             {
@@ -1195,6 +1195,12 @@ impl<'c> Configs<'c> {
                 _ => {}
             }
         }
+        if !is_oxfmt
+            && resolved.options.parser.is_none()
+            && let Some(parser) = super::files::parser_by_interpreter(path)
+        {
+            let _ = resolved.options.set(b"parser", parser);
+        }
         for name in &self.options.plugins {
             sort.add_plugin(name);
         }
@@ -1216,7 +1222,8 @@ impl<'c> Configs<'c> {
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
             let base = config.map_or(&self.environment.cwd[..], |it| paths::dirname(&it.path));
-            let tailwind = tailwind::for_file(&self.classes, &value, base, path);
+            let tailwind =
+                tailwind::for_file(&self.classes, self.environment, &value, (base, path));
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

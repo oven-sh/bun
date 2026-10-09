@@ -4,6 +4,7 @@ pub mod memory;
 
 pub use memory::{AppendVec, LocalVec};
 
+use bun_collections::index_sort;
 use bun_threading::Guarded;
 use memory::Newest;
 use std::alloc::{Allocator, Global};
@@ -14,6 +15,64 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
 /// tuples of them. Nothing may depend on the order in which a map or a set iterates.
 pub use rustc_hash::{FxBuildHasher as FxBuild, FxHashMap, FxHashSet, FxHasher};
+
+/// The sorts of slices, compiled once for the whole program: those of the standard library are compiled once for each
+/// type and closure, several KB each. They cost a list of indices and a call for each comparison, so they are not for
+/// what is sorted all the time.
+pub trait SharedSort<T> {
+    fn shared_sort(&mut self)
+    where
+        T: Ord;
+    fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering);
+    fn shared_sort_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+    fn shared_sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+    fn shared_sort_unstable(&mut self)
+    where
+        T: Ord;
+    fn shared_sort_unstable_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering);
+    fn shared_sort_unstable_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+}
+
+impl<T> SharedSort<T> for [T] {
+    fn shared_sort(&mut self)
+    where
+        T: Ord,
+    {
+        index_sort::sort_slice_by(self, T::cmp);
+    }
+
+    fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        index_sort::sort_slice_by(self, compare);
+    }
+
+    fn shared_sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
+        index_sort::sort_slice_by(self, |a, b| key(a).cmp(&key(b)));
+    }
+
+    fn shared_sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K) {
+        let keys: Vec<K> = self.iter().map(key).collect();
+        let mut order = index_sort::identity(self.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            keys[a as usize].cmp(&keys[b as usize])
+        });
+        index_sort::apply_permutation_in_place(self, &mut order);
+    }
+
+    fn shared_sort_unstable(&mut self)
+    where
+        T: Ord,
+    {
+        index_sort::sort_slice_unstable_by(self, T::cmp);
+    }
+
+    fn shared_sort_unstable_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        index_sort::sort_slice_unstable_by(self, compare);
+    }
+
+    fn shared_sort_unstable_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
+        index_sort::sort_slice_unstable_by(self, |a, b| key(a).cmp(&key(b)));
+    }
+}
 
 #[inline]
 pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {

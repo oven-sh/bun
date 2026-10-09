@@ -4,6 +4,7 @@
 use crate::hir::ResolutionMode;
 use crate::json::Json;
 use crate::session::{Arena, Session};
+use crate::util::SharedSort;
 use crate::util::{FxHashSet, ShardedMap};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -98,8 +99,8 @@ pub trait Host: Sync {
             .list_dir(path)
             .into_iter()
             .partition(|name| self.is_dir(&inside(path, name)));
-        files.sort();
-        directories.sort();
+        files.shared_sort();
+        directories.shared_sort();
         (files, directories)
     }
     /// `UseCaseSensitiveFileNames`
@@ -981,7 +982,7 @@ impl Options {
         self.config_path = config_path.to_vec();
         self.problems = crate::verify::verify_compiler_options(compiler, self, config_path);
         self.errors = self.problems.iter().map(|problem| problem.code).collect();
-        self.errors.sort_unstable();
+        self.errors.shared_sort_unstable();
         self.errors.dedup();
     }
 }
@@ -2171,7 +2172,7 @@ impl<'h> Resolver<'h> {
         for redirected in &self.redirected {
             links.extend(redirected.links.lock().iter().copied());
         }
-        links.sort();
+        links.shared_sort();
         links.dedup();
         for (link, real) in &links {
             known_symlinks.process_resolution(&join(b"/", link), real);
@@ -2231,7 +2232,7 @@ impl<'h> Resolver<'h> {
             );
         }
         let mut found = known_symlinks.directories_by_realpath;
-        found.sort();
+        found.shared_sort();
         found
     }
 
@@ -2709,7 +2710,7 @@ impl<'h> Resolver<'h> {
         };
         let node_modules = &real[..at + b"/node_modules".len()];
         let mut names: Vec<&[u8]> = peers.iter().map(|peer| peer.0.as_slice()).collect();
-        names.sort_unstable();
+        names.shared_sort_unstable();
         let mut found = Vec::new();
         for name in names {
             let Some(peer) = self.get_package_json_info(&inside(node_modules, name), look) else {
@@ -3615,7 +3616,7 @@ impl<'h> Resolver<'h> {
             .iter()
             .filter(|e| strings::count_char(&e.0, b'*') == 1 || e.0.ends_with(b"/"))
             .collect();
-        keys.sort_by(|a, b| compare_pattern_keys(&a.0, &b.0));
+        keys.shared_sort_by(|a, b| compare_pattern_keys(&a.0, &b.0));
         // The first matching key is used, whatever its target resolves to.
         for (key, target) in keys {
             let (subpath, is_pattern) = if let Some(matched) = match_pattern(key, name) {
@@ -3918,7 +3919,7 @@ impl<'h> Resolver<'h> {
     /// `ResolutionDiagnostics` of all lookups, deduplicated: 2209 2210.
     pub fn resolution_problems(&self) -> Vec<crate::verify::Problem> {
         let mut roots = self.ambiguous_roots.lock().to_vec();
-        roots.sort();
+        roots.shared_sort();
         roots.dedup();
         roots
             .iter()

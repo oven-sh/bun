@@ -5,6 +5,7 @@
 
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::codegen::{Codegen, print_expression};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
@@ -31,6 +32,8 @@ const MISSING_DEPENDENCIES: Message = Message::new(
     "",
     "React Hook {{hook}} has missing dependencies: {{dependencies}}{{mutable}}",
 );
+const INCLUDE_OR_REMOVE: Message =
+    Message::new("", "Either include it or remove the dependency array.");
 const UNNECESSARY_DEPENDENCY: Message = Message::new(
     "",
     "React Hook {{hook}} has unnecessary dependency: {{dependency}}",
@@ -54,6 +57,10 @@ const COMPLEX_EXPRESSION: Message = Message::new(
 const CHANGES_EVERY_RENDER: Message = Message::new(
     "",
     "React hook {{hook}} depends on `{{dependency}}`, which changes every render",
+);
+const MEMOIZE: Message = Message::new(
+    "",
+    "Try memoizing this variable with `useRef` or `useCallback`.",
 );
 const UNNECESSARY_OUTER_SCOPE: Message = Message::new(
     "",
@@ -524,7 +531,7 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
         }));
         scopes.extend(scope.children());
     }
-    idents.sort_unstable_by_key(|it| it.span().start);
+    utils::sort::sort_unstable_by_key(&mut idents, |it| it.span().start);
     let mut found = Found::default();
     let mut enclosing_function = AncestorMemo::default();
     for ident in idents {
@@ -839,12 +846,14 @@ fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
     }
 }
 
+/// `appended_to`: the array literal, if oxlint offers to put them at its end.
 fn report_missing<'a, R: Rule>(
     cx: &Cx<'a, R>,
     hook: Name<'a>,
     missing: &[(Span, Vec<u8>)],
     array: Span,
     mutable: Option<&[u8]>,
+    appended_to: Option<Expr<'a>>,
 ) {
     let Some(first) = missing.first() else {
         return;
@@ -867,31 +876,87 @@ fn report_missing<'a, R: Rule>(
         );
         [before, it, after].concat()
     });
-    cx.report(
-        first.0,
-        if missing.len() == 1 {
-            MISSING_DEPENDENCY
-        } else {
-            MISSING_DEPENDENCIES
-        },
-    )
-    .comments_apply_at(array)
-    .data("hook", hook)
-    .data("dependencies", names)
-    .data("mutable", mutable);
+    let report = cx
+        .report(
+            first.0,
+            if missing.len() == 1 {
+                MISSING_DEPENDENCY
+            } else {
+                MISSING_DEPENDENCIES
+            },
+        )
+        .comments_apply_at(array)
+        .data("hook", hook)
+        .data("dependencies", names)
+        .data("mutable", mutable);
+    if let Some(array) = appended_to {
+        report.suggest_dangerously(INCLUDE_OR_REMOVE, |fixer| {
+            fixer.replace(array, print_array(array, None, missing))
+        });
+    }
 }
 
-/// The array without the element at `removed`, as oxc prints it.
-fn without_dependency(file: &File, array: Expr, removed: Span) -> Vec<u8> {
+/// What oxlint puts in the place of `array`: its elements without the one at `removed`, and then `appended`, as oxc prints an
+/// array: each on a line of its own if they are more than two, and without the comments.
+fn print_array(array: Expr, removed: Option<Span>, appended: &[(Span, Vec<u8>)]) -> Vec<u8> {
     let ExprKind::Array(elements) = array.kind() else {
         return Vec::new();
     };
-    let kept: Vec<&[u8]> = elements
+    let kept: SmallVec<[Expr; 8]> = elements
         .iter()
-        .filter(|it| it.outer_span() != removed)
-        .map(|it| file.slice(it.outer_span()))
+        .filter(|it| Some(it.outer_span()) != removed)
         .collect();
-    [b"[", &kept.join(&b", "[..])[..], b"]"].concat()
+    let len = kept.len() + appended.len();
+    let is_multi_line = len > 2;
+    let mut codegen = Codegen::default();
+    codegen.code.push(b'[');
+    if is_multi_line {
+        codegen.indent();
+    }
+    let names = appended.iter().map(|it| Err(&it.1));
+    for (i, item) in kept.iter().map(Ok).chain(names).enumerate() {
+        if i != 0 {
+            codegen.code.push(b',');
+        }
+        if is_multi_line {
+            codegen.print_soft_newline();
+        } else if i != 0 {
+            codegen.code.push(b' ');
+        }
+        match item {
+            Ok(element) if element.is_missing() => {
+                if i + 1 == len {
+                    codegen.code.push(b',');
+                }
+            }
+            Ok(element) => print_element(&mut codegen, *element),
+            Err(name) => codegen.code.extend_from_slice(name),
+        }
+    }
+    if is_multi_line {
+        codegen.dedent();
+        codegen.print_soft_newline();
+    }
+    codegen.code.push(b']');
+    codegen.code
+}
+
+fn print_element(codegen: &mut Codegen, element: Expr) {
+    let element = match element.kind() {
+        ExprKind::Spread(argument) => {
+            codegen.code.extend_from_slice(b"...");
+            argument
+        }
+        _ => element,
+    };
+    let is_sequence = element.binary_op() == Some(BinOp::Comma);
+    if is_sequence {
+        codegen.code.push(b'(');
+    }
+    print_expression(codegen, element);
+    if is_sequence {
+        codegen.code.push(b')');
+    }
 }
 
 /// `call`: any call. `additional_hooks`: the option.
@@ -968,6 +1033,7 @@ pub(crate) fn run<'a, R: Rule>(
                     hook,
                     &[(callback_expr.span(), name.bytes().to_vec())],
                     dependencies_node.outer_span(),
+                    None,
                     None,
                 )
             };
@@ -1075,9 +1141,7 @@ pub(crate) fn run<'a, R: Rule>(
         cx.report(dependency.span, UNNECESSARY_OUTER_SCOPE)
             .data("hook", hook)
             .data("dependency", dependency.name)
-            .fix(|fixer| {
-                fixer.replace(array, without_dependency(cx.file(), array, dependency.span))
-            });
+            .fix(|fixer| fixer.replace(array, print_array(array, Some(dependency.span), &[])));
     }
 
     // Their positions in `found.dependencies`.
@@ -1099,7 +1163,7 @@ pub(crate) fn run<'a, R: Rule>(
                 *it = rank;
             }
         }
-        undeclared.sort_by_key(|at| ranks.get(*at).copied());
+        utils::sort::sort_by_key(&mut undeclared, |at| ranks.get(*at).copied());
     }
     for (_, number) in undeclared
         .iter()
@@ -1123,6 +1187,7 @@ pub(crate) fn run<'a, R: Rule>(
             &missing,
             array.span(),
             mutable.map(|it| it.0.text()).as_deref(),
+            Some(array),
         );
     }
 
@@ -1154,7 +1219,7 @@ pub(crate) fn run<'a, R: Rule>(
                 .filter_map(|it| (it.declared as usize).checked_sub(1));
             pairs.extend(above.map(|other| (at.min(other), at.max(other), at)));
         }
-        pairs.sort_unstable();
+        utils::sort::sort_unstable(&mut pairs);
         for (dependency, _) in pairs.iter().filter_map(|it| declared.get(it.2)) {
             unnecessary(dependency);
         }
@@ -1177,7 +1242,10 @@ pub(crate) fn run<'a, R: Rule>(
         {
             cx.report(dependency.span, CHANGES_EVERY_RENDER)
                 .data("hook", hook)
-                .data("dependency", symbol.name());
+                .data("dependency", symbol.name())
+                .suggest_dangerously(MEMOIZE, |fixer| {
+                    fixer.replace(array, print_array(array, Some(dependency.span), &[]))
+                });
         }
     }
 }
@@ -1197,7 +1265,7 @@ fn report_refs_in_cleanups<'a, R: Rule>(
             .exprs_of_kind(ExprTag::Dot)
             .filter(is_current)
             .collect();
-        currents.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut currents, |it| it.span().start);
         currents
     });
     let first = currents.partition_point(|it| it.span().start < within.start);

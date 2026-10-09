@@ -67,7 +67,7 @@ struct FunctionOffsets {
 impl Indent {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut matched = std::mem::take(&mut cx.state);
-        matched.sort_unstable();
+        utils::sort::sort_unstable(&mut matched);
         let mut offsets = Offsets::new(self, cx.file(), matched);
         offsets.compute();
         offsets.report(cx);
@@ -987,7 +987,7 @@ impl<'a> Offsets<'a, '_> {
     fn ignore_nodes(&mut self, nodes: &[Span]) {
         let ranges = nodes.iter().map(|it| (self.lower_bound(it.start), self.lower_bound(it.end)));
         let mut ranges: Vec<(usize, usize)> = ranges.filter(|it| it.0 < it.1).collect();
-        ranges.sort_unstable_by_key(|it| (it.1, std::cmp::Reverse(it.0)));
+        utils::sort::sort_unstable_by_key(&mut ranges, |it| (it.1, std::cmp::Reverse(it.0)));
         // The outermost of the nodes so far.
         let mut decided: Vec<(usize, usize)> = Vec::new();
         for (first, after) in ranges {

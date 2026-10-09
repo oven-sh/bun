@@ -1,11 +1,14 @@
 //! oxfmt's `sortTailwindcss`: where the order of classes comes from.
 //!
 //! Only the Tailwind CSS of the project knows it, and that is JavaScript. The formatter asks for the order of each list of
-//! classes that it comes across. A file with a list that is not known yet is put aside. When all files have had their
-//! turn, one script answers for all those lists, and the files that were put aside are formatted again.
+//! classes that it comes across. A file with a class that is not known yet is put aside. When all files have had their
+//! turn, one script answers for all those classes, and the files that were put aside are formatted again.
+//!
+//! What has been found out is kept next to the packages, for as long as Tailwind and what it has loaded stay the same. So
+//! most runs start no script.
 
 use super::files::Kind;
-use crate::evaluate::evaluate;
+use crate::evaluate::evaluate_at;
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -23,10 +26,10 @@ const SCRIPT: &str = concat!(
     include_str!("tailwind.js")
 );
 
-/// Which Tailwind is asked: the one that is found from `directory`, with these options, which are paths.
+/// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Which {
-    directory: Vec<u8>,
+    root: Vec<u8>,
     config: Option<Vec<u8>>,
     stylesheet: Option<Vec<u8>>,
 }
@@ -35,35 +38,79 @@ impl Which {
     fn entries(&self) -> Vec<(Vec<u8>, Json)> {
         let path = |path: &Option<Vec<u8>>| path.clone().map_or(Json::Null, Json::String);
         vec![
-            (b"directory".to_vec(), Json::String(self.directory.clone())),
+            (b"root".to_vec(), Json::String(self.root.clone())),
             (b"config".to_vec(), path(&self.config)),
             (b"stylesheet".to_vec(), path(&self.stylesheet)),
         ]
     }
 
-    fn is(&self, answer: &Json) -> bool {
-        (self.entries().iter()).all(|(name, value)| answer.get(name) == Some(value))
+    fn of(answer: &Json) -> Option<Which> {
+        let path = |key: &[u8]| answer.get(key).and_then(Json::as_str).map(<[u8]>::to_vec);
+        Some(Which {
+            root: path(b"root")?,
+            config: path(b"config"),
+            stylesheet: path(b"stylesheet"),
+        })
     }
 }
 
-/// The lists of classes in files for which the same Tailwind is asked.
+/// What is found from a directory upwards.
+#[derive(Clone)]
+struct Found {
+    /// The directory of the package `tailwindcss`.
+    root: Vec<u8>,
+    /// For Tailwind CSS 3: the nearest `tailwind.config.*`.
+    config: Option<Vec<u8>>,
+}
+
+fn find(directory: &[u8]) -> Option<Found> {
+    let root = paths::ancestors(directory)
+        .map(|it| paths::join(it, b"node_modules/tailwindcss"))
+        .find(|it| fs::is_file(&paths::join(it, b"package.json")))?;
+    let names: [&[u8]; 4] = [
+        b"tailwind.config.js",
+        b"tailwind.config.cjs",
+        b"tailwind.config.mjs",
+        b"tailwind.config.ts",
+    ];
+    let config = match fs::is_file(&paths::join(&root, b"theme.css")) {
+        true => None,
+        false => paths::ancestors(directory)
+            .flat_map(|it| names.map(|name| paths::join(it, name)))
+            .find(|it| fs::is_file(it)),
+    };
+    Some(Found { root, config })
+}
+
+/// The classes in files for which the same Tailwind is asked.
 #[derive(Default)]
 struct Group {
-    known: FxHashMap<Vec<u8>, Vec<Rank>>,
+    /// The ranks are among all of them.
+    known: FxHashMap<Vec<u8>, Rank>,
     /// Asked for, and not known.
     missing: Vec<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct Known {
+    is_loaded: bool,
+    by_directory: FxHashMap<Vec<u8>, Option<Found>>,
+    groups: FxHashMap<Which, Group>,
+    /// A directory with files that have classes, from which there is no Tailwind to be found.
+    without_package: Option<Vec<u8>>,
 }
 
 /// What a run knows about the order of classes.
 #[derive(Default)]
 pub(crate) struct Classes {
-    groups: Guarded<FxHashMap<Which, Group>>,
+    known: Guarded<Known>,
 }
 
-/// [`Classes`], for the files for which `which` is asked.
+/// [`Classes`], for the files of a directory.
 struct OfGroup {
     classes: Arc<Classes>,
-    which: Which,
+    /// `Err`: the directory. There is no Tailwind for it.
+    which: Result<Which, Vec<u8>>,
 }
 
 impl std::fmt::Debug for OfGroup {
@@ -77,22 +124,86 @@ impl std::panic::RefUnwindSafe for OfGroup {}
 
 impl Orders for OfGroup {
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>> {
-        let mut groups = self.classes.groups.lock();
-        if !groups.contains_key(&self.which) {
-            groups.insert(self.which.clone(), Group::default());
+        let mut known = self.classes.known.lock();
+        let which = match &self.which {
+            Ok(which) => which,
+            Err(directory) => {
+                known.without_package = Some(directory.clone());
+                return None;
+            }
+        };
+        if !known.groups.contains_key(which) {
+            known.groups.insert(which.clone(), Group::default());
         }
-        let group = groups.get_mut(&self.which)?;
-        let known = group.known.get(classes).cloned();
-        if known.is_none() {
-            group.missing.push(classes.to_vec());
+        let group = known.groups.get_mut(which)?;
+        let (mut ranks, mut is_known) = (Vec::new(), true);
+        for class in strings::split(classes, b" ") {
+            match group.known.get(class) {
+                _ if class.is_empty() => ranks.push(None),
+                Some(&rank) => ranks.push(rank),
+                None => {
+                    group.missing.push(class.to_vec());
+                    is_known = false;
+                }
+            }
         }
-        known
+        is_known.then_some(ranks)
     }
 }
 
-/// `value`: `sortTailwindcss` as JSON, which is not `false`. `base`: the directory that its paths are relative to. `path`: the
-/// file that is formatted.
-pub(crate) fn for_file(classes: &Arc<Classes>, value: &[u8], base: &[u8], path: &[u8]) -> Tailwind {
+/// Where what is asked and what is answered is kept: next to the packages, of which Tailwind is one.
+fn files(environment: &Environment) -> Option<[Vec<u8>; 2]> {
+    let has_packages = |directory: &&[u8]| {
+        fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
+    };
+    let root = paths::ancestors(&environment.cwd).find(has_packages)?;
+    let file =
+        |name: &[u8]| paths::join(&paths::join(root, b"node_modules/.cache/bun-format"), name);
+    Some([file(b"tailwind-classes.json"), file(b"tailwind-order.json")])
+}
+
+impl Known {
+    /// Takes in what the script has answered. Returns what it says about a Tailwind that cannot be asked, if there are
+    /// classes that it has to be asked about.
+    fn take_in(&mut self, answer: &Json) -> Option<Vec<u8>> {
+        let mut failure = None;
+        for answer in (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
+            let Some(which) = Which::of(answer) else {
+                continue;
+            };
+            if let Some(error) = answer.get(b"error").and_then(Json::as_str) {
+                // It is not asked again, unless there are files for it.
+                let group = self.groups.remove(&which);
+                if group.is_some_and(|it| !it.missing.is_empty()) {
+                    failure = Some(error.to_vec());
+                }
+                continue;
+            }
+            let group = self.groups.entry(which).or_default();
+            group.missing.clear();
+            group.known.clear();
+            for (class, rank) in
+                (answer.get(b"ranks").and_then(Json::as_object)).unwrap_or_default()
+            {
+                let rank = match rank {
+                    Json::Number(rank) => Some(*rank as u32),
+                    _ => None,
+                };
+                group.known.insert(class.clone(), rank);
+            }
+        }
+        failure
+    }
+}
+
+/// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `base`: the directory that its
+/// paths are relative to.
+pub(crate) fn for_file(
+    classes: &Arc<Classes>,
+    environment: &Environment,
+    value: &[u8],
+    (base, path): (&[u8], &[u8]),
+) -> Tailwind {
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
     let get = |key: &[u8]| json.as_ref()?.get(key);
@@ -106,6 +217,31 @@ pub(crate) fn for_file(classes: &Arc<Classes>, value: &[u8], base: &[u8], path: 
         Some(paths::resolve(base, &paths::from_native(path)))
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
+    let directory = paths::dirname(path);
+    let mut known = classes.known.lock();
+    // What earlier runs have found out.
+    if !std::mem::replace(&mut known.is_loaded, true)
+        && let Some([question, kept]) = files(environment)
+        && fs::is_file(&question)
+        && let Ok(answer) = evaluate_at(environment, SCRIPT, &question, Some(kept), true)
+    {
+        known.take_in(&answer);
+    }
+    if !known.by_directory.contains_key(directory) {
+        known
+            .by_directory
+            .insert(directory.to_vec(), find(directory));
+    }
+    let found = known.by_directory.get(directory).cloned().flatten();
+    drop(known);
+    // The plugin's `getTailwindConfig`.
+    let stylesheet = path_at(b"stylesheet");
+    let config = path_at(b"config").filter(|it| !it.ends_with(b".css"));
+    let which = found.map(|found| Which {
+        root: found.root,
+        config: config.or(found.config.filter(|_| stylesheet.is_none())),
+        stylesheet,
+    });
     Tailwind {
         functions: names(b"functions"),
         attributes: names(b"attributes"),
@@ -113,13 +249,52 @@ pub(crate) fn for_file(classes: &Arc<Classes>, value: &[u8], base: &[u8], path: 
         preserves_duplicates: is_on(b"preserveDuplicates"),
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
-            which: Which {
-                directory: paths::dirname(path).to_vec(),
-                config: path_at(b"config"),
-                stylesheet: path_at(b"stylesheet"),
-            },
+            which: which.ok_or_else(|| directory.to_vec()),
         }),
         has_missed: AtomicBool::new(false),
+    }
+}
+
+impl Classes {
+    /// Asks Tailwind about the classes that are not known. `Err`: for the user.
+    pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
+        let fail = |why: &[u8]| [&b"sortTailwindcss: "[..], why].concat();
+        let mut known = self.known.lock();
+        let (None, Some([question, kept])) = (&known.without_package, files(environment)) else {
+            let directory = known.without_package.as_deref();
+            return Err(fail(
+                &[
+                    &b"It needs the package tailwindcss, which cannot be found from "[..],
+                    directory.unwrap_or(&environment.cwd),
+                    b". Install it.",
+                ]
+                .concat(),
+            ));
+        };
+        // The ranks are among all classes that are asked about, so those that are known are asked about again.
+        let groups = known.groups.iter().map(|(which, group)| {
+            let mut classes: Vec<&[u8]> = (group.known.keys().chain(&group.missing))
+                .map(|it| &it[..])
+                .collect();
+            classes.sort_unstable();
+            classes.dedup();
+            let classes = classes.into_iter().map(|it| Json::String(it.to_vec()));
+            let mut entries = which.entries();
+            entries.push((b"classes".to_vec(), Json::Array(classes.collect())));
+            Json::Object(entries)
+        });
+        let mut text = Vec::new();
+        write_json(
+            &mut text,
+            &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
+        );
+        fs::write_new_atomically(&question, &text).map_err(|error| fail(&fs::describe(&error)))?;
+        let answer = evaluate_at(environment, SCRIPT, &question, Some(kept), false)
+            .map_err(|Fatal(error)| error)?;
+        match known.take_in(&answer) {
+            Some(error) => Err(fail(&error)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -148,66 +323,5 @@ pub(crate) fn only_where_supported(
     match kind {
         Some(Kind::Html(Parser::Angular) | Kind::Handlebars) => strings::contains(text, b"class"),
         _ => false,
-    }
-}
-
-impl Classes {
-    /// Asks Tailwind about the lists that are not known. `Err`: for the user.
-    pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
-        let mut groups = self.groups.lock();
-        let mut questions = Vec::new();
-        for (which, group) in groups.iter_mut() {
-            group.missing.sort_unstable();
-            group.missing.dedup();
-            if group.missing.is_empty() {
-                continue;
-            }
-            let lists = std::mem::take(&mut group.missing);
-            let mut entries = which.entries();
-            entries.push((
-                b"lists".to_vec(),
-                Json::Array(lists.into_iter().map(Json::String).collect()),
-            ));
-            questions.push(Json::Object(entries));
-        }
-        let mut question = Vec::new();
-        write_json(
-            &mut question,
-            &Json::Object(vec![(b"groups".to_vec(), Json::Array(questions))]),
-        );
-        // Next to the packages, of which Tailwind is one.
-        let has_packages = |directory: &&[u8]| {
-            fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
-        };
-        let fail = |why: &[u8]| [&b"sortTailwindcss: "[..], why].concat();
-        let Some(root) = paths::ancestors(&environment.cwd).find(has_packages) else {
-            return Err(fail(
-                b"It needs the package tailwindcss, and there is no node_modules. Install it.",
-            ));
-        };
-        let file = paths::join(root, b"node_modules/.cache/bun-format/tailwind.json");
-        fs::write_new_atomically(&file, &question).map_err(|error| fail(&fs::describe(&error)))?;
-        let answer = evaluate(environment, SCRIPT, &file, false).map_err(|Fatal(error)| error)?;
-        for answer in (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
-            if let Some(error) = answer.get(b"error").and_then(Json::as_str) {
-                return Err(fail(error));
-            }
-            let Some((_, group)) = groups.iter_mut().find(|(which, _)| which.is(answer)) else {
-                continue;
-            };
-            for (list, ranks) in
-                (answer.get(b"ranks").and_then(Json::as_object)).unwrap_or_default()
-            {
-                let rank = |it: &Json| match it {
-                    Json::Number(rank) => Some(*rank as u32),
-                    _ => None,
-                };
-                let ranks = ranks.as_array().unwrap_or_default();
-                group
-                    .known
-                    .insert(list.clone(), ranks.iter().map(rank).collect());
-            }
-        }
-        Ok(())
     }
 }

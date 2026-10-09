@@ -12,6 +12,7 @@ use crate::bind::{
     ScopeKind, SymbolId,
 };
 use crate::program::SymbolTable;
+use crate::util::SharedSort;
 
 /// The meanings a name was resolved with.
 const VALUE: u8 = 1;
@@ -96,7 +97,7 @@ impl Checker<'_, '_> {
             .iter()
             .filter(|d| d.kind == DiagnosticKind::Parse);
         let mut syntax_errors: Vec<u32> = parse_errors.map(|d| d.start).collect();
-        syntax_errors.sort_unstable();
+        syntax_errors.shared_sort_unstable();
         let mut u = Unused {
             files: self.p.files,
             file,
@@ -2224,7 +2225,7 @@ impl Checker<'_, '_> {
             }
         }
         // `reportUnusedImports`
-        import_clauses.sort_unstable();
+        import_clauses.shared_sort_unstable();
         for unuseds in import_clauses.chunk_by(|a, b| a.0 == b.0) {
             let clause = unuseds[0].0;
             let NodeData::Stmt(stmt) = hir.data(clause.row()) else {

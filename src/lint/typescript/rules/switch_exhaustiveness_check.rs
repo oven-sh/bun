@@ -246,7 +246,7 @@ impl SwitchExhaustivenessCheck {
         {
             let mut missing: Vec<(Type<'a>, Vec<u8>)> =
                 missing_literal_branch_types.iter().map(|&it| (it, type_to_string(it))).collect();
-            missing.sort_by(|a, b| locale_compare(&a.1, &b.1));
+            utils::sort::sort_by(&mut missing, |a, b| locale_compare(&a.1, &b.1));
 
             let mut missing_branches = Vec::new();
             for (i, (missing_type, printed)) in missing.iter().enumerate() {

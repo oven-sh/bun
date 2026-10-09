@@ -648,12 +648,12 @@ fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
 }
 
 /// Where the last parameter of `function` that is used starts. 0 if none is used.
-fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>) -> u32 {
+fn last_used_arg<'a>(function: Func<'a>, is_used: impl Fn(Symbol<'a>) -> bool) -> u32 {
     let mut last = 0;
     for param in function.params().iter() {
         param.pat().for_each_binding(&mut |pat| {
             if let Some(it) = pat.symbol()
-                && (it.references().next().is_some() || analysis.is_eslint_used(Variable::new(it)))
+                && is_used(it)
                 && is_first_parameter_named(it, pat)
             {
                 last = pat.span().start;
@@ -965,8 +965,16 @@ impl NoUnusedVars {
                     && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
-                        < *(last_used_args.entry(function))
-                            .or_insert_with(|| last_used_arg(function, analysis))
+                        < *(last_used_args.entry(function)).or_insert_with(|| {
+                            // Upstream takes every reference for a use, also the default value. oxlint does not.
+                            last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
+                                (true, it) => {
+                                    !analysis.is_unused(it.symbol())
+                                        || oxlint_counts_as_used(it, self.reports_vars_only_used_as_types)
+                                }
+                                (false, it) => it.references().next().is_some() || analysis.is_eslint_used(it),
+                            })
+                        })
                 {
                     return false;
                 }

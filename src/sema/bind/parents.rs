@@ -1,6 +1,7 @@
 //! What each node of a file is part of, and nothing else.
 
 use super::*;
+use crate::util::SharedSort;
 
 fn filled<T: Copy>(arena: &Arena, len: usize, value: T) -> ArenaVec<'_, T> {
     let mut list = ArenaVec::new_in(arena);
@@ -242,7 +243,7 @@ fn is_done(b: &mut BoundBuilder) -> bool {
 }
 
 fn in_order(type_query_operands: &mut Vec<ExprId>) {
-    type_query_operands.sort_unstable();
+    type_query_operands.shared_sort_unstable();
     type_query_operands.dedup();
 }
 

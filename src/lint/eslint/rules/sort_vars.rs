@@ -43,7 +43,7 @@ impl SortVars {
                 false => Cow::Borrowed(name),
             };
             let mut named: Vec<_> = declarations.iter().rev().map(|it| (key(name_of(*it)), *it)).collect();
-            named.sort_by(|a, b| text::compare(&a.0, &b.0));
+            utils::sort::sort_by(&mut named, |a, b| text::compare(&a.0, &b.0));
             sorted = named.into_iter().map(|it| it.1).collect();
         }
         let mut out = Vec::new();

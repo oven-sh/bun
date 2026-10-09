@@ -1,7 +1,7 @@
 //! Types, and the declarations that consist of types.
 
 use super::stmt::{ModifiersOf, Start};
-use super::{GrammarError, Parser, ctx, take_span};
+use super::{GrammarError, ListKind, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -521,7 +521,12 @@ impl Parser<'_> {
                 };
                 return self.token_type(kind);
             }
-            T::Minus => return self.negative_literal_type(),
+            T::Minus => {
+                return match self.peek() {
+                    T::Number | T::BigInt => self.negative_literal_type(),
+                    _ => self.type_reference(),
+                };
+            }
             T::This => {
                 let start = self.pos();
                 let this = self.token_type(TypeNodeKind::Keyword(Keyword::This));
@@ -640,7 +645,11 @@ impl Parser<'_> {
     /// `parseEntityName`, with reserved words allowed.
     fn entity_name(&mut self) -> Span<NameId> {
         let base = self.s.names.len();
-        let first = self.identifier_name();
+        let first = match self.token().is_identifier_or_keyword() {
+            true => self.identifier_name(),
+            // "Type expected."
+            false => self.missing_identifier(1110, 0),
+        };
         self.note_identifier(first.0, first.1);
         self.s.names.push(first);
         while self.token() == T::Dot {
@@ -709,9 +718,10 @@ impl Parser<'_> {
     /// start of a type", so it can be empty (1099) and can end with a comma (1009).
     pub(crate) fn type_argument_list(&mut self, less_than: u32) -> Option<GrammarError> {
         let base = self.s.ids.len();
-        loop {
+        let lists = self.enter_list(ListKind::TypeArguments);
+        let error = loop {
             if self.token() != T::Comma && !self.is_start_of_type(false) {
-                return Some(match self.s.ids.len() == base {
+                break Some(match self.s.ids.len() == base {
                     // Up to the end of the token after the list, which is one character long.
                     true => ((less_than, self.pos() + 1), 1099),
                     false => ((self.prev_end() - 1, self.prev_end()), 1009),
@@ -720,9 +730,11 @@ impl Parser<'_> {
             let ty = self.ty();
             self.s.ids.push(ty.0);
             if !self.eat(T::Comma) {
-                return None;
+                break None;
             }
-        }
+        };
+        self.lists = lists;
+        error
     }
 
     /// `parseType` where `isStartOfType` is asked first, as `isListElement` does: for it a reserved
@@ -799,17 +811,26 @@ impl Parser<'_> {
         mut element: impl FnMut(&mut Self, u32),
     ) -> (u32, Option<(u32, u32)>) {
         let (mut count, mut comma) = (0, None);
-        while self.is_heritage_element() {
+        let lists = self.enter_list(ListKind::HeritageClauseElement);
+        while self.is_at_element(ListKind::HeritageClauseElement) {
+            if !self.recovers && !self.is_heritage_element() {
+                break;
+            }
+            let full = self.full_start();
             element(self, count);
             count += 1;
             comma = (self.token() == T::Comma).then_some((self.lx.start, self.lx.end));
-            if !self.eat(T::Comma) || self.has_failed() {
+            if self.has_failed()
+                || !self.eat(T::Comma)
+                    && !self.goes_on_without_comma(ListKind::HeritageClauseElement, full)
+            {
                 break;
             }
         }
+        self.lists = lists;
         // `isListTerminator`
         if !matches!(self.token(), T::OpenBrace | T::Extends | T::Implements) {
-            self.fail();
+            self.fail_unless_recovering();
         }
         (count, comma)
     }
@@ -875,7 +896,9 @@ impl Parser<'_> {
         let mut others: Vec<TypeNodeId> = Vec::new();
         // The checker returns after 1172 or at `implements`.
         let (mut has_extends, mut is_checked) = (false, true);
-        while matches!(self.token(), T::Extends | T::Implements) {
+        let lists = self.enter_list(ListKind::HeritageClauses);
+        let mut is_first = true;
+        while self.is_at_heritage_clause(std::mem::take(&mut is_first)) {
             let keyword = (self.lx.start, self.lx.end);
             let is_extends = self.token() == T::Extends;
             let is_first_extends = is_extends && !has_extends;
@@ -911,6 +934,7 @@ impl Parser<'_> {
                 }
             }
         }
+        self.lists = lists;
         (extends, self.f.list(&others))
     }
 
@@ -1076,12 +1100,17 @@ impl Parser<'_> {
         let start = self.pos();
         self.next();
         let base = self.s.tuple_elems.len();
-        while self.is_in_list(T::CloseBracket) {
+        let lists = self.enter_list(ListKind::TupleElementTypes);
+        while self.is_in_list(T::CloseBracket) && self.is_at_element(ListKind::TupleElementTypes) {
+            let element = self.full_start();
             self.tuple_element();
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::TupleElementTypes, element)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.expect(T::CloseBracket);
         let elements = take_span!(self, tuple_elems, base);
         self.finish_type(TypeNodeKind::Tuple(elements), start)
@@ -1248,12 +1277,16 @@ impl Parser<'_> {
 
     /// `parseObjectTypeMembers`, at the `{`.
     fn object_type_members(&mut self) -> Span<MemberId> {
-        self.expect(T::OpenBrace);
+        if !self.expect(T::OpenBrace) {
+            return Span::EMPTY;
+        }
         let base = self.s.members.len();
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::TypeMembers);
+        while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::TypeMembers) {
             let member = self.type_member();
             self.s.members.push(member);
         }
+        self.lists = lists;
         self.expect(T::CloseBrace);
         take_span!(self, members, base)
     }
@@ -1398,8 +1431,18 @@ impl Parser<'_> {
         start: u32,
     ) -> FnId {
         let type_params = self.type_parameters();
-        let anchor = self.pos();
+        let anchor = match self.token() {
+            T::OpenParen => self.pos(),
+            // `createMissingList`
+            _ => self.full_start().saturating_sub(1),
+        };
         let (this_param, params) = self.parameters(0);
+        // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
+        // parse the type anyway"
+        if self.token() == T::EqualsGreaterThan && self.recovers {
+            self.expected(T::Colon);
+            self.lx.token = T::Colon;
+        }
         let ret = match self.eat(T::Colon) {
             true => self.type_or_type_predicate(),
             false => TypeNodeId::NONE,

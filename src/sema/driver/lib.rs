@@ -39,6 +39,7 @@ use bun_sema::resolve::{
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
+use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
@@ -1524,7 +1525,7 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
             }
         }
     }
-    found.sort_unstable();
+    found.shared_sort_unstable();
     found
 }
 
@@ -1722,7 +1723,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             files.retain(is_in_directory);
             if !files.is_empty() {
                 files.extend(configs.into_iter().filter(is_in_directory));
-                files.sort_by_cached_key(|it| to_path(it, is_case_sensitive).into_owned());
+                files.shared_sort_by_cached_key(|it| to_path(it, is_case_sensitive).into_owned());
                 files.dedup_by(|a, b| is_same(a, b));
                 (files.into_iter()).for_each(|file| add(Some(config.clone()), Extent::Graph, file));
                 continue;
@@ -1897,7 +1898,7 @@ fn check_project_of(
         // From here on they are only looked for.
         let named = named.iter().map(|it| to_path(it, is_case_sensitive));
         let mut named: Vec<Vec<u8>> = named.map(Cow::into_owned).collect();
-        named.sort_unstable();
+        named.shared_sort_unstable();
         (extent, named)
     });
     let named = (named.as_ref()).map(|(extent, files)| (*extent, files.as_slice()));
@@ -2528,14 +2529,14 @@ fn check_with_references(
             })
             .collect();
         // `maps.Copy`: of the projects that have a file, the last one has the entry.
-        sources.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
+        sources.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
         sources.dedup_by(|a, b| a.0 == b.0);
         let mut output_dts: Vec<(Vec<u8>, u32)> = (sources.iter().enumerate())
             .filter(|(_, it)| !it.2.is_empty())
             .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
             .collect();
         let walked = |it: &(Vec<u8>, u32)| sources[it.1 as usize].3;
-        output_dts.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
+        output_dts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
         output_dts.dedup_by(|a, b| a.0 == b.0);
         project.options.referenced_sources = sources;
         project.options.referenced_output_dts = output_dts;
@@ -2576,7 +2577,7 @@ fn check_with_references(
         );
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
-            awaited.sort_unstable();
+            awaited.shared_sort_unstable();
             awaited.dedup();
             return Err(awaited);
         }
@@ -2765,13 +2766,13 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 
 /// `SortAndDeduplicateDiagnostics`
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.sort_by(compare_diagnostics);
+    diagnostics.shared_sort_by(compare_diagnostics);
     // `compactAndMergeRelatedInfos`
     diagnostics.dedup_by(|next, first| {
         let is_same = equal_diagnostics_no_related_info(first, next);
         if is_same {
             first.related.append(&mut next.related);
-            first.related.sort_by(compare_diagnostics);
+            first.related.shared_sort_by(compare_diagnostics);
             first
                 .related
                 .dedup_by(|next, first| equal_diagnostics(first, next));
@@ -3015,7 +3016,7 @@ fn check_named_files(
     }
     // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
     let place = |f: FileId| program.files.rank_of_file(f);
-    to_check.sort_by_key(|&f| place(f));
+    to_check.shared_sort_by_key(|&f| place(f));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax, such a file only has what `Emit` reports, which is
@@ -3357,8 +3358,8 @@ fn check_named_files(
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut start_order: Vec<usize> = (0..tasks).collect();
         match request.order {
-            1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
-            order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
+            1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
+            order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
         }
         let outcomes: Vec<Guarded<Option<Outcome>>> =
             (0..tasks).map(|_| Guarded::new(None)).collect();
@@ -3444,7 +3445,7 @@ fn check_named_files(
         let generic_relation_entries_not_published = not_published.sum();
         outcomes.into_iter().for_each(&accept);
         let mut slowest = std::mem::take(&mut *task_times.lock());
-        slowest.sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+        slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
         if request.task_clock.is_none() {
             slowest.truncate(5);
         }
@@ -3480,7 +3481,7 @@ fn check_named_files(
         let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
         while !invalid.is_empty() {
             let mut files = invalid.concat();
-            files.sort_unstable();
+            files.shared_sort_unstable();
             let again = Plan::cut(files, &size_of, &request.plan_options);
             invalid = run_round(number, &again, &[], expected);
         }
@@ -3629,7 +3630,7 @@ fn check_named_files(
     report.deepest_stack = deepest_stack.into_inner();
     report.steps = std::mem::take(&mut *steps.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
-    report.incomplete.sort();
+    report.incomplete.shared_sort();
     report.incomplete.dedup();
     let unreadable = host.take_unreadable();
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));

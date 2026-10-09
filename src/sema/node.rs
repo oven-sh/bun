@@ -25,6 +25,7 @@ use crate::check::spans::{
 };
 use crate::hir::*;
 use crate::session::{Arena, ArenaBox};
+use crate::util::SharedSort;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 
@@ -1415,7 +1416,7 @@ impl<'s> File<'s> {
             }
         }
         // The later entry wins here too.
-        around.sort_by_key(|&(inner, _)| inner);
+        around.shared_sort_by_key(|&(inner, _)| inner);
         around.dedup_by(|later, kept| {
             let is_same = later.0 == kept.0;
             if is_same {
@@ -2650,7 +2651,7 @@ impl Places {
     /// Nested or overlapping ranges are merged.
     pub fn new(ranges: impl Iterator<Item = TextRange>) -> Places {
         let mut ranges: Vec<TextRange> = ranges.collect();
-        ranges.sort_unstable_by_key(|range| range.pos);
+        ranges.shared_sort_unstable_by_key(|range| range.pos);
         ranges.dedup_by(|next, kept| {
             let is_in_it = next.pos < kept.end;
             kept.end = if is_in_it {
@@ -2757,7 +2758,7 @@ impl File<'_> {
                     node = inside;
                 }
             }
-            found.sort_unstable_by_key(|&node| (self.start(node), node));
+            found.shared_sort_unstable_by_key(|&node| (self.start(node), node));
             found.dedup();
             ArenaBox::copy_from_slice_in(&found, self.lazy.session.arena())
         })

@@ -1,7 +1,8 @@
 //! Binding patterns.
 
-use super::{Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, take_span};
 use crate::token::T;
+use bun_sema::atom::known;
 use bun_sema::hir::*;
 
 impl Parser<'_> {
@@ -19,14 +20,28 @@ impl Parser<'_> {
     #[inline]
     pub(crate) fn binding_identifier(&mut self) -> PatId {
         if !self.is_binding_identifier() {
-            self.fail();
-            return PatId::NONE;
+            return self.missing_binding_identifier(0);
         }
         let name = self.lx.atom;
         self.note_identifier(name, self.lx.start);
         let pat = self.f.pat(PatKind::Ident(name), self.lx.start, self.lx.end);
         self.next();
         pat
+    }
+
+    /// `parseBindingIdentifierWithDiagnostic`, at a token that is none.
+    #[cold]
+    #[track_caller]
+    pub(crate) fn missing_binding_identifier(&mut self, code_of_private_name: u32) -> PatId {
+        let (full, end) = (self.full_start(), self.lx.end);
+        let (name, pos) = self.missing_identifier(0, code_of_private_name);
+        if name.is_none() {
+            return PatId::NONE;
+        }
+        match name == known::empty {
+            true => self.f.pat(PatKind::Ident(name), full, full),
+            false => self.f.pat(PatKind::Ident(name), pos, end),
+        }
     }
 
     /// `parseArrayBindingPattern`
@@ -38,7 +53,10 @@ impl Parser<'_> {
         self.next();
         let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
         let base = self.s.pat_elems.len();
-        while self.is_in_list(T::CloseBracket) {
+        let lists = self.enter_list(ListKind::ArrayBindingElements);
+        while self.is_in_list(T::CloseBracket) && self.is_at_element(ListKind::ArrayBindingElements)
+        {
+            let element = self.full_start();
             // `parseArrayBindingElement`
             if self.token() == T::Comma {
                 // `finishNode(NewOmittedExpression(), nodePos())`
@@ -73,10 +91,13 @@ impl Parser<'_> {
                     );
                 }
             }
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::ArrayBindingElements, element)
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
         self.expect(T::CloseBracket);
         let elements = take_span!(self, pat_elems, base);
@@ -93,7 +114,10 @@ impl Parser<'_> {
         self.next();
         let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
         let base = self.s.pat_props.len();
-        while self.is_in_list(T::CloseBrace) {
+        let lists = self.enter_list(ListKind::ObjectBindingElements);
+        while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ObjectBindingElements)
+        {
+            let element = self.full_start();
             // `parseObjectBindingElement`
             let pos = self.pos();
             let property = if self.eat(T::DotDotDot) {
@@ -148,6 +172,9 @@ impl Parser<'_> {
             };
             self.s.pat_props.push(property);
             if !self.eat(T::Comma) {
+                if self.goes_on_without_comma(ListKind::ObjectBindingElements, element) {
+                    continue;
+                }
                 break;
             }
             if property.is_rest && self.token() == T::CloseBrace {
@@ -155,6 +182,7 @@ impl Parser<'_> {
                 self.flag(DiagnosticKind::Grammar, 1013, at, &[]);
             }
         }
+        self.lists = lists;
         self.context = saved;
         self.expect(T::CloseBrace);
         let properties = take_span!(self, pat_props, base);

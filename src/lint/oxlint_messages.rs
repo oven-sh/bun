@@ -658,6 +658,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("typescript", "prefer-nullish-coalescing", &[
         m("preferNullishOverTernary", "Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read."),
     ]),
+    ("typescript", "prefer-promise-reject-errors", &[
+        m("rejectAnError", "Expected the Promise rejection reason to be an Error."),
+    ]),
     ("typescript", "prefer-readonly", &[
         m("preferReadonly", "Member '{{name}}' is never reassigned."),
     ]),

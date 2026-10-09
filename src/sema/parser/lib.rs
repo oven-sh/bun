@@ -19,6 +19,7 @@ mod pragmas;
 mod token;
 
 pub use names::FileAtoms;
+pub use parser::keyword_suggestion;
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;

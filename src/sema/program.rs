@@ -24,6 +24,7 @@ use crate::session::{
     vec_from_iter_in,
 };
 use crate::table::{Bases, ByNode, ByNodeIndirect, Frozen, RawWord};
+use crate::util::SharedSort;
 use crate::util::{FxBuild, FxHashMap, FxHashSet, List};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
@@ -2282,7 +2283,7 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
     let text = &hir.text[..];
     let uses = hir.specifier_uses.iter().filter(|u| u.kind.is_dynamic());
     let mut uses: Vec<&SpecifierUse> = uses.collect();
-    uses.sort_by_key(|u| u.pos);
+    uses.shared_sort_by_key(|u| u.pos);
     // `findImportOrRequire`: where each is, and where it ends.
     let mut words: Vec<(usize, usize)> = Vec::new();
     let mut index = 0;
@@ -2377,7 +2378,7 @@ fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
         }
     }
     // The one for an `@import` inside a statement comes before that statement.
-    references.sort_unstable();
+    references.shared_sort_unstable();
     references
 }
 
@@ -2636,7 +2637,7 @@ fn automatic_type_directives(
     let mut packages = Vec::new();
     for root in options.effective_type_roots() {
         let mut names = host.list_dir(&root);
-        names.sort_unstable();
+        names.shared_sort_unstable();
         for name in names {
             if !host.is_dir(&inside(&root, &name)) {
                 continue;
@@ -3175,7 +3176,7 @@ impl Included<'_, '_> {
         let mut uses = hir.specifier_uses.to_vec();
         let visited = module_references(hir);
         uses.retain(|u| is_among_imports(&visited, atoms, u));
-        uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
+        uses.shared_sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
         let calls = (uses.iter().any(|u| u.kind.is_call())).then(|| ExprsByKind::new(hir));
         for u in &uses {
             let mode = mode_for_usage_location(options, module.default_mode, u);
@@ -3680,7 +3681,7 @@ impl Included<'_, '_> {
                 .map(|&(name, file)| (file, self.by_path_of(&visits[file.idx()], name)))
                 .filter(|it| !it.1.is_empty())
                 .collect();
-            each.sort_by_key(|it| it.1[0].order);
+            each.shared_sort_by_key(|it| it.1[0].order);
             let Some(((file, to_file), others)) = each.split_first() else {
                 continue;
             };
@@ -4455,7 +4456,7 @@ impl<'s> Files<'s> {
                             .chain([*id])
                             .filter(|file| modules[file.idx()].is_none())
                             .collect();
-                        missing.sort_unstable();
+                        missing.shared_sort_unstable();
                         missing.dedup();
                         let missing: Vec<&FoundFile> = (missing.iter())
                             .map(|file| &all_found.files[file.idx()])
@@ -4730,7 +4731,7 @@ impl<'s> Files<'s> {
                 redirects.push((FileId(task as u32), named));
             }
         }
-        respelled.sort_unstable();
+        respelled.shared_sort_unstable();
         respelled.dedup();
         // Only the files that `collectFiles` came to are in the program, and of a package file only
         // one copy. The paths of the other copies stand for that one.
@@ -4902,7 +4903,7 @@ impl<'s> Files<'s> {
                 duplicates.entry(id).or_default().push(path);
             }
             for (id, mut paths) in duplicates {
-                paths.sort();
+                paths.shared_sort();
                 redirect_targets.insert(id, slice_in(&paths, arena));
             }
         }
@@ -5676,7 +5677,7 @@ impl<'s> Files<'s> {
             }
             let statements = hir.specifier_uses.iter().filter(|u| !u.kind.is_dynamic());
             let mut statements: Vec<&SpecifierUse> = statements.collect();
-            statements.sort_by_key(|u| u.pos);
+            statements.shared_sort_by_key(|u| u.pos);
             let uses = statements.into_iter().chain(dynamic_imports(hir));
             for u in uses.filter(|u| is_import(u)) {
                 let mode = mode_for_usage_location(options, default_mode, u);
@@ -5768,7 +5769,7 @@ impl<'s> Files<'s> {
                 written.push((place, (spec, mode, i < imported || !is_module_name)));
             }
         }
-        written.sort_by_key(|name| name.0);
+        written.shared_sort_by_key(|name| name.0);
         module_names.extend(written.into_iter().map(|name| name.1));
         let mut imports = Vec::new();
         let (mut untyped_imports, mut untyped_import_files) = (Vec::new(), Vec::new());
@@ -6089,7 +6090,7 @@ impl<'s> Files<'s> {
                 }
             }
         }
-        libs.sort_by_cached_key(|&file| self.default_lib_file_priority(file));
+        libs.shared_sort_by_cached_key(|&file| self.default_lib_file_priority(file));
         libs.extend(others);
         libs
     }
@@ -6278,7 +6279,7 @@ impl<'s> Files<'s> {
         }
         // Each file is visited once, however many of its names are redirected.
         let mut stand_ins = std::mem::replace(&mut self.stand_ins, ArenaVec::new_in(self.arena));
-        stand_ins.sort_unstable();
+        stand_ins.shared_sort_unstable();
         for of_file in stand_ins.chunk_by(|a, b| a.0.file == b.0.file) {
             let is_placeholder = |symbol: &mut SymbolId| {
                 if let Ok(i) = of_file.binary_search_by_key(symbol, |s| s.0.id) {
@@ -7840,10 +7841,10 @@ impl<'s> Files<'s> {
                 self.publish(resolved);
             }
         }
-        failed_lookups.sort_by_key(|it| (it.file, it.identifier));
+        failed_lookups.shared_sort_by_key(|it| (it.file, it.identifier));
         self.failed_lookups = slice_in(&failed_lookups, self.arena);
         nested.retain(|&module| self.canonical(module) == module);
-        nested.sort_unstable();
+        nested.shared_sort_unstable();
         nested.dedup();
         self.modules_with_nested_export_collisions = slice_in(&nested, self.arena);
         let refused = self.refused_merges.iter();

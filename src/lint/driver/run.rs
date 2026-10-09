@@ -879,7 +879,7 @@ impl Run<'_> {
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
                 if let Err(error) =
-                    fs::write_atomically(&result.path, result.text.as_deref().unwrap_or_default())
+                    fs::write_atomically(&result.path, result.written().unwrap_or_default())
                 {
                     failure.lock().get_or_insert(
                         [

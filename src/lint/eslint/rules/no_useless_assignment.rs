@@ -502,7 +502,7 @@ impl Graph {
             }
         }
         edges.sort_unstable();
-        frontier.sort_unstable();
+        utils::sort::sort_unstable(&mut frontier);
         let least_levels = Minima::new(&levels);
         let mut previous = None;
         for (target, source, level) in &mut frontier {
@@ -515,7 +515,7 @@ impl Graph {
             };
             previous = Some((*target, *source));
         }
-        frontier.sort_unstable_by_key(|it| it.1);
+        utils::sort::sort_unstable_by_key(&mut frontier, |it| it.1);
         let frontier_levels: Vec<u32> = frontier.iter().map(|it| it.2).collect();
 
         for node in found.values_mut() {
@@ -531,7 +531,7 @@ impl Graph {
             .filter(|it| it.0 != NO_IDENTIFIERS)
             .collect();
         if !ranges.is_sorted_by_key(|it| it.0.start) {
-            ranges.sort_by_key(|it| it.0.start);
+            utils::sort::sort_by_key(&mut ranges, |it| it.0.start);
         }
         let mut end = 0;
         Graph {
@@ -969,7 +969,7 @@ impl<'a, 'v> Variable<'a, 'v> {
             // Going through all the segments takes less.
             if list.len() > graph.last.len() / 32 {
                 list.truncate(used);
-                list.sort_unstable_by_key(|it| it.0);
+                utils::sort::sort_unstable_by_key(&mut list, |it| it.0);
                 let mut all = vec![None; graph.last.len()];
                 for &(segment, place) in &list {
                     if let Some(it) = all.get_mut(segment as usize) {
@@ -983,7 +983,7 @@ impl<'a, 'v> Variable<'a, 'v> {
                 };
             }
         }
-        list.sort_unstable_by_key(|it| it.0);
+        utils::sort::sort_unstable_by_key(&mut list, |it| it.0);
 
         let mut nearest: Vec<(u32, u32)> = Vec::with_capacity(2 * list.len());
         let mut around: Vec<(u32, u32)> = Vec::new();
@@ -1089,7 +1089,7 @@ impl<'a, 'v> Variable<'a, 'v> {
         }
         read_after.sort_unstable();
         read_after.dedup();
-        leading_apart.sort_unstable();
+        utils::sort::sort_unstable(&mut leading_apart);
         Later {
             read_after,
             read_after_plain,
@@ -1334,7 +1334,7 @@ impl<'a> Uses<'a> {
             })
             .collect();
         if !all.is_sorted_by_key(|it| it.start) {
-            all.sort_unstable_by_key(|it| it.start);
+            utils::sort::sort_unstable_by_key(&mut all, |it| it.start);
         }
         Uses {
             all,
@@ -2030,9 +2030,9 @@ impl NoUselessAssignment {
                 continue;
             }
             if !read_references.is_sorted_by_key(|it| it.start) {
-                read_references.sort_unstable_by_key(|it| it.start);
+                utils::sort::sort_unstable_by_key(&mut read_references, |it| it.start);
             }
-            assignments.sort_by_key(|it| it.identifier.start);
+            utils::sort::sort_by_key(&mut assignments, |it| it.identifier.start);
             let mut uses =
                 Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
             let next = uses.next_assignments();

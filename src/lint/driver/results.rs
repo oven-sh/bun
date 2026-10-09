@@ -62,6 +62,8 @@ pub(crate) struct FileResult {
     pub(crate) text: Option<Vec<u8>>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
+    /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
+    pub(crate) fixed_text: Option<Vec<u8>>,
     /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
     /// why.
     pub(crate) linted: Option<Linted>,
@@ -93,8 +95,14 @@ impl FileResult {
             had_types: false,
             text: None,
             is_fixed: false,
+            fixed_text: None,
             linted: None,
         }
+    }
+
+    /// What `--fix` writes.
+    pub(crate) fn written(&self) -> Option<&[u8]> {
+        self.fixed_text.as_deref().or(self.text.as_deref())
     }
 
     /// ESLint's `getErrorResults` for one result: what `--quiet` leaves of it.

@@ -653,7 +653,12 @@ impl Parser<'_> {
                         self.count_table_row_columns(header_line.beg, header_line.end);
                     let is_header_too_far_in = header_line.indent >= self.code_indent_offset
                         && compat::indented_line_is_no_table_header(&self.flags);
-                    if header_cols == tbl_result.col_count && !is_header_too_far_in {
+                    let interrupts_paragraph = self.current_block_lines.len() > 1
+                        && compat::table_does_not_interrupt_a_paragraph(&self.flags);
+                    if header_cols == tbl_result.col_count
+                        && !is_header_too_far_in
+                        && !interrupts_paragraph
+                    {
                         line.data = tbl_result.col_count;
                         line.r#type = LineType::Tableunderline;
                         break;

@@ -189,7 +189,7 @@ impl NoUnnecessaryParameterPropertyAssignment {
                 && !utils::is_assignment_target(*e)
         };
         let mut assignments: Vec<Expr<'a>> = cx.file().exprs_of_kind(ExprTag::Assign).filter(is_relevant).collect();
-        assignments.sort_by_key(|it| (it.span().start, Reverse(it.span().end)));
+        utils::sort::sort_by_key(&mut assignments, |it| (it.span().start, Reverse(it.span().end)));
 
         let mut infos: FxHashMap<Class<'a>, ReportInfo<'a>> = FxHashMap::default();
         let mut memo = Memo::default();

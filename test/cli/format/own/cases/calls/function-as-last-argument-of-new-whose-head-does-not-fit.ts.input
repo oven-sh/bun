@@ -1,0 +1,16 @@
+function t() {
+  {
+    let diff = new LcsDiff(new StringDiffSequence(left), new StringDiffSequence(right), function (leftIndex, longestMatchSoFar) {
+      return false;
+    });
+    let dif2 = foo(new StringDiffSequence(left), new StringDiffSequencee(right), function (leftIndex, longestMatchSoFar) {
+      return false;
+    });
+    let dif3 = foo(new StringDiffSequence(left), new StringDiffSequencee(right), (leftIndexxxxxxx, longestMatchSoFar) => {
+      return false;
+    });
+  }
+}
+let d = new LcsDiff(new Sequence(left), new Sequence(right), function (leftIndex, longest) {
+  return false;
+});

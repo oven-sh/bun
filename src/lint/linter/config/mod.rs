@@ -754,7 +754,10 @@ impl Config {
             }
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             let js = find_js_rule(&self.js_plugins, &setting.id);
-            let native = match js.is_some() && self.accepts_all_plugins {
+            // So does a plugin that is not the one which is implemented here under that name.
+            let prefix = super::registry::parse_rule_id(&setting.id).0;
+            let is_foreign = config.foreign_plugins.iter().any(|it| **it == *prefix);
+            let native = match is_foreign || js.is_some() && self.accepts_all_plugins {
                 true => None,
                 false => config.find_rule(registry, &setting.id),
             };
@@ -823,7 +826,10 @@ impl Config {
         // From here on: a rule that is turned off can be configured without its plugin.
         if !self.accepts_all_plugins {
             let mut implemented: Vec<Plugin> = Vec::new();
-            for plugin in plugins.iter().filter_map(|it| Plugin::of_prefix(it)) {
+            let is_foreign =
+                |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);
+            let built_in = plugins.iter().filter(|it| !is_foreign(it));
+            for plugin in built_in.filter_map(|it| Plugin::of_prefix(it)) {
                 if !implemented.contains(&plugin) {
                     implemented.push(plugin);
                 }

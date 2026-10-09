@@ -380,7 +380,7 @@ fn get_replace_span(statement: Stmt) -> Span {
         Node::File(file) => file.body().after(span.start),
         _ => None,
     };
-    next.map_or(Span::empty(span.end), |it| span.between(it.span()))
+    next.map_or_else(|| Span::empty(span.end), |it| span.between(it.span()))
 }
 
 fn format_export_names(violations: &[Violation]) -> Vec<u8> {
@@ -443,7 +443,7 @@ impl<'a> Group<'_, 'a> {
         let import_span = self.import_decl.stmt().span();
         let replace_span = get_replace_span(self.import_decl.stmt());
         let mut parent_nodes: Vec<Stmt<'a>> = self.violations.iter().map(|it| it.export_node).collect();
-        parent_nodes.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut parent_nodes, |it| it.span().start);
         let delete_span = parent_nodes.first()?.span().to(parent_nodes.last()?.span());
         let exports_str = if self.is_namespace { violation.export_name.clone() } else { format_export_names(self.violations) };
 

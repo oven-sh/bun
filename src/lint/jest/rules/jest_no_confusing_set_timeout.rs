@@ -49,7 +49,7 @@ fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
     // In the order in which oxlint comes to them: by the name or the declaration, and then by the place.
     if jest_reference_list.len() > 1 {
         let order = OxlintOrder::new(file);
-        jest_reference_list.sort_by_cached_key(|it| {
+        utils::sort::sort_by_cached_key(&mut jest_reference_list, |it| {
             let group = it.1.object().and_then(|jest| match jest.symbol() {
                 Some(symbol) => symbol.declarations().next()?.name_span().map(|it| it.start),
                 None => jest.as_ident().map(|name| order.rank(name)),

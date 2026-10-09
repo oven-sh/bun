@@ -154,7 +154,7 @@ impl Rule for NoRestrictedTypes {
             };
             banned.push((name, ban));
         }
-        banned.sort_by(|a, b| a.0.cmp(&b.0));
+        utils::sort::sort_by(&mut banned, |a, b| a.0.cmp(&b.0));
         NoRestrictedTypes {
             longest: banned.iter().map(|it| it.0.len()).max().unwrap_or(0),
             banned,

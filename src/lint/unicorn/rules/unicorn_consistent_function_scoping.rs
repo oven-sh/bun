@@ -424,7 +424,7 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
         }
     }
     for spans in found.values_mut() {
-        spans.sort_unstable_by_key(|it| it.start);
+        utils::sort::sort_unstable_by_key(spans, |it| it.start);
         let mut end = 0;
         spans.retain(|it| {
             let is_in_none = it.start >= end;

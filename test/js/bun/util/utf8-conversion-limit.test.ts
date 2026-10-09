@@ -7,7 +7,10 @@
 // try / catch. Each API now throws `RangeError: Out of memory`, which is what JSC
 // reports for a string it cannot create. An API that only looks the string up
 // answers that nothing matches: the string is not a name in the certificate and
-// it is not a builtin module.
+// it is not a builtin module. A `bun:sqlite` parameter that must be converted is
+// measured against SQLite's length limit first, so that row reports SQLite's
+// `string or blob too big` and no conversion runs: 2 GiB of UTF-8 is over the
+// limit of each SQLite.
 //
 // An 8-bit ASCII string must stay borrowed: no API here needs a NUL terminator,
 // so a copy of it is waste. The conversion refuses every 8-bit string of 2**30
@@ -101,7 +104,6 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Module._resolveLookupPaths: returned an array",
         "Database#run: RangeError: Out of memory",
         "Database#prepare: RangeError: Out of memory",
-        // SQLite's length limit is checked before the conversion, and 2 GiB of UTF-8 is over it in each SQLite.
         "Statement#get parameter: Error: string or blob too big",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",

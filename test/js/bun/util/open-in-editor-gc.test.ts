@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -205,12 +205,12 @@ async function openInEditor(dir: string, calls: { path: string; options?: object
 }
 
 describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor", () => {
-  const files = (editor: string) => ({
-    [editor]: "@echo off\r\n>> out.txt echo arg=%*\r\n",
+  const files = (editor: string, body = "@echo off\r\n>> out.txt echo arg=%*\r\n") => ({
+    [editor]: body,
     "run.js": openInEditorFixture,
   });
-  const refusal = (name: string, value: string) =>
-    `threw ERR_INVALID_ARG_VALUE: The ${name} contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received ${JSON.stringify(value)}\n`;
+  const refusal = (name: string, value: string, editor: string) =>
+    `threw ERR_INVALID_ARG_VALUE: The ${name} contains a cmd.exe special character and cannot be safely passed to the .bat/.cmd editor "${editor}". Received ${JSON.stringify(value)}\n`;
 
   test.each([
     ["fake-editor.cmd", "%CMD_PROBE%.js"],
@@ -230,8 +230,9 @@ describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor",
     ["my editors/fake-editor.cmd", "a & b.js"],
   ])("%s refuses the path %j", async (name, path) => {
     using dir = tempDir("open-in-editor-batch", files(name));
-    expect(await openInEditor(String(dir), [{ path, options: { editor: join(String(dir), name) } }])).toEqual({
-      stdout: refusal("argument 'path'", path),
+    const editor = join(String(dir), name);
+    expect(await openInEditor(String(dir), [{ path, options: { editor } }])).toEqual({
+      stdout: refusal("argument 'path'", path, editor),
       stderr: "",
       exitCode: 0,
     });
@@ -240,9 +241,9 @@ describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor",
   // The editor runs the bytes before a NUL, so those bytes decide that it is a batch file.
   test("fake-editor.cmd refuses the path when a NUL and .exe follow its name", async () => {
     using dir = tempDir("open-in-editor-batch", files("fake-editor.cmd"));
-    const editor = join(String(dir), "fake-editor.cmd") + "\0.exe";
-    expect(await openInEditor(String(dir), [{ path: "a&b.js", options: { editor } }])).toEqual({
-      stdout: refusal("argument 'path'", "a&b.js"),
+    const editor = join(String(dir), "fake-editor.cmd");
+    expect(await openInEditor(String(dir), [{ path: "a&b.js", options: { editor: editor + "\0.exe" } }])).toEqual({
+      stdout: refusal("argument 'path'", "a&b.js", editor),
       stderr: "",
       exitCode: 0,
     });
@@ -253,7 +254,31 @@ describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor",
     using dir = tempDir("open-in-editor-batch", files("fake-editor.cmd"));
     const editor = join(String(dir), "fake-editor.cmd");
     expect(await openInEditor(String(dir), [{ path: "hello.js", options: { editor } }, { path: "a&b.js" }])).toEqual({
-      stdout: "editor got arg=hello.js\n" + refusal("argument 'path'", "a&b.js"),
+      stdout: "editor got arg=hello.js\n" + refusal("argument 'path'", "a&b.js", editor),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The editor of a refused call would append the first line of out.txt.
+  test("fake-editor.cmd does not start for a refused call", async () => {
+    using dir = tempDir("open-in-editor-batch", files("fake-editor.cmd"));
+    const editor = join(String(dir), "fake-editor.cmd");
+    const calls = ["%CMD_PROBE%.js", "first.js", "second.js"].map(path => ({ path, options: { editor } }));
+    expect(await openInEditor(String(dir), calls)).toEqual({
+      stdout:
+        refusal("argument 'path'", "%CMD_PROBE%.js", editor) + "editor got arg=first.js\neditor got arg=second.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // cmd.exe reads the path of the editor too.
+  test("an editor whose own path has a special character does not start", async () => {
+    using dir = tempDir("open-in-editor-batch", files("a&b/fake-editor.cmd"));
+    const editor = join(String(dir), "a&b", "fake-editor.cmd");
+    expect(await openInEditor(String(dir), [{ path: "hello.js", options: { editor } }])).toEqual({
+      stdout: `threw ERR_INVALID_ARG_VALUE: The editor path contains a cmd.exe special character and cannot be safely passed to cmd.exe, which runs a .bat/.cmd editor. Received "${editor}"\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -270,15 +295,30 @@ describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor",
     });
   });
 
+  // cmd.exe splits an argument at `=`, `,` and `;` when a batch file reads %1. Those are not refused.
+  test("a .cmd editor that reads %1 gets a path with a delimiter in one piece", async () => {
+    using dir = tempDir(
+      "open-in-editor-batch",
+      files("fake-editor.cmd", "@echo off\r\n>> out.txt echo arg=[%1][%2]\r\n"),
+    );
+    const editor = join(String(dir), "fake-editor.cmd");
+    const calls = ["a=b.js", "a,b.js", "a;b.js"].map(path => ({ path, options: { editor } }));
+    expect(await openInEditor(String(dir), calls)).toEqual({
+      stdout: "editor got arg=[a=b.js][]\neditor got arg=[a,b.js][]\neditor got arg=[a;b.js][]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // `code` and `idea` are found on PATH. VS Code takes the position as
   // `--goto file:line:column`, and a JetBrains editor as `file:line`.
-  const onPath = (dir: string) => ({ ...bunEnv, PATH: `${dir}${delimiter}${process.env.PATH}` });
+  const onPath = (dir: string) => mergeWindowEnvs([bunEnv, { PATH: `${dir}${delimiter}${process.env.PATH}` }]);
 
   test.each(["line", "column"])("code.cmd refuses the %s option", async option => {
     using dir = tempDir("open-in-editor-batch", files("code.cmd"));
     const options = { editor: "code", line: 3, column: 7, [option]: "%CMD_PROBE%" };
     expect(await openInEditor(String(dir), [{ path: "hello.js", options }], onPath(String(dir)))).toEqual({
-      stdout: refusal(`property 'options.${option}'`, "%CMD_PROBE%"),
+      stdout: refusal(`property 'options.${option}'`, "%CMD_PROBE%", Bun.which("code", { PATH: String(dir) })!),
       stderr: "",
       exitCode: 0,
     });
@@ -294,11 +334,45 @@ describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor",
     });
   });
 
+  // VS Code takes a column only after a line.
+  test("code.cmd gets the path when the column has a special character and there is no line", async () => {
+    using dir = tempDir("open-in-editor-batch", files("code.cmd"));
+    const options = { editor: "code", column: "%CMD_PROBE%" };
+    expect(await openInEditor(String(dir), [{ path: "hello.js", options }], onPath(String(dir)))).toEqual({
+      stdout: "editor got arg=hello.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The default install directories of VS Code have a space.
+  test("code.cmd in a directory with a space gets a path and a position", async () => {
+    using dir = tempDir("open-in-editor-batch", files("my editors/code.cmd"));
+    const options = { editor: "code", line: 3, column: 7 };
+    const env = onPath(join(String(dir), "my editors"));
+    expect(await openInEditor(String(dir), [{ path: "hello.js", options }], env)).toEqual({
+      stdout: "editor got arg=--goto hello.js:3:7\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("code.cmd in a directory with a space gets a path with a space", async () => {
+    using dir = tempDir("open-in-editor-batch", files("my editors/code.cmd"));
+    const options = { editor: "code", line: 3, column: 7 };
+    const env = onPath(join(String(dir), "my editors"));
+    expect(await openInEditor(String(dir), [{ path: "hello world.js", options }], env)).toEqual({
+      stdout: 'editor got arg=--goto "hello world.js:3:7"\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("idea.cmd refuses the line option", async () => {
     using dir = tempDir("open-in-editor-batch", files("idea.cmd"));
     const options = { editor: "idea", line: "%CMD_PROBE%" };
     expect(await openInEditor(String(dir), [{ path: "hello.js", options }], onPath(String(dir)))).toEqual({
-      stdout: refusal("property 'options.line'", "%CMD_PROBE%"),
+      stdout: refusal("property 'options.line'", "%CMD_PROBE%", Bun.which("idea", { PATH: String(dir) })!),
       stderr: "",
       exitCode: 0,
     });
@@ -343,6 +417,37 @@ test.skipIf(isWindows)("Bun.openInEditor passes a cmd.exe special character to a
 
   expect(await openInEditor(String(dir), [{ path: "%CMD_PROBE%.js", options: { editor } }])).toEqual({
     stdout: "editor got arg=%CMD_PROBE%.js\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The command line that each editor gets for a path, a line and a column.
+// Linux-only so PATH is the only place an editor can come from.
+test.skipIf(!isLinux)("Bun.openInEditor builds the command line of each editor", async () => {
+  const names = ["code", "subl", "atom", "mate", "idea", "webstorm"];
+  using dir = tempDir("open-in-editor-argv", {
+    ...Object.fromEntries(names.map(name => [`bin/${name}`, `#!/bin/sh\necho "${name} $*" >> out.txt\n`])),
+    "run.js": openInEditorFixture,
+  });
+  for (const name of names) chmodSync(join(String(dir), "bin", name), 0o755);
+
+  // An empty array is a line or a column that is present and empty.
+  const cases: [object, string][] = [
+    [{ editor: "code" }, "code f.js"],
+    [{ editor: "code", line: 3 }, "code --goto f.js:3"],
+    [{ editor: "code", column: 7 }, "code f.js"],
+    [{ editor: "code", line: [], column: 7 }, "code f.js"],
+    [{ editor: "code", line: 3, column: [] }, "code --goto f.js:3"],
+    [{ editor: "subl", line: 3, column: 7 }, "subl f.js:3:7"],
+    [{ editor: "atom", line: 3, column: 7 }, "atom f.js:3:7"],
+    [{ editor: "mate", line: 3, column: 7 }, "mate --line 3:7 f.js"],
+    [{ editor: "idea", line: 3, column: 7 }, "idea f.js:3"],
+    [{ editor: "webstorm", line: 3, column: 7 }, "webstorm f.js:3"],
+  ];
+  const calls = cases.map(([options]) => ({ path: "f.js", options }));
+  expect(await openInEditor(String(dir), calls, { ...bunEnv, PATH: join(String(dir), "bin") })).toEqual({
+    stdout: cases.map(([, argv]) => `editor got ${argv}\n`).join(""),
     stderr: "",
     exitCode: 0,
   });

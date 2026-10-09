@@ -661,8 +661,17 @@ private:
 
                 /* Todo: can this handle timeout for non-post as well? */
                 if (fin) {
-                    /* If we just got the last chunk (or empty chunk), disable timeout */
-                    us_socket_timeout((struct us_socket_t *) user, 0);
+                    /* If we just got the last chunk (or empty chunk), disable timeout, unless a
+                     * Bun.serve response write is blocked: then the timeout bounds the wait for the peer. */
+                    bool responseWriteBlocked = false;
+                    if constexpr (!IsNodeHttp) {
+                        responseWriteBlocked = ((struct us_socket_t *) user)->flags.last_write_failed;
+                    }
+                    if (responseWriteBlocked) {
+                        ((HttpResponse<SSL> *) user)->resetTimeout();
+                    } else {
+                        us_socket_timeout((struct us_socket_t *) user, 0);
+                    }
                 } else {
                     /* We still have some more data coming in later, so reset timeout */
                     /* Only reset timeout if we got enough bytes (16kb/sec) since last time we reset here */

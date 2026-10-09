@@ -198,7 +198,8 @@ impl<'a> BinaryLikeExpression<'a> {
         }
 
         let inline_logical_expression = self.should_inline_logical_expression(f);
-        let should_indent_if_inlines = !is_in_type_cast && should_indent_if_parent_inlines(parent);
+        let should_indent_if_inlines =
+            !is_in_type_cast && should_indent_if_parent_inlines(parent, f);
         let parts = split_into_left_and_right_sides(*self, false, f);
         let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
@@ -701,16 +702,31 @@ fn split_into_left_and_right_sides<'a>(
     items
 }
 
+/// ```js
+/// a = {                 a = {
+///   ["b" +                ["b" +
+///     "c"]() {},          "c"]() {},
+/// };                    };
+/// ```
+///
+/// Prettier on the left, oxfmt on the right, as both write the key of `["b" + "c"]: 1`.
+fn key_of_method_is_indented(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// Whether `parent` writes it on the line of its operator, so that it has to indent itself.
-fn should_indent_if_parent_inlines(parent: AstNodes<'_>) -> bool {
-    matches!(
-        parent,
+fn should_indent_if_parent_inlines(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
+    match parent {
+        AstNodes::ObjectProperty(property) => {
+            matches!(property.kind(), PropKind::Init | PropKind::Shorthand)
+                || !key_of_method_is_indented(f)
+        }
         AstNodes::AssignmentExpression(_)
-            | AstNodes::ObjectProperty(_)
-            | AstNodes::AssignmentTargetPropertyProperty(_)
-            | AstNodes::VariableDeclarator(_)
-            | AstNodes::PropertyDefinition(_)
-    )
+        | AstNodes::AssignmentTargetPropertyProperty(_)
+        | AstNodes::VariableDeclarator(_)
+        | AstNodes::PropertyDefinition(_) => true,
+        _ => false,
+    }
 }
 
 /// Prettier's `shouldFlatten`: whether `a op b parent_op c` is written as one chain.

@@ -994,6 +994,29 @@ for (const spelling of ghSpellings) {
   );
 }
 
+// `bun update` asks for the bytes the ref has now. bun.lock then pins what was installed.
+for (const spelling of ghSpellings) {
+  test.concurrent(
+    `bun update takes changed bytes at the locked commit of a github: dependency written as ${spelling.title}, and bun.lock pins them`,
+    async () => {
+      await using pin = await ghPinned(spelling);
+      const changed = await ghArchive(gh.locked, "v2");
+      pin.serve(spelling.ref, changed);
+      pin.serve(gh.locked, changed);
+
+      const { stderr, exitCode } = await pin.bun("cold", "update");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        installed: await installedVersionOf(pin.project, gh.name),
+        locked: (await lockedPackages(pin.project))[gh.name].slice(2),
+      }).toEqual({ installed: "v2", locked: [`${gh.owner}-${gh.repo}-${gh.locked}`, integrityOf(changed)] });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
 // The full hash of a commit names the same commit as the short hash bun.lock holds.
 test.concurrent(
   "a github: dependency refuses changed bytes at the locked commit when a new workspace member writes that commit as a full hash",

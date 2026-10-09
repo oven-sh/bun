@@ -1197,6 +1197,28 @@ describe.concurrent("pinned tarball that is resolved again", () => {
     });
   });
 
+  // A line that moves is the same dependency. It keeps its package, so bun does not ask for the tarball again.
+  describe.each(kinds)("%s, changed bytes, warm cache", kind => {
+    it.each([[["install"]], [["install", "--frozen-lockfile"]]])(
+      "installs the pinned bytes from the cache when the line moves: bun %j",
+      async args => {
+        await using pin = await pinned(kind);
+        await pin.put(await tarballOf("v2"));
+        await pin.manifest({ devDependencies: { [PKG]: pin.spec() } });
+
+        const result = await pin.bun("warm", args);
+
+        expect(result.out).not.toContain("error:");
+        expect({
+          installed: await pin.installed(),
+          requests: result.requests,
+          pinned: (await pin.lock()).includes(pin.pin),
+        }).toEqual({ installed: "v1", requests: 0, pinned: true });
+        expect(result.exitCode).toBe(0);
+      },
+    );
+  });
+
   // `bun update` asks for the bytes the tarball has now. bun.lock then pins what was installed.
   describe.each(kinds)("%s, bun update", kind => {
     const updates = [[["update"]], [["update", PKG]], [["update", "--latest"]]] as const;

@@ -561,10 +561,9 @@ fn write_grouped_arguments<'a>(
 ) {
     let last_index = node.len().saturating_sub(1);
     // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
-    let overlooks_this_parameter = overlooks_this_parameter(f);
     let expands_parameters_of = |function: Func<'a>| {
         matches!(node.parent, AstNodes::CallExpression(_))
-            && (last_index != 0 || has_only_names_as_parameters(function, overlooks_this_parameter))
+            && (last_index != 0 || has_only_simple_parameters(function, false))
     };
     let mut non_grouped_breaks = false;
     let mut grouped_breaks = false;
@@ -767,25 +766,6 @@ fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool
     }
     f.context_mut().cache_element(&key, interned);
     true
-}
-
-/// All parameters are names without types. `this` has a type.
-fn has_only_names_as_parameters(function: Func<'_>, overlooks_this_parameter: bool) -> bool {
-    match overlooks_this_parameter {
-        true => function.params().iter().all(|parameter| {
-            !parameter.is_rest()
-                && matches!(parameter.pat().kind(), PatKind::Ident(_))
-                && parameter.default().is_none()
-                && parameter.ty().is_none()
-        }),
-        false => has_only_simple_parameters(function, false),
-    }
-}
-
-/// oxfmt does not count `this: A` as a parameter, so `a(function (this: A) {})` does not break in
-/// the parameters while it is hugged.
-fn overlooks_this_parameter(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt, like Prettier 3.8, keeps the type parameters of `a(<T>() => {})` on one line while it is

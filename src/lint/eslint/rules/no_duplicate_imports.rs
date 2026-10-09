@@ -43,6 +43,16 @@ fn can_be_merged(a: &Entry, b: &Entry) -> bool {
         || is_pair(Type::Namespace, Type::Named))
 }
 
+/// Where oxlint points: at the specifier of an import, at the first name of an export.
+fn oxlint_place(statement: Stmt) -> Span {
+    let place = match statement.kind() {
+        StmtKind::Import(_) => statement.module_specifier_span(),
+        StmtKind::ExportNamed(export) => export.items().first().map(|it| it.span()),
+        _ => None,
+    };
+    place.unwrap_or_else(|| statement.span())
+}
+
 impl NoDuplicateImports {
     fn collect<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (module, ty, is_type_only, is_export) = match statement.kind() {
@@ -98,6 +108,12 @@ impl NoDuplicateImports {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut entries = std::mem::take(&mut cx.state);
+        let is_oxlint = cx.language().is_oxlint;
+        // oxlint looks at the imports without names only if the file has no others.
+        let is_import_of_names = |it: &Entry| !it.is_export && it.ty != Type::SideEffectImport;
+        if is_oxlint && entries.iter().any(is_import_of_names) {
+            entries.retain(|it| it.is_export || it.ty != Type::SideEffectImport);
+        }
         entries.sort_unstable_by(|a, b| {
             (a.module.cmp(b.module)).then_with(|| a.statement.span().start.cmp(&b.statement.span().start))
         });
@@ -111,7 +127,12 @@ impl NoDuplicateImports {
                 };
                 for (message, exports) in messages {
                     if self.should_report(entry, &previous, exports) {
-                        cx.report(entry.statement, message).data("module", entry.module);
+                        let place = if is_oxlint { oxlint_place(entry.statement) } else { entry.statement.span() };
+                        cx.report(place, message).data("module", entry.module);
+                        // oxlint says one thing about a statement.
+                        if is_oxlint {
+                            break;
+                        }
                     }
                 }
                 let is_same_sort = |it: &&Entry| {

@@ -81,9 +81,10 @@ impl NoShadowRestrictedNames {
             return;
         };
         let owner = Node::Pat(pat).ancestors().find(|it| matches!(it, Node::VarDecl(_) | Node::Param(_)));
-        // The parameters of a signature or of an overload are not those of a `:function`.
+        // The parameters of a signature or of an overload are not those of a `:function`. oxlint looks at them.
         if let Some(Node::Param(param)) = owner
             && !param.func().is_some_and(Func::has_body)
+            && !cx.language().is_oxlint
         {
             return;
         }
@@ -128,6 +129,17 @@ impl Rule for NoShadowRestrictedNames {
                 Self::report(name.span(), name.name(), class.symbol(), cx);
             }
         });
+        // `namespace globalThis {}`
+        if file.language().is_oxlint {
+            on.stmts([StmtTag::Module], |_, stmt, cx| {
+                if let StmtKind::Module(module) = stmt.kind()
+                    && let ModuleName::Ident(name) = module.name()
+                    && Self::is_restricted(name.name(), cx)
+                {
+                    Self::report_once(name.span(), name.name(), cx);
+                }
+            });
+        }
         on.stmts([StmtTag::Import], |_, stmt, cx| {
             let StmtKind::Import(import) = stmt.kind() else {
                 return;

@@ -110,6 +110,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--cache"),
     clap::param!("--cache-location <path>"),
     clap::param!("--cache-strategy <strategy>"),
+    clap::param!("--experimental-cli"),
     clap::param!("--color"),
     clap::param!("-v, --version"),
     // oxfmt's.

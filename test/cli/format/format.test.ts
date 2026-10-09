@@ -533,6 +533,12 @@ describe.concurrent("bun format", () => {
     expect(oxfmt.exitCode).toBe(0);
   });
 
+  test("--experimental-cli is accepted", async () => {
+    const result = await format({ "a.js": ugly }, ["--experimental-cli"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(formatted);
+    expect(result.exitCode).toBe(0);
+  });
+
   describe("a parser that Prettier does not have", () => {
     const files = {
       "a.svelte": '<p   class="a">hi</p>\n',

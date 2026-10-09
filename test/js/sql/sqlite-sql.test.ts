@@ -1,4 +1,5 @@
 import { randomUUIDv7, SQL } from "bun";
+import { heapStats } from "bun:jsc";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { isDebug, tempDir } from "harness";
@@ -1253,6 +1254,76 @@ describe("Transactions", () => {
 
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
+  });
+
+  // A transaction tracks a query from its start, and an identifier or a fragment never starts.
+  // heapStats() counts a query object as a Promise.
+  test("a transaction and a savepoint do not keep the identifiers and fragments of their statements", async () => {
+    const statements = 50;
+    const kept = await sql.begin(async tx => {
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.Promise ?? 0;
+      for (let i = 0; i < statements; i++) {
+        await tx`SELECT ${i} AS ${tx("n")} WHERE ${tx`${i} >= 0`}`;
+        await tx.savepoint(sp => sp`SELECT ${i} AS ${sp("n")} WHERE ${sp.unsafe("1 = 1")}`);
+      }
+      Bun.gc(true);
+      return (heapStats().objectTypeCounts.Promise ?? 0) - before;
+    });
+    // Each statement made two of them. A transaction that keeps them holds all 200 here.
+    expect(kept).toBeLessThan(statements);
+  });
+
+  // null when the query resolves, the error code when it rejects.
+  const code = (query: PromiseLike<unknown>) =>
+    query.then(
+      () => null,
+      err => err.code,
+    );
+
+  // bun:test fails this test if close() starts the fragment or the identifier: nothing handles their rejection.
+  test("tx.close({ timeout }) rolls back and starts nothing that was not started", async () => {
+    let late: unknown;
+    const begin = sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+      const lazy = tx`UPDATE accounts SET balance = 0 WHERE id = 2`;
+      tx`id = ${1}`;
+      tx("id");
+      await tx.close({ timeout: 60 });
+      late = await code(lazy);
+    });
+    expect([await code(begin), late]).toEqual(["ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED"]);
+    expect(await sql`SELECT balance FROM accounts ORDER BY id`).toEqual([{ balance: 1000 }, { balance: 500 }]);
+  });
+
+  test("a query that is cancelled before it starts rejects and does not run", async () => {
+    const onPool = await code(sql`UPDATE accounts SET balance = 0 WHERE id = 1`.cancel());
+    let inTransaction: unknown;
+    await sql.begin(async tx => {
+      inTransaction = await code(tx`UPDATE accounts SET balance = 0 WHERE id = 2`.cancel());
+    });
+    expect([onPool, inTransaction]).toEqual(["ERR_SQLITE_QUERY_CANCELLED", "ERR_SQLITE_QUERY_CANCELLED"]);
+    expect(await sql`SELECT balance FROM accounts ORDER BY id`).toEqual([{ balance: 1000 }, { balance: 500 }]);
+  });
+
+  test("a query that outlives its transaction does not keep the result of begin()", async () => {
+    const queries: unknown[] = [];
+    const results: WeakRef<object>[] = [];
+    async function run() {
+      for (let i = 0; i < 50; i++) {
+        const result = await sql.begin(async tx => {
+          queries.push(tx`SELECT 1`);
+          return { i };
+        });
+        results.push(new WeakRef(result));
+      }
+    }
+    await run();
+    // A WeakRef keeps its target alive until the job that made it ends.
+    await Bun.sleep(0);
+    Bun.gc(true);
+    expect(results.filter(result => result.deref() !== undefined).length).toBeLessThan(10);
+    expect(queries.length).toBe(50);
   });
 });
 

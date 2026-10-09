@@ -38,10 +38,13 @@ enum ReservedConnectionState {
 
 interface TransactionState {
   connectionState: ReservedConnectionState;
-  reject: (err: Error) => void;
+  /// What closed the connection, if it closed under the handle.
   storedError?: Error | null | undefined;
+  /// The queries that started on this handle and did not settle yet.
   queries: Set<Query<any, any>>;
 }
+
+type QueryHandler = (query: Query<any, any>, handle: BaseQueryHandle<any>) => void;
 
 /// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
 /// reach the other without a per-call closure.
@@ -174,25 +177,42 @@ const SQL = function SQL(
     }
   }
 
-  function onTransactionQueryDisconnected(query: Query<any, any>) {
+  function onTransactionQueryDisconnected(this: Set<Query<any, any>>, query: Query<any, any>) {
     const transactionQueries = this;
-    transactionQueries.delete(query);
+    transactionQueries.$delete(query);
   }
 
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
+  /// Runs when a query of a reserved or transaction handle starts. `internal` marks a statement
+  /// that begins or ends the transaction or ends a savepoint.
+  function queryFromTransactionHandler(
+    this: PooledConnection,
+    state: TransactionState,
+    internal: boolean,
+    query: Query<any, any>,
+    handle: BaseQueryHandle<any>,
+  ) {
     const pooledConnection = this;
-    if (err) {
-      transactionQueries.delete(query);
-      return query.reject(err);
-    }
 
     // query is cancelled
     if (query.cancelled) {
-      transactionQueries.delete(query);
       return query.reject(pool.queryCancelledError());
     }
 
-    query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
+    // Before the check below, so that its rejection counts as handled like any failure of a started query.
+    query.finally(onTransactionQueryDisconnected.bind(state.queries, query));
+
+    // User statements: close() and a disconnect clear acceptQueries, release() and the end of begin() do not.
+    // Internal statements: close() sends its ROLLBACK after it cleared acceptQueries.
+    if (
+      internal
+        ? state.connectionState & ReservedConnectionState.closed
+        : !(state.connectionState & ReservedConnectionState.acceptQueries)
+    ) {
+      return query.reject(state.storedError ?? pool.connectionClosedError());
+    }
+
+    // A query is lazy, and a fragment or an identifier never starts: the handle tracks a query from here.
+    state.queries.$add(query);
 
     try {
       // Use adapter method to get the actual connection
@@ -202,29 +222,25 @@ const SQL = function SQL(
         result.catch(err => query.reject(err));
       }
     } catch (err) {
-      query.reject(err);
+      query.reject(err as Error);
     }
   }
 
   function queryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledConnection,
-    transactionQueries: Set<Query<any, any>>,
+    handler: QueryHandler,
   ) {
     try {
-      const query = new Query(
+      return new Query(
         strings,
         values,
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        handler,
         pool,
       );
-
-      transactionQueries.add(query);
-      return query;
     } catch (err) {
       return Promise.$reject(err);
     }
@@ -233,8 +249,7 @@ const SQL = function SQL(
   function unsafeQueryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledConnection,
-    transactionQueries: Set<Query<any, any>>,
+    handler: QueryHandler,
   ) {
     try {
       let flags = connectionInfo.bigint
@@ -244,23 +259,22 @@ const SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      const query = new Query<import("internal/sql/shared.ts").SQLResultArray<any>, any>(
+      return new Query<import("internal/sql/shared.ts").SQLResultArray<any>, any>(
         strings,
         values,
         flags,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        handler,
         pool,
       );
-      transactionQueries.add(query);
-      return query;
     } catch (err) {
       return Promise.$reject(err);
     }
   }
 
-  function onTransactionDisconnected(this: TransactionState, err: Error) {
-    const reject = this.reject;
+  function onTransactionDisconnected(this: TransactionState, reject: (err: Error) => void, err: Error) {
     this.connectionState |= ReservedConnectionState.closed;
+    this.connectionState &= ~ReservedConnectionState.acceptQueries;
+    this.storedError = err;
 
     for (const query of this.queries) {
       query.reject(err);
@@ -348,10 +362,10 @@ const SQL = function SQL(
 
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
-      reject,
       storedError: null,
       queries: new Set(),
     };
+    const queryHandler = queryFromTransactionHandler.bind(pooledConnection, state, false);
 
     function releaseReservation() {
       if (state.connectionState & ReservedConnectionState.released) return;
@@ -359,7 +373,7 @@ const SQL = function SQL(
       pool.release(pooledConnection);
     }
 
-    const onDisconnected = onTransactionDisconnected.bind(state);
+    const onDisconnected = onTransactionDisconnected.bind(state, reject);
     function onClose(err: Error) {
       onDisconnected(err);
       releaseReservation();
@@ -384,18 +398,18 @@ const SQL = function SQL(
         return new SQLHelper([strings], values);
       }
       // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, queryHandler);
     }
 
     reserved_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, args, queryHandler);
     };
 
     reserved_sql.file = async (path: string, args = []) => {
       return await Bun.file(path)
         .text()
         .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+          return unsafeQueryFromTransaction(text, args, queryHandler);
         });
     };
 
@@ -485,13 +499,15 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      if (timeout) {
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -530,7 +546,6 @@ const SQL = function SQL(
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
@@ -599,7 +614,6 @@ const SQL = function SQL(
 
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
-      reject,
       queries: new Set(),
     };
 
@@ -660,17 +674,20 @@ const SQL = function SQL(
       }
     }
 
-    const onClose = onTransactionDisconnected.bind(state);
+    const onClose = onTransactionDisconnected.bind(state, reject);
     // Use adapter method to attach connection close handler
     if (pool.attachConnectionCloseHandler) {
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
     }
 
+    const queryHandler = queryFromTransactionHandler.bind(pooledConnection, state, false);
+    const internalQueryHandler = queryFromTransactionHandler.bind(pooledConnection, state, true);
+
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], internalQueryHandler);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -691,16 +708,16 @@ const SQL = function SQL(
         return new SQLHelper([strings], values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, queryHandler);
     }
     transaction_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, args, queryHandler);
     };
     transaction_sql.file = async (path: string, args = []) => {
       return await Bun.file(path)
         .text()
         .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+          return unsafeQueryFromTransaction(text, args, queryHandler);
         });
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
@@ -768,7 +785,6 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;
       let timeout = options?.timeout;
       if (timeout) {
@@ -776,7 +792,9 @@ const SQL = function SQL(
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      if (timeout) {
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -794,10 +812,12 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
+          const finish = () => {
             clearTimeout(timer);
             resolve();
-          });
+          };
+          // Not finally(): its promise rejects with a savepoint that this close() stopped, and nothing handles it.
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).$then(finish, finish);
           return promise;
         }
       }
@@ -820,7 +840,8 @@ const SQL = function SQL(
       transactionSavepoints.delete(savepoint_promise);
     }
     async function run_internal_savepoint(save_point_name: string, savepoint_callback: TransactionCallback) {
-      await run_internal_transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
+      // Like a user statement: a savepoint that did not start before close() does not start after it.
+      await unsafeQueryFromTransaction(`${SAVEPOINT_COMMAND} ${save_point_name}`, [], queryHandler);
 
       try {
         let result = await savepoint_callback(transaction_sql);

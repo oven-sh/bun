@@ -6678,10 +6678,11 @@ pub mod bv2_impl {
                         continue;
                     }
 
-                    if import_record.path.text.starts_with(b"bun:") {
-                        let new_text: &'static [u8] = &import_record.path.text[b"bun:".len()..];
-                        import_record.path = bun_paths::fs::Path::init(new_text);
-                        import_record.path.namespace = b"bun";
+                    if let Some(rest) = import_record.path.text.strip_prefix(b"bun:") {
+                        if bun_resolve_builtins::HardcodedModule::Alias::is_node_builtin_after_bun_prefix(rest) {
+                            import_record.path = bun_paths::fs::Path::init(rest);
+                            import_record.path.namespace = b"bun";
+                        }
                         import_record.source_index = Index::INVALID;
                         import_record
                             .flags

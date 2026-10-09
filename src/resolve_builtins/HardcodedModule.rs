@@ -876,11 +876,14 @@ pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
 /// scan) so introspection APIs like `require.resolve.paths` agree with
 /// `require` about what is a builtin.
 pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
-    (name == b"stream/iter"
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
         || name == b"node:stream/iter"
         || name == b"zlib/iter"
-        || name == b"node:zlib/iter")
-        && !stream_iter_enabled()
+        || name == b"node:zlib/iter"
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
@@ -938,5 +941,13 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Whether `rest`, the text after `bun:` in a specifier, is the bare name of a Node.js builtin (`bun:fs` is `fs`).
+    pub fn is_node_builtin_after_bun_prefix(rest: &[u8]) -> bool {
+        // `--experimental-stream-iter` is not in the transpiler cache key, so its two names never count.
+        !rest.starts_with(b"node:")
+            && !is_stream_iter_alias(rest)
+            && lookup(&BUN_ALIAS_MAP, rest).is_some_and(|alias| alias.node_builtin)
     }
 }

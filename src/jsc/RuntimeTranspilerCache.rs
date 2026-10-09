@@ -64,7 +64,8 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-const EXPECTED_VERSION: u32 = 34;
+/// Version 35: `bun:` is cut from an import only when the rest is the bare name of a Node.js builtin.
+const EXPECTED_VERSION: u32 = 35;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

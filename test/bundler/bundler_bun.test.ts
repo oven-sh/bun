@@ -176,6 +176,87 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+  // A `bun:` import that is not a builtin stays external as written: the bun that runs the bundle decides.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`bun/ImportOfBunPrefixThatIsNotABuiltin-${format}`, {
+      target: "bun",
+      format,
+      files: {
+        "/entry.js": /* js */ `
+          import fromImport from "bun:not-a-builtin";
+          const fromRequire = require("bun:not-a-builtin");
+          import("bun:not-a-builtin").then(fromDynamicImport => console.log(fromImport, fromRequire, fromDynamicImport));
+        `,
+        // What the name without its prefix finds at run time.
+        "/node_modules/not-a-builtin/index.js": `console.log("LOADED node_modules/not-a-builtin");`,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js").match(/"(bun:)?not-a-builtin"/g)).toEqual([
+          `"bun:not-a-builtin"`,
+          `"bun:not-a-builtin"`,
+          `"bun:not-a-builtin"`,
+        ]);
+      },
+      run: {
+        exitCode: 1,
+        validate({ stdout, stderr }) {
+          expect(stdout).toBe("");
+          expect(stderr).toMatch(/^error: Cannot find package 'bun:not-a-builtin' from '.*'\r?$/m);
+        },
+      },
+    });
+    // Only the rest that is the bare name of a Node.js builtin names a module ("bun:fs" is "fs").
+    itBundled(`bun/ImportOfBunPrefixedNodeBuiltin-${format}`, {
+      target: "bun",
+      format,
+      files: {
+        "/entry.js": /* js */ `
+          import fs from "bun:fs";
+          const path = require("bun:path");
+          import("bun:fs/promises").then(promises => console.log(typeof fs.readFileSync, typeof path.join, typeof promises.readFile));
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js").match(/"(bun:)?(fs|path|fs\/promises)"/g)).toEqual([
+          `"fs"`,
+          `"path"`,
+          `"fs/promises"`,
+        ]);
+      },
+      run: { stdout: "function function function" },
+    });
+  }
+  itBundled("bun/ImportOfBunPrefixThatIsNotABuiltinInShebangEntry", {
+    // No `target`: the "#!/usr/bin/env bun" line makes the entry point a file for bun.
+    files: {
+      "/entry.js": `#!/usr/bin/env bun\nimport fromImport from "bun:not-a-builtin";\nconsole.log(fromImport);`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`import fromImport from "bun:not-a-builtin";`);
+    },
+  });
+  itBundled("bun/ImportOfBunPrefixThatIsNotABuiltinInExecutable", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    format: "cjs",
+    files: {
+      "/entry.js": /* js */ `
+        const fromRequire = require("bun:not-a-builtin");
+        console.log(fromRequire);
+      `,
+      // What the name without its prefix finds in the directory the executable runs in.
+      "/node_modules/not-a-builtin/index.js": `console.log("LOADED node_modules/not-a-builtin");`,
+    },
+    run: {
+      setCwd: true,
+      exitCode: 1,
+      validate({ stdout, stderr }) {
+        expect(stdout).toBe("");
+        expect(stderr).toMatch(/^error: Cannot find package 'bun:not-a-builtin' from '.*'\r?$/m);
+      },
+    },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

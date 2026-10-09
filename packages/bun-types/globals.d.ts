@@ -2004,8 +2004,11 @@ interface BunFetchRequestInit extends RequestInit {
    * Hosts listed in `NO_PROXY` bypass the proxy unless `respectNoProxy` is
    * `false`.
    *
-   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
-   * precedence over credentials parsed from the proxy URL.
+   * The URL may be `http://`, `https://`, `socks5://`, or `socks5h://`
+   * (SOCKS5 with optional username/password; default port 1080).
+   *
+   * For an HTTP(S) proxy, a `Proxy-Authorization` header in `proxy.headers`
+   * takes precedence over credentials parsed from the proxy URL.
    *
    * Not part of the Fetch API specification.
    *

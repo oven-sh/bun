@@ -506,8 +506,8 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return ctx.connect(client, url.hostname, url.get_port_auto());
+                if url.protocol.is_empty() || url.has_http_like_protocol() || url.is_socks() {
+                    return ctx.connect(client, url.hostname, url.get_proxy_port_auto());
                 }
                 return Err(crate::Error::UnsupportedProxyProtocol);
             }
@@ -1023,6 +1023,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
+                client.socks = None;
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));

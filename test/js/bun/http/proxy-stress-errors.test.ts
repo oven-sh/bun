@@ -370,7 +370,7 @@ describe("inner TLS verification", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("unsupported proxy scheme", () => {
-  for (const scheme of ["ftp", "socks4", "socks5", "socks5h", "ws"] as const) {
+  for (const scheme of ["ftp", "socks4", "ws"] as const) {
     test.concurrent(`${scheme}:// proxy is rejected with UnsupportedProxyProtocol`, async () => {
       await using origin = await createAdversarialOrigin({ tls: false, body: "ok" });
       await expect(fetch(origin.url, { proxy: `${scheme}://127.0.0.1:1`, keepalive: false })).rejects.toMatchObject({

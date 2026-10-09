@@ -5018,7 +5018,7 @@ pub(crate) fn write_file_internal(
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
-            break 'brk Blob::init_with_store(archive.store_ref().clone(), cx.global());
+            break 'brk archive.to_blob(cx.global());
         }
 
         if let Some(readable) = ReadableStream::from_js_direct(data) {

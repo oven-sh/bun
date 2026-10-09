@@ -120,8 +120,16 @@ fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool 
     matches!(
         source.text_for(&span),
         [.., b'\n' | b'\r' | b' ' | b'\t' | b'/' | 0xA8 | 0xA9, b';']
-    ) && ends_before_semicolon(statement)
+    ) && (ends_before_semicolon(statement)
+        // An `ExportNamedDeclaration` around a declaration.
+        || statement.is_exported()
+        || empty_line_before_semicolon_is_after_any_statement(f))
         && is_next_line_empty(source, f.comments().without_semicolon(span).end)
+}
+
+/// `type A = 1⏎⏎;(b)`: the `;` is that of the type alias. oxfmt keeps the empty line all the same.
+fn empty_line_before_semicolon_is_after_any_statement(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `printStatementSequence`: the statements of a file, a block or a function body, each

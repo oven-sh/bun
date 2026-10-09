@@ -1358,6 +1358,7 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   test("the default options of typescript-eslint are those of the major version that is installed", async () => {
     const installed = (version: string) => ({
       ".eslintrc.json": rc({
+        parser: "@typescript-eslint/parser",
         plugins: ["@typescript-eslint"],
         rules: { "@typescript-eslint/no-unused-vars": "error" },
       }),

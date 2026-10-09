@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_loop_func::{Dialect, Known, check, check_as_oxlint, has_loops};
+use bun_lint_eslint::rules::no_loop_func::{Dialect, Known, check, has_loops};
 
 /// Disallow function declarations that contain unsafe references inside loop statements.
 pub struct NoLoopFunc;
@@ -17,7 +17,6 @@ impl Rule for NoLoopFunc {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
         if has_loops(file) {
             on.funcs(|_, func, cx| check(func, Dialect::TypeScript, cx));
-            on.finish(|_, cx| check_as_oxlint(cx));
         }
         Known::default()
     }

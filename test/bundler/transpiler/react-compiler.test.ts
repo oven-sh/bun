@@ -3123,6 +3123,41 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
+// ValidateNoRefAccessInRender gives a function the type of what it returns. The port
+// copied all that is nested in a type at each level of each join, so n functions that
+// return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.
+test("react-compiler time does not grow with the cube of a chain of functions", async () => {
+  const source = (n: number) => `
+    import { useState } from "react";
+    export default function App() {
+      const [s] = useState(0);
+      const f0 = () => s;
+      ${Array.from({ length: n }, (_, i) => `const f${i + 1} = () => f${i};`).join("\n")}
+      return <div onClick={f${n}} />;
+    }
+  `;
+  const n = isDebug || isASAN ? 80 : 200;
+  using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
+
+  const cpuTime = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return Number(proc.resourceUsage()!.cpuTime.total);
+  };
+
+  // Without the fix: 5.5 in a debug build, 14 in a release build.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(4);
+});
+
 // ValidateExhaustiveDependencies gives each phi the dependencies of its
 // operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
 // phi held one copy of a dependency for each path that reaches it. Each `if`

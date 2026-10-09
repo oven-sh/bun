@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -18,11 +19,16 @@ const env = {
   FORCE_COLOR: undefined,
 };
 
-async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
+async function lint(
+  files: Record<string, string>,
+  args: string[],
+  reads: string[] = [],
+  variables: Record<string, string> = {},
+) {
   using dir = tempDir("bun-lint-js-plugins", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
-    env,
+    env: { ...env, ...variables },
     cwd: String(dir),
     stdin: "ignore",
     stdout: "pipe",
@@ -1340,6 +1346,34 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // `require()` refuses such a module, and some without `await`: the rules of eslint-plugin-import-x in vitejs/vite.
+  test(
+    "the module of a rule is loaded by import(), and alone",
+    async () => {
+      const rule = (message: string) =>
+        `await 0;\nexport default { create: context => ({ Program(node) { context.report({ node, message: "${message}" }); } }) };`;
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import own from "./plugin.mjs";
+          export default [{ files: ["a.js"], plugins: { own }, rules: { "own/one": "error" } }];`,
+          "plugin.mjs": `
+          import one from "./one.mjs";
+          import two from "./two.mjs";
+          export default { rules: { one, two } };`,
+          "one.mjs": rule("one"),
+          "two.mjs": rule("two"),
+          "a.js": "1;\n",
+        },
+        ["-f", "unix", "--timing", "a.js"],
+      );
+      expect(stdout).toContain("<dir>/a.js:1:1: one [Error/own/one]");
+      expect(stderr).toContain("JavaScript: 1 engines, which have loaded 1 modules");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "without rules in JavaScript there is no engine",
     async () => {
@@ -1349,6 +1383,56 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(stderr).toContain("JavaScript: 0 engines, which have loaded 0 modules, 0.0 MB of source, in 0.0ms");
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // The first regular expression of a configuration starts JavaScriptCore, before anybody knows how many VMs there are going to be.
+  test.skipIf(!isLinux || availableParallelism() < 2)(
+    "threads that mark beside a VM: with a few VMs, not with many, and as BUN_JSC_numberOfGCMarkers says",
+    async () => {
+      const files = (count: number) => ({
+        "eslint.config.mjs": `
+        import threads from "./plugin.mjs";
+        export default [{ plugins: { threads }, rules: { "threads/helpers": "error", "id-match": ["error", "^[a-z]+$"] } }];`,
+        "plugin.mjs": `
+        import { readdirSync, readFileSync } from "node:fs";
+        const nameOf = id => {
+          try {
+            return readFileSync("/proc/self/task/" + id + "/comm", "utf8").trim();
+          } catch {
+            return "";
+          }
+        };
+        // They start when there is something to mark.
+        const kept = Array.from({ length: 300000 }, (_, i) => ({ i }));
+        let counted;
+        const helpers = () => {
+          if (counted === undefined) {
+            Bun.gc(true);
+            counted = readdirSync("/proc/self/task").filter(id => nameOf(id) === "HeapHelper").length * Math.sign(kept.length);
+          }
+          return counted;
+        };
+        export default {
+          rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
+        };`,
+        ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`f${i}.js`, "1;\n"])),
+      });
+      const helpers = async (count: number, variables?: Record<string, string>) => {
+        const { raw } = await lint(files(count), ["--threads", "8", "-f", "json"], [], variables);
+        const results = JSON.parse(raw) as { messages: { ruleId: string; message: string }[] }[];
+        const reported = results.flatMap(it => it.messages.filter(message => message.ruleId === "threads/helpers"));
+        return [...new Set(reported.map(it => it.message))];
+      };
+      const [few, many, asked] = await Promise.all([
+        helpers(2),
+        helpers(200),
+        helpers(200, { BUN_JSC_numberOfGCMarkers: "3" }),
+      ]);
+      expect(few).toEqual([expect.stringMatching(/^[1-9]/)]);
+      expect(many).toEqual(["0"]);
+      expect(asked).toEqual(["2"]);
     },
     timeout,
   );

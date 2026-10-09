@@ -65,7 +65,9 @@ impl PreferNumericLiterals {
             .data("functionName", call.callee().text())
             .fix(|fixer| {
                 let (file, span) = (fixer.file(), e.span());
-                if file.comments_in(e).next().is_some() || !is_same_as_literal(value.bytes(), radix) {
+                // oxlint does not look for comments.
+                let has_comments = !file.language().is_oxlint && file.comments_in(e).next().is_some();
+                if has_comments || !is_same_as_literal(value.bytes(), radix) {
                     return None;
                 }
                 let replacement = [literal_prefix.as_bytes(), value.bytes()].concat();

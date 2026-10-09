@@ -1,36 +1,9 @@
 {
- "7-no-debugger": [
-  "suggestions",
-  "dangerously"
- ],
- "14-no-eq-null": [
-  "dangerously"
- ],
- "15-no-extraneous-class": [
-  "suggestions",
-  "dangerously"
- ],
  "21-no-unused-vars": [
   "dangerously"
  ],
- "22-no-compare-neg-zero": [
+ "145-no-empty-object-type": [
   "suggestions",
-  "dangerously"
- ],
- "32-no-implicit-coercion": [
-  "fix",
-  "suggestions"
- ],
- "33-func-names": [
-  "fix",
-  "dangerously"
- ],
- "34-sort-keys": [
-  "fix",
-  "dangerously"
- ],
- "35-no-negated-condition": [
-  "fix",
   "dangerously"
  ]
 }

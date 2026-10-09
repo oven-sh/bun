@@ -10,9 +10,9 @@ const REJECT_AN_ERROR: Message = Message::new(
     "Expected the Promise rejection reason to be an Error.",
 );
 
-/// Whether `promise`, which is called `Promise`, is taken for the global. oxlint does not ask what it refers to.
+/// Whether `promise`, which is called `Promise`, is taken for the global.
 fn is_promise(promise: Expr) -> bool {
-    promise.file().language().is_oxlint || ast_utils::is_global_reference(promise)
+    bun_lint::utils::oxlint::is_global_by_name(promise)
 }
 
 impl PreferPromiseRejectErrors {

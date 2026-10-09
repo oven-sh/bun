@@ -21,10 +21,7 @@ use bun_threading::Guarded;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-const SCRIPT: &str = concat!(
-    include_str!("../evaluate-track.js"),
-    include_str!("tailwind.js")
-);
+const SCRIPT: crate::run::Source = &[crate::evaluate::TRACK, include_str!("tailwind.js")];
 
 /// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, Hash)]

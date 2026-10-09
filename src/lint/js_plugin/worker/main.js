@@ -192,6 +192,23 @@ function exportedObjects() {
 // Why the last module of a rule could not be loaded.
 let whyNoRule = "";
 
+// What `lint` returns if there is something in `toImport`.
+const NEEDS_MODULES = Symbol("modules");
+
+// The modules that `import()` has been given, and those that it is still to be given.
+const imported = new Set();
+let toImport = [];
+
+// `require()` of an ES module fails where `import()` does not: if a CommonJS module that it imports requires another ES module that
+// it imports too, as the rules of eslint-plugin-import-x do with `eslint` and `debug`. And what has failed once fails again. After
+// `import()` it only looks the module up.
+async function importAll(modules) {
+  const started = performance.now();
+  for (const module of modules) imported.add(module);
+  await Promise.allSettled(modules.map(module => load(pathToFileURL(module).href)));
+  loadingTime += performance.now() - started;
+}
+
 // The rule that is there. `undefined`: it cannot be had without its plugin.
 function ruleAt(location) {
   const started = performance.now();
@@ -399,10 +416,14 @@ const fileContext = Object.freeze({
 });
 
 // The rule with its options that has `id`, and is at `position` among those that run on the file. Or the position of its plugin,
-// which has to be loaded first.
+// which has to be loaded first. Or `null`: its module is among `toImport`.
 function configure(id, position) {
   const [index, options, ruleId, location, pluginPosition] = askForJson(CONFIGURED, String(position));
   const ofPlugin = rules[index];
+  if (ofPlugin === undefined && location && !imported.has(location.module)) {
+    toImport.push(location.module);
+    return null;
+  }
   const found = ofPlugin !== undefined ? ofPlugin.plugin.rules[ofPlugin.name] : location && ruleAt(location);
   if (found === undefined || found === null) {
     if (loadedPlugins.has(pluginPosition))
@@ -704,6 +725,7 @@ function lint() {
     else addParser(fileSettings);
   }
   const entries = Array.from(ids, (id, position) => configured.get(id) ?? configure(id, position));
+  if (toImport.length > 0) return NEEDS_MODULES;
   const unloaded = new Set(entries.filter(it => typeof it === "number"));
   if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
@@ -832,6 +854,7 @@ function respond(kind) {
   }
   try {
     const missing = lint();
+    if (missing === NEEDS_MODULES) return importAll(toImport.splice(0)).then(() => respond(kind));
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();

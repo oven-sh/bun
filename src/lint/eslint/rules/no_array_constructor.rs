@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_oxlint::ast_util::is_global_reference_name;
+use bun_lint_oxlint::ast_util::{could_be_asi_hazard, is_global_reference_name};
 
 /// Disallow `Array` constructors.
 pub struct NoArrayConstructor;
@@ -88,11 +88,28 @@ fn replace_with_literal<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>, chang
     Some(fixer.replace(e, [open, get_arguments_text(e, call), b"]"].concat()))
 }
 
+/// oxlint's fix: all from the first argument on. None for `Array(...a)` and `Array(a, ...b)`.
+fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> Option<Fix> {
+    let args = call.args();
+    if args.len() <= 2 && args.last().is_some_and(|it| it.tag() == ExprTag::Spread) {
+        return None;
+    }
+    let open: &[u8] = if could_be_asi_hazard(e) { b";[" } else { b"[" };
+    let written = args.first().map(|first| Span::new(first.outer_span().start, e.span().end - 1));
+    Some(fixer.replace(e, [open, fixer.file().slice(written.unwrap_or_default()), b"]"].concat()))
+}
+
 impl NoArrayConstructor {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = as_array_call(e) else {
             return;
         };
+        if cx.language().is_oxlint {
+            if is_reported_by_oxlint(call) {
+                cx.report(e, PREFER_LITERAL).fix(|fixer| replace_as_oxlint(fixer, e, call));
+            }
+            return;
+        }
         let args = call.args();
         if args.len() == 1 && args.first().is_some_and(|arg| arg.tag() != ExprTag::Spread) {
             return;

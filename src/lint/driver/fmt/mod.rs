@@ -1193,6 +1193,9 @@ impl Run<'_> {
         // Before any other thread runs: this starts JavaScriptCore, and so would the first pattern of a configuration that one
         // of them compiles. The thread that starts it is its main thread.
         let bridge = (!handed_over.is_empty()).then(|| {
+            // The threads that hand files over wait for a VM, which loads its modules and reads files on Bun's pool: with all of
+            // that pool's threads waiting, for ever.
+            bun_sema_driver::use_a_pool_of_their_own("Bun Format");
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
             prettier::Prettier::new(self.environment, options, (handed_over.len(), size))
         });

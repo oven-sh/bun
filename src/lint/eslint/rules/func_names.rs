@@ -36,21 +36,17 @@ type GuessedNames<'a> = AncestorMemo<'a, Option<Name<'a>>>;
 
 /// oxlint's `is_valid_identifier_name`.
 fn is_valid_identifier_name(name: &[u8]) -> bool {
-    let is_taken = matches!(
-        name,
-        b"let" | b"static" | b"implements" | b"interface" | b"package" | b"private" | b"protected" | b"public"
-            | b"await" | b"break" | b"case" | b"catch" | b"class" | b"const" | b"continue" | b"debugger" | b"default"
-            | b"delete" | b"do" | b"else" | b"enum" | b"export" | b"extends" | b"false" | b"finally" | b"for"
-            | b"function" | b"if" | b"import" | b"in" | b"instanceof" | b"new" | b"null" | b"return" | b"super"
-            | b"switch" | b"this" | b"throw" | b"true" | b"try" | b"typeof" | b"var" | b"void" | b"while" | b"with"
-            | b"yield" | b"Infinity" | b"NaN" | b"globalThis" | b"undefined" | b"arguments" | b"eval"
-            | b"constructor" | b"async"
-    );
-    !is_taken && text::is_identifier_name(name)
+    const TAKEN: &[u8] = b"let static implements interface package private protected public await break case catch class \
+        const continue debugger default delete do else enum export extends false finally for function if import in \
+        instanceof new null return super switch this throw true try typeof var void while with yield Infinity NaN \
+        globalThis undefined arguments eval constructor async";
+    !TAKEN.split(|it| *it == b' ').any(|it| it == name) && text::is_identifier_name(name)
 }
 
 /// oxlint's `guess_function_name`: that of the first assignment, declarator, property or field around the function,
 /// however far out that is.
+#[cold]
+#[inline(never)]
 fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Name<'a>> {
     let found = known.find(func.into(), |_, parent| match parent {
         Node::Expr(e) => match e.kind() {
@@ -79,6 +75,8 @@ fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Opti
 }
 
 /// oxlint's fix: the function gets the name, unless that means something in the function.
+#[cold]
+#[inline(never)]
 fn add_name<'a>(fixer: Fixer<'a>, func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Fix> {
     let (name, scope) = (guess_function_name(func, known)?, func.scope()?);
     let is_used_in_function = |symbol: Symbol<'a>| match scope.contains(symbol.scope()) {

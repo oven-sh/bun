@@ -62,7 +62,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
     is_function_expression: bool,
 ) -> Result<(), CompilerDiagnostic> {
     // ValueIds are dense and pass-local so `InferenceState.values` can be a
-    // flat Vec; allocation starts at 0 and continues via `Context.next_value_id`.
+    // `ChunkedVec`; allocation starts at 0 and continues via `Context.next_value_id`.
     let mut next_value_id = 0u32;
 
     let mut initial_state = InferenceState::empty(is_function_expression, env.identifiers.len());
@@ -292,7 +292,7 @@ fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
 /// Unique allocation-site identifier, replacing TS's object-identity on InstructionValue.
 ///
 /// IDs are dense and pass-local (allocated via `Context.next_value_id`) so
-/// `InferenceState.values` can be a flat Vec.
+/// `InferenceState.values` can be a `ChunkedVec`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 struct ValueId(u32);
@@ -459,7 +459,7 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 const CHUNK: usize = 64;
 
 /// A vector in chunks that its clones share until one of them writes to the chunk.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct ChunkedVec<T>(Vec<Rc<[T; CHUNK]>>);
 
 impl<T: Clone + Default> ChunkedVec<T> {
@@ -593,14 +593,12 @@ impl std::fmt::Debug for Variables {
 
 /// The abstract state tracked during inference.
 ///
-/// `values` is a dense Vec indexed by `ValueId.0` (pass-local, starts at 0) so
-/// `clone()` is a memcpy of small `Copy` cells and `merge_from()` is an
-/// elementwise loop. `variables` is dense for the top-level function
+/// `variables` is dense for the top-level function
 /// and sparse (`HashMap`) for nested function expressions — see [`Variables`].
 #[derive(Debug, Clone)]
 struct InferenceState {
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
-    values: Vec<Option<AbstractValue>>,
+    values: ChunkedVec<Option<AbstractValue>>,
     /// Points-to set per identifier.
     variables: Variables,
     uninitialized_access: std::cell::Cell<Option<(IdentifierId, Option<SourceLocation>)>>,
@@ -614,7 +612,7 @@ impl InferenceState {
             Variables::Dense(ChunkedVec::with_len(identifier_capacity))
         };
         InferenceState {
-            values: Vec::new(),
+            values: ChunkedVec::with_len(0),
             variables,
             uninitialized_access: std::cell::Cell::new(None),
         }
@@ -622,11 +620,7 @@ impl InferenceState {
 
     #[inline]
     fn value_slot(&mut self, id: ValueId) -> &mut Option<AbstractValue> {
-        let i = id.0 as usize;
-        if i >= self.values.len() {
-            self.values.resize(i + 1, None);
-        }
-        &mut self.values[i]
+        self.values.get_mut(id.0 as usize)
     }
 
     /// Check the kind of a place, recording the usage location for error reporting.
@@ -769,27 +763,16 @@ impl InferenceState {
 
     /// Merge `other` into `self` in place. Returns `true` if `self` changed.
     fn merge_from(&mut self, other: &InferenceState) -> bool {
-        let mut changed = false;
-
-        if other.values.len() > self.values.len() {
-            self.values.resize(other.values.len(), None);
-        }
-        for (i, ov) in other.values.iter().enumerate() {
-            let Some(ov) = *ov else { continue };
-            match self.values[i] {
-                Some(this) => {
-                    let merged = merge_abstract_values(this, ov);
-                    if merged != this {
-                        self.values[i] = Some(merged);
-                        changed = true;
-                    }
-                }
-                None => {
-                    self.values[i] = Some(ov);
-                    changed = true;
-                }
-            }
-        }
+        let mut changed = self.values.merge_from(&other.values, |value, ov| {
+            let Some(ov) = *ov else { return false };
+            let merged = match *value {
+                Some(this) => merge_abstract_values(this, ov),
+                None => ov,
+            };
+            let changed = *value != Some(merged);
+            *value = Some(merged);
+            changed
+        });
 
         match (&mut self.variables, &other.variables) {
             (Variables::Dense(this), Variables::Dense(that)) => {

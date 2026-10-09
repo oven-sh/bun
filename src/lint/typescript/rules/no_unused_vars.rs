@@ -140,13 +140,9 @@ impl<'a> Visitor<'a> for Named {
 /// `discarded`: the left operands of the comma operators.
 fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Option<SymbolSet> {
     let mut named = Named::default();
-    // Few files have one.
-    let operators: [&[u8]; 3] = [b"||=", b"&&=", b"??="];
-    if operators.iter().any(|it| bun_core::strings::contains(file.text(), it)) {
-        for e in file.exprs_of_kind(ExprTag::Assign) {
-            if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
-                named.enter(Node::Expr(target));
-            }
+    for e in file.exprs_of_kind(ExprTag::Assign) {
+        if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
+            named.enter(Node::Expr(target));
         }
     }
     // Each is looked into once: not the `a` of `a, b, c`, which is in the `a, b`.

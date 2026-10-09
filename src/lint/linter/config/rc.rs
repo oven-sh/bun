@@ -74,7 +74,7 @@ pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
 
 /// Fixes of rules for which the lists say nothing, or not enough: the plugin, the rule, the `messageId` of the report or nothing
 /// for all of them, and what `--fix` of oxlint 1.87 makes of the fix. Each was tried.
-const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 3] = [
+const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 4] = [
     // `a ? true : false`, `a ? a : b`
     (
         Plugin::Eslint,
@@ -88,6 +88,13 @@ const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 3] = [
         "no-extra-boolean-cast",
         "unexpectedNegation",
         SuggestionKind::Suggestion,
+    ),
+    // `a += b` with "never". `a = a + b` with "always" is fixed.
+    (
+        Plugin::Eslint,
+        "operator-assignment",
+        "unexpected",
+        SuggestionKind::DangerousFix,
     ),
     // `a as string`, by tsgolint 7.0
     (

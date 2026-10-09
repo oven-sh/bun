@@ -252,26 +252,11 @@ impl Vm for ThreadVm {
 /// With no more VMs than this, cores are left to compile and to collect garbage on while the VMs run.
 const FEW_VMS: usize = 4;
 
+/// So many files do not take more than a few VMs.
+const FEW_FILES: usize = 128;
+
 /// What a VM with a few plugins takes.
 const MEMORY_OF_A_VM: usize = 384 << 20;
-
-/// How many VMs there can be at a time: half of the memory is for them.
-fn most_vms() -> usize {
-    (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
-}
-
-/// Starts JavaScriptCore for `threads` threads (0: one for each core). The first start fixes the options, and the first regular expression of a
-/// configuration would be it (`bun_yarr`), before anybody knows how many VMs are needed: so this goes by how many there can be.
-pub(crate) fn start_javascriptcore(threads: usize) {
-    let threads = match threads {
-        0 => usize::from(bun_core::get_thread_count()),
-        threads => threads,
-    };
-    jsc::initialize(jsc::InitializeOptions {
-        vm_per_thread: threads.min(most_vms()) > FEW_VMS,
-        ..Default::default()
-    });
-}
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. With
 /// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
@@ -341,6 +326,8 @@ impl Desk {
 #[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
+    /// Whether there can be more than a few engines. Nobody knows if an engine is needed to find out.
+    is_for_few: core::sync::atomic::AtomicBool,
 }
 
 impl Start {
@@ -348,6 +335,11 @@ impl Start {
     fn start_vm(&self) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
+            // The first regular expression of a configuration has started it as well (`bun_yarr`).
+            jsc::initialize(jsc::InitializeOptions::default());
+            if !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed) {
+                jsc::expect_vm_per_thread();
+            }
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {
@@ -503,7 +495,7 @@ impl Engines {
             if self.demand.is_worth_another(state.all.len()) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
-                // SAFETY: no VM or JS state crosses: a number, a `Once`, and a `Desk`, whose turns are bytes. This
+                // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
                 // thread has no VM. The new one makes its own, and frees it itself before `end_all` returns.
                 std::thread::Builder::new()
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
@@ -531,13 +523,14 @@ impl Engine for Engines {
         Ok(())
     }
 
-    fn expect(&self, _files: usize, size: u64, most: usize) {
-        // `bun format` has not: it needs no VM but for a language that only a plugin of Prettier reads.
-        start_javascriptcore(0);
+    fn expect(&self, files: usize, size: u64, most: usize) {
+        let is_for_few = most <= FEW_VMS || files <= FEW_FILES;
+        (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
         self.demand.expect(size, most);
     }
 
+    /// Half of the memory is for them.
     fn most_realms(&self) -> usize {
-        most_vms()
+        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
     }
 }

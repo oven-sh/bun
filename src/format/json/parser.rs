@@ -260,8 +260,12 @@ impl Reader<'_, '_> {
     #[cold]
     fn reason(&self) -> Reason {
         let rest = self.text.get(self.at..).unwrap_or_default();
+        // The width of a sign with its operand is written when the operand has been read.
+        let is_behind_sign = (self.tree.nodes.iter().rev().take(2))
+            .any(|it| it.kind == Kind::Unary && it.width == 0);
         let message = match *rest {
             [] => Message::UnexpectedEnd,
+            _ if is_behind_sign => Message::UnexpectedToken,
             [quote @ (b'"' | b'\''), ref string @ ..] => {
                 let mut at = 0;
                 while string
@@ -473,6 +477,7 @@ impl Reader<'_, '_> {
                     _ => {
                         let operand = self.identifier()?;
                         if !matches!(self.source_of(operand), b"Infinity" | b"NaN") {
+                            self.at = self.tree.nodes[operand as usize].start as usize;
                             return Err(SyntaxError);
                         }
                         operand
@@ -493,7 +498,11 @@ impl Reader<'_, '_> {
                     b"null" | b"true" | b"false" | b"Infinity" | b"NaN" | b"undefined" => {
                         Ok(State::AfterValue(identifier))
                     }
-                    _ => Err(SyntaxError),
+                    _ => {
+                        self.at = self.tree.nodes[identifier as usize].start as usize;
+                        self.tree.nodes.truncate(identifier as usize);
+                        Err(SyntaxError)
+                    }
                 }
             }
         }

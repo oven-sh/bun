@@ -8,7 +8,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
     is_type_flag_set,
 };
-use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags};
+use bun_lint::types::{Signature, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
@@ -489,7 +489,10 @@ fn is_property_in_problematic_context(assertion: Assertion) -> bool {
     }
     let is_satisfies = |node: Node| matches!(node, Node::Expr(e) if e.tag() == ExprTag::Satisfies);
     let object_parent = object_expr.parent();
+    // tsgolint 7.0 also leaves what has its context from another assertion: `{ a: "b" as C } as D`.
+    let is_assertion = |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::As | ExprTag::AsConst));
     is_satisfies(object_parent)
+        || node.file().language().is_oxlint && is_assertion(object_parent)
         || matches!(
             object_parent,
             // ESLint has a `ChainExpression` around `f?.({})`.
@@ -787,6 +790,60 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
     expression.ty()
 }
 
+/// Whether `node` or something in it is the name of one of `symbols`.
+fn names_one_of<'a>(node: TsNode<'a>, symbols: &[TsSymbol<'a>]) -> bool {
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        if node.kind() == SyntaxKind::Identifier
+            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(&it))
+        {
+            return true;
+        }
+        pending.extend(node.children());
+    }
+    false
+}
+
+/// For a call, tsgolint asks for the type that it has where nothing is expected of it. Whether that is another than its
+/// type under the assertion: a type parameter of what is called is in the type of no parameter, so that it can only be
+/// inferred from what is expected. `a.get("b") as C` with `get<T>(key: string): T`.
+///
+/// If another rule has asked for the type of the call before, tsgolint 7.0 answers with that, and reports the
+/// assertion. That is not followed: without the assertion the type is another.
+fn tsgolint_infers_type_arguments_from_the_assertion(expression: Expr) -> bool {
+    let mut node = expression;
+    while let ExprKind::Await(argument) = node.kind() {
+        node = argument;
+    }
+    let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind() else {
+        return false;
+    };
+    if !call.type_args().is_empty() {
+        return false;
+    }
+    let is_type_parameter = |it: &TsNode| it.kind() == SyntaxKind::TypeParameter;
+    let Some(declaration) = node.resolved_signature().and_then(|it| it.declaration()) else {
+        // A class without a constructor.
+        let class = call.callee().ts_symbol().filter(|_| node.tag() == ExprTag::New);
+        let mut declarations = class.into_iter().flat_map(|it| it.skip_alias().declarations());
+        return declarations.any(|it| {
+            matches!(it.kind(), SyntaxKind::ClassDeclaration | SyntaxKind::ClassExpression)
+                && it.children().any(|it| is_type_parameter(&it))
+        });
+    };
+    // The type parameters of the signature of a constructor are those of the class.
+    let generic = match declaration.kind() {
+        SyntaxKind::Constructor => declaration.parent(),
+        _ => Some(declaration),
+    };
+    let type_parameters = generic.into_iter().flat_map(TsNode::children).filter(is_type_parameter);
+    let parameters: SmallVec<[TsNode; 8]> =
+        declaration.children().filter(|it| it.kind() == SyntaxKind::Parameter).filter_map(TsNode::type_node).collect();
+    type_parameters.filter_map(|it| it.name()?.get_symbol_at_location()).any(|type_parameter| {
+        !parameters.iter().any(|it| names_one_of(*it, &[type_parameter]))
+    })
+}
+
 fn fix_assertion<'a>(fixer: Fixer<'a>, assertion: Assertion<'a>) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let Assertion {
@@ -846,6 +903,9 @@ impl NoUnnecessaryTypeAssertion {
 
         let uncast_type = get_uncast_type(expression);
         if cast_type.is_unresolved() || uncast_type.is_unresolved() {
+            return;
+        }
+        if cx.language().is_oxlint && tsgolint_infers_type_arguments_from_the_assertion(expression) {
             return;
         }
         let would_same_type_be_inferred = match cast_type_is_literal {

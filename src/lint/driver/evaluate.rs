@@ -9,7 +9,7 @@
 //! is used again as long as none of these has changed. A program that does what cannot be checked
 //! again (starts a process, lists the environment) is run every time.
 
-use crate::run::{Environment, Fatal, Script};
+use crate::run::{Environment, Fatal, Script, Source};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::linter::write_json;
@@ -18,23 +18,16 @@ use bun_lint::options::Json;
 /// What precedes the JSON. The file itself can print, too.
 const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
 
+/// What every script begins with.
+pub(crate) const TRACK: &str = include_str!("evaluate-track.js");
+const DESCRIBE: &str = include_str!("evaluate-describe.js");
+
 /// For `eslint.config.*` and `oxlint.config.ts`.
-pub(crate) const ESLINT: &str = concat!(
-    include_str!("evaluate-track.js"),
-    include_str!("evaluate-describe.js"),
-    include_str!("evaluate-eslint.js")
-);
+pub(crate) const ESLINT: Source = &[TRACK, DESCRIBE, include_str!("evaluate-eslint.js")];
 /// For what the configuration files of ESLint 8 name.
-pub(crate) const ESLINTRC: &str = concat!(
-    include_str!("evaluate-track.js"),
-    include_str!("evaluate-describe.js"),
-    include_str!("evaluate-eslintrc.js")
-);
+pub(crate) const ESLINTRC: Source = &[TRACK, DESCRIBE, include_str!("evaluate-eslintrc.js")];
 /// For the configuration files of Prettier.
-pub(crate) const PRETTIER: &str = concat!(
-    include_str!("evaluate-track.js"),
-    include_str!("fmt/evaluate-prettier.js")
-);
+pub(crate) const PRETTIER: Source = &[TRACK, include_str!("fmt/evaluate-prettier.js")];
 
 /// FNV-1a.
 pub(crate) fn hash(parts: &[&[u8]]) -> u64 {
@@ -71,7 +64,8 @@ fn variable(name: &[u8]) -> Json {
 }
 
 /// What has to be the same for a result to be of any use.
-fn version(environment: &Environment, source: &str, argument: &[u8]) -> Json {
+fn version(environment: &Environment, source: Source, argument: &[u8]) -> Json {
+    let source = source.concat();
     let parts = [environment.version, source.as_bytes(), argument];
     let version = format!("{:016x}", hash(&parts));
     Json::String(version.into_bytes())
@@ -106,7 +100,7 @@ fn still_valid(version: &Json, kept: Json) -> Option<Json> {
 /// of an earlier run will do, and that of this one is kept.
 pub(crate) fn evaluate(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     path: &[u8],
     keeps: bool,
 ) -> Result<Json, Fatal> {
@@ -116,7 +110,7 @@ pub(crate) fn evaluate(
 /// The same for a script that takes an `argument`: `process.argv.at(-3)`.
 pub(crate) fn evaluate_with(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     path: &[u8],
     argument: &[u8],
     keeps: bool,
@@ -134,7 +128,7 @@ pub(crate) fn evaluate_with(
 /// What is kept at `cache_file` of a run of `source`, if what it depends on is as it was.
 pub(crate) fn kept_at(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     cache_file: &[u8],
 ) -> Option<Json> {
     kept_with(environment, source, b"", cache_file)
@@ -143,7 +137,7 @@ pub(crate) fn kept_at(
 /// The same of a run with `argument`.
 fn kept_with(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     argument: &[u8],
     cache_file: &[u8],
 ) -> Option<Json> {
@@ -154,7 +148,7 @@ fn kept_with(
 /// Runs `source`, whatever is kept. `cache_file`: where the result is kept, if it is.
 pub(crate) fn evaluate_at(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     path: &[u8],
     cache_file: Option<Vec<u8>>,
 ) -> Result<Json, Fatal> {
@@ -164,7 +158,7 @@ pub(crate) fn evaluate_at(
 /// `argument`: empty for a script that takes none.
 fn run(
     environment: &Environment,
-    source: &'static str,
+    source: Source,
     path: &[u8],
     argument: &[u8],
     cache_file: Option<Vec<u8>>,

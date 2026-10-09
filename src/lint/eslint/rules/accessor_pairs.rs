@@ -120,13 +120,16 @@ pub(crate) fn key_groups<'a>(file: &'a File<'a>, keys: impl Iterator<Item = Key<
 }
 
 impl AccessorPairs {
+    /// It is compiled once, not for each kind of list.
+    #[inline(never)]
     fn check_list<'a>(
         &self,
-        accessors: &(impl Iterator<Item = Accessor<'a>> + Clone),
+        accessors: &mut dyn Iterator<Item = Accessor<'a>>,
         missing_getter: Message,
         missing_setter: Message,
         cx: &Cx<'a, Self>,
     ) {
+        let accessors: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> = accessors.collect();
         let is_checked = |accessor: Accessor<'a>| match accessor.is_getter {
             true => self.get_without_set,
             false => self.set_without_get,
@@ -144,10 +147,8 @@ impl AccessorPairs {
         // Of several getters, or setters, of a name that is known oxlint keeps the last.
         let is_oxlint = cx.language().is_oxlint;
         let keeps_the_last = |accessor: Accessor<'a>| is_oxlint && accessor.key.name().is_some();
-        let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =
-            accessors.clone().take(MAX_KEYS_TO_COMPARE_IN_PAIRS + 1).collect();
-        if few.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
-            for (i, &accessor) in few.iter().enumerate() {
+        if accessors.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
+            for (i, &accessor) in accessors.iter().enumerate() {
                 let is_paired = |other: &Accessor<'a>| {
                     other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
                 };
@@ -155,26 +156,26 @@ impl AccessorPairs {
                     other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
                 };
                 if is_checked(accessor)
-                    && !few.iter().any(is_paired)
-                    && !(keeps_the_last(accessor) && few.iter().skip(i + 1).any(is_same))
+                    && !accessors.iter().any(is_paired)
+                    && !(keeps_the_last(accessor) && accessors.iter().skip(i + 1).any(is_same))
                 {
                     report(accessor);
                 }
             }
             return;
         }
-        let groups = key_groups(cx.file(), accessors.clone().map(|it| it.key));
+        let groups = key_groups(cx.file(), accessors.iter().map(|it| it.key));
         // Whether the group has a getter, and whether it has a setter.
         let mut kinds = vec![[false; 2]; groups.len()];
         // Where the last getter of the group starts, and the last setter.
         let mut last = vec![[0; 2]; groups.len()];
-        for (accessor, &group) in accessors.clone().zip(&groups) {
+        for (accessor, &group) in accessors.iter().zip(&groups) {
             if let (Some(kinds), Some(last)) = (kinds.get_mut(group as usize), last.get_mut(group as usize)) {
                 kinds[usize::from(accessor.is_getter)] = true;
                 last[usize::from(accessor.is_getter)] = accessor.key.inner_span(cx.file()).start;
             }
         }
-        for (accessor, &group) in accessors.clone().zip(&groups) {
+        for (&accessor, &group) in accessors.iter().zip(&groups) {
             let is_paired = kinds.get(group as usize).is_some_and(|it| it[usize::from(!accessor.is_getter)]);
             let is_last = last
                 .get(group as usize)
@@ -190,7 +191,7 @@ impl AccessorPairs {
             return;
         };
         self.check_list(
-            &props.iter().filter_map(Accessor::of_prop),
+            &mut props.iter().filter_map(Accessor::of_prop),
             MISSING_GETTER_IN_OBJECT_LITERAL,
             MISSING_SETTER_IN_OBJECT_LITERAL,
             cx,
@@ -230,7 +231,7 @@ impl AccessorPairs {
                 member.is_static() == is_static && !member.flags().contains(Flags::ABSTRACT)
             });
             self.check_list(
-                &methods.filter_map(Accessor::of_member),
+                &mut methods.filter_map(Accessor::of_member),
                 MISSING_GETTER_IN_CLASS,
                 MISSING_SETTER_IN_CLASS,
                 cx,
@@ -240,7 +241,7 @@ impl AccessorPairs {
 
     fn check_type<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check_list(
-            &members.iter().filter_map(Accessor::of_member),
+            &mut members.iter().filter_map(Accessor::of_member),
             MISSING_GETTER_IN_TYPE,
             MISSING_SETTER_IN_TYPE,
             cx,

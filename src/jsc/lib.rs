@@ -489,8 +489,6 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
-    /// `bun lint` with plugins in JavaScript: there are many VMs, each busy on a thread of its own.
-    pub vm_per_thread: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -510,9 +508,16 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
-            options.vm_per_thread,
         )
     };
+}
+
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread() {
+    let env = bun_sys::environ();
+    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -1565,8 +1570,8 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
-        vm_per_thread: bool,
     );
+    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

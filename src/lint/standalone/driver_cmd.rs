@@ -13,7 +13,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     command
         .arg("--no-install")
         .arg("-e")
-        .arg(script.source)
+        .arg(script.source.concat())
         .args(script.arguments.iter().map(|it| os_text(it)))
         .current_dir(os_text(script.cwd));
     let output = command

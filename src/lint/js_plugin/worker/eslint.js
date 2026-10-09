@@ -141,6 +141,7 @@ async function builtConfiguration({ FlatConfigArray }, { basePath }, { object, p
   if (reportUnusedInlineConfigs === 0) config.linterOptions = linterOptions;
   if (object.language === "@/js") delete config.language;
   for (const [prefix, { location, rules, isNeeded }] of Object.entries(plugins)) {
+    await importAll(Object.values(rules).map(it => it.module));
     const loaded = isNeeded ? await locatedPlugin(location, prefix) : undefined;
     config.plugins[prefix] = pluginFor(location, rules, loaded);
   }

@@ -665,6 +665,20 @@ describe.concurrent("bun lint", () => {
         expect(await after("--fix-dangerously")).toBe("done; done;\n");
       });
 
+      // What oxlint 1.87 writes.
+      test('a fix that is a dangerous one for oxlint: operator-assignment with "never"', async () => {
+        const after = async (mode: string, ...flags: string[]) => {
+          const rules = { "operator-assignment": ["error", mode] };
+          const oxlintrc = JSON.stringify({ plugins: [], categories: { correctness: "off" }, rules });
+          const files = { ".oxlintrc.json": oxlintrc, "a.js": "x += y;\nx = x + y;\n" };
+          return (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
+        };
+        expect(await after("never", "--fix")).toBe("x += y;\nx = x + y;\n");
+        expect(await after("never", "--fix", "--fix-suggestions")).toBe("x += y;\nx = x + y;\n");
+        expect(await after("never", "--fix-dangerously")).toBe("x = x + y;\nx = x + y;\n");
+        expect(await after("always", "--fix")).toBe("x += y;\nx += y;\n");
+      });
+
       const rc = (more: object = {}) =>
         JSON.stringify({
           categories: { correctness: "off" },
@@ -2720,6 +2734,49 @@ describe.concurrent("regular expressions in a configuration", () => {
         1 error and 0 warnings potentially fixable with the \`--fix\` option."
     `);
     expect(exitCode).toBe(1);
+  });
+
+  test("the rules compile none for the patterns that they have themselves", async () => {
+    const files = {
+      "a.js": [
+        `switch (Math.random()) {`,
+        `  case 0:`,
+        `    console.log(0);`,
+        `  // FALLſ\u2003Through`,
+        `  case 1:`,
+        `    console.log(1);`,
+        `  // fall  through`,
+        `  case 2:`,
+        `    console.log(2);`,
+        `}`,
+        `// \u3000ToDo: a`,
+        `// todoſ: b`,
+        ``,
+      ].join("\n"),
+      "b.ts": "// @ts-ignore\nexport const a: number = 1;\n",
+    };
+    // JavaScriptCore, which has the regular expressions, prints its options when it is started.
+    const env = { BUN_JSC_dumpOptions: "1", JSC_dumpOptions: "1" };
+    // Without a configuration file: eslint:recommended.
+    const { stdout, stderr, exitCode } = await lint(files, ["--rule", "no-warning-comments: error"], { env });
+    expect(stdout).toMatchInlineSnapshot(`
+      "<dir>/a.js
+         4:11  error  Irregular whitespace not allowed            no-irregular-whitespace
+         8:3   error  Expected a 'break' statement before 'case'  no-fallthrough
+        11:1   error  Unexpected 'todo' comment: 'ToDo: a'        no-warning-comments
+        11:4   error  Irregular whitespace not allowed            no-irregular-whitespace
+
+      <dir>/b.ts
+        1:1  error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+
+      ✖ 5 problems (5 errors, 0 warnings)"
+    `);
+    expect(stderr).not.toContain("JSC options");
+    expect(exitCode).toBe(1);
+
+    const own = await lint(files, ["--rule", 'no-fallthrough: [error, { commentPattern: "fall +through" }]'], { env });
+    expect(own.stdout).toMatch(/ 5:3 +error +Expected a 'break' statement before 'case' +no-fallthrough\n/);
+    expect(own.stderr).toContain("JSC options");
   });
 
   test("one is shared by all threads", async () => {

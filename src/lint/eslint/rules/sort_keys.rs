@@ -122,6 +122,8 @@ fn has_empty_line(text: &[u8]) -> bool {
 /// oxlint's `lift_property_span`: the property, from the first of the JSDoc comments that oxc attaches to it, which are
 /// those before it that are not on the line of the token before, and up to the end of a `// ..` after its `,` on the
 /// same line. `boundary`: where the next property starts, or where the object ends.
+#[cold]
+#[inline(never)]
 fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, boundary: u32) -> Span {
     let whole = prop.span();
     let mut lifted = whole;
@@ -161,6 +163,8 @@ fn nested_objects<'a>(object: Expr<'a>) -> impl Iterator<Item = Expr<'a>> {
 impl SortKeys {
     /// oxlint's `count_static_groups`: how many runs of properties with known names there are between spreads and, with
     /// `allowLineSeparatedGroups`, empty lines.
+    #[cold]
+    #[inline(never)]
     fn count_static_groups<'a>(&self, file: &'a File<'a>, props: List<'a, Prop<'a>>) -> usize {
         let (mut count, mut is_in_group) = (0, false);
         let mut rest = props.iter().peekable();
@@ -180,6 +184,8 @@ impl SortKeys {
     }
 
     /// oxlint's `collect_fixable_properties`. `known`: the fixes of the [`nested_objects`].
+    #[cold]
+    #[inline(never)]
     fn collect_fixable_properties<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> Option<Vec<FixableProperty<'a>>> {
         let ExprKind::Object(props) = object.kind() else {
             return None;
@@ -233,6 +239,8 @@ impl SortKeys {
     }
 
     /// oxlint's `build_object_fix`.
+    #[cold]
+    #[inline(never)]
     fn build_object_fix<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> Option<(Span, Vec<u8>)> {
         let (file, props) = (object.file(), self.collect_fixable_properties(object, known)?);
         let (first, last) = (props.first()?, props.last()?);
@@ -271,6 +279,8 @@ impl SortKeys {
     }
 
     /// [`SortKeys::build_object_fix`] of `root`, after those of the object literals in it.
+    #[cold]
+    #[inline(never)]
     fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> Option<(Span, Vec<u8>)> {
         let mut pending = vec![root];
         while let Some(&object) = pending.last() {

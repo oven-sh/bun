@@ -32,10 +32,11 @@ fn unwrap_void_argument(node: Expr<'_>) -> Expr<'_> {
     }
 }
 
-/// Removes the `void` that `node` starts with, and what is before the next token.
+/// Removes the `void` that `node` starts with, and what is before the next token. tsgolint 7.0 leaves that.
 fn fix(fixer: Fixer, node: Expr) -> Fix {
-    let start = node.span().start;
-    fixer.remove(Span::new(start, skip_trivia(fixer.file().text(), start + 4)))
+    let (file, start) = (fixer.file(), node.span().start);
+    let end = if file.language().is_oxlint { start + 4 } else { skip_trivia(file.text(), start + 4) };
+    fixer.remove(Span::new(start, end))
 }
 
 impl NoMeaninglessVoidOperator {

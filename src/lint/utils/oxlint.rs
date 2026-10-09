@@ -7,7 +7,7 @@ use crate::ast::{
     Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Ident, Key, KeyKind, List, Member,
     MemberKind, ModuleName, Node, Prop, PropKind, Stmt, StmtKind, StmtTag, VarDecl, VarKind,
 };
-use crate::language::SourceType;
+use crate::language::{LanguageOptions, SourceType};
 use crate::semantic::{Declaration, Scope, ScopeKind, Symbol};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
@@ -108,11 +108,16 @@ pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
         })
 }
 
-/// [`is_global_reference`] for the rules whose port in oxlint goes by the name and does not ask what it refers to:
-/// `Boolean`, `Promise`, `NaN`. With a configuration of oxlint it is enough that `e`, which the caller knows
-/// to have the name, is written.
+/// Whether a rule that asks today what `Boolean`, `Promise` or `NaN` refers to goes by the name alone: its port in oxlint does, and
+/// so did the rule in ESLint 8, whose configurations have `Promise` only if `env` says so.
+pub fn goes_by_the_name(language: &LanguageOptions) -> bool {
+    language.is_oxlint || language.eslint_8.is_some()
+}
+
+/// [`is_global_reference`] for such a rule: where it [`goes_by_the_name`] it is enough that `e`, which the caller knows to have
+/// the name, is written.
 pub fn is_global_by_name(e: Expr) -> bool {
-    e.file().language().is_oxlint || is_global_reference(e)
+    goes_by_the_name(e.file().language()) || is_global_reference(e)
 }
 
 /// `scope` is that of a class, or of a function or a file that begins with `"use strict"`: it and what is in it are strict for

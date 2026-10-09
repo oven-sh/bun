@@ -70,24 +70,25 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 
 impl GroupedAccessorPairs {
     /// ESLint's `checkList`.
-    fn check_list<'a>(&self, accessors: &(impl Iterator<Item = Accessor<'a>> + Clone), cx: &Cx<'a, Self>) {
-        let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =
-            accessors.clone().take(MAX_KEYS_TO_COMPARE_IN_PAIRS + 1).collect();
+    /// It is compiled once, not for each kind of list.
+    #[inline(never)]
+    fn check_list<'a>(&self, accessors: &mut dyn Iterator<Item = Accessor<'a>>, cx: &Cx<'a, Self>) {
+        let all: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> = accessors.collect();
         // Nothing is reported for a name that has several getters or several setters.
-        if few.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
-            for getter in few.iter().filter(|it| it.is_getter) {
+        if all.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
+            for getter in all.iter().filter(|it| it.is_getter) {
                 let mut others =
-                    few.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
+                    all.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
                 if let (Some(setter), None) = (others.next(), others.next()) {
                     self.check_pair(*getter, *setter, cx);
                 }
             }
             return;
         }
-        let groups = key_groups(cx.file(), accessors.clone().map(|it| it.key));
+        let groups = key_groups(cx.file(), all.iter().map(|it| it.key));
         // The first two of each group, and how many there are.
         let mut members = vec![(None, None, 0usize); groups.len()];
-        for (accessor, &group) in accessors.clone().zip(&groups) {
+        for (&accessor, &group) in all.iter().zip(&groups) {
             if let Some((first, second, count)) = members.get_mut(group as usize) {
                 let slot = if first.is_none() { first } else { second };
                 slot.get_or_insert(accessor);
@@ -141,7 +142,7 @@ impl GroupedAccessorPairs {
     /// `TSMethodSignature`s
     fn check_signatures<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check_list(
-            &members.iter().enumerate().filter_map(|(index, member)| Accessor::of_member(index, member)),
+            &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::of_member(index, member)),
             cx,
         );
     }
@@ -166,7 +167,7 @@ impl Rule for GroupedAccessorPairs {
         on.exprs([ExprTag::Object], |rule, e, cx| {
             if let ExprKind::Object(props) = e.kind() {
                 rule.check_list(
-                    &props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
+                    &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
                     cx,
                 );
             }
@@ -174,13 +175,13 @@ impl Rule for GroupedAccessorPairs {
         on.classes(|rule, class, cx| {
             for is_static in [false, true] {
                 // An abstract accessor is not a `MethodDefinition`.
-                let accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
+                let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
                     let flags = member.flags();
                     (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
                         .then(|| Accessor::of_member(index, member))
                         .flatten()
                 });
-                rule.check_list(&accessors, cx);
+                rule.check_list(&mut accessors, cx);
             }
         });
         if self.enforce_for_ts_types {

@@ -70,8 +70,9 @@ fn needs_parens<'a>(previous: Expr<'a>, node: Expr<'a>) -> bool {
     }
 }
 
+/// oxlint does not look for them.
 fn has_comments_inside(e: Expr) -> bool {
-    e.file().comments_in(e).next().is_some()
+    !e.file().language().is_oxlint && e.file().comments_in(e).next().is_some()
 }
 
 /// A space, if `replacement` cannot directly follow the token that `replaced` directly follows.

@@ -62,7 +62,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         // What is not installed is missing: nothing is fetched to read a configuration.
         Box::from(&b"--no-install"[..]),
         Box::from(&b"-e"[..]),
-        Box::from(script.source.as_bytes()),
+        Box::from(script.source.concat().as_bytes()),
     ];
     argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));
     let spawned = spawn(&SpawnOptions {
@@ -148,7 +148,6 @@ impl LintCommand {
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
-            super::lint_js::start_javascriptcore(0);
             run_and_exit(b"lint", None, |environment| Outcome {
                 exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
                     rest,
@@ -167,7 +166,6 @@ impl LintCommand {
             crate::cli::command::tag_print_help(crate::cli::command::Tag::LintCommand, true);
             Global::exit(0);
         }
-        super::lint_js::start_javascriptcore(options.threads);
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             bun_lint_driver::run(&options, environment)
         })

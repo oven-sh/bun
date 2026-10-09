@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
@@ -52,7 +54,7 @@ enum RefAccessType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -82,6 +84,8 @@ impl PartialEq for RefAccessType {
     }
 }
 
+impl Eq for RefAccessType {}
+
 /// Corresponds to TS `RefAccessRefType` — the subset of `RefAccessType` that can appear
 /// inside `Structure.value` and be joined via `join_ref_access_ref_types`.
 ///
@@ -97,7 +101,7 @@ enum RefAccessRefType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -125,10 +129,12 @@ impl PartialEq for RefAccessRefType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl Eq for RefAccessRefType {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RefFnType {
     read_ref_effect: bool,
-    return_type: Box<RefAccessType>,
+    return_type: Rc<RefAccessType>,
 }
 
 impl RefAccessType {
@@ -224,16 +230,21 @@ fn join_ref_access_ref_types(
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_fn), Some(b_fn)) => Some(RefFnType {
                     read_ref_effect: a_fn.read_ref_effect || b_fn.read_ref_effect,
-                    return_type: Box::new(join_ref_access_types(
-                        &a_fn.return_type,
-                        &b_fn.return_type,
-                        keeps_place,
-                    )),
+                    return_type: if Rc::ptr_eq(&a_fn.return_type, &b_fn.return_type) {
+                        Rc::clone(&a_fn.return_type)
+                    } else {
+                        Rc::new(join_ref_access_types(
+                            &a_fn.return_type,
+                            &b_fn.return_type,
+                            keeps_place,
+                        ))
+                    },
                 }),
             };
             let value = match (a_value, b_value) {
                 (None, other) | (other, None) => other.clone(),
-                (Some(a_val), Some(b_val)) => Some(Box::new(join_ref_access_ref_types(
+                (Some(a_val), Some(b_val)) if Rc::ptr_eq(a_val, b_val) => Some(Rc::clone(a_val)),
+                (Some(a_val), Some(b_val)) => Some(Rc::new(join_ref_access_ref_types(
                     a_val,
                     b_val,
                     keeps_place,
@@ -819,7 +830,7 @@ fn validate_no_ref_access_in_render_impl(
                                 value: None,
                                 fn_type: Some(RefFnType {
                                     read_ref_effect,
-                                    return_type: Box::new(return_type),
+                                    return_type: Rc::new(return_type),
                                 }),
                             },
                         );
@@ -838,7 +849,7 @@ fn validate_no_ref_access_in_render_impl(
                             ..
                         }) = &fn_type
                         {
-                            return_type = *fn_ty.return_type.clone();
+                            return_type = (*fn_ty.return_type).clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
                                 errors.push(ref_access_error(
@@ -969,7 +980,7 @@ fn validate_no_ref_access_in_render_impl(
                                 ref_env.set(
                                     instr.lvalue.identifier,
                                     RefAccessType::Structure {
-                                        value: value.to_ref_type().map(Box::new),
+                                        value: value.to_ref_type().map(Rc::new),
                                         fn_type: None,
                                     },
                                 );

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -395,6 +396,9 @@ describe.concurrent("bun format", () => {
       ["comment.json", '{"a": 1} /* b\n', "This comment is not closed (1:10)"],
       ["more.json", '{"a": 1} 2\n', "Expected the end of the file (1:10)"],
       ["only-comments.json", "// a\n", "Unexpected end of file (2:1)"],
+      ["word.json", "nul\n", "Unexpected token (1:1)"],
+      ["sign-before-a-string.json", "+''\n", "Unexpected token (1:2)"],
+      ["sign-before-a-word.json5", "-null\n", "Unexpected token (1:2)"],
     ];
     const result = await format(Object.fromEntries(cases.map(([name, text]) => [name, text])), []);
     const said = [...result.stderr.matchAll(/^\[error\] ([^:\n]+): SyntaxError: (.+)$/gm)].map(it => [it[1], it[2]]);
@@ -881,6 +885,26 @@ exports.format = async (text, options) => {
       expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
       const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
       expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+    });
+
+    // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
+    test("more files than there are threads", async () => {
+      const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.svelte`);
+      const reading = packages["node_modules/prettier/index.cjs"].replace(
+        "exports.format = async (text, options) => {",
+        "exports.format = async (text, options) => {\n  await fs.promises.readFile(__filename);",
+      );
+      const result = await format(
+        {
+          ...files,
+          "node_modules/prettier/index.cjs": reading,
+          ...Object.fromEntries(names.map(name => [name, "<p   >a</p>\n"])),
+        },
+        ["many"],
+        { reads: names },
+      );
+      expect(Object.values(result.files)).toEqual(names.map(() => "<p >a</p>\n"));
+      expect(result.exitCode).toBe(0);
     });
 
     // The first pattern that is compiled starts JavaScriptCore too, on the thread that formats the file.

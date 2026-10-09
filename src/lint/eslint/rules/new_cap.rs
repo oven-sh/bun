@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::goes_by_the_name;
 use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 
@@ -101,8 +102,7 @@ impl NewCap {
         }
         match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                // oxlint goes by the names.
-                let is_date = || match callee.file().language().is_oxlint {
+                let is_date = || match goes_by_the_name(callee.file().language()) {
                     true => obj.is_ident("Date"),
                     false => is_global_built_in(obj, b"Date"),
                 };
@@ -129,9 +129,8 @@ impl NewCap {
             && let Some(name) = extract_name(callee)
             && get_cap(&name) == Cap::Upper
             && !self.is_cap_allowed(&self.cap_is_new_exceptions, callee, &name)
-            // oxlint goes by the name, whatever it refers to.
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
-                && (cx.language().is_oxlint || is_global_built_in(callee, &name)))
+                && (goes_by_the_name(cx.language()) || is_global_built_in(callee, &name)))
         {
             report(callee, UPPER, cx);
         }

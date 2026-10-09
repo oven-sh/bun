@@ -1693,7 +1693,7 @@ const whatESLint8Has = [
   presets("rules for Node.js that are deprecated: no-process-exit, no-path-concat, handle-callback-err", { ".eslintrc.json": rc(on("no-process-exit", "no-path-concat", "handle-callback-err", "no-sync", "global-require")), "a.js": "process.exit(1);\nvar p = __dirname + '/a';\nfunction f(err) { fs.readFileSync(p); require('a'); }\n" }),
   presets("the default options of 8: no-constant-condition and while (true)", { ".eslintrc.json": rc(on("no-constant-condition")), "a.js": "while (true) { f(); }\nfor (;;) { f(); }\nwhile (1) { f(); }\n" }),
   presets("the default options of 8: no-constant-condition, checkLoops: false", { ".eslintrc.json": rc({ rules: { "no-constant-condition": ["error", { checkLoops: false }] } }), "a.js": "while (true) { f(); }\nif (true) { f(); }\n" }),
-  ...[on("no-async-promise-executor", "prefer-promise-reject-errors", "new-cap", "getter-return", "accessor-pairs"), on("no-undef")].map(rules =>
+  ...[on("no-async-promise-executor", "prefer-promise-reject-errors", "new-cap"), on("getter-return", "accessor-pairs"), on("no-undef")].map(rules =>
     presets(`rules that go by the name of a global: Promise, Symbol, BigInt, Reflect without env: ${Object.keys(rules.rules)[0]} ..`, {
       ".eslintrc.json": rc({ parserOptions: { ecmaVersion: 2020 }, ...rules }),
       "a.js": "new Promise(async (resolve, reject) => { reject(1); });\nPromise.reject(2);\nvar s = Symbol('a'), b = BigInt(1);\nReflect.defineProperty(s, 'c', { get() {} });\nReflect.defineProperty(b, 'd', { set(e) {} });\n",

@@ -64,51 +64,42 @@ enum Cause<'a> {
     },
 }
 
-/// ESLint's `getErrorCause`.
-fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize) -> Cause<'a> {
-    if args.iter().take(options_index + 1).any(|arg| arg.tag() == ExprTag::Spread) {
+/// ESLint's `getErrorCause`: the last `cause` counts. In oxlint's `has_cause_property` it is the first that is written
+/// as a name, only a spread before it can have one, a spread among the arguments can be after the options too, and what
+/// is not an object in braces has none.
+fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize, is_oxlint: bool) -> Cause<'a> {
+    let looked_at = if is_oxlint { usize::MAX } else { options_index + 1 };
+    if args.iter().take(looked_at).any(|arg| arg.tag() == ExprTag::Spread) {
         return Cause::Unknown;
     }
     let Some(options) = args.get(options_index) else {
         return Cause::Missing;
     };
-    let ExprKind::Object(properties) = options.kind() else {
-        return Cause::Unknown;
+    let properties = match options.kind() {
+        ExprKind::Object(properties) if !(is_oxlint && options.is_parenthesized()) => properties,
+        _ if is_oxlint => return Cause::Missing,
+        _ => return Cause::Unknown,
     };
-    if properties.iter().any(|property| property.kind() == PropKind::Spread) {
-        return Cause::Unknown;
-    }
-    let mut causes = properties.iter().filter(|property| {
-        ast_utils::get_static_property_name(*property).is_some_and(|name| *name == *b"cause")
-    });
-    match causes.next_back() {
-        Some(property) => Cause::Found {
-            property,
-            has_multiple_definitions: causes.next().is_some(),
-        },
-        None => Cause::Missing,
-    }
-}
-
-/// oxlint's `has_cause_property`: the first `cause` that is written as a name counts, a spread before it can have one,
-/// and what is not an object in braces has none.
-fn get_error_cause_as_oxlint<'a>(args: List<'a, Expr<'a>>, options_index: usize) -> Cause<'a> {
-    if args.iter().any(|arg| arg.tag() == ExprTag::Spread) {
-        return Cause::Unknown;
-    }
-    let properties = match args.get(options_index).map(|options| (options.kind(), options.is_parenthesized())) {
-        Some((ExprKind::Object(properties), false)) => properties,
-        _ => return Cause::Missing,
-    };
+    let (mut last, mut count) = (None, 0);
     for property in properties {
         if property.kind() == PropKind::Spread {
             return Cause::Unknown;
         }
-        if matches!(property.key().map(|key| key.kind()), Some(KeyKind::Ident(name)) if name.is("cause")) {
-            return Cause::Found { property, has_multiple_definitions: false };
+        let is_cause = match is_oxlint {
+            true => matches!(property.key().map(|key| key.kind()), Some(KeyKind::Ident(name)) if name.is("cause")),
+            false => ast_utils::get_static_property_name(property).is_some_and(|name| *name == *b"cause"),
+        };
+        if is_cause {
+            (last, count) = (Some(property), count + 1);
+            if is_oxlint {
+                break;
+            }
         }
     }
-    Cause::Missing
+    match last {
+        Some(property) => Cause::Found { property, has_multiple_definitions: count > 1 },
+        None => Cause::Missing,
+    }
 }
 
 /// By a statement: the `try` statement in whose `catch` block it is, or `None` in a function in that
@@ -232,35 +223,27 @@ fn include_cause_as_oxlint<'a>(
     (caught, param): (Name<'a>, Span),
 ) -> Option<[Fix; 2]> {
     let file = fixer.file();
-    let cause = [&b"cause: "[..], caught.bytes()].concat();
-    let options = [&b"{ "[..], cause.as_slice(), b" }"].concat();
-    let (cause, options) = (cause.as_slice(), options.as_slice());
     let args = call.args();
-    let fix = match (args.len(), args.last()) {
+    // What it comes after, and what is written before and after `cause: caught`.
+    let (place, before, after): (Span, &[u8], &[u8]) = match (args.len(), args.last()) {
         (0, _) => {
             let (after_callee, last) = (file.last_token(call.callee())?, file.last_token(thrown)?);
             let open = file.tokens_between(after_callee, last).find(ast_utils::is_opening_paren_token)?;
-            let before: &[u8] = if is_aggregate_error { b"[], \"\", " } else { b"\"\", " };
-            fixer.insert_after(open, [before, options].concat())
+            (open.span(), if is_aggregate_error { b"[], \"\", { " } else { b"\"\", { " }, b" }")
         }
-        (1, Some(last)) => {
-            let before: &[u8] = if is_aggregate_error { b", \"\", " } else { b", " };
-            fixer.insert_after(last.outer_span(), [before, options].concat())
-        }
-        (2, Some(last)) if is_aggregate_error => fixer.insert_after(last.outer_span(), [&b", "[..], options].concat()),
+        (1, Some(last)) => (last.outer_span(), if is_aggregate_error { b", \"\", { " } else { b", { " }, b" }"),
+        (2, Some(last)) if is_aggregate_error => (last.outer_span(), b", { ", b" }"),
         (2, Some(last)) if !last.is_parenthesized() => match last.kind() {
             ExprKind::Object(properties) => match properties.last() {
-                Some(property) => fixer.insert_after(property, [&b", "[..], cause].concat()),
-                None => {
-                    let close_brace = Span::empty(last.span().end.saturating_sub(1));
-                    fixer.insert_after(close_brace, [&b" "[..], cause, b" "].concat())
-                }
+                Some(property) => (property.span(), b", ", b""),
+                None => (Span::empty(last.span().end.saturating_sub(1)), b" ", b" "),
             },
             _ => return None,
         },
         _ => return None,
     };
-    Some([fixer.replace(param, file.slice(param)), fix])
+    let text = [before, b"cause: ", caught.bytes(), after].concat();
+    Some([fixer.replace(param, file.slice(param)), fixer.insert_after(place, text)])
 }
 
 impl PreserveCaughtError {
@@ -313,7 +296,7 @@ impl PreserveCaughtError {
             Some(PatKind::Ident(name)) => name,
             // oxlint goes on as with a name, which nothing is the value of, and points at the statement.
             Some(_) if is_oxlint => {
-                if !matches!(get_error_cause_as_oxlint(call.args(), options_index), Cause::Unknown) {
+                if !matches!(get_error_cause(call.args(), options_index, true), Cause::Unknown) {
                     cx.report(statement, PARTIALLY_LOST_ERROR);
                 }
                 return;
@@ -333,11 +316,7 @@ impl PreserveCaughtError {
             }
         };
 
-        let cause = match is_oxlint {
-            true => get_error_cause_as_oxlint(call.args(), options_index),
-            false => get_error_cause(call.args(), options_index),
-        };
-        let (property, has_multiple_definitions) = match cause {
+        let (property, has_multiple_definitions) = match get_error_cause(call.args(), options_index, is_oxlint) {
             Cause::Unknown => return,
             Cause::Missing => {
                 let report = cx.report(statement, MISSING_CAUSE);

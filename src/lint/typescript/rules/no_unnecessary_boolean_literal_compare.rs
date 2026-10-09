@@ -152,6 +152,40 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) 
     fixer.replace(mutated_node, replacement_text)
 }
 
+/// The fix of tsgolint 7.0. What it puts in place of the comparison begins where the token before the expression ends:
+/// `a = b === true` becomes `a =  b`.
+fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) -> Fix {
+    let unary_negation = match node.parent() {
+        Node::Expr(parent) if matches!(parent.kind(), ExprKind::Unary { op: UnOp::Not, .. }) => Some(parent),
+        _ => None,
+    };
+    let mutated_node = unary_negation.unwrap_or(node);
+    let (file, expression) = (fixer.file(), comparison.expression);
+    let whole = expression.outer_span();
+    let text = file.slice(Span::new(file.end_of_token_before(whole.start), whole.end));
+    let is_strong = expression.is_parenthesized() || is_strong_precedence_node(expression);
+    let is_nullable = comparison.expression_is_nullable_boolean;
+    let adds_negation = (comparison.negated != comparison.boolean_literal) == unary_negation.is_some();
+
+    if is_nullable && comparison.boolean_literal && !adds_negation && !is_conditional_test(mutated_node) {
+        let (open, close): (&[u8], &[u8]) = if is_strong { (b"(!!", b")") } else { (b"(!!(", b"))") };
+        return fixer.replace(mutated_node, [open, text.trim_ascii(), close].concat());
+    }
+    let (mut before, mut after) = (Vec::new(), Vec::new());
+    if adds_negation {
+        before.push(b'!');
+        if !is_strong {
+            before.push(b'(');
+            after.push(b')');
+        }
+    }
+    if is_nullable && !comparison.boolean_literal {
+        before.push(b'(');
+        after.extend_from_slice(b" ?? true)");
+    }
+    fixer.replace(mutated_node, [before.as_slice(), text, after.as_slice()].concat())
+}
+
 impl NoUnnecessaryBooleanLiteralCompare {
     fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(comparison) = get_boolean_comparison(node) else {
@@ -166,7 +200,11 @@ impl NoUnnecessaryBooleanLiteralCompare {
             (false, _) if comparison.negated => NEGATED,
             (false, _) => DIRECT,
         };
-        cx.report(node, message).fix(|fixer| fix(fixer, node, comparison));
+        let is_oxlint = cx.language().is_oxlint;
+        cx.report(node, message).fix(|fixer| match is_oxlint {
+            true => fix_as_tsgolint(fixer, node, comparison),
+            false => fix(fixer, node, comparison),
+        });
     }
 }
 

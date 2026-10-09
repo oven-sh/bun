@@ -49,15 +49,13 @@ struct Writes {
 }
 
 impl Writes {
-    /// `references`: all those to a variable of `variable_scope`. For oxc a declaration that gives the variable a value
-    /// is none.
+    /// `references`: all those to a variable of `variable_scope`.
     fn among<'a>(references: impl Iterator<Item = Reference<'a>>, variable_scope: Scope<'a>) -> Writes {
         let mut writes = Writes {
             is_in_other_function: false,
             last: None,
         };
-        let is_oxlint = variable_scope.node().file().language().is_oxlint;
-        for reference in references.filter(|it| it.is_write() && !(is_oxlint && it.is_init())) {
+        for reference in references.filter(|it| it.is_write()) {
             writes.is_in_other_function |= reference.scope().variable_scope() != variable_scope;
             writes.last = writes.last.max(Some(reference.ident().start()));
         }
@@ -74,14 +72,8 @@ pub struct Known<'a> {
     writes_to_globals: FxHashMap<Name<'a>, Writes>,
     /// [`Known::is_written_in_top_loop`], by its arguments, for the loops that are far up from where it was asked.
     is_written_in_top_loop: FxHashMap<(Stmt<'a>, u32, u32), bool>,
-    /// With a configuration of oxlint: the functions of the file.
-    functions: Vec<Func<'a>>,
-    /// Those with a function in them that is not [called where it is written](is_safe_iife).
-    with_lasting_functions: FxHashSet<Func<'a>>,
-    /// [`Known::loop_with_body_around`]
-    loops_with_body_around: AncestorMemo<'a, Option<Stmt<'a>>>,
-    /// Where a variable is written to, but for its declarations, in the order of the file.
-    places_of_writes: FxHashMap<usize, Vec<u32>>,
+    /// Where the functions start that are reported as oxlint does.
+    reported_as_oxlint: FxHashSet<u32>,
 }
 
 impl<'a> Known<'a> {
@@ -104,26 +96,7 @@ impl<'a> Known<'a> {
                 }
                 _ => None,
             },
-            // oxlint does not go on from a function that is called where it is written.
-            Node::Func(func)
-                if ast_utils::is_function_with_body(func)
-                    && (func.file().language().is_oxlint || !is_skipped_iife(func)) =>
-            {
-                Some(None)
-            }
-            _ => None,
-        });
-        found.flatten()
-    }
-
-    /// The loop that oxlint's `LoopFunctionCollector` finds `func` for: the innermost one around it, in the same
-    /// function, whose body it is in. What is in the head of a loop belongs to the loop around that.
-    fn loop_with_body_around(&mut self, func: Func<'a>) -> Option<Stmt<'a>> {
-        let found = self.loops_with_body_around.find(func.into(), |current, parent| match parent {
-            Node::Stmt(statement) => {
-                (body_of_loop(statement).map(Node::Stmt) == Some(current)).then_some(Some(statement))
-            }
-            Node::Func(outer) if is_function_of_oxc(outer) => Some(None),
+            Node::Func(func) if ast_utils::is_function_with_body(func) && !is_skipped_iife(func) => Some(None),
             _ => None,
         });
         found.flatten()
@@ -174,120 +147,6 @@ impl<'a> Known<'a> {
     }
 }
 
-fn body_of_loop(statement: Stmt<'_>) -> Option<Stmt<'_>> {
-    match statement.kind() {
-        StmtKind::For { body, .. }
-        | StmtKind::ForIn { body, .. }
-        | StmtKind::ForOf { body, .. }
-        | StmtKind::While { body, .. }
-        | StmtKind::DoWhile { body, .. } => Some(body),
-        _ => None,
-    }
-}
-
-/// What is a function for oxc: not a static block, a signature or a function type.
-fn is_function_of_oxc(func: Func) -> bool {
-    matches!(
-        func.kind(),
-        FnKind::Decl
-            | FnKind::Expr
-            | FnKind::Arrow
-            | FnKind::Method
-            | FnKind::Getter
-            | FnKind::Setter
-            | FnKind::Constructor
-    )
-}
-
-/// oxlint's `is_safe_iife`, for all but `async` functions and generators: it is called where it is written, and its
-/// name is not used.
-fn is_safe_iife(func: Func) -> bool {
-    !func.is_async()
-        && !func.is_generator()
-        && is_iife(func)
-        && !func.symbol().is_some_and(|it| it.references().next().is_some())
-}
-
-/// The loop in whose head `declarator` is: as the `init` of a `for`, or on the left of `in` or `of`.
-fn loop_with_head_of(declarator: VarDecl<'_>) -> Option<Stmt<'_>> {
-    let Node::Stmt(declaration) = declarator.parent() else {
-        return None;
-    };
-    let head = declaration.parent().as_stmt()?;
-    let is_in_head = match head.kind() {
-        StmtKind::For { init, .. } => init == Some(declaration),
-        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left == declaration,
-        _ => false,
-    };
-    is_in_head.then_some(head)
-}
-
-/// oxlint's `is_unsafe_reference`, for a function in the body of `loop_node`.
-fn is_unsafe_for_oxlint<'a>(variable: Symbol<'a>, loop_node: Stmt<'a>, known: &mut Known<'a>) -> bool {
-    let Some(declaration) = variable.declarations().next() else {
-        return false;
-    };
-    let (is_var, declared, head) = match (declaration, declaration.node()) {
-        (Declaration::Param(pat), _) => (true, pat.span(), None),
-        (Declaration::Var(pat), _) if declaration.is_catch_parameter() => (false, pat.span(), None),
-        (Declaration::Var(_), Some(Node::VarDecl(declarator))) => match declarator.var_kind() {
-            VarKind::Var => (true, declarator.span(), loop_with_head_of(declarator)),
-            VarKind::Let => (false, declarator.span(), loop_with_head_of(declarator)),
-            VarKind::Const | VarKind::Using | VarKind::AwaitUsing => return false,
-        },
-        _ => return false,
-    };
-    let whole = loop_node.span();
-    // The loop that declares it in its head, if it is around `loop_node`, or is it, in the same function.
-    let function_of = |it: Stmt<'a>| Node::Stmt(it).scope().variable_scope();
-    let head = head.filter(|it| it.span().contains(whole) && function_of(*it) == function_of(loop_node));
-    if is_var {
-        // All the iterations have the same variable.
-        let is_set_by_head = |it: Stmt<'a>| !matches!(it.kind(), StmtKind::For { update: None, .. });
-        if whole.contains(declared) || head.is_some_and(is_set_by_head) {
-            return true;
-        }
-        let writes = known.places_of_writes.entry(variable.key()).or_insert_with(|| {
-            let writes = variable.references().filter(|it| it.is_write() && !it.is_init());
-            let mut places: Vec<u32> = writes.map(|it| it.span().start).collect();
-            utils::sort::sort_unstable(&mut places);
-            places
-        });
-        let first_in_loop = writes.get(writes.partition_point(|it| *it < whole.start));
-        return first_in_loop.is_some_and(|it| *it < whole.end);
-    }
-    // Each iteration has a variable of its own.
-    if body_of_loop(loop_node).is_some_and(|it| it.span().contains(declared)) || head.is_some() {
-        return false;
-    }
-    let writes = *(known.writes_to_variables.entry(variable.key()))
-        .or_insert_with(|| Writes::among(variable.references(), variable.scope().variable_scope()));
-    known.has_unsafe_write(writes, loop_node, declared.end)
-}
-
-/// oxlint's rule, once [`check`] has seen all the functions. It looks at the functions that are directly in the body of
-/// a loop, with all that is in them, and not at one that is called where it is written if all those in it are too.
-pub fn check_as_oxlint<'a, R: Rule<State<'a> = Known<'a>>>(cx: &mut Cx<'a, R>) {
-    for func in std::mem::take(&mut cx.state.functions) {
-        let known = &mut cx.state;
-        let (Some(loop_node), Some(scope)) = (known.loop_with_body_around(func), func.scope()) else {
-            continue;
-        };
-        if is_safe_iife(func) && !known.with_lasting_functions.contains(&func) {
-            continue;
-        }
-        let mut seen = FxHashSet::default();
-        let is_unsafe = scope.through().filter(|it| it.is_value()).filter_map(Reference::symbol).any(|variable| {
-            seen.insert(variable.key())
-                && variable.is_value_variable()
-                && is_unsafe_for_oxlint(variable, loop_node, known)
-        });
-        if is_unsafe {
-            cx.report(func.estree_span(), UNSAFE_REFS);
-        }
-    }
-}
-
 /// It resolves to something, and ESLint's `isSafe` does not hold.
 fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect, known: &mut Known<'a>) -> bool {
     if dialect == Dialect::TypeScript && reference.is_type() {
@@ -323,8 +182,12 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
         }
         _ => 0,
     };
-    let writes = *(known.writes_to_variables.entry(variable.key()))
+    let mut writes = *(known.writes_to_variables.entry(variable.key()))
         .or_insert_with(|| Writes::among(variable.references(), variable.scope().variable_scope()));
+    // For oxlint it does not matter in which function a `var` is written to.
+    if loop_node.file().language().is_oxlint && matches!(declaration, Some((VarKind::Var, _))) {
+        writes.is_in_other_function = false;
+    }
     known.has_unsafe_write(writes, loop_node, excluded_end)
 }
 
@@ -341,19 +204,6 @@ pub fn has_loops(file: &File) -> bool {
 
 /// ESLint's `checkForLoops`.
 pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialect, cx: &mut Cx<'a, R>) {
-    // [`check_as_oxlint`] goes on.
-    if cx.language().is_oxlint {
-        if is_function_of_oxc(func) {
-            cx.state.functions.push(func);
-        }
-        let mut outer = func.enclosing().filter(|_| is_function_of_oxc(func) && !is_safe_iife(func));
-        while let Some(it) = outer
-            && cx.state.with_lasting_functions.insert(it)
-        {
-            outer = it.enclosing();
-        }
-        return;
-    }
     if !ast_utils::is_function_with_body(func) {
         return;
     }
@@ -382,7 +232,34 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
         var_names.extend_from_slice(name.bytes());
     }
     var_names.push(b'\'');
-    cx.report(func.estree_span(), UNSAFE_REFS).data("varNames", var_names);
+    let mut place = func.estree_span();
+    if cx.language().is_oxlint {
+        let body = match loop_node.kind() {
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. } => body,
+            _ => loop_node,
+        };
+        // What is in the head of a loop is in the body of the loop around that.
+        if !body.span().contains(place) && cx.state.get_containing_loop_node(loop_node.into()).is_none() {
+            return;
+        }
+        // oxlint looks at the functions that are directly in the loop, with all that is in them: once at the function
+        // that is called where it is written, not at those in it.
+        let (whole, mut at) = (loop_node.span(), func);
+        while let Some(outer) = at.enclosing().filter(|it| whole.contains(it.span())) {
+            if ast_utils::is_function_with_body(outer) {
+                place = outer.estree_span();
+            }
+            at = outer;
+        }
+        if !cx.state.reported_as_oxlint.insert(place.start) {
+            return;
+        }
+    }
+    cx.report(place, UNSAFE_REFS).data("varNames", var_names);
 }
 
 impl Rule for NoLoopFunc {
@@ -396,7 +273,6 @@ impl Rule for NoLoopFunc {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
         if has_loops(file) {
             on.funcs(|_, func, cx| check(func, Dialect::Eslint, cx));
-            on.finish(|_, cx| check_as_oxlint(cx));
         }
         Known::default()
     }

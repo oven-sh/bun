@@ -514,6 +514,181 @@
   "suggestions": "try {} catch (e) { class A { static { throw new Error(\"a\"); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n",
   "dangerously": "try {} catch (e) { class A { static { throw new Error(\"a\", { cause: e }); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n"
  },
+ "112-arrow-body-style": {
+  "fix": "a = () =>  b ;\nc = () => (\n  { d: 1 }\n);\nfor (e = () => ( f in g );;) {}\n",
+  "suggestions": "a = () => { return b; };\nc = () => {\n  return { d: 1 };\n};\nfor (e = () => { return f in g; };;) {}\n",
+  "dangerously": "a = () =>  b ;\nc = () => (\n  { d: 1 }\n);\nfor (e = () => ( f in g );;) {}\n"
+ },
+ "113-arrow-body-style": {
+  "fix": "a = () =>  () => { return b; } ;\n",
+  "suggestions": "a = () => { return () => { return b; }; };\n",
+  "dangerously": "a = () =>  () => { return b; } ;\n"
+ },
+ "114-no-negated-condition": {
+  "fix": "if (a) { c(); } else { b(); }\nd = e === f ? h : g;\n",
+  "suggestions": "if (!a) { b(); } else { c(); }\nd = e !== f ? g : h;\n",
+  "dangerously": "if (a) { c(); } else { b(); }\nd = e === f ? h : g;\n"
+ },
+ "115-yoda": {
+  "fix": "a = [ c === 'b' ,d]; if (e>1) {}\n",
+  "suggestions": "a = ['b' === c,d]; if (1<e) {}\n",
+  "dangerously": "a = [ c === 'b' ,d]; if (e>1) {}\n"
+ },
+ "116-eqeqeq": {
+  "fix": "typeof a === 'b'; c /* d */ == 'e';\n",
+  "suggestions": "typeof a=='b'; c /* d */ == 'e';\n",
+  "dangerously": "typeof a === 'b'; c === 'e';\n"
+ },
+ "117-prefer-object-has-own": {
+  "fix": "if (! Object.hasOwn(a, b)) {} c = Object.hasOwn(d, e);\n",
+  "suggestions": "if (!Object.prototype.hasOwnProperty.call(a, b)) {} c = {}.hasOwnProperty.call(d, e);\n",
+  "dangerously": "if (! Object.hasOwn(a, b)) {} c = Object.hasOwn(d, e);\n"
+ },
+ "118-no-new-wrappers": {
+  "fix": "a = 'b'; c = Number(d); e = Boolean;\n",
+  "suggestions": "a = new String('b'); c = new Number(d); e = new Boolean;\n",
+  "dangerously": "a = 'b'; c = Number(d); e = Boolean;\n"
+ },
+ "119-prefer-exponentiation-operator": {
+  "fix": "a = b ** c; d = (e + f) ** -g * 2; h = -(i ** j);\n",
+  "suggestions": "a = Math.pow(b, c); d = Math.pow(e + f, -g) * 2; h = -Math.pow(i, j);\n",
+  "dangerously": "a = b ** c; d = (e + f) ** -g * 2; h = -(i ** j);\n"
+ },
+ "120-no-empty": {
+  "fix": "try { a(); } catch {}\nif (b) {}\ntry { c(); } catch (e) { f(); } finally {}\nswitch (d) {}\n",
+  "suggestions": "try { a(); } catch {}\n\ntry { c(); } catch (e) { f(); } \n\n",
+  "dangerously": "try { a(); } catch {}\n\ntry { c(); } catch (e) { f(); } \n\n"
+ },
+ "121-no-implicit-coercion": {
+  "fix": "a = String(b); c += ''; d = Number(e, f); g = typeofNumber(h); i = ~j.indexOf(k);\n",
+  "suggestions": "a = '' + b; c += ''; d = +(e, f); g = typeof+h; i = ~j.indexOf(k);\n",
+  "dangerously": "a = String(b); c += ''; d = Number(e, f); g = typeofNumber(h); i = ~j.indexOf(k);\n"
+ },
+ "122-no-console": {
+  "fix": "if (a) console.log(1); b = () => console.log(2); c = d ? console.log(3) : 4; console.log(5)\ne(console.log);\n",
+  "suggestions": "if (a) {} b = () => {}; c = d ? console.log(3) : 4; \n\n",
+  "dangerously": "if (a) {} b = () => {}; c = d ? undefined : 4; \n\n"
+ },
+ "123-prefer-arrow-callback": {
+  "fix": "a(() => { b(function () {}); }); c(() => { return this; }); d(e || (async (g) => {}));\n",
+  "suggestions": "a(function () { b(function () {}); }); c(function () { return this; }.bind(this)); d(e || async function f(g) {});\n",
+  "dangerously": "a(() => { b(function () {}); }); c(() => { return this; }); d(e || (async (g) => {}));\n"
+ },
+ "124-use-isnan": {
+  "fix": "isNaN(a); !isNaN(b); c < NaN; d.indexOf(NaN);\n",
+  "suggestions": "a === NaN; b != Number.NaN; c < NaN; d.indexOf(NaN);\n",
+  "dangerously": "isNaN(a); !isNaN(b); c < NaN; d.indexOf(NaN);\n"
+ },
+ "125-no-useless-rename": {
+  "fix": "import { a } from 'b'; const { c, e = 1 } = f; export { c };\n",
+  "suggestions": "import { a as a } from 'b'; const { c /* d */: c, e: e = 1 } = f; export { c as c };\n",
+  "dangerously": "import { a } from 'b'; const { c, e = 1 } = f; export { c };\n"
+ },
+ "126-no-useless-rename": {
+  "fix": "import { type a } from 'b'; export { type a };\n",
+  "suggestions": "import { type a as a } from 'b'; export { type a as a };\n",
+  "dangerously": "import { type a } from 'b'; export { type a };\n"
+ },
+ "127-no-compare-neg-zero": {
+  "fix": "a < 0; 0 == b; c !== 0;\n",
+  "suggestions": "a < -0; -0 == b; c !== -0;\n",
+  "dangerously": "a < 0; 0 == b; c !== 0;\n"
+ },
+ "128-no-unused-labels": {
+  "fix": "for (;;) {}\nD: e();\n",
+  "suggestions": "A: /* b */ for (;;) {}\nC: D: e();\n",
+  "dangerously": "for (;;) {}\nD: e();\n"
+ },
+ "129-no-unsafe-negation": {
+  "fix": "!(a in b); !((c) instanceof d);\n",
+  "suggestions": "!a in b; !(c) instanceof  d;\n",
+  "dangerously": "!(a in b); !((c) instanceof d);\n"
+ },
+ "130-no-iterator": {
+  "fix": "a.__iterator__ = b; c['__iterator__'];\n",
+  "suggestions": "a[Symbol.iterator] = b; c[Symbol.iterator];\n",
+  "dangerously": "a[Symbol.iterator] = b; c[Symbol.iterator];\n"
+ },
+ "131-no-empty-static-block": {
+  "fix": "class A { static {} }\n",
+  "suggestions": "class A {  }\n",
+  "dangerously": "class A {  }\n"
+ },
+ "132-no-debugger": {
+  "fix": "if (a) debugger; else debugger\nfor (;;) debugger;\n",
+  "suggestions": "if (a) {} else {}\nfor (;;) {}\n",
+  "dangerously": "if (a) {} else {}\nfor (;;) {}\n"
+ },
+ "133-for-direction": {
+  "fix": "for (let i = 0; i < 1; i--) {} for (let j = 0; j < 1; j -= 1) {} for (let k = 1; k > 0; ++k) {}\n",
+  "suggestions": "for (let i = 0; i < 1; i--) {} for (let j = 0; j < 1; j -= 1) {} for (let k = 1; k > 0; ++k) {}\n",
+  "dangerously": "for (let i = 0; i < 1; i++) {} for (let j = 0; j < 1; j+=1) {} for (let k = 1; k > 0; --k) {}\n"
+ },
+ "134-no-useless-escape": {
+  "fix": "a = /[*\\?]/; b = 'd\\e';\n",
+  "suggestions": "a = /[\\*\\?]/; b = '\\d\\e';\n",
+  "dangerously": "a = /[*\\?]/; b = 'd\\e';\n"
+ },
+ "135-prefer-destructuring": {
+  "fix": "const {a} = (b || c); const {d} = e; const {f} = h.i;\n",
+  "suggestions": "const a = (b || c).a; const d = e['d']; const f /* g */ = (h.i).f;\n",
+  "dangerously": "const {a} = (b || c); const {d} = e; const {f} = h.i;\n"
+ },
+ "136-no-unneeded-ternary": {
+  "fix": "a = (b !== c) ? true : false; d = e & f ? true : false; g = h == i ? false : true; j = k[l] ? false : true;\n",
+  "suggestions": "a = (b !== c) ? true : false; d = e & f ? true : false; g = h == i ? false : true; j = k[l] ? false : true;\n",
+  "dangerously": "a = !!((b !== c)); d = e & f; g = h != i; j = !(k[l]);\n"
+ },
+ "137-sort-vars": {
+  "fix": "var a, b; var d = e(), c, f, g = 1; var i, /* j */ h;\n",
+  "suggestions": "var b, a; var d = e(), c, g = 1, f; var i, /* j */ h;\n",
+  "dangerously": "var a, b; var d = e(), c, f, g = 1; var i, /* j */ h;\n"
+ },
+ "138-one-var": {
+  "fix": "const a = 1,  b = 2; export const c = 3;\n",
+  "suggestions": "const a = 1; const b = 2; export const c = 3;\n",
+  "dangerously": "const a = 1,  b = 2; export const c = 3;\n"
+ },
+ "139-one-var": {
+  "fix": "declare const a: number; const b = 2,  c = 3;\n",
+  "suggestions": "declare const a: number; const b = 2; const c = 3;\n",
+  "dangerously": "declare const a: number; const b = 2,  c = 3;\n"
+ },
+ "140-prefer-template": {
+  "fix": "a = `${b}${c}`; d = `${e +\n  (f ? 'g' : 'h')  }i`;\n`j${  k}`\n",
+  "suggestions": "a = `${b}` + c; d = e +\n  (f ? 'g' : 'h') + 'i';\n'j' + k\n",
+  "dangerously": "a = `${b}${c}`; d = `${e +\n  (f ? 'g' : 'h')  }i`;\n`j${  k}`\n"
+ },
+ "141-no-explicit-any": {
+  "fix": "let a: any; type B = keyof any; function c(...d: any) {}\n",
+  "suggestions": "let a: any; type B = keyof any; function c(...d: any) {}\n",
+  "dangerously": "let a: any; type B = keyof any; function c(...d: any) {}\n"
+ },
+ "142-ban-ts-comment": {
+  "fix": "// @ts-expect-error\nlet a: number = 'b';\n/* @ts-expect-error: @ts-expect-error */\nlet c: number = 'd';\n",
+  "suggestions": "// @ts-ignore\nlet a: number = 'b';\n/* @ts-ignore: @ts-ignore */\nlet c: number = 'd';\n",
+  "dangerously": "// @ts-expect-error\nlet a: number = 'b';\n/* @ts-expect-error: @ts-expect-error */\nlet c: number = 'd';\n"
+ },
+ "143-consistent-type-assertions": {
+  "fix": "a = (c as B); d(f as E); g = (i as H) ? 1 : 2; j = ((l, m) as K); n = () => ({} as O);\n",
+  "suggestions": "a = <B>c; d(<E>f); g = <H>i ? 1 : 2; j = <K>(l, m); n = () => <O>{};\n",
+  "dangerously": "a = (c as B); d(f as E); g = (i as H) ? 1 : 2; j = ((l, m) as K); n = () => ({} as O);\n"
+ },
+ "144-prefer-function-type": {
+  "fix": "type A = () => void;\nexport type B<C> = (d: C) => void;\ntype E = () => void;\n",
+  "suggestions": "interface A { (): void }\nexport interface B<C> { (d: C): void; }\ntype E = { (): void };\n",
+  "dangerously": "type A = () => void;\nexport type B<C> = (d: C) => void;\ntype E = () => void;\n"
+ },
+ "145-no-empty-object-type": {
+  "fix": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ninterface E extends F {}\n",
+  "suggestions": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ntype E = F\n",
+  "dangerously": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ntype E = F\n"
+ },
+ "146-consistent-indexed-object-style": {
+  "fix": "type A = Record<D, E>;\ntype F = Record<string, H>;\n",
+  "suggestions": "type A = {\n  /** b */\n  [C in D]: E;\n};\ninterface F { [g: string]: H /* i */ }\n",
+  "dangerously": "type A = Record<D, E>;\ntype F = Record<string, H>;\n"
+ },
  "9-non-nullable-type-assertion-style": {
   "fix": "declare const a: string | null; export const b = a as string;\n",
   "suggestions": "declare const a: string | null; export const b = a!;\n",

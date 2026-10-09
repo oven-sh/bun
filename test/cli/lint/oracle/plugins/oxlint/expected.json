@@ -1960,18 +1960,6 @@
   "strict.js:3:17 eslint(no-implicit-globals)",
   "strict.js:3:5 eslint(no-implicit-globals)"
  ],
- "source-type/no-implicit-globals-catch": [
-  "a.js:1:15 eslint(no-implicit-globals)",
-  "a.js:1:24 eslint(no-implicit-globals)",
-  "a.js:1:31 eslint(no-implicit-globals)",
-  "a.js:2:5 eslint(no-implicit-globals)",
-  "b.js:1:5 eslint(no-implicit-globals)",
-  "c.js:1:15 eslint(no-implicit-globals)",
-  "c.js:1:34 eslint(no-implicit-globals)",
-  "c.js:1:45 eslint(no-implicit-globals)",
-  "c.js:1:52 eslint(no-implicit-globals)",
-  "d.js:1:10 eslint(no-implicit-globals)"
- ],
  "source-type/no-implicit-globals-names": [
   "a.js:3:19 eslint(no-implicit-globals)",
   "a.js:3:22 eslint(no-implicit-globals)",
@@ -3158,24 +3146,6 @@
   "b5.ts:2:21 eslint(no-duplicate-imports)",
   "b8.ts:2:20 eslint(no-duplicate-imports)"
  ],
- "counts/no-useless-return": [
-  "a.js:10:24 eslint(no-useless-return)",
-  "a.js:12:45 eslint(no-useless-return)",
-  "a.js:14:23 eslint(no-useless-return)",
-  "a.js:16:19 eslint(no-useless-return)",
-  "a.js:18:60 eslint(no-useless-return)",
-  "a.js:19:39 eslint(no-useless-return)",
-  "a.js:1:39 eslint(no-useless-return)",
-  "a.js:22:32 eslint(no-useless-return)",
-  "a.js:2:49 eslint(no-useless-return)",
-  "a.js:4:39 eslint(no-useless-return)",
-  "a.js:5:41 eslint(no-useless-return)",
-  "a.js:6:26 eslint(no-useless-return)",
-  "a.js:7:37 eslint(no-useless-return)",
-  "a.js:8:25 eslint(no-useless-return)",
-  "a.js:8:38 eslint(no-useless-return)",
-  "b1.js:1:17 eslint(no-useless-return)"
- ],
  "counts/max-lines-per-function-without-body": [
   "a.ts:14:4 eslint(max-lines-per-function)",
   "a.ts:2:4 eslint(max-lines-per-function)",
@@ -4165,5 +4135,10 @@
   "a.js:4:5 eslint(no-unused-vars)",
   "a.js:5:12 eslint(no-unused-vars)",
   "a.js:7:5 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/beside-a-type-parameter-of-the-same-name": [
+  "a.ts:11:11 eslint(no-unused-vars)",
+  "a.ts:4:40 eslint(no-unused-vars)",
+  "a.ts:4:46 eslint(no-unused-vars)"
  ]
 }

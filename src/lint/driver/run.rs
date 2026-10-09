@@ -36,9 +36,12 @@ pub struct Stream {
     pub colors: bool,
 }
 
+/// The text of a program, in parts: several programs begin with the same.
+pub(crate) type Source = &'static [&'static str];
+
 /// A program for the running executable to run, as `bun -e <source> <arguments>`.
 pub struct Script<'s> {
-    pub source: &'static str,
+    pub source: Source,
     pub arguments: &'s [&'s [u8]],
     /// The working directory.
     pub cwd: &'s [u8],

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
     ReturnTypeOptions, ancestor_has_return_type, check_function_return_type,
     is_valid_function_expression_return_type,
@@ -52,6 +53,23 @@ fn is_iife(func: Func) -> bool {
         if matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call))
 }
 
+/// oxlint's `ancestor_has_return_type`, which does not ask whether the function is returned: it is enough that it is
+/// somewhere in a function with a return type, or in the value of a variable or a property with a type annotation, with
+/// no statement that is an expression between.
+fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let answer = known.find(Node::Func(func), |_, ancestor| match ancestor {
+        Node::Func(outer) if outer.return_type().is_some() => Some(true),
+        Node::VarDecl(declaration) => Some(declaration.ty().is_some()),
+        Node::Member(member) if member.kind() == MemberKind::Property => Some(member.ty().is_some()),
+        Node::Stmt(statement) => match statement.kind() {
+            StmtKind::Expr(e) if !e.as_fn().is_some_and(Func::is_arrow) => Some(false),
+            _ => None,
+        },
+        _ => None,
+    });
+    answer == Some(true)
+}
+
 impl ExplicitFunctionReturnType {
     fn is_allowed_function(&self, func: Func) -> bool {
         (self.allow_functions_without_type_parameters && func.type_params().is_empty())
@@ -80,7 +98,8 @@ impl ExplicitFunctionReturnType {
         if is_expression
             && self.options.allow_typed_function_expressions
             && (is_valid_function_expression_return_type(func, self.options)
-                || ancestor_has_return_type(func))
+                || ancestor_has_return_type(func)
+                || cx.language().is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
         {
             return;
         }
@@ -92,7 +111,8 @@ impl ExplicitFunctionReturnType {
 
 impl Rule for ExplicitFunctionReturnType {
     const META: Meta = Meta::typescript("explicit-function-return-type", Kind::Problem);
-    type State<'a> = ();
+    /// For oxlint: whether what is around a node has a return type.
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -116,7 +136,8 @@ impl Rule for ExplicitFunctionReturnType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.funcs(Self::check);
+        AncestorMemo::default()
     }
 }

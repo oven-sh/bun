@@ -42,11 +42,6 @@ fn count_new_lines(text: &[u8]) -> usize {
     strings::count_char(text, b'\n')
 }
 
-/// `/\s/.test(text)`
-fn has_white_space(text: &[u8]) -> bool {
-    (0..text.len()).any(|at| white_space_len(&text[at..]) > 0)
-}
-
 /// `string.toUpperCase() === string`, for the first UTF-16 code unit of the name of a tag.
 fn starts_with_upper_case(tag: &[u8]) -> bool {
     !tag.first().is_some_and(u8::is_ascii_lowercase)
@@ -1128,8 +1123,8 @@ impl<'a> Printer<'a> {
         let needs_brackets = !(is_first && part.starts_with(b"@"))
             && ((!is_first && matches!(part, b"true" | b"false" | b"null" | b"undefined"))
                 || part.first().is_some_and(u8::is_ascii_digit)
-                || strings::index_of_any(part, b"!\"#%&'()*+,./;<=>@[\\]^`{|}~").is_some()
-                || has_white_space(part));
+                // `/[\s!"#%&'()*+,./;<=>@[\\\]^`{|}~]/`: all that cannot be in an `ID`.
+                || id_len(part) != part.len());
         // Whether it is read as it is printed.
         self.is_damaged |= match needs_brackets {
             true => {

@@ -782,7 +782,14 @@ impl Builder<'_> {
                     self.finish_tag()?;
                     self.state = State::BeforeData;
                 } else {
-                    self.append_to_tag_name();
+                    let start = self.index - 1;
+                    self.index += self
+                        .rest()
+                        .iter()
+                        .take_while(|next| !is_space(**next) && !matches!(**next, b'/' | b'>'))
+                        .count();
+                    self.tree
+                        .append_source(self.source, &mut self.tag.name, start, self.index);
                     return Ok(());
                 }
                 if is_end {
@@ -791,7 +798,11 @@ impl Builder<'_> {
             }
             State::BeforeAttributeName => {
                 if is_space(character) {
-                    self.index += 1;
+                    self.index += self
+                        .rest()
+                        .iter()
+                        .take_while(|next| is_space(**next))
+                        .count();
                 } else if character == b'/' {
                     self.state = State::SelfClosingStartTag;
                     self.index += 1;
@@ -819,9 +830,30 @@ impl Builder<'_> {
                     self.finish_attribute_and_tag()?;
                 } else if matches!(character, b'"' | b'\'' | b'<') {
                     return Err(Error::Syntax);
-                } else {
+                } else if match self.text(self.attribute.name) {
+                    b"" => self.rest().starts_with(b"as"),
+                    b"a" => character == b's',
+                    _ => false,
+                } {
                     self.index += 1;
                     self.append_to_attribute_name()?;
+                } else {
+                    // It is not `as` on the way.
+                    let start = self.index;
+                    self.index += self
+                        .rest()
+                        .iter()
+                        .take_while(|next| {
+                            !is_space(**next)
+                                && !matches!(**next, b'/' | b'=' | b'>' | b'"' | b'\'' | b'<')
+                        })
+                        .count();
+                    self.tree.append_source(
+                        self.source,
+                        &mut self.attribute.name,
+                        start,
+                        self.index,
+                    );
                 }
             }
             State::AfterAttributeName => {

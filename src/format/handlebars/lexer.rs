@@ -57,29 +57,33 @@ enum State {
     Raw,
 }
 
-/// `[^\s!"#%-,\.\/;->@\[-\^`\{-~]`, for ASCII.
-const fn is_id_byte(byte: u8) -> bool {
-    !matches!(
-        byte,
-        b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ' | b'!' | b'"' | b'#' | b'%'..=b',' | b'.' | b'/' | b';'..=b'>' | b'@' | b'['..=b'^' | b'`' | b'{'..=b'~'
-    )
-}
+/// Which bytes are ASCII that `[^\s!"#%-,\.\/;->@\[-\^`\{-~]` matches.
+const IS_ASCII_OF_ID: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut byte = 0;
+    while byte < 0x80 {
+        table[byte] = !matches!(
+            byte as u8,
+            b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ' | b'!' | b'"' | b'#' | b'%'..=b',' | b'.' | b'/' | b';'..=b'>' | b'@' | b'['..=b'^' | b'`' | b'{'..=b'~'
+        );
+        byte += 1;
+    }
+    table
+};
 
 /// How many bytes at the start of `text` can be in an `ID`.
 pub(crate) fn id_len(text: &[u8]) -> usize {
     let mut at = 0;
-    while let Some(&byte) = text.get(at) {
-        let is_in_id = if byte < 0x80 {
-            is_id_byte(byte)
-        } else {
-            white_space_len(&text[at..]) == 0
-        };
-        if !is_in_id {
-            break;
+    loop {
+        at += text[at..]
+            .iter()
+            .take_while(|byte| IS_ASCII_OF_ID[**byte as usize])
+            .count();
+        match text.get(at) {
+            Some(0x80..) if white_space_len(&text[at..]) == 0 => at += 1,
+            _ => return at,
         }
-        at += 1;
     }
-    at
 }
 
 fn white_space_run(text: &[u8]) -> usize {

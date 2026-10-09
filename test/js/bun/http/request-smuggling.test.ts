@@ -895,12 +895,11 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
   });
 
   // TE.TE desync (https://github.com/oven-sh/bun/issues/29732): upstream uWS
-  // blindly consumed two bytes after "0\r\n" as the terminating CRLF, so
-  // "0\r\nX:POST /admin ..." stripped "X:" and then parsed the rest as a
-  // second pipelined request. The bytes after the last-chunk are the RFC 7230
-  // trailer-part (header-field lines then an empty line); they belong to the
-  // current message, so "POST /admin ..." must never be seen as a request.
-  test("trailer-part bytes after zero-chunk are not parsed as a pipelined request", async () => {
+  // took the two bytes after "0\r\n" for the terminating CRLF, so
+  // "0\r\nX:GET /admin ..." lost "X:" and the rest ran as a second request.
+  // The bytes after the last-chunk are the trailer section of the first
+  // request (RFC 9112 7.1.2): header lines, then an empty line.
+  test("a request line in the trailer section of a chunked body is not dispatched", async () => {
     const urls: string[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -915,36 +914,38 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     const client = net.connect(server.port!, "127.0.0.1");
 
-    // Three trailer header-field lines and the terminating empty line.
-    // A vulnerable server that consumes "X:" as the terminator would then
-    // parse "POST /admin HTTP/1.1" as a second (smuggled) request.
+    // The first request must not say "Connection: close": Bun runs no request
+    // behind one that does, so "/admin" would stay out whatever the parser did
+    // with "X:". "/after" is the control. It runs right behind the trailer
+    // section, where a smuggled request would run too, and it ends the
+    // connection.
     const smuggleAttempt =
       "POST / HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
-      "Connection: close\r\n" +
       "Transfer-Encoding: chunked\r\n" +
       "\r\n" +
       "0\r\n" +
-      "X:POST /admin HTTP/1.1\r\n" +
+      "X:GET /admin HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
-      "Content-Length: 5\r\n" +
       "\r\n" +
-      "admin";
+      "GET /after HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Connection: close\r\n" +
+      "\r\n";
 
-    await new Promise<void>((resolve, reject) => {
-      let responseData = "";
+    const responseData = await new Promise<string>((resolve, reject) => {
+      let data = "";
       client.on("error", reject);
-      client.on("data", data => {
-        responseData += data.toString();
+      client.on("data", chunk => {
+        data += chunk.toString();
       });
-      client.on("close", () => {
-        // The smuggled second request must never reach the handler.
-        expect(urls).toEqual(["/"]);
-        // No ADMIN-ACCESS body should have been produced.
-        expect(responseData).not.toContain("ADMIN-ACCESS");
-        resolve();
-      });
+      client.on("close", () => resolve(data));
       client.write(smuggleAttempt);
+    });
+
+    expect({ urls, adminBody: responseData.includes("ADMIN-ACCESS") }).toEqual({
+      urls: ["/", "/after"],
+      adminBody: false,
     });
   });
 

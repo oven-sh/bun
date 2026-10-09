@@ -1,0 +1,122 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2228,8 +2228,10 @@
+ 
+ /**
+  * Force the pending delayed ACK to be scheduled on the next engine tick.
++ * Returns 0 and queues nothing when no ack-eliciting application packet
++ * waits for an ACK.  Returns 1 otherwise.
+  */
+-void
++int
+ lsquic_conn_ack_now (lsquic_conn_t *);
+ 
+ /**
+--- a/src/liblsquic/lsquic_conn.h
++++ b/src/liblsquic/lsquic_conn.h
+@@ -40,7 +40,7 @@
+     LSCONN_HASHED         = (1 << 2),
+     LSCONN_MINI           = (1 << 3),   /* This is a mini connection */
+     LSCONN_IMMED_CLOSE    = (1 << 4),
+-    LSCONN_UNUSED_5       = (1 << 5),
++    LSCONN_USER_ABORT     = (1 << 5),   /* bun: lsquic_conn_abort_error() */
+     LSCONN_HANDSHAKE_DONE = (1 << 6),
+     LSCONN_CLOSING        = (1 << 7),
+     LSCONN_PEER_GOING_AWAY= (1 << 8),
+--- a/src/liblsquic/lsquic_conn.c
++++ b/src/liblsquic/lsquic_conn.c
+@@ -208,6 +208,9 @@
+ lsquic_conn_abort_error (struct lsquic_conn *lconn, int is_app,
+                          unsigned error_code, const char *reason)
+ {
++    /* bun: lsquic's own aborts call ci_abort_error() too.  The mark lets
++     * immediate_close() tell the application's close apart from them. */
++    lconn->cn_flags |= LSCONN_USER_ABORT;
+     lconn->cn_if->ci_abort_error(lconn, is_app, error_code, "%s",
+                                  reason ? reason : "");
+ }
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3051,16 +3051,24 @@
+  * and the peer keeps retransmitting into the dead conn until it eats a
+  * stateless reset instead of quietly idling out.
+  */
+-void
++int
+ lsquic_conn_ack_now (struct lsquic_conn *lconn)
+ {
+     struct ietf_full_conn *conn;
+ 
+     if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
+-        return;
++        return 0;
+     conn = (struct ietf_full_conn *) lconn;
++    /* bun: no ack-eliciting application packet waits for an ACK.  An ACK
++     * queued anyway is a datagram the peer does not need.  With no
++     * application packet received at all it fails in
++     * generate_ack_frame_for_pns(), and that ABORT_ERROR reaches the peer as
++     * an INTERNAL_ERROR close. */
++    if (0 == conn->ifc_n_slack_akbl[PNS_APP])
++        return 0;
+     conn->ifc_flags |= IFC_ACK_QUED_APP;
+     lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
++    return 1;
+ }
+ 
+ 
+@@ -4183,12 +4191,24 @@
+     struct conn_err conn_err;
+     enum packnum_space pns;
+     int sz;
++    /* bun: a close the application asked for (lsquic_conn_abort_error).
++     * Upstream sends nothing for it on a client that has not heard from the
++     * server and never uses the Initial space, so the server keeps the
++     * connection until its handshake timer.  ngtcp2 sends the close in the
++     * highest space that has keys.  lsquic's own aborts are not changed.
++     * https://github.com/litespeedtech/lsquic/pull/693 proposes the Initial
++     * fallback for all of them. */
++    const int user_abort = !!(conn->ifc_conn.cn_flags & LSCONN_USER_ABORT);
+ 
+     if (conn->ifc_flags & (IFC_TICK_CLOSE|IFC_GOT_PRST))
+         return TICK_CLOSE;
+ 
+     if (!(conn->ifc_flags & IFC_SERVER)
+-            && conn->ifc_u.cli.ifcli_ver_neg.vn_state != VN_END)
++            && conn->ifc_u.cli.ifcli_ver_neg.vn_state != VN_END
++            /* bun: before the first tick no ClientHello has left, so the
++             * server has no connection to close.  (ngtcp2 sends its first
++             * flight inside connect(), so Node is never in this state.) */
++            && (!user_abort || (conn->ifc_flags & IFC_FIRST_TICK)))
+         return TICK_CLOSE;
+ 
+     conn->ifc_flags |= IFC_TICK_CLOSE;
+@@ -4210,6 +4230,11 @@
+              */
+                     (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+         pns = PNS_APP;
++    else if (user_abort && !iquic_esf_is_enc_level_ready(
++                            conn->ifc_conn.cn_enc_session, ENC_LEV_HSK))
++        /* bun: a Handshake packet cannot be encrypted before the
++         * ServerHello. */
++        pns = PNS_INIT;
+     else
+         pns = PNS_HSK;
+ 
+@@ -4222,13 +4247,15 @@
+     }
+ 
+     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED|IFC_TIMED_OUT));
+-    if (pns == PNS_HSK && conn->ifc_error.app_error)
++    if (pns != PNS_APP /* bun: PNS_INIT too */ && conn->ifc_error.app_error)
+     {
+         /* [RFC 9000] Section 10.2.3: clear app code and reason: */
+         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
+         error_reason = NULL;
+     }
+-    else if (conn->ifc_error.u.err != 0)
++    else if (conn->ifc_error.u.err != 0
++            /* bun: code 0 is the application's choice, not "no code". */
++            || user_abort)
+     {
+         conn_err = conn->ifc_error;
+         error_reason = conn->ifc_errmsg;

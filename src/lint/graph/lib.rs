@@ -91,11 +91,11 @@ struct ProjectResolver<'h> {
     base_url: Option<Vec<u8>>,
 }
 
-pub struct Graph<'h> {
-    store: &'h Store,
+/// What is found once and asked for often.
+#[derive(Default)]
+struct Known<'h> {
     /// By the path of the `tsconfig.json`. Empty: there is none.
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
-    loading: Guarded<()>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
     /// What a specifier that is not relative means: by the directory, how it is imported, and the specifier.
@@ -104,9 +104,16 @@ pub struct Graph<'h> {
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
     packages: ShardedMap<Vec<u8>, Option<Json>>,
-    recorded: Guarded<Vec<Recorded<'h>>>,
     /// [`Modules::record_exports`]: by the path, with symbolic links followed. `None`: it cannot be parsed.
     records: ShardedMap<Vec<u8>, Option<Record>>,
+}
+
+pub struct Graph<'h> {
+    store: &'h Store,
+    /// Made when a rule asks: most runs have no such rule, and the tables are large.
+    known: OnceLock<Box<Known<'h>>>,
+    loading: Guarded<()>,
+    recorded: Guarded<Vec<Recorded<'h>>>,
     record_maker: OnceLock<MakeRecord>,
     /// [`Modules::follow_packages`]
     follows_packages: AtomicBool,
@@ -183,19 +190,18 @@ impl<'h> Graph<'h> {
     pub fn new(store: &'h Store) -> Graph<'h> {
         Graph {
             store,
-            resolvers: ShardedMap::default(),
+            known: OnceLock::new(),
             loading: Guarded::new(()),
-            configs: ShardedMap::default(),
-            not_relative: ShardedMap::default(),
-            real_paths: ShardedMap::default(),
-            packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
-            records: ShardedMap::default(),
             record_maker: OnceLock::new(),
             follows_packages: AtomicBool::new(false),
             follows_oxlint: AtomicBool::new(false),
             complete: OnceLock::new(),
         }
+    }
+
+    fn known(&self) -> &Known<'h> {
+        self.known.get_or_init(Box::default)
     }
 
     fn load_project(&self, config: &[u8], directory: &[u8]) -> Project {
@@ -230,19 +236,20 @@ impl<'h> Graph<'h> {
 
     /// The resolver for the files in `directory`.
     fn resolver(&self, directory: &[u8]) -> &ProjectResolver<'h> {
-        let config = match self.configs.get_ref(directory) {
+        let known = self.known();
+        let config = match known.configs.get_ref(directory) {
             Some(config) => config,
             None => {
                 let found = find_config(self.store.disk(), directory).unwrap_or_default();
-                self.configs.insert_ref(directory.to_vec(), found)
+                known.configs.insert_ref(directory.to_vec(), found)
             }
         };
-        if let Some(resolver) = self.resolvers.get_ref(&config[..]) {
+        if let Some(resolver) = known.resolvers.get_ref(&config[..]) {
             return resolver;
         }
         // One thread reads a configuration, the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = self.resolvers.get_ref(&config[..]) {
+        if let Some(resolver) = known.resolvers.get_ref(&config[..]) {
             return resolver;
         }
         let store: &'h Store = self.store;
@@ -258,8 +265,7 @@ impl<'h> Graph<'h> {
         }
         let project = store.session.keep(project);
         let resolver = Resolver::new(&store.session, store.disk(), &project.options);
-        self.resolvers
-            .insert_ref(config.clone(), ProjectResolver { resolver, base_url })
+        (known.resolvers).insert_ref(config.clone(), ProjectResolver { resolver, base_url })
     }
 
     fn flavor(&self) -> Flavor {
@@ -309,13 +315,13 @@ impl<'h> Graph<'h> {
             specifier,
         ]
         .concat();
-        let found = match self.not_relative.get_ref(&key[..]) {
+        let found = match self.known().not_relative.get_ref(&key[..]) {
             Some(found) => found,
             None => {
                 let found = self
                     .resolve_with_project(from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
-                self.not_relative.insert_ref(key, found)
+                self.known().not_relative.insert_ref(key, found)
             }
         };
         found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
@@ -360,13 +366,15 @@ impl<'h> Graph<'h> {
                 found
             }
         };
-        Some(found.map(|path| match self.real_paths.get_ref(&path[..]) {
-            Some(real) => real.clone(),
-            None => {
-                let real = disk.realpath(&path);
-                self.real_paths.insert_ref(path, real).clone()
-            }
-        }))
+        Some(
+            found.map(|path| match self.known().real_paths.get_ref(&path[..]) {
+                Some(real) => real.clone(),
+                None => {
+                    let real = disk.realpath(&path);
+                    self.known().real_paths.insert_ref(path, real).clone()
+                }
+            }),
+        )
     }
 
     fn resolve_with_project(
@@ -492,11 +500,11 @@ impl<'h> Graph<'h> {
     /// Makes the [`Record`] of `file`, which is at `path`, if a rule wants them and it is not known.
     fn keep_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
         let make = self.record_maker.get()?;
-        let known = match self.records.get_ref(&path[..]) {
+        let known = match self.known().records.get_ref(&path[..]) {
             Some(known) => known,
             None => {
                 let record = (!file.has_parse_errors()).then(|| make(file));
-                self.records.insert_ref(path, record)
+                self.known().records.insert_ref(path, record)
             }
         };
         known.as_ref()
@@ -704,7 +712,7 @@ impl Modules for Graph<'_> {
     }
 
     fn record_of(&self, module: ModuleId) -> Option<&Record> {
-        self.records.get_ref(self.path(module))?.as_ref()
+        self.known().records.get_ref(self.path(module))?.as_ref()
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {
@@ -749,7 +757,7 @@ impl Modules for Graph<'_> {
     fn package_json(&self, path: &[u8]) -> Option<&Json> {
         let path = from_native(path);
         let directory = directory_of(&path);
-        if let Some(known) = self.packages.get_ref(directory) {
+        if let Some(known) = self.known().packages.get_ref(directory) {
             return known.as_ref();
         }
         let disk = self.store.disk();
@@ -758,7 +766,9 @@ impl Modules for Graph<'_> {
             let text = disk.is_file(&file).then(|| disk.read(&file))??;
             bun_lint::json::parse(&text).filter(|it| it.as_object().is_some())
         });
-        self.packages.insert_ref(directory.to_vec(), found).as_ref()
+        (self.known().packages)
+            .insert_ref(directory.to_vec(), found)
+            .as_ref()
     }
 }
 

@@ -98,10 +98,10 @@ fn is_empty_string(e: Expr) -> bool {
     }
 }
 
-/// `callee(operand)`. ESLint's `getOperandText`: the commas of a sequence would separate arguments.
+/// `callee(operand)`. ESLint's `getOperandText`: the commas of a sequence would separate arguments. oxlint lets them.
 fn call_of(callee: &str, operand: Expr) -> Vec<u8> {
     let (open, close) = match operand.kind() {
-        ExprKind::Binary { op: BinOp::Comma, .. } => ("((", "))"),
+        ExprKind::Binary { op: BinOp::Comma, .. } if !operand.file().language().is_oxlint => ("((", "))"),
         _ => ("(", ")"),
     };
     [callee.as_bytes(), open.as_bytes(), operand.text(), close.as_bytes()].concat()
@@ -120,9 +120,12 @@ fn first_token_of(recommendation: &[u8]) -> &[u8] {
 
 fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, recommendation: &[u8]) -> Fix {
     // A text is split into tokens to its end, which for each of `!!!!..a` is the rest of the chain.
-    let needs_space = fixer.file().token_before(node).is_some_and(|before| {
-        before.end() == node.span().start && !ast_utils::can_tokens_be_adjacent(before, first_token_of(recommendation))
-    });
+    // oxlint does not look at what is before.
+    let needs_space = !fixer.file().language().is_oxlint
+        && fixer.file().token_before(node).is_some_and(|before| {
+            before.end() == node.span().start
+                && !ast_utils::can_tokens_be_adjacent(before, first_token_of(recommendation))
+        });
     match needs_space {
         true => fixer.replace(node, [&b" "[..], recommendation].concat()),
         false => fixer.replace(node, recommendation),
@@ -143,6 +146,11 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
     if cx.language().is_oxlint {
         report = report.data("type", type_of_coercion(node));
     }
+    // What ESLint suggests is a fix for oxlint.
+    let remedy = match remedy {
+        Remedy::Suggestion if cx.language().is_oxlint => Remedy::Fix,
+        _ => remedy,
+    };
     match remedy {
         Remedy::Nothing => report,
         Remedy::Suggestion => report.suggest_with(
@@ -238,7 +246,9 @@ impl NoImplicitCoercion {
             && !cx.has_reported_too_much()
         {
             let code = target.text();
-            report(e, &[code, b" = String(", code, b")"].concat(), Remedy::Suggestion, cx);
+            // oxlint changes nothing here.
+            let remedy = if cx.language().is_oxlint { Remedy::Nothing } else { Remedy::Suggestion };
+            report(e, &[code, b" = String(", code, b")"].concat(), remedy, cx);
         }
     }
 

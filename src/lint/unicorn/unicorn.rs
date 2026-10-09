@@ -3,7 +3,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
-    as_member_expression, get_inner_expression, is_decorator_expression, is_method_call, plain,
+    as_member_expression, get_inner_expression, is_decorator_expression, is_method_call,
     static_property_info, static_property_name,
 };
 use bun_lint_oxlint::same_expression::is_same_expression;
@@ -20,80 +20,6 @@ pub(crate) fn is_empty_stmt(stmt: Stmt) -> bool {
         }
     }
     true
-}
-
-/// `ast_util::could_be_asi_hazard`: whether text that starts with `[`, `(`, `/`, `+`, `-` or a backtick, in the place
-/// of `node`, would continue the statement before.
-pub(crate) fn could_be_asi_hazard(node: Expr) -> bool {
-    let start = node.span().start;
-    let mut statement = None;
-    for ancestor in Node::Expr(node).ancestors() {
-        match ancestor {
-            Node::Stmt(stmt) if stmt.tag() == StmtTag::Expr => {
-                statement = Some(stmt);
-                break;
-            }
-            // What can start with the node.
-            Node::Expr(e) if e.outer_span().start == start => match e.tag() {
-                ExprTag::Call
-                | ExprTag::Index
-                | ExprTag::Dot
-                | ExprTag::TaggedTemplate
-                | ExprTag::Binary
-                | ExprTag::Assign
-                | ExprTag::Cond
-                | ExprTag::Await
-                | ExprTag::As
-                | ExprTag::AsConst
-                | ExprTag::Satisfies
-                | ExprTag::NonNull
-                | ExprTag::Instantiation => {}
-                _ => return false,
-            },
-            _ => return false,
-        }
-    }
-    let Some(statement) = statement.filter(|it| it.span().start == start && start != 0) else {
-        return false;
-    };
-    // The body of one of these follows a `)` or a keyword.
-    let is_body = matches!(statement.parent(), Node::Stmt(parent) if matches!(
-        parent.kind(),
-        StmtKind::If { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::With { .. }
-            | StmtKind::Labeled { .. }
-    ));
-    if is_body {
-        return false;
-    }
-    let file = node.file();
-    let before = file
-        .text()
-        .get(..file.end_of_token_before(start) as usize)
-        .unwrap_or_default();
-    let continuation_bytes = before
-        .iter()
-        .rev()
-        .take(3)
-        .take_while(|it| **it & 0xC0 == 0x80)
-        .count();
-    let last = before
-        .get(before.len().saturating_sub(continuation_bytes + 1)..)
-        .unwrap_or_default();
-    std::str::from_utf8(last)
-        .ok()
-        .and_then(|it| it.chars().next())
-        .is_some_and(|last| {
-            matches!(
-                last,
-                ')' | ']' | '}' | '"' | '\'' | '`' | '+' | '-' | '/' | '.' | '_' | '$'
-            ) || last.is_alphanumeric()
-        })
 }
 
 /// `[...a]`, not in parentheses.
@@ -719,45 +645,6 @@ pub(crate) fn concat(parts: &[&[u8]]) -> Vec<u8> {
 /// The parent is an `AstKind::Decorator`: it is the `e` of `@e`.
 pub(crate) fn is_decorator(e: Expr) -> bool {
     !e.is_parenthesized() && is_decorator_expression(e)
-}
-
-/// `oxc_syntax::precedence::Precedence::Member`, as a number.
-pub(crate) const PRECEDENCE_MEMBER: u8 = 22;
-
-/// `get_precedence` of `utils/unicorn.rs`, with the numbers of `oxc_syntax::precedence::Precedence`. `None`: it never
-/// needs parentheses. What is in parentheses and the whole of an optional chain are among these.
-pub(crate) fn get_precedence(expr: Expr) -> Option<u8> {
-    Some(match plain(expr)?.kind() {
-        ExprKind::Binary { left, .. } if left.tag() == ExprTag::PrivateIdentifier => return None,
-        ExprKind::Binary { op, .. } => match op {
-            BinOp::Comma => 1,
-            BinOp::Nullish => 6,
-            BinOp::Or => 7,
-            BinOp::And => 8,
-            BinOp::BitOr => 9,
-            BinOp::BitXor => 10,
-            BinOp::BitAnd => 11,
-            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => 12,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Instanceof | BinOp::In => 13,
-            BinOp::Shl | BinOp::Shr | BinOp::UShr => 14,
-            BinOp::Add | BinOp::Sub => 15,
-            BinOp::Mul | BinOp::Div | BinOp::Rem => 16,
-            BinOp::Pow => 17,
-        },
-        ExprKind::Yield { .. } => 3,
-        ExprKind::Assign { .. } => 4,
-        ExprKind::Cond { .. } => 5,
-        ExprKind::Unary {
-            op: UnOp::PostInc | UnOp::PostDec,
-            ..
-        } => 19,
-        ExprKind::Unary { .. } | ExprKind::Await(_) => 18,
-        ExprKind::New(_) | ExprKind::Call(_) => 21,
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => PRECEDENCE_MEMBER,
-        ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => 0,
-        ExprKind::Fn(func) if func.is_arrow() => 0,
-        _ => return None,
-    })
 }
 
 /// Of `ast_util.rs`: what is before `start` on its line, if that is nothing but blanks. As `str::lines` has no empty

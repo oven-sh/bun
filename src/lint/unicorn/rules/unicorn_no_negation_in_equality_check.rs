@@ -1,4 +1,4 @@
-use crate::unicorn::could_be_asi_hazard;
+use bun_lint_oxlint::ast_util::could_be_asi_hazard;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 

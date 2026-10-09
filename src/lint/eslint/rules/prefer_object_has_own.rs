@@ -64,10 +64,16 @@ impl Rule for PreferObjectHasOwn {
                 if file.comments_in(callee).next().is_some() {
                     return None;
                 }
-                let needs_space = file.tokens_before(callee).with_comments().next().is_some_and(|before| {
-                    before.end() == callee.span().start
-                        && !ast_utils::can_tokens_be_adjacent(before, "Object.hasOwn")
-                });
+                let start = callee.span().start;
+                let needs_space = match file.language().is_oxlint {
+                    // It goes by the character before.
+                    true => {
+                        start > 1 && !matches!(file.text().get(start as usize - 1), Some(b' ' | b'=' | b'/' | b'('))
+                    }
+                    false => file.tokens_before(callee).with_comments().next().is_some_and(|before| {
+                        before.end() == start && !ast_utils::can_tokens_be_adjacent(before, "Object.hasOwn")
+                    }),
+                };
                 Some(fixer.replace(callee, if needs_space { " Object.hasOwn" } else { "Object.hasOwn" }))
             });
         });

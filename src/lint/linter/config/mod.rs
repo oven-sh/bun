@@ -202,6 +202,8 @@ struct ConfigObject {
     source: Option<Json>,
     /// `$parser`
     parser_location: Option<Json>,
+    /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
+    changes_linter: bool,
 }
 
 impl Default for ConfigObject {
@@ -225,6 +227,7 @@ impl Default for ConfigObject {
             processor_location: None,
             source: None,
             parser_location: None,
+            changes_linter: false,
         }
     }
 }
@@ -786,7 +789,9 @@ impl Config {
         config.parser_name = (language_options.get(b"parser"))
             .and_then(Json::as_str)
             .map(Box::from);
-        if config.is_for_eslint() {
+        config.changes_linter = (indices.iter())
+            .any(|index| (self.objects.get(*index as usize)).is_some_and(|it| it.changes_linter));
+        if config.is_for_eslint() && !config.changes_linter {
             config.for_eslint = for_eslint::build(&for_eslint::Parts {
                 language: config.language_name.as_deref(),
                 language_options: &language_options,

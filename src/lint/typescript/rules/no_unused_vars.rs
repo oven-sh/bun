@@ -101,6 +101,20 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
     })
 }
 
+/// One of its declarations starts with `export`.
+fn is_exported(variable: Variable) -> bool {
+    let is_export = |owner: Node| matches!(owner, Node::Stmt(statement) if statement.is_exported());
+    variable.defs().any(|def| match def {
+        Declaration::Param(_) => false,
+        def => def.node().is_some_and(|node| match node {
+            Node::VarDecl(declaration) => is_export(declaration.parent()),
+            Node::Func(func) => is_export(func.owner()),
+            Node::Class(class) => is_export(class.owner()),
+            node => is_export(node),
+        }),
+    })
+}
+
 /// The variables that are named somewhere.
 #[derive(Default)]
 struct Named(SymbolSet, bool);
@@ -1238,6 +1252,7 @@ impl NoUnusedVars {
             candidates.as_ref().is_some_and(|candidates| candidates.contains(it.symbol()))
                 && it.class_scope().is_none()
                 && !analysis.is_eslint_used(*it)
+                && !is_exported(*it)
                 && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types)
         };
         let added: Vec<Variable<'a>> = match &candidates {

@@ -113,6 +113,10 @@ impl Rule for NoUnusedLabels {
                     continue;
                 };
                 cx.report(label, UNUSED).data("name", label).fix(|fixer| {
+                    // oxlint always puts the body in the place of the statement.
+                    if fixer.file().language().is_oxlint {
+                        return Some(fixer.replace(statement, body.text()));
+                    }
                     is_fixable(statement, label, body, &mut known)
                         .then(|| fixer.remove(Span::new(statement.span().start, body.span().start)))
                 });

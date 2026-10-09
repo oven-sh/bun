@@ -510,6 +510,13 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             report.check_time.as_secs_f64() * 1000.0,
             report.deepest_stack / 1024,
         );
+        if report.files_parsed_for_all > 0 {
+            let _ = writeln!(
+                summary,
+                "  {} files parsed for all projects",
+                report.files_parsed_for_all,
+            );
+        }
     }
     let _ = Output::error_writer().write_all(&summary);
     Output::flush();

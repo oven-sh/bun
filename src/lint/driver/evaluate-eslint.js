@@ -166,6 +166,9 @@ function serializeConfigObject(given, index) {
     const withRules = Object.entries(plugins).filter(
       ([, plugin]) => Object.keys(plugin?.rules ?? {}).length > 0 || Object.keys(plugin?.languages ?? {}).length > 0,
     );
+    // eslint-plugin-html has nothing in it: to load it changes the `Linter`, which then finds the scripts in a file.
+    const changesLinter = plugin => /[\\/]eslint-plugin-html[\\/]/.test(locateDeep(plugin)?.module ?? "");
+    if (Object.values(plugins).some(changesLinter)) out.$changesLinter = true;
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [

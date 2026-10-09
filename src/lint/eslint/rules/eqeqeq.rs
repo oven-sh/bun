@@ -96,9 +96,14 @@ impl Eqeqeq {
         if is_whole {
             return;
         }
+        // oxlint replaces all that is between the operands.
+        let change = |fixer: Fixer<'a>| match is_oxlint {
+            true => fixer.replace(left.outer_span().between(right.outer_span()), [" ", expected, " "].concat()),
+            false => fixer.replace(operator, expected),
+        };
         // The change is safe if both sides are known to have the same type.
         if is_typeof || are_literals_of_same_type {
-            report.fix(|fixer| fixer.replace(operator, expected));
+            report.fix(change);
         } else {
             report.suggest_with(
                 REPLACE_OPERATOR,
@@ -106,7 +111,7 @@ impl Eqeqeq {
                     ("expectedOperator", expected.as_bytes()),
                     ("actualOperator", actual.as_bytes()),
                 ],
-                |fixer| fixer.replace(operator, expected),
+                change,
             );
         }
     }

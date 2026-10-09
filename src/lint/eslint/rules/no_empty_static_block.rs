@@ -37,9 +37,12 @@ impl Rule for NoEmptyStaticBlock {
             // For oxlint a comment before the `{` fills it too.
             let is_filled = cx.language().is_oxlint && cx.file().comments_in(member.span()).next().is_some();
             if !is_filled && text::is_blank(cx.slice(inside)) {
-                // oxlint points at the `static`.
-                cx.report(if cx.language().is_oxlint { member.span() } else { braces }, UNEXPECTED)
-                    .suggest(SUGGEST_COMMENT, |fixer| fixer.replace(inside, " /* empty */ "));
+                // oxlint points at the `static`, and suggests to remove the block.
+                match cx.language().is_oxlint {
+                    true => cx.report(member.span(), UNEXPECTED).fix(|fixer| fixer.remove(member.span())),
+                    false => (cx.report(braces, UNEXPECTED))
+                        .suggest(SUGGEST_COMMENT, |fixer| fixer.replace(inside, " /* empty */ ")),
+                };
             }
         });
     }

@@ -444,6 +444,40 @@ describe.concurrent("bun lint with languages", () => {
   );
 
   test(
+    "so is a file for which eslint-plugin-html is configured, which changes the Linter when it is loaded",
+    async () => {
+      const result = await lint(
+        {
+          ...eslintPackage,
+          "node_modules/eslint-plugin-html/package.json": JSON.stringify({
+            name: "eslint-plugin-html",
+            main: "index.js",
+          }),
+          "node_modules/eslint-plugin-html/index.js": `
+            require("eslint").Linter.prototype.verify = (text, configs) => {
+              const line = text.split("\\n").indexOf("<script>") + 1;
+              return [{ ruleId: "no-var", severity: 2, message: "a script, " + configs.length + " objects", line, column: 1 }];
+            };`,
+          "eslint.config.mjs": `
+            import html from "eslint-plugin-html";
+            export default [{ rules: { "no-var": "error" } }, { files: ["**/*.html"], plugins: { html } }];`,
+          "a.html": "<p>\n<script>\nvar a;\n</script>\n",
+          "b.js": "var b;\n",
+        },
+        ["-f", "unix", "a.html", "b.js"],
+      );
+      expect(result.stdout).toMatchInlineSnapshot(`
+        "<dir>/a.html:2:1: a script, 2 objects [Error/no-var]
+        <dir>/b.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
+
+        2 problems"
+      `);
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
     "--fix goes on until nothing is left to fix",
     async () => {
       const result = await lint({ ...eslintPackage, ...lines }, ["--fix", "b.txt"], ["b.txt"]);

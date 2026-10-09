@@ -12,18 +12,48 @@ const SUGGEST_COMMENT: Message =
 
 impl NoEmpty {
     /// `braces`: a `{ }` without statements or cases. All that can be in it is whitespace and
-    /// comments. `place`: where it is reported.
-    fn check(braces: Span, place: Span, kind: &'static str, cx: &Cx<'_, Self>) {
+    /// comments. `place`: where it is reported. `removed`: what oxlint suggests to remove.
+    fn check(braces: Span, place: Span, kind: &'static str, removed: Option<Span>, cx: &Cx<'_, Self>) {
         let inside = braces.shrink(1, 1);
         if !text::is_blank(cx.slice(inside)) {
             return;
         }
-        cx.report(place, UNEXPECTED).data("type", kind).suggest_with(
+        let report = cx.report(place, UNEXPECTED).data("type", kind);
+        if cx.language().is_oxlint {
+            report.fix(|fixer| removed.map(|it| fixer.remove(it)));
+            return;
+        }
+        report.suggest_with(
             SUGGEST_COMMENT,
             &[("type", kind.as_bytes())],
             |fixer| fixer.replace(inside, " /* empty */ "),
         );
     }
+}
+
+/// What oxlint suggests to remove for the empty `block`: what the block is in. Of a `try` statement the `finally` with
+/// its block; nothing for the block of a `catch`.
+fn removed_by_oxlint(block: Stmt) -> Option<Span> {
+    let parent = match block.parent() {
+        Node::Stmt(parent) => parent,
+        Node::Case(case) => return Some(case.span()),
+        // All of the file, or the body of a function.
+        _ => return None,
+    };
+    let StmtKind::Try { handler, finalizer, .. } = parent.kind() else {
+        return Some(parent.span());
+    };
+    if handler == Some(block) {
+        return None;
+    }
+    if finalizer != Some(block) {
+        return Some(parent.span());
+    }
+    let file = block.file();
+    let keyword = file.tokens_before(block).with_comments().next().filter(|it| it.is_keyword("finally"))?;
+    // It counts characters where it has an offset in bytes.
+    let is_found = file.text().get(..keyword.start() as usize).is_some_and(<[u8]>::is_ascii);
+    is_found.then(|| Span::new(keyword.start(), block.span().end))
 }
 
 impl Rule for NoEmpty {
@@ -50,7 +80,8 @@ impl Rule for NoEmpty {
             {
                 return;
             }
-            Self::check(stmt.span(), stmt.span(), "block", cx);
+            let removed = if cx.language().is_oxlint { removed_by_oxlint(stmt) } else { None };
+            Self::check(stmt.span(), stmt.span(), "block", removed, cx);
         });
         on.stmts([StmtTag::Switch], |_, stmt, cx| {
             let StmtKind::Switch { expr, cases } = stmt.kind() else {
@@ -64,13 +95,13 @@ impl Rule for NoEmpty {
             let open_brace = skip_trivia(source, close_paren + 1);
             let braces = Span::new(open_brace, stmt.span().end);
             if !cx.language().is_oxlint {
-                return Self::check(braces, braces, "switch", cx);
+                return Self::check(braces, braces, "switch", None, cx);
             }
             // oxlint points at the whole statement, which a comment does not fill.
             if text::is_blank(cx.slice(braces.shrink(1, 1))) {
-                Self::check(braces, stmt.span(), "switch", cx);
+                Self::check(braces, stmt.span(), "switch", Some(stmt.span()), cx);
             } else {
-                cx.report(stmt, UNEXPECTED).data("type", "switch");
+                cx.report(stmt, UNEXPECTED).data("type", "switch").fix(|fixer| fixer.remove(stmt));
             }
         });
     }

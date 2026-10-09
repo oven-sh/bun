@@ -139,7 +139,7 @@ Types are not there for a rule in JavaScript. `parserServices.program` is `null`
 
 ### Other languages
 
-A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
+A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, or `eslint-plugin-html`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
 
 ### Processors
 
@@ -574,6 +574,7 @@ These differences are intentional:
 - **Files and problems are sorted.** oxlint prints a file when a thread is done with it.
 - **One parser.** Bun's parser reads all files. The wording and the place of a syntax error can differ. oxlint refuses some programs that `bun lint` lints, such as `let a; let a;`.
 - **Types come from the type checker of `bun check`**, not from `oxlint-tsgolint`. Both follow TypeScript 7. `bun lint` says nothing about a `tsconfig.json` that cannot be loaded.
+- **In a file with a byte order mark, what needs types is reported where it is.** oxlint places it 3 bytes too far to the left.
 - **`checkstyle`, `junit`, and `github` escape the names of files and rules.** oxlint prints them as they are, so a name with `"` or `<` breaks its report.
 - **`--init` leaves an `.oxlintrc.json` that exists as it is.** oxlint writes over it.
 - **`--ignore-path ./file` works.** oxlint ignores the flag if the path starts with `./`.

@@ -3,9 +3,9 @@
 //
 //   bun|node test/cli/lint/oracle/regex/charset.ts <bun-lint> <regexpp checkout> [--classes=n] [--seed=n]
 //
-// Known differences, where the other engine and the specification agree with bun-lint:
-// - JavaScriptCore, `i` without `u` and `v`: it does not know the pairs of letters that Unicode 16 added (U+019B and U+A7DC, ..).
-// - V8, `\P{ASCII}` and `[^\p{ASCII}]` with `iv`: it matches U+017F and U+212A, which are `s` and `k` when case is ignored.
+// bun-lint runs JavaScriptCore's engine. Known differences from V8:
+// - `i` without `u` and `v`: JavaScriptCore does not know the pairs of letters that Unicode 16 added (U+019B and U+A7DC, ..). V8 is right.
+// - `\P{ASCII}` and `[^\p{ASCII}]` with `iv`: V8 matches U+017F and U+212A, which are `s` and `k` when case is ignored. JavaScriptCore is right.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

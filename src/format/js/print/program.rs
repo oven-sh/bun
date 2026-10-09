@@ -236,6 +236,14 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 FormatTrailingComments::Comments(f.comments().comments_before(end))
             );
         }
+        // `return // a⏎/* b */;`: what `return` has left for the next statement, and there is none.
+        if let Some(last) = previous
+            && !f.is_quiet()
+            && f.options().flavor.is_oxfmt()
+        {
+            let comments = f.comments().comments_before(last.span().end);
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
         imports.finish(f);
         if let Some(last) = previous
             && is_directive_before_empty_line(last, f)
@@ -302,8 +310,14 @@ fn write_more_trailing_comments<'a>(
 ) -> SmallVec<[CommentPlacement; 8]> {
     let placements = comment_placements(comments, next.span().start, f);
     // Prettier's `printTrailingComment`
-    let mut is_after_line_comment = (f.comments().printed_comments().last())
-        .is_some_and(|comment| comment.is_line() && comment.span.start >= previous.span().start);
+    let mut is_after_line_comment =
+        (f.comments().printed_comments().last()).is_some_and(|comment| {
+            // It trails `previous`, and is not in it: `{ // comment⏎};`
+            let rest = Span::new(comment.end(), previous.span().end.max(comment.end()));
+            comment.is_line()
+                && comment.span.start >= previous.span().start
+                && matches!(f.source_text().text_for(&rest).trim_ascii(), b"" | b";")
+        });
     let mut has_line_suffix = is_after_line_comment;
     for (comment, _) in comments
         .iter()

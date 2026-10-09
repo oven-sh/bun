@@ -432,3 +432,126 @@ pub fn is_react_hook(expr: Expr) -> bool {
         _ => false,
     }
 }
+
+/// Whether text that starts with `[`, `(`, `/`, `+`, `-` or a backtick, in the place
+/// of `node`, would continue the statement before.
+pub fn could_be_asi_hazard(node: Expr) -> bool {
+    let start = node.span().start;
+    let mut statement = None;
+    for ancestor in Node::Expr(node).ancestors() {
+        match ancestor {
+            Node::Stmt(stmt) if stmt.tag() == StmtTag::Expr => {
+                statement = Some(stmt);
+                break;
+            }
+            // What can start with the node.
+            Node::Expr(e) if e.outer_span().start == start => match e.tag() {
+                ExprTag::Call
+                | ExprTag::Index
+                | ExprTag::Dot
+                | ExprTag::TaggedTemplate
+                | ExprTag::Binary
+                | ExprTag::Assign
+                | ExprTag::Cond
+                | ExprTag::Await
+                | ExprTag::As
+                | ExprTag::AsConst
+                | ExprTag::Satisfies
+                | ExprTag::NonNull
+                | ExprTag::Instantiation => {}
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+    let Some(statement) = statement.filter(|it| it.span().start == start && start != 0) else {
+        return false;
+    };
+    // The body of one of these follows a `)` or a keyword.
+    let is_body = matches!(statement.parent(), Node::Stmt(parent) if matches!(
+        parent.kind(),
+        StmtKind::If { .. }
+            | StmtKind::While { .. }
+            | StmtKind::DoWhile { .. }
+            | StmtKind::For { .. }
+            | StmtKind::ForIn { .. }
+            | StmtKind::ForOf { .. }
+            | StmtKind::With { .. }
+            | StmtKind::Labeled { .. }
+    ));
+    if is_body {
+        return false;
+    }
+    let file = node.file();
+    let before = file
+        .text()
+        .get(..file.end_of_token_before(start) as usize)
+        .unwrap_or_default();
+    let continuation_bytes = before
+        .iter()
+        .rev()
+        .take(3)
+        .take_while(|it| **it & 0xC0 == 0x80)
+        .count();
+    let last = before
+        .get(before.len().saturating_sub(continuation_bytes + 1)..)
+        .unwrap_or_default();
+    std::str::from_utf8(last)
+        .ok()
+        .and_then(|it| it.chars().next())
+        .is_some_and(|last| {
+            matches!(
+                last,
+                ')' | ']' | '}' | '"' | '\'' | '`' | '+' | '-' | '/' | '.' | '_' | '$'
+            ) || last.is_alphanumeric()
+        })
+}
+
+/// `oxc_syntax::precedence::Precedence::Member`, as a number.
+pub const PRECEDENCE_MEMBER: u8 = 22;
+/// `Precedence::Exponentiation`
+pub const PRECEDENCE_EXPONENTIATION: u8 = 17;
+
+/// `get_precedence` of `utils/unicorn.rs`, with the numbers of `oxc_syntax::precedence::Precedence`. `None`: it never
+/// needs parentheses. What is in parentheses and the whole of an optional chain are among these.
+pub fn get_precedence(expr: Expr) -> Option<u8> {
+    get_precedence_without_parentheses(expr).filter(|_| !expr.is_parenthesized())
+}
+
+/// `get_precedence(expr.without_parentheses())`
+pub fn get_precedence_without_parentheses(expr: Expr) -> Option<u8> {
+    if expr.is_chain_root() {
+        return None;
+    }
+    Some(match expr.kind() {
+        ExprKind::Binary { left, .. } if left.tag() == ExprTag::PrivateIdentifier => return None,
+        ExprKind::Binary { op, .. } => match op {
+            BinOp::Comma => 1,
+            BinOp::Nullish => 6,
+            BinOp::Or => 7,
+            BinOp::And => 8,
+            BinOp::BitOr => 9,
+            BinOp::BitXor => 10,
+            BinOp::BitAnd => 11,
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => 12,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Instanceof | BinOp::In => 13,
+            BinOp::Shl | BinOp::Shr | BinOp::UShr => 14,
+            BinOp::Add | BinOp::Sub => 15,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => 16,
+            BinOp::Pow => PRECEDENCE_EXPONENTIATION,
+        },
+        ExprKind::Yield { .. } => 3,
+        ExprKind::Assign { .. } => 4,
+        ExprKind::Cond { .. } => 5,
+        ExprKind::Unary {
+            op: UnOp::PostInc | UnOp::PostDec,
+            ..
+        } => 19,
+        ExprKind::Unary { .. } | ExprKind::Await(_) => 18,
+        ExprKind::New(_) | ExprKind::Call(_) => 21,
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => PRECEDENCE_MEMBER,
+        ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => 0,
+        ExprKind::Fn(func) if func.is_arrow() => 0,
+        _ => return None,
+    })
+}

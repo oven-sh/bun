@@ -77,6 +77,24 @@ fn statement_starting_with<'a>(it: Expr<'a>) -> Option<Stmt<'a>> {
     found.flatten()
 }
 
+/// What acorn says about the first thing in `written`, a string literal, that it only reads in an edition after `edition`.
+fn newer_in_string(written: &[u8], edition: u32) -> Option<&'static str> {
+    let mut rest = written;
+    loop {
+        let at = rest.iter().position(|it| matches!(it, b'\\' | 0xE2))?;
+        rest = match rest.get(at..)? {
+            [b'\\', b'u', b'{', ..] if edition < 6 => return Some("Unexpected token"),
+            // After a backslash, a separator continues the line.
+            [b'\\', 0xE2, 0x80, 0xA8 | 0xA9, after @ ..] | [b'\\', _, after @ ..] => after,
+            [0xE2, 0x80, 0xA8 | 0xA9, ..] if edition < 10 => {
+                return Some("Unterminated string constant");
+            }
+            [_, after @ ..] => after,
+            [] => return None,
+        };
+    }
+}
+
 impl<'a> Checks<'a, '_> {
     /// The errors of acorn for what is newer than the edition that the configuration asks for.
     pub(super) fn editions(&mut self) {
@@ -636,11 +654,8 @@ impl<'a> Checks<'a, '_> {
             if !matches!(written.first(), Some(b'"' | b'\'')) {
                 continue;
             }
-            if looks_for_braces && strings::contains(written, b"\\u{") {
-                self.fail(it.span().start, "Unexpected token");
-            }
-            if looks_for_separators && has_separator(written) {
-                self.fail(it.span().start, "Unterminated string constant");
+            if let Some(message) = newer_in_string(written, edition) {
+                self.fail(it.span().start, message);
             }
         }
     }

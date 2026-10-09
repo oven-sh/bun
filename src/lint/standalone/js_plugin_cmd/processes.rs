@@ -83,8 +83,30 @@ struct State {
     idle: Vec<Process>,
     /// How many processes there are, idle or not.
     count: usize,
-    /// The threads that have one, each as often as it has one.
-    users: Vec<ThreadId>,
+    /// Which thread has which. `None`: it is being called.
+    lent: Vec<(ThreadId, Option<Process>)>,
+}
+
+/// The process that a thread has. As with an engine of `bun lint`, what asks for one further down on that thread has the same.
+struct Lent<'p, 'e> {
+    by: &'p Processes<'e>,
+    to: ThreadId,
+}
+
+impl Vm for Lent<'_, '_> {
+    fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
+        let slot = |state: &State| state.lent.iter().position(|it| it.0 == self.to);
+        let mut state = self.by.state.lock();
+        let mut process = (slot(&state).and_then(|at| state.lent[at].1.take()))
+            .ok_or(b"The process for JavaScript plugins is being called.".as_slice())?;
+        drop(state);
+        let returned = process.call(kind, content, serve);
+        let mut state = self.by.state.lock();
+        if let Some(at) = slot(&state) {
+            state.lent[at].1 = Some(process);
+        }
+        returned
+    }
 }
 
 /// Some processes. None is started before it is needed.
@@ -140,48 +162,45 @@ impl<'e> Processes<'e> {
 
 impl Engine for Processes<'_> {
     fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        let me = std::thread::current().id();
+        let to = std::thread::current().id();
         let mut state = self.state.lock();
-        // It has one, which it would wait for.
-        let is_within = state.users.contains(&me);
+        if state.lent.iter().any(|it| it.0 == to) {
+            drop(state);
+            then(&mut Lent { by: self, to });
+            return Ok(());
+        }
         let idle = loop {
             if let Some(process) = state.idle.pop() {
                 break Some(process);
             }
             let is_worth_it =
                 !self.is_told.load(Ordering::Relaxed) || self.demand.is_worth_another(state.count);
-            if (state.count < self.max && is_worth_it) || is_within {
+            if state.count < self.max && is_worth_it {
                 state.count += 1;
                 break None;
             }
             self.is_idle.wait_guarded(&mut state);
         };
-        state.users.push(me);
         drop(state);
-        let started = match idle {
-            Some(process) => Ok(process),
-            None => self.start().inspect_err(|_| self.lose()),
+        let process = match idle {
+            Some(process) => process,
+            None => self.start().inspect_err(|_| self.lose())?,
         };
-        let used = started.map(|mut process| {
-            then(&mut process);
-            if !is_within {
-                self.demand.note(size);
-            }
-            process
-        });
+        self.state.lock().lent.push((to, Some(process)));
+        then(&mut Lent { by: self, to });
+        self.demand.note(size);
         let mut state = self.state.lock();
-        if let Some(at) = state.users.iter().rposition(|it| *it == me) {
-            state.users.swap_remove(at);
-        }
-        let process = used?;
-        if process.has_failed {
-            drop(state);
-            drop(process);
-            self.lose();
-        } else {
-            state.idle.push(process);
-            // Each of those that wait looks whether another one is worth it by now.
-            self.is_idle.notify_all();
+        let at = state.lent.iter().position(|it| it.0 == to);
+        match at.and_then(|at| state.lent.swap_remove(at).1) {
+            Some(process) if !process.has_failed => {
+                state.idle.push(process);
+                // Each of those that wait looks whether another one is worth it by now.
+                self.is_idle.notify_all();
+            }
+            _ => {
+                drop(state);
+                self.lose();
+            }
         }
         Ok(())
     }

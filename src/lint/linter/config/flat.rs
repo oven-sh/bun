@@ -156,7 +156,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$jsPlugins" | b"$parser" | b"$processor" | b"$source" => None,
+            b"$changesLinter" | b"$jsPlugins" | b"$parser" | b"$processor" | b"$source" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
                 .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
@@ -390,6 +390,7 @@ impl Reader<'_> {
         object.processor = json.get(b"processor").and_then(Json::as_str).map(Box::from);
         object.source = json.get(b"$source").cloned();
         object.parser_location = json.get(b"$parser").cloned();
+        object.changes_linter = json.get(b"$changesLinter").is_some();
         object.processor_location = json
             .get(b"$processor")
             .filter(|it| it.as_object().is_some())

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 
 /// Disallow `new` operators with the `String`, `Number`, and `Boolean` objects.
 pub struct NoNewWrappers;
@@ -39,7 +40,23 @@ impl Rule for NoNewWrappers {
                     true => e.span().to(call.callee().span()),
                     false => e.span(),
                 };
-                cx.report(place, if is_symbol { NOT_A_CONSTRUCTOR } else { NO_CONSTRUCTOR }).data("fn", name);
+                let message = if is_symbol { NOT_A_CONSTRUCTOR } else { NO_CONSTRUCTOR };
+                let report = cx.report(place, message).data("fn", name);
+                // oxlint has a fix: without the `new`, or the argument if that is a literal of the kind.
+                if cx.language().is_oxlint {
+                    report.fix(|fixer| {
+                        let literal = call.args().first().map(get_inner_expression).filter(|it| match it.tag() {
+                            ExprTag::True | ExprTag::False => name.is("Boolean"),
+                            ExprTag::String => name.is("String"),
+                            ExprTag::Number => name.is("Number"),
+                            _ => false,
+                        });
+                        match literal {
+                            Some(literal) => fixer.replace(e, literal.text()),
+                            None => fixer.remove(Span::new(e.span().start, call.callee().span().start)),
+                        }
+                    });
+                }
             }
         });
     }

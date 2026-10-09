@@ -659,6 +659,11 @@ fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `const a = (b) => (⏎b && c⏎// comment⏎);`: for oxfmt the comment is behind the statement. For Prettier it trails `b && c`.
+fn only_the_body_of_an_argument_keeps_comments_before_its_parenthesis(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `is_on_its_own_line`: a comment has moved it off the line of the `=>` already.
 fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut Formatter<'a>) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
@@ -700,18 +705,31 @@ fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut F
         };
     }
     write!(f, body);
-    // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.
-    if matches!(body.kind(), ExprKind::Cond { .. }) {
-        let comments = f
-            .comments()
-            .comments_in(Span::after(body.span(), body.outer_span().end));
-        let count = comments
+    let comments = f
+        .comments()
+        .comments_in(Span::after(body.span(), body.outer_span().end));
+    let count = match body.kind() {
+        // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.
+        ExprKind::Cond { .. } => comments
             .iter()
             .take_while(|comment| !comment.preceded_by_newline())
-            .count();
-        write!(
-            f,
-            FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
-        );
-    }
+            .count(),
+        // What is before the `)` of parentheses that go trails the body, with its indentation.
+        ExprKind::Binary { .. }
+            if !comments.is_empty()
+                && (!only_the_body_of_an_argument_keeps_comments_before_its_parenthesis(f)
+                    || matches!(
+                        // The statement that the body is, the body, the function, what that is in.
+                        body.ast_parent().parent().parent().parent(),
+                        AstNodes::CallExpression(_) | AstNodes::NewExpression(_)
+                    )) =>
+        {
+            comments.len()
+        }
+        _ => 0,
+    };
+    write!(
+        f,
+        FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+    );
 }

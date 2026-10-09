@@ -157,6 +157,41 @@ fn is_range_test(node: Node) -> bool {
     is_in_order && ast_utils::is_parenthesised(e)
 }
 
+/// Whether oxlint puts a blank before and after the flipped comparison, which is at `whole`: by the characters there.
+fn needs_spaces_for_oxlint(source: &[u8], whole: Span, left: Expr, right: Expr) -> (bool, bool) {
+    let is_literal_or_name = |it: Expr| {
+        !it.is_parenthesized()
+            && matches!(
+                it.tag(),
+                ExprTag::True
+                    | ExprTag::False
+                    | ExprTag::Null
+                    | ExprTag::Number
+                    | ExprTag::BigInt
+                    | ExprTag::Regex
+                    | ExprTag::String
+                    | ExprTag::Ident
+            )
+    };
+    let starts_with_keyword = |it: Expr| {
+        !it.is_parenthesized()
+            && match it.kind() {
+                ExprKind::Unary { op, .. } => matches!(op, UnOp::Typeof | UnOp::Void | UnOp::Delete),
+                ExprKind::Await(_) | ExprKind::Yield { .. } | ExprKind::New(_) => true,
+                _ => false,
+            }
+    };
+    let separates = |c: Option<u32>| c.is_some_and(|c| b" (){}/=;".iter().any(|it| u32::from(*it) == c));
+    let before = source.get(..whole.start as usize).unwrap_or_default();
+    let after = source.get(whole.end as usize..).unwrap_or_default();
+    (
+        !before.is_empty()
+            && (is_literal_or_name(right) || starts_with_keyword(right))
+            && !separates(text::last_code_point(before)),
+        !after.is_empty() && is_literal_or_name(left) && !separates(text::first_code_point(after)),
+    )
+}
+
 /// ESLint's `getFlippedString`: the text of the comparison `e` with its sides and its operator
 /// flipped around.
 fn flipped_text<'a>(
@@ -167,15 +202,24 @@ fn flipped_text<'a>(
     flipped: BinOp,
 ) -> Option<Vec<u8>> {
     let (whole, operator) = (e.span(), e.operator_span()?);
+    let (left_side, right_side) = (left, right);
     let (left, right) = (left.outer_span(), right.outer_span());
-    let needs_space_before = file.token_before(e).is_some_and(|before| {
-        before.end() == whole.start
-            && file.first_token(right).is_some_and(|first| !ast_utils::can_tokens_be_adjacent(before, first))
-    });
-    let needs_space_after = file.token_after(e).is_some_and(|after| {
-        whole.end == after.start()
-            && file.last_token(left).is_some_and(|last| !ast_utils::can_tokens_be_adjacent(last, after))
-    });
+    let needs_space_before = || {
+        file.token_before(e).is_some_and(|before| {
+            before.end() == whole.start
+                && file.first_token(right).is_some_and(|first| !ast_utils::can_tokens_be_adjacent(before, first))
+        })
+    };
+    let needs_space_after = || {
+        file.token_after(e).is_some_and(|after| {
+            whole.end == after.start()
+                && file.last_token(left).is_some_and(|last| !ast_utils::can_tokens_be_adjacent(last, after))
+        })
+    };
+    let (needs_space_before, needs_space_after) = match file.language().is_oxlint {
+        true => needs_spaces_for_oxlint(file.text(), whole, left_side, right_side),
+        false => (needs_space_before(), needs_space_after()),
+    };
     let space = |is_needed: bool| -> &'static [u8] { if is_needed { b" " } else { b"" } };
     Some(
         [

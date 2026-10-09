@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_oxlint::ast_util::static_property_name;
+use bun_lint_oxlint::ast_util::{parent_node, static_property_name};
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 
 /// Disallow the use of `console`.
@@ -43,6 +43,30 @@ fn removable_statement(member: Expr<'_>) -> Option<Stmt<'_>> {
     .then_some(statement)
 }
 
+/// oxlint's `remove_console`: what it puts where, for a `member` that is directly in a call. Nothing in the place of a
+/// statement, a block where there has to be a statement or a body, and `undefined` where there has to be a value.
+fn change_of_oxlint(member: Expr) -> Option<(Span, &'static str)> {
+    let call = parent_node(member)?.as_expr().filter(|it| it.tag() == ExprTag::Call)?;
+    if call.is_chain_root() {
+        return Some((call.span(), ""));
+    }
+    let needs_statement = |it: Stmt| {
+        matches!(it.tag(), StmtTag::If | StmtTag::While | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf)
+    };
+    let text = match call.parent() {
+        Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_)) => {
+            let is_body = matches!(statement.parent(), Node::Stmt(parent) if needs_statement(parent));
+            return Some((statement.span(), if is_body { "{}" } else { "" }));
+        }
+        Node::Stmt(parent) if needs_statement(parent) => "{}",
+        Node::Func(func) if func.is_arrow() => "{}",
+        Node::Expr(parent) if parent.tag() == ExprTag::Cond || parent.binary_op() == Some(BinOp::Comma) => "undefined",
+        Node::Prop(prop) if prop.kind() == PropKind::Init && !prop.is_jsx_attribute() => "undefined",
+        _ => "",
+    };
+    Some((call.outer_span(), text))
+}
+
 impl NoConsole {
     fn is_allowed(&self, member: Expr) -> bool {
         !self.allowed.is_empty()
@@ -76,6 +100,15 @@ impl NoConsole {
             true => cx.report(place, UNEXPECTED),
             false => cx.report(place, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
         };
+        if cx.language().is_oxlint {
+            if let Some((at, text)) = change_of_oxlint(member) {
+                match text {
+                    "undefined" => report.suggest_dangerously(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),
+                    _ => report.suggest(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),
+                };
+            }
+            return;
+        }
         let remove = |fixer: Fixer<'a>| removable_statement(member).map(|it| fixer.remove(it));
         match member.kind() {
             ExprKind::Dot { name, .. } => {

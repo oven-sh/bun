@@ -369,6 +369,11 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
 }
 
 impl Disk {
+    /// The paths of `Provided::already_read`, each a `tspath.Path`.
+    pub fn provided_paths(&self) -> impl Iterator<Item = &Vec<u8>> {
+        self.already_read.keys()
+    }
+
     /// `project`: a path in the project, in the checker's path format.
     pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
         let case_sensitive = is_file_system_case_sensitive(project);

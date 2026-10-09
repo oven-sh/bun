@@ -254,7 +254,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                             position: CallExpressionPosition::End,
                             ..
                         }
-                    ) && has_trailing_comment(member.expr(), f))
+                    ) && !(matches!(member, ChainMember::ComputedMember(_))
+                        && comment_behind_brackets_breaks_no_chain(f))
+                        && has_trailing_comment(member.expr(), f))
             })
     }
 }
@@ -353,9 +355,21 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
         .any(|comment| comment.preceded_by_newline())
 }
 
+/// `a["b"] // comment⏎(c)` is `a["b"](c); // comment` for oxfmt.
+fn comment_behind_brackets_breaks_no_chain(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Whether a comment trails `expression`, a link of a chain that is not the last.
 fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let end = expression.span().end;
+    // See `comments_trailing_computed_callee`: those behind the `(` are among them, and separate nothing.
+    if expression.tag() == ExprTag::Index && f.options().flavor.is_oxfmt() {
+        return (f.comments().comments_after(end).first()).is_some_and(|comment| {
+            (f.source_text())
+                .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
+        });
+    }
     match call_of_callee(expression) {
         Some(call) => {
             let comments = callee_trailing_comments(call, end, f);

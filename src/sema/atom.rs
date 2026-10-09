@@ -457,6 +457,8 @@ impl crate::table::Id for Atom {
 }
 
 /// An `Interner` for those who cannot name the lifetime of its session.
+// No method of an `impl` of it is `#[inline]`: one that is only reached through `&dyn Intern` would be compiled again in
+// every crate that makes the table of methods.
 pub trait Intern: Sync {
     fn intern(&self, text: &[u8]) -> Atom;
     /// The atom of `text` if it has one. Nothing is entered. For the interner of one file: if it is
@@ -470,23 +472,18 @@ pub trait Intern: Sync {
 }
 
 impl Intern for Interner<'_> {
-    #[inline]
     fn intern(&self, text: &[u8]) -> Atom {
         Interner::intern(self, text)
     }
-    #[inline]
     fn find(&self, text: &[u8]) -> Option<Atom> {
         self.lookup(text)
     }
-    #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {
         Interner::bytes(self, atom)
     }
-    #[inline]
     fn number(&self) -> u64 {
         Interner::number(self)
     }
-    #[inline]
     fn of_this_thread(&self) -> &dyn Intern {
         self
     }
@@ -543,23 +540,18 @@ impl<'s> InternerPerThread<'s> {
 }
 
 impl Intern for InternerPerThread<'_> {
-    #[inline]
     fn intern(&self, text: &[u8]) -> Atom {
         self.own().intern(text)
     }
-    #[inline]
     fn find(&self, text: &[u8]) -> Option<Atom> {
         self.own().lookup(text)
     }
-    #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {
         self.own().bytes(atom)
     }
-    #[inline]
     fn number(&self) -> u64 {
         self.own().number()
     }
-    #[inline]
     fn of_this_thread(&self) -> &dyn Intern {
         self.own()
     }

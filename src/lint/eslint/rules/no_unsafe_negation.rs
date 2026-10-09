@@ -20,7 +20,7 @@ const SUGGEST_PARENTHESISED_NEGATION: Message = Message::new(
 
 impl NoUnsafeNegation {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, .. } = e.kind() else {
+        let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
         let applies = match op {
@@ -35,8 +35,17 @@ impl NoUnsafeNegation {
             return;
         }
         let operator = bin_op_text(op);
-        cx.report(left, UNEXPECTED)
-            .data("operator", operator)
+        let report = cx.report(left, UNEXPECTED).data("operator", operator);
+        // oxlint has a fix, and writes the comparison anew.
+        if cx.language().is_oxlint {
+            report.fix(|fixer| {
+                let file = fixer.file();
+                let (negated, compared) = (file.slice(left.operand()?.outer_span()), file.slice(right.outer_span()));
+                Some(fixer.replace(e, [&b"!("[..], negated, b" ", operator.as_bytes(), b" ", compared, b")"].concat()))
+            });
+            return;
+        }
+        report
             .suggest_with(
                 SUGGEST_NEGATED_EXPRESSION,
                 &[("operator", operator.as_bytes())],

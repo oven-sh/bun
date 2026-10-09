@@ -23,16 +23,14 @@ pub trait Trace<'m> {
 
     /// The properties, by their position: the name, and what to report of the property.
     fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)>;
+
+    /// The property `name`, with the name as the map has it.
+    fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)>;
 }
 
 impl<'m> dyn Trace<'m> + 'm {
     fn members(&self) -> impl Iterator<Item = (&'m str, &'m dyn Trace<'m>)> {
         (0..).map_while(move |index| self.member(index))
-    }
-
-    /// The property `name`, with the name as the map has it.
-    pub fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
-        self.members().find(|member| member.0.as_bytes() == name)
     }
 }
 
@@ -124,6 +122,12 @@ impl<'m> Trace<'m> for TraceMap<'m, ()> {
 
     fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)> {
         let (name, map) = self.members.get(index)?;
+        Some((*name, map))
+    }
+
+    fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
+        let mut members = self.members.iter();
+        let (name, map) = members.find(|member| member.0.as_bytes() == name)?;
         Some((*name, map))
     }
 }

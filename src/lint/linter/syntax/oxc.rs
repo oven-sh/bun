@@ -200,16 +200,24 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
 /// Each of `params` is a name, with or without a default, there are at most eight, and no two are the same.
 #[inline]
 fn are_different_names<'a>(file: &'a File<'a>, params: &[bun_sema::hir::Param]) -> bool {
+    let name_of = |it: &bun_sema::hir::Param| match file.hir.pats.get(it.pat.idx()) {
+        Some(&bun_sema::hir::Pat {
+            kind: PatKind::Ident(name),
+            ..
+        }) => name,
+        _ => Atom::NONE,
+    };
+    if let [a, b] = params {
+        let (a, b) = (name_of(a), name_of(b));
+        return a != b && !a.is_none() && !b.is_none();
+    }
     let mut seen = [Atom::NONE; 8];
     if params.len() > seen.len() {
         return false;
     }
     for (param, index) in params.iter().zip(0..) {
-        let Some(PatKind::Ident(name)) = file.hir.pats.get(param.pat.idx()).map(|it| it.kind)
-        else {
-            return false;
-        };
-        if seen[..index].contains(&name) {
+        let name = name_of(param);
+        if name.is_none() || seen[..index].contains(&name) {
             return false;
         }
         seen[index] = name;
@@ -224,9 +232,13 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let mut first: Option<u32> = None;
     let mut names: SmallVec<[(Atom, u32); 8]> = SmallVec::new();
     for (i, raw) in hir.fns.iter().enumerate() {
+        // Most functions have fewer. One parameter binds a name twice only in a pattern, which is not looked for.
+        if raw.params.len < 2 {
+            continue;
+        }
         let params = hir.params.get(raw.params.range()).unwrap_or_default();
-        // Nearly every function has a few names, all different.
-        if params.is_empty() || are_different_names(file, params) {
+        // Nearly every other has a few names, all different.
+        if are_different_names(file, params) {
             continue;
         }
         names.clear();

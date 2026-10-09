@@ -17,11 +17,11 @@ const today = requireFromEslint("globals");
 // `Linter` turns this one on for every file: the names of ES5. They are not among the `globals` of `bun lint`.
 const builtin = Legacy.environments.get("builtin").globals;
 const withoutBuiltin = globals => globals.filter(([name, value]) => !(name in builtin && value === "readonly"));
-// NOT JUDGED HERE: five rules whose default options have changed since ESLint 8. `bun lint` has the rules of today, and makes them
+// NOT JUDGED HERE: six rules whose default options have changed since ESLint 8. `bun lint` has the rules of today, and makes them
 // do what those of ESLint 8 do by a setting `off` for each that carries the old default options, which a setting that is only a
-// severity keeps: so its `rules` have five entries, and options, that `extractConfig` does not have. What they REPORT is judged with
+// severity keeps: so its `rules` have six entries, and options, that `extractConfig` does not have. What they REPORT is judged with
 // the real ESLint 8.57.1: driver/eslintrc-cli.mjs, the rows "presets: the default options of 8 ..".
-const changed = ["no-implicit-coercion", "no-inner-declarations", "no-shadow-restricted-names", "no-unused-vars", "no-useless-computed-key"];
+const changed = ["no-constant-condition", "no-implicit-coercion", "no-inner-declarations", "no-shadow-restricted-names", "no-unused-vars", "no-useless-computed-key"];
 const implemented = JSON.parse(execFileSync(bunLint, ["linter", "rules"]).toString()).filter(
   id => !id.includes("/") && builtInRules.has(id) && !changed.includes(id),
 );

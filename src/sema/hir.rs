@@ -291,7 +291,8 @@ impl<'s> Storage for InArena<'s> {
 }
 
 /// A list that neither grows nor shrinks. It has a block of an arena, which it frees when it is
-/// dropped, or it is lent by one who still has it (`FileBuilder::lend`).
+/// dropped, or it is lent by one who still has it (`FileBuilder::lend`), or it is that of a file that several programs
+/// have (`File::share`).
 pub struct Fixed<'s, T>(FixedIn<'s, T>);
 
 enum FixedIn<'s, T> {
@@ -299,6 +300,7 @@ enum FixedIn<'s, T> {
     /// not of (`File::empty_in`).
     Arena(ArenaBox<'s, [T]>),
     Lent(&'s mut [T]),
+    Shared(&'s [T]),
 }
 
 impl<T> Default for Fixed<'_, T> {
@@ -325,6 +327,7 @@ impl<T> Deref for Fixed<'_, T> {
         match &self.0 {
             FixedIn::Arena(list) => list,
             FixedIn::Lent(list) => list,
+            FixedIn::Shared(list) => list,
         }
     }
 }
@@ -335,6 +338,9 @@ impl<T> DerefMut for Fixed<'_, T> {
         match &mut self.0 {
             FixedIn::Arena(list) => list,
             FixedIn::Lent(list) => list,
+            FixedIn::Shared(_) => {
+                unreachable!("a file is shared when nothing is written into it any more")
+            }
         }
     }
 }
@@ -2422,9 +2428,10 @@ macro_rules! long_lists {
     };
 }
 
-/// A `File` of the `FileBuilder` `$this`. `$long`: what becomes of a list of nodes.
+/// A `File` of `$this`, a `FileBuilder` or a `File`. What becomes of a list of nodes (`$long`), of a list that is empty in most
+/// files (`$few`), of one whose elements own memory (`$kept`), of the text (`$taken`).
 macro_rules! file_in_arena {
-    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident) => {
+    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $kept:ident, $taken:ident) => {
         File {
             kind: $this.kind,
             is_js: $this.is_js,
@@ -2434,63 +2441,45 @@ macro_rules! file_in_arena {
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
-            decorators: few_to_arena(std::mem::take(&mut $this.decorators), $arena),
+            decorators: $few!($this.decorators),
             legacy_decorators: $this.legacy_decorators,
-            diagnostics: Cow::Owned(std::mem::take(&mut $this.diagnostics)),
+            diagnostics: $kept!($this.diagnostics),
             has_parse_diagnostics: $this.has_parse_diagnostics,
             syntax_errors: $this.syntax_errors,
             error_pos: $this.error_pos,
             source_len: $this.source_len,
-            text: std::mem::take(&mut $this.text),
+            text: $taken!($this.text),
             body: $this.body,
-            references: few_to_arena(std::mem::take(&mut $this.references), $arena),
-            comment_directives: few_to_arena(std::mem::take(&mut $this.comment_directives), $arena),
+            references: $few!($this.references),
+            comment_directives: $few!($this.comment_directives),
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
-            with_bodies: few_to_arena(std::mem::take(&mut $this.with_bodies), $arena),
+            with_bodies: $few!($this.with_bodies),
             body_starts: $long!($this.body_starts),
-            after_skipped: few_to_arena(std::mem::take(&mut $this.after_skipped), $arena),
+            after_skipped: $few!($this.after_skipped),
             modifiers_of_params: $long!($this.modifiers_of_params),
-            modifiers_of_props: few_to_arena(std::mem::take(&mut $this.modifiers_of_props), $arena),
-            unclosed_literals: few_to_arena(std::mem::take(&mut $this.unclosed_literals), $arena),
-            stray_decorators: few_to_arena(std::mem::take(&mut $this.stray_decorators), $arena),
+            modifiers_of_props: $few!($this.modifiers_of_props),
+            unclosed_literals: $few!($this.unclosed_literals),
+            stray_decorators: $few!($this.stray_decorators),
             specifier_uses: $long!($this.specifier_uses),
-            deferred_import_calls: few_to_arena(
-                std::mem::take(&mut $this.deferred_import_calls),
-                $arena,
-            ),
-            import_call_type_args: few_to_arena(
-                std::mem::take(&mut $this.import_call_type_args),
-                $arena,
-            ),
-            import_attributes: few_to_arena(std::mem::take(&mut $this.import_attributes), $arena),
-            specifier_expressions: few_to_arena(
-                std::mem::take(&mut $this.specifier_expressions),
-                $arena,
-            ),
-            exports_from_expressions: few_to_arena(
-                std::mem::take(&mut $this.exports_from_expressions),
-                $arena,
-            ),
+            deferred_import_calls: $few!($this.deferred_import_calls),
+            import_call_type_args: $few!($this.import_call_type_args),
+            import_attributes: $few!($this.import_attributes),
+            specifier_expressions: $few!($this.specifier_expressions),
+            exports_from_expressions: $few!($this.exports_from_expressions),
             parens: $long!($this.parens),
-            non_null_ends: few_to_arena(std::mem::take(&mut $this.non_null_ends), $arena),
+            non_null_ends: $few!($this.non_null_ends),
             jsx_expressions: $long!($this.jsx_expressions),
             jsx_pragmas: $this.jsx_pragmas,
-            jsdoc_comments: few_to_arena(std::mem::take(&mut $this.jsdoc_comments), $arena),
-            jsdoc_asterisks: few_to_arena(std::mem::take(&mut $this.jsdoc_asterisks), $arena),
-            jsdoc_hosts: few_to_arena(std::mem::take(&mut $this.jsdoc_hosts), $arena),
-            jsdoc_types: few_to_arena(std::mem::take(&mut $this.jsdoc_types), $arena),
-            jsdoc_modifiers: few_to_arena(std::mem::take(&mut $this.jsdoc_modifiers), $arena),
-            jsdoc_member_comments: Cow::Owned(std::mem::take(&mut $this.jsdoc_member_comments)),
-            jsdoc_param_errors: Cow::Owned(std::mem::take(&mut $this.jsdoc_param_errors)),
-            functions_with_param_tags: few_to_arena(
-                std::mem::take(&mut $this.functions_with_param_tags),
-                $arena,
-            ),
-            unmatched_augments_tags: few_to_arena(
-                std::mem::take(&mut $this.unmatched_augments_tags),
-                $arena,
-            ),
+            jsdoc_comments: $few!($this.jsdoc_comments),
+            jsdoc_asterisks: $few!($this.jsdoc_asterisks),
+            jsdoc_hosts: $few!($this.jsdoc_hosts),
+            jsdoc_types: $few!($this.jsdoc_types),
+            jsdoc_modifiers: $few!($this.jsdoc_modifiers),
+            jsdoc_member_comments: $kept!($this.jsdoc_member_comments),
+            jsdoc_param_errors: $kept!($this.jsdoc_param_errors),
+            functions_with_param_tags: $few!($this.functions_with_param_tags),
+            unmatched_augments_tags: $few!($this.unmatched_augments_tags),
             ids: $long!($this.ids),
             numbers: $long!($this.numbers),
             exprs: $long!($this.exprs),
@@ -2505,25 +2494,25 @@ macro_rules! file_in_arena {
             classes: $long!($this.classes),
             interfaces: $long!($this.interfaces),
             aliases: $long!($this.aliases),
-            enums: few_to_arena(std::mem::take(&mut $this.enums), $arena),
-            enum_members: few_to_arena(std::mem::take(&mut $this.enum_members), $arena),
-            modules: few_to_arena(std::mem::take(&mut $this.modules), $arena),
+            enums: $few!($this.enums),
+            enum_members: $few!($this.enum_members),
+            modules: $few!($this.modules),
             members: $long!($this.members),
             props: $long!($this.props),
             var_decls: $long!($this.var_decls),
             calls: $long!($this.calls),
             cases: $long!($this.cases),
-            jsx: few_to_arena(std::mem::take(&mut $this.jsx), $arena),
+            jsx: $few!($this.jsx),
             imports: $long!($this.imports),
             import_specs: $long!($this.import_specs),
-            import_equals: few_to_arena(std::mem::take(&mut $this.import_equals), $arena),
+            import_equals: $few!($this.import_equals),
             exports: $long!($this.exports),
             export_specs: $long!($this.export_specs),
-            tuple_elems: few_to_arena(std::mem::take(&mut $this.tuple_elems), $arena),
-            mapped: few_to_arena(std::mem::take(&mut $this.mapped), $arena),
+            tuple_elems: $few!($this.tuple_elems),
+            mapped: $few!($this.mapped),
             modifiers: $long!($this.modifiers),
             names: $long!($this.names),
-            bases: std::mem::take(&mut $this.bases),
+            bases: $this.bases,
             fn_nodes: $long!($this.fn_nodes),
             class_nodes: $long!($this.class_nodes),
             lazy: Lazy {
@@ -2531,10 +2520,28 @@ macro_rules! file_in_arena {
                 arena: $arena,
                 cells: $cells,
             },
-            keyword_identifier_positions: few_to_arena(
-                std::mem::take(&mut $this.keyword_identifier_positions),
-                $arena,
-            ),
+            keyword_identifier_positions: $few!($this.keyword_identifier_positions),
+        }
+    };
+}
+
+/// `$few`, `$kept` and `$taken` for a `FileBuilder` that gives up what it has.
+macro_rules! moved_lists {
+    ($arena:ident) => {
+        macro_rules! few {
+            ($list:expr) => {
+                few_to_arena(std::mem::take(&mut $list), $arena)
+            };
+        }
+        macro_rules! kept {
+            ($list:expr) => {
+                Cow::Owned(std::mem::take(&mut $list))
+            };
+        }
+        macro_rules! taken {
+            ($it:expr) => {
+                std::mem::take(&mut $it)
+            };
         }
     };
 }
@@ -2566,7 +2573,8 @@ impl FileBuilder {
                 exact
             }};
         }
-        let file = file_in_arena!(self, arena, session, cells, copied);
+        moved_lists!(arena);
+        let file = file_in_arena!(self, arena, session, cells, copied, few, kept, taken);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -2589,7 +2597,45 @@ impl FileBuilder {
                 Fixed(FixedIn::Lent(&mut $list[..]))
             };
         }
-        file_in_arena!(self, arena, session, &self.lazy, lent)
+        moved_lists!(arena);
+        file_in_arena!(self, arena, session, &self.lazy, lent, few, kept, taken)
+    }
+}
+
+impl File<'_> {
+    /// The same file for a program that has it in common with others. The lists of nodes stay where they are, and what is
+    /// computed on demand is computed once for all. What else a `File` has is in `arena`, which is one of `session`.
+    pub fn share<'s>(&'s self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        macro_rules! shared {
+            ($list:expr) => {
+                Fixed(FixedIn::Shared(&$list[..]))
+            };
+        }
+        macro_rules! few {
+            ($list:expr) => {
+                ArenaFew::from_iter_in($list.iter().cloned(), arena)
+            };
+        }
+        macro_rules! kept {
+            ($list:expr) => {
+                Cow::Borrowed(&$list[..])
+            };
+        }
+        macro_rules! taken {
+            ($it:expr) => {
+                Cow::Borrowed(&$it[..])
+            };
+        }
+        file_in_arena!(
+            self,
+            arena,
+            session,
+            self.lazy.cells,
+            shared,
+            few,
+            kept,
+            taken
+        )
     }
 }
 

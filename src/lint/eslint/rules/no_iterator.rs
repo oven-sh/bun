@@ -7,6 +7,14 @@ pub struct NoIterator;
 
 const NO_ITERATOR: Message = Message::new("noIterator", "Reserved name '__iterator__'.");
 
+/// `member`: the `__iterator__` of `object`. oxlint suggests `object[Symbol.iterator]`.
+fn report<'a>(member: Expr<'a>, object: Expr<'a>, cx: &Cx<'a, NoIterator>) {
+    let report = cx.report(member, NO_ITERATOR);
+    if cx.language().is_oxlint {
+        report.fix(|fixer| fixer.replace(Span::new(object.outer_span().end, member.span().end), "[Symbol.iterator]"));
+    }
+}
+
 impl Rule for NoIterator {
     const META: Meta = Meta::eslint("no-iterator", Kind::Suggestion);
     type State<'a> = ();
@@ -18,19 +26,19 @@ impl Rule for NoIterator {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if file.mentions("__iterator__") {
             on.exprs([ExprTag::Dot], |_, e, cx| {
-                if let ExprKind::Dot { name, .. } = e.kind()
+                if let ExprKind::Dot { obj, name, .. } = e.kind()
                     && name.name().is("__iterator__")
                     && is_member_expression(e)
                 {
-                    cx.report(e, NO_ITERATOR);
+                    report(e, obj, cx);
                 }
             });
             on.exprs([ExprTag::Index], |_, e, cx| {
-                if let ExprKind::Index { index, .. } = e.kind()
+                if let ExprKind::Index { obj, index, .. } = e.kind()
                     && matches!(index.tag(), ExprTag::String | ExprTag::Template)
                     && get_static_string_value(index).is_some_and(|name| &*name == b"__iterator__")
                 {
-                    cx.report(e, NO_ITERATOR);
+                    report(e, obj, cx);
                 }
             });
         }

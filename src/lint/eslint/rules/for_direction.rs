@@ -115,7 +115,22 @@ fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirectio
         _ => return,
     };
     if is_forward != (is_less == is_left) {
-        cx.report(test, INCORRECT_DIRECTION);
+        // The other operator, in the place of all that is between the operands.
+        cx.report(test, INCORRECT_DIRECTION).fix_dangerously(|fixer| match update.kind() {
+            ExprKind::Unary { operand, .. } => {
+                let (whole, argument) = (update.span(), operand.span());
+                let operator = match whole.start == argument.start {
+                    true => Span::new(argument.end, whole.end),
+                    false => Span::new(whole.start, argument.start),
+                };
+                Some(fixer.replace(operator, if is_forward { "--" } else { "++" }))
+            }
+            ExprKind::Assign { op, target, value } => {
+                let other = if op == Some(BinOp::Add) { "-=" } else { "+=" };
+                Some(fixer.replace(target.span().between(value.span()), other))
+            }
+            _ => None,
+        });
     }
 }
 

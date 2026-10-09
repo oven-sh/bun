@@ -191,7 +191,29 @@ pub(super) fn lower_expression_to_temporary(
     expr: &Expr,
 ) -> Result<Place, CompilerError> {
     let value = lower_expression(builder, expr)?;
-    lower_value_to_temporary(builder, value)
+    let place = lower_value_to_temporary(builder, value)?;
+    match builder.type_cast_around(expr.loc) {
+        None => Ok(place),
+        Some(cast) => lower_type_cast(builder, place, cast),
+    }
+}
+
+/// Not inlined: what calls it calls itself along the source.
+#[inline(never)]
+fn lower_type_cast(
+    builder: &mut HirBuilder,
+    value: Place,
+    cast: ast::Loc,
+) -> Result<Place, CompilerError> {
+    let cast = InstructionValue::TypeCastExpression {
+        value,
+        type_: Type::Poly,
+        type_annotation_name: None,
+        type_annotation_kind: Some("as"),
+        type_annotation: None,
+        loc: convert_loc(cast),
+    };
+    lower_value_to_temporary(builder, cast)
 }
 
 // =============================================================================

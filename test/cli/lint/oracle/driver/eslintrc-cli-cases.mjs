@@ -1691,6 +1691,14 @@ const whatESLint8Has = [
   presets("rules that ESLint 9 removed: require-jsdoc, valid-jsdoc", { ".eslintrc.json": rc(on("require-jsdoc", "valid-jsdoc")), "a.js": "function f(a) {}\n/**\n * @param {string} b\n */\nfunction g(a) {}\n" }),
   presets("formatting rules", { ".eslintrc.json": rc({ rules: { semi: "error", quotes: ["error", "single"], indent: ["error", 2], "comma-dangle": ["error", "always-multiline"], "no-extra-semi": "error" } }), "a.js": 'var a = "b"\nif (a) {\n    a = {\n  c: 1\n  };;\n}\n' }),
   presets("rules for Node.js that are deprecated: no-process-exit, no-path-concat, handle-callback-err", { ".eslintrc.json": rc(on("no-process-exit", "no-path-concat", "handle-callback-err", "no-sync", "global-require")), "a.js": "process.exit(1);\nvar p = __dirname + '/a';\nfunction f(err) { fs.readFileSync(p); require('a'); }\n" }),
+  presets("the default options of 8: no-constant-condition and while (true)", { ".eslintrc.json": rc(on("no-constant-condition")), "a.js": "while (true) { f(); }\nfor (;;) { f(); }\nwhile (1) { f(); }\n" }),
+  presets("the default options of 8: no-constant-condition, checkLoops: false", { ".eslintrc.json": rc({ rules: { "no-constant-condition": ["error", { checkLoops: false }] } }), "a.js": "while (true) { f(); }\nif (true) { f(); }\n" }),
+  ...[on("no-async-promise-executor", "prefer-promise-reject-errors", "new-cap", "getter-return", "accessor-pairs"), on("no-undef")].map(rules =>
+    presets(`rules that go by the name of a global: Promise, Symbol, BigInt, Reflect without env: ${Object.keys(rules.rules)[0]} ..`, {
+      ".eslintrc.json": rc({ parserOptions: { ecmaVersion: 2020 }, ...rules }),
+      "a.js": "new Promise(async (resolve, reject) => { reject(1); });\nPromise.reject(2);\nvar s = Symbol('a'), b = BigInt(1);\nReflect.defineProperty(s, 'c', { get() {} });\nReflect.defineProperty(b, 'd', { set(e) {} });\n",
+    }),
+  ),
   presets("the default options of 8: no-unused-vars and a caught error", { ".eslintrc.json": rc(on("no-unused-vars")), "a.js": "try { f(); } catch (e) {}\n" }),
   presets("the default options of 8: no-useless-computed-key in classes", { ".eslintrc.json": rc({ parserOptions: { ecmaVersion: 2022 }, ...on("no-useless-computed-key") }), "a.js": "class A { ['a']() {} }\nvar o = { ['a']: 1 };\n" }),
   presets("the default options of 8: no-inner-declarations", { ".eslintrc.json": rc({ parserOptions: { ecmaVersion: 2022 }, ...on("no-inner-declarations") }), "a.js": "if (a) { function f() {} }\n'use strict';\n" }),
@@ -2418,6 +2426,8 @@ const more = [
   language("a function in a block, a label before a function", { ".eslintrc.json": rc(), "a.js": "if (a) function f() {}\nl: function g() {}\n" }),
   language("line separators in strings came with 2019", { ".eslintrc.json": rc(), "a.js": "var a = '\u2028';\n" }),
   language("\\u{..} came with 2015", { ".eslintrc.json": rc(), "a.js": "var a = '\\u{61}';\n" }),
+  language("a line separator after a backslash continues the line in every edition", { ".eslintrc.json": rc(), "a.js": "var a = 'b \\\u2028 c', d = 'e \\\u2029 f';\n" }),
+  language("after two backslashes it does not, and u{ is no escape", { ".eslintrc.json": rc(), "a.js": "var a = '\\\\u{61}';\n", "b.js": "var a = '\\\\\u2028';\n" }, ["a.js", "b.js"]),
   language("new.target came with 2015", { ".eslintrc.json": rc(), "a.js": "function f() { new.target; }\n" }),
 
   // The rules are those of 8.57.1.

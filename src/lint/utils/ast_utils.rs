@@ -1286,11 +1286,14 @@ pub fn is_configured_global<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
 /// It goes by the scopes as ESLint has them, not by [`Expr::symbol`]: `namespace Promise {}` hides
 /// the global although it has no value, what another block of a merged namespace exports does not,
 /// and `interface Object {}` in a script is a definition of the global variable itself.
+///
+/// The rules of ESLint 8 that ask this today went by the name. With a configuration of ESLint 8, which has `Promise` only if `env`
+/// says so, nothing need declare the variable.
 pub fn is_global_reference(e: Expr<'_>) -> bool {
     let (Some(name), file) = (e.as_ident(), e.file()) else {
         return false;
     };
-    file.global_named(name).is_some()
+    (file.global_named(name).is_some() || file.language().eslint_8.is_some())
         && e.reference().is_some_and(|it| it.global().is_some())
         && file.scope().get_name(name).is_none()
 }

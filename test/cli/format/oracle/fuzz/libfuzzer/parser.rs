@@ -153,7 +153,28 @@ fn agree_one(
             .map(|it| format!("{:?}", (it.kind, it.code))),
         // Too large, too deep and not UTF-8 are no syntax to recover from.
         Err(why) if matches!(why.why, Refusal::TooLarge | Refusal::TooDeep | Refusal::NotUtf8) => return None,
-        Err(why) => return Some(("recovery-gives-up", format!("{:?} by {}:{}", why.why, why.by.file(), why.by.line()))),
+        // An early error of acorn's or Babel's, which TypeScript's parser does not have: whoever calls words it.
+        Err(why) if why.why == Refusal::Reported && dialect != Dialect::default() => return None,
+        Err(why) => {
+            // The worst kind: the text is valid. As long as there is another parser to say so.
+            let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
+                dialect,
+                false,
+                (session.arena(), &session),
+                path,
+                None,
+                text,
+                &atoms,
+                false,
+                dialect != Dialect::default() && !dialect.script,
+            );
+            let is_valid = !(reference.has_errors
+                || reference.has_parse_diagnostics
+                || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
+                || reference.ran_out_of_stack);
+            let kind = if is_valid { "recovery-gives-up-on-a-valid-text" } else { "recovery-gives-up" };
+            return Some((kind, format!("{:?} by {}:{}", why.why, why.by.file(), why.by.line())));
+        }
     };
     match (strict, general, error) {
         (Ok(_), _, Some(error)) => Some(("strict-accepts-an-error", error)),
@@ -202,7 +223,7 @@ fn run(data: &[u8]) {
     });
     if let Some(Some((kind, what))) = wrong {
         // One for each line of the parser that gives up.
-        let key = if kind == "recovery-gives-up" { what.clone() } else { shape(what.as_bytes()) };
+        let key = if kind.starts_with("recovery-gives-up") { what.clone() } else { shape(what.as_bytes()) };
         run.report(kind, &format!("{name}-{key}"), &what);
     }
 }

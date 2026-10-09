@@ -278,6 +278,15 @@ oxfmt's option, and the plugin of Prettier that it is made of: the classes of Ta
 - **Not there**: with `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
 - **Tests**: `test/cli/format/tailwind`, with a stand-in for the package. `test/cli/format/oracle/tailwind/make-fixtures.ts` makes what is expected with the real tools.
 
+## Languages that only a plugin of Prettier reads
+
+`.svelte`, `.astro`, `.php` and the like. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project.
+
+- **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`.
+- **When**: `prettier` and every package that the configuration names as a plugin are installed. Prettier loads all of them, also those that are built in here. Else the files are named and left as they are.
+- **Options**: Prettier resolves them, from the configuration file that the driver has found. The flags are merged as `--config-precedence` says.
+- **Tests**: "a language that only a plugin of Prettier reads" in `test/cli/format/format.test.ts`, with a plugin of a few lines.
+
 ## Pitfalls
 
 - oxc tracks an older release of Prettier (3.8). Where they differ, the snapshot of 3.9.9 is right.

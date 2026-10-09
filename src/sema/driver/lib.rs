@@ -27,7 +27,7 @@ use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, declaration_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, Run, declaration_emit_output_file_path,
     own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
@@ -913,6 +913,9 @@ pub struct Report {
     /// `diagnostics` and of `listed_files`, and what a task has printed is printed together.
     pub tasks: Vec<TaskOutput>,
     pub files_loaded: usize,
+    /// Of several projects: how many parses they have in common. A file that two of them load counts twice in
+    /// `files_loaded`, and once here if they read it alike.
+    pub files_parsed_for_all: usize,
     pub files_checked: usize,
     /// Those that were to be checked in a program with an error in its syntax, its options or its
     /// global types. As in `tsc`, nothing else is reported for such a program.
@@ -1687,6 +1690,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     config: Some(&config),
                     named: None,
                     elsewhere: None,
+                    run: None,
                 };
                 return check_project_of(disk, request, &mut projects, of, report, started);
             }
@@ -1818,6 +1822,9 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let all: FxHashSet<&[u8]> = (paths_by_project.iter().flatten())
         .map(Vec::as_slice)
         .collect();
+    // Declared before the session of any program, so it is dropped after them.
+    let of_run = Session::new();
+    let run = (!is_one).then(|| Run::new(&of_run, disk.provided_paths().cloned().collect()));
     for ((config, extent, files), paths) in by_project.iter().zip(&paths_by_project) {
         let own: FxHashSet<&[u8]> = paths.iter().map(Vec::as_slice).collect();
         let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
@@ -1825,6 +1832,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             config: config.as_deref(),
             named: Some((*extent, files.as_slice())),
             elsewhere: (!is_one).then_some(&elsewhere),
+            run: run.as_ref(),
         };
         let (so_far, began) = (Report::default(), Instant::now());
         let checked = check_project_of(disk, request, &mut projects, of, so_far, began);
@@ -1832,6 +1840,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
+    report.files_parsed_for_all = run.as_ref().map_or(0, Run::parses);
     if !is_one {
         sort_as_one_project(&mut report);
     }
@@ -1851,20 +1860,22 @@ enum Extent {
 
 /// What `check_project_of` checks.
 #[derive(Clone, Copy)]
-struct OfProject<'a> {
+struct OfProject<'a, 'u> {
     /// `None`: there is no configuration file.
     config: Option<&'a [u8]>,
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project, by `tspath.Path`. This one may import them.
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
+    /// Of the request, if it has more than one project.
+    run: Option<&'a Run<'u>>,
 }
 
 fn check_project_of(
     disk: &host::Disk,
     request: &Request,
     projects: &mut Projects,
-    of: OfProject<'_>,
+    of: OfProject<'_, '_>,
     mut report: Report,
     started: Instant,
 ) -> Report {
@@ -1945,6 +1956,7 @@ fn check_project_of(
             named,
             of.elsewhere,
             None,
+            of.run,
         )
     }
 }
@@ -2592,6 +2604,8 @@ fn check_with_references(
             named,
             Some(&owned_elsewhere),
             Some(&|| !host.awaited.lock().is_empty()),
+            // What one of these programs emits another reads: the files change.
+            None,
         );
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
@@ -2833,7 +2847,9 @@ pub fn check_project(
     report: Report,
     started: Instant,
 ) -> Report {
-    check_named_files(host, project, request, report, started, None, None, None)
+    check_named_files(
+        host, project, request, report, started, None, None, None, None,
+    )
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
@@ -2850,6 +2866,7 @@ fn check_named_files(
     owned_elsewhere: Option<&FxHashSet<&[u8]>>,
     // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
+    run: Option<&Run<'_>>,
 ) -> Report {
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
@@ -2914,7 +2931,7 @@ fn check_named_files(
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
     let session = Session::new();
-    let files = Files::load(&session, host, project.options, &project.files);
+    let files = Files::load(&session, run, host, project.options, &project.files);
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;

@@ -14,6 +14,7 @@ use bun_lint::utils::eslint_utils::{
     get_string_if_constant,
 };
 use semver::Range;
+use std::fmt::Write;
 use std::sync::OnceLock;
 use table::{Part, Roots};
 
@@ -29,13 +30,19 @@ fn versions(part: Part) -> &'static [[u8; 3]] {
 
 /// `versionsToString`
 fn versions_to_string(versions: &[[u8; 3]]) -> String {
-    let mut versions = versions.iter().map(|[a, b, c]| format!("{a}.{b}.{c}"));
-    let latest = versions.next().unwrap_or_default();
-    let backported: Vec<String> = versions.map(|it| format!("^{it}")).collect();
-    match backported.is_empty() {
-        true => latest,
-        false => format!("{latest} (backported: {})", backported.join(", ")),
+    let mut text = String::new();
+    for (index, [a, b, c]) in versions.iter().enumerate() {
+        let before = match index {
+            0 => "",
+            1 => " (backported: ^",
+            _ => ", ^",
+        };
+        _ = write!(text, "{before}{a}.{b}.{c}");
     }
+    if versions.len() > 1 {
+        text.push(')');
+    }
+    text
 }
 
 /// With indices into [`data::INFOS`].

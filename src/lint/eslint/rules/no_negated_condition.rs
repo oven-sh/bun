@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::no_negated_condition::{fix_conditional_expression, fix_if_statement};
 
 /// Disallow negated conditions.
 pub struct NoNegatedCondition;
@@ -23,19 +24,26 @@ impl Rule for NoNegatedCondition {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::If], |_, stmt, cx| {
-            if let StmtKind::If { test, no: Some(no), .. } = stmt.kind()
+            if let StmtKind::If { test, yes, no: Some(no) } = stmt.kind()
                 && no.tag() != StmtTag::If
                 && is_negated(test)
             {
-                // oxlint points at the test.
-                cx.report(if cx.language().is_oxlint { test.span() } else { stmt.span() }, UNEXPECTED_NEGATED);
+                // oxlint points at the test, and has a fix.
+                match cx.language().is_oxlint {
+                    true => cx.report(test, UNEXPECTED_NEGATED).fix(|fixer| fix_if_statement(fixer, test, yes, no)),
+                    false => cx.report(stmt, UNEXPECTED_NEGATED),
+                };
             }
         });
         on.exprs([ExprTag::Cond], |_, e, cx| {
-            if let ExprKind::Cond { test, .. } = e.kind()
+            if let ExprKind::Cond { test, yes, no } = e.kind()
                 && is_negated(test)
             {
-                cx.report(if cx.language().is_oxlint { test } else { e }, UNEXPECTED_NEGATED);
+                match cx.language().is_oxlint {
+                    true => (cx.report(test, UNEXPECTED_NEGATED))
+                        .fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no)),
+                    false => cx.report(e, UNEXPECTED_NEGATED),
+                };
             }
         });
     }

@@ -137,6 +137,7 @@ fn is_truthy(value: &Json) -> bool {
 
 /// The options that rules had by default in ESLint 8 and no longer have.
 const DEFAULTS_OF_ESLINT_8: &[u8] = br#"{
+    "no-constant-condition": [{ "checkLoops": true }],
     "no-implicit-coercion": [{ "allow": ["- -", "-"] }],
     "no-inner-declarations": ["functions", { "blockScopedFunctions": "disallow" }],
     "no-shadow-restricted-names": [{ "reportGlobalThis": false }],

@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::{get_inner_expression, plain};
+use smallvec::{SmallVec, smallvec};
 use std::cell::OnceCell;
 
 /// Require braces around arrow function bodies.
@@ -210,6 +212,96 @@ fn add_block<'a>(fixer: Fixer<'a>, state: &State<'a>, arrow: Expr<'a>, func: Fun
     Some(fixes)
 }
 
+/// oxlint's `starts_with_object_literal`
+fn starts_with_object_literal(e: Expr) -> bool {
+    let mut at = Some(e).filter(|it| !it.is_chain_root());
+    while let Some(e) = at {
+        let leftmost = match e.kind() {
+            ExprKind::Object(_) => return true,
+            ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => obj,
+            ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => call.callee(),
+            ExprKind::Binary { op, left, .. } if op != BinOp::Comma => left,
+            ExprKind::Cond { test, .. } => test,
+            _ => return false,
+        };
+        at = plain(leftmost);
+    }
+    false
+}
+
+/// oxlint's `contains_in_operator`
+fn contains_in_operator(e: Expr) -> bool {
+    let mut pending: SmallVec<[Expr; 8]> = smallvec![e];
+    while let Some(e) = pending.pop() {
+        let inner = get_inner_expression(e);
+        if inner.is_chain_root() {
+            continue;
+        }
+        match inner.kind() {
+            // `#a in b` is another kind of node.
+            ExprKind::Binary { op: BinOp::In, left, .. } if left.tag() == ExprTag::PrivateIdentifier => {}
+            ExprKind::Binary { op: BinOp::In, .. } => return true,
+            ExprKind::Binary { left, right, .. } => pending.extend([left, right]),
+            ExprKind::Cond { test, yes, no } => pending.extend([test, yes, no]),
+            ExprKind::Assign { value, .. } => pending.push(value),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// oxlint's `is_inside_for_loop_init`. It does not look at what `arrow` is directly in.
+fn is_inside_for_loop_init(arrow: Expr) -> bool {
+    for ancestor in Node::Expr(arrow).ancestors() {
+        match ancestor {
+            Node::Stmt(statement) => {
+                if let StmtKind::For { init, .. } = statement.kind() {
+                    return init.is_some_and(|init| {
+                        init.span().contains(arrow.span())
+                            && !matches!(init.kind(), StmtKind::Expr(head) if head == arrow && !arrow.is_parenthesized())
+                    });
+                }
+            }
+            Node::Func(func) if !matches!(func.kind(), FnKind::StaticBlock) => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// oxlint's `fix_block_to_concise`: the braces, `return` with one blank after it, and the `;` go. The rest stays.
+fn remove_block_as_oxlint<'a>(
+    fixer: Fixer<'a>,
+    arrow: Expr<'a>,
+    body: Span,
+    statement: Stmt<'a>,
+    argument: Expr<'a>,
+) -> Vec<Fix> {
+    let inner = get_inner_expression(argument);
+    let needs_parens = !argument.is_parenthesized()
+        && (starts_with_object_literal(inner)
+            || inner.binary_op() == Some(BinOp::Comma)
+            || contains_in_operator(argument) && is_inside_for_loop_init(arrow));
+    let start = statement.span().start;
+    let after_keyword = fixer.file().text().get((start + RETURN_LEN) as usize);
+    let has_blank = after_keyword.is_some_and(u8::is_ascii_whitespace);
+    let mut fixes = vec![
+        fixer.replace(Span::new(body.start, body.start + 1), if needs_parens { "(" } else { "" }),
+        fixer.remove(Span::new(start, start + RETURN_LEN + u32::from(has_blank))),
+    ];
+    fixes.extend(statement.semicolon().map(|it| fixer.remove(it)));
+    fixes.push(fixer.replace(Span::new(body.end - 1, body.end), if needs_parens { ")" } else { "" }));
+    fixes
+}
+
+/// oxlint's `fix_concise_to_block`. Of an object literal it leaves out what is around it.
+fn add_block_as_oxlint<'a>(fixer: Fixer<'a>, body: Expr<'a>) -> Fix {
+    let inner = get_inner_expression(body);
+    let returned = if inner.tag() == ExprTag::Object { inner.span() } else { body.outer_span() };
+    fixer.replace(body.outer_span(), [&b"{return "[..], fixer.file().slice(returned), b"}"].concat())
+}
+
 impl ArrowBodyStyle {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(func) = e.as_fn().filter(|it| it.is_arrow()) else {
@@ -224,8 +316,11 @@ impl ArrowBodyStyle {
                         && body.tag() == ExprTag::Object)
                 {
                     // For oxlint the parentheses are part of the body.
-                    let place = if cx.language().is_oxlint { body.outer_span() } else { body.span() };
-                    cx.report(place, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func));
+                    match cx.language().is_oxlint {
+                        true => (cx.report(body.outer_span(), EXPECTED_BLOCK))
+                            .fix(|fixer| add_block_as_oxlint(fixer, body)),
+                        false => cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func)),
+                    };
                 }
             }
             FnBody::None => {}
@@ -277,6 +372,9 @@ impl ArrowBodyStyle {
             Some(_) => UNEXPECTED_SINGLE_BLOCK,
         };
         cx.report(body, message).fix(|fixer| match returned {
+            Some((statement, Some(argument))) if cx.language().is_oxlint => {
+                Some(remove_block_as_oxlint(fixer, e, body, statement, argument))
+            }
             Some((statement, Some(argument))) => remove_block(fixer, &cx.state, e, body, statement, argument),
             _ => None,
         });

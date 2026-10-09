@@ -56,29 +56,6 @@ fn write_return_or_throw<'a>(
             }
         ]
     );
-    // The others lead the next statement, if there is one.
-    if is_at_end_of_block(statement, f) {
-        write!(
-            f,
-            FormatTrailingComments::Comments(&comments[on_the_line..])
-        );
-    }
-}
-
-/// Whether nothing but comments is between `statement` and a `}`, or the end of the file.
-fn is_at_end_of_block<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
-    let mut end = statement.span().end;
-    for comment in f.comments().comments_after(end) {
-        let between = f
-            .source_text()
-            .text_for(&Span::new(end, comment.start().max(end)));
-        if !between.trim_ascii().is_empty() {
-            break;
-        }
-        end = comment.end();
-    }
-    let rest = f.file().text().get(end as usize..).unwrap_or_default();
-    matches!(rest.trim_ascii_start().first(), None | Some(b'}'))
 }
 
 /// `return a // comment⏎;`: the `;` is on a later line, so the comment is in the statement. oxfmt writes it behind the

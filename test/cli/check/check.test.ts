@@ -1064,6 +1064,23 @@ describe.concurrent("bun check", () => {
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
+    test("files that two projects read alike are parsed once", async () => {
+      const config = JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [], lib: ["es2022"] } });
+      using dir = project({
+        "a/tsconfig.json": config,
+        "a/a.ts": `import "../shared/s";\n`,
+        "b/tsconfig.json": config,
+        "b/b.ts": `import "../shared/s";\n`,
+        "shared/s.ts": `export {};\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["a/a.ts", "b/b.ts", "--timing"]);
+      const count = (pattern: RegExp) => Number(pattern.exec(stderr)?.[1]);
+      const [loaded, parsed] = [count(/(\d+) files loaded in/), count(/(\d+) files parsed for all projects/)];
+      // Each loads the library, its own file and the shared one.
+      expect(loaded).toBeGreaterThan(20);
+      expect({ parsed, stdout, exitCode }).toEqual({ parsed: loaded / 2 + 1, stdout: "", exitCode: 0 });
+    });
+
     test("two directories", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,

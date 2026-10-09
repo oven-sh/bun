@@ -13,8 +13,8 @@ use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
-    Options, PackageId, ParseOptions, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer,
-    ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
+    Options, PackageId, ParseOptions, Phase, ResolvedModule, Resolver, ScriptKind, ScriptTarget,
+    Spent, Tracer, ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
     format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
     inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, path_is_relative,
     remove_file_extension, supported_extensions, to_file_name_lower_case, to_path, to_path_in,
@@ -26,7 +26,7 @@ use crate::session::{
 };
 use crate::table::{Bases, ByNode, ByNodeIndirect, Frozen, RawWord};
 use crate::util::SharedSort;
-use crate::util::{FxBuild, FxHashMap, FxHashSet, List};
+use crate::util::{FxBuild, FxHashMap, FxHashSet, List, ShardedMap};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -780,6 +780,99 @@ struct UnsupportedExtension {
 struct Parse<'s> {
     hir: hir::File<'s>,
     bound: Bound<'s>,
+}
+
+/// All that `parse_and_bind` is given for a file besides its path and its text.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct ParseKey {
+    options: ParseOptions,
+    script_kind: Option<ScriptKind>,
+    is_lib: bool,
+    specifies_esm: bool,
+}
+
+/// What the programs of one request have in common: the names, and each file parsed and bound once. A file is the same
+/// for two programs if its path and its `ParseKey` are. It is read once: a file does not change during a request.
+pub struct Run<'u> {
+    session: &'u Session,
+    atoms: Interner<'u>,
+    /// By path.
+    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>)>>>,
+    /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
+    provided: FxHashSet<Vec<u8>>,
+    parses: AtomicUsize,
+}
+
+impl<'u> Run<'u> {
+    pub fn new(session: &'u Session, provided: FxHashSet<Vec<u8>>) -> Run<'u> {
+        Run {
+            session,
+            atoms: Interner::new_in(session),
+            parsed: ShardedMap::default(),
+            provided,
+            parses: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many files have been parsed.
+    pub fn parses(&self) -> usize {
+        self.parses.load(Ordering::Relaxed)
+    }
+
+    /// Whether `parse` may answer for `path` without its text.
+    fn has(&self, path: &[u8]) -> bool {
+        self.parsed.get_ref(path).is_some()
+    }
+
+    fn parse(
+        &self,
+        host: &dyn Host,
+        path: &[u8],
+        key: ParseKey,
+        text: impl FnOnce() -> Cow<'static, [u8]>,
+    ) -> &'u Parse<'u> {
+        let of_path = match self.parsed.get_ref(path) {
+            Some(of_path) => of_path,
+            None => self
+                .parsed
+                .insert_ref(path.to_vec(), Guarded::new(Vec::new())),
+        };
+        // Until the file is parsed: a program that comes to it at the same time waits for that.
+        let mut of_path = of_path.lock();
+        if let Some(found) = of_path.iter().find(|it| it.0 == key) {
+            return found.1;
+        }
+        self.parses.fetch_add(1, Ordering::Relaxed);
+        let arena = self.session.arena();
+        let (mut hir, bound) = Files::parse_and_bind(
+            arena,
+            host,
+            key.options,
+            &self.atoms,
+            path,
+            key.is_lib,
+            key.specifies_esm,
+            text(),
+        );
+        rename_private_names(&mut hir, &bound, &self.atoms, path);
+        // Nothing drops it.
+        keep_list(self.session, &mut hir.text);
+        keep_list(self.session, &mut hir.diagnostics);
+        keep_list(self.session, &mut hir.jsdoc_member_comments);
+        keep_list(self.session, &mut hir.jsdoc_param_errors);
+        let parse: &'u Parse<'u> = arena.alloc(Parse { hir, bound });
+        of_path.push((key, parse));
+        parse
+    }
+}
+
+/// `keep_lists` for one list.
+fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &mut Cow<'s, [T]>) {
+    if let Cow::Owned(owned) = list
+        && !owned.is_empty()
+    {
+        *list = Cow::Borrowed(session.keep(std::mem::take(owned)));
+    }
 }
 
 /// `'r`: the paths belong to the `Resolver`.
@@ -4145,8 +4238,11 @@ pub(crate) fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
 impl<'s> Files<'s> {
     /// Loads `roots` and every file reachable from them. The HIR and the side tables of a file are
     /// in the arena of the thread that loads it.
-    pub fn load(
+    ///
+    /// `run`: of the request, if it has more programs than this one.
+    pub fn load<'u: 's>(
         session: &'s Session,
+        run: Option<&'s Run<'u>>,
         host: &dyn Host,
         options: Options,
         roots: &[Vec<u8>],
@@ -4154,7 +4250,10 @@ impl<'s> Files<'s> {
         let arena = session.arena();
         // Nothing drops `Files`.
         let options: &'s Options = session.keep(options);
-        let atoms = Interner::new_in(session);
+        let atoms: Interner<'s> = match run {
+            Some(run) => run.atoms,
+            None => Interner::new_in(session),
+        };
         // Owns the paths that are only needed until every file is found. They are freed together
         // below, before the first file is checked: in `session` they would stay until the end.
         let resolving = Session::new();
@@ -4379,7 +4478,7 @@ impl<'s> Files<'s> {
         let (mut ahead, mut parses): (FxHashMap<&[u8], Box<Loaded>>, Vec<Option<Parse>>) =
             match seeds.is_empty() {
                 true => Default::default(),
-                false => Self::load_ahead(session, host, &resolver, options, &atoms, seeds),
+                false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
@@ -4468,14 +4567,16 @@ impl<'s> Files<'s> {
                         let paths: Vec<&[u8]> = missing.iter().map(|it| it.path.pretty).collect();
                         read_and_work(host, &paths, &|at, text| {
                             *results[at].lock() = Some(Box::new(Self::load_one(
+                                session,
                                 session.arena(),
+                                run,
                                 host,
                                 &resolver,
                                 options,
                                 &atoms,
                                 paths[at],
                                 missing[at].is_lib,
-                                text,
+                                Some(text),
                             )));
                         });
                         for (path, result) in paths.iter().zip(results) {
@@ -5223,8 +5324,9 @@ impl<'s> Files<'s> {
     /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one.
     /// Here one copy is parsed, and a copy with the same text uses the result to find what it refers
     /// to, from where it is. The results are returned by `Loaded::parse`.
-    fn load_ahead<'r>(
+    fn load_ahead<'r, 'u: 's>(
         session: &'s Session,
+        run: Option<&'s Run<'u>>,
         host: &dyn Host,
         resolver: &Resolver<'r>,
         options: &'s Options,
@@ -5248,7 +5350,7 @@ impl<'s> Files<'s> {
         enum Slot<'s, 'r> {
             /// A thread parses a copy. These copies have been read meanwhile. They become `ready`
             /// again when it is done.
-            InProgress(Vec<(ToLoad<'r>, Cow<'static, [u8]>)>),
+            InProgress(Vec<(ToLoad<'r>, Option<Cow<'static, [u8]>>)>),
             Done {
                 parse: Arc<Parse<'s>>,
                 specifies_esm: bool,
@@ -5257,7 +5359,8 @@ impl<'s> Files<'s> {
         }
         struct Shared<'s, 'r> {
             to_read: std::collections::VecDeque<ToLoad<'r>>,
-            ready: Vec<(ToLoad<'r>, Cow<'static, [u8]>)>,
+            /// Without the text if the run has the file: see `Run::has`.
+            ready: Vec<(ToLoad<'r>, Option<Cow<'static, [u8]>>)>,
             seen: FxHashSet<&'r [u8]>,
             /// Taken from `to_read` and not in `done` yet.
             in_progress: usize,
@@ -5293,11 +5396,13 @@ impl<'s> Files<'s> {
             loop {
                 if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
-                    let run: Vec<_> = state.to_read.drain(..count).collect();
+                    let some: Vec<_> = state.to_read.drain(..count).collect();
                     state.in_progress += count;
                     drop(state);
-                    for file in run {
-                        let text = host.read_source(file.path);
+                    for file in some {
+                        let is_at_hand =
+                            file.package.is_none() && run.is_some_and(|run| run.has(file.path));
+                        let text = (!is_at_hand).then(|| host.read_source(file.path));
                         shared.lock().ready.push((file, text));
                         has_changed.notify_one();
                     }
@@ -5351,7 +5456,8 @@ impl<'s> Files<'s> {
                     let loaded = match (package, parsed) {
                         (Some(_), Some((parse, of_parsed, parsed_path)))
                             if of_parsed == specifies_esm
-                                && *parse.hir.text == *text
+                                // A file of a package has been read.
+                                && *parse.hir.text == *text.as_deref().unwrap_or_default()
                                 && get_base_file_name(parsed_path) == get_base_file_name(path) =>
                         {
                             load_parsed(specifies_esm, &parse)
@@ -5365,7 +5471,7 @@ impl<'s> Files<'s> {
                                 path,
                                 is_lib,
                                 specifies_esm,
-                                text,
+                                text.unwrap_or_default(),
                             );
                             let parse = Arc::new(Parse { hir, bound });
                             let loaded = load_parsed(specifies_esm, &parse);
@@ -5377,7 +5483,7 @@ impl<'s> Files<'s> {
                             loaded
                         }
                         _ => Self::load_one(
-                            arena, host, resolver, options, atoms, path, is_lib, text,
+                            session, arena, run, host, resolver, options, atoms, path, is_lib, text,
                         ),
                     };
                     let loaded = Box::new(loaded);
@@ -5550,28 +5656,51 @@ impl<'s> Files<'s> {
         module.transient_symbols.clear();
     }
 
-    fn load_one<'r>(
+    /// `arena`: that of the calling thread in `session`. `text`: `None`: it has not been read.
+    fn load_one<'r, 'u: 's>(
+        session: &'s Session,
         arena: &'s Arena,
+        run: Option<&'s Run<'u>>,
         host: &dyn Host,
         resolver: &Resolver<'r>,
         options: &'s Options,
         atoms: &Interner<'s>,
         path: &[u8],
         is_lib: bool,
-        text: Cow<'static, [u8]>,
+        text: Option<Cow<'static, [u8]>>,
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
-        let (mut hir, bound) = Self::parse_and_bind(
-            arena,
-            host,
-            options.for_parsing(),
-            atoms,
-            path,
-            is_lib,
-            specifies_esm,
-            text,
-        );
-        rename_private_names(&mut hir, &bound, atoms, path);
+        let text = || text.unwrap_or_else(|| host.read_source(path));
+        let is_provided = |run: &Run| {
+            !run.provided.is_empty()
+                && (run.provided).contains(&*to_path(path, host.is_case_sensitive()))
+        };
+        let (hir, bound) = match run.filter(|run| !is_provided(run)) {
+            Some(run) => {
+                let key = ParseKey {
+                    options: options.for_parsing(),
+                    script_kind: host.script_kind(path),
+                    is_lib,
+                    specifies_esm,
+                };
+                let parse = run.parse(host, path, key, text);
+                (parse.hir.share(arena, session), parse.bound.copy_in(arena))
+            }
+            None => {
+                let (mut hir, bound) = Self::parse_and_bind(
+                    arena,
+                    host,
+                    options.for_parsing(),
+                    atoms,
+                    path,
+                    is_lib,
+                    specifies_esm,
+                    text(),
+                );
+                rename_private_names(&mut hir, &bound, atoms, path);
+                (hir, bound)
+            }
+        };
         let mut loaded = Self::load_parsed(
             arena,
             host,

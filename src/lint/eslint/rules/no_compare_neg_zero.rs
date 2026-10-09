@@ -66,9 +66,20 @@ impl NoCompareNegZero {
         if !left_is_neg_zero && !right_is_neg_zero {
             return;
         }
+        let report = cx.report(e, UNEXPECTED).data("operator", bin_op_text(op));
+        // oxlint suggests `Object.is` for `===`, and takes the `-` away from the first `-0` for all else.
+        if cx.language().is_oxlint {
+            let (neg_zero, other) = if left_is_neg_zero { (left, right) } else { (right, left) };
+            match op {
+                BinOp::EqEqEq => report.suggest(SUGGEST_OBJECT_IS, |fixer| {
+                    fixer.replace(e, [&b"Object.is("[..], fixer.file().slice(other.outer_span()), b", -0)"].concat())
+                }),
+                _ => report.fix(|fixer| Some(fixer.remove(neg_zero.operator_span()?))),
+            };
+            return;
+        }
         let object_is = if op == BinOp::EqEqEq { SUGGEST_OBJECT_IS } else { SUGGEST_NOT_OBJECT_IS };
-        cx.report(e, UNEXPECTED)
-            .data("operator", bin_op_text(op))
+        report
             .suggest(SUGGEST_REMOVE_MINUS, |fixer| {
                 let mut fixes = Vec::new();
                 if left_is_neg_zero {

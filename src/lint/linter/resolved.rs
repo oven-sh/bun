@@ -181,6 +181,9 @@ pub struct ResolvedConfig {
     pub processor_location: Option<Arc<js_plugin::Processor>>,
     /// The name of `languageOptions.parser`, if one is configured.
     pub parser_name: Option<Box<[u8]>>,
+    /// One of the plugins is eslint-plugin-html, which changes ESLint's `Linter` when the configuration file loads it: that then
+    /// finds the scripts in a file.
+    pub changes_linter: bool,
     /// All of this for ESLint's own `Linter`, if that is what lints such a file ([`Route::Eslint`]) and if JSON can say it.
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
@@ -278,12 +281,12 @@ impl ResolvedConfig {
 
     /// Whether there are files that [`Route::Eslint`] is the way of.
     pub(crate) fn is_for_eslint(&self) -> bool {
-        !self.is_javascript() || self.language.parser == Parser::Other
+        !self.is_javascript() || self.language.parser == Parser::Other || self.changes_linter
     }
 
     /// How the file at `path` is linted after a processor, or if there is none.
     pub fn route_as_it_is(&self, path: &[u8]) -> Route {
-        let is_read_here = self.language.parser != Parser::Other
+        let is_read_here = (self.language.parser != Parser::Other && !self.changes_linter)
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
         match self.is_javascript() && is_read_here {
             true => Route::Native,

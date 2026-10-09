@@ -99,6 +99,14 @@ impl UseIsnan {
             return;
         }
         let negates = matches!(op, BinOp::NotEq | BinOp::NotEqEq);
+        // oxlint has a fix, and suggests nothing.
+        if cx.language().is_oxlint {
+            report.fix(|fixer| {
+                let call: &[u8] = if negates { b"!isNaN(" } else { b"isNaN(" };
+                fixer.replace(e, [call, fixer.file().slice(compared.outer_span()), b")"].concat())
+            });
+            return;
+        }
         let report = report.suggest(REPLACE_WITH_IS_NAN, |fixer| fix_comparison(fixer, e, compared, negates, false));
         if matches!(op, BinOp::EqEq | BinOp::NotEq) {
             report.suggest(REPLACE_WITH_CASTING_AND_IS_NAN, |fixer| {
@@ -151,7 +159,7 @@ impl UseIsnan {
         };
         let report = cx.report(place, INDEX_OF_NAN).data("methodName", method_name);
         // `arr.findIndex(Number.isNaN)` would lose the side effects of what comes before the `NaN`.
-        if is_sequence(first) || args.len() > 1 {
+        if is_sequence(first) || args.len() > 1 || cx.language().is_oxlint {
             return;
         }
         report.suggest_with(

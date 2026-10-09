@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr};
 use bun_lint_oxlint::same_expression::{is_same_expression, is_same_inner_expression};
 use bun_lint_oxlint::text::trim;
-use crate::unicorn::{PRECEDENCE_MEMBER, get_precedence};
+use bun_lint_oxlint::ast_util::{PRECEDENCE_MEMBER, get_precedence};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 

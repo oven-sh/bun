@@ -15,7 +15,15 @@ impl Rule for NoDebugger {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::Debugger], |_, stmt, cx| {
-            cx.report(stmt, UNEXPECTED);
+            let report = cx.report(stmt, UNEXPECTED);
+            // oxlint suggests to remove it, or to put a block where a statement has to be.
+            if cx.language().is_oxlint {
+                let is_body = matches!(stmt.parent(), Node::Stmt(parent) if matches!(
+                    parent.tag(),
+                    StmtTag::If | StmtTag::While | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
+                ));
+                report.fix(|fixer| fixer.replace(stmt, if is_body { "{}" } else { "" }));
+            }
         });
     }
 }

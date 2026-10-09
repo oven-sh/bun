@@ -795,7 +795,10 @@ fn run(data: &[u8]) {
                 let letter = if at < 26 { (b'a' + at as u8) as char } else { '~' };
                 let way = if before[at] > after[at] { "lost" } else { "added" };
                 let detail = format!("{letter}: {} times, then {} times", before[at], after[at]);
-                run.report(&format!("letter-{way}"), &format!("{variant}-{letter}"), &detail);
+                // A text that somebody could have written does not hide behind garbage.
+                let is_clean = str::from_utf8(text).is_ok() && !text.iter().any(|it| it.is_ascii_control() && !b"\t\n\r".contains(it));
+                let kind = if is_clean { "in-clean-text" } else { "in-garbage" };
+                run.report(&format!("letter-{way}"), &format!("{variant}-{letter}-{kind}"), &detail);
             }
         }
         None => {}

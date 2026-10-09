@@ -105,7 +105,8 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
   // Of an array that is only an array the `Linter` makes one for each file.
   const configs = FlatConfigArray === null ? [] : new FlatConfigArray([], { basePath, shouldIgnore: ignores });
   if (file !== null) {
-    const exported = (await load(pathToFileURL(file).href)).default;
+    // It can be a promise, as that of @antfu/eslint-config.
+    const exported = await (await load(pathToFileURL(file).href)).default;
     if (Array.isArray(exported)) configs.push(...exported);
     else if (exported !== undefined) configs.push(exported);
   }

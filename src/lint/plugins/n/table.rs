@@ -81,6 +81,10 @@ impl<T: Table> Member<T> {
     fn traced<'m>(&'static self) -> (&'m str, &'m dyn Trace<'m>) {
         (self.name(), self)
     }
+
+    fn is_called(&self, name: &[u8]) -> bool {
+        usize::from(self.name_len) == name.len() && self.name().as_bytes() == name
+    }
 }
 
 impl<'m, T: Table> Trace<'m> for Member<T> {
@@ -97,6 +101,11 @@ impl<'m, T: Table> Trace<'m> for Member<T> {
     fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)> {
         self.members().get(index).map(Member::traced)
     }
+
+    fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
+        let mut members = self.members().iter();
+        members.find(|it| it.is_called(name)).map(Member::traced)
+    }
 }
 
 /// A map with some members of a table as its members.
@@ -109,5 +118,10 @@ impl<'m, T: Table> Trace<'m> for Roots<T> {
 
     fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)> {
         self.0.get(index).map(|it| it.traced())
+    }
+
+    fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
+        let mut members = self.0.iter();
+        members.find(|it| it.is_called(name)).map(|it| it.traced())
     }
 }

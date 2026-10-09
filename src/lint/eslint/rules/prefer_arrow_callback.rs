@@ -165,6 +165,35 @@ fn fix<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_this: bool)
     Some(fixes)
 }
 
+/// oxlint's `build_fix`: the arrow function in the place of the whole function, or of `function () {}.bind(this)`.
+fn fix_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_this: bool) -> Option<Fix> {
+    let file = fixer.file();
+    let (params, body) = (func.params_span()?, func.body_span()?);
+    // `: T`
+    let return_type = func.return_type().map(|it| Span::new(skip_trivia(file.text(), params.end), it.outer_span().end));
+    let arrow = [
+        if func.is_async() { &b"async "[..] } else { b"" },
+        func.type_params().angle_brackets_span().map_or(&b""[..], |it| file.slice(it)),
+        file.slice(params),
+        return_type.map_or(&b""[..], |it| file.slice(it)),
+        b" =>",
+        file.slice(Span::new(return_type.unwrap_or(params).end, body.end)),
+    ];
+    let replaced = match is_lexical_this {
+        true => {
+            let member = e.parent().as_expr().filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))?;
+            member.parent().as_expr()?
+        }
+        false => e,
+    };
+    let is_in_call_or_conditional =
+        matches!(replaced.parent().as_expr().map(Expr::tag), Some(ExprTag::Call | ExprTag::New | ExprTag::Cond));
+    Some(match is_in_call_or_conditional || replaced.is_parenthesized() {
+        true => fixer.replace(replaced, arrow.concat()),
+        false => fixer.replace(replaced, [&b"("[..], &arrow.concat(), b")"].concat()),
+    })
+}
+
 impl PreferArrowCallback {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Fn(func) = e.kind() else {
@@ -200,7 +229,10 @@ impl PreferArrowCallback {
             if !is_lexical_this && own.this || has_duplicate_params(func) || func.this_param().is_some() {
                 return None;
             }
-            fix(fixer, e, func, is_lexical_this)
+            match is_oxlint {
+                true => fix_as_oxlint(fixer, e, func, is_lexical_this).map(|it| vec![it]),
+                false => fix(fixer, e, func, is_lexical_this),
+            }
         });
     }
 }

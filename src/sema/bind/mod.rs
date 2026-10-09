@@ -10,7 +10,7 @@ pub use parents::{bind_for_format, bind_for_format_in, try_bind_for_format_in};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec};
+use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec, vec_from_iter_in};
 use crate::util::{FxBuild, FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -436,6 +436,17 @@ impl DeclsIn<Growable> {
     }
 }
 
+impl Decls<'_> {
+    /// `clone_in`, into the arena of another session.
+    pub fn copy_in<'s>(&self, arena: &'s Arena) -> Decls<'s> {
+        match self {
+            DeclsIn::None => DeclsIn::None,
+            DeclsIn::One(decl) => DeclsIn::One(*decl),
+            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
+        }
+    }
+}
+
 impl<'s> Decls<'s> {
     pub fn clone_in(&self, arena: &'s Arena) -> Decls<'s> {
         match self {
@@ -531,6 +542,7 @@ pub enum ScopeKind {
     PropertyType(MemberId, FnId),
 }
 
+#[derive(Copy, Clone)]
 pub struct Scope {
     pub parent: ScopeId,
     pub kind: ScopeKind,
@@ -832,6 +844,7 @@ pub enum InferPosition {
 }
 
 /// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: `symbol` refused `decl`.
+#[derive(Copy, Clone)]
 pub struct Redeclaration {
     pub symbol: SymbolId,
     /// `len(symbol.Declarations)` by then.
@@ -2073,6 +2086,195 @@ impl BoundBuilder {
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
         }
     }
+}
+
+impl Bound<'_> {
+    /// The same in `arena`, for a program that has the file in common with others: it writes into the symbols, and its
+    /// lists have its lifetime.
+    pub fn copy_in<'s>(&self, arena: &'s Arena) -> Bound<'s> {
+        Bound {
+            ran_out_of_stack: self.ran_out_of_stack,
+            symbols: {
+                let copy = |symbol: &Symbol<'_>| Symbol {
+                    name: symbol.name,
+                    flags: symbol.flags,
+                    decls: symbol.decls.copy_in(arena),
+                    value_declaration: symbol.value_declaration,
+                    parent: symbol.parent,
+                    exports: symbol.exports,
+                    members: symbol.members,
+                    export_symbol: symbol.export_symbol,
+                };
+                vec_from_iter_in(self.symbols.iter().map(copy), arena)
+            },
+            scopes: vec_from_iter_in(self.scopes.iter().cloned(), arena),
+            tables: vec_from_iter_in(self.tables.iter().cloned(), arena),
+            entries: vec_from_iter_in(self.entries.iter().cloned(), arena),
+            large_tables: copy_of_map(&self.large_tables, arena),
+            nested_names: vec_from_iter_in(self.nested_names.iter().cloned(), arena),
+            ids: vec_from_iter_in(self.ids.iter().cloned(), arena),
+            file_symbol: self.file_symbol,
+            export_stars: ArenaFew::from_iter_in(self.export_stars.iter().cloned(), arena),
+            ambient_modules: ArenaFew::from_iter_in(self.ambient_modules.iter().cloned(), arena),
+            pattern_ambient_modules: ArenaFew::from_iter_in(
+                self.pattern_ambient_modules.iter().cloned(),
+                arena,
+            ),
+            global_augmentations: ArenaFew::from_iter_in(
+                self.global_augmentations.iter().cloned(),
+                arena,
+            ),
+            redeclarations: ArenaFew::from_iter_in(self.redeclarations.iter().cloned(), arena),
+            umd_globals: ArenaFew::from_iter_in(self.umd_globals.iter().cloned(), arena),
+            specifiers: vec_from_iter_in(self.specifiers.iter().cloned(), arena),
+            module_augmentations: ArenaFew::from_iter_in(
+                self.module_augmentations.iter().cloned(),
+                arena,
+            ),
+            ambient_specifiers: ArenaFew::from_iter_in(
+                self.ambient_specifiers.iter().cloned(),
+                arena,
+            ),
+            commonjs_indicator: self.commonjs_indicator,
+            module_exports_property: self.module_exports_property,
+            expr_symbol: vec_from_iter_in(self.expr_symbol.iter().cloned(), arena),
+            expr_parent: vec_from_iter_in(self.expr_parent.iter().cloned(), arena),
+            expr_flow: vec_from_iter_in(self.expr_flow.iter().cloned(), arena),
+            stmt_parent: vec_from_iter_in(self.stmt_parent.iter().cloned(), arena),
+            stmt_scope: vec_from_iter_in(self.stmt_scope.iter().cloned(), arena),
+            type_scope: vec_from_iter_in(self.type_scope.iter().cloned(), arena),
+            type_by_alias: vec_from_iter_in(self.type_by_alias.iter().cloned(), arena),
+            this_in_type_literal: copy_of_set(&self.this_in_type_literal, arena),
+            pat_parent: vec_from_iter_in(self.pat_parent.iter().cloned(), arena),
+            pat_symbol: vec_from_iter_in(self.pat_symbol.iter().cloned(), arena),
+            prop_owner: vec_from_iter_in(self.prop_owner.iter().cloned(), arena),
+            member_symbol: vec_from_iter_in(self.member_symbol.iter().cloned(), arena),
+            property_symbol: copy_of_map(&self.property_symbol, arena),
+            member_owner: vec_from_iter_in(self.member_owner.iter().cloned(), arena),
+            member_scope: vec_from_iter_in(self.member_scope.iter().cloned(), arena),
+            param_fn: vec_from_iter_in(self.param_fn.iter().cloned(), arena),
+            type_param_symbol: vec_from_iter_in(self.type_param_symbol.iter().cloned(), arena),
+            type_param_scope: vec_from_iter_in(self.type_param_scope.iter().cloned(), arena),
+            fns: vec_from_iter_in(self.fns.iter().cloned(), arena),
+            requires_scope_change: vec_from_iter_in(
+                self.requires_scope_change.iter().cloned(),
+                arena,
+            ),
+            fn_symbol: vec_from_iter_in(self.fn_symbol.iter().cloned(), arena),
+            class_symbol: vec_from_iter_in(self.class_symbol.iter().cloned(), arena),
+            class_owner: vec_from_iter_in(self.class_owner.iter().cloned(), arena),
+            class_scope: vec_from_iter_in(self.class_scope.iter().cloned(), arena),
+            interface_symbol: vec_from_iter_in(self.interface_symbol.iter().cloned(), arena),
+            interface_scope: vec_from_iter_in(self.interface_scope.iter().cloned(), arena),
+            interface_contains_this: vec_from_iter_in(
+                self.interface_contains_this.iter().cloned(),
+                arena,
+            ),
+            enum_scope: ArenaFew::from_iter_in(self.enum_scope.iter().cloned(), arena),
+            module_scope: ArenaFew::from_iter_in(self.module_scope.iter().cloned(), arena),
+            alias_symbol: vec_from_iter_in(self.alias_symbol.iter().cloned(), arena),
+            alias_scope: vec_from_iter_in(self.alias_scope.iter().cloned(), arena),
+            enum_symbol: ArenaFew::from_iter_in(self.enum_symbol.iter().cloned(), arena),
+            enum_member_symbol: ArenaFew::from_iter_in(
+                self.enum_member_symbol.iter().cloned(),
+                arena,
+            ),
+            enum_member_owner: ArenaFew::from_iter_in(
+                self.enum_member_owner.iter().cloned(),
+                arena,
+            ),
+            module_symbol: ArenaFew::from_iter_in(self.module_symbol.iter().cloned(), arena),
+            module_instance_state: ArenaFew::from_iter_in(
+                self.module_instance_state.iter().cloned(),
+                arena,
+            ),
+            var_stmt: vec_from_iter_in(self.var_stmt.iter().cloned(), arena),
+            assignments: vec_from_iter_in(self.assignments.iter().cloned(), arena),
+            unchecked_assignment_targets: ArenaFew::from_iter_in(
+                self.unchecked_assignment_targets.iter().cloned(),
+                arena,
+            ),
+            type_query_operands: ArenaFew::from_iter_in(
+                self.type_query_operands.iter().cloned(),
+                arena,
+            ),
+            unchecked_exprs: ArenaFew::from_iter_in(self.unchecked_exprs.iter().cloned(), arena),
+            unchecked_types: ArenaFew::from_iter_in(self.unchecked_types.iter().cloned(), arena),
+            infer_positions: ArenaFew::from_iter_in(self.infer_positions.iter().cloned(), arena),
+            expando_declarations: ArenaFew::from_iter_in(
+                self.expando_declarations.iter().cloned(),
+                arena,
+            ),
+            computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
+            case_stmt: vec_from_iter_in(self.case_stmt.iter().cloned(), arena),
+            stmt_flow: vec_from_iter_in(self.stmt_flow.iter().cloned(), arena),
+            case_fallthrough: vec_from_iter_in(self.case_fallthrough.iter().cloned(), arena),
+            hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
+            refused_decorators: ArenaFew::from_iter_in(
+                self.refused_decorators.iter().cloned(),
+                arena,
+            ),
+            unused_labels: ArenaFew::from_iter_in(self.unused_labels.iter().cloned(), arena),
+            import_scope: vec_from_iter_in(self.import_scope.iter().cloned(), arena),
+            import_equals_scope: ArenaFew::from_iter_in(
+                self.import_equals_scope.iter().cloned(),
+                arena,
+            ),
+            export_scope: vec_from_iter_in(self.export_scope.iter().cloned(), arena),
+            expr_scope: copy_of_map(&self.expr_scope, arena),
+            private_class: copy_of_map(&self.private_class, arena),
+            private_names_outside_class_bodies: ArenaFew::from_iter_in(
+                self.private_names_outside_class_bodies.iter().cloned(),
+                arena,
+            ),
+            classes_of_private_names: ArenaFew::from_iter_in(
+                self.classes_of_private_names.iter().cloned(),
+                arena,
+            ),
+            free_idents: vec_from_iter_in(self.free_idents.iter().cloned(), arena),
+            alias_idents: vec_from_iter_in(self.alias_idents.iter().cloned(), arena),
+            arguments_objects: ArenaFew::from_iter_in(
+                self.arguments_objects.iter().cloned(),
+                arena,
+            ),
+            identifiers_in_parameters: ArenaFew::from_iter_in(
+                self.identifiers_in_parameters.iter().cloned(),
+                arena,
+            ),
+            jsdoc_param_errors: ArenaFew::from_iter_in(
+                self.jsdoc_param_errors.iter().cloned(),
+                arena,
+            ),
+            names_resolved_for_arguments: ArenaFew::from_iter_in(
+                self.names_resolved_for_arguments.iter().cloned(),
+                arena,
+            ),
+            flow: vec_from_iter_in(self.flow.iter().cloned(), arena),
+            flow_edges: vec_from_iter_in(self.flow_edges.iter().cloned(), arena),
+            flow_shared: vec_from_iter_in(self.flow_shared.iter().cloned(), arena),
+            flow_places: self.flow_places,
+            expr_kinds: vec_from_iter_in(self.expr_kinds.iter().cloned(), arena),
+            expr_kind_counts: vec_from_iter_in(self.expr_kind_counts.iter().cloned(), arena),
+        }
+    }
+}
+
+fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
+    map: &ArenaHashMap<'_, K, V>,
+    arena: &'s Arena,
+) -> ArenaHashMap<'s, K, V> {
+    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
+    exact.extend(map.iter().map(|(&key, &value)| (key, value)));
+    exact
+}
+
+fn copy_of_set<'s, K: Copy + Eq + std::hash::Hash>(
+    set: &ArenaHashSet<'_, K>,
+    arena: &'s Arena,
+) -> ArenaHashSet<'s, K> {
+    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
+    exact.extend(set.iter().copied());
+    exact
 }
 
 impl<'s> Bound<'s> {

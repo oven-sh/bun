@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
-use bun_lint_oxlint::ast_util::as_member_expression;
+use bun_lint_oxlint::ast_util::{
+    PRECEDENCE_EXPONENTIATION, as_member_expression, get_precedence_without_parentheses, parent_node,
+};
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 
 /// Disallow the use of `Math.pow` in favor of the `**` operator.
@@ -20,14 +22,50 @@ fn precedence_of_exponentiation_expr() -> i32 {
 /// Whether `base` needs parentheses as the left operand of `**`, which is right-associative and
 /// does not allow a unary operator directly before it.
 fn does_base_need_parens(base: Expr) -> bool {
-    ast_utils::get_precedence(base) <= precedence_of_exponentiation_expr()
-        || match base.kind() {
-            ExprKind::Await(_) => true,
-            ExprKind::Unary { op, .. } => {
-                !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
-            }
-            _ => false,
-        }
+    ast_utils::get_precedence(base) <= precedence_of_exponentiation_expr() || is_unary_or_await(base)
+}
+
+/// An `UnaryExpression` or an `AwaitExpression`
+fn is_unary_or_await(e: Expr) -> bool {
+    match e.kind() {
+        ExprKind::Await(_) => true,
+        ExprKind::Unary { op, .. } => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
+        _ => false,
+    }
+}
+
+/// oxlint's `needs_parens_for_parent`
+fn needs_parens_for_parent(node: Expr) -> bool {
+    let Some(Node::Expr(parent)) = parent_node(node) else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::Binary { op: BinOp::Pow, right, .. } => right != node,
+        ExprKind::As { .. } | ExprKind::AsConst(_) => !parent.is_angle_bracket_assertion(),
+        ExprKind::Satisfies { .. } => true,
+        ExprKind::Dot { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Call(_)
+        | ExprKind::TaggedTemplate(_)
+        | ExprKind::NonNull(_)
+        | ExprKind::Instantiation { .. } => parent.span().start == node.span().start,
+        _ => is_unary_or_await(parent),
+    }
+}
+
+/// What oxlint makes of `Math.pow(base, exponent)`, which is `node`.
+fn fix_as_oxlint<'a>(fixer: Fixer<'a>, node: Expr<'a>, base: Expr<'a>, exponent: Expr<'a>) -> Fix {
+    let file = fixer.file();
+    let is_at_most = |e: Expr, limit: u8| get_precedence_without_parentheses(e).is_some_and(|it| it <= limit);
+    let mut expression = Vec::new();
+    let base_needs_parens = is_unary_or_await(base) || is_at_most(base, PRECEDENCE_EXPONENTIATION);
+    push_parenthesized_if(&mut expression, file.slice(base.outer_span()), base_needs_parens);
+    expression.extend_from_slice(b" ** ");
+    let exponent_needs_parens = is_at_most(exponent, PRECEDENCE_EXPONENTIATION - 1);
+    push_parenthesized_if(&mut expression, file.slice(exponent.outer_span()), exponent_needs_parens);
+    let mut replacement = Vec::new();
+    push_parenthesized_if(&mut replacement, &expression, needs_parens_for_parent(node));
+    fixer.replace(node, replacement)
 }
 
 fn does_exponent_need_parens(exponent: Expr) -> bool {
@@ -88,6 +126,9 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<Fix> {
         || file.comments_in(node).next().is_some()
     {
         return None;
+    }
+    if file.language().is_oxlint {
+        return Some(fix_as_oxlint(fixer, node, base, exponent));
     }
     let should_parenthesize_base = does_base_need_parens(base);
     let should_parenthesize_exponent = does_exponent_need_parens(exponent);

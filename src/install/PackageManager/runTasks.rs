@@ -2141,6 +2141,7 @@ pub fn generate_network_task_for_tarball<'a>(
         dependency_id,
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
+        pinned_by_github_commit: false,
         integrity: package.meta.integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,

@@ -40,6 +40,11 @@ pub struct ExtractTarball {
     /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
     /// it); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: StringOrTinyString,
+    /// A `github:` fetch for a dependency that has no package yet. Its commit
+    /// is known from the archive's root directory only, so the pin the
+    /// lockfile holds for that commit is checked after the extract
+    /// (`verify_github_pin`).
+    pub(crate) pinned_by_github_commit: bool,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
@@ -381,6 +386,14 @@ impl ExtractTarball {
                         },
                     )?;
 
+                    if let Err(err) =
+                        self.verify_github_pin(log, resolved, |pin| pin.verify(tgz_bytes))
+                    {
+                        drop(extract_destination);
+                        let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                        return Err(err);
+                    }
+
                     let lockfile_tag = self.github_resolved.slice();
                     if !lockfile_tag.is_empty() {
                         resolved = FileSystem::instance()
@@ -451,6 +464,36 @@ impl ExtractTarball {
         }
 
         self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+    }
+
+    /// A `github:` archive of a commit that the loaded lockfile pins must be
+    /// the pinned bytes. `archive_tag` is the root directory of the archive
+    /// (`<owner>-<repo>-<hash>`). `matches` compares the archive with a pin.
+    /// Both extraction paths call this before the rename into the cache.
+    pub(crate) fn verify_github_pin(
+        &self,
+        log: &mut bun_ast::Log,
+        archive_tag: &[u8],
+        matches: impl FnOnce(&Integrity) -> bool,
+    ) -> Result<(), Error> {
+        if !self.pinned_by_github_commit || self.skip_verify {
+            return Ok(());
+        }
+        let Some(pin) = self.package_manager.get().github_pin(archive_tag) else {
+            return Ok(());
+        };
+        if matches(pin) {
+            return Ok(());
+        }
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Integrity check failed for tarball: {}",
+                bun_fmt::s(self.name.slice()),
+            ),
+        );
+        Err(crate::Error::IntegrityCheckFailed)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read

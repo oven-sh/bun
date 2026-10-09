@@ -330,6 +330,11 @@ pub struct PackageManager {
 
     pub to_update: bool,
 
+    /// The pins of the `github:` packages of the loaded lockfile, by bun-tag
+    /// (`<owner>-<repo>-<hash>`). Extract workers read it, so it is built once
+    /// on the main thread (`load_github_pins`) and not changed after that.
+    pub(crate) github_pins: Option<Box<[(Box<[u8]>, crate::Integrity)]>>,
+
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
     pub(crate) update_request_index: update_request::UpdateRequestIndex,
@@ -645,6 +650,47 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 static VERBOSE_INSTALL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
+    /// Collects the pins of the `github:` packages the lockfile loaded, once.
+    /// `false` when it pins none, so no extract has one to check.
+    #[cold]
+    pub(crate) fn load_github_pins(&mut self) -> bool {
+        use crate::lockfile::package::PackageColumns as _;
+
+        if self.github_pins.is_none() {
+            let lockfile = &*self.lockfile;
+            let loaded = (lockfile.loaded_package_count as usize).min(lockfile.packages.len());
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            let pins = lockfile.packages.items_resolution()[..loaded]
+                .iter()
+                .zip(&lockfile.packages.items_meta()[..loaded])
+                .filter(|(resolution, meta)| {
+                    resolution.tag == crate::ResolutionTag::Github
+                        && meta.integrity.tag.is_supported()
+                        && !resolution.github().resolved.is_empty()
+                })
+                .map(|(resolution, meta)| {
+                    (
+                        Box::<[u8]>::from(resolution.github().resolved.slice(buf)),
+                        meta.integrity,
+                    )
+                })
+                .collect();
+            self.github_pins = Some(pins);
+        }
+        self.github_pins
+            .as_deref()
+            .is_some_and(|pins| !pins.is_empty())
+    }
+
+    /// The pin the loaded lockfile holds for the `github:` archive `tag`.
+    pub(crate) fn github_pin(&self, tag: &[u8]) -> Option<&crate::Integrity> {
+        self.github_pins
+            .as_deref()?
+            .iter()
+            .find(|(pinned_tag, _)| &**pinned_tag == tag)
+            .map(|(_, integrity)| integrity)
+    }
+
     /// Read as `PackageManager::verbose_install()` throughout the install pipeline.
     #[inline]
     pub(crate) fn verbose_install() -> bool {
@@ -2088,6 +2134,7 @@ pub fn init(
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
+        wr!(github_pins, None);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
@@ -2548,6 +2595,7 @@ fn init_with_runtime_once(
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
+        wr!(github_pins, None);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());

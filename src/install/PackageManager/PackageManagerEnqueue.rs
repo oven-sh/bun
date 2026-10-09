@@ -794,19 +794,31 @@ fn pin_for_unresolved_tarball(
     let dependency = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
     let name = this.lockfile.packages.items_name()[package_id as usize];
     let name_hash = this.lockfile.packages.items_name_hash()[package_id as usize];
-    let refresh = if this.to_update {
-        is_update_target(this, &dependency, dependency_id, name_hash, name)
-    } else {
-        this.subcommand == crate::Subcommand::Add && {
-            let buf = this.lockfile.buffers.string_bytes.as_slice();
-            this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
-                || this.is_update_request(name_hash, name.slice(buf))
-        }
-    };
-    if refresh {
+    if is_refresh(this, &dependency, dependency_id, name_hash, name) {
         Integrity::default()
     } else {
         integrity
+    }
+}
+
+/// Does the command ask for the bytes a tarball or a ref has now? `bun update`
+/// does for its targets, and `bun add` for the dependency it names. `name` is
+/// the package's own name when the lockfile knows it.
+#[cold]
+fn is_refresh(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    name: SemverString,
+) -> bool {
+    if this.to_update {
+        return is_update_target(this, dependency, dependency_id, name_hash, name);
+    }
+    this.subcommand == crate::Subcommand::Add && {
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
+            || this.is_update_request(name_hash, name.slice(buf))
     }
 }
 
@@ -1679,6 +1691,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
+            // The extract checks the archive against the pin the lockfile
+            // holds for its commit. `bun update` and a `bun add` of the
+            // dependency ask for the bytes the ref has now.
+            let pinned_by_commit =
+                !is_refresh(this, dependency, id, dependency.name_hash, dependency.name)
+                    && this.load_github_pins();
             let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
@@ -1699,6 +1717,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 other => other?,
             };
             if let Some(network_task) = generated {
+                if let crate::network_task::Callback::Extract(tarball) = &mut network_task.callback
+                {
+                    tarball.pinned_by_github_commit = pinned_by_commit;
+                }
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -2272,6 +2294,7 @@ fn enqueue_local_tarball(
                     skip_verify: false,
                     in_trusted_dependencies: false,
                     github_resolved: StringOrTinyString::init(b""),
+                    pinned_by_github_commit: false,
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,

@@ -1174,6 +1174,21 @@ impl TarballStream {
                 }
             }
 
+            // The hash of an unpinned archive. It becomes the pin of the package.
+            let computed = (!tarball.integrity.tag.is_supported()).then(|| self.hasher.final_());
+
+            if let Some(computed) = &computed {
+                if let Err(err) = tarball.verify_github_pin(
+                    &mut (*task).log,
+                    self.resolved_github_dirname,
+                    |pin| bytemuck::bytes_of(pin) == bytemuck::bytes_of(computed),
+                ) {
+                    (*task).err = Some(err);
+                    (*task).status = TaskStatus::Fail;
+                    return;
+                }
+            }
+
             if tarball.resolution.tag == ResolutionTag::Github {
                 'insert_tag: {
                     if self.resolved_github_dirname.is_empty() {
@@ -1222,11 +1237,7 @@ impl TarballStream {
                 ResolutionTag::Github
                 | ResolutionTag::RemoteTarball
                 | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
-                        result.integrity = tarball.integrity;
-                    } else {
-                        result.integrity = self.hasher.final_();
-                    }
+                    result.integrity = computed.unwrap_or(tarball.integrity);
                 }
                 _ => {}
             }

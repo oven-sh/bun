@@ -2238,18 +2238,30 @@ describe.concurrent("bun lint", () => {
             [root, ["SRC"]],
             [root, ["SRC/a.ts"]],
             [root, ["src/A.ts"]],
-            [root, [join(root, "SRC", "A.TS")]],
+            [root, [join(root, "SRC", "A.ts")]],
             [join(root, "SRC"), ["a.ts"]],
             [inUpperCase(root), []],
           );
         }
         if (isWindows) rows.push([withSmallDrive(root), []], [root, ["src\\a.ts"]]);
+        const results = [];
         for (const [cwd, args] of rows) {
-          expect({ cwd, args, ...(await problems(cwd, args)) }).toMatchObject({ found: both, exitCode: 1 });
+          const { found, exitCode } = await problems(cwd, args);
+          results.push({ cwd, args, found, exitCode });
         }
+        expect(results).toEqual(rows.map(([cwd, args]) => ({ cwd, args, found: both, exitCode: 1 })));
       },
       slow,
     );
+
+    // As ESLint 10.12.0: "File ignored because no matching configuration was supplied.", whatever the file system takes the name for.
+    test("`files` is compared with the path as it is written: **/*.ts is not for B.TS", async () => {
+      using dir = tempDir("bun-lint", { ...inSrc, "src/B.TS": files["a.ts"] });
+      expect(await problems(String(dir), [join("src", "B.TS")])).toMatchObject({
+        found: ["b.ts:undefined null"],
+        exitCode: 0,
+      });
+    });
 
     test(
       "run on a file that tsconfig.json spells differently",
@@ -2264,17 +2276,30 @@ describe.concurrent("bun lint", () => {
     test(
       "--fix in several passes, and --stdin, however the path is spelled",
       async () => {
-        for (const name of foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"]) {
+        const names = foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"];
+        const results = [];
+        for (const name of names) {
           using dir = tempDir("bun-lint", respelled("declare const text: string;\nexport const a = text!!;\n"));
           const fixed = await problems(String(dir), ["--fix", name]);
-          expect({ name, ...fixed, text: readFileSync(join(String(dir), "src/a.ts"), "utf8") }).toMatchObject({
-            found: [],
-            exitCode: 0,
-            text: "declare const text: string;\nexport const a = text;\n",
-          });
+          const text = readFileSync(join(String(dir), "src/a.ts"), "utf8");
           const piped = await problems(String(dir), ["--stdin", "--stdin-filename", name], files["a.ts"]);
-          expect({ name, ...piped }).toMatchObject({ found: both, exitCode: 1 });
+          results.push({
+            name,
+            left: fixed.found,
+            text,
+            piped: piped.found,
+            exitCodes: [fixed.exitCode, piped.exitCode],
+          });
         }
+        expect(results).toEqual(
+          names.map(name => ({
+            name,
+            left: [],
+            text: "declare const text: string;\nexport const a = text;\n",
+            piped: both,
+            exitCodes: [0, 1],
+          })),
+        );
       },
       slow,
     );
@@ -2293,15 +2318,14 @@ describe.concurrent("bun lint", () => {
         const root = String(dir);
         const args = ["-c", join(root, ".oxlintrc.json"), "--type-aware", "-f", "unix", join(root, "a.ts")];
         const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withSmallDrive(root)] : [])];
+        const results = [];
         for (const cwd of from) {
           await using proc = Bun.spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
           const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-          expect({ cwd, stdout, exitCode }).toEqual({
-            cwd,
-            stdout: expect.stringContaining("a.ts:2:1: Promises must be awaited"),
-            exitCode: 1,
-          });
+          results.push({ cwd, stdout, exitCode });
         }
+        const stdout = expect.stringContaining("a.ts:2:1: Promises must be awaited");
+        expect(results).toEqual(from.map(cwd => ({ cwd, stdout, exitCode: 1 })));
       },
       slow,
     );

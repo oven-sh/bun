@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include <array>
+#include <expected>
 #include <optional>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
@@ -35,28 +36,28 @@ public:
     // The same, and throws `RangeError: Out of memory` when the conversion fails.
     static std::optional<UTF8View> tryCreate(JSC::JSGlobalObject*, JSC::ThrowScope&, WTF::StringView);
 
-    // Calls `function` with the UTF-8 bytes, which live until it returns: no copy is kept. std::nullopt when the string does not convert.
-    template<typename Function>
-    static std::optional<std::invoke_result_t<Function, std::span<const char>>> tryWith(WTF::StringView view, NOESCAPE const Function& function)
+    enum class Failure : uint8_t {
+        OutOfMemory,
+        OverLimit,
+    };
+
+    // Calls `function` with the UTF-8 bytes, which live until it returns. A lone surrogate becomes U+FFFD. A string that must be converted fails with OverLimit, before any conversion, when its UTF-8 form is longer than `byteLimit()`.
+    template<typename Limit, typename Function>
+    static std::expected<std::invoke_result_t<Function, std::span<const char>>, Failure> tryWith(WTF::StringView view, NOESCAPE const Limit& byteLimit, NOESCAPE const Function& function)
     {
         if (view.is8Bit() && view.containsOnlyASCII())
             return function(byteCast<char>(view.span8()));
-        if (view.length() <= shortLength) {
-            std::array<char8_t, shortLength * 3> buffer;
-            if (auto utf8 = convertShort(view, buffer))
-                return function(byteCast<char>(*utf8));
+        if (view.length() <= stackCapacity / (view.is8Bit() ? 2 : 3)) {
+            std::array<char8_t, stackCapacity> stack;
+            return function(byteCast<char>(convertIntoStack(view, stack)));
         }
-        if (view.is8Bit()) {
-            // The callback overload of tryGetUTF8 converts Latin-1 one character at a time.
-            auto utf8 = view.tryGetUTF8();
-            if (!utf8) [[unlikely]]
-                return std::nullopt;
-            return function(byteCast<char>(utf8->span()));
-        }
-        auto result = view.tryGetUTF8([&](std::span<const char8_t> utf8) { return function(byteCast<char>(utf8)); });
-        if (!result) [[unlikely]]
-            return std::nullopt;
-        return WTF::move(result.value());
+        const size_t length = utf8Length(view);
+        if (length > limitFloor && length > byteLimit()) [[unlikely]]
+            return std::unexpected(Failure::OverLimit);
+        WTF::Vector<char8_t> heap;
+        if (!convertIntoHeap(view, length, heap)) [[unlikely]]
+            return std::unexpected(Failure::OutOfMemory);
+        return function(byteCast<char>(heap.span()));
     }
 
     std::span<const uint8_t> bytes() const { return byteCast<uint8_t>(span()); }
@@ -71,10 +72,14 @@ public:
 private:
     UTF8View() = default;
 
-    // The longest string, in code units, that tryWith() converts on the stack in one pass.
-    static constexpr size_t shortLength = 341;
-    // std::nullopt for ill-formed UTF-16: it takes the conversion that replaces each lone surrogate.
-    static std::optional<std::span<const char8_t>> convertShort(WTF::StringView, std::span<char8_t, shortLength * 3>);
+    // A code unit takes at most 2 bytes (Latin-1) or 3 bytes (UTF-16), so 511 or 341 code units always fit.
+    static constexpr size_t stackCapacity = 1023;
+    // Up to this many UTF-8 bytes tryWith() does not call `byteLimit()`, which can take a lock. The consumer applies its own limit to the bytes.
+    static constexpr size_t limitFloor = 1 << 24;
+    static std::span<const char8_t> convertIntoStack(WTF::StringView, std::span<char8_t, stackCapacity>);
+    static size_t utf8Length(WTF::StringView);
+    // False when the allocator refuses the buffer or the bytes do not fit in a Vector.
+    static bool convertIntoHeap(WTF::StringView, size_t utf8Length, WTF::Vector<char8_t>&);
 
     WTF::StringView m_borrowed {};
     WTF::UTF8CString m_converted {};

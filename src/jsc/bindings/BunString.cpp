@@ -15,6 +15,7 @@
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
 #include "MimallocWTFMalloc.h"
+#include "VectorSizeLimit.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -373,16 +374,33 @@ std::optional<UTF8View> UTF8View::tryCreate(JSC::JSGlobalObject* globalObject, J
     return result;
 }
 
-std::optional<std::span<const char8_t>> UTF8View::convertShort(WTF::StringView view, std::span<char8_t, shortLength * 3> buffer)
+std::span<const char8_t> UTF8View::convertIntoStack(WTF::StringView view, std::span<char8_t, stackCapacity> stack)
 {
-    if (view.is8Bit()) {
-        auto latin1 = view.span8();
-        return buffer.first(simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(latin1.data()), latin1.size(), reinterpret_cast<char*>(buffer.data())));
-    }
-    size_t size = WTF::StringImpl::tryConvertUTF16ToUTF8(view.span16(), buffer);
-    if (size == WTF::notFound) [[unlikely]]
-        return std::nullopt;
-    return buffer.first(size);
+    auto* out = reinterpret_cast<char*>(stack.data());
+    if (view.is8Bit())
+        return stack.first(simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(view.span8().data()), view.length(), out));
+    return stack.first(simdutf::convert_utf16le_to_utf8_with_replacement(view.span16().data(), view.length(), out));
+}
+
+size_t UTF8View::utf8Length(WTF::StringView view)
+{
+    if (view.is8Bit())
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(view.span8().data()), view.length());
+    return simdutf::utf8_length_from_utf16le_with_replacement(view.span16().data(), view.length()).count;
+}
+
+bool UTF8View::convertIntoHeap(WTF::StringView view, size_t utf8Length, WTF::Vector<char8_t>& heap)
+{
+    if (utf8Length > maxVectorSize<char8_t>() || !heap.tryGrow(utf8Length)) [[unlikely]]
+        return false;
+    auto* out = reinterpret_cast<char*>(heap.mutableSpan().data());
+    const size_t written = view.is8Bit()
+        ? simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(view.span8().data()), view.length(), out)
+        : simdutf::convert_utf16le_to_utf8_with_replacement(view.span16().data(), view.length(), out);
+    // simdutf's sizer and converter agree. Never expose bytes that were not written.
+    ASSERT(written == utf8Length);
+    heap.shrink(written);
+    return true;
 }
 
 }

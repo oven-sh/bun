@@ -2694,6 +2694,9 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
     ["trailing lone low surrogate", "a\uDC00"],
     ["only a lone high surrogate", "\uD800"],
     ["well-formed surrogate pair", "a\uD83D\uDE00b"],
+    ["low surrogate before a high surrogate", "\uDC00\uD800"],
+    ["lone high surrogate before a pair", "\uD800\uD800\uDC00"],
+    ["pair before a lone low surrogate", "\uD83D\uDE00\uDE00"],
     ["Latin-1 non-ASCII", "caf\u00E9"],
     ["BMP non-Latin-1", "\u65E5\u672C\u8A9E"],
     // SQLite reads these two as a byte-order mark when the bind is UTF-16.
@@ -2729,8 +2732,8 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
     });
   });
 
-  // The conversion takes another path from 342 code units, and another from 1,025 bytes.
-  it.each([340, 341, 342, 1024, 1025])("strings of about %d code units", length => {
+  // A string of up to 341 UTF-16 or 511 Latin-1 code units is converted on the stack, a longer one on the heap.
+  it.each([340, 341, 342, 511, 512, 1025])("strings of about %d code units", length => {
     using db = new Database(":memory:");
     const fill = (unit, units) => unit.repeat(Math.ceil(units / unit.length)).slice(0, units);
     const inputs = [
@@ -2739,6 +2742,7 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
       fill("\u{1F600}", length - (length % 2)),
       fill("ab", length - 1) + "\uD800",
       "\uDC00" + fill("\u65E5", length - 1),
+      fill("\u65E5", length - 3) + "\uD800\uD800\uDC00",
     ];
     const q = db.query("SELECT hex(CAST(? AS BLOB)) AS h, ? AS v");
     for (const input of inputs) {
@@ -2777,6 +2781,47 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
     const h = s => db.query("SELECT hex(CAST(? AS BLOB)) AS h").get(s).h;
     expect(h("a\uD800b")).toBe("61EFBFBD62");
     expect(h("a\uD800")).toBe("61EFBFBD");
+    // A lone surrogate next to another surrogate: each lone one is replaced and the pair stays.
+    expect(h("\uDC00\uD800")).toBe("EFBFBDEFBFBD");
+    expect(h("\uD800\uD800\uDC00")).toBe("EFBFBDF0908080");
+    expect(h("\uD83D\uDE00\uDE00")).toBe("F09F9880EFBFBD");
+  });
+
+  it("a string of 16,777,217 code units", () => {
+    using db = new Database(":memory:");
+    const q = db.query("SELECT length(CAST(? AS BLOB)) AS bytes");
+    // 8-bit ASCII is borrowed. The second string is 16-bit, so it is converted on the heap.
+    expect(q.get("a".repeat(2 ** 24 + 1))).toEqual({ bytes: 2 ** 24 + 1 });
+    expect(q.get("\uFEFF" + "a".repeat(2 ** 24))).toEqual({ bytes: 2 ** 24 + 3 });
+  });
+
+  it("a conversion buffer that the allocator refuses is an error", () => {
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    using db = new Database(":memory:");
+    const q = db.query("SELECT length(CAST(? AS BLOB)) AS bytes");
+    const latin1 = "\u00E9".repeat(600_000);
+    const cjk = "\u65E5".repeat(400_000);
+    const previous = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      expect(() => q.get(latin1)).toThrow(new RangeError("Out of memory"));
+      expect(() => q.get(cjk)).toThrow(new RangeError("Out of memory"));
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+    }
+    expect([q.get(latin1), q.get(cjk)]).toEqual([{ bytes: 1_200_000 }, { bytes: 1_200_000 }]);
+  });
+
+  it("a row that the UTF-16 bind wrote from an unpaired surrogate is found by its bytes, not by the string", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (k TEXT PRIMARY KEY)");
+    // What older versions stored for "a\uD800" and for "a\uD800b".
+    db.run("INSERT INTO t VALUES (CAST(x'61EDA080' AS TEXT)), (CAST(x'61F09081A2' AS TEXT))");
+    const byText = db.query("SELECT hex(k) AS h FROM t WHERE k = ?");
+    const byBytes = db.query("SELECT hex(k) AS h FROM t WHERE k = CAST(? AS TEXT)");
+    expect([byText.get("a\uD800"), byText.get("a\uD800b")]).toEqual([null, null]);
+    expect(byBytes.get(new Uint8Array([0x61, 0xed, 0xa0, 0x80]))).toEqual({ h: "61EDA080" });
+    // The second row is the well-formed text "a" + U+10062, and that string finds it.
+    expect(byText.get("a\u{10062}")).toEqual({ h: "61F09081A2" });
   });
 });
 

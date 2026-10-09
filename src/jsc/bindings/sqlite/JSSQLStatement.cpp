@@ -52,8 +52,6 @@
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
 static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
-// A string parameter longer than this many code units is measured against SQLite's length limit before it is converted.
-static constexpr unsigned bindLengthCheckFloor = 1 << 24;
 
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
@@ -939,27 +937,16 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        // A string over SQLite's length limit fails here, before the conversion allocates its UTF-8 form.
-        if (roped->length() > bindLengthCheckFloor) [[unlikely]] {
-            const uint64_t limit = static_cast<uint64_t>(sqlite3_limit(db, SQLITE_LIMIT_LENGTH, -1));
-            const bool canExceedLimit = static_cast<uint64_t>(roped->length()) * (roped->is8Bit() ? 2 : 3) > limit;
-            if (canExceedLimit) {
-                const uint64_t utf8Length = roped->is8Bit()
-                    ? Bun__encoding__byteLengthLatin1AsUTF8(roped->span8().data(), roped->length())
-                    : Bun__encoding__byteLengthUTF16AsUTF8(roped->span16().data(), roped->length());
-                if (utf8Length > limit) {
-                    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, String::fromUTF8(sqlite3_errstr(SQLITE_TOOBIG))));
-                    return false;
-                }
-            }
-        }
-
-        // Never SQLITE_UTF16: SQLite pairs a lone surrogate with the next unit and reads a leading U+FEFF or U+FFFE as a byte-order mark. SQLITE_TRANSIENT makes the only copy of the UTF-8 bytes.
-        const auto bound = Bun::UTF8View::tryWith(roped, [&](std::span<const char> utf8) {
-            return sqlite3_bind_text64(stmt, i, utf8.data(), utf8.size(), SQLITE_TRANSIENT, SQLITE_UTF8);
-        });
+        // Never SQLITE_UTF16: SQLite pairs a lone surrogate with the next unit and reads a leading U+FEFF or U+FFFE as a byte-order mark.
+        const auto bound = Bun::UTF8View::tryWith(
+            roped,
+            [&] { return static_cast<size_t>(sqlite3_limit(db, SQLITE_LIMIT_LENGTH, -1)); },
+            [&](std::span<const char> utf8) { return sqlite3_bind_text64(stmt, i, utf8.data(), utf8.size(), SQLITE_TRANSIENT, SQLITE_UTF8); });
         if (!bound) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            if (bound.error() == Bun::UTF8View::Failure::OverLimit)
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, String::fromUTF8(sqlite3_errstr(SQLITE_TOOBIG))));
+            else
+                throwOutOfMemoryError(lexicalGlobalObject, scope);
             return false;
         }
         CHECK_BIND(*bound);

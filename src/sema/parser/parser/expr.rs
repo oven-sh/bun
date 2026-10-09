@@ -443,6 +443,10 @@ impl Parser<'_> {
         mut left: ExprId,
         start: u32,
     ) -> ExprId {
+        // The right operand of `**` can have the same operator.
+        if self.is_too_deep() {
+            return left;
+        }
         loop {
             // "We either have a binary operator here, or we're finished."
             if self.token() == T::GreaterThan {
@@ -459,8 +463,6 @@ impl Parser<'_> {
                 return left;
             }
             match token {
-                // The only operator whose right operand can have the same operator.
-                T::AsteriskAsterisk if self.is_too_deep() => return left,
                 T::In if self.has_context(ctx::DISALLOW_IN) => return left,
                 T::As | T::Satisfies => {
                     // "Make sure we *do* perform ASI for constructs like this: var x = foo \n as

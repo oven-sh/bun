@@ -193,7 +193,6 @@ pub(crate) struct Parser<'a> {
     failed_at: (T, u32),
     /// The last `try_parse` was abandoned because of that call.
     pub(crate) was_abandoned_at: Option<(T, u32)>,
-    stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Parser<'a> {
@@ -252,7 +251,6 @@ impl<'a> Parser<'a> {
             has_reported: false,
             failed_at: (T::Eof, 0),
             was_abandoned_at: None,
-            stack_check: bun_core::StackCheck::init(),
         };
         this.source_file();
         this.report_what_the_scanner_flagged();
@@ -547,10 +545,12 @@ impl<'a> Parser<'a> {
         self.lx.token != close && self.lx.token != T::Eof
     }
 
-    /// Every recursive path of the parser passes through a function that asks this.
+    /// Every recursive path of the parser passes through a function that asks this before it calls
+    /// anything on that path: `test/internal/source-lints/sema-parser-recursion.test.ts` looks for
+    /// one that does not.
     #[inline(always)]
     pub(crate) fn is_too_deep(&mut self) -> bool {
-        if self.stack_check.is_safe_to_recurse() {
+        if self.lx.stack_check.is_safe_to_recurse() {
             return false;
         }
         self.refuse(Refusal::TooDeep);

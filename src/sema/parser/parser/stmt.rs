@@ -164,6 +164,10 @@ impl Parser<'_> {
     /// `parseStatement` where a declaration cannot be: the body of an `if`, of a loop, of a `with`
     /// or of a label. For acorn `let` is a name there, unless a `[` or a name with an escape follows.
     pub(crate) fn embedded_statement(&mut self) -> StmtId {
+        // `let: let: ..` does not get to `statement`.
+        if self.is_too_deep() {
+            return StmtId::NONE;
+        }
         if self.token() == T::Let && self.is_ecmascript {
             let is_declaration = self.look_ahead(|p| {
                 p.next();

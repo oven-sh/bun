@@ -379,6 +379,28 @@ impl Parser<'_> {
 
     /// `isStartOfType`
     pub(crate) fn is_start_of_type(&mut self, is_in_parameter: bool) -> bool {
+        if self.token() != T::OpenParen {
+            return self.is_start_of_type_without_parenthesis(is_in_parameter);
+        }
+        // "Only consider '(' the start of a type if followed by ')', '...', an identifier, a
+        // modifier, or something that starts a type."
+        // A loop over the parentheses that follow each other, where TypeScript recurses.
+        !is_in_parameter
+            && self.look_ahead(|p| {
+                loop {
+                    p.next();
+                    if p.token() == T::CloseParen || p.is_start_of_parameter() {
+                        return true;
+                    }
+                    if p.token() != T::OpenParen {
+                        return p.is_start_of_type_without_parenthesis(false);
+                    }
+                }
+            })
+    }
+
+    /// `isStartOfType`, at any token but a `(`.
+    fn is_start_of_type_without_parenthesis(&mut self, is_in_parameter: bool) -> bool {
         match self.token() {
             T::Any
             | T::Unknown
@@ -418,23 +440,6 @@ impl Parser<'_> {
             | T::TemplateHead => true,
             T::Function => !is_in_parameter,
             T::Minus => !is_in_parameter && matches!(self.peek(), T::Number | T::BigInt),
-            // "Only consider '(' the start of a type if followed by ')', '...', an identifier, a
-            // modifier, or something that starts a type."
-            // A loop over the parentheses that follow each other, where TypeScript recurses.
-            T::OpenParen => {
-                !is_in_parameter
-                    && self.look_ahead(|p| {
-                        loop {
-                            p.next();
-                            if p.token() == T::CloseParen || p.is_start_of_parameter() {
-                                return true;
-                            }
-                            if p.token() != T::OpenParen {
-                                return p.is_start_of_type(false);
-                            }
-                        }
-                    })
-            }
             _ => self.is_identifier(),
         }
     }
@@ -446,7 +451,7 @@ impl Parser<'_> {
             || matches!(self.token(), T::OpenBracket | T::OpenBrace)
             || self.token().is_modifier()
             || self.token() == T::At
-            || self.is_start_of_type(true)
+            || self.is_start_of_type_without_parenthesis(true)
     }
 
     /// `parseNonArrayType`

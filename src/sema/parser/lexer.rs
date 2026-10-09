@@ -53,6 +53,7 @@ pub(crate) struct Lexer<'a> {
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 /// What a lookahead restores.
@@ -73,6 +74,23 @@ pub(crate) struct Mark {
 fn blank_run(bytes: u8x16) -> u32 {
     let blanks = bytes.simd_eq(u8x16::splat(b'\t')) | bytes.simd_eq(u8x16::splat(b' '));
     (!blanks.to_bitmask() as u32 | 1 << 16).trailing_zeros()
+}
+
+/// The end of the tabs and spaces at `pos`. How far a line is indented is hard to guess, so it is not
+/// asked byte by byte.
+#[inline(always)]
+fn end_of_indentation(src: &[u8], mut pos: usize) -> usize {
+    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
+        let len = blank_run(u8x16::from_array(*chunk)) as usize;
+        pos += len;
+        if len < 16 {
+            break;
+        }
+    }
+    while matches!(src.get(pos), Some(b'\t' | b' ')) {
+        pos += 1;
+    }
+    pos
 }
 
 /// The number of leading bytes of `bytes` that are ASCII letters, digits, `_` or `$`.
@@ -145,6 +163,7 @@ impl<'a> Lexer<'a> {
             comments: Vec::new(),
             flagged: Vec::new(),
             buffer: Vec::new(),
+            stack_check: bun_core::StackCheck::init(),
         }
     }
 
@@ -275,19 +294,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'\n' => {
                     self.newline_before = true;
-                    pos = next;
-                    // How far a line is indented is hard to guess, so it is not asked byte by byte.
-                    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>())
-                    {
-                        let len = blank_run(u8x16::from_array(*chunk)) as usize;
-                        pos += len;
-                        if len < 16 {
-                            break;
-                        }
-                    }
-                    while matches!(src.get(pos), Some(b'\t' | b' ')) {
-                        pos += 1;
-                    }
+                    pos = end_of_indentation(src, next);
                     continue;
                 }
                 b'\r' => {
@@ -325,8 +332,7 @@ impl<'a> Lexer<'a> {
                 },
                 b'\'' | b'"' => return self.string(pos, byte),
                 b'/' => match self.at(next) {
-                    b'/' => return self.line_comment(pos),
-                    b'*' => return self.block_comment(pos),
+                    b'/' | b'*' => return self.scan_after_comments(pos),
                     b'=' => self.set(T::SlashEquals, pos, pos + 2),
                     _ => self.set(T::Slash, pos, next),
                 },
@@ -353,7 +359,7 @@ impl<'a> Lexer<'a> {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
                     (b'!', b'-') if self.is_script && self.at(pos + 3) == b'-' => {
-                        return self.rest_of_line(pos);
+                        return self.scan_after_comments(pos);
                     }
                     _ => self.set(T::LessThan, pos, next),
                 },
@@ -374,7 +380,7 @@ impl<'a> Lexer<'a> {
                     (b'-', b'>')
                         if self.is_script && (self.newline_before || self.full_start == 0) =>
                     {
-                        return self.rest_of_line(pos);
+                        return self.scan_after_comments(pos);
                     }
                     (b'-', _) => self.set(T::MinusMinus, pos, pos + 2),
                     (b'=', _) => self.set(T::MinusEquals, pos, pos + 2),
@@ -411,31 +417,101 @@ impl<'a> Lexer<'a> {
                 b'#' => {
                     let is_first = pos == 0 || pos == 3 && src.starts_with(b"\xEF\xBB\xBF");
                     if is_first && self.at(next) == b'!' {
-                        return self.rest_of_line(pos);
+                        return self.scan_after_comments(pos);
                     }
                     return self.private_name(pos);
                 }
                 b'\\' => return self.name_slowly(pos, pos),
-                0x80.. => return self.not_ascii(pos),
+                0x80.. => return self.scan_after_comments(pos),
                 _ => return self.refuse(Refusal::UnexpectedCharacter),
             }
             return;
         }
     }
 
-    /// At a character that is not ASCII, where a token can start.
+    /// See `Parser::is_too_deep`.
+    #[inline(always)]
+    fn is_too_deep(&mut self) -> bool {
+        if self.stack_check.is_safe_to_recurse() {
+            return false;
+        }
+        self.refuse(Refusal::TooDeep);
+        true
+    }
+
+    /// At a comment, or at a character that is not ASCII: scans the token after it and after the
+    /// blanks and comments that follow it. They are passed over in a loop: not every build turns
+    /// the last call of a function into a jump, and a file can start with thousands of comments.
+    #[inline(never)]
+    fn scan_after_comments(&mut self, mut pos: usize) {
+        if self.is_too_deep() {
+            return;
+        }
+        loop {
+            let end = match self.at(pos) {
+                b'/' => match self.at(pos + 1) {
+                    b'/' => Some(self.line_comment(pos)),
+                    b'*' => self.block_comment(pos),
+                    _ => return self.scan(pos),
+                },
+                b'\n' => {
+                    self.newline_before = true;
+                    Some(end_of_indentation(self.src, pos + 1))
+                }
+                b'\r' => {
+                    self.newline_before = true;
+                    Some(pos + 1)
+                }
+                b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
+                b'<' | b'-' | b'#' => match self.end_of_unusual_comment(pos) {
+                    Some(end) => Some(end),
+                    None => return self.scan(pos),
+                },
+                0x80.. => self.not_ascii(pos),
+                _ => return self.scan(pos),
+            };
+            // Otherwise the token is set.
+            match end {
+                Some(end) => pos = end,
+                None => return,
+            }
+        }
+    }
+
+    /// At a character that is not ASCII: its end, if it is a blank or a line break. Otherwise it
+    /// starts a name, which is scanned, or the text is refused.
     #[cold]
     #[inline(never)]
-    fn not_ascii(&mut self, pos: usize) {
+    fn not_ascii(&mut self, pos: usize) -> Option<usize> {
         let Some((c, len)) = decode(&self.src[pos..]) else {
-            return self.refuse(Refusal::NotUtf8);
+            self.refuse(Refusal::NotUtf8);
+            return None;
         };
         if c == 0x2028 || c == 0x2029 {
             self.newline_before = true;
         } else if !is_unicode_blank(c) {
-            return self.name_slowly(pos, pos);
+            self.name_slowly(pos, pos);
+            return None;
         }
-        self.scan(pos + len);
+        Some(pos + len)
+    }
+
+    /// The end of the line of `pos`, if a `<!--`, a `-->` or a `#!` there makes the rest of it a
+    /// comment.
+    #[cold]
+    #[inline(never)]
+    fn end_of_unusual_comment(&self, pos: usize) -> Option<usize> {
+        let rest = &self.src[pos..];
+        let is_comment = match self.is_script {
+            true if rest.starts_with(b"<!--") => true,
+            // Only blanks and comments are before it on its line.
+            true if rest.starts_with(b"-->") => self.newline_before || self.full_start == 0,
+            _ => {
+                rest.starts_with(b"#!")
+                    && (pos == 0 || pos == 3 && self.src.starts_with(b"\xEF\xBB\xBF"))
+            }
+        };
+        is_comment.then(|| self.end_of_line(pos))
     }
 
     /// `isConflictMarkerTrivia`
@@ -463,14 +539,6 @@ impl<'a> Lexer<'a> {
             b'|' => self.set(T::BarBar, pos, pos + 2),
             _ => self.set(T::GreaterThan, pos, pos + 1),
         }
-    }
-
-    /// Passes over the rest of the line of `pos` and scans the token after it.
-    #[cold]
-    #[inline(never)]
-    fn rest_of_line(&mut self, pos: usize) {
-        let end = self.end_of_line(pos);
-        self.scan(end);
     }
 
     // ───────────────────────────── names ─────────────────────────────
@@ -730,9 +798,9 @@ impl<'a> Lexer<'a> {
         src.len()
     }
 
-    /// Passes over the `//` comment at `start` and scans the token after it.
+    /// Notes the `//` comment at `start`. Returns its end.
     #[inline(never)]
-    fn line_comment(&mut self, start: usize) {
+    fn line_comment(&mut self, start: usize) -> usize {
         let end = self.end_of_line(start + 2);
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
@@ -745,12 +813,13 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(start, pos, end);
-        self.scan(end);
+        end
     }
 
-    /// Passes over the `/*` comment at `start` and scans the token after it.
+    /// Notes the `/*` comment at `start`. Returns its end. `None`: it has none, and the text is
+    /// refused.
     #[inline(never)]
-    fn block_comment(&mut self, start: usize) {
+    fn block_comment(&mut self, start: usize) -> Option<usize> {
         let src = self.src;
         let mut pos = start + 2;
         // The start of its last line.
@@ -770,7 +839,8 @@ impl<'a> Lexer<'a> {
                 pos += mask.trailing_zeros() as usize;
             }
             let Some(&byte) = src.get(pos) else {
-                return self.refuse(Refusal::Unterminated);
+                self.refuse(Refusal::Unterminated);
+                return None;
             };
             match byte {
                 b'*' if src.get(pos + 1) == Some(&b'/') => break pos + 2,
@@ -799,7 +869,7 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(last_line, pos, end);
-        self.scan(end);
+        Some(end)
     }
 
     /// `processCommentDirective`, from the blanks before the `@` on.
@@ -895,14 +965,13 @@ impl<'a> Lexer<'a> {
 
     /// Appends the UTF-16 code unit or the code point `c` to `text`, which is WTF-8: the second half
     /// of a surrogate pair joins the first.
-    pub(crate) fn push_code_point(text: &mut Vec<u8>, c: u32) {
+    pub(crate) fn push_code_point(text: &mut Vec<u8>, mut c: u32) {
         if (0xDC00..=0xDFFF).contains(&c)
             && let [.., 0xED, second @ 0xA0..=0xAF, third] = text[..]
         {
             let high = 0xD000 | u32::from(second & 0x3F) << 6 | u32::from(third & 0x3F);
-            let joined = 0x1_0000 + ((high - 0xD800) << 10) + (c - 0xDC00);
+            c = 0x1_0000 + ((high - 0xD800) << 10) + (c - 0xDC00);
             text.truncate(text.len() - 3);
-            return Self::push_code_point(text, joined);
         }
         match char::from_u32(c) {
             Some(c) => text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),

@@ -434,7 +434,9 @@ impl<'a> Lexer<'a> {
         }
         // Only the line breaks between the quotes count.
         let limit = end.unwrap_or(0);
-        let newline_before_end = |from: usize| self.index_of(b'\n', from).filter(|&at| at < limit);
+        let newline_before_end = |from: usize| {
+            strings::index_of_char_usize(self.buffer.get(from..limit)?, b'\n').map(|at| from + at)
+        };
         let mut nl = newline_before_end(self.pos);
         while let Some(at) = nl {
             match self.continue_scalar(at + 1) {

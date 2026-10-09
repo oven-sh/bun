@@ -152,7 +152,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
       let body = "";
       const socket = await Bun.connect({
         hostname: "127.0.0.1",
-        port: tlsServer.port,
+        port: tlsServer.port!,
         socket: {
           data() {},
           close() {},

@@ -69,7 +69,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     const gotRequest = Promise.withResolvers<Buffer>();
     const { port } = await listenEphemeral(socket => {
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         const joined = Buffer.concat(chunks);
         if (joined.includes("\r\n\r\n")) {

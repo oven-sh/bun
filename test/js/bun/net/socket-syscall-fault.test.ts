@@ -346,7 +346,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       socket.on("error", () => {});
       let buf = Buffer.alloc(0);
       let sawPreface = false;
-      socket.on("data", d => {
+      socket.on("data", (d: Buffer) => {
         buf = Buffer.concat([buf, d]);
         if (!sawPreface && buf.length >= 24) {
           buf = buf.subarray(24);
@@ -391,7 +391,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       // Recorded rather than asserted here: a throw inside the listener would
       // not reach the test body, while an unexpected event fails its toEqual.
       if (fd < 0) events.push("connect:no-fd");
-      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", after: 0, repeat, fd });
+      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
     req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));

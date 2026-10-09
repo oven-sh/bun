@@ -586,7 +586,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
   const junk = (n: number) => new Array<number>(n).fill(0);
   const sof5 = [0xff, 0xc5]; // differential sequential DCT: libjpeg's fatal JERR_SOF_UNSUPPORTED
   const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
-  const metadata = { width: warnW, height: warnH, format: "jpeg" };
+  const metadata: Bun.Image.Metadata = { width: warnW, height: warnH, format: "jpeg" };
 
   test("fixture layout", () => {
     expect([clean[eoi], clean[eoi + 1], eoi]).toEqual([0xff, 0xd9, clean.length - 2]);
@@ -1057,7 +1057,7 @@ describe("memory hygiene", () => {
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
-          get maxPixels() {
+          get maxPixels(): number {
             throw new Error("x");
           },
         });
@@ -1124,7 +1124,7 @@ describe("hostile option objects", () => {
   });
 
   test("detached ArrayBuffer input", async () => {
-    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength);
+    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength) as ArrayBuffer;
     structuredClone(ab, { transfer: [ab] }); // detaches `ab`
     // Constructor sees byteLength 0; must reject, not read freed memory.
     expect(await survives(new Bun.Image(ab).metadata())).toBe("rejected");
@@ -1139,7 +1139,7 @@ describe("hostile option objects", () => {
   });
 
   test("detach AFTER construction rejects the next terminal", async () => {
-    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength);
+    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength) as ArrayBuffer;
     const img = new Bun.Image(ab);
     expect((await img.metadata()).width).toBe(2);
     structuredClone(ab, { transfer: [ab] }); // detach between calls
@@ -1173,6 +1173,7 @@ describe("hostile option objects", () => {
     // The borrow-not-copy contract means a cross-thread store between header
     // parse and full decode could re-shape the implied output behind a guard
     // that's already passed; refuse SAB so the contract is enforceable.
+    // @ts-expect-error
     expect(() => new Bun.Image(sab)).toThrow(/shared/);
     expect(() => new Bun.Image(new Uint8Array(sab))).toThrow(/shared/);
   });

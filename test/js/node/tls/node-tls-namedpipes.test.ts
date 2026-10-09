@@ -153,7 +153,7 @@ it.if(isWindows)("setSecureContext() rotates the certificate of a server listeni
       client.on("error", reject);
       client.on("close", () => reject(new Error("the pipe closed before the server sent anything")));
       client.on("data", () => {
-        resolve(client.getPeerCertificate().subject.CN);
+        resolve(client.getPeerCertificate().subject.CN as string);
         client.destroy();
       });
     });

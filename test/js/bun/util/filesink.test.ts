@@ -71,7 +71,7 @@ describe("FileSink", () => {
       if (got !== original) throw new Error(`Expected ${original} bytes, got ${got} (${label})`);
       return Buffer.concat(chunks).toString();
       // test it on a small chunk size
-    })(Bun.file(path).stream(64), byteLength);
+    })((Bun.file(path) as any).stream(64), byteLength);
     return path;
   }
 
@@ -432,7 +432,7 @@ it.skipIf(!isPosix)(
 
       // The Err arm also moves the sink to its terminal state: further writes
       // short-circuit to Writable::Done (=> true).
-      expect(sink.write("x")).toBe(true);
+      expect(sink.write("x")).toBe<unknown>(true);
 
       // end() after the error reports the bytes that actually reached the fd;
       // the point is it doesn't claim the full chunk was delivered.
@@ -523,7 +523,7 @@ it("close() does not leak the native FileSink", async () => {
   for (let i = 0; i < iterations; i++) {
     const writer = Bun.file(join(dir, `close-leak-${i}.txt`)).writer();
     writer.write("hi");
-    writer.close();
+    (writer as any).close();
   }
   for (let i = 0; i < 50; i++) {
     Bun.gc(true);
@@ -549,7 +549,7 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   // returns a promise.
   const p = writer.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
   expect(p).toBeInstanceOf(Promise);
-  writer.close();
+  (writer as any).close();
   await expect(p).resolves.toBeGreaterThanOrEqual(0);
   const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
@@ -606,7 +606,7 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   // Re-point the writer at a read-only fd so the buffered flush in end() fails.
   const fd = fs.openSync(target, "r");
   try {
-    writer.start({ fd });
+    writer.start({ fd } as any);
   } finally {
     fs.closeSync(fd);
   }

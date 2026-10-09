@@ -253,7 +253,7 @@ for (const [label, arg] of [
 }
 
 const decoder = new TextDecoder();
-const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as ArrayBufferView));
+const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as NodeJS.ArrayBufferView));
 
 /** In-process consumers: each takes a stream and resolves to its full text (or rejects). */
 export const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {

@@ -267,7 +267,7 @@ describe("bundler", () => {
       },
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
         expect(trailer).toBeGreaterThan(0);
         // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
         const offsets = trailer - 32;
@@ -337,7 +337,7 @@ describe("bundler", () => {
       },
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
         expect(trailer).toBeGreaterThan(0);
         const offsets = trailer - 32;
         const base = offsets - Number(file.readBigUInt64LE(offsets));

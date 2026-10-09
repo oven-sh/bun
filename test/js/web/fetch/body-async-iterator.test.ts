@@ -165,7 +165,7 @@ test("cancel(reason) on an async generator body throws the reason into the gener
         },
         return: async () => {
           events.push("return");
-          return { done: true, value: undefined };
+          return { done: true as const, value: undefined };
         },
       };
     },
@@ -176,7 +176,7 @@ test("cancel(reason) on an async generator body throws the reason into the gener
 
   // Hand-written iterators whose throw() lets the reason out in other shapes than a
   // rejected native promise: a synchronous rethrow and a rejecting thenable.
-  const handWritten = (throwImpl: (e: unknown) => unknown) => ({
+  const handWritten = (throwImpl: (e: unknown) => any) => ({
     [Symbol.asyncIterator]() {
       return {
         next: async () => ({ done: false, value: new Uint8Array(64 * 1024) }),

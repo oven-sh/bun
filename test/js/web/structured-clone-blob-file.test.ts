@@ -241,7 +241,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned[0].size).toBe(4);
 
       expect(cloned[1]).toBeInstanceOf(File);
-      expect(cloned[1].name).toBe("test.txt");
+      expect((cloned[1] as File).name).toBe("test.txt");
       expect(cloned[1].size).toBe(4);
     });
 

@@ -81,7 +81,7 @@ test("fails with error if not provided abort signal", async () => {
   const invalidSignals = [{}, null, undefined, Symbol(), [], 1, 0, 1n, true, false, "a", () => {}];
 
   for (const sig of invalidSignals) {
-    await expect(() => aborted(sig, {})).toThrow();
+    await expect(() => aborted(sig as any, {})).toThrow();
   }
 });
 

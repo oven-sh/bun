@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -881,6 +882,45 @@ exports.format = async (text, options) => {
       expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
       const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
       expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+    });
+
+    // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
+    test("more files than there are threads", async () => {
+      const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.svelte`);
+      const reading = packages["node_modules/prettier/index.cjs"].replace(
+        "exports.format = async (text, options) => {",
+        "exports.format = async (text, options) => {\n  await fs.promises.readFile(__filename);",
+      );
+      const result = await format(
+        {
+          ...files,
+          "node_modules/prettier/index.cjs": reading,
+          ...Object.fromEntries(names.map(name => [name, "<p   >a</p>\n"])),
+        },
+        ["many"],
+        { reads: names },
+      );
+      expect(Object.values(result.files)).toEqual(names.map(() => "<p >a</p>\n"));
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The first pattern that is compiled starts JavaScriptCore too, on the thread that formats the file.
+    test("beside files for which a pattern of the configuration is compiled", async () => {
+      const sorter = "@ianvs/prettier-plugin-sort-imports";
+      const result = await format(
+        {
+          ...files,
+          [`node_modules/${sorter}/package.json`]: `{ "name": "${sorter}", "version": "4.0.0" }`,
+          ".prettierrc": `{\n  "plugins": ["prettier-plugin-svelte", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
+          "c.ts": 'import a from "a";\nimport b from "b";\n',
+          "d.ts": 'import a from "a";\nimport b from "b";\n',
+        },
+        [],
+        { reads: ["a.svelte", "c.ts", "d.ts"] },
+      );
+      const sorted = 'import b from "b";\nimport a from "a";\n';
+      expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
+      expect(result.exitCode).toBe(0);
     });
 
     test("what Prettier throws is shown as it shows it", async () => {

@@ -1190,6 +1190,15 @@ impl Run<'_> {
         // The largest first, so that no thread begins it when the others are nearly done.
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
+        // Before any other thread runs: this starts JavaScriptCore, and so would the first pattern of a configuration that one
+        // of them compiles. The thread that starts it is its main thread.
+        let bridge = (!handed_over.is_empty()).then(|| {
+            // The threads that hand files over wait for a VM, which loads its modules and reads files on Bun's pool: with all of
+            // that pool's threads waiting, for ever.
+            bun_sema_driver::use_a_pool_of_their_own("Bun Format");
+            let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
+            prettier::Prettier::new(self.environment, options, (handed_over.len(), size))
+        });
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
         let atoms = InternerPerThread::new_in(&names);
@@ -1275,10 +1284,7 @@ impl Run<'_> {
                 pool.for_each(put_aside.len(), 1, &|at| format_at(put_aside[at]));
             }
         }
-        if !handed_over.is_empty() {
-            let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
-            let bridge =
-                prettier::Prettier::new(self.environment, options, (handed_over.len(), size));
+        if let Some(bridge) = &bridge {
             pool.for_each(handed_over.len(), 1, &|at| {
                 let (index, target) = handed_over[at];
                 let began = Instant::now();

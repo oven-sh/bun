@@ -82,19 +82,38 @@ impl Resolver<'_> {
         glob: &[u8],
     ) -> Option<GlobInDir> {
         let package_json = dir_info.package_json_for_module_type?;
+        // On Windows the target is joined with backslashes, which escape in a pattern. Those become
+        // slashes, and the pattern's own are kept out of their way meanwhile.
+        const ESCAPE: u8 = 1;
+        let swap = |bytes: &[u8], from: u8, to: u8| -> Vec<u8> {
+            let swapped = bytes
+                .iter()
+                .map(|&byte| if byte == from { to } else { byte });
+            swapped.collect()
+        };
+        let specifier = if cfg!(windows) {
+            swap(glob, b'\\', ESCAPE)
+        } else {
+            glob.to_vec()
+        };
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
             debug_logs: None,
         }
-        .resolve_imports(glob, &package_json.imports.as_ref()?.root);
+        .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
         matches!(
             resolution.status,
             Status::Exact | Status::ExactEndsWithStar | Status::Inexact
         )
         .then(|| {
+            let path = if cfg!(windows) {
+                swap(&swap(&resolution.path, b'\\', b'/'), ESCAPE, b'\\')
+            } else {
+                resolution.path.to_vec()
+            };
             (
                 package_json.source.path.name().dir.to_vec(),
-                strings::without_leading_path_separator(&resolution.path).to_vec(),
+                strings::without_leading_path_separator(&path).to_vec(),
             )
         })
     }

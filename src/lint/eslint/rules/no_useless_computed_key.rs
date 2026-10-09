@@ -51,7 +51,18 @@ impl NoUselessComputedKey {
     fn report<'a>(node: Node<'a>, key: Key<'a>, cx: &Cx<'a, Self>) {
         let file = cx.file();
         let (brackets, literal) = (key.span(file), key.inner_span(file));
-        cx.report(node, UNNECESSARILY_COMPUTED_PROPERTY)
+        // Of a property of an object or a class, oxlint points at what is in the brackets.
+        let is_property = match node {
+            Node::Prop(_) => true,
+            Node::Member(member) => member.kind() == MemberKind::Property,
+            _ => false,
+        };
+        let place = match key.kind() {
+            _ if !(is_property && cx.language().is_oxlint) => node.span(),
+            KeyKind::Computed(e) => e.outer_span(),
+            _ => literal,
+        };
+        cx.report(place, UNNECESSARILY_COMPUTED_PROPERTY)
             .data("property", file.slice(literal))
             .fix(|fixer| {
                 let left = Span::new(brackets.start, brackets.start + 1);

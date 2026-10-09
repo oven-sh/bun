@@ -291,7 +291,9 @@ impl ObjectShorthand {
                     .fix(|fixer| fixer.insert_after(key.span(fixer.file()), [&b": "[..], name.bytes()].concat()));
             }
             Finding::MethodShorthand(func) => {
-                cx.report(prop, EXPECTED_METHOD_SHORTHAND).fix(|fixer| make_function_shorthand(fixer, prop, func));
+                // oxlint points at the function.
+                let place = if cx.language().is_oxlint { value.span() } else { prop.span() };
+                cx.report(place, EXPECTED_METHOD_SHORTHAND).fix(|fixer| make_function_shorthand(fixer, prop, func));
             }
             Finding::PropertyShorthand(name) => {
                 cx.report(prop, EXPECTED_PROPERTY_SHORTHAND).fix(|fixer| {

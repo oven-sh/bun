@@ -136,6 +136,59 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
     true
 }
 
+/// `f($a)-1` in a media query of SCSS is `f($a) - 1` for oxfmt, as it is in a value. Prettier leaves it as it is.
+///
+/// - `*` always has blanks around it.
+/// - `+` and `-` have if there is none before them and a variable, a name or a function is next to them: not `1+2`. A `-`
+///   behind anything but a `)` is a part of a name, and so is one before a letter.
+fn with_blanks_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
+    if bun_core::strings::index_of_any(value, b"+-*").is_none() {
+        return Cow::Borrowed(value);
+    }
+    let is_blank = |byte: Option<u8>| byte.is_some_and(|it| it.is_ascii_whitespace());
+    let starts_name = |byte: u8| byte == b'$' || byte.is_ascii_alphabetic();
+    let mut result = Vec::with_capacity(value.len() + 4);
+    let mut quote = 0u8;
+    for (at, &byte) in value.iter().enumerate() {
+        if quote != 0 || matches!(byte, b'"' | b'\'') {
+            quote = match quote {
+                0 => byte,
+                _ if byte == quote => 0,
+                _ => quote,
+            };
+            result.push(byte);
+            continue;
+        }
+        let previous = at.checked_sub(1).map(|it| value[it]);
+        let next = value.get(at + 1).copied();
+        let is_operator = match (byte, previous, next) {
+            (b'*', Some(_), Some(_)) | (b'+', Some(b')'), Some(_)) => true,
+            (b'-', Some(b')'), Some(next)) => {
+                next.is_ascii_digit() || matches!(next, b'$' | b'(' | b'.' | b' ')
+            }
+            (b'+', Some(previous), Some(next)) if !previous.is_ascii_whitespace() => {
+                let word_len = value[..at]
+                    .iter()
+                    .rev()
+                    .take_while(|&&it| {
+                        it.is_ascii_alphanumeric() || matches!(it, b'$' | b'_' | b'-' | b'.' | b'%')
+                    })
+                    .count();
+                starts_name(next) || (word_len > 0 && starts_name(value[at - word_len]))
+            }
+            _ => false,
+        };
+        if is_operator && !is_blank(previous) {
+            result.push(b' ');
+        }
+        result.push(byte);
+        if is_operator && !is_blank(next) {
+            result.push(b' ');
+        }
+    }
+    Cow::Owned(result)
+}
+
 fn normalize_bang(text: &[u8], word: &[u8], allows_space: bool) -> Vec<u8> {
     let mut from = 0;
     while let Some(bang) = text::index_of_char_from(text, b'!', from) {
@@ -858,6 +911,14 @@ impl<'a> Printer<'a, '_> {
             }
             match &node.params {
                 Params::None => {}
+                // For oxfmt the quotes of the name of `@keyframes` and of what `@error` and `@warn` say are as everywhere.
+                Params::Text(params) | Params::Unknown(params)
+                    if self.is_oxfmt
+                        && (statement.is_in_keyframes()
+                            || matches!(node.name, b"error" | b"warn")) =>
+                {
+                    self.sink.text(&adjust_strings(params, self.single_quote));
+                }
                 Params::Text(params) | Params::Unknown(params) => self.sink.text(params),
                 Params::Media(list) => self.print_media(list, true),
                 Params::Value(value) => self.print_value(statement, *value, None),
@@ -965,10 +1026,14 @@ impl<'a> Printer<'a, '_> {
                 }
             }
             MediaKind::Type | MediaKind::Value => {
-                self.sink.text(&adjust_numbers(&adjust_strings(
-                    node.value,
-                    self.single_quote,
-                )));
+                let is_expression =
+                    node.kind == MediaKind::Value && self.is_oxfmt && self.syntax() == Syntax::Scss;
+                let value = match is_expression {
+                    true => with_blanks_around_operators(node.value),
+                    false => Cow::Borrowed(node.value),
+                };
+                self.sink
+                    .text(&adjust_numbers(&adjust_strings(&value, self.single_quote)));
             }
             MediaKind::FeatureExpression => match &node.nodes {
                 None => self.sink.text(node.value),

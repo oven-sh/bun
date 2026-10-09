@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::ast_utils::is_global_reference;
+use bun_lint::utils::oxlint::is_global_by_name;
 
 /// Disallow using an async function as a Promise executor.
 pub struct NoAsyncPromiseExecutor;
@@ -29,7 +29,7 @@ impl Rule for NoAsyncPromiseExecutor {
             let Some(executor) = call.args().first() else {
                 return;
             };
-            if !executor.as_fn().is_some_and(Func::is_async) || !is_global_reference(callee) {
+            if !executor.as_fn().is_some_and(Func::is_async) || !is_global_by_name(callee) {
                 return;
             }
             let start = executor.span().start;

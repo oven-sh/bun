@@ -57,7 +57,8 @@ impl NoArrayDelete {
         if !is_underlying_type_array(get_constrained_type_at_location(object)) {
             return;
         }
-        cx.report(node, NO_ARRAY_DELETE)
+        // oxlint points at the array.
+        cx.report(if cx.language().is_oxlint { object.outer_span() } else { node.span() }, NO_ARRAY_DELETE)
             .suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence));
     }
 }

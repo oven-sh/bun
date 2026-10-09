@@ -31,19 +31,27 @@ impl NoRestrictedExports {
             || name != b"default" && self.restricted_name_pattern.as_ref().is_some_and(|it| it.test(name))
     }
 
-    /// `name`, which is written at `at`, is exported and cannot be `default`.
-    fn check_declared_name<'a>(&self, name: Name<'a>, at: Span, cx: &Cx<'a, Self>) {
+    /// `name`, which is written at `at`, is exported by `statement` and cannot be `default`. oxlint points at the statement.
+    fn check_declared_name<'a>(&self, name: Name<'a>, at: Span, statement: Stmt<'a>, cx: &Cx<'a, Self>) {
         if self.is_restricted_name(name) {
-            cx.report(at, RESTRICTED_NAMED).data("name", name);
+            let place = if cx.language().is_oxlint { statement.span() } else { at };
+            cx.report(place, RESTRICTED_NAMED).data("name", name);
         }
     }
 
     /// `restricts_default`: whether this way of exporting something as `default` is restricted.
-    fn check_exported_name<'a>(&self, exported: Ident<'a>, restricts_default: bool, cx: &Cx<'a, Self>) {
+    fn check_exported_name<'a>(
+        &self,
+        exported: Ident<'a>,
+        restricts_default: bool,
+        statement: Stmt<'a>,
+        cx: &Cx<'a, Self>,
+    ) {
+        let place = if cx.language().is_oxlint { statement.span() } else { exported.span() };
         if self.is_restricted_name(exported.name()) {
-            cx.report(exported, RESTRICTED_NAMED).data("name", exported);
+            cx.report(place, RESTRICTED_NAMED).data("name", exported);
         } else if restricts_default && exported.name().is("default") {
-            cx.report(exported, RESTRICTED_DEFAULT);
+            cx.report(place, RESTRICTED_DEFAULT);
         }
     }
 
@@ -53,7 +61,7 @@ impl NoRestrictedExports {
             true if specifier.local().name().is("default") => self.default_from,
             true => self.named_from,
         };
-        self.check_exported_name(specifier.exported(), restricts_default, cx);
+        self.check_exported_name(specifier.exported(), restricts_default, specifier.export().stmt(), cx);
     }
 
     fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -61,7 +69,7 @@ impl NoRestrictedExports {
         match kind {
             StmtKind::ExportStar { alias, .. } => {
                 if let Some(alias) = alias {
-                    self.check_exported_name(alias, self.namespace_from, cx);
+                    self.check_exported_name(alias, self.namespace_from, statement, cx);
                 }
                 return;
             }
@@ -89,12 +97,12 @@ impl NoRestrictedExports {
             // Without a body it is a `TSDeclareFunction`.
             StmtKind::Fn(func) if func.has_body() => {
                 if let Some(name) = func.name() {
-                    self.check_declared_name(name.name(), name.span(), cx);
+                    self.check_declared_name(name.name(), name.span(), statement, cx);
                 }
             }
             StmtKind::Class(class) => {
                 if let Some(name) = class.name() {
-                    self.check_declared_name(name.name(), name.span(), cx);
+                    self.check_declared_name(name.name(), name.span(), statement, cx);
                 }
             }
             StmtKind::Var(declarations) => {
@@ -113,7 +121,8 @@ impl NoRestrictedExports {
                             true => declaration.binding_span(),
                             false => binding.span(),
                         };
-                        cx.report(at, RESTRICTED_NAMED).data("name", name);
+                        let place = if cx.language().is_oxlint { statement.span() } else { at };
+                        cx.report(place, RESTRICTED_NAMED).data("name", name);
                     });
                 }
             }

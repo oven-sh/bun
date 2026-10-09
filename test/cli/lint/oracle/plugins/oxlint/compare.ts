@@ -16,7 +16,8 @@ const names = args.filter(it => !it.startsWith("--"));
 const expectedPath = join(import.meta.dir, "expected.json");
 const oxlint = process.env.OXLINT_BIN;
 const [ours, ...oursArgs] = (process.env.BUN_LINT ?? "bun lint").split(" ");
-const expected: Record<string, string[]> = oxlint ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
+// With names, `--record` leaves what is recorded for the other projects as it is.
+const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
 
 /** `file:line:column rule` of each diagnostic, at its first label, which is what oxlint prints. */
 function run(command: string, before: string[], cwd: string): string[] {

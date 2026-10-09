@@ -33,13 +33,23 @@ use rustc_hash::FxHashMap;
 const MAX_DEPTH: u32 = 192;
 
 /// How much of each the tree can have. Passes of the compiler take time and memory that grow with the
-/// square or the cube of the blocks of the control flow graph, of the functions in a function and of
-/// what it declares, and with the fourth power of the arguments of a call. With these a function
-/// that is made to be slow takes a second or two.
-const MAX_NODES: usize = 1 << 14;
-const MAX_BRANCHES: u32 = 512;
-const MAX_FUNCTIONS: u32 = 512;
+/// square or the cube of what a function has: of its instructions, of the blocks of its control
+/// flow graph, of the functions in it, of the arguments of a call. A function in a function is
+/// analysed on its own, so what counts is the sum of the squares.
+const MAX_NODES: usize = 1 << 17;
+/// One function with 11,585 nodes that are not in a function in it.
+const MAX_SQUARED_NODES: u64 = 1 << 27;
+/// One function with 512 branches.
+const MAX_SQUARED_BRANCHES: u64 = 1 << 18;
+const MAX_FUNCTIONS: u32 = 1024;
 const MAX_ARGUMENTS: usize = 64;
+
+/// What is counted for each function, without the functions in it.
+#[derive(Copy, Clone, Default)]
+struct Counts {
+    nodes: u64,
+    branches: u64,
+}
 
 /// Why there is no tree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -104,7 +114,10 @@ pub(crate) struct Converter<'a, 'x> {
     fragment: Ref,
     implicit_arguments: Vec<Span>,
     clock_reads: Vec<Span>,
-    branches: u32,
+    /// Of the function that is being converted.
+    here: Counts,
+    /// The sums of the squares of the counts of the functions that are converted.
+    squares: Counts,
     functions: u32,
     depth: u32,
     stack: bun_core::StackCheck,
@@ -130,7 +143,8 @@ pub(crate) fn convert<'a>(
         fragment: Ref::NONE,
         implicit_arguments: Vec::new(),
         clock_reads: Vec::new(),
-        branches: 0,
+        here: Counts::default(),
+        squares: Counts::default(),
         functions: 0,
         depth: 0,
         stack: bun_core::StackCheck::init(),
@@ -161,7 +175,9 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── places ─────────────────────────────
 
     fn loc(&mut self, span: Span) -> Converts<Loc> {
-        if self.spans.len() >= MAX_NODES {
+        self.here.nodes += 1;
+        let squared = self.squares.nodes + self.here.nodes * self.here.nodes;
+        if self.spans.len() >= MAX_NODES || squared > MAX_SQUARED_NODES {
             return Err(Refusal::TooManyNodes);
         }
         let index = self.spans.len() as i32;
@@ -171,8 +187,9 @@ impl<'a> Converter<'a, '_> {
 
     /// Counts what makes blocks in the control flow graph.
     fn branch(&mut self) -> Converts<()> {
-        self.branches += 1;
-        match self.branches > MAX_BRANCHES {
+        self.here.branches += 1;
+        let squared = self.squares.branches + self.here.branches * self.here.branches;
+        match squared > MAX_SQUARED_BRANCHES {
             true => Err(Refusal::TooManyBranches),
             false => Ok(()),
         }
@@ -357,17 +374,22 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn count_function(&mut self) -> Converts<()> {
+    /// Calls `then`, which converts a function, one level further down.
+    fn in_function<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
         self.functions += 1;
-        match self.functions > MAX_FUNCTIONS {
-            true => Err(Refusal::TooManyFunctions),
-            false => Ok(()),
+        if self.functions > MAX_FUNCTIONS {
+            return Err(Refusal::TooManyFunctions);
         }
+        let outer = std::mem::take(&mut self.here);
+        let result = self.nested(then);
+        self.squares.nodes += self.here.nodes * self.here.nodes;
+        self.squares.branches += self.here.branches * self.here.branches;
+        self.here = outer;
+        result
     }
 
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
-        self.count_function()?;
-        self.nested(|this| {
+        self.in_function(|this| {
             let loc = this.loc(func.estree_span())?;
             let name = match func.name() {
                 Some(name) => Some(LocRef {
@@ -400,8 +422,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
-        self.count_function()?;
-        self.nested(|this| {
+        self.in_function(|this| {
             let loc = this.loc(func.estree_span())?;
             let (args, has_rest_arg) = this.args(func)?;
             let (body, prefer_expr) = this.body(func, loc)?;
@@ -842,13 +863,13 @@ impl<'a> Converter<'a, '_> {
             ),
             ExprKind::Unary { op, operand } => {
                 let value = self.expr(operand)?;
-                let is_access = matches!(
-                    operand.skip_type_wrappers().kind(),
-                    ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-                );
-                let flags = match op {
-                    UnOp::Delete if is_access => {
-                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS
+                let flags = match (op, operand.skip_type_wrappers().kind()) {
+                    (
+                        UnOp::Delete,
+                        ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. },
+                    ) => E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    (UnOp::Typeof, ExprKind::Ident(_)) => {
+                        E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
                     }
                     _ => E::UnaryFlags::empty(),
                 };

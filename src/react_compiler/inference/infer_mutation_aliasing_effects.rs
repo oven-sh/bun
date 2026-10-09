@@ -446,6 +446,32 @@ impl ValueIdSet {
         }
     }
 
+    /// `insert` of each value of `other`, in its order. Returns `true` if any was inserted.
+    ///
+    /// The set of a phi at the end of n branches has n values, and is merged n times.
+    fn union_with(&mut self, other: &ValueIdSet) -> bool {
+        const FEW: u32 = 16;
+        let mut changed = false;
+        if self.len <= FEW || other.len <= 1 {
+            for v in other {
+                changed |= self.insert(*v);
+            }
+            return changed;
+        }
+        // What is merged is most often an earlier state of the same set.
+        if self.as_slice().starts_with(other.as_slice()) {
+            return false;
+        }
+        let mut members: HashSet<ValueId> = self.iter().copied().collect();
+        for v in other {
+            if members.insert(*v) {
+                self.push(*v);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     #[inline]
     fn iter(&self) -> std::slice::Iter<'_, ValueId> {
         self.as_slice().iter()
@@ -621,18 +647,14 @@ impl Variables {
                 let Some(prev) = vec.get_mut(id.0 as usize).filter(|s| !s.is_empty()) else {
                     return;
                 };
-                for v in values {
-                    prev.insert(*v);
-                }
+                prev.union_with(values);
                 *any_heap |= prev.is_heap();
             }
             Variables::Sparse(m) => {
                 let Some(prev) = m.get_mut(&id) else {
                     return;
                 };
-                for v in values {
-                    prev.insert(*v);
-                }
+                prev.union_with(values);
             }
         }
     }
@@ -888,11 +910,7 @@ impl InferenceState {
                         *this_values = other_values.clone();
                         changed = true;
                     } else {
-                        for ov in other_values {
-                            if this_values.insert(*ov) {
-                                changed = true;
-                            }
-                        }
+                        changed |= this_values.union_with(other_values);
                     }
                     *any_heap |= this_values.is_heap();
                 }
@@ -901,12 +919,7 @@ impl InferenceState {
                 for (id, other_values) in that {
                     match this.entry(*id) {
                         std::collections::hash_map::Entry::Occupied(mut e) => {
-                            let this_values = e.get_mut();
-                            for ov in other_values {
-                                if this_values.insert(*ov) {
-                                    changed = true;
-                                }
-                            }
+                            changed |= e.get_mut().union_with(other_values);
                         }
                         std::collections::hash_map::Entry::Vacant(e) => {
                             e.insert(other_values.clone());
@@ -930,9 +943,7 @@ impl InferenceState {
         let mut values = ValueIdSet::new();
         for (_, operand) in phi_operands {
             if let Some(operand_values) = self.variables.get(operand.identifier) {
-                for v in operand_values {
-                    values.insert(*v);
-                }
+                values.union_with(operand_values);
             }
             // If not found, it's a backedge that will be handled later by merge
         }

@@ -75,8 +75,14 @@ fn is_checked(scope: Scope, config: Config) -> bool {
 }
 
 fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(DeclarationType, Span)>) {
+    // For oxlint the declarations that TypeScript merges are declarations like the others, in the order of the source.
+    let is_oxlint = symbol.file().language().is_oxlint;
     let mut add = |declarations: &mut dyn Iterator<Item = Declaration<'a>>| {
+        let known = into.len();
         into.extend(declarations.filter_map(identifier_span).map(|span| (DeclarationType::Syntax, span)));
+        if is_oxlint && let Some(added) = into.get_mut(known..) {
+            added.sort_unstable_by_key(|it| it.1.start);
+        }
     };
     let Some(ignore_declaration_merge) = config.ignore_declaration_merge else {
         add(&mut symbol.declarations());
@@ -86,7 +92,7 @@ fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(Decla
     let identifiers =
         || symbol.declarations().filter(|it| !matches!(it, Declaration::Fn(func) if !func.has_body()));
     let kinds = || identifiers().map(merge_kind);
-    if ignore_declaration_merge && kinds().count() > 1 {
+    if ignore_declaration_merge && !is_oxlint && kinds().count() > 1 {
         if kinds().all(|it| it == MergeKind::Interface) || kinds().all(|it| it == MergeKind::Module) {
             return;
         }
@@ -130,7 +136,8 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     let count = symbol.declaration_count();
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
-    if count < 2 && !is_global || !is_checked(scope, config) {
+    // oxlint looks at all scopes.
+    if count < 2 && !is_global || !cx.language().is_oxlint && !is_checked(scope, config) {
         return;
     }
     let name = symbol.name().bytes();

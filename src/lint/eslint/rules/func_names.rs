@@ -76,7 +76,10 @@ impl FuncNames {
             Node::Expr(_) => UNNAMED,
             _ => return,
         };
-        cx.report(ast_utils::get_function_head_loc(func), message)
+        let head = ast_utils::get_function_head_loc(func);
+        // For oxlint it starts with the function, not with the member that the function is the value of.
+        let start = if cx.language().is_oxlint { func.estree_span().start } else { head.start };
+        cx.report(Span::new(start, head.end), message)
             .data("name", ast_utils::get_function_name_with_kind(func));
     }
 }

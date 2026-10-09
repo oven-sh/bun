@@ -145,6 +145,12 @@ fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
     }
 }
 
+/// `// comment ⏎ (function () {})()`: oxfmt follows Prettier 3.8, for which the parentheses are written around the
+/// function alone, as around anything else.
+fn comments_of_called_function_are_outside_of_its_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printCommentsForFunction`: the comments around a function that is called, or is the
 /// tag of a template, are written in its parentheses.
 ///
@@ -161,7 +167,10 @@ pub(crate) fn write_called_function_with_comments<'a>(
     options: ExprOptions,
     f: &mut Formatter<'a>,
 ) -> bool {
-    if e.as_fn().is_none() || !is_iife_callee_or_tagged_template_tag(e) {
+    if e.as_fn().is_none()
+        || !is_iife_callee_or_tagged_template_tag(e)
+        || comments_of_called_function_are_outside_of_its_parentheses(f)
+    {
         return false;
     }
     let (span, end) = (e.span(), e.outer_span().end);

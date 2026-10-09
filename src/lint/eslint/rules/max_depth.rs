@@ -105,8 +105,10 @@ impl MaxDepth {
         });
         let depth = around + 1;
         if depth > max {
-            let start = stmt.span().start;
-            cx.report(Span::new(start, start + keyword.len() as u32), TOO_DEEPLY)
+            let whole = stmt.span();
+            // oxlint points at the whole statement.
+            let end = if cx.language().is_oxlint { whole.end } else { whole.start + keyword.len() as u32 };
+            cx.report(Span::new(whole.start, end), TOO_DEEPLY)
                 .data("depth", depth)
                 .data("maxDepth", max);
         }

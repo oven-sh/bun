@@ -510,6 +510,54 @@ describe.concurrent("bun lint", () => {
     });
 
     describe("like oxlint, with an .oxlintrc.json", () => {
+      // What oxlint 1.87.0 does with each. TypeScript's parser, which reads the file here, takes them all.
+      const quiet = JSON.stringify({ categories: { correctness: "off" }, rules: {} });
+      test.each([
+        ["a.ts", "const a: string;"],
+        ["a.ts", "export const"],
+        ["a.ts", "export const a = /(/;"],
+        ["a.ts", "export {};\nlet = 1;"],
+        ["a.ts", "export class <T> {}"],
+        ["a.ts", "export {};\nfunction f() { await (1); }"],
+        ["a.ts", "for (const a, b of c);"],
+        ["a.ts", "using a;"],
+        ["a.js", "const a"],
+        ["a.js", "const { a }"],
+        ["a.js", "break;"],
+        ["a.js", "a: continue a;"],
+        ["a.js", "export {};\nstatic = 1;"],
+        ["a.js", "[a()] = b;"],
+        ["a.js", "a = /a/gg;"],
+      ])("what OXC refuses is a parsing error: %s: %j", async (name, code) => {
+        const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
+        expect(stdout).toContain(": Parsing error: ");
+        expect(exitCode).toBe(1);
+      });
+
+      test.each([
+        // Only declared.
+        ["a.ts", "declare const a: string;"],
+        ["a.d.ts", "export const a: string;"],
+        ["a.ts", "declare function f(package: string): void;\nexport {};"],
+        // A file without `import` and `export` is a script, which is not strict.
+        ["a.ts", "type A = (...arguments: any[]) => void;"],
+        ["a.ts", "let = 1;"],
+        ["a.js", "function f() { await (1); }"],
+        ["a.tsx", "if (f) function f() {}"],
+        // What acorn does not know, or typescript-estree throws.
+        ["a.ts", "class A { accessor b = 1 }"],
+        ["a.js", "class A { accessor b = 1 }"],
+        ["a.js", "@d class A {}"],
+        ["a.ts", "let a!: string;"],
+        ["a.ts", "function f<>() {}"],
+        ["a.ts", "for (const a in b);"],
+        ["a.js", "for (const a of b);"],
+      ])("what OXC takes is linted: %s: %j", async (name, code) => {
+        const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
+        expect(stdout).not.toContain("Parsing error");
+        expect(exitCode).toBe(0);
+      });
+
       test("--fix applies the fixes of a rule that is about several files", async () => {
         const result = await lint(
           {

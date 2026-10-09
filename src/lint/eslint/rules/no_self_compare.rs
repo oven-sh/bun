@@ -54,7 +54,8 @@ impl Rule for NoSelfCompare {
                 && can_have_equal_tokens(left.text(), right.text())
                 && ast_utils::equal_tokens(cx.file(), left, right)
             {
-                cx.report(e, COMPARING_TO_SELF);
+                // oxlint points at the left side.
+                cx.report(if cx.language().is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF);
             }
         });
     }

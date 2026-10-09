@@ -144,7 +144,10 @@ impl Rule for InitDeclarations {
             {
                 return;
             }
-            cx.report(decl, found.message).data("idName", found.name);
+            let whole = decl.span();
+            // For oxlint the type is part of it.
+            let end = if cx.language().is_oxlint { whole.end.max(decl.binding_span().end) } else { whole.end };
+            cx.report(Span::new(whole.start, end), found.message).data("idName", found.name);
         });
         State::default()
     }

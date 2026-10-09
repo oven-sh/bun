@@ -373,7 +373,7 @@ struct Imported<'a> {
 
 impl<'a> Imported<'a> {
     fn new(statement: Stmt<'a>, dialect: Dialect, source: &'a [u8]) -> Imported<'a> {
-        // What oxlint says about a `*`, it says about the statement.
+        // What oxlint says about a `*`, it says about the statement, and what it says about `a as b`, about the `a`.
         let is_oxlint = statement.file().language().is_oxlint;
         let mut specifiers = SmallVec::new();
         let mut add = |name: &'a [u8], span: Span, is_type_only: bool| {
@@ -393,12 +393,14 @@ impl<'a> Imported<'a> {
                     add(b"*", if is_oxlint { node } else { namespace }, false);
                 }
                 for it in import.named() {
-                    add(it.imported().bytes(), it.span(), it.is_type_only());
+                    let span = if is_oxlint { it.imported().span() } else { it.span() };
+                    add(it.imported().bytes(), span, it.is_type_only());
                 }
             }
             StmtKind::ExportNamed(export) => {
                 for it in export.items() {
-                    add(it.local().bytes(), it.span(), it.is_type_only());
+                    let span = if is_oxlint { it.local().span() } else { it.span() };
+                    add(it.local().bytes(), span, it.is_type_only());
                 }
             }
             StmtKind::ExportStar { .. } if is_oxlint => add(b"*", node, false),

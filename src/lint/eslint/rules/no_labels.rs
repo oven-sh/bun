@@ -13,6 +13,14 @@ const UNEXPECTED_LABEL_IN_BREAK: Message =
 const UNEXPECTED_LABEL_IN_CONTINUE: Message =
     Message::new("unexpectedLabelInContinue", "Unexpected label in continue statement.");
 
+/// Where a labeled statement, a `break` or a `continue` is reported. oxlint points at the label.
+fn place(stmt: Stmt) -> Span {
+    match stmt.label().filter(|_| stmt.file().language().is_oxlint) {
+        Some(label) => label.span(),
+        None => stmt.span(),
+    }
+}
+
 impl NoLabels {
     /// Whether a label on `body` is allowed.
     fn allows(&self, body: Stmt) -> bool {
@@ -27,7 +35,7 @@ impl NoLabels {
         if let StmtKind::Labeled { body, .. } = stmt.kind()
             && !self.allows(body)
         {
-            cx.report(stmt, UNEXPECTED_LABEL);
+            cx.report(place(stmt), UNEXPECTED_LABEL);
         }
     }
 
@@ -39,7 +47,7 @@ impl NoLabels {
         };
         let is_allowed = cx.state.get(&name).and_then(|around| around.last());
         if is_allowed != Some(&true) {
-            cx.report(stmt, message);
+            cx.report(place(stmt), message);
         }
     }
 

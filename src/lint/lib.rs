@@ -26,6 +26,7 @@ pub mod linter;
 pub mod literal;
 pub mod modules;
 pub mod options;
+pub(crate) mod oxlint_messages;
 pub mod regex;
 pub mod rule;
 pub mod runner;

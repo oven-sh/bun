@@ -36,7 +36,9 @@ impl Rule for NoNewNativeNonconstructor {
                 || (!cx.is_javascript() && callee.symbol().is_none())
             {
                 // oxlint points at the `new`.
-                cx.report(if cx.language().is_oxlint { e } else { callee }, NO_NEW_NONCONSTRUCTOR).data("name", name);
+                let start = e.span().start;
+                let place = if cx.language().is_oxlint { Span::new(start, start + 3) } else { callee.span() };
+                cx.report(place, NO_NEW_NONCONSTRUCTOR).data("name", name);
             }
         });
     }

@@ -38,7 +38,9 @@ impl NoUnassignedVars {
             return;
         };
         if !symbol.has_writes() && symbol.has_reads() {
-            cx.report(decl, UNASSIGNED).data("name", name);
+            // oxlint points at the name, without its type.
+            let place = if cx.language().is_oxlint { decl.pat().span() } else { decl.span() };
+            cx.report(place, UNASSIGNED).data("name", name);
         }
     }
 }

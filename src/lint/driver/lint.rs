@@ -67,6 +67,8 @@ struct How<'h> {
     physical_path_len: Option<usize>,
     /// It is a script in a file: its language, and which rules run.
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
+    /// Which rules run, if not all.
+    only: Option<&'h RuleFilter<'h>>,
     vue_script: VueScript,
 }
 
@@ -180,7 +182,7 @@ impl Context<'_, '_> {
 
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
-        self.verify_as(path, text, config, How::default())
+        self.verify_as(path, text, config, &How::default())
     }
 
     /// The same for a block that a processor has found in a file, whose path is the first `physical_path_len` bytes of `path`.
@@ -198,7 +200,7 @@ impl Context<'_, '_> {
             physical_path_len: Some(physical_path_len),
             ..How::default()
         };
-        self.verify_as(path, text, config, how)
+        self.verify_as(path, text, config, &how)
     }
 
     /// The same for a script in the file at `path`, in the language `kind`. Only the rules run of which `filter` says so.
@@ -215,7 +217,28 @@ impl Context<'_, '_> {
             vue_script,
             ..How::default()
         };
-        self.verify_as(path, text, config, how)
+        self.verify_as(path, text, config, &how)
+    }
+
+    /// Runs the rules in JavaScript on a file for nothing but that an engine has loaded them, and what they load when they
+    /// first run.
+    pub(crate) fn warm_up_an_engine(&self, target: &Target) {
+        let Status::Matched(config) = &target.status else {
+            return;
+        };
+        let Ok(text) = fs::read_sized(&target.path, target.size) else {
+            return;
+        };
+        let of_the_run = self.lint_options().rule_filter;
+        let only = |id: &RuleId, severity: Severity| {
+            matches!(id, RuleId::Js(_)) && of_the_run.is_none_or(|it| it(id, severity))
+        };
+        let how = How {
+            without_fixes: true,
+            only: Some(&only),
+            ..How::default()
+        };
+        self.verify_as(&target.path, &text, config, &how);
     }
 
     /// Lints a file again that `modules` names when all files are linted.
@@ -247,7 +270,7 @@ impl Context<'_, '_> {
         let linted = match framework {
             // Its scripts are linted one by one, so all rules run once more.
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
-            None => self.verify_as(&path, &text, &config, how),
+            None => self.verify_as(&path, &text, &config, &how),
         };
         let (had_types, was_fixed) = (result.had_types, result.is_fixed);
         let shown = std::mem::take(&mut result.path);
@@ -272,7 +295,7 @@ impl Context<'_, '_> {
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        as_what: How,
+        as_what: &How,
     ) -> LintResult {
         let started = self.timing.now();
         let session = self.memory;
@@ -313,7 +336,9 @@ impl Context<'_, '_> {
                     again: as_what.again,
                     wants_fixes: options.wants_fixes && !as_what.without_fixes,
                     physical_path_len: as_what.physical_path_len,
-                    rule_filter: as_what.script.map(|it| it.1).or(options.rule_filter),
+                    rule_filter: (as_what.script.map(|it| it.1))
+                        .or(as_what.only)
+                        .or(options.rule_filter),
                     ..options
                 };
                 let mut result = self.linter.lint(&file, config, &options);

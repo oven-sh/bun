@@ -1,5 +1,7 @@
 //! ESLint's `lib/rules/utils/char-source.js`.
 
+use crate::ast::{Expr, ExprKind};
+use crate::span::Span;
 use bun_core::lexer::char_and_size;
 
 /// ESLint's `CodeUnit`. One UTF-16 code unit of the value of a string literal or of a template
@@ -163,4 +165,37 @@ pub fn parse_template_token(source: &[u8]) -> Vec<CharInfo> {
         }
     }
     reader.units
+}
+
+/// Where the parts of the value of a string literal, or of a template without substitutions, are
+/// written: for a pattern that is given to `RegExp`.
+pub struct Written {
+    /// Where the literal starts.
+    start: u32,
+    units: Vec<CharInfo>,
+}
+
+impl Written {
+    /// `None` for any other expression.
+    pub fn new(literal: Expr<'_>) -> Option<Written> {
+        let units = match literal.kind() {
+            ExprKind::String(_) => parse_string_literal(literal.text()),
+            ExprKind::Template(template) if template.exprs().is_empty() => {
+                parse_template_token(literal.text())
+            }
+            _ => return None,
+        };
+        Some(Written {
+            start: literal.span().start,
+            units,
+        })
+    }
+
+    /// Where the UTF-16 code units of the value from `start` to `end` are written: for
+    /// `regex::Node::utf16_start` and `utf16_end`. `None` if there are none.
+    pub fn span(&self, start: u32, end: u32) -> Option<Span> {
+        let first = self.units.get(start as usize)?;
+        let last = self.units.get(end.checked_sub(1)? as usize)?;
+        (start < end).then(|| Span::new(self.start + first.start, self.start + last.end))
+    }
 }

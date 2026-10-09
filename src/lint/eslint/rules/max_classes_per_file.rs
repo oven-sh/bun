@@ -38,7 +38,9 @@ impl Rule for MaxClassesPerFile {
                 && let (Some(first), Some(last)) = (body.first(), body.last())
             {
                 let start = first.export_span().unwrap_or_else(|| first.span()).start;
-                cx.report(Span::new(start, last.span().end), MAXIMUM_EXCEEDED)
+                // oxlint points at the first byte.
+                let end = if cx.language().is_oxlint { start + 1 } else { last.span().end };
+                cx.report(Span::new(start, end), MAXIMUM_EXCEEDED)
                     .data("classCount", cx.state)
                     .data("max", rule.max);
             }

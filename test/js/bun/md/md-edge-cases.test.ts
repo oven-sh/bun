@@ -1912,3 +1912,11 @@ test("list markers on one line are not looked at again from each of them", () =>
   const html = Markdown.html("- ".repeat(depth) + "a\n");
   expect(html.length).toBe("<ul>\n<li>\n</li>\n</ul>\n".length * depth);
 });
+
+test("a delimiter at the edge of the text of a link has the bracket next to it", () => {
+  // Both runs can open and close then, so the rule of three keeps them apart.
+  expect(Markdown.html("[**<x:y>*](u)\n")).toBe('<p><a href="u">**&lt;x:y&gt;*</a></p>\n');
+  expect(Markdown.html("[*a*](u) [**b**](u)\n")).toBe(
+    '<p><a href="u"><em>a</em></a> <a href="u"><strong>b</strong></a></p>\n',
+  );
+});

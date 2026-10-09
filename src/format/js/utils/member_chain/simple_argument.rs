@@ -86,7 +86,13 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                     op: UnOp::Not | UnOp::Minus | UnOp::Plus | UnOp::BitNot,
                     operand,
                 } => operand,
-                ExprKind::Unary { op, operand } if op.is_update() => operand,
+                // For oxfmt `a++` is simple and `a.b++` is not.
+                ExprKind::Unary { op, operand }
+                    if op.is_update()
+                        && (!flavor.is_oxfmt() || matches!(operand.kind(), ExprKind::Ident(_))) =>
+                {
+                    operand
+                }
                 ExprKind::NonNull(expression) => expression,
                 ExprKind::Dot { obj, .. } => obj,
                 ExprKind::Index { obj, index, .. } => {

@@ -131,9 +131,11 @@ fn check_destructure<'a>(
     sender_type: Type<'a>,
     sender_node: Expr<'a>,
 ) {
+    // oxlint points at what is assigned.
+    let place = |span: Span| if cx.language().is_oxlint { sender_node.outer_span() } else { span };
     // Not by recursion: a pattern is nested as deeply as the parser allows. The last is the next.
     let mut parts = Vec::new();
-    check_pattern(cx, receiver_node, receiver_span, sender_type, &mut parts);
+    check_pattern(cx, receiver_node, place(receiver_span), sender_type, &mut parts);
     while let Some(part) = parts.pop() {
         let sender_type = match part.sender {
             Sender::Type(ty) => ty,
@@ -141,10 +143,10 @@ fn check_destructure<'a>(
         };
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
-            cx.report(part.span, part.message)
+            cx.report(place(part.span), part.message)
                 .data("sender", describe_sender(sender_type));
         } else if !part.has_default {
-            check_pattern(cx, part.target, part.target.span(), sender_type, &mut parts);
+            check_pattern(cx, part.target, place(part.target.span()), sender_type, &mut parts);
         }
     }
 }
@@ -254,15 +256,20 @@ fn report_any_assignment<'a>(
 ) {
     let options = cx.file().type_checker().compiler_options();
     // `var foo = this`
-    let is_this_any = !is_strict_compiler_option_enabled(options, CompilerOption::NoImplicitThis)
-        && get_this_expression(sender_node)
-            .is_some_and(|this| is_type_any_type(get_constrained_type_at_location(this)));
-    let message = if is_this_any {
+    let any_this = get_this_expression(sender_node)
+        .filter(|_| !is_strict_compiler_option_enabled(options, CompilerOption::NoImplicitThis))
+        .filter(|&this| is_type_any_type(get_constrained_type_at_location(this)));
+    let message = if any_this.is_some() {
         ANY_ASSIGNMENT_THIS
     } else {
         ANY_ASSIGNMENT
     };
-    cx.report(reporting_node, message)
+    // oxlint points at what is assigned, or at the `this`.
+    let place = match cx.language().is_oxlint {
+        true => any_this.unwrap_or(sender_node).outer_span(),
+        false => reporting_node,
+    };
+    cx.report(place, message)
         .data("sender", describe_sender(sender_type));
 }
 
@@ -289,7 +296,8 @@ fn check_assignment_of_type<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type(), sender_node) else {
         return false;
     };
-    cx.report(reporting_node, UNSAFE_ASSIGNMENT)
+    let place = if cx.language().is_oxlint { sender_node.outer_span() } else { reporting_node };
+    cx.report(place, UNSAFE_ASSIGNMENT)
         .data("receiver", in_backticks(result.receiver))
         .data("sender", in_backticks(result.sender));
     true
@@ -525,7 +533,8 @@ impl Rule for NoUnsafeAssignment {
             }
             let rest_type = argument.ty();
             if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-                cx.report(node, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type));
+                let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
+                cx.report(place, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type));
             }
         });
     }

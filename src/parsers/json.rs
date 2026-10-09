@@ -114,7 +114,78 @@ fn parse_impl_in(
     }
     let log_mark = (log.errors, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
+    let (index_error, first_comment) = (sidx.index_error, sidx.first_comment);
+    settle(
+        source,
+        log,
+        opts,
+        log_mark,
+        result,
+        index_error,
+        first_comment,
+    )
+}
 
+/// [`parse_impl_in`] in one pass over the text, without the index.
+fn parse_impl_in_one_pass(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+    check_len: bool,
+    tape_alloc: E::TapeAlloc,
+) -> crate::Result<ParseOutput> {
+    let mut opts = opts;
+    if opts.json_warn_duplicate_keys && source.path.is_node_module() {
+        opts.json_warn_duplicate_keys = false;
+    }
+    if source.contents.len() > i32::MAX as usize {
+        return Err(report_index_error(
+            IndexError::DocumentTooLarge,
+            source,
+            log,
+        ));
+    }
+    let log_mark = (log.errors, log.msgs.len());
+    let mut parser = crate::json_reader::Parser::new(source, log, opts, tape_alloc);
+    let mut root = parser.parse_value();
+    if root.is_ok() && check_len && !parser.at_trailing_end() {
+        root = Err(parser.unexpected_here());
+    }
+    parser.read_the_rest();
+    let (index_error, first_comment) = (parser.index_error, parser.first_comment);
+    let tape = parser.take_tape();
+    drop(parser);
+    let result = root.map(|root| ParseOutput {
+        root,
+        tape,
+        indentation: if opts.guess_indentation {
+            guess_indentation(&source.contents)
+        } else {
+            Indentation::default()
+        },
+    });
+    settle(
+        source,
+        log,
+        opts,
+        log_mark,
+        result,
+        index_error,
+        first_comment,
+    )
+}
+
+/// What the parse comes to: of what is wrong with a `/`, a comment where there can be none, and what
+/// the parser itself has said, the first in the text counts.
+fn settle(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+    log_mark: (u32, usize),
+    result: crate::Result<ParseOutput>,
+    index_error: Option<IndexError>,
+    first_comment: Option<bun_ast::Range>,
+) -> crate::Result<ParseOutput> {
     let drop_stage2_errors = |log: &mut bun_ast::Log| {
         let mut i = log_mark.1;
         while i < log.msgs.len() {
@@ -133,20 +204,17 @@ fn parse_impl_in(
             .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
             .min()
     };
-    let rejected_comment = |sidx: &StructuralIndex, before: usize| {
-        !opts.allow_comments
-            && sidx
-                .first_comment
-                .is_some_and(|r| (r.loc.start as usize) < before)
+    let rejected_comment = |before: usize| {
+        !opts.allow_comments && first_comment.is_some_and(|r| (r.loc.start as usize) < before)
     };
-    if let Some(e) = sidx.index_error {
+    if let Some(e) = index_error {
         let pos = match e {
             IndexError::UnterminatedBlockComment { pos } | IndexError::UnexpectedSlash { pos } => {
                 pos
             }
             IndexError::DocumentTooLarge => 0,
         };
-        if !rejected_comment(&sidx, pos) {
+        if !rejected_comment(pos) {
             let earlier_stage2_err = log.msgs[log_mark.1..]
                 .iter()
                 .filter(|m| m.kind == bun_ast::Kind::Err)
@@ -160,7 +228,7 @@ fn parse_impl_in(
         }
     }
     if !opts.allow_comments
-        && let Some(range) = sidx.first_comment
+        && let Some(range) = first_comment
         && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
         drop_stage2_errors(log);
@@ -175,7 +243,7 @@ fn parse_impl_in(
         );
         return Err(crate::Error::SyntaxError);
     }
-    if sidx.index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
+    if index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
         return Err(crate::Error::SyntaxError);
     }
     result
@@ -439,6 +507,25 @@ fn parse_to_rows(
         });
     }
     let out = parse_impl(source, log, opts, check_len)?;
+    Ok(ParsedJson {
+        root: out.root,
+        tape: out.tape,
+    })
+}
+
+/// For who compares the two parsers, as long as there are two: the rows for `opts`, with the index
+/// or in one pass.
+pub fn parse_rows_for_comparison(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+    check_len: bool,
+    is_one_pass: bool,
+) -> crate::Result<ParsedJson> {
+    if !is_one_pass || source.contents.is_empty() {
+        return parse_to_rows(source, log, opts, check_len);
+    }
+    let out = parse_impl_in_one_pass(source, log, opts, check_len, E::TapeAlloc::Global)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,

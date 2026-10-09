@@ -39,7 +39,12 @@ impl MaxNestedCallbacks {
         });
         let depth = around + 1;
         if depth > max {
-            cx.report(ast_utils::get_function_head_loc(func), EXCEED).data("num", depth).data("max", max);
+            // oxlint points at the whole function.
+            let place = match cx.language().is_oxlint {
+                true => func.estree_span(),
+                false => ast_utils::get_function_head_loc(func),
+            };
+            cx.report(place, EXCEED).data("num", depth).data("max", max);
         }
     }
 }

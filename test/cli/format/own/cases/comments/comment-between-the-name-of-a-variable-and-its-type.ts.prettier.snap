@@ -8,12 +8,6 @@ const a // c
 const d /* c */ : T = 1;
 const e // c
 : T = 1;
-let f // c
-: T;
-function g(
-  h // c
-  : T,
-) {}
 
 -------------------
 { printWidth: 100 }
@@ -25,11 +19,5 @@ const a // c
 const d /* c */ : T = 1;
 const e // c
 : T = 1;
-let f // c
-: T;
-function g(
-  h // c
-  : T,
-) {}
 
 ===================== End =====================

@@ -233,6 +233,15 @@ impl Builder<'_> {
             return self.source(start, start + len);
         }
         if !self.is_indentable(comment) {
+            // oxfmt's `write_comment_text`: the first line ends without blanks.
+            let first_line = bun_core::strings::index_of_char_usize(self.slice(start, end), b'\n')
+                .filter(|_| self.config.flavor.is_oxfmt());
+            if let Some(len) = first_line {
+                let line_end = start + len as u32;
+                let kept = self.slice(start, line_end).trim_ascii_end().len() as u32;
+                self.source(start, start + kept);
+                return self.source(line_end, end);
+            }
             return self.source(start, end);
         }
         let text = self.text;

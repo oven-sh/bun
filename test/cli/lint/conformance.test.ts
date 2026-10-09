@@ -4,8 +4,9 @@ import { realpathSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
-// The tests of ESLint, of typescript-eslint and of the plugins, and more cases that the real ESLint has judged, run on
-// `bun lint`. See conformance/README.md. `src/lint/conformance` runs them: it says what is compared.
+// The tests of ESLint, of typescript-eslint and of the plugins, more cases that the real ESLint has judged, and the tests of
+// oxlint's own plugins, which oxlint has judged, run on `bun lint`. See conformance/README.md. `src/lint/conformance` runs
+// them: it says what is compared.
 //
 // `conformance/expected*.txt` is what the runner prints: the cases that fail, one per line, and the totals.
 
@@ -21,6 +22,7 @@ const isSample = isDebug || isASAN;
 const suites = [
   { suite: "upstream", expected: "expected.txt", every: isSample ? [50, 2000] : [1, 20] },
   { suite: "more", expected: "expected-more.txt", every: isSample ? [100, 5000] : [1, 200] },
+  { suite: "oxlint", expected: "expected-oxlint.txt", every: isSample ? [50, 1] : [1, 1] },
 ];
 
 let dir: ReturnType<typeof tempDir> | undefined;

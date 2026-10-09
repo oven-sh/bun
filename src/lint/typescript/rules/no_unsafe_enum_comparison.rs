@@ -83,7 +83,9 @@ impl Rule for NoUnsafeEnumComparison {
                 return;
             };
             if cx.state.is_mismatched(discriminant.ty(), test.ty()) {
-                cx.report(node, MISMATCHED_CASE);
+                // oxlint points at what the `switch` compares.
+                let place = if cx.language().is_oxlint { discriminant.outer_span() } else { node.span() };
+                cx.report(place, MISMATCHED_CASE);
             }
         });
         EnumComparisons::default()

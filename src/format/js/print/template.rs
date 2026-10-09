@@ -72,12 +72,25 @@ pub(crate) fn write_embedded_template_expression<'a>(
     }
 }
 
+/// ``a /* comment */ ⏎ `b` ``: for oxfmt every comment between a tag and its template leads the template. For Prettier
+/// one that ends its line trails the tag.
+fn comments_behind_tag_lead_the_template(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `` tag`a${b}c` ``
 pub(crate) fn write_tagged_template_expression<'a>(
     e: Expr<'a>,
     call: Call<'a>,
     f: &mut Formatter<'a>,
 ) {
+    let tag_end = call
+        .type_args()
+        .angle_brackets_span()
+        .map_or_else(|| call.callee().span().end, |it| it.end);
+    let leads_template = comments_behind_tag_lead_the_template(f);
+    let view_limit =
+        (leads_template && !f.is_quiet()).then(|| f.comments_mut().limit_comments_up_to(tag_end));
     write!(
         f,
         [
@@ -85,16 +98,15 @@ pub(crate) fn write_tagged_template_expression<'a>(
             type_arguments(call.type_args(), Node::Expr(e))
         ]
     );
+    if let Some(view_limit) = view_limit {
+        f.comments_mut().restore_view_limit(view_limit);
+    }
     let Some(quasi) = call.template() else {
         return;
     };
 
     let comments = f.comments().comments_before(quasi.span().start);
     if let Some(first) = comments.first() {
-        let tag_end = call
-            .type_args()
-            .angle_brackets_span()
-            .map_or_else(|| call.callee().span().end, |it| it.end);
         match f
             .source_text()
             .contains_newline(Span::before(tag_end, first.span))
@@ -103,13 +115,11 @@ pub(crate) fn write_tagged_template_expression<'a>(
             false => write!(f, space()),
         }
     }
-    write!(
-        f,
-        [
-            line_suffix_boundary(),
-            FormatLeadingComments::Comments(comments)
-        ]
-    );
+    let comments = FormatLeadingComments::Comments(comments);
+    match leads_template {
+        true => write!(f, [comments, line_suffix_boundary()]),
+        false => write!(f, [line_suffix_boundary(), comments]),
+    }
 
     let ExprKind::Template(template) = quasi.kind() else {
         return;

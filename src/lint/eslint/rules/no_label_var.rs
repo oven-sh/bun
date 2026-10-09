@@ -21,8 +21,12 @@ impl Rule for NoLabelVar {
             let StmtKind::Labeled { label, .. } = stmt.kind() else {
                 return;
             };
-            if Node::Stmt(stmt).scope().resolve_name(label).is_some() || cx.file().global(label.bytes()).is_some() {
-                cx.report(stmt, IDENTIFIER_CLASH_WITH_LABEL);
+            let variable = Node::Stmt(stmt).scope().resolve_name(label);
+            if variable.is_some() || cx.file().global(label.bytes()).is_some() {
+                // oxlint points at where the variable is declared.
+                let declared = (variable.filter(|_| cx.language().is_oxlint))
+                    .and_then(|it| it.declarations().next()?.name_span());
+                cx.report(declared.unwrap_or_else(|| stmt.span()), IDENTIFIER_CLASH_WITH_LABEL);
             }
         });
     }

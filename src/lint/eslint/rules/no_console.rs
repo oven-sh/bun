@@ -69,9 +69,14 @@ impl NoConsole {
         if reference.symbol().is_some() || reference_contains_type_query(reference) {
             return;
         }
+        // For oxlint it ends with the name: before the `]`.
+        let place = match member.kind() {
+            ExprKind::Index { index, .. } if cx.language().is_oxlint => member.span().to(index.span()),
+            _ => member.span(),
+        };
         let report = match self.allowed.is_empty() {
-            true => cx.report(member, UNEXPECTED),
-            false => cx.report(member, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
+            true => cx.report(place, UNEXPECTED),
+            false => cx.report(place, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
         };
         let remove = |fixer: Fixer<'a>| removable_statement(member).map(|it| fixer.remove(it));
         match member.kind() {

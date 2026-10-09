@@ -74,7 +74,8 @@ impl NoPromiseExecutorReturn {
                 ExprKind::Class(class) => class.name().is_some(),
                 _ => true,
             };
-            cx.report(body, RETURNS_VALUE)
+            // For oxlint the parentheses are part of the body.
+            cx.report(if cx.language().is_oxlint { body.outer_span() } else { body.span() }, RETURNS_VALUE)
                 .suggest(PREPEND_VOID, |fixer| allow_void.then(|| void_prepend_fixer(fixer, body, arrow, false)))
                 .suggest(WRAP_BRACES, |fixer| can_wrap.then(|| curly_wrap_fixer(fixer, executor, arrow)));
             return;

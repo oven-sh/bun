@@ -75,6 +75,24 @@ const BUILT_IN: &[u8] = br#"[
     { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] }
 ]"#;
 
+/// The files whose `lint` is the configuration of oxlint in a project of Vite+, by priority.
+const NAMES_OF_VITE: [&[u8]; 6] = [
+    b"vite.config.ts",
+    b"vite.config.mts",
+    b"vite.config.cts",
+    b"vite.config.js",
+    b"vite.config.mjs",
+    b"vite.config.cjs",
+];
+
+/// What is wrong with one of [`NAMES_OF_VITE`] that `--config` names and that says nothing about linting. One that is found is
+/// passed over.
+const HAS_NO_LINT_FIELD: &[u8] = b"Expected a `lint` field in the default export of ";
+
+fn has_no_lint_field(found: &Found) -> bool {
+    matches!(found, Err(Fatal(why)) if why.starts_with(HAS_NO_LINT_FIELD))
+}
+
 /// Whether a run in `cwd` stands in for oxlint, as far as can be told without a configuration being read: by `--flavor`, or else by
 /// whose file is the nearest.
 pub(crate) fn is_for_oxlint(flavor: Option<Tool>, cwd: &[u8]) -> bool {
@@ -94,6 +112,20 @@ pub(crate) fn is_for_oxlint(flavor: Option<Tool>, cwd: &[u8]) -> bool {
             })
             .unwrap_or(false),
     }
+}
+
+/// Whether the file at `path`, which `--config` names, has what only a configuration file of oxlint has.
+fn is_written_for_oxlint(path: &[u8]) -> bool {
+    let Some(json) = fs::read(path)
+        .ok()
+        .and_then(|it| bun_lint::json::parse(&it))
+    else {
+        return false;
+    };
+    let only_there: [&[u8]; 3] = [b"categories", b"jsPlugins", b"options"];
+    let schema = json.get(b"$schema").and_then(Json::as_str);
+    only_there.iter().any(|it| json.get(it).is_some())
+        || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
 /// A configuration that has been read.
@@ -153,6 +185,8 @@ pub(crate) struct Loader<'l> {
     tool: OnceLock<Option<Flavor>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
     wants_types: OnceLock<Option<bool>>,
+    /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
+    is_of_vite: OnceLock<bool>,
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
@@ -330,6 +364,7 @@ impl<'l> Loader<'l> {
             is_legacy: OnceLock::new(),
             tool: OnceLock::new(),
             wants_types: OnceLock::new(),
+            is_of_vite: OnceLock::new(),
         }
     }
 
@@ -630,7 +665,9 @@ impl<'l> Loader<'l> {
     /// configuration are relative to.
     fn read(&self, path: &[u8], base_path: &[u8]) -> Found {
         let name = paths::basename(path);
-        let known = NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2));
+        let is_of_vite = NAMES_OF_VITE.contains(&name);
+        let known = (NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2)))
+            .or_else(|| is_of_vite.then_some((Flavor::Oxlint, Syntax::Program)));
         let is_json = name.ends_with(b".json") || name.ends_with(b".jsonc");
         let syntax = known.map_or(
             if is_json {
@@ -664,6 +701,9 @@ impl<'l> Loader<'l> {
                 })?
             }
         };
+        if is_of_vite && json == Json::Null {
+            return Err(Fatal([HAS_NO_LINT_FIELD, path].concat()));
+        }
         // A file by another name is what it looks like.
         let flavor = known.map_or_else(
             || match (&json, syntax) {
@@ -829,12 +869,15 @@ impl<'l> Loader<'l> {
                 let found = names.find(|it| is_there(directory, it.0))?;
                 Some((directory, found.0, found.1))
             });
-            // Flags that only oxlint has.
+            // Flags that only oxlint has, or a file that only it reads.
             let is_for_oxlint = !options.filters.is_empty()
                 || !options.plugins.is_empty()
                 || options.deny_warnings
                 || options.disable_nested_config
-                || options.fix_suggestions;
+                || options.fix_suggestions
+                || (options.config.as_ref()).is_some_and(|it| {
+                    is_written_for_oxlint(&paths::resolve(self.cwd(), &paths::from_native(it)))
+                });
             if let Some((directory, name, flavor)) = found {
                 let mut others = names().filter(|it| it.1 != flavor);
                 let other = others.find(|it| is_there(directory, it.0));
@@ -862,19 +905,21 @@ impl<'l> Loader<'l> {
                 }
                 return Some(Flavor::Oxlint);
             }
-            if wanted != Some(Flavor::Oxlint) && paths::ancestors(self.cwd()).any(eslintrc::has_one)
-            {
+            let can_be_legacy =
+                wanted == Some(Flavor::Eslint) || wanted.is_none() && !is_for_oxlint;
+            if can_be_legacy && paths::ancestors(self.cwd()).any(eslintrc::has_one) {
                 return Some(Flavor::EslintRc);
             }
-            wanted
-                .or_else(|| is_for_oxlint.then_some(Flavor::Oxlint))
-                .or_else(|| self.tool_of_the_package())
+            let decided = wanted.or_else(|| is_for_oxlint.then_some(Flavor::Oxlint));
+            let of_the_package = self.tool_of_the_package(decided.is_some());
+            decided.or(of_the_package)
         })
     }
 
     /// Without any configuration file: oxlint, if the nearest `package.json` that depends on one of the two tools depends on it.
     /// ESLint does not run without a configuration file.
-    fn tool_of_the_package(&self) -> Option<Flavor> {
+    /// `is_decided`: the command line has said which tool it is.
+    fn tool_of_the_package(&self, is_decided: bool) -> Option<Flavor> {
         let found = paths::ancestors(self.cwd()).find_map(|directory| {
             let path = paths::join(directory, b"package.json");
             let json = bun_lint::json::parse(&fs::read(&path).ok()?)?;
@@ -884,7 +929,10 @@ impl<'l> Loader<'l> {
                     .any(|it| json.get(it).is_some_and(|it| it.get(name).is_some()))
             };
             let (has_oxlint, has_eslint) = (has(b"oxlint") || has(b"vite-plus"), has(b"eslint"));
-            if has_oxlint && has_eslint {
+            if has(b"vite-plus") {
+                let _ = self.is_of_vite.set(true);
+            }
+            if has_oxlint && has_eslint && !is_decided {
                 self.warn(&[
                     b"No configuration file found, and ",
                     &path,
@@ -899,10 +947,12 @@ impl<'l> Loader<'l> {
     /// Those of [`NAMES`] that count.
     fn names(&self) -> impl Iterator<Item = &'static [u8]> {
         let (reads_flat, tool) = (self.flat_config != Some(false), self.tool());
+        let is_of_vite = tool == Some(Flavor::Oxlint) && self.is_of_vite.get() == Some(&true);
         let names = NAMES.iter().filter(move |it| {
             (reads_flat || it.1 != Flavor::Eslint) && tool.is_none_or(|tool| tool == it.1)
         });
-        names.map(|it| it.0)
+        let of_vite = NAMES_OF_VITE.iter().filter(move |_| is_of_vite);
+        names.map(|it| it.0).chain(of_vite.copied())
     }
 
     /// The name of the configuration file among `names`, which are those of a directory, and whether one of these can be a file
@@ -913,6 +963,7 @@ impl<'l> Loader<'l> {
             name.starts_with(b"eslint.")
                 || name.starts_with(b".")
                 || name.starts_with(b"oxlint.")
+                || name.starts_with(b"vite.")
                 || *name == b"package.json"
         }) {
             has_legacy |= eslintrc::NAMES.contains(&name);
@@ -940,12 +991,7 @@ impl<'l> Loader<'l> {
                 return true;
             }
             // A file that can be either is what the working directory has.
-            let has_other = |directory: &[u8]| {
-                (self.names()).any(|name| fs::is_file(&paths::join(directory, name)))
-            };
-            path.ends_with(b".json")
-                && !paths::ancestors(self.cwd()).any(has_other)
-                && paths::ancestors(self.cwd()).any(eslintrc::has_one)
+            path.ends_with(b".json") && self.tool() == Some(Flavor::EslintRc)
         })
     }
 
@@ -1086,8 +1132,9 @@ impl<'l> Loader<'l> {
             }
             asked.push(ancestor);
             let name = (self.names()).find(|name| fs::is_file(&paths::join(ancestor, name)));
-            if let Some(name) = name {
-                found = Some(self.load(&paths::join(ancestor, name), ancestor));
+            let loaded = name.map(|name| self.load(&paths::join(ancestor, name), ancestor));
+            if let Some(loaded) = loaded.filter(|it| !has_no_lint_field(it)) {
+                found = Some(loaded);
                 break;
             }
             if legacy.is_none() && eslintrc::has_one(ancestor) {
@@ -1134,7 +1181,11 @@ impl<'l> Loader<'l> {
         let is_legacy = matches!(inherited.flavor, Flavor::EslintRc | Flavor::BuiltIn);
         match self.pick(names) {
             (Some(name), _) if !self.is_command_line_of_eslint_8() => {
-                self.load(&paths::join(directory, name), directory)
+                let loaded = self.load(&paths::join(directory, name), directory);
+                match has_no_lint_field(&loaded) {
+                    true => Ok(Arc::clone(inherited)),
+                    false => loaded,
+                }
             }
             (_, true)
                 if is_legacy && self.flat_config != Some(true) && eslintrc::has_one(directory) =>
@@ -1209,7 +1260,12 @@ impl<'l> Loader<'l> {
         if !self.reads_ignore_files(loaded) {
             return None;
         }
-        let chain = gitignore::above_and_in(directory, self.ignore_file_names());
+        let mut chain = gitignore::above_and_in(directory, self.ignore_file_names());
+        // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
+        let patterns = &self.options.ignore_pattern;
+        if loaded.flavor == Flavor::Oxlint && self.options.ignore && !patterns.is_empty() {
+            chain = gitignore::with_text(chain, self.cwd(), &patterns.join(&b'\n'), true);
+        }
         match self
             .options
             .ignore_path

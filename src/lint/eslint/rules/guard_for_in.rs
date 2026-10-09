@@ -41,10 +41,13 @@ impl Rule for GuardForIn {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::ForIn], |_, stmt, cx| {
-            if let StmtKind::ForIn { body, .. } = stmt.kind()
+            if let StmtKind::ForIn { expr, body, .. } = stmt.kind()
                 && !is_guarded(body)
             {
-                cx.report(stmt, WRAP);
+                let whole = stmt.span();
+                // oxlint points at the head, which it takes to end one byte after the object.
+                let end = if cx.language().is_oxlint { expr.outer_span().end + 1 } else { whole.end };
+                cx.report(Span::new(whole.start, end), WRAP);
             }
         });
     }

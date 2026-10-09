@@ -113,7 +113,8 @@ fn check_and_lint(
         build: false,
         errors: &[],
         paths: &paths,
-        are_entry_points: false,
+        // oxlint lints JavaScript with types too, whatever `allowJs` says and whether or not a project includes it.
+        are_entry_points: (indices.iter()).any(|&index| files[index].config.language.is_oxlint),
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],

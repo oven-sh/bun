@@ -8,7 +8,15 @@ import * as oxlint from "./shapes-oxlint";
 import * as typed from "./shapes-typed";
 import * as typescript from "./shapes-typescript";
 
-const more = { "eslint-1": eslint1, "eslint-2": eslint2, "eslint-3": eslint3, "eslint-4": eslint4, typescript, typed, oxlint };
+const more = {
+  "eslint-1": eslint1,
+  "eslint-2": eslint2,
+  "eslint-3": eslint3,
+  "eslint-4": eslint4,
+  typescript,
+  typed,
+  oxlint,
+};
 
 /**
  * The names of the shapes, each with what makes its text: a shape is made when it is asked for.

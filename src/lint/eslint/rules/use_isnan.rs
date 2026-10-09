@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::is_global_by_name;
 
 /// Require calls to `isNaN()` when checking for `NaN`.
 pub struct UseIsnan {
@@ -39,10 +40,10 @@ fn is_nan_identifier(e: Expr) -> bool {
         _ => e,
     };
     match to_check.kind() {
-        ExprKind::Ident(name) => name.is("NaN") && ast_utils::is_global_reference(to_check),
+        ExprKind::Ident(name) => name.is("NaN") && is_global_by_name(to_check),
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
             ast_utils::is_specific_member_access(to_check, Some("Number"), Some("NaN"))
-                && ast_utils::is_global_reference(obj)
+                && is_global_by_name(obj)
         }
         _ => false,
     }
@@ -75,8 +76,8 @@ impl UseIsnan {
         } else {
             return;
         };
-        // oxlint points at the `NaN`.
-        let report = cx.report(if cx.language().is_oxlint { nan } else { e }, COMPARISON_WITH_NAN);
+        // oxlint points at the `NaN`, with its parentheses.
+        let report = cx.report(if cx.language().is_oxlint { nan.outer_span() } else { e.span() }, COMPARISON_WITH_NAN);
         let is_fixable = matches!(op, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq);
         if !is_fixable || is_sequence(nan) {
             return;
@@ -95,11 +96,11 @@ impl UseIsnan {
             return;
         };
         if is_nan_identifier(expr) {
-            cx.report(if cx.language().is_oxlint { expr.span() } else { statement.span() }, SWITCH_NAN);
+            cx.report(if cx.language().is_oxlint { expr.outer_span() } else { statement.span() }, SWITCH_NAN);
         }
         for case in cases {
             if let Some(test) = case.test().filter(|&it| is_nan_identifier(it)) {
-                cx.report(if cx.language().is_oxlint { test.span() } else { case.span() }, CASE_NAN);
+                cx.report(if cx.language().is_oxlint { test.outer_span() } else { case.span() }, CASE_NAN);
             }
         }
     }
@@ -126,7 +127,13 @@ impl UseIsnan {
         if args.len() > 2 || !is_nan_identifier(first) {
             return;
         }
-        let report = cx.report(e, INDEX_OF_NAN).data("methodName", method_name);
+        // oxlint points at the `NaN`, without parentheses.
+        let place = match first.kind() {
+            _ if !cx.language().is_oxlint => e.span(),
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => right.span(),
+            _ => first.span(),
+        };
+        let report = cx.report(place, INDEX_OF_NAN).data("methodName", method_name);
         // `arr.findIndex(Number.isNaN)` would lose the side effects of what comes before the `NaN`.
         if is_sequence(first) || args.len() > 1 {
             return;

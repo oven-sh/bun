@@ -157,6 +157,36 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     })
 }
 
+/// oxfmt's `route`: the parser for a block of code in `language`, and for JavaScript and TypeScript the name of a file
+/// that says what it is. The names are those of Shiki. What has none of them stays as it is written.
+pub(crate) fn parser_of_oxfmt(language: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
+    Some(match language {
+        b"graphql" | b"gql" => (b"graphql", b""),
+        b"css" | b"postcss" => (b"css", b""),
+        b"scss" => (b"scss", b""),
+        b"less" => (b"less", b""),
+        b"yaml" | b"yml" => (b"yaml", b""),
+        b"json" => (b"json", b""),
+        b"jsonc" => (b"jsonc", b""),
+        b"json5" => (b"json5", b""),
+        b"html" => (b"html", b""),
+        b"angular" | b"angular-html" => (b"angular", b""),
+        b"vue" => (b"vue", b""),
+        b"handlebars" | b"hbs" => (b"glimmer", b""),
+        b"mdx" => (b"mdx", b""),
+        b"markdown" | b"md" => (b"markdown", b""),
+        b"javascript" | b"js" => (b"babel", b"dummy.js"),
+        b"jsx" => (b"babel", b"dummy.jsx"),
+        b"mjs" => (b"babel", b"dummy.mjs"),
+        b"cjs" => (b"babel", b"dummy.cjs"),
+        b"typescript" | b"angular-ts" | b"ts" => (b"typescript", b"dummy.ts"),
+        b"tsx" => (b"typescript", b"dummy.tsx"),
+        b"mts" => (b"typescript", b"dummy.mts"),
+        b"cts" => (b"typescript", b"dummy.cts"),
+        _ => return None,
+    })
+}
+
 /// Formats `code`, which is in a block of code in `language`, for lines of `width` columns.
 fn format_embedded(
     language: &[u8],
@@ -170,8 +200,14 @@ fn format_embedded(
         return Some(Vec::new());
     }
     let is_mdx_jsx = language == MDX_JSX;
+    let mut file_of_oxfmt: &[u8] = b"";
     let parser: &[u8] = match language {
         _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
+        _ if options.flavor.is_oxfmt() => {
+            let parser;
+            (parser, file_of_oxfmt) = parser_of_oxfmt(language)?;
+            parser
+        }
         b"angular-html" => b"angular",
         _ => infer_parser(language)?,
     };
@@ -249,6 +285,7 @@ fn format_embedded(
                 };
                 format_in(code, &options, &mut Default::default(), &mut out, mode).is_ok()
             }
+            _ if !file_of_oxfmt.is_empty() => format_javascript(file_of_oxfmt, &mut out),
             b"babel" => format_javascript(b"dummy.jsx", &mut out),
             _ if language == b"tsx" => format_javascript(b"dummy.tsx", &mut out),
             _ => format_javascript(b"dummy.ts", &mut out),
@@ -349,10 +386,16 @@ fn format_in(
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
     let Offsets { start, end, .. } = Offsets::new(original, first, options);
     let mut text = &original[first..];
-    let options = FormatOptions {
+    let mut options = FormatOptions {
         line_ending: options.line_ending.resolve(text),
         ..options.clone()
     };
+    // oxfmt hands MDX to the Prettier that comes with it, and nothing in it comes back: the code in it is Prettier's
+    // too, and what only oxfmt does is not done.
+    if mode.is_mdx && options.flavor.is_oxfmt() {
+        options.flavor = crate::options::Flavor::Prettier;
+        (options.sort_imports, options.jsdoc, options.tailwind) = (None, None, None);
+    }
     let is_whole = start <= first && end >= original.len();
     let mut normalized = Vec::new();
     if bun_core::strings::contains_char(text, b'\r') {

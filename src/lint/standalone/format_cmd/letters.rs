@@ -90,7 +90,7 @@ fn without_character_references(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `text` with what `A` and `\u{41}` in it stand for.
+/// `text` with what `\u0041` and `\u{41}` in it stand for.
 fn without_unicode_escapes(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut rest = text;

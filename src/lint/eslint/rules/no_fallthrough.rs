@@ -75,11 +75,31 @@ impl NoFallthrough {
                 cx.report(case, if case.is_default() { DEFAULT } else { CASE });
             }
             Some(comment) if !is_fallthrough => {
-                cx.report(comment, UNUSED_FALLTHROUGH_COMMENT);
+                let place = match cx.language().is_oxlint {
+                    true => place_of_oxlint(previous, case, comment.span()),
+                    false => comment.span(),
+                };
+                cx.report(place, UNUSED_FALLTHROUGH_COMMENT);
             }
             _ => {}
         }
     }
+}
+
+/// oxlint points at all that is between the last statement of `previous` and `case`, or the `}` of the block that the
+/// comment is in.
+fn place_of_oxlint<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Span {
+    let (body, end_of_case) = (previous.body(), previous.span().end);
+    let block = body.first().filter(|_| body.len() == 1).and_then(|it| Some((it.span(), it.as_block()?)));
+    let start = match block {
+        Some((block, statements)) => statements.last().map_or(block.start, |it| it.span().end),
+        None => body.last().map_or(end_of_case, |it| it.span().end),
+    };
+    let end = match block {
+        Some((block, _)) if comment.end <= block.end => block.end,
+        _ => case.span().start,
+    };
+    Span::new(start, end)
 }
 
 impl Rule for NoFallthrough {

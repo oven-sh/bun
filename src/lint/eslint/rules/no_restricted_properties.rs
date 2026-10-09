@@ -22,7 +22,30 @@ struct Restriction {
 #[derive(Copy, Clone)]
 enum Found<'r> {
     ObjectProperty(&'r Restriction),
+    /// All the properties of an object.
+    Object(&'r Restriction),
     Property(&'r Restriction),
+}
+
+/// Where an access can be reported.
+#[derive(Copy, Clone)]
+struct Places {
+    eslint: Span,
+    /// oxlint points at what is restricted: the object, the property, or both.
+    object: Option<Span>,
+    property: Span,
+    access: Span,
+}
+
+impl Places {
+    fn everywhere(at: Span) -> Places {
+        Places { eslint: at, object: None, property: at, access: at }
+    }
+
+    /// `key`: of the property of a pattern.
+    fn of_pattern(pattern: Span, key: Option<Span>) -> Places {
+        Places { eslint: pattern, ..Places::everywhere(key.unwrap_or(pattern)) }
+    }
 }
 
 const RESTRICTED_OBJECT_PROPERTY: Message = Message::new(
@@ -63,13 +86,13 @@ impl NoRestrictedProperties {
     /// The restriction that an access to the property of the object violates.
     fn find(&self, object_name: Option<&[u8]>, property_name: &[u8]) -> Option<Found<'_>> {
         let matched_object_property = object_name.and_then(|name| match self.restricted_properties.get(name) {
-            Some(properties) => properties.get(property_name),
-            None => self.globally_restricted_objects.get(name),
+            Some(properties) => properties.get(property_name).map(Found::ObjectProperty),
+            None => self.globally_restricted_objects.get(name).map(Found::Object),
         });
-        if let Some(matched) = matched_object_property
+        if let Some(found @ (Found::ObjectProperty(matched) | Found::Object(matched))) = matched_object_property
             && !matched.allows(property_name)
         {
-            return Some(Found::ObjectProperty(matched));
+            return Some(found);
         }
         (self.globally_restricted_properties.get(property_name))
             .filter(|matched| !object_name.is_some_and(|name| matched.allows(name)))
@@ -78,14 +101,20 @@ impl NoRestrictedProperties {
 
     fn report<'a>(
         &self,
-        at: Span,
+        places: Places,
         found: Found<'_>,
         object_name: Option<Name<'a>>,
         property_name: Cow<'a, [u8]>,
         cx: &Cx<'a, Self>,
     ) {
+        let at = match found {
+            _ if !cx.language().is_oxlint => places.eslint,
+            Found::ObjectProperty(_) => places.access,
+            Found::Object(_) => places.object.unwrap_or(places.property),
+            Found::Property(_) => places.property,
+        };
         match found {
-            Found::ObjectProperty(matched) => {
+            Found::ObjectProperty(matched) | Found::Object(matched) => {
                 let allowed = matched.allowed_message(&[&b" Only these properties are allowed: "[..]]);
                 cx.report(at, RESTRICTED_OBJECT_PROPERTY)
                     .data("objectName", object_name.map_or(&b""[..], Name::bytes))
@@ -110,7 +139,7 @@ impl NoRestrictedProperties {
     /// ESLint's `checkPropertyAccess`.
     fn check_property_access<'a>(
         &self,
-        at: impl FnOnce() -> Span,
+        at: impl FnOnce() -> Places,
         object_name: Option<Name<'a>>,
         property_name: Option<Cow<'a, [u8]>>,
         cx: &Cx<'a, Self>,
@@ -138,7 +167,13 @@ impl NoRestrictedProperties {
             && let Some(found) = self.find(object_name.map(Name::bytes), &property_name)
             && ast_utils::is_member_expression(e)
         {
-            self.report(e.span(), found, object_name, property_name, cx);
+            let (object, property) = match e.kind() {
+                ExprKind::Dot { obj, name, .. } => (Some(obj.outer_span()), name.span()),
+                ExprKind::Index { obj, index, .. } => (Some(obj.outer_span()), index.outer_span()),
+                _ => (None, e.span()),
+            };
+            let places = Places { object, property, ..Places::everywhere(e.span()) };
+            self.report(places, found, object_name, property_name, cx);
         }
     }
 
@@ -158,7 +193,11 @@ impl NoRestrictedProperties {
         let object_name = right.and_then(Expr::as_ident);
         for property in properties {
             let property_name = ast_utils::get_static_property_name(property);
-            self.check_property_access(|| utils::estree_span(Node::Pat(pat)), object_name, property_name, cx);
+            let places = || {
+                let key = property.key().map(|it| it.inner_span(cx.file()));
+                Places::of_pattern(utils::estree_span(Node::Pat(pat)), key)
+            };
+            self.check_property_access(places, object_name, property_name, cx);
         }
     }
 
@@ -177,7 +216,8 @@ impl NoRestrictedProperties {
         };
         for property in properties {
             let property_name = ast_utils::get_static_property_name(property);
-            self.check_property_access(|| e.span(), object_name, property_name, cx);
+            let places = || Places::of_pattern(e.span(), property.key().map(|it| it.inner_span(cx.file())));
+            self.check_property_access(places, object_name, property_name, cx);
         }
     }
 
@@ -193,7 +233,7 @@ impl NoRestrictedProperties {
                 && utils::estree_type_name(Node::Type(ty)) != "TSTypeReference"
             {
                 let at = Span::new(ty.span().start, property.span().end);
-                self.report(at, found, object_name, Cow::Borrowed(property.bytes()), cx);
+                self.report(Places::everywhere(at), found, object_name, Cow::Borrowed(property.bytes()), cx);
             }
             object_name = None;
         }

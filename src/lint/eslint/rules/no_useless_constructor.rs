@@ -88,7 +88,13 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
             before.end()
         }
     };
-    cx.report(Span::new(member.span().start, name_end), NO_USELESS_CONSTRUCTOR)
+    // oxlint points at all of an empty constructor, and at the name of one that only calls `super`.
+    let place = match (cx.language().is_oxlint, member.constructor_keyword()) {
+        (true, Some(name)) if has_super_class => name.span(),
+        (true, _) => member.span(),
+        (false, _) => Span::new(member.span().start, name_end),
+    };
+    cx.report(place, NO_USELESS_CONSTRUCTOR)
         .suggest(REMOVE_CONSTRUCTOR, |fixer| {
             let next = fixer.file().token_after(member);
             let adds_semicolon = next.is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))

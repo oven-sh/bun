@@ -25,7 +25,8 @@ impl NoNewFunc {
             _ => return,
         };
         if function.is_ident("Function") && ast_utils::is_global_reference(function) {
-            cx.report(e, NO_FUNCTION_CONSTRUCTOR);
+            // oxlint points at the `Function`.
+            cx.report(if cx.language().is_oxlint { function } else { e }, NO_FUNCTION_CONSTRUCTOR);
         }
     }
 }

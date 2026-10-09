@@ -674,6 +674,9 @@ fn collect_dependencies(
                             loc: decl_lv.place.loc,
                         },
                     );
+                    // Upstream leaves this out, and takes a variable that a closure in the
+                    // callback reads before its declaration for a dependency of the callback.
+                    locals.insert(decl_lv.place.identifier);
                 }
                 InstructionValue::StoreContext {
                     lvalue: store_lv,

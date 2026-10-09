@@ -121,7 +121,10 @@ impl GroupedAccessorPairs {
         };
         // oxlint points at the getter.
         let at = if cx.language().is_oxlint { getter.func } else { latter.func };
-        cx.report(ast_utils::get_function_head_loc(at), message)
+        let head = ast_utils::get_function_head_loc(at);
+        // For oxlint it ends with the key: before the `]`.
+        let end = if cx.language().is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
+        cx.report(Span::new(head.start, end), message)
             .data("formerName", ast_utils::get_function_name_with_kind(former.func))
             .data("latterName", ast_utils::get_function_name_with_kind(latter.func));
     }

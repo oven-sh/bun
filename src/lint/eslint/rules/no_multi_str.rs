@@ -23,6 +23,16 @@ fn is_in_jsx(e: Expr) -> bool {
     }
 }
 
+/// Where a string with a line break is reported. oxlint points at what is before the first line break.
+fn place(string: Span, file: &File) -> Span {
+    let text = file.slice(string);
+    let is_linebreak = |at: &usize| matches!(text.get(*at..), Some([b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]));
+    match (1..text.len()).find(is_linebreak).filter(|_| file.language().is_oxlint) {
+        Some(at) => Span::new(string.start + at as u32 - 1, string.start + at as u32),
+        None => string,
+    }
+}
+
 impl Rule for NoMultiStr {
     const META: Meta = Meta::eslint("no-multi-str", Kind::Suggestion);
     /// Where the strings with a line break start that are expressions.
@@ -50,7 +60,7 @@ impl Rule for NoMultiStr {
             }
             cx.state.push(e.span().start);
             if !is_in_jsx(e) {
-                cx.report(e, MULTILINE_STRING);
+                cx.report(place(e.span(), cx.file()), MULTILINE_STRING);
             }
         });
         // The strings that are not expressions: keys, module specifiers, literal types.
@@ -61,7 +71,7 @@ impl Rule for NoMultiStr {
                     && ast_utils::has_linebreak(token.text())
                     && cx.state.binary_search(&token.start()).is_err()
                 {
-                    cx.report(token, MULTILINE_STRING);
+                    cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
                 }
             }
         });

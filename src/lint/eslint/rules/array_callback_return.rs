@@ -70,9 +70,9 @@ pub struct State<'a> {
     functions: AncestorMemo<'a, Func<'a>>,
 }
 
-/// The name of the method of arrays that the function expression `func` is the callback of.
+/// The name of the method of arrays that the function expression `func` is the callback of, and what is called.
 /// Generators are excluded. Async functions are allowed only for `Array.fromAsync`.
-fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<&'static str> {
+fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&'static str, Expr<'a>)> {
     if func.is_generator() {
         return None;
     }
@@ -96,15 +96,16 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<&'
                     let is_second = args.get(1) == Some(current);
                     if !func.is_async() {
                         if is_second && ast_utils::is_array_from_method(callee) {
-                            return Some("from");
+                            return Some(("from", callee));
                         }
                         if args.first() == Some(current)
                             && let Some(name) = get_target_method(callee)
                         {
-                            return Some(name);
+                            return Some((name, callee));
                         }
                     }
-                    return (is_second && ast_utils::is_array_from_async_method(callee)).then_some("fromAsync");
+                    return (is_second && ast_utils::is_array_from_async_method(callee))
+                        .then_some(("fromAsync", callee));
                 }
                 _ => return None,
             },
@@ -173,14 +174,17 @@ impl ArrayCallbackReturn {
         if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
             return;
         }
-        let Some(method) = get_array_method_name(func, &mut cx.state) else {
+        let Some((method, callee)) = get_array_method_name(func, &mut cx.state) else {
             return;
         };
         if method == "forEach" {
             if self.check_for_each {
-                self.check_for_each_callback(func, cx);
+                self.check_for_each_callback(func, callee, cx);
             }
             return;
+        }
+        if cx.language().is_oxlint {
+            return self.check_as_oxlint(func, method, cx);
         }
         let mut has_return = false;
         for statement in func.returns() {
@@ -201,9 +205,49 @@ impl ArrayCallbackReturn {
         }
     }
 
-    /// Returning a value on any path is not allowed.
-    fn check_for_each_callback<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
+    /// oxlint reports a callback once: at its body, or at its head if it ends with an `if` without `else` or a `switch`
+    /// without `default`.
+    fn check_as_oxlint<'a>(&self, func: Func<'a>, method: &str, cx: &Cx<'a, Self>) {
+        let FnBody::Block(body) = func.body() else {
+            return;
+        };
+        let (last, mut returns) = (body.last(), func.returns());
+        let is_end_reachable =
+            !matches!(last.map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw)) && func.is_end_reachable();
+        let message = match is_end_reachable {
+            true if returns.next().is_some() => EXPECTED_AT_END,
+            true => EXPECTED_INSIDE,
+            false if !self.allow_implicit && returns.any(|it| matches!(it.kind(), StmtKind::Return(None))) => {
+                EXPECTED_RETURN_VALUE
+            }
+            false => return,
+        };
+        let can_run_past_the_last = match last.map(Stmt::kind) {
+            Some(StmtKind::Switch { cases, .. }) => !cases.iter().any(Case::is_default),
+            Some(StmtKind::If { no, .. }) => no.is_none(),
+            _ => false,
+        };
+        let start = func.estree_span().start;
+        let place = match can_run_past_the_last {
+            true if func.is_arrow() => func.arrow_span(),
+            true => func.params_span().map(|params| Span::new(start, params.start)),
+            false => func.body_span(),
+        };
+        if let Some(place) = place {
+            Self::report(cx, place, message, func, method);
+        }
+    }
+
+    /// Returning a value on any path is not allowed. `callee`: the `a.forEach`.
+    fn check_for_each_callback<'a>(&self, func: Func<'a>, callee: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_allowed = |value: Expr<'a>| self.allow_void && is_expression_void(value);
+        // oxlint reports a callback once, at the name of the method.
+        let place_of_oxlint = match callee.kind() {
+            _ if !cx.language().is_oxlint => None,
+            ExprKind::Dot { name, .. } => Some(name.span()),
+            ExprKind::Index { index, .. } => Some(index.span()),
+            _ => None,
+        };
         for statement in func.returns() {
             let StmtKind::Return(Some(argument)) = statement.kind() else {
                 continue;
@@ -211,11 +255,15 @@ impl ArrayCallbackReturn {
             if is_allowed(argument) {
                 continue;
             }
-            let report = Self::report(cx, statement, EXPECTED_NO_RETURN_VALUE, func, "forEach");
+            let place = place_of_oxlint.unwrap_or_else(|| statement.span());
+            let report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach");
             if self.allow_void {
                 let start = statement.span().start;
                 let keyword = Span::new(start, start + "return".len() as u32);
                 report.suggest(PREPEND_VOID, |fixer| void_prepend_fixer(fixer, argument, keyword, true));
+            }
+            if place_of_oxlint.is_some() {
+                return;
             }
         }
         let FnBody::Expr(body) = func.body() else {
@@ -224,7 +272,7 @@ impl ArrayCallbackReturn {
         if is_allowed(body) {
             return;
         }
-        let head = ast_utils::get_function_head_loc(func);
+        let head = place_of_oxlint.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
         let report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
             .suggest(WRAP_BRACES, |fixer| curly_wrap_fixer(fixer, func));
         if self.allow_void {

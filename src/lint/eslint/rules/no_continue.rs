@@ -15,7 +15,10 @@ impl Rule for NoContinue {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::Continue], |_, stmt, cx| {
-            cx.report(stmt, UNEXPECTED);
+            let whole = stmt.span();
+            // oxlint points at the keyword.
+            let end = if cx.language().is_oxlint { whole.start + "continue".len() as u32 } else { whole.end };
+            cx.report(Span::new(whole.start, end), UNEXPECTED);
         });
     }
 }

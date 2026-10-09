@@ -413,6 +413,22 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect((await lint(files, ["--disable-nested-config"])).problems).toEqual(["a.js:1:1 no-var"]);
   });
 
+  test("--ignore-pattern is for the whole run", async () => {
+    const own = JSON.stringify({ ...noVar, categories: { correctness: "off" } });
+    const files = {
+      ".oxlintrc.json": own,
+      "a.js": code,
+      "src/b.js": code,
+      "src/nested/.oxlintrc.json": own,
+      "src/nested/c.js": code,
+    };
+    expect((await lint(files, ["--ignore-pattern=src/**"])).problems).toEqual(["a.js:1:1 no-var"]);
+    expect((await lint(files, ["--ignore-pattern", "c.js"])).problems).toEqual([
+      "a.js:1:1 no-var",
+      "src/b.js:1:1 no-var",
+    ]);
+  });
+
   test("`files` of `overrides` have no `?(a|b)`", async () => {
     const { problems } = await lint({
       ".oxlintrc.json": JSON.stringify({
@@ -881,7 +897,7 @@ describe.concurrent("whose configuration files count", () => {
   test("--flavor takes two values", async () => {
     const { stderr, exitCode } = await lint(both, ["--flavor=biome", "."]);
     expect(stderr).toContain("Option flavor: 'biome' not one of eslint or oxlint.");
-    expect(exitCode).toBe(2);
+    expect(exitCode).toBe(1);
   });
 
   test("flags that only oxlint has, without a configuration file, are for oxlint", async () => {
@@ -916,6 +932,52 @@ describe.concurrent("whose configuration files count", () => {
     expect(chosen.stderr).not.toContain("No configuration file found");
     expect(chosen.exitCode).toBe(1);
     expect((await lint(files)).exitCode).toBe(1);
+  });
+
+  test("beside a file of ESLint 8, --config with a file of oxlint and flags that only oxlint has are for oxlint", async () => {
+    const files = {
+      ".eslintrc.json": JSON.stringify({ extends: "not-installed" }),
+      "mine.json": oxlintrc({ "no-var": "error" }),
+      "plain.json": JSON.stringify({ rules: { "no-var": "error" } }),
+      "a.js": code,
+    };
+    expect((await lint(files, ["-c", "mine.json", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
+    const byFlag = await lint(files, ["-c", "plain.json", "--disable-nested-config", "a.js"]);
+    expect(byFlag.problems).toEqual(["a.js:1:1 no-var", "a.js:2:13 no-debugger"]);
+    // What can be either is what the working directory has.
+    expect((await lint(files, ["-c", "plain.json", "a.js"])).stderr).toContain("not-installed");
+  });
+
+  test("Vite+: `lint` of the vite.config.ts", async () => {
+    const lintOf = (rule: string) => `lint: { categories: { correctness: "off" }, rules: { "${rule}": "error" } }`;
+    const files = {
+      "package.json": JSON.stringify({ devDependencies: { "vite-plus": "*" } }),
+      "vite.config.ts": `import { defineConfig } from "vite-plus";\nexport default defineConfig({ ${lintOf("no-var")} });`,
+      "a.js": code,
+      "packages/own/vite.config.ts": `export default ({ command }) => ({ ${lintOf("eqeqeq")}, command });`,
+      "packages/own/b.js": code,
+      "packages/silent/vite.config.ts": `export default { server: {} };`,
+      "packages/silent/c.js": code,
+    };
+    const { problems, exitCode } = await lint(files, ["a.js", "packages/own/b.js", "packages/silent/c.js"]);
+    expect(problems).toEqual(["a.js:1:1 no-var", "packages/own/b.js:2:7 eqeqeq", "packages/silent/c.js:1:1 no-var"]);
+    expect(exitCode).toBe(1);
+    const walked = await lint(files, ["packages"]);
+    expect(walked.problems.filter(it => !it.includes("vite.config"))).toEqual([
+      "packages/own/b.js:2:7 eqeqeq",
+      "packages/silent/c.js:1:1 no-var",
+    ]);
+    const named = await lint(files, ["-c", "packages/silent/vite.config.ts", "a.js"]);
+    expect(named.stderr).toContain(
+      "Expected a `lint` field in the default export of <dir>/packages/silent/vite.config.ts",
+    );
+    expect(named.exitCode).not.toBe(0);
+    // A configuration file of oxlint counts, and then these do not.
+    const withFile = await lint({ ...files, ".oxlintrc.json": oxlintrc({ "no-debugger": "error" }) }, [
+      "a.js",
+      "packages/own/b.js",
+    ]);
+    expect(withFile.problems).toEqual(["a.js:2:13 no-debugger", "packages/own/b.js:2:13 no-debugger"]);
   });
 
   test("flags that only oxlint has, where there are both, are for oxlint", async () => {

@@ -21,6 +21,7 @@ mod conformance;
 mod cursor;
 mod letters;
 mod markdown;
+mod readers;
 mod sort_imports;
 mod value;
 mod verify;
@@ -546,6 +547,7 @@ pub(crate) fn run(args: &[String]) {
         Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),
+        Some("readers") => readers::run(&args),
         Some("markdown") => markdown::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
         _ => output_line!(

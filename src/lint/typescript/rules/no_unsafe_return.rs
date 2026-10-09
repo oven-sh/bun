@@ -29,6 +29,8 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     let Some(function_node) = get_parent_function_node(return_node) else {
         return;
     };
+    // oxlint points at what is returned.
+    let reporting_node = if cx.language().is_oxlint { return_node.outer_span() } else { reporting_node };
     let return_node_type = return_node.ty();
     let any_type = discriminate_any_type(return_node_type, return_node);
 

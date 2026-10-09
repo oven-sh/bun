@@ -503,7 +503,9 @@ impl Preprocessor<'_> {
             // mdast-util-gfm-task-list-item passes the character behind `[x]` by adding one to the column, also if it
             // is a line break.
             let start = match child.start.checked_sub(1) {
-                Some(before) if item.checked != 0 && self.original[before as usize] == b'\n' => {
+                Some(before)
+                    if item.checked != 0 && self.original.get(before as usize) == Some(&b'\n') =>
+                {
                     return Some((before - self.tree.line_start(before)) as usize + 1);
                 }
                 _ => child.start,

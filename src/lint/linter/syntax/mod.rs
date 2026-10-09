@@ -202,7 +202,7 @@ pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> 
 /// does besides. Nothing is asked of the scopes of the file.
 pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
     refusal_of_prettier(file, types).or_else(|| {
-        oxc::first_error_for_formatter(file).map(|it| Refusal {
+        oxc::first_error_of_parser(file).map(|it| Refusal {
             message: it.message,
             at: it.at,
         })

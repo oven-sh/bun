@@ -6,8 +6,8 @@ const marker = process.argv.at(-2);
 const { fileURLToPath, pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
 
-// Who has removed the packages of oxlint and oxfmt still has `import { defineConfig } from "oxlint"` in the file.
-for (const name of ["oxlint", "oxfmt"]) {
+// Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.
+for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
   try {
     Bun.resolveSync(name, resolve(path, ".."));
   } catch {

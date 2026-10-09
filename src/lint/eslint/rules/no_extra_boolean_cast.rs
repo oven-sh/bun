@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::oxlint::is_global_by_name;
 
 /// Disallow unnecessary boolean casts.
 pub struct NoExtraBooleanCast {
@@ -13,7 +14,7 @@ const UNEXPECTED_NEGATION: Message =
 
 /// The callee is the global `Boolean`.
 fn calls_boolean(call: Call) -> bool {
-    call.callee().is_ident("Boolean") && ast_utils::is_global_reference(call.callee())
+    call.callee().is_ident("Boolean") && is_global_by_name(call.callee())
 }
 
 fn is_sequence(e: Expr) -> bool {
@@ -89,7 +90,9 @@ fn prefix<'a>(replaced: Expr<'a>, replacement: ast_utils::TokenOrText<'a>) -> &'
 impl NoExtraBooleanCast {
     /// ESLint's `isInFlaggedContext`.
     fn is_in_flagged_context<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) -> bool {
-        let inner = self.enforce_for_inner_expressions;
+        // For oxlint the two options are one.
+        let is_oxlint = cx.language().is_oxlint;
+        let inner = self.enforce_for_inner_expressions || self.enforce_for_logical_operands && is_oxlint;
         let logical = inner || self.enforce_for_logical_operands;
         let is_flagged = cx.state.find(Node::Expr(e), |child, parent| {
             let e = child.as_expr()?;

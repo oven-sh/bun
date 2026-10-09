@@ -76,11 +76,10 @@ impl Complexity {
                     member.init().map_or_else(|| member.span(), Expr::span),
                 ),
                 Node::Func(func) if func.kind() == FnKind::StaticBlock => {
-                    let start = func.span().start;
-                    (
-                        b"Class static block".to_vec(),
-                        Span::new(start, start + "static".len() as u32),
-                    )
+                    let whole = func.span();
+                    // oxlint points at the whole block.
+                    let end = if cx.language().is_oxlint { whole.end } else { whole.start + "static".len() as u32 };
+                    (b"Class static block".to_vec(), Span::new(whole.start, end))
                 }
                 Node::Func(func) => (
                     upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),

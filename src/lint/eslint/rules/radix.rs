@@ -68,7 +68,8 @@ impl Radix {
             }
             (Some(_), Some(radix)) => {
                 if !is_valid_radix(radix) {
-                    cx.report(e, INVALID_RADIX);
+                    // oxlint points at the radix.
+                    cx.report(if cx.language().is_oxlint { radix.outer_span() } else { e.span() }, INVALID_RADIX);
                 }
             }
         }

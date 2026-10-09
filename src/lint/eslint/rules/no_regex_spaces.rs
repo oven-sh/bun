@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::NodeType};
+use bun_lint::utils::char_source::Written;
 
 /// Disallow multiple spaces in regular expressions.
 pub struct NoRegexSpaces;
@@ -64,10 +65,19 @@ fn check_regex<'a>(
             continue;
         }
         // TODO(api): the key `{length` is for `context::interpolate`, which takes the first `{{`.
-        // oxlint points at the spaces.
-        let spaces = Span::new(raw_start + index as u32, raw_start + (index + length) as u32);
-        let is_at_spaces = cx.language().is_oxlint && pattern == raw;
-        cx.report(if is_at_spaces { spaces } else { node_to_report.span() }, MULTIPLE_SPACES)
+        // oxlint points at the spaces, where they are written.
+        let place = match node_to_report.kind() {
+            _ if !cx.language().is_oxlint => node_to_report.span(),
+            _ if pattern == raw => Span::new(raw_start + index as u32, raw_start + (index + length) as u32),
+            ExprKind::Call(call) | ExprKind::New(call) => {
+                let start = regex::utf16_index(pattern, index) as u32;
+                (call.args().first().and_then(Written::new))
+                    .and_then(|it| it.span(start, start + length as u32))
+                    .unwrap_or_else(|| node_to_report.span())
+            }
+            _ => node_to_report.span(),
+        };
+        cx.report(place, MULTIPLE_SPACES)
             .data("length", length)
             .data("{length", format!("{{{length}"))
             .fix(|fixer| {

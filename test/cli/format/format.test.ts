@@ -954,6 +954,34 @@ declare export function h(): void;
     expect(result.exitCode).toBe(0);
   });
 
+  // What oxfmt 0.72.0 does with each. It runs OXC's parser alone: what the pass that builds the scopes reports, oxlint refuses
+  // and oxfmt formats. Prettier formats a `const` without an initializer.
+  test.each([
+    ["a.ts", "const a: string;"],
+    ["a.ts", "using a;"],
+    ["a.js", "const a;"],
+    ["a.js", "const { a };"],
+  ])("with an .oxfmtrc.json what OXC's parser refuses is a syntax error: %s: %j", async (name, code) => {
+    const files = { [name]: code + "\n" };
+    const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [name], { reads: [name] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toContain(`[error] ${name}: SyntaxError: `);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each([
+    ["a.ts", "declare const a: string;"],
+    ["a.d.ts", "export const a: string;"],
+    ["a.ts", "export const a = /(/;"],
+    ["a.ts", "export {};\nlet = 1;"],
+    ["a.js", "break;"],
+    ["a.js", "for (const a of b);"],
+  ])("with an .oxfmtrc.json what OXC's parser takes is formatted: %s: %j", async (name, code) => {
+    const result = await format({ [name]: code + "\n", ".oxfmtrc.json": "{}\n" }, ["--check", name]);
+    expect(result.stderr).not.toContain("[error]");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("the modifiers of JavaScript where they can be", async () => {
     const code = `class A {
   static async *a() {}

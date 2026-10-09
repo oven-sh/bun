@@ -1,37 +1,7 @@
 {
- "0-no-lonely-if": [
-  "suggestions",
-  "dangerously"
- ],
- "1-no-extra-bind": [
-  "suggestions",
-  "dangerously"
- ],
- "2-no-useless-return": [
-  "suggestions",
-  "dangerously"
- ],
- "3-logical-assignment-operators": [
-  "suggestions",
-  "dangerously"
- ],
- "4-method-signature-style": [
-  "suggestions",
-  "dangerously"
- ],
- "5-no-empty-interface": [
-  "suggestions",
-  "dangerously"
- ],
  "7-no-debugger": [
   "suggestions",
   "dangerously"
- ],
- "12-require-await": [
-  "suggestions"
- ],
- "13-radix": [
-  "suggestions"
  ],
  "14-no-eq-null": [
   "dangerously"
@@ -39,9 +9,6 @@
  "15-no-extraneous-class": [
   "suggestions",
   "dangerously"
- ],
- "18-eqeqeq": [
-  "suggestions"
  ],
  "21-no-unused-vars": [
   "dangerously"

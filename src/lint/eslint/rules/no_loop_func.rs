@@ -72,6 +72,8 @@ pub struct Known<'a> {
     writes_to_globals: FxHashMap<Name<'a>, Writes>,
     /// [`Known::is_written_in_top_loop`], by its arguments, for the loops that are far up from where it was asked.
     is_written_in_top_loop: FxHashMap<(Stmt<'a>, u32, u32), bool>,
+    /// Where the functions start that are reported as oxlint does.
+    reported_as_oxlint: FxHashSet<u32>,
 }
 
 impl<'a> Known<'a> {
@@ -226,7 +228,22 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
         var_names.extend_from_slice(name.bytes());
     }
     var_names.push(b'\'');
-    cx.report(func.estree_span(), UNSAFE_REFS).data("varNames", var_names);
+    let mut place = func.estree_span();
+    if cx.language().is_oxlint {
+        // oxlint looks at the functions that are directly in the loop, with all that is in them: once at the function
+        // that is called where it is written, not at those in it.
+        let (whole, mut at) = (loop_node.span(), func);
+        while let Some(outer) = at.enclosing().filter(|it| whole.contains(it.span())) {
+            if ast_utils::is_function_with_body(outer) {
+                place = outer.estree_span();
+            }
+            at = outer;
+        }
+        if !cx.state.reported_as_oxlint.insert(place.start) {
+            return;
+        }
+    }
+    cx.report(place, UNSAFE_REFS).data("varNames", var_names);
 }
 
 impl Rule for NoLoopFunc {

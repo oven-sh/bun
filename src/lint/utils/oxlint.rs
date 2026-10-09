@@ -2,7 +2,15 @@
 //! with a configuration of oxlint.
 
 use super::ancestor_memo::AncestorMemo;
-use crate::ast::{Flags, ModuleName, Node, StmtKind};
+use super::ast_utils::is_global_reference;
+use crate::ast::{Expr, Flags, ModuleName, Node, StmtKind};
+
+/// [`is_global_reference`] for the rules whose port in oxlint goes by the name and does not ask what it refers to:
+/// `Boolean`, `Promise`, `NaN`. With a configuration of oxlint it is enough that `e`, which the caller knows
+/// to have the name, is written.
+pub fn is_global_by_name(e: Expr) -> bool {
+    e.file().language().is_oxlint || is_global_reference(e)
+}
 
 /// `has_ambient_typescript_ancestor`, asked of many nodes of a file.
 #[derive(Default)]

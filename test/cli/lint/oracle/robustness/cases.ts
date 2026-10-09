@@ -886,23 +886,44 @@ export const cases: Case[] = [
   // ── the type checker alone: the rule asks for nothing ──
   ...(
     [
-      ["120,000 call statements in a row", () => "declare const a: any;\n" + rep("a();\n", 120_000)],
+      ["120,000 call statements in a row", false, () => "declare const a: any;\n" + rep("a();\n", 120_000)],
       [
         "a variable with 24,000 assignments that 24,000 functions refer to",
+        false,
         () =>
           `export function f() {\n  let v = 0;\n${seq(24_000, i => `  { { { { { { v = ${i}; } } } } } }\n`)}` +
           `  return [\n${rep("    () => v,\n", 24_000)}  ];\n}\n`,
       ],
       [
         "an array literal with 60,000 functions, for an array type",
+        false,
         () => `export const a: readonly (() => void)[] = [\n${rep("  () => {},\n", 60_000)}];\n`,
       ],
-      ["a pattern with 120,000 properties", () => `export const {\n${seq(120_000, i => `  p${i} = 0,\n`)}} = {};\n`],
+      [
+        "a pattern with 120,000 properties",
+        false,
+        () => `export const {\n${seq(120_000, i => `  p${i} = 0,\n`)}} = {};\n`,
+      ],
+      ["array literals 1,200 deep", true, () => `export default ${rep("[", 1_200)}${rep("]", 1_200)};\n`],
+      [
+        "a diamond of 6,000 interfaces",
+        true,
+        () =>
+          "interface T0 { m(): void }\n" +
+          seq(
+            2_000,
+            i =>
+              `interface A${i} extends T${i} {}\ninterface B${i} extends T${i} {}\n` +
+              `interface T${i + 1} extends A${i}, B${i} {}\n`,
+          ) +
+          "export declare const o: T2000;\n",
+      ],
     ] as const
   ).map(
-    ([name, text]): Case => ({
+    ([name, isSlow, text]): Case => ({
       name,
       isHeavy: true,
+      isSlow,
       file: "a.ts",
       text,
       rules: { "typescript/await-thenable": "error" },

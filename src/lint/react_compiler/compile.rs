@@ -34,6 +34,8 @@ pub(crate) struct Compiler<'a> {
 fn config_of_oxlint() -> EnvironmentConfig {
     EnvironmentConfig {
         validate_ref_access_during_render: true,
+        joined_ref_values_keep_their_place: true,
+        captured_refs_are_known_in_functions: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

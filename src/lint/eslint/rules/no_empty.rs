@@ -12,13 +12,13 @@ const SUGGEST_COMMENT: Message =
 
 impl NoEmpty {
     /// `braces`: a `{ }` without statements or cases. All that can be in it is whitespace and
-    /// comments.
-    fn check(braces: Span, kind: &'static str, cx: &Cx<'_, Self>) {
+    /// comments. `place`: where it is reported.
+    fn check(braces: Span, place: Span, kind: &'static str, cx: &Cx<'_, Self>) {
         let inside = braces.shrink(1, 1);
         if !text::is_blank(cx.slice(inside)) {
             return;
         }
-        cx.report(braces, UNEXPECTED).data("type", kind).suggest_with(
+        cx.report(place, UNEXPECTED).data("type", kind).suggest_with(
             SUGGEST_COMMENT,
             &[("type", kind.as_bytes())],
             |fixer| fixer.replace(inside, " /* empty */ "),
@@ -50,7 +50,7 @@ impl Rule for NoEmpty {
             {
                 return;
             }
-            Self::check(stmt.span(), "block", cx);
+            Self::check(stmt.span(), stmt.span(), "block", cx);
         });
         on.stmts([StmtTag::Switch], |_, stmt, cx| {
             let StmtKind::Switch { expr, cases } = stmt.kind() else {
@@ -62,7 +62,10 @@ impl Rule for NoEmpty {
             let source = cx.text();
             let close_paren = skip_trivia(source, expr.outer_span().end);
             let open_brace = skip_trivia(source, close_paren + 1);
-            Self::check(Span::new(open_brace, stmt.span().end), "switch", cx);
+            let braces = Span::new(open_brace, stmt.span().end);
+            // oxlint points at the whole statement.
+            let place = if cx.language().is_oxlint { stmt.span() } else { braces };
+            Self::check(braces, place, "switch", cx);
         });
     }
 }

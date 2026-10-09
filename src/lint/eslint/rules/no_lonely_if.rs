@@ -58,7 +58,10 @@ impl Rule for NoLonelyIf {
                 // oxlint says nothing after an `else if`.
                 && !(cx.language().is_oxlint && is_else_if(outer))
             {
-                cx.report(node, UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
+                let whole = node.span();
+                // oxlint points at the keyword.
+                let end = if cx.language().is_oxlint { whole.start + 2 } else { whole.end };
+                cx.report(Span::new(whole.start, end), UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
             }
         });
     }

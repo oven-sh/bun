@@ -47,11 +47,20 @@ impl Rule for NoSequences {
             {
                 return;
             }
-            let Some(&first) = e.sequence().first() else {
+            let sequence = e.sequence();
+            let Some(first) = sequence.first() else {
                 return;
             };
-            let comma = skip_trivia(cx.text(), first.outer_span().end);
-            cx.report(Span::new(comma, comma + 1), UNEXPECTED_COMMA_EXPRESSION);
+            let after_first = first.outer_span().end;
+            // oxlint points at all that is between the first two.
+            let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
+                Some(second) => Span::new(after_first, second.outer_span().start),
+                None => {
+                    let comma = skip_trivia(cx.text(), after_first);
+                    Span::new(comma, comma + 1)
+                }
+            };
+            cx.report(place, UNEXPECTED_COMMA_EXPRESSION);
         });
     }
 }

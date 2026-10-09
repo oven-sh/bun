@@ -136,6 +136,10 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// made of the rest.
     #[cold]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+        let message = match self.file.language().is_oxlint {
+            true => crate::oxlint_messages::of(&R::META, message),
+            false => message,
+        };
         let diagnostic = |message: Message| Diagnostic {
             rule: self.rule,
             severity: self.severity,

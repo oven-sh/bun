@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};
+use bun_lint::utils::char_source::Written;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
 use std::cell::OnceCell;
 
@@ -65,6 +66,7 @@ fn check_regex<'a>(
         return;
     };
     let as_is = OnceCell::new();
+    let in_string = OnceCell::new();
     let group_name = OnceCell::new();
     // Where the last group starts in `pattern`, in bytes and in UTF-16 units, and the offset in
     // bytes that `regex_node` has after as many units. The groups come in the order of their `(`,
@@ -75,12 +77,15 @@ fn check_regex<'a>(
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
         }
-        // oxlint points at the group.
-        let place = match cx.language().is_oxlint && *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
-            true => {
+        // oxlint points at the group, where it is written, or else at what the pattern is made of.
+        let place = match cx.language().is_oxlint {
+            true if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) => {
                 let pattern_start = regex_node.span().start + 1;
                 Span::new(pattern_start + group.start(), pattern_start + group.end())
             }
+            true => (in_string.get_or_init(|| Written::new(regex_node)).as_ref())
+                .and_then(|it| it.span(group.utf16_start(), group.utf16_end()))
+                .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
         };
         let report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());

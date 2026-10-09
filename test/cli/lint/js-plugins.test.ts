@@ -1068,7 +1068,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           "plugin.mjs": noFoo,
         };
         for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = "foo;\n";
-        const { stderr, exitCode } = await lint(files, ["--timing", "--threads", "8", "src"]);
+        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", "8", "src"]);
+        // Once for each file, also for those that the engines are warmed up with.
+        expect(stdout.split("\n").filter(it => it.endsWith("[Error/demo/no-foo]"))).toHaveLength(count);
         expect(exitCode).toBe(1);
         return /JavaScript: (\d+) engines/.exec(stderr)?.[1];
       };

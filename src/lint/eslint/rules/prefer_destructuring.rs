@@ -116,7 +116,7 @@ impl Config {
         };
         // oxlint's port of ESLint's rule points at the value.
         let place = match declaration.init() {
-            Some(init) if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint => init.span(),
+            Some(init) if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint => init.outer_span(),
             _ => declaration.span(),
         };
         let report = cx.report(place, PREFER_DESTRUCTURING).data("type", kind);

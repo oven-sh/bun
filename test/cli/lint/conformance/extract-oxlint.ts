@@ -17,7 +17,17 @@
 // - The file of a case is called what oxlint's `Tester` calls it. The cases of `import` are files of `<out>/import-project`.
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -39,7 +49,9 @@ for (let argv = process.argv.slice(2), i = 0; i < argv.length; i++) {
   else wanted.push(argv[i]);
 }
 if (!oxc || !oxlint || !out) {
-  console.error("usage: bun extract-oxlint.ts --oxc <oxc checkout> --oxlint <oxlint> --out <dir> [--jobs <n>] [<plugin>/<rule>..]");
+  console.error(
+    "usage: bun extract-oxlint.ts --oxc <oxc checkout> --oxlint <oxlint> --out <dir> [--jobs <n>] [<plugin>/<rule>..]",
+  );
   process.exit(2);
 }
 const environments: Record<string, Record<string, unknown>> = process.env.ESLINT_DIR
@@ -55,7 +67,9 @@ interface Listed {
   category: string;
   fix: string;
 }
-const listed: Listed[] = JSON.parse(spawnSync(oxlint, ["--rules", "-f", "json"], { encoding: "utf8", maxBuffer: 1 << 26 }).stdout);
+const listed: Listed[] = JSON.parse(
+  spawnSync(oxlint, ["--rules", "-f", "json"], { encoding: "utf8", maxBuffer: 1 << 26 }).stdout,
+);
 
 function rustFiles(path: string): string[] {
   if (!statSync(path).isDirectory()) return [path];
@@ -116,17 +130,34 @@ function rawCasesOf(rule: Listed): { cases: Raw[]; unparsed: number } {
       if (plugins.includes("import")) filename = harness?.path ?? filename;
       else if (it.path !== undefined) filename = it.path;
       else if (isTest) filename = filename.replace(/\.\w+$/, ".test.tsx");
-      cases.push({ ...it, valid: / pass$/.test(it.name), filename, plugins, inImportProject: plugins.includes("import") || rule.scope === "import" });
+      cases.push({
+        ...it,
+        valid: / pass$/.test(it.name),
+        filename,
+        plugins,
+        inImportProject: plugins.includes("import") || rule.scope === "import",
+      });
     }
   }
   const written = join(more, dash(rule.scope), `${rule.value}.json`);
   if (more && existsSync(written)) {
     for (const it of JSON.parse(readFileSync(written, "utf8")).cases) {
-      const oxlintrc = it.oxlintrc ?? (it.settings && Object.keys(it.settings).length > 0 ? { settings: it.settings } : undefined);
+      const oxlintrc =
+        it.oxlintrc ?? (it.settings && Object.keys(it.settings).length > 0 ? { settings: it.settings } : undefined);
       const { valid, name, code, filename, settings } = it;
       const options = it.options.length > 0 ? it.options : undefined;
       const plugins: string[] = it.plugins ?? [];
-      cases.push({ valid, name, code, options, filename, settings, oxlintrc, plugins, inImportProject: plugins.includes("import") || rule.scope === "import" });
+      cases.push({
+        valid,
+        name,
+        code,
+        options,
+        filename,
+        settings,
+        oxlintrc,
+        plugins,
+        inImportProject: plugins.includes("import") || rule.scope === "import",
+      });
     }
   }
   const seen = new Set<string>();
@@ -204,14 +235,21 @@ function record(rule: Listed) {
     };
     const diagnostics = run(directory, []);
     const outputs = hasFixes
-      ? [fixed(["--fix"]), fixed(["--fix", "--fix-suggestions"]), fixed(["--fix", "--fix-suggestions", "--fix-dangerously"])]
+      ? [
+          fixed(["--fix"]),
+          fixed(["--fix", "--fix-suggestions"]),
+          fixed(["--fix", "--fix-suggestions", "--fix-dangerously"]),
+        ]
       : [];
     for (const index of indices) {
       const raw = cases[index];
       const path = relative(directory, fileOf(directory, index));
       const bytes = Buffer.from(raw.code);
       const position = (offset: number) => {
-        const lines = bytes.subarray(0, offset).toString("utf8").split(/\r\n|[\r\n\u2028\u2029]/);
+        const lines = bytes
+          .subarray(0, offset)
+          .toString("utf8")
+          .split(/\r\n|[\r\n\u2028\u2029]/);
         return { line: lines.length, column: lines.at(-1)!.length + 1 };
       };
       const own = diagnostics.filter(it => it.filename === path);
@@ -222,10 +260,23 @@ function record(rule: Listed) {
         .map(it => {
           const labels = it.labels.map(label => {
             const [start, end] = [position(label.span.offset), position(label.span.offset + label.span.length)];
-            return { line: start.line, column: start.column, endLine: end.line, endColumn: end.column, label: label.label ?? null };
+            return {
+              line: start.line,
+              column: start.column,
+              endLine: end.line,
+              endColumn: end.column,
+              label: label.label ?? null,
+            };
           });
           const { label: _, ...at } = labels[0] ?? { line: 1, column: 1, endLine: null, endColumn: null, label: null };
-          return { messageId: "", message: it.message, ...at, fix: null, suggestions: [], oxlint: { labels, help: it.help ?? null } };
+          return {
+            messageId: "",
+            message: it.message,
+            ...at,
+            fix: null,
+            suggestions: [],
+            oxlint: { labels, help: it.help ?? null },
+          };
         })
         .sort((a, b) => a.line - b.line || a.column - b.column);
       let before = raw.code;
@@ -266,12 +317,25 @@ function record(rule: Listed) {
   }
   const file = join(out, dash(rule.scope), `${rule.value}.json`);
   mkdirSync(dirname(file), { recursive: true });
-  writeJson(file, { plugin: dash(rule.scope), rule: rule.value, judge: "oxlint", meta: { category: rule.category, fix: rule.fix }, cases: recorded });
-  return { id, cases: cases.length, unparsed, disagreements: recorded.filter((it: any) => !it.skip && it.valid !== (it.messages.length === 0)).length };
+  writeJson(file, {
+    plugin: dash(rule.scope),
+    rule: rule.value,
+    judge: "oxlint",
+    meta: { category: rule.category, fix: rule.fix },
+    cases: recorded,
+  });
+  return {
+    id,
+    cases: cases.length,
+    unparsed,
+    disagreements: recorded.filter((it: any) => !it.skip && it.valid !== (it.messages.length === 0)).length,
+  };
 }
 
 const rules = listed.filter(it =>
-  wanted.length > 0 ? wanted.includes(`${dash(it.scope)}/${it.value}`) : it.scope !== "eslint" && it.scope !== "typescript",
+  wanted.length > 0
+    ? wanted.includes(`${dash(it.scope)}/${it.value}`)
+    : it.scope !== "eslint" && it.scope !== "typescript",
 );
 if (rules.some(it => it.scope === "import") && !process.env.EXTRACT_OXLINT_WORKER) {
   rmSync(join(out, "import-project"), { recursive: true, force: true });
@@ -291,7 +355,10 @@ if (process.env.EXTRACT_OXLINT_WORKER) {
       stderr: "inherit",
     }),
   );
-  const lines = (await Promise.all(workers.map(it => new Response(it.stdout).text()))).join("").split("\n").filter(Boolean);
+  const lines = (await Promise.all(workers.map(it => new Response(it.stdout).text())))
+    .join("")
+    .split("\n")
+    .filter(Boolean);
   const all: ReturnType<typeof record>[] = lines.map(it => JSON.parse(it)).sort((a, b) => a.id.localeCompare(b.id));
   writeJson(join(out, "stats.json"), all);
   const total = (key: "cases" | "unparsed" | "disagreements") => all.reduce((sum, it) => sum + it[key], 0);

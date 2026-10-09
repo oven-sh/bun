@@ -106,33 +106,29 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
     })
 }
 
-/// The error for which OXC refuses a file in which TypeScript's parser has found none.
+/// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    first_of(file, espree::first_error_of_oxc(file))
-}
-
-/// The same for a formatter.
-pub(super) fn first_error_for_formatter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    first_of(file, espree::first_error_of_oxc_for_formatter(file))
-}
-
-/// `early`: the first of the early errors.
-fn first_of<'a>(file: &'a File<'a>, early: Option<SyntaxError>) -> Option<SyntaxError> {
-    let early = [early, reserved_word(file)];
-    if file.is_javascript() {
-        return early.into_iter().flatten().min_by_key(|it| it.at);
-    }
-    let is_refused = |it: &SyntaxError| {
-        (OF_TYPESCRIPT_ESTREE.iter()).any(|start| it.message.starts_with(start.as_bytes()))
+    let of_typescript = match file.is_javascript() {
+        true => [None, None],
+        false => [
+            declaration_without_initializer(file),
+            typescript_estree::first_error(file, false).filter(|it| {
+                (OF_TYPESCRIPT_ESTREE.iter()).any(|start| it.message.starts_with(start.as_bytes()))
+            }),
+        ],
     };
-    let [early, reserved] = early;
-    [
-        declaration_without_initializer(file),
-        typescript_estree::first_error(file, false).filter(is_refused),
-        early,
-        reserved,
-    ]
-    .into_iter()
-    .flatten()
-    .min_by_key(|it| it.at)
+    let [a, b] = of_typescript;
+    [a, b, espree::first_error_of_oxc(file), reserved_word(file)]
+        .into_iter()
+        .flatten()
+        .min_by_key(|it| it.at)
+}
+
+/// The same for oxfmt, which runs OXC's parser and not the pass that builds the scopes: that pass has most of the errors.
+/// The file is one that Prettier does not refuse, so typescript-estree has nothing to say about it.
+pub(super) fn first_error_of_parser<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    match file.is_javascript() {
+        true => espree::first_error_of_oxc_parser(file),
+        false => declaration_without_initializer(file),
+    }
 }

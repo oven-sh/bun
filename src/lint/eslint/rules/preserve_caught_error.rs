@@ -231,7 +231,9 @@ impl PreserveCaughtError {
             Some(PatKind::Ident(name)) => name,
             Some(_) => {
                 if let Some(catch_clause) = try_statement.catch_clause_span() {
-                    cx.report(catch_clause, PARTIALLY_LOST_ERROR);
+                    // oxlint points at the statement.
+                    let place = if cx.language().is_oxlint { statement.span() } else { catch_clause };
+                    cx.report(place, PARTIALLY_LOST_ERROR);
                 }
                 return;
             }

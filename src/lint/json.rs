@@ -37,6 +37,161 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     convert(&root, 0)
 }
 
+/// Compiled into the test harness only, and only as long as there are two parsers of JSON: all that
+/// can be seen of a parse, as text, and a parse that is dropped, for measuring.
+#[cfg(bun_sema_mimalloc)]
+pub mod comparison {
+    use super::{ASTMemoryAllocator, Data, JsonValue, Log, Source};
+    use bun_ast::Loc;
+    use bun_parsers::json::{JSONOptions, ParsedJson, parse_rows_for_comparison};
+    use std::io::Write as _;
+
+    /// `json`, `jsonc`, `document` (JSONC and nothing behind it), `manifest` (no warnings), `locs`
+    /// (JSONC with the places of the values), `env`.
+    fn options(name: &str) -> (JSONOptions, bool) {
+        let lenient = JSONOptions {
+            allow_comments: true,
+            allow_trailing_commas: true,
+            ..JSONOptions::DEFAULT
+        };
+        match name {
+            "json" => (JSONOptions::DEFAULT, false),
+            "strict-document" => (JSONOptions::DEFAULT, true),
+            "jsonc" => (lenient, false),
+            "document" => (lenient, true),
+            "locs" => {
+                let options = JSONOptions {
+                    record_value_locs: true,
+                    guess_indentation: true,
+                    ..lenient
+                };
+                (options, false)
+            }
+            "env" => {
+                let options = JSONOptions {
+                    allow_trailing_commas: true,
+                    ignore_leading_escape_sequences: true,
+                    ..JSONOptions::DEFAULT
+                };
+                (options, false)
+            }
+            _ => {
+                let options = JSONOptions {
+                    json_warn_duplicate_keys: false,
+                    ..JSONOptions::DEFAULT
+                };
+                (options, false)
+            }
+        }
+    }
+
+    fn parse(
+        name: &str,
+        is_one_pass: bool,
+        source: &Source,
+        log: &mut Log,
+    ) -> Result<ParsedJson, &'static str> {
+        let (options, check_len) = options(name);
+        parse_rows_for_comparison(source, log, options, check_len, is_one_pass)
+            .map_err(|error| error.name())
+    }
+
+    /// Returns whether `text` is taken.
+    pub fn read_and_drop(name: &str, is_one_pass: bool, text: &[u8]) -> bool {
+        let mut allocator = ASTMemoryAllocator::default();
+        let _scope = allocator.enter();
+        let source = Source::init_path_string(b"".as_slice(), text);
+        parse(name, is_one_pass, &source, &mut Log::init()).is_ok()
+    }
+
+    fn write_value(out: &mut Vec<u8>, value: &JsonValue, loc: Option<Loc>, depth: usize) {
+        if let Some(loc) = loc {
+            let _ = write!(out, "@{} ", loc.start);
+        }
+        match value {
+            JsonValue::Null => out.extend_from_slice(b"null"),
+            JsonValue::Boolean(it) => {
+                let _ = write!(out, "{it}");
+            }
+            JsonValue::Number(it) => {
+                let _ = write!(out, "{:016x}", it.value().to_bits());
+            }
+            JsonValue::String(it) => {
+                let _ = write!(out, "{:?}", bstr::BStr::new(it.slice()));
+            }
+            _ if depth > 400 => out.extend_from_slice(b"deep"),
+            JsonValue::Array(it) => {
+                let it = it.get();
+                let _ = write!(
+                    out,
+                    "[{} {} ",
+                    it.is_single_line, it.close_bracket_loc.start
+                );
+                let locs = it.item_locs();
+                for (index, item) in it.items().iter().enumerate() {
+                    write_value(out, item, locs.map(|locs| locs[index]), depth + 1);
+                    out.push(b',');
+                }
+                out.push(b']');
+            }
+            JsonValue::Object(it) => {
+                let it = it.get();
+                let _ = write!(out, "{{{} {} ", it.is_single_line, it.close_brace_loc.start);
+                let locs = it.value_locs();
+                for (index, property) in it.properties().iter().enumerate() {
+                    let key = bstr::BStr::new(property.key.slice());
+                    let _ = write!(out, "@{} {key:?}:", property.key_loc.start);
+                    write_value(
+                        out,
+                        &property.value,
+                        locs.map(|locs| locs[index]),
+                        depth + 1,
+                    );
+                    out.push(b',');
+                }
+                out.push(b'}');
+            }
+        }
+    }
+
+    /// The error or the rows, with all their places, and every message with its place.
+    pub fn describe(name: &str, is_one_pass: bool, text: &[u8]) -> Vec<u8> {
+        let mut allocator = ASTMemoryAllocator::default();
+        let _scope = allocator.enter();
+        let source = Source::init_path_string(b"".as_slice(), text);
+        let mut log = Log::init();
+        let mut out = Vec::new();
+        match parse(name, is_one_pass, &source, &mut log) {
+            Err(error) => out.extend_from_slice(error.as_bytes()),
+            Ok(parsed) => {
+                let root = match parsed.root.data {
+                    Data::ENull(_) => JsonValue::Null,
+                    Data::EBoolean(it) => JsonValue::Boolean(it.value),
+                    Data::ENumber(it) => JsonValue::Number(it),
+                    Data::EString(it) => JsonValue::String(it.get().data),
+                    Data::EArrayJSON(it) => JsonValue::Array(it),
+                    Data::EObjectJSON(it) => JsonValue::Object(it),
+                    _ => JsonValue::Null,
+                };
+                write_value(&mut out, &root, Some(parsed.root.loc), 0);
+            }
+        }
+        let _ = write!(out, " | {} errors {} warnings", log.errors, log.warnings);
+        for message in &log.msgs {
+            let text = bstr::BStr::new(&message.data.text);
+            let _ = write!(out, " | {:?} {text:?}", message.kind);
+            if let Some(it) = &message.data.location {
+                let _ = write!(
+                    out,
+                    " {}+{} {}:{}",
+                    it.offset, it.length, it.line, it.column
+                );
+            }
+        }
+        out
+    }
+}
+
 fn convert(value: &JsonValue, depth: usize) -> Option<Json> {
     if depth > MAX_DEPTH {
         return None;

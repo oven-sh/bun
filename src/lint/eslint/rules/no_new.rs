@@ -19,7 +19,12 @@ impl Rule for NoNew {
             if let Node::Stmt(statement) = e.parent()
                 && statement.tag() == StmtTag::Expr
             {
-                cx.report(statement, NO_NEW_STATEMENT);
+                // oxlint points at `new A`.
+                let place = match e.callee().filter(|_| cx.language().is_oxlint) {
+                    Some(callee) => e.span().to(callee.outer_span()),
+                    None => statement.span(),
+                };
+                cx.report(place, NO_NEW_STATEMENT);
             }
         });
     }

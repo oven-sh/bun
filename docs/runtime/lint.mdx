@@ -130,6 +130,8 @@ bun lint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
+In a project with `vite-plus` in its `package.json` and no configuration file of a linter, `bun lint` reads what `vp lint` reads: `lint` in the `vite.config.ts`.
+
 Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 
 - It skips what `.gitignore` ignores, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
@@ -157,7 +159,7 @@ The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list th
 
 The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, and `vue`. These 522 rules do what oxlint 1.87 does, with its options, messages, and fixes. The rules of `jsdoc`, the 22 React Compiler rules of `react`, `promise/always-return`, and `promise/no-multiple-resolved` are not built in. With an `eslint.config.js` these names mean the plugins that the configuration imports.
 
-Where oxlint and ESLint disagree about a rule that both have, `bun lint` does what ESLint does, and the messages are ESLint's.
+The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json`, most of them report at oxlint's places with oxlint's messages. Where the two disagree about what is a problem, `bun lint` does what ESLint does.
 
 ## What cannot be linted
 

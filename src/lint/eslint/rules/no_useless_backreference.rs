@@ -2,9 +2,11 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::ast::{Assertion, Kind as RegexKind, NodeType, Nodes};
 use bun_lint::regex::{self, Mode, parse_pattern};
+use bun_lint::utils::char_source::Written;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 use std::ops::Range;
 
 /// Disallow useless backreferences in regular expressions.
@@ -214,6 +216,7 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
     let Ok(ast) = parse_pattern(pattern, Mode::of_flags(flags), regex::Options::default()) else {
         return;
     };
+    let written = OnceCell::new();
     // By where the first of them starts.
     let mut groups_of_names: FxHashMap<u32, Option<GroupsOfName<'_>>> = FxHashMap::default();
     for bref in ast.root().descendants() {
@@ -248,11 +251,15 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
             1 => " and another group".to_owned(),
             count => format!(" and other {count} groups"),
         };
-        // In a literal, oxlint points at the backreference.
+        // oxlint points at the backreference, where it is written.
         let pattern_start = node.span().start + 1;
-        let place = match cx.language().is_oxlint && node.tag() == ExprTag::Regex {
-            true => Span::new(pattern_start + bref.start(), pattern_start + bref.end()),
-            false => node.span(),
+        let place = match node.kind() {
+            _ if !cx.language().is_oxlint => node.span(),
+            ExprKind::Regex(_) => Span::new(pattern_start + bref.start(), pattern_start + bref.end()),
+            ExprKind::Call(call) | ExprKind::New(call) => (written.get_or_init(|| Written::new(call.args().first()?)).as_ref())
+                .and_then(|it| it.span(bref.utf16_start(), bref.utf16_end()))
+                .unwrap_or_else(|| node.span()),
+            _ => node.span(),
         };
         cx.report(place, message)
             .data("bref", bref.raw().to_vec())

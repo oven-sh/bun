@@ -81,13 +81,21 @@ fn paren_group_open(node: ValueRef<'_>) -> Option<ValueRef<'_>> {
         .then(|| node.at(group.open))
 }
 
-/// The line of the `)` of a function or of what is in parentheses.
-fn line_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
+/// The `)` of a function or of what is in parentheses.
+fn closing_parenthesis(node: ValueRef<'_>) -> Option<ValueRef<'_>> {
     let group = match node.kind() {
         ValueKind::Func => node.at(node.node().group),
         _ => node,
     };
-    paren_group_open(group).and_then(|_| group.at(group.node().close).node().loc.start_line())
+    paren_group_open(group).map(|_| group.at(group.node().close))
+}
+
+fn line_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
+    closing_parenthesis(node).and_then(|it| it.node().loc.start_line())
+}
+
+fn end_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
+    closing_parenthesis(node).and_then(|it| it.node().loc.end_offset())
 }
 
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
@@ -574,6 +582,21 @@ impl<'a> Printer<'a, '_> {
                 }
             }
 
+            // For oxfmt a `;` is right behind what is before it, like any other.
+            if self.is_oxfmt && next_node.value() == Some(b";") {
+                continue;
+            }
+            // For oxfmt `-600px` behind a blank is one word, which the line can end before.
+            if self.is_oxfmt
+                && self.syntax() == Syntax::Css
+                && !inside_calc
+                && (is_addition(next_node) || is_subtraction(next_node))
+                && !has_empty_raw_before(next_node)
+                && next_next_node.is_some_and(has_empty_raw_before)
+            {
+                self.sink.fill_separator(Separator::Line);
+                continue;
+            }
             if is_next_math {
                 self.sink.token(" ");
                 continue;
@@ -645,6 +668,26 @@ impl<'a> Printer<'a, '_> {
             self.sink.end_indent();
         }
         self.sink.end_group();
+    }
+
+    /// `printTrailingComma`: whether there is a comma behind the last of what is in the parentheses `node`.
+    fn has_comma_before_closing_parenthesis(&self, node: ValueRef<'_>) -> bool {
+        let (Some(start), Some(end)) = (
+            node.groups()
+                .next_back()
+                .and_then(|it| it.node().loc.start_offset()),
+            Some(node.node().close)
+                .filter(|&it| it != 0)
+                .and_then(|it| node.at(it).node().loc.start_offset()),
+        ) else {
+            return false;
+        };
+        text::trim_end(
+            self.original_text()
+                .get(start as usize..end as usize)
+                .unwrap_or_default(),
+        )
+        .ends_with(b",")
     }
 
     /// For oxfmt a `//` comment on the line of a comma stays there. For Prettier it is the first of what follows the comma,
@@ -849,6 +892,13 @@ impl<'a> Printer<'a, '_> {
                         .and_then(|at| parent.group(at))
                         .is_some_and(|it| is_the_word(it, b"with"))
             });
+        // For oxfmt only a list with commas and a map have each item on a line of its own, and a comma at the end:
+        // `($a + $b,)` is not `($a + $b)`.
+        let is_scss_map_item = is_scss_map_item
+            && !(self.is_oxfmt
+                && count == 1
+                && !node.group(0).is_some_and(is_key_value_pair)
+                && !self.has_comma_before_closing_parenthesis(node));
         let should_break = is_configuration || (is_scss_map_item && !is_key);
         let should_dedent = is_configuration || is_key;
 
@@ -887,26 +937,9 @@ impl<'a> Printer<'a, '_> {
                 self.sink.token(",");
                 self.print_comment_behind_comma(statement, node.group(index + 1));
             } else {
-                // `printTrailingComma`
-                let has_comma = || {
-                    let (Some(start), Some(end)) = (
-                        child.node().loc.start_offset(),
-                        Some(close)
-                            .filter(|&it| it != 0)
-                            .and_then(|it| node.at(it).node().loc.start_offset()),
-                    ) else {
-                        return false;
-                    };
-                    text::trim_end(
-                        self.original_text()
-                            .get(start as usize..end as usize)
-                            .unwrap_or_default(),
-                    )
-                    .ends_with(b",")
-                };
                 let is_only_comments = is_comment(child)
                     || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));
-                if is_var && has_comma() {
+                if is_var && self.has_comma_before_closing_parenthesis(node) {
                     self.sink.token(",");
                 } else if !is_only_comments && self.trailing_comma && is_scss_map_item {
                     self.sink.if_break(",");
@@ -916,11 +949,17 @@ impl<'a> Printer<'a, '_> {
             if !is_last
                 && child.kind() == ValueKind::CommaGroup
                 && let Some(last) = child.groups().next_back()
-                && let Some(end) = last
-                    .node()
-                    .loc
-                    .end_offset()
-                    .filter(|_| last.node().has_source())
+                && let Some(end) = match self.is_oxfmt {
+                    // For oxfmt it does not matter what the item ends with.
+                    true => end_of_closing_parenthesis(last),
+                    false => None,
+                }
+                .or_else(|| {
+                    last.node()
+                        .loc
+                        .end_offset()
+                        .filter(|_| last.node().has_source())
+                })
             {
                 // It may look at what follows the declaration.
                 self.is_memoizable = false;

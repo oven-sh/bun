@@ -391,21 +391,22 @@ pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
 /// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    first_error_of_oxc_among(file, None)
+    let mut checks = checks_of_oxc(file);
+    checks.early_errors_of_oxc();
+    checks.first.map(|it| it.1)
 }
 
-/// The same for a formatter, for which nobody has listed the expressions of the file by kind.
-pub(super) fn first_error_of_oxc_for_formatter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    first_error_of_oxc_among(file, Some(&Candidates::of(file)))
+/// Those of them that OXC's parser makes itself. oxfmt runs nothing but the parser.
+pub(super) fn first_error_of_oxc_parser<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let mut checks = checks_of_oxc(file);
+    checks.early_errors_of_oxc_parser();
+    checks.first.map(|it| it.1)
 }
 
-fn first_error_of_oxc_among<'a>(
-    file: &'a File<'a>,
-    candidates: Option<&Candidates>,
-) -> Option<SyntaxError> {
-    let mut checks = Checks {
+fn checks_of_oxc<'a, 'c>(file: &'a File<'a>) -> Checks<'a, 'c> {
+    Checks {
         file,
-        candidates,
+        candidates: None,
         tops: Tops::default(),
         first: None,
         noticed: 0,
@@ -413,9 +414,7 @@ fn first_error_of_oxc_among<'a>(
         // Nothing is asked of the scopes, to which a file is a module whatever is in it.
         is_whole: false,
         is_babel: false,
-    };
-    checks.early_errors_of_oxc();
-    checks.first.map(|it| it.1)
+    }
 }
 
 fn is_identifier_byte(byte: u8) -> bool {

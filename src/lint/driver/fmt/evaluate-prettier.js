@@ -14,32 +14,12 @@ const loaders = {
   "": file => Bun.YAML.parse(read(file)),
 };
 
-// `import { defineConfig } from "oxfmt"`, or from "vite-plus", goes on working in a project that has removed the package.
-const isOfVite = basename(path).startsWith("vite.config.");
-if (isOfVite || basename(path).startsWith("oxfmt.")) {
-  const name = isOfVite ? "vite-plus" : "oxfmt";
-  let isInstalled = true;
-  try {
-    Bun.resolveSync(name, dirname(path));
-  } catch {
-    isInstalled = false;
-  }
-  if (!isInstalled) {
-    Bun.plugin({
-      name,
-      setup(build) {
-        build.module(name, () => ({ exports: { defineConfig: config => config }, loader: "object" }));
-      },
-    });
-  }
-}
-
 let config;
 if (basename(path) === "package.json") config = (await importDefault(path)).prettier;
 else if (basename(path) === "package.yaml") config = Bun.YAML.parse(read(path))?.prettier;
 else config = await (loaders[extname(path)] ?? importDefault)(path);
 // Vite+: the options of `vp fmt`. A file without them has no configuration.
-if (isOfVite) {
+if (basename(path).startsWith("vite.config.")) {
   if (typeof config === "function") config = await config({ command: "serve", mode: "development" });
   config = (await config)?.fmt ?? null;
 }

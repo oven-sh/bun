@@ -31,7 +31,12 @@ impl Rule for NoNewWrappers {
             if cx.file().global(name.bytes()).is_some()
                 && Node::Expr(e).scope().resolve_name(name).is_none()
             {
-                cx.report(e, NO_CONSTRUCTOR).data("fn", name);
+                // Of what is long, oxlint points at `new String`.
+                let place = match cx.language().is_oxlint && e.span().len() > 24 {
+                    true => e.span().to(call.callee().span()),
+                    false => e.span(),
+                };
+                cx.report(place, NO_CONSTRUCTOR).data("fn", name);
             }
         });
     }

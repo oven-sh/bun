@@ -57,6 +57,12 @@ fn mark_as_root(contents: Doc<'_>) -> Doc<'_> {
     Doc::MarkAsRoot(Box::new(contents))
 }
 
+/// oxfmt's `Atom::VerbatimLine`: a line break in what is in a line and is printed as it is written. The next line
+/// starts in the column of the content of the container, which is all that a parser takes away.
+fn verbatim_line<'a>() -> Doc<'a> {
+    Doc::DedentToRoot(Box::new(hardline()))
+}
+
 fn spaces<'a>(count: usize) -> Doc<'a> {
     Doc::Text(Cow::Owned(vec![b' '; count]))
 }
@@ -93,6 +99,19 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
         parts.push(Doc::from(line.strip_suffix(b"\r").unwrap_or(line).to_vec()));
     }
     Doc::Array(parts)
+}
+
+/// oxfmt's `has_line_ranges`: whether what is behind the language of a block of code names lines by their numbers:
+/// `{1,3-5}`.
+fn has_line_ranges(meta: &[u8]) -> bool {
+    bun_core::strings::split(meta, b"{").skip(1).any(|rest| {
+        bun_core::strings::split_once_char(rest, b'}').is_some_and(|(ranges, _)| {
+            ranges.iter().any(u8::is_ascii_digit)
+                && ranges
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b',' | b'-' | b' '))
+        })
+    })
 }
 
 /// The lengths of the runs of `marker` in `text`.
@@ -1217,6 +1236,7 @@ impl<'a> Printer<'a, '_> {
             ],
             Kind::Blockquote => {
                 let children = self.indented(2, |printer| printer.print_children(id));
+                let children = self.content_of_container(children);
                 docs!["> ", Doc::Align(Alignment::Text("> "), Box::new(children))]
             }
             Kind::Heading => {
@@ -1250,6 +1270,9 @@ impl<'a> Printer<'a, '_> {
                     is_comment,
                 ) {
                     (false, _) => self.lines(value, !is_comment),
+                    (true, _) if self.options.flavor.is_oxfmt() => {
+                        replace_end_of_line(value, verbatim_line)
+                    }
                     (true, true) => replace_end_of_line(value, hardline),
                     (true, false) => replace_end_of_line(value, || mark_as_root(literalline())),
                 }
@@ -1410,26 +1433,73 @@ impl<'a> Printer<'a, '_> {
                 && code.last().is_some_and(is_blank)
                 && !code.iter().all(is_blank));
         let padding = if needs_padding { " " } else { "" };
+        if self.options.flavor.is_oxfmt() && bun_core::strings::contains_char(&code, b'\n') {
+            let mut lines = Vec::new();
+            for (index, line) in bun_core::strings::split(&code, b"\n").enumerate() {
+                if index > 0 {
+                    lines.push(verbatim_line());
+                }
+                lines.push(Doc::from(line.to_vec()));
+            }
+            return docs![
+                backticks.clone(),
+                padding,
+                Doc::Array(lines),
+                padding,
+                backticks
+            ];
+        }
         docs![backticks.clone(), padding, code, padding, backticks]
     }
 
-    /// `formatted`: the code, if it has been formatted.
-    fn print_code(&self, id: NodeId, node: &Node, formatted: Option<Doc<'a>>) -> Doc<'a> {
-        let value = self.str(node.value);
-        if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
-            return align_with_spaces(4, docs!["    ", replace_end_of_line(value, hardline)]);
-        }
-        let style_unit = if self.is_in_template { b'~' } else { b'`' };
-        let style = vec![style_unit; (max_continuous_count(value, style_unit) + 1).max(3)];
+    /// What is behind the opening fence of the block of code `node`.
+    fn print_info(&self, node: &Node) -> Doc<'a> {
         let meta = self.str(node.third);
         docs![
-            style.clone(),
             self.str(node.second),
             if meta.is_empty() {
                 Doc::EMPTY
             } else {
                 docs![" ", meta]
-            },
+            }
+        ]
+    }
+
+    /// What the fence of the block of code `node` is made of.
+    fn fence_unit(&self, node: &Node) -> u8 {
+        // oxfmt: behind backticks there can be no backtick.
+        let has_backtick = |text: Str| bun_core::strings::contains_char(self.str(text), b'`');
+        let is_backtick_in_info = self.options.flavor.is_oxfmt()
+            && (has_backtick(node.second) || has_backtick(node.third));
+        if self.is_in_template || is_backtick_in_info {
+            b'~'
+        } else {
+            b'`'
+        }
+    }
+
+    /// `formatted`: the code, if it has been formatted, and for oxfmt the longest run of what the fence is made of in
+    /// it: Prettier looks at the code as it was.
+    fn print_code(
+        &self,
+        id: NodeId,
+        node: &Node,
+        formatted: Option<(Doc<'a>, Option<usize>)>,
+    ) -> Doc<'a> {
+        let value = self.str(node.value);
+        if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
+            return align_with_spaces(4, docs!["    ", replace_end_of_line(value, hardline)]);
+        }
+        let style_unit = self.fence_unit(node);
+        let (formatted, run) = match formatted {
+            Some((formatted, run)) => (Some(formatted), run),
+            None => (None, None),
+        };
+        let run = run.unwrap_or_else(|| max_continuous_count(value, style_unit));
+        let style = vec![style_unit; (run + 1).max(3)];
+        docs![
+            style.clone(),
+            self.print_info(node),
             hardline(),
             formatted.unwrap_or_else(|| self.lines(value, false)),
             hardline(),
@@ -1461,12 +1531,31 @@ impl<'a> Printer<'a, '_> {
         }
         let width = (self.options.line_width.value() as usize).saturating_sub(self.indentation);
         let code = self.str(node.value);
+        let is_oxfmt = self.options.flavor.is_oxfmt();
+        if is_oxfmt {
+            // Formatting would move the lines that the numbers are about.
+            if has_line_ranges(self.str(node.third)) {
+                return None;
+            }
+            // Nothing but white space in a language that is formatted: nothing.
+            if crate::text::trim_end(code).is_empty() && super::parser_of_oxfmt(language).is_some()
+            {
+                let style = vec![self.fence_unit(node); 3];
+                return Some(docs![
+                    style.clone(),
+                    self.print_info(node),
+                    hardline(),
+                    style
+                ]);
+            }
+        }
         let formatted = (self.embed)(&Embedded {
             language,
             code,
             width,
         })?;
         let formatted = crate::text::trim_end(&formatted);
+        let run = is_oxfmt.then(|| max_continuous_count(formatted, self.fence_unit(node)));
         let is_as_it_is = self.indentation == 0
             && !self.is_in_template
             && !self.options.is_in_markdown
@@ -1476,7 +1565,11 @@ impl<'a> Printer<'a, '_> {
         } else {
             lines_of(formatted)
         };
-        Some(mark_as_root(self.print_code(id, node, Some(formatted))))
+        Some(mark_as_root(self.print_code(
+            id,
+            node,
+            Some((formatted, run)),
+        )))
     }
 
     /// Prettier's `printEmbedFrontMatter`
@@ -1666,8 +1759,17 @@ impl<'a> Printer<'a, '_> {
             }
             let contents =
                 printer.indented(len, |printer| printer.print_list_item(item, node, len));
+            let contents = printer.content_of_container(contents);
             Some(docs![prefix, align_with_spaces(len as u32, contents)])
         })
+    }
+
+    /// oxfmt: see `verbatim_line`.
+    fn content_of_container(&self, contents: Doc<'a>) -> Doc<'a> {
+        match self.options.flavor.is_oxfmt() {
+            true => mark_as_root(contents),
+            false => contents,
+        }
     }
 
     /// Prettier's `printListItem`
@@ -1718,7 +1820,7 @@ impl<'a> Printer<'a, '_> {
                 let mut text = Vec::new();
                 let doc = self.print(cell);
                 doc::print(doc, self.options, b"\n", &mut text);
-                let width = crate::ir::width::string_width(&text) as usize;
+                let width = crate::ir::width::string_width_as(&text, self.options.flavor) as usize;
                 if widths.len() <= column {
                     // `---`, `:--`, `:-:`, `--:`
                     widths.push(3);

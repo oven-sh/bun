@@ -245,6 +245,8 @@ impl<'a> Captures<'a> {
             with_eval: FxHashSet::default(),
         };
         let private_references = private_references(file);
+        // The scopes of the classes of `path` that declare a private name, and where their bodies start.
+        let mut declaring: FxHashMap<Name<'a>, SmallVec<[(Scope<'a>, u32); 1]>> = FxHashMap::default();
         let eval = file.mentions("eval").then(|| file.name_of("eval"));
         // From the global scope to the current one.
         let mut path: Vec<Scope<'a>> = Vec::new();
@@ -256,8 +258,31 @@ impl<'a> Captures<'a> {
                 path.pop();
             }
             path.push(scope);
-            for &(class_scope, at) in private_references.get(&scope).into_iter().flatten() {
-                captures.note_private_reference(&path, class_scope, at);
+            if let Node::Class(class) = scope.node()
+                && !private_references.is_empty()
+            {
+                let body_start = class.body_span().start;
+                for member in class.members() {
+                    if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
+                        let classes = declaring.entry(name).or_default();
+                        while classes.last().is_some_and(|it| !it.0.contains(scope)) {
+                            classes.pop();
+                        }
+                        classes.push((scope, body_start));
+                    }
+                }
+            }
+            for &(name, at) in private_references.get(&scope).into_iter().flatten() {
+                let Some(classes) = declaring.get_mut(&name) else {
+                    continue;
+                };
+                while classes.last().is_some_and(|it| !it.0.contains(scope)) {
+                    classes.pop();
+                }
+                // The heritage of a class is in its scope, not in its body.
+                if let Some(&(class_scope, _)) = classes.iter().rev().find(|it| it.1 <= at) {
+                    captures.note_private_reference(&path, class_scope, at);
+                }
             }
             for reference in scope.references() {
                 if eval.is_some_and(|it| it == reference.name()) && is_called(reference) {
@@ -412,41 +437,19 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
     found
 }
 
-/// By the scope that it is in: the scope of the class that declares a private name, and where the name is used.
-fn private_references<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<(Scope<'a>, u32)>> {
-    let mut found: FxHashMap<Scope<'a>, Vec<(Scope<'a>, u32)>> = FxHashMap::default();
+/// By the scope that it is in: a private name that is used, and where.
+fn private_references<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<(Name<'a>, u32)>> {
+    let mut found: FxHashMap<Scope<'a>, Vec<(Name<'a>, u32)>> = FxHashMap::default();
     if !file.has_classes() || !strings::contains_char(file.text(), b'#') {
         return found;
     }
-    let mut declared = FxHashSet::default();
-    for class in file.classes() {
-        for member in class.members() {
-            if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
-                declared.insert((class, name));
-            }
-        }
-    }
-    // The class whose body a node is in.
-    let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
     for usage in file.exprs_of_kind(ExprTag::Dot).chain(file.exprs_of_kind(ExprTag::PrivateIdentifier)) {
         let name = match usage.kind() {
             ExprKind::Dot { name, .. } if usage.is_private_member() => name.name(),
             ExprKind::PrivateIdentifier(name) => name,
             _ => continue,
         };
-        let mut inner = Node::Expr(usage);
-        while let Some(class) = classes.find(inner, |child, parent| match (parent, child) {
-            (Node::Class(class), Node::Member(_)) => Some(class),
-            _ => None,
-        }) {
-            if declared.contains(&(class, name)) {
-                if let Some(class_scope) = class.scope() {
-                    found.entry(Node::Expr(usage).scope()).or_default().push((class_scope, usage.span().start));
-                }
-                break;
-            }
-            inner = Node::Class(class);
-        }
+        found.entry(Node::Expr(usage).scope()).or_default().push((name, usage.span().start));
     }
     found
 }

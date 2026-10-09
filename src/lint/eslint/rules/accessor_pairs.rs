@@ -181,13 +181,15 @@ impl AccessorPairs {
             cx,
         );
 
-        let (mut has_getter, mut has_setter) = (false, false);
+        let (mut has_getter, mut has_setter, mut key_of_setter) = (false, false, None);
         for prop in props {
             if matches!(prop.kind(), PropKind::Init | PropKind::Shorthand | PropKind::Method)
                 && let Some(KeyKind::Ident(name)) = prop.key().map(Key::kind)
             {
                 has_getter |= name.is("get");
-                has_setter |= name.is("set");
+                if name.is("set") {
+                    (has_setter, key_of_setter) = (true, prop.key());
+                }
             }
         }
         let message = match (has_getter, has_setter) {
@@ -196,7 +198,12 @@ impl AccessorPairs {
             _ => return,
         };
         if ast_utils::is_property_descriptor(e) {
-            cx.report(e, message);
+            // oxlint points at the `set`.
+            let place = match key_of_setter.filter(|_| cx.language().is_oxlint) {
+                Some(key) => key.inner_span(cx.file()),
+                None => e.span(),
+            };
+            cx.report(place, message);
         }
     }
 

@@ -1450,5 +1450,68 @@
   "a.js:7:17 eslint(for-direction)",
   "a.js:8:18 eslint(for-direction)",
   "a.js:9:11 eslint(use-isnan)"
+ ],
+ "no-inner-declarations/without-options": [
+  "a.ts:2:10 eslint(no-inner-declarations)",
+  "a.ts:3:15 eslint(no-inner-declarations)",
+  "a.ts:3:38 eslint(no-inner-declarations)",
+  "a.ts:4:25 eslint(no-inner-declarations)",
+  "a.ts:6:29 eslint(no-inner-declarations)"
+ ],
+ "no-inner-declarations/functions": [],
+ "no-inner-declarations/both": [
+  "a.ts:2:10 eslint(no-inner-declarations)",
+  "a.ts:2:26 eslint(no-inner-declarations)",
+  "a.ts:3:51 eslint(no-inner-declarations)"
+ ],
+ "no-redeclare/what-typescript-merges": [
+  "a.ts:10:6 eslint(no-redeclare)",
+  "a.ts:12:7 eslint(no-redeclare)",
+  "a.ts:14:19 eslint(no-redeclare)",
+  "a.ts:14:39 eslint(no-redeclare)",
+  "a.ts:15:24 eslint(no-redeclare)",
+  "a.ts:18:11 eslint(no-redeclare)",
+  "a.ts:1:11 eslint(no-redeclare)",
+  "a.ts:20:12 eslint(no-redeclare)",
+  "a.ts:3:7 eslint(no-redeclare)",
+  "a.ts:5:6 eslint(no-redeclare)",
+  "a.ts:8:10 eslint(no-redeclare)"
+ ],
+ "no-template-curly-in-string/nothing-between-the-braces": [
+  "a.js:1:5 eslint(no-template-curly-in-string)",
+  "a.js:2:5 eslint(no-template-curly-in-string)",
+  "a.js:6:5 eslint(no-template-curly-in-string)"
+ ],
+ "names/whatever-they-refer-to": [
+  "a.js:1:27 eslint(no-extra-boolean-cast)",
+  "a.js:2:35 eslint(no-async-promise-executor)",
+  "a.js:3:32 eslint(use-isnan)",
+  "a.js:5:36 eslint(use-isnan)",
+  "a.js:6:5 eslint(no-extra-boolean-cast)"
+ ],
+ "no-extra-boolean-cast/enforce-for-logical-operands": [
+  "a.js:1:10 eslint(no-extra-boolean-cast)",
+  "a.js:2:10 eslint(no-extra-boolean-cast)",
+  "a.js:3:13 eslint(no-extra-boolean-cast)",
+  "a.js:4:9 eslint(no-extra-boolean-cast)"
+ ],
+ "places/the-first-label-of-tsgolint": [
+  "a.ts:12:5 typescript(no-unsafe-enum-comparison)",
+  "a.ts:13:18 typescript(no-unsafe-assignment)",
+  "a.ts:14:31 typescript(no-unsafe-assignment)",
+  "a.ts:15:20 typescript(no-unsafe-assignment)",
+  "a.ts:16:20 typescript(no-unsafe-assignment)",
+  "a.ts:17:22 typescript(no-unsafe-assignment)",
+  "a.ts:17:27 typescript(no-unsafe-assignment)",
+  "a.ts:18:22 typescript(no-unsafe-assignment)",
+  "a.ts:19:23 typescript(no-unsafe-assignment)",
+  "a.ts:20:22 typescript(no-unsafe-assignment)",
+  "a.ts:21:19 typescript(no-unsafe-assignment)",
+  "a.ts:2:8 typescript(no-array-delete)",
+  "a.ts:3:8 typescript(no-array-delete)",
+  "a.ts:4:30 typescript(no-unsafe-return)",
+  "a.ts:5:24 typescript(no-unsafe-return)",
+  "a.ts:6:43 typescript(no-unsafe-return)",
+  "a.ts:9:9 typescript(no-unsafe-enum-comparison)"
  ]
 }

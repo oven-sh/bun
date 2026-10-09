@@ -178,9 +178,13 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
+const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
 let exported = (await import(pathToFileURL(path).href)).default;
-if (typeof exported === "function") exported = exported();
+if (typeof exported === "function")
+  exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();
 exported = await exported;
+// Vite+: what `vp lint` reads.
+if (isOfVite) exported = exported?.lint ?? null;
 const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
 if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
 [exported].flat(Infinity).forEach((object, index) => {

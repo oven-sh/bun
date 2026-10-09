@@ -19,6 +19,24 @@ fn is_lexical_declaration(statement: Stmt) -> bool {
     }
 }
 
+/// Where oxlint points: as many bytes from the start as `function`, `class`, `let`, `const`, `using` have, or
+/// `await using`.
+fn keyword(statement: Stmt) -> Span {
+    let whole = statement.span();
+    let len = match statement.kind() {
+        StmtKind::Fn(_) => 8,
+        StmtKind::Var(declarations) => match declarations.first().map(|it| (it.var_kind(), it.span().start)) {
+            Some((VarKind::Let, _)) => 3,
+            Some((VarKind::AwaitUsing, first)) => {
+                statement.file().slice(Span::new(whole.start, first)).trim_ascii_end().len() as u32
+            }
+            _ => 5,
+        },
+        _ => 5,
+    };
+    Span::new(whole.start, whole.start + len)
+}
+
 impl Rule for NoCaseDeclarations {
     const META: Meta = Meta::eslint("no-case-declarations", Kind::Suggestion)
         .has_suggestions()
@@ -36,7 +54,8 @@ impl Rule for NoCaseDeclarations {
                 if !is_lexical_declaration(statement) {
                     continue;
                 }
-                cx.report(statement, UNEXPECTED).suggest(ADD_BRACKETS, |fixer| {
+                let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
+                cx.report(place, UNEXPECTED).suggest(ADD_BRACKETS, |fixer| {
                     Some([
                         fixer.insert_before(body.first()?, "{ "),
                         fixer.insert_after(body.last()?, " }"),

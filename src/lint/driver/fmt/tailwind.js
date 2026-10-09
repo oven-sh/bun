@@ -80,7 +80,12 @@ async function loadV4(tailwind, stylesheet) {
     loadPlugin: id => load(id, dirname(stylesheet), () => {}),
     loadConfig: id => load(id, dirname(stylesheet), {}),
   });
-  return classes => design.getClassOrder(classes);
+  // Where Tailwind 4 puts a class does not depend on what else it is asked about, and one question takes a thirtieth of the
+  // time of thousands.
+  return lists => {
+    const orders = new Map(design.getClassOrder([...new Set(lists.flat())]));
+    return lists.map(list => list.map(it => orders.get(it) ?? null));
+  };
 }
 
 const loaded = new Map();
@@ -118,9 +123,8 @@ const groups = [];
 for (const group of JSON.parse(read(path)).groups) {
   const { lists, ...which } = group;
   try {
-    const order = await orderFor(which);
-    const answers = lists.map(list => [list, ranks(order(list.split(" ")).map(it => it[1]))]);
-    groups.push({ ...which, ranks: Object.fromEntries(answers) });
+    const orders = (await orderFor(which))(lists.map(list => list.split(" ")));
+    groups.push({ ...which, ranks: Object.fromEntries(lists.map((list, index) => [list, ranks(orders[index])])) });
   } catch (error) {
     groups.push({ ...which, error: String(error?.message ?? error) });
   }

@@ -629,6 +629,14 @@ impl Run<'_> {
             .min(context.js_plugins.most_realms());
         context.js_plugins.expect(engines);
         if !with_types.is_empty() {
+            // The checker begins with one file and goes on with a few: the engines would load their plugins one after the other.
+            let first: Vec<&Target> = (with_types.iter().map(|it| it.0))
+                .filter(|it| needs(it) == Needs::Engine)
+                .take(engines)
+                .collect();
+            if first.len() > 1 {
+                pool.for_each(first.len(), 1, &|at| context.warm_up_an_engine(first[at]));
+            }
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.into_iter().zip(linted) {

@@ -223,7 +223,9 @@ impl ArrowBodyStyle {
                         && self.require_return_for_object_literal
                         && body.tag() == ExprTag::Object)
                 {
-                    cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func));
+                    // For oxlint the parentheses are part of the body.
+                    let place = if cx.language().is_oxlint { body.outer_span() } else { body.span() };
+                    cx.report(place, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func));
                 }
             }
             FnBody::None => {}

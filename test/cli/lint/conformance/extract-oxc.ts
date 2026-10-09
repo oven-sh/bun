@@ -232,7 +232,8 @@ class Parser {
       const args = this.list(")", () => this.expr());
       if (last === "Some") return args[0];
       if (last === "from" || last === "new") return this.postfix(args[0]);
-      if (segments === 1 && args.length === 0 && this.lookup(last) !== undefined) return this.postfix(this.lookup(last));
+      if (segments === 1 && args.length === 0 && this.lookup(last) !== undefined)
+        return this.postfix(this.lookup(last));
       throw new Unparsed(`${last}()`);
     }
     if (last === "None") return null;

@@ -751,7 +751,7 @@ fn is_indentable_text(content: &[u8]) -> bool {
         return false;
     }
     while let Some(line) = lines.next() {
-        let line = line.trim_ascii_start();
+        let line = crate::text::trim_start(line);
         // The last line goes on with the `*` of `*/`.
         if !line.starts_with(b"*") && !(line.is_empty() && lines.peek().is_none()) {
             return false;

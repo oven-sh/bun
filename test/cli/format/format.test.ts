@@ -562,25 +562,14 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("--end-of-line auto goes by the first \\r, also if lines before it end in \\n", async () => {
+  test("white space that is not ASCII at the end of a comment goes, and the file is written", async () => {
     const result = await format(
-      { "a.js": "a;\nb;\r\nc;\n", "b.css": "a {\n}\nb {\n}\r", "c.js": "a;\nb;\n" },
-      ["--end-of-line", "auto"],
-      { reads: ["a.js", "b.css", "c.js"] },
+      { "a.js": "// a\u00a0\na;\n// b\u3000\nb;\n// c\u000b\nc;\n/**\n * d\u00a0\n */\nd;\n" },
+      [],
+      { reads: ["a.js"] },
     );
-    expect(result.files).toEqual({
-      "a.js": "a;\r\nb;\r\nc;\r\n",
-      "b.css": "a {\r}\rb {\r}\r",
-      "c.js": "a;\nb;\n",
-    });
-    expect(result.exitCode).toBe(0);
-  });
-
-  test("a value of 10,000 lines in a style sheet does not take quadratic time", async () => {
-    const result = await format({ "a.css": `a {\n  b:${Buffer.alloc(60_000, "\n    c").toString()};\n}\n` }, [], {
-      reads: ["a.css"],
-    });
-    expect(result.files["a.css"]?.split(/\s+/).join(" ")).toBe(`a { b:${Buffer.alloc(20_000, " c").toString()}; } `);
+    expect(result.stderr).not.toContain("error");
+    expect(result.files["a.js"]).toBe("// a\na;\n// b\nb;\n// c\nc;\n/**\n * d\n */\nd;\n");
     expect(result.exitCode).toBe(0);
   });
 

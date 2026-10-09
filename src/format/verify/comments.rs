@@ -21,7 +21,7 @@ fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
         let text = rest?;
         let Some(end) = strings::index_of_any(text, b"\r\n") else {
             rest = None;
-            return Some(text.trim_ascii());
+            return Some(crate::text::trim(text));
         };
         let after = if text.get(end..end + 2) == Some(b"\r\n") {
             end + 2
@@ -29,7 +29,7 @@ fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
             end + 1
         };
         rest = text.get(after..);
-        text.get(..end).map(<[u8]>::trim_ascii)
+        text.get(..end).map(crate::text::trim)
     })
 }
 

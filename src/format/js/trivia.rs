@@ -392,9 +392,10 @@ impl<'a> Format<'a> for Comment {
             let is_jsdoc = content.starts_with(b"/**")
                 && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt());
             let mut lines = lines(content).peekable();
-            write!(f, text(lines.next().unwrap_or_default().trim_ascii_end()));
+            let first = lines.next().unwrap_or_default();
+            write!(f, text(crate::text::trim_end(first)));
             while let Some(line) = lines.next() {
-                let trimmed = line.trim_ascii();
+                let trimmed = crate::text::trim(line);
                 write!(f, [hard_line_break(), " ", text(trimmed)]);
                 if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
                     // A line break in a text keeps the spaces before it. The one that follows

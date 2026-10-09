@@ -126,6 +126,7 @@ struct Place(AtomicPtr<c_void>);
 
 impl Place {
     /// Whichever thread put it there: nothing in the C++ object belongs to the thread that made it or ran it last.
+    #[inline]
     fn take(&self) -> Option<Instance> {
         if self.0.load(Ordering::Relaxed).is_null() {
             return None;
@@ -134,6 +135,7 @@ impl Place {
     }
 
     /// Gives it back if the place is taken.
+    #[inline]
     fn put(&self, instance: Instance) -> Option<Instance> {
         if !self.0.load(Ordering::Relaxed).is_null() {
             return Some(instance);
@@ -171,7 +173,7 @@ pub struct Compiled {
     pattern: Pattern,
     bits: u16,
     offsets_len: u32,
-    /// All that there is until two threads search at the same time.
+    /// All that there is until two threads search at the same time. From then on it stays empty, and no thread writes to it.
     first: Place,
     /// At least as many as threads search at a time, or those that find no place compile for every search.
     more: OnceLock<Box<[Apart]>>,
@@ -205,33 +207,44 @@ impl Compiled {
         self.offsets_len as usize
     }
 
-    /// All places, from the one that this thread is likely to have used last. The address of its stack is only a hint at which thread it is.
-    fn places(&self) -> impl Iterator<Item = &Place> {
+    /// The places of `more`, from the one that this thread is likely to have used last. The address of its stack is only a hint at which thread it is.
+    #[inline]
+    fn from_home(more: &[Apart]) -> impl Iterator<Item = &Place> {
         let on_the_stack = 0u8;
         let thread = (core::ptr::from_ref(&on_the_stack).addr() >> 18) as u64;
         let hash = (thread.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as usize;
-        let more = self.more.get().map_or(&[][..], |it| &**it);
-        let (before, from) = more.split_at(hash % more.len().max(1));
-        (from.iter().chain(before).map(|it| &it.0)).chain([&self.first])
+        // Their number is a power of two.
+        let home = hash & more.len().wrapping_sub(1);
+        let (before, from) = more.split_at_checked(home).unwrap_or((more, &[]));
+        from.iter().chain(before).map(|it| &it.0)
     }
 
     /// `None`: all have been in use for seconds, and one more cannot be made.
+    #[inline]
     fn take(&self) -> Option<Taken<'_>> {
+        match self.first.take() {
+            Some(instance) => Some(Taken::new(self, instance)),
+            None => self.take_of_more(),
+        }
+    }
+
+    fn take_of_more(&self) -> Option<Taken<'_>> {
+        let more = self.more.get_or_init(|| {
+            let cores = std::thread::available_parallelism().map_or(0, usize::from);
+            core::iter::repeat_with(Apart::default)
+                .take(cores.max(64).next_power_of_two())
+                .collect()
+        });
         for round in 0..PATIENCE {
-            if let Some(instance) = self.places().find_map(Place::take) {
+            let mut waiting = Self::from_home(more).chain([&self.first]);
+            if let Some(instance) = waiting.find_map(Place::take) {
                 return Some(Taken::new(self, instance));
             }
-            self.more.get_or_init(|| {
-                let cores = std::thread::available_parallelism().map_or(0, usize::from);
-                core::iter::repeat_with(Apart::default)
-                    .take(cores.max(64))
-                    .collect()
-            });
             let pattern = match &self.pattern {
                 Pattern::Latin1(it) => Text::Latin1(it),
                 Pattern::Utf16(it) => Text::Utf16(it),
             };
-            // It can fail where the first did not: with less of the stack left. One is only freed when all places are taken, so one comes back.
+            // It can fail where the first did not: with less of the stack left. One is only freed when it finds no place, so another comes back.
             match Instance::new(pattern, self.bits) {
                 Ok((instance, offsets_len)) => {
                     debug_assert_eq!(offsets_len, self.offsets_len);
@@ -244,10 +257,22 @@ impl Compiled {
         None
     }
 
-    /// One more than there are places for is freed.
+    /// One that finds no place is freed.
+    #[inline]
     fn put(&self, instance: Instance) {
+        match self.more.get() {
+            None => {
+                // Only the first instance is ever there: the others are made, and put back, by threads that see `more`. This thread has it.
+                let back = self.first.put(instance);
+                debug_assert!(back.is_none());
+            }
+            Some(more) => Self::put_in(more, instance),
+        }
+    }
+
+    fn put_in(more: &[Apart], instance: Instance) {
         let mut instance = Some(instance);
-        for place in self.places() {
+        for place in Self::from_home(more) {
             let Some(it) = instance.take() else { break };
             instance = place.put(it);
         }
@@ -290,6 +315,7 @@ struct Taken<'a> {
 }
 
 impl<'a> Taken<'a> {
+    #[inline]
     fn new(of: &'a Compiled, instance: Instance) -> Self {
         let handle = core::mem::ManuallyDrop::new(instance).0;
         Taken { of, handle }
@@ -297,6 +323,7 @@ impl<'a> Taken<'a> {
 }
 
 impl Drop for Taken<'_> {
+    #[inline]
     fn drop(&mut self) {
         self.of.put(Instance(self.handle));
     }

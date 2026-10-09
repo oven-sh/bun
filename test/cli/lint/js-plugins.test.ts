@@ -1627,15 +1627,16 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             const realm = String(Math.random());
             export default { rules: { realm: { create: context => ({ Program: node => context.report({ node, message: realm }) }) } } };`,
         };
-        const text = (size: number) => "foo;\n" + Buffer.alloc(size, "// comment\n").toString();
+        const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
         for (let i = 0; i < heavy; i++) files[`src/heavy${i}.${extension}`] = text(270_000);
         for (let i = 0; i < 24; i++) files[`src/light${i}.${extension}`] = text(250_000);
-        const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", threads, "src"]);
+        // Not as JSON, which has the text of each file in it.
+        const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);
         const realmsOf = (name: string) =>
-          JSON.parse(raw).flatMap((it: any) =>
-            it.filePath.includes(name) ? it.messages.map((it: any) => it.message) : [],
-          );
+          Array.from(raw.matchAll(/(heavy|light)\d+\.\w+:1:1: (\S+) \[Error\/own\/realm\]/g))
+            .filter(it => it[1] === name)
+            .map(it => it[2]);
         return {
           heavy: [realmsOf("heavy").length, new Set(realmsOf("heavy")).size],
           light: new Set(realmsOf("light")).size,
@@ -1708,17 +1709,17 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             };
             export default { rules: { grows } };`,
         };
-        const text = "foo;\n" + Buffer.alloc(250_000, "// comment\n").toString();
+        const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
         const variables = { BUN_JSC_forceRAMSize: String(64 << 20) };
         const { raw, stderr, exitCode } = await lint(
           files,
-          ["-f", "json", "--timing", "--threads", threads, "src"],
+          ["-f", "unix", "--timing", "--threads", threads, "src"],
           [],
           variables,
         );
         expect(exitCode).toBe(1);
-        const seen = JSON.parse(raw).filter((it: any) => it.messages.some((it: any) => it.message === "seen")).length;
+        const seen = raw.split(":1:1: seen [Error/own/grows]").length - 1;
         return { seen, freed: Number(/, freed to stay in the memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
       };
       const more = Math.max(16, availableParallelism() + 1);

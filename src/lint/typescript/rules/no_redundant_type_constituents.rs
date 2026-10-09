@@ -196,7 +196,18 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         TypeKind::StringLit(value) if is_oxlint => return value.bytes().to_vec(),
         TypeKind::Template(_) if is_oxlint => return type_node.text().to_vec(),
         TypeKind::BoolLit(_) if is_oxlint => b"literal type",
-        TypeKind::Ref { .. } if is_oxlint => return type_node.text().to_vec(),
+        // One that does not resolve: `A.B<C, D>`.
+        TypeKind::Ref { name, args } if is_oxlint => {
+            let names: Vec<&[u8]> = name.parts().map(|it| it.bytes()).collect();
+            let args: Vec<Vec<u8>> = args.iter().map(|it| it.ty().to_text()).collect();
+            let mut text = names.join(&b"."[..]);
+            if !args.is_empty() {
+                text.push(b'<');
+                text.extend_from_slice(&args.join(&b", "[..]));
+                text.push(b'>');
+            }
+            return text;
+        }
         TypeKind::Keyword(Keyword::Any) => b"any",
         TypeKind::Keyword(Keyword::Boolean) => b"boolean",
         TypeKind::Keyword(Keyword::Never) => b"never",
@@ -212,6 +223,20 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         _ => b"literal type",
     };
     description.to_vec()
+}
+
+/// The reference to `name`, which does not resolve, that `type_node` has its type `error` from: itself, or the `A` of
+/// `Partial<A>`.
+fn unresolved_reference<'a>(mut type_node: TypeNode<'a>, error: Type<'a>, name: &[u8]) -> Option<TypeNode<'a>> {
+    loop {
+        let TypeKind::Ref { name: written, args } = type_node.kind() else {
+            return None;
+        };
+        if written.last().is_some_and(|it| it.bytes() == name) {
+            return Some(type_node);
+        }
+        type_node = args.iter().find(|it| it.ty() == error)?;
+    }
 }
 
 /// Adds the parts of the type that is written as `type_node`.
@@ -257,15 +282,15 @@ fn get_type_node_type_part_flags<'a>(
                 described: Described::Type(type_part),
             };
             let node_type = type_node.ty();
-            // tsgolint 7.0 names a type that does not resolve as it is written: `A.B<C>`.
+            // tsgolint 7.0 names a type that does not resolve with what is before the dots and with its type arguments.
             if type_node.file().language().is_oxlint
-                && matches!(type_node.kind(), TypeKind::Ref { .. })
                 && node_type.is_error()
-                && node_type.alias_symbol().is_some()
+                && let Some(alias_symbol) = node_type.alias_symbol()
+                && let Some(reference) = unresolved_reference(type_node, node_type, alias_symbol.escaped_name())
             {
                 parts.push(TypeFlagsWithName {
                     type_flags: node_type.flags(),
-                    described: Described::TypeNode(type_node),
+                    described: Described::TypeNode(reference),
                 });
                 return;
             }

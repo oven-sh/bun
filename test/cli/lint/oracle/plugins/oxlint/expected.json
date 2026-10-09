@@ -4651,5 +4651,40 @@
   "a.ts:15:8+11 typescript(explicit-function-return-type)",
   "a.ts:8:31+9 typescript(explicit-function-return-type)",
   "a.ts:9:32+9 typescript(explicit-function-return-type)"
+ ],
+ "no-unnecessary-type-assertion/in-a-method-of-an-argument-of-a-generic-call": [
+  "a.ts:17:16+13 typescript(no-unnecessary-type-assertion)",
+  "a.ts:23:16+13 typescript(no-unnecessary-type-assertion)",
+  "a.ts:30:14+13 typescript(no-unnecessary-type-assertion)"
+ ],
+ "prefer-readonly-parameter-types/a-conditional-type": [
+  "a.ts:15:23+6 typescript(prefer-readonly-parameter-types)",
+  "a.ts:7:20+16 typescript(prefer-readonly-parameter-types)"
+ ],
+ "no-deprecated/in-all-of-a-union-or-an-intersection": [
+  "a.ts:32:6+1 typescript(no-deprecated)",
+  "a.ts:33:6+1 typescript(no-deprecated)",
+  "a.ts:34:6+1 typescript(no-deprecated)",
+  "a.ts:35:6+1 typescript(no-deprecated)",
+  "a.ts:36:6+1 typescript(no-deprecated)",
+  "a.ts:37:6+1 typescript(no-deprecated)",
+  "a.ts:38:10+1 typescript(no-deprecated)",
+  "a.ts:38:16+1 typescript(no-deprecated)",
+  "a.ts:38:22+1 typescript(no-deprecated)",
+  "a.ts:38:4+1 typescript(no-deprecated)",
+  "a.ts:39:16+1 typescript(no-deprecated)"
+ ],
+ "counts/void-in-an-instantiation-and-every-parameter": [
+  "a.ts:11:38+13 typescript(consistent-generic-constructors)",
+  "a.ts:12:16+13 typescript(consistent-generic-constructors)",
+  "a.ts:13:16+13 typescript(consistent-generic-constructors)",
+  "a.ts:15:20+13 typescript(consistent-generic-constructors)",
+  "a.ts:15:67+21 typescript(consistent-generic-constructors)",
+  "a.ts:16:24+13 typescript(consistent-generic-constructors)",
+  "a.ts:19:14+15 typescript(consistent-generic-constructors)",
+  "a.ts:4:19+4 typescript(no-invalid-void-type)",
+  "a.ts:5:32+4 typescript(no-invalid-void-type)",
+  "a.ts:6:23+4 typescript(no-invalid-void-type)",
+  "a.ts:7:23+4 typescript(no-invalid-void-type)"
  ]
 }

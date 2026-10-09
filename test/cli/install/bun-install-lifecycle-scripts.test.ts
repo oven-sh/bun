@@ -702,30 +702,33 @@ test.concurrent.each(["hoisted", "isolated"] as const)(
   },
 );
 
-test.concurrent("an empty trustedDependencies list added to a bun.lockb project turns the default list off", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
-  const preinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
-  const dependencies = { electron: "1.0.0" };
+test.concurrent(
+  "an empty trustedDependencies list added to a bun.lockb project turns the default list off",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const preinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+    const dependencies = { electron: "1.0.0" };
 
-  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
-  await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
-  await runBunInstall(env, packageDir);
-  expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
-  expect(await exists(preinstall)).toBeTrue();
+    await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
+    expect(await exists(preinstall)).toBeTrue();
 
-  await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: [] }));
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  let { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
-  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-  expect(await exists(preinstall)).toBeFalse();
-  expect(err).toContain("Saved lockfile");
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: [] }));
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    let { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+    expect(await exists(preinstall)).toBeFalse();
+    expect(err).toContain("Saved lockfile");
 
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  ({ err } = await runBunInstall(env, packageDir, { savesLockfile: false }));
-  expect(await exists(preinstall)).toBeFalse();
-  expect(err).not.toContain("Saved lockfile");
-});
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    ({ err } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(await exists(preinstall)).toBeFalse();
+    expect(err).not.toContain("Saved lockfile");
+  },
+);
 
 test.concurrent(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",

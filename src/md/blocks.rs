@@ -759,21 +759,13 @@ impl Parser<'_> {
                 blk.data = line.data;
                 blk.flags |= types::BLOCK_SETEXT_HEADER;
             }
-            // Add the underline line (md4c stores it for ref def interaction)
-            self.add_line_to_current_block(line)?;
+            // The underline is not a line of the block: a reference definition
+            // at the end of it does not go on with the underline.
             self.end_current_block()?;
-            if self.current_block.is_none() {
-                // Block was closed normally
-                *pivot_line = Line {
-                    r#type: LineType::Blank,
-                    ..Line::default()
-                };
-            } else {
-                // Block stayed open: all body was consumed as link ref defs,
-                // underline downgraded to start of a new paragraph (md4c behavior)
-                line.r#type = LineType::Text;
-                *pivot_line = *line;
-            }
+            *pivot_line = Line {
+                r#type: LineType::Blank,
+                ..Line::default()
+            };
             return Ok(());
         }
 
@@ -893,22 +885,10 @@ impl Parser<'_> {
             }
             let hdr = self.get_block_header_at(cb_off);
 
-            // Handle setext heading after ref def consumption
-            if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
-                if hdr.n_lines > 1 {
-                    // Remove the underline (last line)
-                    hdr.n_lines -= 1;
-                    let _ = self.current_block_lines.pop();
-                } else if hdr.n_lines == 1 {
-                    // Only underline left after eating ref defs → convert to paragraph,
-                    // keep block open so subsequent lines join this paragraph (md4c behavior)
-                    hdr.block_type = BlockType::P;
-                    hdr.flags &= !types::BLOCK_SETEXT_HEADER;
-                    return Ok(()); // Don't close the block!
-                } else {
-                    // All lines consumed (shouldn't normally happen)
-                    hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-                }
+            // All lines consumed (`current_block_is_only_ref_defs` keeps such a
+            // block from becoming a heading)
+            if is_setext && hdr.n_lines == 0 {
+                hdr.flags |= types::BLOCK_REF_DEF_ONLY;
             }
 
             // Write accumulated lines to block_bytes

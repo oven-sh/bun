@@ -97,9 +97,7 @@ impl<'a> PatchFile<'a> {
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
                     if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
-                        // A patch that an older bun made for a git dependency deletes each
-                        // file the repository committed in `node_modules`. A checkout does
-                        // not keep those files now.
+                        // An older bun's patch deletes files a git dependency committed in `node_modules`, which a checkout no longer has.
                         let already_gone = e.get_errno() == sys::E::ENOENT
                             && file_deletion.path.starts_with(b"node_modules/");
                         if !already_gone {

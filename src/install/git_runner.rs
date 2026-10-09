@@ -262,15 +262,7 @@ fn read_package_json(
     })
 }
 
-/// What a checkout keeps of the `node_modules` its repository committed.
-///
-/// bun installs a package's dependencies into `<package>/node_modules`, except the
-/// ones `package.json` bundles: those come with the package. So the checkout keeps the
-/// bundled packages and the committed packages those depend on, which is what
-/// `npm pack` keeps. Everything else there is removed, and so is every link inside a
-/// kept package.
-///
-/// `cache_dir` is where a removed entry goes first (`remove_entry`).
+/// Keeps in `node_modules` only the bundled packages and the committed packages those need, as `npm pack` does.
 fn strip_node_modules(cache_dir: Fd, checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
     use bun_sys::{E, EntryKind};
 
@@ -310,9 +302,7 @@ fn strip_node_modules(cache_dir: Fd, checkout: &bun_sys::Dir) -> bun_sys::Maybe<
     remove_unkept(cache_dir, &node_modules, b"", &kept)
 }
 
-/// Moves `name` out of `dir` to a temporary name in `cache_dir`, then deletes it there.
-/// The move is one step, so an install that reads the checkout at the same time finds
-/// the entry whole or not at all. An entry that another install moved first is removed.
+/// Moves `name` out of `dir` into `cache_dir` in one rename, then deletes it: a concurrent install sees it whole or gone.
 fn remove_entry(cache_dir: Fd, dir: &bun_sys::Dir, name: &[u8]) -> bun_sys::Maybe<()> {
     use bun_sys::E;
 
@@ -345,8 +335,7 @@ const REAL_DIR: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOF
 
 type Entries = Vec<(Vec<u8>, bun_sys::EntryKind)>;
 
-/// The entries of `dir`, read before any of them is deleted: a directory that changes
-/// under its iterator can skip entries.
+/// The entries of `dir`, all read first: a directory that changes under its iterator can skip entries.
 fn read_entries(dir: &bun_sys::Dir) -> bun_sys::Maybe<Entries> {
     let mut entries = Vec::new();
     let mut iter = bun_sys::iterate_dir(dir.fd());
@@ -374,8 +363,7 @@ fn known_kind(
     }
 }
 
-/// Opens `node_modules/<name>` or `node_modules/@scope/<name>` when it is a real
-/// directory, which is what a committed package is.
+/// Opens `node_modules/<name>` or `node_modules/@scope/<name>` when it is a real directory.
 fn open_package(node_modules: &bun_sys::Dir, name: &[u8]) -> Option<bun_sys::Dir> {
     let open_real_dir = |parent: &bun_sys::Dir, name: &[u8]| {
         let kind = entry_kind(parent, &bun_core::ZBox::from_bytes(name));
@@ -397,8 +385,7 @@ fn open_package(node_modules: &bun_sys::Dir, name: &[u8]) -> Option<bun_sys::Dir
     }
 }
 
-/// Walks a kept package: deletes every link in it, and adds to `names` what each
-/// `package.json` in it depends on.
+/// Deletes every link in a kept package and adds to `names` what each `package.json` in it depends on.
 fn clean_kept_package(package: bun_sys::Dir, names: &mut Vec<Box<[u8]>>) -> bun_sys::Maybe<()> {
     use bun_sys::EntryKind;
 
@@ -423,8 +410,7 @@ fn clean_kept_package(package: bun_sys::Dir, names: &mut Vec<Box<[u8]>>) -> bun_
     Ok(())
 }
 
-/// Removes every entry of `node_modules`, or of the scope directory `scope` in it, that
-/// `kept` does not name.
+/// Removes every entry of `node_modules` (or of its scope directory `scope`) that `kept` does not name.
 fn remove_unkept(
     cache_dir: Fd,
     dir: &bun_sys::Dir,
@@ -461,8 +447,7 @@ enum Manifest {
     Dependencies,
 }
 
-/// Adds to `names` the package names the `package.json` in `dir` lists. A missing or
-/// broken file lists none.
+/// Adds to `names` the package names the `package.json` in `dir` lists (none when it is missing or broken).
 fn manifest_names(dir: &bun_sys::Dir, which: Manifest, names: &mut Vec<Box<[u8]>>) {
     use crate::bun_json::E::JsonValue;
 
@@ -470,8 +455,7 @@ fn manifest_names(dir: &bun_sys::Dir, which: Manifest, names: &mut Vec<Box<[u8]>
         return;
     };
     let _ = file.close();
-    // Not `crate::initialize_store()`: that one resets the store, and a caller on the
-    // install thread can be in the middle of a parse of its own.
+    // Not `crate::initialize_store()`: it resets the store under a parse the install thread has in progress.
     bun_ast::initialize_store();
     let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
     let mut log = bun_ast::Log::init();
@@ -515,16 +499,13 @@ fn manifest_names(dir: &bun_sys::Dir, which: Manifest, names: &mut Vec<Box<[u8]>
     }
 }
 
-/// Whether `checkout` is a cache hit: `.bun-tag` is written last. A checkout that an
-/// older bun published can hold a `node_modules` that was not cleaned. It is cleaned
-/// here before it counts as a hit.
+/// Whether `checkout` is a cache hit: it has `.bun-tag` (written last), and what an older bun left in it is cleaned.
 fn is_finished_checkout(cache_dir: Fd, checkout: &bun_sys::Dir) -> bool {
     bun_sys::exists_at(checkout.fd(), bun_core::zstr!(".bun-tag"))
         && strip_node_modules(cache_dir, checkout).is_ok()
 }
 
-/// `is_finished_checkout` for `<cache_dir>/<folder>`, which it opens only when there
-/// is a `node_modules` to clean.
+/// `is_finished_checkout` for `<cache_dir>/<folder>`, which it opens only when there is a `node_modules` to clean.
 pub(crate) fn is_cached_checkout(cache_dir: Fd, folder: &[u8]) -> bool {
     let mut buf = Path::path_buffer_pool::get();
     let tag =

@@ -75,7 +75,7 @@ const keepHome = process.argv.includes("--keep-home");
 type Result = {
   name: string;
   lockfileVersion: string;
-  outcome: "migrated" | "not migrated" | "crashed" | "no yarn.lock" | "clone failed";
+  outcome: "migrated" | "not migrated" | "crashed" | "no yarn.lock" | "yarn v1" | "clone failed";
   /** the first `error:` line */
   reason: string;
   seconds: number;
@@ -150,6 +150,11 @@ async function run(name: string, repo: string, ref: string, subdir: string): Pro
   }
   const yarnLock = await readFile(join(cwd, "yarn.lock"), "utf8");
   result.lockfileVersion = yarnLock.match(/^__metadata:\n  version: (\S+)/m)?.[1] ?? "v1";
+  if (result.lockfileVersion === "v1") {
+    // not a berry lockfile; the yarn v1 migration has its own tests
+    result.outcome = "yarn v1";
+    return result;
+  }
   const inYarn = yarnNpmPackages(yarnLock);
   result.yarnPackages = inYarn.size;
   // a project that already has a bun lockfile is migrated from yarn.lock all the same
@@ -218,7 +223,7 @@ for (const [name, repo, ref, subdir] of projects) {
 const count = (outcome: Result["outcome"]) => results.filter(r => r.outcome === outcome).length;
 console.log(
   `\n${results.length} projects: ${count("migrated")} migrated, ${count("not migrated")} not migrated, ${count("crashed")} crashed, ` +
-    `${count("clone failed") + count("no yarn.lock")} not run`,
+    `${count("clone failed") + count("no yarn.lock") + count("yarn v1")} not run`,
 );
 
 const reasons = new Map<string, string[]>();

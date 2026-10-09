@@ -556,6 +556,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
+                        s->end_after_shutdown = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -920,6 +921,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
+                    if (s->end_after_shutdown && !s->read_eof) {
+                        s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    }
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }

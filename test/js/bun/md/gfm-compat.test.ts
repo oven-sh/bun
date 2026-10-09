@@ -826,8 +826,8 @@ describe("table alignment", () => {
   });
 
   test("a line that only looks like a delimiter row does not change the table before it", () => {
-    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\nx\n:-:\n")).toBe(
-      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n<p>x\n:-:</p>\n',
+    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\nx | y | z\n:-:|:-:\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n<p>x | y | z\n:-:|:-:</p>\n',
     );
   });
 });
@@ -868,6 +868,14 @@ describe("task list items with nothing behind the marker", () => {
   test("what follows the item is not in it", () => {
     expect(markdown.html("- [x] \n\nfoo\n")).toBe(
       '<ul>\n<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked></li>\n</ul>\n<p>foo</p>\n',
+    );
+  });
+});
+
+describe("a table of one column", () => {
+  test("the row under its head needs no pipe if it has a colon", () => {
+    expect(markdown.html("a\n:-\nb\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">b</td></tr>\n</tbody>\n</table>\n',
     );
   });
 });

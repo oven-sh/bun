@@ -599,6 +599,7 @@ impl Parser<'_> {
         let mut pos = off;
         let mut col_count: u32 = 0;
         let mut had_pipe = false;
+        let mut had_colon = false;
 
         // Skip leading pipe
         if pos < self.size && ch(self.text, pos) == b'|' {
@@ -633,6 +634,8 @@ impl Parser<'_> {
             if has_right_colon {
                 pos += 1;
             }
+
+            had_colon |= has_left_colon || has_right_colon;
 
             // Determine alignment
             if col_count < types::TABLE_MAXCOLCOUNT {
@@ -680,7 +683,7 @@ impl Parser<'_> {
             }
         }
 
-        if col_count == 0 || (!had_pipe && col_count < 2) {
+        if col_count == 0 || (!had_pipe && !had_colon && col_count < 2) {
             return TableUnderlineResult {
                 is_underline: false,
                 col_count: 0,

@@ -14,6 +14,7 @@ The crate is not a member of Bun's workspace. It links the crates that it tests 
 | `json` | `bun format` | JSON, JSON5, JSONC, `json-stringify`, `package.json`, `.prettierrc` |
 | `js` | `bun format`: parse, bind, print, parse again, compare | the extension, and `flow`, `babel-flow`, `babel-ts`, `typescript`, `babel` |
 | `imports` | `bun format` with what plugins do: imports sorted as `@trivago` / `@ianvs/prettier-plugin-sort-imports`, `prettier-plugin-organize-imports` and oxfmt sort them, JSDoc comments formatted as oxfmt does | where the text is: a file, a block of code in Markdown or MDX, the top of MDX, a script in Vue or HTML (`PLACES_OF_IMPORTS` in `format.rs`), and which of sixteen sets of options (`EXTRAS`) |
+| `options` | the same, and the first line of the text is the options, as they are in a `.prettierrc` or an `.oxfmtrc.json`: regular expressions, globs, groups | where the text is |
 | `md` | `bun_md`, which is behind `Bun.markdown`: Markdown to HTML | |
 | `lint` | `bun lint`: every rule that needs neither types nor other files, with its default options, the comments that configure rules, and fixes | the extension, the parser, module or script |
 | `parser` | `bun_sema_parser` and, except for Flow, the parser that recovers from errors | the extension. The second byte: the dialect |
@@ -104,5 +105,5 @@ The crates of the formatter, the linter and the new parser forbid `unsafe`, so t
 
 - It sees every block of the global allocator, which is `malloc` here as in Bun's own builds with AddressSanitizer (`--cfg bun_asan`).
 - It sees every block of an arena, which it would not in Bun: there an arena is a heap of mimalloc, whose blocks lie side by side in pages that AddressSanitizer knows nothing about. `mimalloc.rs` makes each a block of `malloc`: reading past the end of one, or using one after its heap is destroyed, is reported. Reading up to 48 bytes before the start of one is not: the list of the heap's blocks is there.
-- It does not see Bun's SIMD kernels (Highway, simdutf): plain loops in Rust stand in for them. A kernel that reads past the end of a text is not found here.
+- It does not see Bun's SIMD kernels (Highway, simdutf): plain loops in Rust stand in for them. A kernel that reads past the end of a text is not found here, unless those of Highway are linked: `KERNELS=<directory with the objects> ./build.sh asan`.
 - The widths of characters are an approximation of Bun's, so where a line with wide characters breaks can differ from `bun format`.

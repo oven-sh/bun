@@ -133,6 +133,14 @@ function writeImports(name: string, extras: readonly number[], text: Uint8Array)
 for (const [plugin, extras] of [["trivago", [0, 1, 2, 3]], ["ianvs", [4, 5, 6, 7]], ["organize", [8, 9, 10]], ["oxfmt", [11, 12, 13]]] as const) {
   const cases = JSON.parse(readFileSync(join(import.meta.dir, `../../../sort-imports/${plugin}.json`), "utf8"));
   for (const it of cases) writeImports(it.filename, extras, Buffer.from(it.input));
+  // For `options`: with the options of the case.
+  const named = { trivago: "@trivago/prettier-plugin-sort-imports", ianvs: "@ianvs/prettier-plugin-sort-imports", organize: "prettier-plugin-organize-imports" };
+  for (const it of cases) {
+    const { overrides, ...options } = it.options;
+    const all = plugin == "oxfmt" ? { flavor: "oxfmt", ...options } : { plugins: [named[plugin]], ...options };
+    const [file] = PLACES_OF_IMPORTS[/\.[cm]?(ts|js|tsx|jsx)$/.exec(it.filename)?.[1] ?? "js"];
+    write("options", file, 0, Buffer.from(JSON.stringify(all) + "\n" + it.input));
+  }
 }
 for (const [name, text] of readBundle(join(import.meta.dir, "../../../oxfmt/bundle.zst"))) {
   if (name.includes("jsdoc") && !name.endsWith(".snap")) writeImports(name, [14, 15], text);

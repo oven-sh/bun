@@ -3,7 +3,7 @@
 #   <binaries>  where build.sh has put them
 #   <work>      corpus/<target>, findings/<target>, artifacts/<target> and logs/<target> are made there. Put the output of
 #               seeds.ts at <work>/seeds.
-#   <target>    imports embedded html handlebars css yaml markdown md graphql json js lint parser
+#   <target>    options imports embedded html handlebars css yaml markdown md graphql json js lint parser
 # What a target notices by itself (a panic, an alarm of the formatter's own checks, output that does not stay as it is, ..)
 # goes to findings/, the smallest input for each, and the fuzzer goes on. What ends the process (a stack overflow, a report
 # of AddressSanitizer, a timeout, too much memory) goes to artifacts/.
@@ -12,6 +12,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 binaries=$1 work=$2 target=$3 seconds=${4:-600} jobs=${5:-4} largest=${6:-4096}
 case $target in
   lint | parser | imports) dictionary=js ;;
+  options) dictionary=options ;;
   md) dictionary=markdown ;;
   *) dictionary=$target ;;
 esac

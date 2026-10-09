@@ -4,6 +4,8 @@
 #   asan      libFuzzer's instrumentation, AddressSanitizer, overflow checks, debug assertions
 #   plain     the same without AddressSanitizer: twice as fast, and frames on the stack of the size they have in Bun
 #   coverage  no fuzzing: -C instrument-coverage, to run a corpus and see what it reaches (coverage.sh)
+# KERNELS=<directory>: every *.o in it is linked too: Bun's SIMD kernels (src/jsc/bindings/highway_*.cpp and vendor/highway/hwy/targets.cc, compiled
+# as Bun compiles them, with -fsanitize=address for asan). They take the place of the plain loops in src/sema/standalone/native.rs, which are weak symbols.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../../../.." && pwd)
@@ -21,9 +23,18 @@ triple=$(echo "$host" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${triple}_LINKER=${CXX:-clang++}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/fuzz}/$mode"
 cd "$here"
-RUSTFLAGS="$flags" cargo build --profile $profile --target "$host"
+if [ -n "$KERNELS" ]; then
+  # Only the programs are linked again.
+  objects=
+  for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
+  for program in fuzz_format fuzz_lint fuzz_parser; do
+    RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects -Clink-arg=-lstdc++
+  done
+else
+  RUSTFLAGS="$flags" cargo build --profile $profile --target "$host"
+fi
 out="$CARGO_TARGET_DIR/$host/$profile"
-for language in imports embedded html handlebars css yaml markdown md graphql json js; do
+for language in options imports embedded html handlebars css yaml markdown md graphql json js; do
   ln -sf fuzz_format "$out/fuzz_$language"
 done
 echo "built: $out"

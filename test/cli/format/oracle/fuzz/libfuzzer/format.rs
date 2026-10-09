@@ -1,6 +1,7 @@
 //! `bun format` on bytes. `FUZZ_TARGET`, or the name of the program after `fuzz_`, says which
 //! language: html, handlebars, css, yaml, markdown, graphql, json, js. `embedded`: the text is in a text in another language.
-//! `imports`: JavaScript with what plugins of Prettier and oxfmt do: sorted imports, formatted JSDoc comments.
+//! `imports`: JavaScript with what plugins of Prettier and oxfmt do: sorted imports, formatted JSDoc comments. `options`: the same, and
+//! the options are part of the input.
 //! `md` is not the formatter: `bun_md`, which is behind `Bun.markdown`, renders the text as HTML.
 
 #![no_main]
@@ -229,6 +230,12 @@ const TARGETS: &[Target] = &[
         variants: &[],
         growth: 8,
     },
+    // The first line of the text is the options, as they are in a configuration file. See `PLACES_OF_IMPORTS`.
+    Target {
+        name: "options",
+        variants: &[],
+        growth: 8,
+    },
     // See `PLACES`.
     Target {
         name: "embedded",
@@ -447,6 +454,26 @@ fn render_markdown(data: &[u8], input: &Input) {
     }
 }
 
+/// An option of a configuration file, as a name and the value as it is written, a string without its quotes. An object that is the
+/// value of `jsdoc`: each of its properties by itself.
+fn written(name: &[u8], value: &bun_lint::options::Json) -> Vec<(Vec<u8>, Vec<u8>)> {
+    use bun_lint::options::Json;
+    let text = |value: &Json| match value {
+        Json::String(text) => text.clone(),
+        other => {
+            let mut out = Vec::new();
+            other.stringify(&mut out);
+            out
+        }
+    };
+    match value {
+        Json::Object(properties) if name == b"jsdoc" => std::iter::once((name.to_vec(), b"{}".to_vec()))
+            .chain(properties.iter().map(|(property, value)| ([b"jsdoc.", &property[..]].concat(), text(value))))
+            .collect(),
+        _ => vec![(name.to_vec(), text(value))],
+    }
+}
+
 /// `options` without what moves or removes things: sorted imports, sorted keys, formatted JSDoc comments. Nothing: they ask
 /// for none of that.
 fn without_steps(options: &FormatOptions) -> Option<FormatOptions> {
@@ -587,10 +614,14 @@ fn run(data: &[u8]) {
     }
     let which = input.variant as usize;
     let whole;
+    let (first_line, rest) = match input.text.iter().position(|&it| it == b'\n') {
+        Some(at) if target.name == "options" => (&input.text[..at], &input.text[at + 1..]),
+        _ => (&b""[..], input.text),
+    };
     let (path, parser, mut variant, text) = match (target.name, target.variants) {
-        ("imports", _) => {
+        ("imports" | "options", _) => {
             let place = PLACES_OF_IMPORTS[which % PLACES_OF_IMPORTS.len()];
-            whole = in_its_place(place, input.text);
+            whole = in_its_place(place, rest);
             (place.0, None, format!("{}", which % PLACES_OF_IMPORTS.len()), &whole[..])
         }
         (_, []) => {
@@ -617,6 +648,29 @@ fn run(data: &[u8]) {
         options.sort_imports = settings.compile().ok().flatten();
     }
     let mut run = Run::new(data);
+    if target.name == "options" {
+        let Some(bun_lint::options::Json::Object(all)) = bun_lint::json::parse(first_line) else {
+            return;
+        };
+        run.how = format!("{path} {}", String::from_utf8_lossy(first_line));
+        let mut settings = bun_format::sort_imports::Settings::default();
+        let compiled = run.guarded(|| {
+            for (name, value) in &all {
+                for (name, value) in written(name, value) {
+                    if !settings.set(&name, &value) {
+                        let _ = options.set(&name, &value);
+                    }
+                    flags.push_str(&format!(" --{}={}", String::from_utf8_lossy(&name), String::from_utf8_lossy(&value)));
+                }
+            }
+            settings.compile()
+        });
+        // What is wrong with them is for the user.
+        let Some(Ok(compiled)) = compiled else {
+            return;
+        };
+        options.sort_imports = compiled;
+    }
     run.how = format!("{path}{flags}");
     // For triage.ts.
     if let Some(path) = std::env::var_os("FUZZ_TEXT") {

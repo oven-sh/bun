@@ -164,7 +164,7 @@ describe.concurrent("bun lint", () => {
       stdout
         .split("\n")
         .filter(line => / Parsing error: /.test(line))
-        .map(line => line.match(/a\d\.js/)?.[0]),
+        .map(line => line.match(/a\d+\.js/)?.[0]),
     ).toEqual(Object.keys(files));
     expect(exitCode).toBe(1);
   });

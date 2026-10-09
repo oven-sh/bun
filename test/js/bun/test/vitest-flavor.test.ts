@@ -1649,6 +1649,7 @@ describe.concurrent("exports", () => {
     onTestFinished: "function",
   };
   const vitestGlobals = { suite: "function", vitest: "object", onTestFailed: "function", assertType: "function" };
+  const notOfVitest = { jest: "undefined", xit: "undefined", xtest: "undefined", xdescribe: "undefined" };
   const typeofEach = (names: object) => `({ ${Object.keys(names).map(name => `${name}: typeof ${name}`)} })`;
 
   for (const [name, header, args] of [
@@ -1679,7 +1680,7 @@ describe.concurrent("exports", () => {
       );
       expect({ log, results, exitCode }).toEqual({
         log: [
-          JSON.stringify({ ...globals, ...vitestGlobals }),
+          JSON.stringify({ ...globals, ...notOfVitest, ...vitestGlobals }),
           "true true",
           "afterEach 2",
           "afterEach 1",
@@ -1770,7 +1771,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
   const file = `
     afterEach(() => console.log("afterEach 1"));
     afterEach(() => console.log("afterEach 2"));
-    const fn = jest.fn();
+    const fn = vi.fn();
     test("test", parameter => {
       fn();
       console.log("parameter:", parameter.task ? "context" : "done");
@@ -1911,6 +1912,329 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
       flag: [`error: --globals expects 'bun' or 'vitest', received "jest"`],
       bun: ofBun,
       exitCodes: [1, 1, 0],
+    });
+  });
+});
+
+// A library takes a `jest` for Jest's fake timers, and then advances them itself while it waits.
+describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
+  const typeofEach = `({ ${["jest", "xit", "xtest", "xdescribe", "vi", "expect", "afterEach", "test"].map(name => `${name}: typeof ${name}`)} })`;
+  const libraries = {
+    "node_modules/peek/package.json": `{ "name": "peek", "version": "1.0.0", "main": "index.js" }`,
+    "node_modules/peek/index.js": `module.exports = () => JSON.stringify(${typeofEach});`,
+    "node_modules/peek-esm/package.json": `{ "name": "peek-esm", "version": "1.0.0", "type": "module", "main": "index.js" }`,
+    "node_modules/peek-esm/index.js": `export default () => JSON.stringify(${typeofEach});`,
+    "node_modules/waits/package.json": `{ "name": "waits", "version": "1.0.0", "main": "index.js" }`,
+    "node_modules/waits/index.js": `
+      function fakeTimersAreOn() {
+        return typeof jest !== "undefined" && jest !== null
+          ? setTimeout._isMockFunction === true || Object.prototype.hasOwnProperty.call(setTimeout, "clock")
+          : false;
+      }
+      const observers = new Set();
+      exports.changed = () => { for (const observer of observers) queueMicrotask(observer); };
+      exports.waitFor = (callback, { timeout = 1000, interval = 50 } = {}) =>
+        new Promise(async (resolve, reject) => {
+          let lastError, intervalId, finished = false;
+          const overallTimer = setTimeout(() => done(lastError), timeout);
+          if (fakeTimersAreOn()) {
+            check();
+            while (!finished) {
+              await (async () => { jest.advanceTimersByTime(interval); })();
+              if (finished) break;
+              check();
+            }
+          } else {
+            intervalId = setInterval(check, interval);
+            observers.add(check);
+            check();
+          }
+          function done(error, result) {
+            finished = true;
+            clearTimeout(overallTimer);
+            clearInterval(intervalId);
+            observers.delete(check);
+            error ? reject(error) : resolve(result);
+          }
+          function check() {
+            if (finished) return;
+            try { done(null, callback()); } catch (error) { lastError = error; }
+          }
+        });
+    `,
+  };
+  const waits = (header: string) => `
+    ${header}
+    import peek from "peek";
+    import peekEsm from "peek-esm";
+    import { waitFor, changed } from "waits";
+    const macrotask = setImmediate;
+    const outcome = async promise => {
+      let state = "pending";
+      promise.then(() => (state = "resolved"), () => (state = "rejected"));
+      for (let i = 0; i < 5; i++) await new Promise(resolve => macrotask(resolve));
+      return state;
+    };
+    let value, start;
+    const isDone = () => { if (value !== "done") throw new Error("not yet"); };
+    beforeEach(() => { value = undefined; vi.useFakeTimers(); start = Date.now(); });
+    afterEach(() => { vi.useRealTimers(); });
+    test("what is seen", () => {
+      console.log(peek());
+      console.log(peekEsm());
+      console.log(typeof jest, typeof xit, typeof xtest, typeof xdescribe);
+    });
+    test("a fake timer makes the change", async () => {
+      setTimeout(() => { value = "done"; changed(); }, 300);
+      console.log(await outcome(waitFor(isDone)), Date.now() - start);
+    });
+    test("the test advances the clock", async () => {
+      setTimeout(() => { value = "done"; changed(); }, 300);
+      const promise = waitFor(isDone);
+      await vi.advanceTimersByTimeAsync(300);
+      console.log(await outcome(promise), Date.now() - start);
+    });
+    test("a promise makes the change", async () => {
+      let fired = false;
+      setTimeout(() => { fired = true; }, 40);
+      Promise.resolve().then(() => { value = "done"; changed(); });
+      console.log(await outcome(waitFor(isDone)), Date.now() - start, fired);
+    });
+    test("there is no change", async () => {
+      console.log(await outcome(waitFor(isDone)), Date.now() - start);
+    });
+    test("a jest that script has put on globalThis", async () => {
+      let calls = 0;
+      globalThis.jest = { advanceTimersByTime(ms) { calls++; vi.advanceTimersByTime(ms); } };
+      try {
+        setTimeout(() => { value = "done"; changed(); }, 300);
+        console.log(await outcome(waitFor(isDone)), Date.now() - start, calls);
+      } finally {
+        delete globalThis.jest;
+      }
+    });
+  `;
+  const seen = (jest: string, xit: string) =>
+    JSON.stringify({
+      jest,
+      xit,
+      xtest: xit,
+      xdescribe: xit,
+      vi: "object",
+      expect: "function",
+      afterEach: "function",
+      test: "function",
+    });
+
+  test.each([
+    // vitest shows a library "vi", "expect", "afterEach" and "test" only with \`globals: true\`.
+    [`import { test, vi, beforeEach, afterEach } from "vitest";`, []],
+    [``, ["--globals=vitest"]],
+  ])(`a library sees none, and leaves the clock alone: %s %j`, async (header, args) => {
+    const { log, exitCode } = await runTests({ ...libraries, "a.test.js": waits(header) }, args);
+    expect({ log, exitCode }).toEqual({
+      log: [
+        seen("undefined", "undefined"),
+        seen("undefined", "undefined"),
+        "undefined undefined undefined undefined",
+        "pending 0",
+        "resolved 300",
+        "resolved 0 false",
+        "pending 0",
+        "resolved 300 6",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    `import { test, vi, beforeEach, afterEach } from "bun:test";`,
+    `import { test, jest as vi, beforeEach, afterEach } from "@jest/globals";`,
+    ``,
+  ])(`for the other modules nothing changes: %s`, async header => {
+    const { log, exitCode } = await runTests({ ...libraries, "a.test.js": waits(header) });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        seen("object", "function"),
+        seen("object", "function"),
+        "object function function function",
+        "resolved 300",
+        "resolved 600",
+        "resolved 50 true",
+        "rejected 1000",
+        "resolved 300 0",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    [`import { test, vi } from "vitest";`, []],
+    [``, ["--globals=vitest"]],
+  ])("a use is a ReferenceError, where it is written: %s %j", async (header, args) => {
+    const { log, results, errors, exitCode } = await runTests(
+      {
+        "side.js": `console.log("side.js");`,
+        "mocked.js": `export const real = "real";`,
+        "a.test.js": `
+          ${header}
+          const message = fn => { try { return fn(); } catch (error) { return error.name + ": " + error.message; } };
+          test("test", () => {
+            console.log(message(() => typeof jest.fn));
+            console.log(message(() => xit("x", () => {})));
+            console.log((() => { if (false) return typeof jest; return "dead code"; })(), false && typeof jest);
+            console.log((() => { const jest = { local: true }; return jest.local; })(), (xit => typeof xit)(1));
+          });
+        `,
+        "b.test.js": `
+          ${header}
+          import "./side.js";
+          import { real } from "./mocked.js";
+          console.log("b.test.js");
+          jest.mock("./mocked.js", () => ({ real: "mocked" }));
+        `,
+        "c.test.js": `
+          ${header}
+          import { real } from "./mocked.js";
+          vi.mock("./mocked.js", () => ({ real: "mocked" }));
+          test("vi.mock() is hoisted", () => console.log(real));
+        `,
+      },
+      args,
+    );
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "ReferenceError: jest is not defined",
+        "ReferenceError: xit is not defined",
+        "dead code false",
+        "true number",
+        "side.js",
+        "b.test.js",
+        "mocked",
+      ],
+      results: ["(pass) test", "(pass) vi.mock() is hoisted"],
+      errors: ["ReferenceError: jest is not defined"],
+      exitCode: 1,
+    });
+  });
+
+  // What a module is loaded for first decides: it stays in the registry.
+  const scripts = {
+    ...libraries,
+    "vitest.test.js": `
+      import { test } from "vitest";
+      import peekEsm from "peek-esm";
+      test("test", () => console.log("vitest", JSON.parse(require("peek")()).jest, JSON.parse(peekEsm()).jest));
+    `,
+    "bun.test.js": `
+      import { test } from "bun:test";
+      import peekEsm from "peek-esm";
+      test("test", () => console.log("bun:test", JSON.parse(require("peek")()).jest, JSON.parse(peekEsm()).jest));
+    `,
+    "of-vitest.js": `import { vi } from "vitest"; import "peek"; import "peek-esm";`,
+    "of-bun.js": `import { mock } from "bun:test"; import "peek"; import "peek-esm";`,
+    "of-neither.js": `import "peek"; import "peek-esm";`,
+    "of-vitest-peek.js": `import { vi } from "vitest"; import "peek";`,
+    "of-bun-peek-esm.js": `import { mock } from "bun:test"; import "peek-esm";`,
+  };
+  test.each([
+    [["./vitest.test.js"], ["vitest undefined undefined"]],
+    [["./bun.test.js"], ["bun:test object object"]],
+    // A preload script that imports from "vitest" is like a test file that does.
+    [["--preload=./of-vitest.js", "./vitest.test.js"], ["vitest undefined undefined"]],
+    [["--preload=./of-vitest.js", "./bun.test.js"], ["bun:test undefined undefined"]],
+    [["--preload=./of-bun.js", "./vitest.test.js"], ["vitest object object"]],
+    [
+      ["--preload=./of-vitest-peek.js", "--preload=./of-bun-peek-esm.js", "./vitest.test.js"],
+      ["vitest undefined object"],
+    ],
+    [
+      ["--preload=./of-bun-peek-esm.js", "--preload=./of-vitest-peek.js", "./bun.test.js"],
+      ["bun:test undefined object"],
+    ],
+    // One that does not says nothing about the test files, which are not known yet.
+    [["--preload=./of-neither.js", "./vitest.test.js"], ["vitest object object"]],
+    [["--preload=./of-neither.js", "--globals=vitest", "./vitest.test.js"], ["vitest undefined undefined"]],
+    [
+      ["./bun.test.js", "./vitest.test.js"],
+      ["bun:test object object", "vitest object object"],
+    ],
+    [
+      ["./vitest.test.js", "./bun.test.js"],
+      ["vitest undefined undefined", "bun:test undefined undefined"],
+    ],
+    // Nothing stays from one file to the next.
+    [
+      ["--isolate", "./bun.test.js", "./vitest.test.js"],
+      ["bun:test object object", "vitest undefined undefined"],
+    ],
+    [
+      ["--isolate", "./vitest.test.js", "./bun.test.js"],
+      ["vitest undefined undefined", "bun:test object object"],
+    ],
+    [
+      ["--parallel=1", "./bun.test.js", "./vitest.test.js"],
+      ["bun:test object object", "vitest undefined undefined"],
+    ],
+    [
+      ["--isolate", "--preload=./of-vitest.js", "./bun.test.js", "./vitest.test.js"],
+      ["bun:test undefined undefined", "vitest undefined undefined"],
+    ],
+    [
+      ["--isolate", "--preload=./of-neither.js", "./bun.test.js", "./vitest.test.js"],
+      ["bun:test object object", "vitest object object"],
+    ],
+  ])("the jest that a library sees: bun test %j", async (args, expected) => {
+    const { log, exitCode } = await runTests(scripts, args);
+    expect({ log, exitCode }).toEqual({ log: expected, exitCode: 0 });
+  });
+
+  test("the transpiler cache keeps the two apart, and knows a test file that it holds", async () => {
+    using cache = tempDir("vitest-flavor-cache", {});
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    // Small files are not cached.
+    const padding = "\n// " + Buffer.alloc(8192, "-").toString();
+    const files = Object.fromEntries(
+      Object.entries(scripts).map(([name, source]) => [name, name.endsWith(".js") ? source + padding : source]),
+    );
+    const logs: string[][] = [];
+    for (const file of ["vitest", "vitest", "bun", "bun", "vitest"]) {
+      logs.push((await runTests(files, [`./${file}.test.js`], env)).log);
+    }
+    expect(logs).toEqual([
+      ["vitest undefined undefined"],
+      ["vitest undefined undefined"],
+      ["bun:test object object"],
+      ["bun:test object object"],
+      ["vitest undefined undefined"],
+    ]);
+  });
+
+  test("the type of a decorated member may name it", async () => {
+    const { log, results, exitCode } = await runTests({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+      }),
+      "a.test.ts": `
+        import { test, vi } from "vitest";
+        (Reflect as any).metadata = (key: string, type: unknown) => () => {
+          if (key === "design:type") console.log(type === Object);
+        };
+        function decorated(target: unknown, key: string) {}
+        class Service {}
+        class Holder {
+          @decorated service: jest.Mocked<Service>;
+        }
+        test("test", () => console.log(typeof jest, typeof vi.fn));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["true", "undefined function"],
+      results: ["(pass) test"],
+      exitCode: 0,
     });
   });
 });

@@ -82,9 +82,28 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             })
     }
 
+    pub(crate) fn imports_vitest(&self) -> bool {
+        self.import_records
+            .items()
+            .iter()
+            .any(|record| record.path.text == b"vitest")
+    }
+
+    /// Whether what this file uses without importing it comes from "vitest".
+    pub(crate) fn has_globals_of_vitest(&self) -> bool {
+        self.options.features.vitest_globals || self.imports_vitest()
+    }
+
+    fn global_mock_api(&self, name: &[u8]) -> Option<MockApi> {
+        match MockApi::from_export_name(name)? {
+            MockApi::Jest if self.has_globals_of_vitest() => None,
+            api => Some(api),
+        }
+    }
+
     fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
-            return MockApi::from_export_name(Jest::GLOBALS[global].as_bytes());
+            return self.global_mock_api(Jest::GLOBALS[global].as_bytes());
         }
         self.imported_mock_apis.get(&ref_).copied()
     }
@@ -101,7 +120,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     fn unvisited_top_level_mock_api(&self, name: Ref) -> Option<MockApi> {
         match self.unvisited_top_level_symbol(name) {
             Some(symbol) => self.mock_api(symbol),
-            None => MockApi::from_export_name(self.load_name_from_ref(name)),
+            None => self.global_mock_api(self.load_name_from_ref(name)),
         }
     }
 

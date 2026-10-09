@@ -2645,13 +2645,13 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
           export const seen = which;
         `,
         "1.test.ts": `
-          import { expect, test, vi } from "bun:test";
+          import { expect, jest, test } from "bun:test";
           test("a file replaces them", async () => {
             expect((await import("./importer")).seen).toBe("preload");
             const configured = await import("./configured");
             expect(configured.patched()).toBe("preload");
-            vi.doMock("./mocked-by-preload", () => ({ which: "file" }));
-            vi.doMock("./patched-by-preload", () => ({ which: "file" }));
+            jest.doMock("./mocked-by-preload", () => ({ which: "file" }));
+            jest.doMock("./patched-by-preload", () => ({ which: "file" }));
             expect((await import("./mocked-by-preload")).which).toBe("file");
             expect(configured.patched()).toBe("file");
           });
@@ -2669,8 +2669,8 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
           });
         `,
         "3.test.ts": `
-          import { expect, test, vi } from "bun:test";
-          vi.mock("./dependency", () => ({ dependency: () => "mocked" }));
+          import { expect, jest, test } from "bun:test";
+          jest.mock("./dependency", () => ({ dependency: () => "mocked" }));
           test("they are back, and a file mocks what a module of the preload imports", async () => {
             expect((await import("./importer")).seen).toBe("preload");
             const configured = await import("./configured");
@@ -4852,3 +4852,270 @@ test.concurrent(
     );
   },
 );
+
+describe.concurrent("a CommonJS module that a preload has loaded", () => {
+  test.each(["jest.doMock", "mock.module", "vi.doMock"])(
+    "is not patched by %s() once a getter of the mock has evicted it",
+    async mock => {
+      await expectFixturesToPass(
+        {
+          "one.cjs": `exports.a = "real";`,
+          "preload.js": `await import("./one.cjs"); globalThis.one = require("./one.cjs");`,
+          "a.test.js": `
+            import { jest, mock, test, vi } from "bun:test";
+            test("mocks it", () => {
+              ${mock}("./one.cjs", () => ({
+                get a() {
+                  vi.resetModules();
+                  return "mock";
+                },
+              }));
+            });
+          `,
+          "b.test.js": `
+            import { expect, test } from "bun:test";
+            test("as the preload left it", async () => {
+              expect(require("./one.cjs")).toBe(one);
+              expect([one.a, (await import("./one.cjs")).a]).toEqual(["real", "real"]);
+            });
+          `,
+        },
+        2,
+        ["--preload", "./preload.js"],
+      );
+    },
+  );
+
+  test("is the preload's still after a test file has imported it, and reset", async () => {
+    await expectFixturesToPass(
+      {
+        "store.cjs": `exports.id = globalThis.stores = (globalThis.stores ?? 0) + 1;`,
+        "preload.js": `globalThis.store = require("./store.cjs");`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as imported from "./store.cjs";
+          test("imports it, and resets", () => {
+            expect(imported.id).toBe(1);
+            vi.resetModules();
+            expect(require("./store.cjs").id).toBe(2);
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the same module", () => {
+            expect(require("./store.cjs")).toBe(store);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js"],
+    );
+  });
+});
+
+describe.concurrent("a test file mocks a module that a preload has loaded", () => {
+  const apis = {
+    vi: {
+      mock: "vi.mock",
+      inTest: "vi.doMock",
+      unmock: "vi.unmock",
+      fromOriginal: `async importOriginal => ({ ...(await importOriginal()), who: "file" })`,
+    },
+    jest: {
+      mock: "jest.mock",
+      inTest: "jest.doMock",
+      unmock: "jest.unmock",
+      fromOriginal: `() => ({ ...jest.requireActual("./dep.js"), who: "file" })`,
+    },
+    mock: { mock: "mock.module", inTest: "mock.module", unmock: "", fromOriginal: "" },
+  };
+
+  // dep.who, the names that dep.js exports, dep.who through user.js (which the file loads) and through helper.js (which the preload has loaded)
+  type Row = [who: string, names: string, viaUser: string, viaHelper: string];
+  type Rows = Partial<Record<"factory" | "none" | "automock" | "inTest" | "unmock" | "fromOriginal" | "async", Row>>;
+
+  function fixture(name: keyof typeof apis, preloadMocks: boolean, rows: Rows) {
+    const api = apis[name];
+    const bunTest = `import { expect, jest, mock, test, vi } from "bun:test";`;
+    const imports = `
+      import * as dep from "./dep.js";
+      import { viaUser } from "./user.js";
+      import { viaHelper } from "./helper.js";
+    `;
+    const row = `[dep.who, Object.keys(dep).sort().join(), viaUser(), viaHelper()]`;
+    const mocks = {
+      factory: `${api.mock}("./dep.js", () => ({ who: "file" }));`,
+      none: ``,
+      automock: `${api.mock}("./dep.js");`,
+      unmock: `${api.unmock}("./dep.js");`,
+      fromOriginal: `${api.mock}("./dep.js", ${api.fromOriginal});`,
+      async: `${api.mock}("./dep.js", async () => (await null, { who: "file" }));`,
+    };
+    const preloaded = preloadMocks ? "preload" : "real";
+    const files: Record<string, string> = {
+      "dep.js": `export const who = "real"; export const other = "real other";`,
+      "user.js": `import { who } from "./dep.js"; export const viaUser = () => who;`,
+      "helper.js": `import { who } from "./dep.js"; export const viaHelper = () => who;`,
+      "preload.js": `
+        ${bunTest}
+        import { viaHelper } from "./helper.js";
+        ${preloadMocks ? `${api.mock}("./dep.js", () => ({ who: "preload", other: "preload other" }));` : ""}
+        globalThis.heldByPreload = viaHelper;
+      `,
+      // The module that the preload has imported is the one that is mocked.
+      "x-helper.test.js": `
+        ${bunTest}
+        ${imports}
+        ${api.mock}("./helper.js", () => ({ viaHelper: () => "file" }));
+        test("helper.js", () => {
+          expect(${row}).toEqual(${JSON.stringify([preloaded, "other,who", preloaded, "file"])});
+          expect([heldByPreload(), viaHelper === heldByPreload]).toEqual([${JSON.stringify(preloaded)}, false]);
+        });
+      `,
+      "z-last.test.js": `
+        ${bunTest}
+        ${imports}
+        test("as the preload left them", () => {
+          expect(${row}).toEqual(${JSON.stringify([preloaded, "other,who", preloaded, preloaded])});
+          expect(viaHelper).toBe(heldByPreload);
+        });
+      `,
+    };
+    for (const [kind, expected] of Object.entries(rows))
+      files[`${kind}.test.js`] =
+        kind === "inTest"
+          ? `
+            ${bunTest}
+            test("inTest", async () => {
+              ${api.inTest}("./dep.js", () => ({ who: "file" }));
+              const dep = await import("./dep.js");
+              const { viaUser } = await import("./user.js");
+              const { viaHelper } = await import("./helper.js");
+              expect(${row}).toEqual(${JSON.stringify(expected)});
+            });
+          `
+          : `
+            ${bunTest}
+            ${imports}
+            ${mocks[kind as keyof typeof mocks]}
+            test(${JSON.stringify(kind)}, () => expect(${row}).toEqual(${JSON.stringify(expected)}));
+          `;
+    return files;
+  }
+
+  describe.each([
+    ["in one process", []],
+    ["under --isolate", ["--isolate"]],
+  ])("%s", (_, isolate) => {
+    // The rows of Vitest 5.0.3, with the preload as a setup file.
+    test.each<[string, boolean, Rows]>([
+      [
+        "and mocked",
+        true,
+        {
+          factory: ["file", "who", "file", "preload"],
+          none: ["preload", "other,who", "preload", "preload"],
+          automock: ["real", "other,who", "real", "preload"],
+          inTest: ["file", "who", "file", "preload"],
+          unmock: ["real", "other,who", "real", "preload"],
+          fromOriginal: ["file", "other,who", "file", "preload"],
+          async: ["file", "who", "file", "preload"],
+        },
+      ],
+      [
+        "and not mocked",
+        false,
+        {
+          factory: ["file", "who", "file", "real"],
+          none: ["real", "other,who", "real", "real"],
+          automock: ["real", "other,who", "real", "real"],
+          inTest: ["file", "who", "file", "real"],
+          unmock: ["real", "other,who", "real", "real"],
+          fromOriginal: ["file", "other,who", "file", "real"],
+          async: ["file", "who", "file", "real"],
+        },
+      ],
+    ])("with vi.mock(): what the preload has loaded %s stays as it is", async (_, preloadMocks, rows) => {
+      await expectFixturesToPass(fixture("vi", preloadMocks, rows), 9, ["--preload", "./preload.js", ...isolate]);
+    });
+
+    test.each<[string, boolean, Rows]>([
+      [
+        "and mocked",
+        true,
+        {
+          factory: ["file", "who", "file", "file"],
+          none: ["preload", "other,who", "preload", "preload"],
+          automock: ["real", "other,who", "real", "real"],
+          inTest: ["file", "who", "file", "file"],
+          unmock: ["real", "other,who", "real", "preload"],
+          fromOriginal: ["file", "other,who", "file", "file"],
+          async: ["file", "who", "file", "file"],
+        },
+      ],
+      [
+        "and not mocked",
+        false,
+        {
+          factory: ["file", "other,who", "file", "file"],
+          none: ["real", "other,who", "real", "real"],
+          automock: ["real", "other,who", "real", "real"],
+          inTest: ["file", "other,who", "file", "file"],
+          unmock: ["real", "other,who", "real", "real"],
+          fromOriginal: ["file", "other,who", "file", "file"],
+          async: ["file", "other,who", "file", "file"],
+        },
+      ],
+    ])("with jest.mock(): the mock reaches what the preload has loaded %s", async (_, preloadMocks, rows) => {
+      await expectFixturesToPass(fixture("jest", preloadMocks, rows), 9, ["--preload", "./preload.js", ...isolate]);
+    });
+
+    test.each<[string, boolean, string]>([
+      ["and mocked", true, "preload"],
+      ["and not mocked", false, "real"],
+    ])("with mock.module(): the mock reaches what the preload has loaded %s", async (_, preloadMocks, preloaded) => {
+      const rows: Rows = {
+        factory: ["file", "other,who", "file", "file"],
+        none: [preloaded, "other,who", preloaded, preloaded],
+        inTest: ["file", "other,who", "file", "file"],
+        async: ["file", "other,who", "file", "file"],
+      };
+      await expectFixturesToPass(fixture("mock", preloadMocks, rows), 6, ["--preload", "./preload.js", ...isolate]);
+    });
+  });
+});
+
+describe.concurrent("vi.doMock() of a module that a preload has loaded and the file has patched before", () => {
+  test.each([
+    ["mock.module", "dep.js"],
+    ["jest.doMock", "dep.js"],
+    ["mock.module", "dep.cjs"],
+    ["jest.doMock", "dep.cjs"],
+  ])("with %s(): the patch of %s is taken back", async (patch, dep) => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const a = "real";`,
+        "dep.cjs": `exports.a = "real";`,
+        "helper.js": `import * as dep from "./${dep}"; export const seen = () => dep.a;`,
+        "preload.js": `globalThis.helper = await import("./helper.js");`,
+        "a.test.js": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          test("patches, then mocks", async () => {
+            ${patch}("./${dep}", () => ({ a: "patch" }));
+            expect(helper.seen()).toBe("patch");
+            vi.doMock("./${dep}", () => ({ a: "mock" }));
+            expect([(await import("./${dep}")).a, helper.seen()]).toEqual(["mock", "real"]);
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("as the preload left it", async () => {
+            expect([(await import("./${dep}")).a, require("./${dep}").a, helper.seen(), (await import("./helper.js")) === helper]).toEqual(["real", "real", "real", true]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js"],
+    );
+  });
+});

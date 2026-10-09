@@ -85,7 +85,16 @@ describe.concurrent("a file that imports from a test module", () => {
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["test", name]);
     expect(stderr).toContain(" 1 pass");
-    expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual(types);
+    // "vitest" has none of these four.
+    const notOfVitest = {
+      jest: header.includes("{ jest }") ? "object" : "undefined",
+      xit: "undefined",
+      xtest: "undefined",
+      xdescribe: "undefined",
+    };
+    expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual(
+      header.includes(`"vitest"`) ? { ...types, ...notOfVitest } : types,
+    );
     expect(exitCode).toBe(0);
   });
 

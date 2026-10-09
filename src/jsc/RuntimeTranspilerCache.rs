@@ -73,7 +73,9 @@ bun_core::declare_scope!(cache, visible);
 /// API of `bun test`, and of no other.
 /// Version 39: A file uses that API if it looks up one of its globals at all, counted or not, or
 /// `bun test` hoists a statement of it.
-const EXPECTED_VERSION: u32 = 39;
+/// Version 40: `jest`, `xit`, `xtest` and `xdescribe` are no globals where the globals are those
+/// of "vitest", and a file that imports from "vitest" has a features hash of its own.
+const EXPECTED_VERSION: u32 = 40;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -552,6 +554,8 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) test_features_hash: Option<u64>,
+    pub(crate) vitest_features_hash: Option<u64>,
+    pub(crate) imports_vitest: bool,
     pub(crate) exports_kind: ExportsKind,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
@@ -730,7 +734,7 @@ impl RuntimeTranspilerCache {
 
     pub(crate) fn from_file(
         input_hash: u64,
-        feature_hashes: [u64; 2],
+        feature_hashes: [u64; 3],
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
@@ -749,7 +753,7 @@ impl RuntimeTranspilerCache {
     pub(crate) fn from_file_with_cache_file_path(
         cache_file_path: &ZStr,
         input_hash: u64,
-        feature_hashes: [u64; 2],
+        feature_hashes: [u64; 3],
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
@@ -899,15 +903,21 @@ impl RuntimeTranspilerCache {
         let features_hash = features_hasher.final_();
         parser_options.hash_test_features_for_runtime_transpiler(&mut features_hasher);
         let test_features_hash = features_hasher.final_();
+        features_hasher.update(b"vitest");
+        let vitest_features_hash = features_hasher.final_();
         self.features_hash = Some(features_hash);
         self.test_features_hash = Some(test_features_hash);
+        self.vitest_features_hash = Some(vitest_features_hash);
 
         self.entry = match Self::from_file(
             input_hash,
-            [features_hash, test_features_hash],
+            [features_hash, test_features_hash, vitest_features_hash],
             source.contents.len() as u64,
         ) {
-            Ok(e) => Some(e),
+            Ok(e) => {
+                self.imports_vitest = e.metadata.features_hash == vitest_features_hash;
+                Some(e)
+            }
             Err(err) => {
                 bun_core::scoped_log!(
                     cache,
@@ -974,6 +984,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 test_features_hash: this.test_features_hash,
+                vitest_features_hash: this.vitest_features_hash,
+                imports_vitest: false,
                 exports_kind: this.exports_kind,
                 entry: None,
             };
@@ -982,6 +994,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.test_features_hash = jsc.test_features_hash;
+            this.vitest_features_hash = jsc.vitest_features_hash;
+            this.imports_vitest = jsc.imports_vitest;
             this.exports_kind = jsc.exports_kind;
             if let Some(entry) = jsc.entry {
                 this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
@@ -1002,7 +1016,9 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
-                if this.uses_test_api {
+                if this.imports_vitest {
+                    this.vitest_features_hash.unwrap()
+                } else if this.uses_test_api {
                     this.test_features_hash.unwrap()
                 } else {
                     this.features_hash.unwrap()

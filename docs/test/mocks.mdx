@@ -482,6 +482,8 @@ When a test file ends, Bun removes the module mocks it made. The next file loads
 
 Mocks made in a `--preload` script apply to every test file.
 
+A test file can mock the same module again. As in Vitest, `vi.mock()` and `vi.doMock()` leave the modules that the preload script imported as they are: those keep what they imported, and only what the test file imports gets the file's mock. `mock.module()` and `jest.mock()` also change it for the modules that the preload script imported.
+
 ### Hoisting & Preloading
 
 Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls run before the imports of their file, as in Vitest and Jest. A module is then mocked before the file, or anything the file imports, loads it.

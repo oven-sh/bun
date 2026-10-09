@@ -52,7 +52,8 @@ public:
     }
 
     // `pluginContents`: what a plugin supplied for `key` in place of the file. A key has one provider, the last one made
-    // for it, and it is found only by what it was made from: the file, or those contents with that loader.
+    // for it, and it is found only by what it was made from: the file, or those contents with that loader, and the
+    // globals of "bun:test" or of "vitest".
     static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key, const CodeString* pluginContents = nullptr);
 
     // Inserts only when isTagCacheable(provider.m_tag) and the source is all the provider was made from; no-op otherwise.

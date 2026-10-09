@@ -1830,6 +1830,11 @@ impl Jest {
         }
     }
 
+    /// Whether "vitest" lacks this one of `GLOBALS`.
+    pub(crate) fn is_of_bun_only(global: &str) -> bool {
+        matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
+    }
+
     /// Whether "bun:test" lacks this one of `GLOBALS`.
     pub(crate) fn is_of_vitest_only(global: &str) -> bool {
         matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")

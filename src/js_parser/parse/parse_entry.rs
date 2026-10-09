@@ -2292,6 +2292,7 @@ impl<'a> Parser<'a> {
 
         // Before the import of the globals is added, which only `bun test` does.
         let uses_test_api = asks_uses_test_api && p.uses_test_api();
+        let imports_vitest = uses_test_api && p.imports_vitest();
 
         // Auto inject jest globals into the test file
         'outer: {
@@ -2328,12 +2329,8 @@ impl<'a> Parser<'a> {
                 p.arena,
             );
 
-            let import_path: &'static [u8] = if p.options.features.vitest_globals
-                || p.import_records
-                    .items()
-                    .iter()
-                    .any(|record| record.path.text == b"vitest")
-            {
+            let import_path: &'static [u8] = if p.has_globals_of_vitest() {
+                used.retain(|(name, _)| !Jest::is_of_bun_only(name));
                 b"vitest"
             } else {
                 used.retain(|(name, _)| !Jest::is_of_vitest_only(name));
@@ -2707,6 +2704,7 @@ impl<'a> Parser<'a> {
                 } else {
                     cache.exports_kind = exports_kind;
                     cache.uses_test_api = uses_test_api;
+                    cache.imports_vitest = imports_vitest;
                 }
             }
         }

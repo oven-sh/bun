@@ -1706,6 +1706,11 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModul
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
+        // (A getter may have evicted it: nothing would find it to take the patch back.)
+        JSValue cached = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(mock->specifier.get())));
+        RETURN_IF_EXCEPTION(scope, );
+        if (cached != moduleObject)
+            return;
         JSValue moduleExports = exports;
         if (commonJSExports) {
             moduleExports = commonJSExports->exportsObject();
@@ -2363,10 +2368,27 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
 
     LoadedModule loaded = findLoadedModule(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
+    JSModuleMock* previous = registeredModuleMock(globalObject, specifier);
+
+    // As in Vitest, what a preload has loaded stays as the preload left it, with all that the preload linked to it: the test file loads the
+    // module again, as the mock, and the preload's is back when the file ends. (mock.module() and jest.mock() patch what is loaded.)
+    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && !globalObject->onLoadPlugins.testFileOfModule.get(specifier);
+    if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
+        // (What the file has patched before is taken back first.)
+        unmockModule(globalObject, previous, specifier);
+        RETURN_IF_EXCEPTION(scope, {});
+        previous = nullptr;
+        loaded = findLoadedModule(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    bool isLoadInFlight = loaded.staleESMEntry;
+    if (leavesLoadedModuleAlone) {
+        loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
+        loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
+    }
 
     // What is loaded is the original unless an earlier mock was loaded in its place.
-    JSModuleMock* previous = registeredModuleMock(globalObject, specifier);
-    if (previous) {
+    if (previous && !leavesLoadedModuleAlone) {
         mock->originalExports.setMayBeNull(vm, mock, previous->originalExports.get());
         mock->originalNamespace.setMayBeNull(vm, mock, previous->originalNamespace.get());
         mock->patchedNamespace.setMayBeNull(vm, mock, previous->patchedNamespace.get());
@@ -2414,7 +2436,7 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
         plugins.addModuleMock(vm, specifier, mock);
-        if (previous)
+        if (previous && isLoadInFlight)
             keepModuleMockOfLoadInFlight(globalObject, previous, specifier, loaded);
         if (previous && previous->isFromPreload && !mock->isFromPreload)
             plugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, previous });
@@ -3430,9 +3452,15 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     };
 
     if (isBunTest && !Zig::JSMock__isInPreload(globalObject)) {
-        // (require() of an ES module that is loaded comes by here too, and loads nothing: the module is still whoever loaded it's.)
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(globalObject->vm(), specifier->toWTFString()));
-        if (!entry || !entry->record())
+        // (require() of an ES module that is loaded comes by here too, and import() of a CommonJS one, and load nothing: the module is still
+        // whoever loaded it's.)
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifier->toWTFString()));
+        JSValue cached = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(jsString(vm, specifier->toWTFString()))));
+        scope.assertNoExceptionExceptTermination();
+        auto* commonJSModule = cached ? dynamicDowncast<Bun::JSCommonJSModule>(cached) : nullptr;
+        if ((!entry || !entry->record()) && !(commonJSModule && commonJSModule->hasEvaluated))
             globalObject->onLoadPlugins.testFileOfModule.set(specifier->toWTFString(), globalObject->onLoadPlugins.testFile);
     }
 

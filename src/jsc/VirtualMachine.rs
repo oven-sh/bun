@@ -260,6 +260,8 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// `Watcher::get_hash()` of the path of the preload script that is loaded.
+    pub preload_hash: u32,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
@@ -5715,6 +5717,12 @@ impl VirtualMachine {
         self.test_isolation_enabled
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)
+    }
+
+    /// Whether what is transpiled now has the globals of "vitest".
+    #[unsafe(export_name = "Bun__VM__hasGlobalsOfVitest")]
+    pub extern "C" fn has_globals_of_vitest(&self) -> bool {
+        self.transpiler.options.vitest_globals || self.transpiler.options.test_file_imports_vitest
     }
 
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.

@@ -805,6 +805,11 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 .path()
                 .expect("resolver Success result has a primary path")
                 .text;
+            // SAFETY: per fn contract.
+            unsafe {
+                (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
+                (*vm).transpiler.options.test_file_imports_vitest = false;
+            }
             bun_core::String::from_bytes(path_text)
         };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
@@ -909,6 +914,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: per fn contract; `global` is the live global of `vm`.
     unsafe {
+        (*vm).transpiler.options.test_file_imports_vitest = false;
         if (*vm).transpiler.options.rewrite_jest_for_tests {
             (*vm).transpiler.options.own_test_globals =
                 crate::test_runner::jest::Jest::own_globals(&*global)
@@ -2224,6 +2230,8 @@ fn transpile_source_code_inner(
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
             let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+            // SAFETY: per fn contract.
+            let is_preload = unsafe { (*jsc_vm).is_in_preload && (*jsc_vm).preload_hash == hash };
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -2722,6 +2730,21 @@ fn transpile_source_code_inner(
                 if is_main && !disable_transpilying {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
+                }
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let is_bun_test = unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests };
+                if (is_main || is_preload) && !disable_transpilying && is_bun_test {
+                    let imports_vitest = cache.imports_vitest
+                        || parse_result
+                            .ast
+                            .import_records
+                            .as_slice()
+                            .iter()
+                            .any(|record| record.path.text == b"vitest");
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unsafe {
+                        (*jsc_vm).transpiler.options.test_file_imports_vitest = imports_vitest;
+                    }
                 }
 
                 let source = &parse_result.source;
@@ -4303,7 +4326,11 @@ unsafe fn get_loader_and_virtual_source<'a>(
         .or(loader);
 
     // SAFETY: per fn contract.
-    let is_main = specifier == unsafe { &*jsc_vm }.main();
+    let is_main = specifier == unsafe { &*jsc_vm }.main()
+        || unsafe {
+            (*jsc_vm).is_in_preload
+                && (*jsc_vm).preload_hash == bun_watcher::Watcher::get_hash(specifier)
+        };
 
     // package.json sniff for `.js`/`.ts` module-type.
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);

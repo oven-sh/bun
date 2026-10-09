@@ -51,8 +51,8 @@ public:
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
-    // Bun__hashPluginContents() of what a plugin supplied, for a provider IsolatedModuleCache holds that was not made from the file.
-    uint64_t m_pluginContentsHash { 0 };
+    // What IsolatedModuleCache finds a provider that it holds by, besides the key: what a plugin supplied in place of the file, and the module its globals come from.
+    uint64_t m_madeFromHash { 0 };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,

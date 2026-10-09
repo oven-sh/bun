@@ -2631,6 +2631,29 @@ describe("bundler", () => {
     ],
   });
 
+  // u.js folds into the chunk of the other files, and e1.js does not import it. It uses t.js, which is split off, so
+  // it does not stay with k.js, which t.js and r.js use: the two chunks would import each other.
+  itBundled("splitting/SharedFilesInTwoOrdersFoldedFile", {
+    files: {
+      "/e1.js": `import "./r.js"; import "./t.js";`,
+      "/e2.js": `import "./t.js"; import { u } from "./u.js"; import "./r.js"; console.log(u().v);`,
+      "/e3.js": `import "./t.js"; import { u } from "./u.js"; import "./r.js"; console.log(u().v);`,
+      "/t.js": `import { k } from "./k.js"; console.log("t", k?.v); export const t = { v: 1 };`,
+      "/k.js": `export const k = { v: 1, pad: "${Buffer.alloc(20000, "x").toString()}" };`,
+      "/r.js": `import { k } from "./k.js"; console.log("r", k?.v);`,
+      "/u.js": `import { t } from "./t.js"; export const u = () => t;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "r 1\nt 1" },
+      { file: "/out/e2.js", stdout: "t 1\nr 1\n1" },
+    ],
+  });
+
   // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
   itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
     files: {

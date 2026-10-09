@@ -241,6 +241,14 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
             }
         }
     }
+    // `merge_small_chunks` can move a file into a group that not every entry point of the group imports it from.
+    // It imports a file that is split off, so it does not stay with the files that the split-off files import.
+    for (id, &group) in group_of_file.iter().enumerate() {
+        if is_tracked[id] && run_of_file[id] == 0 && groups[group as usize].runs_len >= 2 {
+            runs_len += 1;
+            run_of_file[id] = runs_len;
+        }
+    }
     Ok(run_of_file)
 }
 

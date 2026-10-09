@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
 
 /// Require destructuring from arrays and/or objects.
 pub struct PreferDestructuring {
@@ -111,7 +112,12 @@ impl Config {
         let Some(kind) = self.perform_check(self.variable_declarator, left, property) else {
             return;
         };
-        let report = cx.report(declaration, PREFER_DESTRUCTURING).data("type", kind);
+        // oxlint's port of ESLint's rule points at the value.
+        let place = match declaration.init() {
+            Some(init) if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint => init.span(),
+            _ => declaration.span(),
+        };
+        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", kind);
         // Only `let x = a.x` is fixed.
         if can_fix
             && kind == "object"

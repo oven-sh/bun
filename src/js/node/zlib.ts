@@ -12,6 +12,9 @@ const ArrayPrototypePush = Array.prototype.push;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
@@ -61,17 +64,29 @@ for (const ckey of ObjectKeys(codes)) {
   codes[codes[ckey]] = ckey;
 }
 
-function zlibBuffer(engine, buffer, callback) {
+function zlibBuffer(engine, buffer, callback, direct) {
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
   if (isArrayBufferView(buffer)) {
     buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   } else if (isAnyArrayBuffer(buffer)) {
     buffer = Buffer.from(buffer);
+  } else if (direct && typeof buffer === "string") {
+    buffer = Buffer.from(buffer);
+  } else {
+    direct = false;
   }
   engine.buffers = null;
   engine.nread = 0;
   engine.cb = callback;
+  if (direct) {
+    // Past the stream: nobody else holds the engine. The writes are those that `engine.end(buffer)` leads to: the input with the default flush flag, then nothing with the last one.
+    // kDirectLast: unpacking yields the same whichever way, so the input goes with the last flush flag at once, as in the synchronous methods.
+    engine.on("error", zlibBufferOnError);
+    engine._handle.direct = direct;
+    processChunk(engine, buffer, direct === kDirectLast ? maxFlush(engine._defaultFlushFlag, engine._finishFlushFlag) : engine._defaultFlushFlag, undefined);
+    return;
+  }
   engine.on("data", zlibBufferOnData);
   engine.on("error", zlibBufferOnError);
   engine.on("end", zlibBufferOnEnd);
@@ -131,6 +146,58 @@ function zlibOnError(message, errno, code) {
   error.code = code;
   self.destroy(error);
   self[kError] = error;
+}
+
+// What a synchronous convenience method runs on: the fields of a ZlibBase on an object that is no stream. Nobody but this file sees it, unless the options
+// ask for something that only a stream can do: then it is given `streamPrototype` and becomes the stream that `new ctor(opts)` makes.
+function SyncEngine() {}
+// Its first output chunk. What is in it is copied out (takeOutput), so the next call takes the same one, unless it was filled and handed over whole.
+let syncOutBuffer;
+SyncEngine.prototype = { __proto__: null, on() {}, destroy() {} };
+
+// What such an object inherits is what a copy of it inherits, and asking this runs no code of the user's.
+function isPlainBag(opts) {
+  if (typeof opts !== "object" || $isProxyObject(opts)) return false;
+  const prototype = ObjectGetPrototypeOf(opts);
+  return prototype === ObjectPrototype || prototype === null;
+}
+
+// What the last stream was made with, for the method that has just made it.
+let streamOptions;
+
+function needsStream(options) {
+  return (
+    options.info ||
+    options.highWaterMark !== undefined ||
+    options.readableHighWaterMark !== undefined ||
+    options.writableHighWaterMark !== undefined ||
+    options.allowHalfOpen !== undefined ||
+    options.readable !== undefined ||
+    options.writable !== undefined ||
+    options.objectMode !== undefined ||
+    options.readableObjectMode !== undefined ||
+    options.writableObjectMode !== undefined ||
+    options.emitClose !== undefined ||
+    options.defaultEncoding !== undefined ||
+    options.encoding !== undefined ||
+    options.decodeStrings !== undefined ||
+    options.signal !== undefined ||
+    options.read !== undefined ||
+    options.write !== undefined ||
+    options.writev !== undefined ||
+    options.destroy !== undefined ||
+    options.final !== undefined ||
+    options.construct !== undefined ||
+    options.transform !== undefined ||
+    options.captureRejections !== undefined ||
+    typeof options.flush === "function"
+  );
+}
+
+function becomeStreamLate(engine, opts) {
+  if (engine._outBuffer === syncOutBuffer) syncOutBuffer = undefined;
+  ObjectSetPrototypeOf(engine, engine.streamPrototype);
+  Transform.$call(engine, { autoDestroy: true, ...opts });
 }
 
 const FLUSH_BOUND = [
@@ -218,14 +285,26 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
     }
   }
 
-  Transform.$apply(this, [{ autoDestroy: true, ...opts }]);
+  let sync = this instanceof SyncEngine;
+  if (!sync) {
+    Transform.$call(this, (streamOptions = { autoDestroy: true, ...opts }));
+  } else if (opts) {
+    const plain = isPlainBag(opts);
+    const options = { autoDestroy: true, ...opts };
+    if (!plain || needsStream(options)) {
+      sync = false;
+      ObjectSetPrototypeOf(this, this.streamPrototype);
+      Transform.$call(this, options);
+    }
+  }
   this[kError] = null;
   this.bytesWritten = 0;
   this._handle = handle;
   handle[owner_symbol] = this;
   // Used by processCallback() and zlibOnError()
   handle.onerror = zlibOnError;
-  this._outBuffer = Buffer.allocUnsafe(chunkSize);
+  this._outBuffer =
+    sync && chunkSize === Z_DEFAULT_CHUNK ? (syncOutBuffer ??= Buffer.allocUnsafe(Z_DEFAULT_CHUNK)) : Buffer.allocUnsafe(chunkSize);
   this._outOffset = 0;
 
   this._chunkSize = chunkSize;
@@ -234,6 +313,8 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
+  // A getter that says something else the second time.
+  if (sync && this._info) becomeStreamLate(this, opts);
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -408,6 +489,7 @@ function processChunkSync(self, chunk, flushFlag) {
     const have = availOutBefore - availOutAfter;
     if (have > 0) {
       const out = takeOutput(buffer, offset, have);
+      if (out === syncOutBuffer) syncOutBuffer = undefined;
       offset += have;
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
@@ -470,12 +552,66 @@ function processChunk(self, chunk, flushFlag, cb) {
   );
 }
 
+const kDirectFirst = 1;
+const kDirectLast = 2;
+
+function processDirectCallback(handle, self) {
+  if (self.destroyed) {
+    handle.buffer = null;
+    return;
+  }
+
+  const state = self._writeState;
+  const availOutAfter = state[0];
+  const availInAfter = state[1];
+
+  const inDelta = handle.availInBefore - availInAfter;
+  self.bytesWritten += inDelta;
+
+  const have = handle.availOutBefore - availOutAfter;
+  if (have > 0) {
+    const out = takeOutput(self._outBuffer, self._outOffset, have);
+    self._outOffset += have;
+    zlibBufferOnData.$call(self, out);
+    if (self.destroyed) {
+      handle.buffer = null;
+      return;
+    }
+  } else {
+    $assert(have === 0, "have should not go down");
+  }
+
+  const chunkSize = self._chunkSize;
+  if (availOutAfter === 0 || self._outOffset >= chunkSize) {
+    handle.availOutBefore = chunkSize;
+    self._outOffset = 0;
+    self._outBuffer = Buffer.allocUnsafe(chunkSize);
+  }
+
+  if (availOutAfter === 0) {
+    handle.inOff += inDelta;
+    handle.availInBefore = availInAfter;
+    handle.write(handle.flushFlag, handle.buffer, handle.inOff, handle.availInBefore, self._outBuffer, self._outOffset, chunkSize);
+    return;
+  }
+
+  if (handle.direct === kDirectFirst && availInAfter === 0) {
+    handle.direct = kDirectLast;
+    processChunk(self, Buffer.alloc(0), maxFlush(self._defaultFlushFlag, self._finishFlushFlag), undefined);
+    return;
+  }
+
+  handle.buffer = null;
+  zlibBufferOnEnd.$call(self);
+}
+
 function processCallback() {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
   const handle = this;
   const self = this[owner_symbol];
+  if (handle.direct) return processDirectCallback(handle, self);
   const state = self._writeState;
 
   if (self.destroyed) {
@@ -629,7 +765,7 @@ function Zlib(opts, mode) {
   this._writeState = new Uint32Array(2);
   handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback, dictionary);
 
-  ZlibBase.$apply(this, [opts, mode, handle, zlibDefaultOpts]);
+  ZlibBase.$call(this, opts, mode, handle, zlibDefaultOpts);
 
   this._level = level;
   this._strategy = strategy;
@@ -661,48 +797,70 @@ Zlib.prototype.params = function params(level, strategy, callback) {
 
 function Deflate(opts): void {
   if (!(this instanceof Deflate)) return new Deflate(opts);
-  Zlib.$apply(this, [opts, DEFLATE]);
+  Zlib.$call(this, opts, DEFLATE);
 }
 $toClass(Deflate, "Deflate", Zlib);
 
 function Inflate(opts): void {
   if (!(this instanceof Inflate)) return new Inflate(opts);
-  Zlib.$apply(this, [opts, INFLATE]);
+  Zlib.$call(this, opts, INFLATE);
 }
 $toClass(Inflate, "Inflate", Zlib);
 
 function Gzip(opts): void {
   if (!(this instanceof Gzip)) return new Gzip(opts);
-  Zlib.$apply(this, [opts, GZIP]);
+  Zlib.$call(this, opts, GZIP);
 }
 $toClass(Gzip, "Gzip", Zlib);
 
 function Gunzip(opts): void {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
-  Zlib.$apply(this, [opts, GUNZIP]);
+  Zlib.$call(this, opts, GUNZIP);
 }
 $toClass(Gunzip, "Gunzip", Zlib);
 
 function DeflateRaw(opts): void {
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-  Zlib.$apply(this, [opts, DEFLATERAW]);
+  Zlib.$call(this, opts, DEFLATERAW);
 }
 $toClass(DeflateRaw, "DeflateRaw", Zlib);
 
 function InflateRaw(opts): void {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-  Zlib.$apply(this, [opts, INFLATERAW]);
+  Zlib.$call(this, opts, INFLATERAW);
 }
 $toClass(InflateRaw, "InflateRaw", Zlib);
 
 function Unzip(opts): void {
   if (!(this instanceof Unzip)) return new Unzip(opts);
-  Zlib.$apply(this, [opts, UNZIP]);
+  Zlib.$call(this, opts, UNZIP);
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
+// The constructor of a synchronous method's engine. It bears the name of the stream's, which is what an error's stack shows.
+function syncEngineOf(ctor, base, mode) {
+  const Engine =
+    ctor === DeflateRaw
+      ? function (opts) {
+          if (opts && opts.windowBits === 8) opts.windowBits = 9;
+          base.$call(this, opts, mode);
+        }
+      : function (opts) {
+          base.$call(this, opts, mode);
+        };
+  ObjectDefineProperty(Engine, "name", { value: ctor.name });
+  Engine.prototype = { __proto__: SyncEngine.prototype, streamPrototype: ctor.prototype };
+  return Engine;
+}
+
+function syncEngineOfClass(ctor, Engine) {
+  ObjectSetPrototypeOf(Engine.prototype, SyncEngine.prototype);
+  Engine.prototype.streamPrototype = ctor.prototype;
+  return Engine;
+}
+
+function createConvenienceMethod(ctor, sync, methodName, isZstd?, unpacks?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -734,7 +892,19 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }
-      return zlibBuffer(new ctor(opts), buffer, callback);
+      const engine = new ctor(opts);
+      const options = streamOptions;
+      streamOptions = undefined;
+      return zlibBuffer(
+        engine,
+        buffer,
+        callback,
+        (opts && !isPlainBag(opts)) || options.flush !== undefined || needsStream(options)
+          ? 0
+          : unpacks && options.finishFlush === undefined
+            ? kDirectLast
+            : kDirectFirst,
+      );
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
@@ -789,19 +959,19 @@ function Brotli(opts, mode) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
-  ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);
+  ZlibBase.$call(this, opts, mode, handle, brotliDefaultOpts);
 }
 $toClass(Brotli, "Brotli", Zlib);
 
 function BrotliCompress(opts): void {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  Brotli.$apply(this, [opts, BROTLI_ENCODE]);
+  Brotli.$call(this, opts, BROTLI_ENCODE);
 }
 $toClass(BrotliCompress, "BrotliCompress", Brotli);
 
 function BrotliDecompress(opts): void {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  Brotli.$apply(this, [opts, BROTLI_DECODE]);
+  Brotli.$call(this, opts, BROTLI_DECODE);
 }
 $toClass(BrotliDecompress, "BrotliDecompress", Brotli);
 
@@ -899,27 +1069,35 @@ const zlib = {
   ZstdDecompress,
 
   deflate: createConvenienceMethod(Deflate, false, "deflate"),
-  deflateSync: createConvenienceMethod(Deflate, true, "deflateSync"),
+  deflateSync: createConvenienceMethod(syncEngineOf(Deflate, Zlib, DEFLATE), true, "deflateSync"),
   gzip: createConvenienceMethod(Gzip, false, "gzip"),
-  gzipSync: createConvenienceMethod(Gzip, true, "gzipSync"),
+  gzipSync: createConvenienceMethod(syncEngineOf(Gzip, Zlib, GZIP), true, "gzipSync"),
   deflateRaw: createConvenienceMethod(DeflateRaw, false, "deflateRaw"),
-  deflateRawSync: createConvenienceMethod(DeflateRaw, true, "deflateRawSync"),
-  unzip: createConvenienceMethod(Unzip, false, "unzip"),
-  unzipSync: createConvenienceMethod(Unzip, true, "unzipSync"),
-  inflate: createConvenienceMethod(Inflate, false, "inflate"),
-  inflateSync: createConvenienceMethod(Inflate, true, "inflateSync"),
-  gunzip: createConvenienceMethod(Gunzip, false, "gunzip"),
-  gunzipSync: createConvenienceMethod(Gunzip, true, "gunzipSync"),
-  inflateRaw: createConvenienceMethod(InflateRaw, false, "inflateRaw"),
-  inflateRawSync: createConvenienceMethod(InflateRaw, true, "inflateRawSync"),
+  deflateRawSync: createConvenienceMethod(syncEngineOf(DeflateRaw, Zlib, DEFLATERAW), true, "deflateRawSync"),
+  unzip: createConvenienceMethod(Unzip, false, "unzip", false, true),
+  unzipSync: createConvenienceMethod(syncEngineOf(Unzip, Zlib, UNZIP), true, "unzipSync"),
+  inflate: createConvenienceMethod(Inflate, false, "inflate", false, true),
+  inflateSync: createConvenienceMethod(syncEngineOf(Inflate, Zlib, INFLATE), true, "inflateSync"),
+  gunzip: createConvenienceMethod(Gunzip, false, "gunzip", false, true),
+  gunzipSync: createConvenienceMethod(syncEngineOf(Gunzip, Zlib, GUNZIP), true, "gunzipSync"),
+  inflateRaw: createConvenienceMethod(InflateRaw, false, "inflateRaw", false, true),
+  inflateRawSync: createConvenienceMethod(syncEngineOf(InflateRaw, Zlib, INFLATERAW), true, "inflateRawSync"),
   brotliCompress: createConvenienceMethod(BrotliCompress, false, "brotliCompress"),
-  brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
-  brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
-  brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
+  brotliCompressSync: createConvenienceMethod(syncEngineOf(BrotliCompress, Brotli, BROTLI_ENCODE), true, "brotliCompressSync"),
+  brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress", false, true),
+  brotliDecompressSync: createConvenienceMethod(syncEngineOf(BrotliDecompress, Brotli, BROTLI_DECODE), true, "brotliDecompressSync"),
   zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
-  zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
-  zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
-  zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),
+  zstdCompressSync: createConvenienceMethod(syncEngineOfClass(ZstdCompress, class ZstdCompress extends Zstd {
+    constructor(opts) {
+      super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
+    }
+  }), true, "zstdCompressSync"),
+  zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress", false, true),
+  zstdDecompressSync: createConvenienceMethod(syncEngineOfClass(ZstdDecompress, class ZstdDecompress extends Zstd {
+    constructor(opts) {
+      super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
+    }
+  }), true, "zstdDecompressSync"),
 
   createDeflate: function (options) {
     return new Deflate(options);

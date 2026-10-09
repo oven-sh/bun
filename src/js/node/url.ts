@@ -29,6 +29,7 @@ const { URL, URLSearchParams, URLPattern } = globalThis;
 const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 interface Url {
   protocol: string | null;
@@ -88,6 +89,12 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   // Characters never allowed in a hostname (post-IDNA) / bracketed IPv6 hostname.
   forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/,
   forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/,
+  // user@server without a protocol
+  authWithoutProtocolPattern = /^\/\/[^@/]+@[^@/]+/,
+  // Any of `autoEscape`
+  autoEscapePattern = /['{}|\\^`<>" \r\n\t]/,
+  questionMarkOrHashPattern = /[?#]/g,
+  hashPattern = /#/g,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
@@ -165,7 +172,10 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let rest = "";
   let lastPos = 0;
   for (let i = 0, inWs = false, split = false; i < url.length; ++i) {
-    const code = url.$charCodeAt(i);
+    const code = StringPrototypeCharCodeAt.$call(url, i);
+
+    // Nothing below looks at ] ^ _ ` a-z { | } ~ once the text has begun.
+    if (code > 92 && code < 128 && start !== -1 && !inWs) continue;
 
     // Find first and last non-whitespace characters for trimming
     const isWs = code < 33 || code === Char.NO_BREAK_SPACE || code === Char.ZERO_WIDTH_NOBREAK_SPACE;
@@ -263,7 +273,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
    * how the browser resolves relative URLs.
    */
   let slashes;
-  if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
+  if (slashesDenoteHost || proto || rest.match(authWithoutProtocolPattern)) {
     slashes = rest.substring(0, 2) === "//";
     if (slashes && !(proto && hostlessProtocol[lowerProto])) {
       rest = rest.substring(2);
@@ -290,7 +300,10 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     let atSign = -1;
     let nonHost = -1;
     for (let i = 0; i < rest.length; ++i) {
-      switch (rest.$charCodeAt(i)) {
+      const code = StringPrototypeCharCodeAt.$call(rest, i);
+      // a-z 0-9 - .
+      if (code >= 97 ? code <= 122 : code >= 48 ? code <= 57 : code === 46 || code === 45) continue;
+      switch (code) {
         case Char.TAB:
         case Char.LINE_FEED:
         case Char.CARRIAGE_RETURN:
@@ -419,7 +432,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
    * now rest is set to the post-host stuff.
    * chop off any delim chars.
    */
-  if (!unsafeProtocol[lowerProto]) {
+  if (!unsafeProtocol[lowerProto] && autoEscapePattern.test(rest)) {
     /*
      * First, make 100% sure that any "autoEscape" chars get
      * escaped, even if encodeURIComponent doesn't think they
@@ -510,7 +523,7 @@ function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
   let i = 0;
 
   outer: for (; i < len; i++) {
-    let c = str.$charCodeAt(i);
+    let c = StringPrototypeCharCodeAt.$call(str, i);
 
     // ASCII
     while (c < 0x80) {
@@ -522,7 +535,7 @@ function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
 
       if (++i === len) break outer;
 
-      c = str.$charCodeAt(i);
+      c = StringPrototypeCharCodeAt.$call(str, i);
     }
 
     if (lastPos < i) out += str.slice(lastPos, i);
@@ -543,7 +556,7 @@ function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
 
     if (i >= len) throw $ERR_INVALID_URI();
 
-    const c2 = str.$charCodeAt(i) & 0x3ff;
+    const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
 
     lastPos = i + 1;
     c = 0x10000 + (((c & 0x3ff) << 10) | c2);
@@ -560,15 +573,15 @@ function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
 
 function isIpv6Hostname(hostname: string) {
   return (
-    hostname.$charCodeAt(0) === Char.LEFT_SQUARE_BRACKET &&
-    hostname.$charCodeAt($toLength(hostname.length - 1)) === Char.RIGHT_SQUARE_BRACKET
+    StringPrototypeCharCodeAt.$call(hostname, 0) === Char.LEFT_SQUARE_BRACKET &&
+    StringPrototypeCharCodeAt.$call(hostname, $toLength(hostname.length - 1)) === Char.RIGHT_SQUARE_BRACKET
   );
 }
 
 let warnInvalidPort = true;
 function getHostname(self, rest, hostname: string, url) {
   for (let i = 0; i < hostname.length; ++i) {
-    const code = hostname.$charCodeAt(i);
+    const code = StringPrototypeCharCodeAt.$call(hostname, i);
     const isValid =
       code !== Char.FORWARD_SLASH &&
       code !== Char.BACKWARD_SLASH &&
@@ -739,13 +752,15 @@ Url.prototype.format = function format() {
     search = "?" + search;
   }
 
-  pathname = pathname.replace(/[?#]/g, function (match) {
-    return encodeURIComponent(match);
-  });
-  search = search.replace(/#/g, "%23");
+  pathname = pathname.replace(questionMarkOrHashPattern, encodeMatch);
+  search = search.replace(hashPattern, "%23");
 
   return protocol + host + pathname + search + hash;
 };
+
+function encodeMatch(match) {
+  return encodeURIComponent(match);
+}
 
 function urlResolve(source: string | URL | Url, relative: string | URL | Url) {
   return urlParse(source, false, true).resolve(relative);

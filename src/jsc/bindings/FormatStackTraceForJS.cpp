@@ -348,6 +348,10 @@ WTF::String formatStackTrace(
 
         sourceURLs[i] = Zig::sourceURL(vm, frame);
 
+        // A position recorded at build time is already the one in the original source.
+        if (auto position = frame.reportedPosition(); position && position->source)
+            continue;
+
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
         if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
@@ -536,7 +540,11 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
         }
 
-        if (globalObjectForFrame == globalObject) {
+        // A position recorded at build time is already the one in the original source.
+        auto reportedPosition = stackFrame.reportedPosition();
+        bool isOriginalPosition = reportedPosition && reportedPosition->source;
+
+        if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();

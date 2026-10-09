@@ -170,19 +170,43 @@ fn run(args: &[String]) {
                 Some(it) => (text(&it.cwd), it.entry_points.clone(), command_line.project.clone().or_else(|| it.tsconfig.clone())),
                 None => (cwd, command_line.paths.clone(), command_line.project.clone()),
             };
-            let code = snapshot.as_ref().map_or_else(Vec::new, |it| it.code.clone());
+            let mut code = snapshot.as_ref().map_or_else(Vec::new, |it| it.code.clone());
+            if has("--aot") {
+                code.extend(bun_aot::prelude::FILES.iter().map(|&(name, _)| bun_aot::prelude::path_of(cwd.as_bytes(), name)));
+            }
             let script_kinds = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds.clone());
             let script_kinds_by_extension = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds_by_extension.clone());
             let conditions = snapshot.as_ref().map_or_else(Vec::new, |it| it.conditions.clone());
             // `--define=name=value` and `--feature=FLAG`, as for `bun build`.
-            let mut constants = bun_aot::Constants::default();
+            let mut constants = bun_aot::Constants { root: bun_sema_driver::host::from_native(cwd.as_bytes()), ..Default::default() };
             if let Some(it) = &snapshot {
                 constants.defines = it.defines.clone();
                 constants.features = it.features.clone();
                 constants.resolved = Some(it.resolved.clone());
                 constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
+                constants.statements = bun_aot::Constants::statements_by_file(it.statements.iter().cloned());
                 constants.texts = it.texts.iter().cloned().collect();
                 constants.assets = it.assets.iter().cloned().collect();
+            }
+            // `--test-globals`: as for `bun test --aot`.
+            constants.has_test_globals = has("--test-globals");
+            // `--own-paths`: as for `bun run --aot`, each module reports its own path.
+            if has("--own-paths") || snapshot.as_ref().is_some_and(|it| it.preserve_source_paths) {
+                constants.own_paths = Some(|path| {
+                    let mut url = b"file://".to_vec();
+                    for &byte in path {
+                        match byte {
+                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' | b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' => url.push(byte),
+                            _ => url.extend(format!("%{byte:02X}").into_bytes()),
+                        }
+                    }
+                    url
+                });
+            }
+            // `--removable=path:offset`: what the bundler says of the statement that starts there, for a test without a bundler.
+            for (path, offset) in args.iter().filter_map(|a| a.strip_prefix("--removable=")?.rsplit_once(':')) {
+                let path = bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(path).to_string_lossy().as_bytes());
+                constants.statements.entry(path).or_default().push((offset.parse().expect("--removable=path:offset"), true));
             }
             for define in args.iter().filter_map(|a| a.strip_prefix("--define=")) {
                 if let Some((name, value)) = define.split_once('=') {
@@ -272,8 +296,26 @@ fn run(args: &[String]) {
             // `--aot-explain=foreign`, `--aot-explain=members`: why a view admits objects that are not laid out, and which views have
             // members that the relation does not find.
             // `--aot-explain=uninitialized`: the variables of numbers and booleans that may be read before anything is stored to them.
-            let explain = bun_aot::Explain { foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), uninitialized: has("--aot-explain=uninitialized") };
+            // `--aot-explain=kinds`: how many variables, parameters and loop counters hold one kind of value, going by what is stored to them alone.
+            // `--aot-explain=disagreements`: in what a fragment and the program differ, and what a class is that nobody defines, without a name or a text of the program.
+            // `--aot-explain=fields`: the fields whose name nothing stores, by name and by layout.
+            // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
+            // `--aot-explain=predictions`: every place where a declaration without a body was taken for a prediction, with counts.
+            // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
+            // `--aot-explain=captures`: which captured variables are copied, which activations keep an environment and the first reason why, and what each function captures.
+            // `--aot-explain=escape`: of each environment and function expression whether it is unreachable once the activation that made it has ended, and what keeps it if not.
+            // `--aot-explain=parsed`: by where a value of type `any` or `unknown` comes from, how many views it is held to in containers, and whether that flags them. The first nine lines are numbers alone.
+            // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
+            // `--aot-explain=callees`: the variables and fields that may hold a function and have no one function, or none that is a fact, each with the hole in the proof.
+            // `--aot-explain=keys`: the pairs of a property and a constant key under which one function of the program is stored: `e.on("x", listener)`.
+            let explain = bun_aot::Explain { keys: has("--aot-explain=keys"), foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), escapes: has("--aot-explain=escapes"), alterations: has("--aot-explain=alterations"), uninitialized: has("--aot-explain=uninitialized"), kinds: has("--aot-explain=kinds"), captures: has("--aot-explain=captures"), escape: has("--aot-explain=escape"), fields: has("--aot-explain=fields"), disagreements: has("--aot-explain=disagreements"), integers: has("--aot-explain=integers"), predictions: has("--aot-explain=predictions"), callees: has("--aot-explain=callees"), progress: has("--aot-explain=progress"), parsed: has("--aot-explain=parsed"), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
+            // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
+            // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
+            let explains_react = has("--aot-explain=react") || has("--aot-explain=react-locations");
+            let react = bun_aot::build::react::Report::new(&constants, has("--aot-explain=react-locations"));
+            let is_replayed = snapshot.is_some();
+            let entry_functions = snapshot.as_ref().map_or_else(Vec::new, |it| it.entry_functions.clone());
             let begin_translation = |program: &bun_sema::check::Program| {
                 let roots: Vec<bun_sema::program::FileId> = (roots.iter())
                     .filter_map(|path| {
@@ -281,26 +323,50 @@ fn run(args: &[String]) {
                         program.files.by_path.get(&path)
                     })
                     .collect();
-                // As `bun build --compile` does: the executable runs its first entry point.
-                translation.begin(program, &roots[..roots.len().min(1)]);
+                // As `bun build --compile` does: the executable runs its first entry point and starts workers with the others. The paths of a
+                // snapshot also have what a page imports.
+                let roots = if is_replayed { &roots[..roots.len().min(1)] } else { &roots[..] };
+                if has("--aot") {
+                    let entry_points: Vec<Vec<bun_sema::program::FileId>> = if entry_functions.is_empty() {
+                        roots.iter().map(|&root| vec![root]).collect()
+                    } else {
+                        (entry_functions.iter())
+                            .map(|files| files.iter().filter_map(|path| program.files.by_path.get(&bun_sema_driver::host::from_native(path))).collect())
+                            .collect()
+                    };
+                    translation.begin(program, &entry_points);
+                }
+                if explains_react {
+                    react.begin(program, roots);
+                }
             };
             let loaded = |program: &bun_sema::check::Program| {
                 if has("--memory") {
                     list_loaded(program);
                 }
-                if has("--aot") {
+                if has("--aot") || explains_react {
                     begin_translation(program);
                 }
             };
             let translate_file =
                 |checker: &mut bun_sema::check::Checker<'_, '_>,
                  file: bun_sema::program::FileId| translation.translate_file(checker, file);
+            let explain_react =
+                |checker: &mut bun_sema::check::Checker<'_, '_>,
+                 file: bun_sema::program::FileId| {
+                    if has("--aot") {
+                        translation.translate_file(checker, file);
+                    }
+                    react.explain_file(checker, file);
+                };
             let note_file =
                 |checker: &mut bun_sema::check::Checker<'_, '_>,
                  file: bun_sema::program::FileId| translation.note_file(checker, file);
             let merge_notes = |program: &bun_sema::check::Program| translation.merge_notes(program);
             // By entry of `Report::not_in_program`.
             let why_errors_do_not_stand: Guarded<Vec<String>> = Guarded::new(Vec::new());
+            // `--aot-out=<file>`, and the file is not written.
+            let lacks_output = std::sync::atomic::AtomicBool::new(false);
             let translate = |program: &bun_sema::check::Program,
                              in_parallel: bun_sema::util::InParallel<'_>,
                              errors: &[(bun_sema::program::FileId, u32)]|
@@ -314,9 +380,16 @@ fn run(args: &[String]) {
                 for problem in &translated.problems {
                     error_line!("{problem}");
                 }
-                error_line!("aot: members: {} pairs asked, {} added", translated.pairs_asked, translated.members_added);
+                error_line!("aot: members: {}", translated.members);
                 for line in &translated.explained {
                     error_line!("aot: {line}");
+                }
+                for (id, why) in translated.builtin_modules_left_out.iter().filter(|_| has("--aot-explain=builtins")) {
+                    let module = bun_builtin_syntax::Archive::embedded().manifest().module(*id);
+                    error_line!("aot: builtins: left out {id} \"{}\": {why}", module.map_or_else(String::new, |module| text(&module.name)));
+                }
+                for (id, why) in translated.builtin_functions_left_out.iter().filter(|_| has("--aot-explain=builtins")) {
+                    error_line!("aot: builtins: left out the function {id}: {why}");
                 }
                 let steps: Vec<String> = (translated.times.steps.iter())
                     .map(|(step, spent)| format!("{step} {:.3} s", spent.as_secs_f64()))
@@ -329,9 +402,8 @@ fn run(args: &[String]) {
                 );
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    if translated.problems.is_empty() {
-                        let _ = std::fs::write(path, bun_aot::format::write(&translated.program));
-                    }
+                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write(&translated.program)).is_ok();
+                    lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     return translated.errors_that_stand;
                 }
@@ -355,7 +427,9 @@ fn run(args: &[String]) {
                     let path = text(checker.p.files.modules[file.idx()].file_name());
                     error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
                 };
-            let after_file = if has("--aot") {
+            let after_file = if explains_react {
+                Some(&explain_react as AfterFile<'_>)
+            } else if has("--aot") {
                 Some(&translate_file as AfterFile<'_>)
             } else if has("--file-instructions") {
                 Some(&note_instructions as AfterFile<'_>)
@@ -436,7 +510,7 @@ fn run(args: &[String]) {
                 conditions: &conditions,
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,
-                loaded: (has("--memory") || has("--aot"))
+                loaded: (has("--memory") || has("--aot") || explains_react)
                     .then_some(&loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 compile: has("--aot").then_some(
                     &translate
@@ -481,10 +555,28 @@ fn run(args: &[String]) {
                     bun_sema_standalone::current_memory() >> 20
                 );
             }
-            let provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
+            let mut provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
                 already_read: std::mem::take(&mut it.already_read),
                 ..Default::default()
             });
+            if has("--aot") {
+                for &(name, text) in bun_aot::prelude::FILES {
+                    provided.already_read.insert(bun_sema_driver::host::from_native(&bun_aot::prelude::path_of(cwd.as_bytes(), name)), text.as_bytes().to_vec());
+                }
+            }
+            // `--no-builtin-modules`: for a program that is run where nothing runs the modules of the runtime, in the `jsc` shell.
+            provided.without_builtin_modules = has("--no-builtin-modules");
+            // `--builtin-sources=<folder>`: a source of the runtime is read from `<folder>/<path under src/js>` if that file is there, else
+            // from the archive. The ids, the names and what requires what stay the manifest's.
+            if let Some(folder) = args.iter().find_map(|a| a.strip_prefix("--builtin-sources=")) {
+                let manifest = bun_builtin_syntax::Archive::embedded().manifest();
+                let with_source = manifest.modules().iter().map(|module| &module.path).filter(|path| !path.is_empty());
+                for file in with_source.chain(manifest.function_files()) {
+                    if let Ok(source) = std::fs::read(std::path::Path::new(folder).join(text(file))) {
+                        provided.already_read.insert([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), source);
+                    }
+                }
+            }
             bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
@@ -512,6 +604,44 @@ fn run(args: &[String]) {
                 let mut out = Vec::new();
                 write_diagnostics(&mut out, &report, &style);
                 let _ = std::io::stdout().write_all(&out);
+                if explains_react {
+                    for line in react.finish() {
+                        output_line!("react: {line}");
+                    }
+                }
+                // `--aot-explain=builtins`: the modules of the runtime that are compiled with the program, and why each is.
+                if has("--aot-explain=builtins")
+                    && let Some(found) = &report.builtin_modules
+                {
+                    use bun_sema_driver::builtins::Why;
+                    let archive = bun_builtin_syntax::Archive::embedded();
+                    let name_of = |id: u32| archive.manifest().module(id).map_or_else(String::new, |module| text(if module.specifier.is_empty() { &module.label } else { &module.specifier }));
+                    let mut bytes = 0;
+                    for module in &found.included {
+                        let size = archive.source(module.id).len();
+                        bytes += size;
+                        let why = match &module.why {
+                            Why::Always => "native code requires it".to_owned(),
+                            Why::Named(specifier) => format!("the program names \"{}\"", text(specifier)),
+                            Why::Trigger(property) => format!("the program may read {}", text(property)),
+                            Why::AnyName(door) => format!("a name that is made at run time can reach the module loader: {door}"),
+                            Why::RequiredBy(by) => format!("{} can require it", name_of(*by)),
+                        };
+                        error_line!("aot: builtins: included {} {} {} {size} bytes: {why}", module.id, name_of(module.id), text(archive.path(module.id)));
+                    }
+                    for file in archive.manifest().function_files() {
+                        error_line!("aot: builtins: functions {}{}", text(bun_builtin_syntax::VIRTUAL_ROOT), text(file));
+                    }
+                    for (name, id) in &found.native {
+                        error_line!("aot: builtins: left out {} \"{}\": it is native code", id.map_or_else(|| "-".to_owned(), |id| id.to_string()), text(name));
+                    }
+                    let mut native_bindings: Vec<_> = archive.manifest().native_bindings().collect();
+                    native_bindings.sort_unstable_by_key(|binding| binding.id);
+                    for binding in native_bindings {
+                        error_line!("aot: builtins: native {} {} {} {}", binding.id, text(binding.kind), text(binding.file), text(binding.symbol));
+                    }
+                    error_line!("aot: builtins: {} modules, {bytes} bytes of source", found.included.len());
+                }
                 // `--aot-explain=errors`: the errors that do not fail the build, and why each does not.
                 if has("--aot") {
                     error_line!("aot: {} errors in code that is not in the program", report.not_in_program.len());
@@ -696,7 +826,7 @@ fn run(args: &[String]) {
                         }
                     }
                 }
-                std::process::exit(i32::from(!report.is_ok()));
+                std::process::exit(i32::from(!report.is_ok() || lacks_output.load(std::sync::atomic::Ordering::Relaxed)));
             })
         }
         // each --out=<directory> [--jobs=<n>] [--limit=<seconds>]: for thousands of small programs,

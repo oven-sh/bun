@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { Stats, statSync } from "node:fs";

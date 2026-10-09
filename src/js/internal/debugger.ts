@@ -102,7 +102,7 @@ function cdpAdapterConstructor() {
   return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
 }
 
-export default function (
+function startDebugger(
   executionContextId: number,
   url: string,
   createBackend: CreateBackendFn,
@@ -918,3 +918,5 @@ type Writer = {
   drain?: () => void;
   close: () => void;
 };
+
+export default startDebugger;

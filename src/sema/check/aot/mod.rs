@@ -1,17 +1,41 @@
 //! What ahead-of-time compilation asks of the types beyond what checking does.
 
+mod alterations;
+mod builtin_constants;
+mod builtins_generated;
+mod callees;
+mod captures;
 mod classes;
+mod creation;
+mod escape;
+mod escape_closure;
+mod first_stores;
 mod flows;
 mod identity;
+mod int32_fields;
 mod integers;
 mod javascript;
+mod kinds;
+mod libraries;
 mod storage;
+mod subtypes;
+mod trust;
+mod undeclared_fields;
 
+pub use callees::{Callee, Hole, OnlyFunction};
+pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver};
+pub use escape::{Keeper, argument_use};
+pub use escape_closure::{ByDoor, Certainty, Door, Doubt, EscapeCause, ForClosure};
 pub use classes::{ClassFacts, MethodStore, ReplacedMethods};
+pub use first_stores::FirstStore;
 pub use identity::Identity;
+pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use javascript::CodeOfImport;
-pub use flows::{AddedOver, BuiltIn, Candidate, Literal, Membership, Noted, Place, Question, Questions, Reach, WhyForeign};
-pub use storage::{Evaluates, Primitive, ReferenceRead, Storage};
+pub use kinds::kind;
+pub use flows::{BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
+pub use subtypes::{Cause, FieldTypes, Sizes, Subtypes};
+pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
+pub use trust::Claim;
 
 use super::Checker;
 use crate::atom::known;
@@ -46,6 +70,7 @@ pub(super) struct Shared {
     /// `exprs_by_kind_of`
     exprs_by_kind: ByFile<ExprsByKind>,
     classes: classes::Shared,
+    escape: escape::Shared,
     integers: integers::Shared,
     javascript: javascript::Shared,
     storage: storage::Shared,
@@ -54,9 +79,18 @@ pub(super) struct Shared {
 /// What the queries of this module have found so far, a field for each part of it. It belongs to a checker.
 #[derive(Default)]
 pub(super) struct State {
+    callees: callees::State,
+    captures: captures::State,
+    creation: creation::State,
+    first_stores: first_stores::State,
+    undeclared_fields: undeclared_fields::State,
+    escape: escape::State,
+    escape_closure: escape_closure::State,
+    trust: trust::State,
     flows: flows::State,
     identity: identity::State,
     integers: integers::State,
+    kinds: kinds::State,
     javascript: javascript::State,
     storage: storage::State,
 }
@@ -91,6 +125,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `{}`, `Object`, an interface without members: a string or a number is one as well. `object` is not meant.
     pub fn admits_primitives(&mut self, ty: TypeId) -> bool {
         ty != TypeId::OBJECT && !matches!(self.data(ty), TypeData::Union(_)) && (self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]))
+    }
+
+    /// `is_assignable`, for a question that checking the program need not have asked, and whose answer only saves something. `false` also
+    /// where it is not known: where the checker has run into one of its limits, behind which is the error type, to which everything
+    /// is assignable. `e as T[K]`: to be assignable to `T[K]` is to be assignable to all values of `T` at once, an intersection that is
+    /// distributed over those that are unions. TypeScript builds up to 100,000 of them, each with members of its own.
+    pub fn is_provably_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        let (limits, cross_product_limit) = (self.limits, std::mem::replace(&mut self.cross_product_limit, 256));
+        let is_assignable = self.is_assignable(source, target);
+        self.cross_product_limit = cross_product_limit;
+        is_assignable && self.limits == limits
     }
 
     pub fn says_nothing(&self, ty: TypeId) -> bool {

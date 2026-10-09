@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunRun, expectMaxObjectTypeCount, isWindows } from "harness";

@@ -567,7 +567,7 @@ pub mod parse_worker {
             Other,
         }
         let variant = match target {
-            options::Target::Bun => Variant::Bun,
+            options::Target::Bun | options::Target::BunBuiltins => Variant::Bun,
             options::Target::BunMacro => Variant::BunMacro,
             options::Target::Node => Variant::Node,
             _ => Variant::Other,
@@ -2505,6 +2505,8 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
+        opts.bun_builtin_syntax =
+            target == options::Target::BunBuiltins && !task.source_index.is_runtime();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =

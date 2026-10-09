@@ -23,6 +23,10 @@ pub(super) enum Relation {
     StrictSubtype = 1,
     /// The two types may share a value. Used for `===` and type assertions.
     Comparable = 2,
+    /// `Assignable`, but a target that the program declares has no property that the translated program never stores, and `readonly` on an
+    /// array or a tuple means nothing: see `aot::flows`. At every depth. What is found depends on which names those are, so it is only
+    /// asked once they are known, and nothing of it is published.
+    AssignableAsStored = 3,
     Subtype = 4,
     Identity = 5,
 }
@@ -30,7 +34,10 @@ pub(super) enum Relation {
 impl Relation {
     /// `relation == assignableRelation || relation == comparableRelation`
     pub(super) fn is_lenient(self) -> bool {
-        matches!(self, Relation::Assignable | Relation::Comparable)
+        matches!(
+            self,
+            Relation::Assignable | Relation::Comparable | Relation::AssignableAsStored
+        )
     }
 
     pub(super) fn is_subtype(self) -> bool {
@@ -2601,6 +2608,15 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ternary {
         if original_source == original_target {
             return Ternary::TRUE;
+        }
+        if r.relation == Relation::AssignableAsStored {
+            let (source, target) = (
+                self.without_readonly(original_source),
+                self.without_readonly(original_target),
+            );
+            if (source, target) != (original_source, original_target) {
+                return self.is_related_to_ex::<REPORT>(r, source, target, recursion, state);
+            }
         }
         let head = if REPORT { r.head_message.take() } else { None };
         let (original_sd, original_td) = (self.data(original_source), self.data(original_target));
@@ -5878,12 +5894,15 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
+        let leaves_out =
+            r.relation == Relation::AssignableAsStored && self.is_made_by_the_program(target);
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
                 || (self.property_among(has_properties, &sm, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
+                || leaves_out && self.is_never_stored(tp.name)
             {
                 continue;
             }
@@ -5951,6 +5970,7 @@ impl<'p, 's> Checker<'p, 's> {
             if excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
+                || leaves_out && self.is_never_stored(tp.name)
             {
                 continue;
             }
@@ -6294,6 +6314,11 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if pick(&tm) == 0 {
+            return Ternary::TRUE;
+        }
+        // At run time a function is a function: no signature is there to be compared. What a call hands over is held to the types of the
+        // parameters by the function that is called.
+        if r.relation == Relation::AssignableAsStored && !(sm.shape().call.is_empty() && sm.shape().construct.is_empty()) {
             return Ternary::TRUE;
         }
         // Whatever can be called is a `Function`.

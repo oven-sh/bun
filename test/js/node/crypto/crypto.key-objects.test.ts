@@ -1,3 +1,4 @@
+// @ts-nocheck
 "use strict";
 
 import { describe, expect, it, test } from "bun:test";

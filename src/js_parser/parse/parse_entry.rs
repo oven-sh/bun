@@ -133,6 +133,8 @@ pub struct Options<'a> {
     pub module_type: options::ModuleType,
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
+    /// The source is a file of `src/js`: see `crate::builtin_syntax`.
+    pub bun_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -190,6 +192,7 @@ impl<'a> Default for Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            bun_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -280,6 +283,7 @@ impl<'a> Options<'a> {
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
+            bun_builtin_syntax: self.bun_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
@@ -357,6 +361,7 @@ impl<'a> Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            bun_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -393,6 +398,7 @@ impl<'a> Parser<'a> {
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.bun_builtin_syntax = options.bun_builtin_syntax;
         lexer.tolerant = options.tolerant;
         lexer.is_javascript = options.is_javascript;
         lexer.is_jsx = options.tolerant && options.jsx.parse;
@@ -1128,6 +1134,10 @@ impl<'a> Parser<'a> {
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
+        }
+
+        if p.options.bun_builtin_syntax {
+            p.finish_builtin_module(stmts);
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.

@@ -1499,6 +1499,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         if func.flags.contains(ast::flags::Function::IsGenerator) {
             flags |= Flags::GENERATOR;
         }
+        if func
+            .flags
+            .contains(ast::flags::Function::HasReactHooksSuppression)
+        {
+            flags |= Flags::REACT_HOOKS_SUPPRESSION;
+        }
         let open = func.open_parens_loc;
         let type_params = match self.note(open, Mark::TypeParameters) {
             Some(at) => self.type_params_at(at),
@@ -1592,13 +1598,15 @@ impl<'p, 'a> Lower<'p, 'a> {
             _ => FnBody::Block(self.stmts(stmts, false)),
         };
         let anchor = arrow_token.unwrap_or(pos);
+        let mut flags = Flags::empty();
+        flags.set(Flags::ASYNC, arrow.is_async);
+        flags.set(
+            Flags::REACT_HOOKS_SUPPRESSION,
+            arrow.has_react_hooks_suppression,
+        );
         let created = self.b.file.add_fn(Func {
             kind: FnKind::Arrow,
-            flags: if arrow.is_async {
-                Flags::ASYNC
-            } else {
-                Flags::empty()
-            },
+            flags,
             name: Atom::NONE,
             name_pos: pos,
             type_params,

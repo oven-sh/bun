@@ -182,6 +182,7 @@
 #include "JavaScriptCore/JSGenerator.h"
 #include "JavaScriptCore/JSPromiseReaction.h"
 #include "JavaScriptCore/FunctionExecutable.h"
+#include "JavaScriptCore/AOTFunction.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"
 #include "wtf/text/StringToIntegerConversion.h"
 
@@ -4274,6 +4275,10 @@ bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
     case CallData::Type::Native:
         if (callData.native.isBoundFunction)
             return false;
+#if ENABLE(AOT)
+        if (auto declaredAs = JSC::AOT::Typed::declaredAs(value.asCell()); declaredAs != JSC::AOT::Typed::DeclaredAs::NotCompiled)
+            return declaredAs == JSC::AOT::Typed::DeclaredAs::Class;
+#endif
         return value.isConstructor();
     default:
         return false;
@@ -5694,7 +5699,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, );
     }
 

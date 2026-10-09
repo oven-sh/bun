@@ -54,17 +54,44 @@ pub enum LayoutKind {
 
 pub mod field_flags {
     /// May be absent.
-    pub const OPTIONAL: u8 = 1;
+    pub const OPTIONAL: u16 = 1;
+    /// The numbers that the program stores under its name are expected to be int32s (`bun_sema::check::expected_int32`). It goes by the
+    /// name, like `NEVER_STORED`. It is a prediction, which may be wrong: it is for choosing how the field is kept, so that an int32 takes
+    /// little room and anything else still has a place. It takes the whole program to say so: no code that is translated depends on it.
+    pub const EXPECTED_INT32: u16 = 1 << 1;
     /// Only stored while the object is made.
-    pub const IMMUTABLE: u8 = 1 << 2;
+    pub const IMMUTABLE: u16 = 1 << 2;
     /// Declared the way a method is: an object of a class has it on its prototype, not among its fields.
-    pub const METHOD: u8 = 1 << 3;
+    pub const METHOD: u16 = 1 << 3;
     /// Its type is written down: what is stored to it is held to the type as `as` holds it.
-    pub const ANNOTATED: u8 = 1 << 4;
+    pub const ANNOTATED: u16 = 1 << 4;
     /// A variable in an environment: no read comes before the first store.
-    pub const NEVER_SEEN_UNINITIALIZED: u8 = 1 << 5;
+    pub const NEVER_SEEN_UNINITIALIZED: u16 = 1 << 5;
     /// A variable in an environment: there is one store, that of its declaration.
-    pub const STORED_ONCE: u8 = 1 << 6;
+    pub const STORED_ONCE: u16 = 1 << 6;
+    /// No code of the program stores a property by its name, in whatever object. So no object has it, unless by a computed key, and it
+    /// needs no room. It goes by the name: every field of the name has the flag, in every layout but an environment, or none has. It
+    /// takes the whole program to say so: no code that is translated depends on it.
+    pub const NEVER_STORED: u16 = 1 << 7;
+    /// An object of the layout gets it right after its allocation, at every creation point, on every path: `bun_sema::check`, creation.rs. A
+    /// prediction, which may be wrong: it is for choosing which fields are kept inline. It takes the whole program to say so: no code
+    /// that is translated depends on it.
+    pub const SET_AT_CREATION: u16 = 1 << 8;
+    /// The same, at some creation point, on some path.
+    pub const MAY_BE_SET_AT_CREATION: u16 = 1 << 9;
+    /// Of a class: no constructor defines it. The object has no such property until one is stored. Every other field of a class is
+    /// defined while the object is constructed, an optional one as `undefined`. A fact.
+    pub const ABSENT_AT_BIRTH: u16 = 1 << 10;
+    /// Of a required field of a layout that is allocated: between the moment an object has the layout and the first store to the field,
+    /// nobody reads the field, asks whether it is there, or gets hold of the object. A FACT, by layout and not by name: the field is kept
+    /// without a marker for "absent". It rests on `bun_sema::check`, first_stores.rs: literals and classes have it from the start, a
+    /// constructor function stores it first (the operation `Initialize`), and no shape transition adds it. It takes the whole program
+    /// to say so: the link sets it, and no code that is translated depends on it.
+    pub const NEVER_SEEN_ABSENT: u16 = 1 << 11;
+    /// `undefined` is not of the type that is declared for it: `s: string`, `inner: Flat`, and not `x: T | undefined`, `brand: any`, `unknown`, `void`. The type of
+    /// the field does not tell: a reference may be nil as it is kept. So an object that is not laid out and lacks the property lacks what
+    /// the layout requires. A fact about the declaration, not about what the field holds.
+    pub const DECLARED_WITHOUT_UNDEFINED: u16 = 1 << 12;
 }
 
 /// In the variable of a static field that is a module variable: the same as `field_flags::ANNOTATED`.
@@ -81,10 +108,31 @@ pub struct Field {
     pub name: StrId,
     /// What it holds. `NONE`: anything.
     pub declared: TyId,
-    pub flags: u8,
+    pub flags: u16,
     /// The strings it can hold, if its type names them all, and likewise the numbers: `kind: "a" | "b"`, `code: 1`. `declared` says less.
     /// Plain data that enters a union is made the part whose fields can hold what it has. Nothing else goes by this.
     pub literals: Vec<Literal>,
+    /// The type of the property as the checker prints it, cut short if it is long. For messages alone. `NONE`: there is none, as in
+    /// every fragment: the link puts it there.
+    pub type_text: StrId,
+    /// The one function whose closures are stored to it. `NONE`: nothing is known.
+    pub only_function: FuncId,
+    /// `only_function_flags`
+    pub only_function_flags: u8,
+}
+
+impl Field {
+    pub fn new(name: StrId, declared: TyId, flags: u16) -> Field {
+        Field { name, declared, flags, literals: Vec::new(), type_text: StrId::NONE, only_function: FuncId::NONE, only_function_flags: 0 }
+    }
+}
+
+pub mod only_function_flags {
+    /// It holds a closure of the function whenever it is read. Otherwise that is a prediction.
+    pub const IS_FACT: u8 = 1;
+    /// Of a variable, of a module or in an environment: every store to it is seen, and it holds a closure of the function, `undefined` or
+    /// `null` whenever it is read. A fact. Not together with `IS_FACT`.
+    pub const OR_NIL: u8 = 1 << 2;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -170,6 +218,10 @@ pub struct Layout {
     pub members: Vec<LayoutId>,
     /// What a cast may turn an object into that was allocated with this layout: layouts that have all its fields. Sorted.
     pub specializations: Vec<LayoutId>,
+    /// Where the type or the class is declared, for messages: the path, as `Module::display_path` has it, and the line, from 1. `NONE` and
+    /// 0: nothing declares it, as in every fragment: the link puts them there.
+    pub declared_path: StrId,
+    pub declared_line: u32,
 }
 
 impl Layout {
@@ -183,6 +235,9 @@ pub struct Global {
     pub module: ModuleId,
     pub declared: TyId,
     pub initialization: Initialization,
+    /// As `Field::only_function`.
+    pub only_function: FuncId,
+    pub only_function_flags: u8,
 }
 
 /// What a module variable holds before anything is stored to it.
@@ -203,6 +258,10 @@ pub struct Module {
     pub path: StrId,
     /// Runs its top-level statements.
     pub init: FuncId,
+    /// The path for messages and stack traces: from where the program is built (`Constants::root`), with `/` between the names.
+    pub display_path: StrId,
+    /// `format::line_table` of its text: from the positions in it to lines and columns.
+    pub line_table: Vec<u8>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -229,8 +288,15 @@ pub mod func_flags {
     pub const STARTS_EAGERLY: u16 = 1 << 5;
     /// Written in TypeScript: the checker has held it to its types.
     pub const IS_TYPED: u16 = 1 << 6;
-    /// A constructor whose first parameter is `new.target`. Its `length` does not count that.
+    /// A constructor whose first parameter is `new.target`. Its `length` does not count that. A plain function: it asks for it, with
+    /// `GetNewTarget`, and has no such parameter.
     pub const HAS_NEW_TARGET: u16 = 1 << 7;
+    /// Of the prelude: it implements a built-in.
+    pub const IS_BUILTIN: u16 = 1 << 8;
+    /// Written in a builtin module.
+    pub const IS_OF_BUILTIN_MODULE: u16 = 1 << 9;
+    /// Its frames only exist because of how the code is compiled. Stack traces leave them out.
+    pub const IS_HIDDEN_IN_STACK_TRACES: u16 = 1 << 10;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -276,8 +342,9 @@ pub enum Why {
     /// What enters a place whose type is written down: `const a: T = x`, a parameter, a result, a field. Plain data is made what the type
     /// says, and an object that was made as less and has what is missing becomes one of the type where it is.
     Cast,
-    /// `x!` asserts: neither `undefined` nor `null`, and the type has neither.
-    NonNull,
+    /// `x!` asserts: neither `undefined` nor `null`, and the type has neither. The text of `x`, for the message. `NONE`: it is long, or
+    /// more than a name and properties of it.
+    NonNull(StrId),
     /// It comes from where nothing vouches for it: an element, what a call by someone who does not know the function came back with,
     /// `await`, `yield`, `catch`.
     Claim,
@@ -311,11 +378,20 @@ pub enum Op {
 
     /// An object of a shape, with nothing stored in it yet.
     New(LayoutId),
+    /// The same, with its discriminant: whoever initializes it stores `value` to the property `name` before anybody else sees it, and no
+    /// code of the program stores to the property by its name after that. See `Checker::discriminant_of_new` and
+    /// `Checker::discriminant_of_object_literal` for what is not ruled out. What the object is made as may go by the value.
+    NewWith { layout: LayoutId, name: StrId, value: V },
     /// Of an environment only. What the language sees as an object is read by name.
     FieldGet { obj: V, layout: LayoutId, field: u32 },
     /// Of an environment, or of an object right after its `New`, before anything else has got hold of it. Any other store is by name.
     FieldSet { obj: V, layout: LayoutId, field: u32, value: V },
-    Closure { func: FuncId, env: V },
+    /// A new function object. `captures`: as the entry block of `func` takes them. Of the constructor of a class that is not evaluated
+    /// once, the class object: the environment of the class, whether or not the constructor takes it.
+    Closure { func: FuncId, captures: Args },
+    /// The closure of a function declaration, made the first time it is asked for and kept in the field of the environment. The field holds
+    /// `undefined` until then, and nothing else reads it or stores to it.
+    ClosureOnce { func: FuncId, captures: Args, env: V, field: u32 },
 
     PropGet { obj: V, name: StrId },
     PropSet { obj: V, name: StrId, value: V },
@@ -422,6 +498,12 @@ pub enum Prediction {
     Ty(TyId),
     /// A closure of the function.
     Closure(FuncId),
+    /// Of what is read under a key from the dictionary that is held under the property of this name: a closure of the function that `Program::functions_by_key` has for the name and the
+    /// key, once the key is known for a constant.
+    ByKey(StrId),
+    /// Of the type that the view it is read through gives the property. Only until the link: where the view takes no foreign object that is a
+    /// fact, and becomes the type of the value. Where it does, it becomes a `Ty`.
+    Field(TyId),
 }
 
 #[derive(Clone, Debug)]
@@ -449,8 +531,9 @@ pub struct Func {
     pub flags: u16,
     /// Its `length` property: the parameters before the first one with an initializer or the rest parameter.
     pub length: u16,
-    /// The shape of the environment it is given as its first argument. `NONE`: it is given none.
-    pub env: LayoutId,
+    /// What it is handed ahead of `this` and its arguments: the type of each capture. An environment, or a copy of a variable that nothing
+    /// stores to once an inner function can have seen it.
+    pub captures: Vec<TyId>,
     /// The checker's type of `this` in it: for a method, an object of its class. `NONE`: it says nothing.
     pub this_declared: TyId,
     /// The checker's type of each parameter. `NONE`: it says nothing.
@@ -511,7 +594,95 @@ impl Func {
     }
 }
 
+impl Op {
+    /// Every value that the operation takes. `NONE` is passed too.
+    pub fn for_each_operand(&self, mut f: impl FnMut(V)) {
+        match self {
+            Op::Undefined
+            | Op::Null
+            | Op::Bool(_)
+            | Op::Int(_)
+            | Op::Double(_)
+            | Op::Str(_)
+            | Op::BigInt(_)
+            | Op::FuncRef(_)
+            | Op::GlobalGet(_)
+            | Op::FreeGet { .. }
+            | Op::New(_)
+            | Op::NewObject
+            | Op::Caught
+            | Op::Poll
+            | Op::ResumeMode
+            | Op::ExternalModule(_) => {}
+            Op::GlobalSet(_, a)
+            | Op::FreeSet { value: a, .. }
+            | Op::NewWith { value: a, .. }
+            | Op::Coerce { value: a, .. }
+            | Op::IsInstance { value: a, .. }
+            | Op::FieldGet { obj: a, .. }
+            | Op::PropGet { obj: a, .. }
+            | Op::PropHas { obj: a, .. }
+            | Op::PropDelete { obj: a, .. }
+            | Op::Unary { a, .. }
+            | Op::Not(a)
+            | Op::Truthy(a)
+            | Op::TypeOf(a)
+            | Op::ToStr(a)
+            | Op::ToKey(a)
+            | Op::IsNullish(a)
+            | Op::IterOpen(a)
+            | Op::IterClose(a)
+            | Op::IterCloseForThrow(a)
+            | Op::Yield(a)
+            | Op::Await(a) => f(*a),
+            Op::FieldSet { obj: a, value: b, .. }
+            | Op::PropSet { obj: a, value: b, .. }
+            | Op::ElemGet { obj: a, key: b }
+            | Op::ElemHas { obj: a, key: b }
+            | Op::ElemDelete { obj: a, key: b }
+            | Op::Binary { a, b, .. }
+            | Op::Relational { a, b, .. }
+            | Op::StrictEq { a, b }
+            | Op::LooseEq { a, b }
+            | Op::InstanceOf { value: a, of: b }
+            | Op::IterHas { iter: a, index: b }
+            | Op::IterGet { iter: a, index: b } => {
+                f(*a);
+                f(*b);
+            }
+            Op::ElemSet { obj, key, value } => {
+                f(*obj);
+                f(*key);
+                f(*value);
+            }
+            Op::Closure { captures: args, .. } | Op::NewArray(args) | Op::StrConcat(args) | Op::Operation { args, .. } | Op::CallDirect { args, .. } => args.iter().copied().for_each(f),
+            Op::ClosureOnce { captures, env, .. } => {
+                captures.iter().copied().for_each(&mut f);
+                f(*env);
+            }
+            Op::Call { callee, this, args } => {
+                f(*callee);
+                f(*this);
+                args.iter().copied().for_each(f);
+            }
+            Op::Construct { callee: a, args } | Op::CallMethod { obj: a, args, .. } => {
+                f(*a);
+                args.iter().copied().for_each(f);
+            }
+        }
+    }
+}
+
 impl Term {
+    /// Every value that it takes or passes on. `NONE` is passed too.
+    pub fn for_each_operand(&self, mut f: impl FnMut(V)) {
+        match self {
+            Term::Branch { cond: value, .. } | Term::Switch { value, .. } | Term::Return(value) | Term::Throw { value, .. } => f(*value),
+            Term::Jump(_) | Term::Invoke { .. } | Term::Unreachable => {}
+        }
+        self.for_each_target(|target| target.args.iter().copied().for_each(&mut f));
+    }
+
     pub fn for_each_target(&self, mut f: impl FnMut(&Target)) {
         match self {
             Term::Return(_) | Term::Unreachable => {}
@@ -575,8 +746,19 @@ pub struct Program {
     /// By name: the classes of the engine that a class of the program extends, going by the checker's type of what stands after
     /// `extends`, and `console` if the program does anything with it but read and call its properties. Sorted.
     pub extended_globals: Vec<StrId>,
+    /// The names that the modules of the program define on an object written as `E.prototype` (`Checker::prototype_property_names_in`).
+    /// The run time lets no other name of a field be defined on the `prototype` object of a function. Sorted.
+    pub prototype_property_names: Vec<StrId>,
+    /// By registry id, ascending: the function that evaluates a builtin module and returns its value.
+    pub builtin_modules: Vec<(u32, FuncId)>,
+    /// By id, ascending: a builtin function of the runtime that is compiled with the program, and its `ImplementationVisibility` as a number.
+    pub builtin_functions: Vec<(u32, FuncId, u32)>,
+    /// A property, a key, and the one function of the program whose closures are stored under the key in the dictionaries that are held under the property: `e.on("x", listener)`. Ascending.
+    /// A prediction.
+    pub functions_by_key: Vec<(StrId, StrId, FuncId)>,
     /// Runs the program.
-    pub entry: FuncId,
+    /// What is run first, by entry point, in their order. The first is that of the executable itself. One of them is run in an instance of the program, once.
+    pub entries: Vec<FuncId>,
 }
 
 impl Default for FuncId {

@@ -4,13 +4,17 @@
 
 pub mod build;
 pub mod builder;
+mod builtins_generated;
 pub mod declared;
+mod field_types;
 pub mod format;
 pub mod fragment;
 pub mod id;
 pub mod ir;
 pub mod link;
+pub mod prelude;
 mod print;
+mod verify;
 
 use build::Problem;
 use bun_sema::check::{Checker, Program as Checked};
@@ -26,22 +30,26 @@ pub struct Translated {
     pub program: ir::Program,
     /// What could not be translated: file, line and what.
     pub problems: Vec<String>,
-    /// How many pairs of an allocated type and a view the checker's relation was asked about, and how many members it did not find and
-    /// were added because a test had been left out.
-    pub pairs_asked: usize,
-    pub members_added: usize,
+    /// What the soundness closure has cost and come to: `bun_sema::check::Sizes::line`.
+    pub members: String,
     /// What `Translation::explaining` has asked for, a line each.
     pub explained: Vec<String>,
     /// For each of the errors that `Translation::finish` was handed: whether it stands. If one does, the program is of no use.
     pub errors_that_stand: Vec<bool>,
     /// For each of those that do not stand, in their order: why not.
     pub why_errors_do_not_stand: Vec<String>,
+    /// The modules of the runtime that are not in the program, by id: file, line and what could not be translated.
+    pub builtin_modules_left_out: Vec<(u32, String)>,
+    pub builtin_functions_left_out: Vec<(u32, String)>,
     pub times: link::Times,
 }
 
 /// What the bundler has decided: what it replaces by constants, and which code each import stands for.
 #[derive(Default)]
 pub struct Constants {
+    /// The directory the program is built in, in the checker's format. The paths in messages and stack traces are relative to it, as
+    /// the bundler shows them.
+    pub root: Vec<u8>,
     /// `--define`: the dotted name and the JavaScript text of the value.
     pub defines: Vec<(Vec<u8>, Vec<u8>)>,
     /// The flags for which `feature()` of `bun:bundle` is true.
@@ -53,11 +61,30 @@ pub struct Constants {
     pub resolved: Option<rustc_hash::FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>>,
     /// The imports the bundler has left out, by the importing file and the specifier: nothing is evaluated for them.
     pub dropped_imports: rustc_hash::FxHashSet<(Vec<u8>, Vec<u8>)>,
+    /// By file: where each statement at its top level starts, as the bundler has them, and whether it may be left out if nothing uses what
+    /// it declares. A file that is not here: the bundler has said nothing.
+    pub statements: rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>>,
     /// The files that are imported as strings, by path, with their text.
     pub texts: rustc_hash::FxHashMap<Vec<u8>, Vec<u8>>,
     /// The files that are imported for their path, by path, with what stands for the path they end up at. The bundler tells the
     /// engine what to put in its place.
     pub assets: rustc_hash::FxHashMap<Vec<u8>, Vec<u8>>,
+    /// What is built is run in place of its sources (`bun run --aot`), so each module says of itself what it says when it is run from
+    /// its file: `import.meta.url`, `__dirname`, what `require` is relative to. The function makes the `file:` URL of a path.
+    /// `None`: all of that is the entry point's, as in any bundle.
+    pub own_paths: Option<fn(&[u8]) -> Vec<u8>>,
+    /// What is built is run by `bun test`, which lets a file use `test`, `expect` and the like without importing them.
+    pub has_test_globals: bool,
+}
+
+impl Constants {
+    pub fn statements_by_file(statements: impl Iterator<Item = (Vec<u8>, u32, bool)>) -> rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>> {
+        let mut by_file: rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>> = Default::default();
+        for (path, start, verdict) in statements {
+            by_file.entry(path).or_default().push((start, verdict));
+        }
+        by_file
+    }
 }
 
 /// The translation of a program along with its check. Each file is translated by the task that has checked it, while the types of the
@@ -88,10 +115,11 @@ impl<'a> Translation<'a> {
         Translation { explain, ..self }
     }
 
-    /// `Request::loaded`. What can run once the files `roots` are run is translated. A program that is loaded again is begun again.
-    pub fn begin(&self, program: &Checked<'_>, roots: &[FileId]) {
+    /// `Request::loaded`. `entry_points`: for each, the files that are run when the program is started with it, in order. What can run then,
+    /// whichever it is started with, is translated. A program that is loaded again is begun again.
+    pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>]) {
         let without_whole_trees = program.files_without_whole_trees();
-        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, roots, self.constants), Fragments::new(program.files.modules.len())));
+        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants), Fragments::new(program.files.modules.len())));
         *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating });
     }
 
@@ -139,7 +167,7 @@ impl<'a> Translation<'a> {
             Some((shared, fragments)) => {
                 let mut c = program.checker();
                 let errors = Errors { places: errors, imported_by: &mut |file| build::files_imported_by(&mut c, shared, file) };
-                link::link(program, fragments.take(), shared.roots(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
+                link::link(program, fragments.take(), shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
             }
             // A file that is only code is not checked, so that nobody has reported it.
             None => {
@@ -164,15 +192,14 @@ impl<'a> Translation<'a> {
                 })
             })
             .collect();
-        let problems = linked
-            .problems
-            .iter()
-            .map(|problem| {
-                let module = program.files.module(problem.file);
-                format!("{}:{}: not compiled yet: {}", String::from_utf8_lossy(module.file_name()), line_of(problem.file, problem.pos), problem.what)
-            })
-            .collect();
-        Translated { program: linked.program, problems, pairs_asked: linked.pairs_asked, members_added: linked.members_added, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), why_errors_do_not_stand, times: linked.times }
+        let shown = |problem: &Problem| {
+            let module = program.files.module(problem.file);
+            format!("{}:{}: not compiled yet: {}", String::from_utf8_lossy(module.file_name()), line_of(problem.file, problem.pos), problem.what)
+        };
+        let problems = linked.problems.iter().map(shown).collect();
+        let builtin_modules_left_out = linked.builtin_modules_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
+        let builtin_functions_left_out = linked.builtin_functions_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
+        Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times }
     }
 
     /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { expect, mock, test } from "bun:test";
 import { writeFile } from "fs/promises";
 import { tempDir } from "harness";

@@ -1,37 +1,38 @@
 "use strict";
 
 const { aggregateTwoErrors } = require("internal/errors");
-const {
-  kIsDestroyed,
-  isDestroyed,
-  isFinished,
-  isServerRequest,
-  kState,
-  kErrorEmitted,
-  kEmitClose,
-  kClosed,
-  kCloseEmitted,
-  kConstructed,
-  kDestroyed,
-  kAutoDestroy,
-  kErrored,
-} = require("internal/streams/utils");
+const { kIsDestroyed, isDestroyed, isFinished, isServerRequest } = require("internal/streams/utils");
+const { isReadableState, isWritableState, flagsOf, addFlags } =
+  require("internal/streams/state") as typeof import("internal/streams/state").default;
+type ReadableState = import("internal/streams/state").ReadableState;
+type WritableState = import("internal/streams/state").WritableState;
+
+const kErrorEmitted = 1 << 1;
+const kAutoDestroy = 1 << 2;
+const kEmitClose = 1 << 3;
+const kDestroyed = 1 << 4;
+const kClosed = 1 << 5;
+const kCloseEmitted = 1 << 6;
+const kErrored = 1 << 7;
+const kConstructed = 1 << 8;
 
 const ProcessNextTick = process.nextTick;
 
 const kDestroy = Symbol("kDestroy");
 const kConstruct = Symbol("kConstruct");
 
-function checkError(err, w, r) {
+function checkError(err, w: WritableState | undefined, r: ReadableState | undefined): void {
   if (err) {
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
     err.stack; // eslint-disable-line no-unused-expressions
 
-    if (w && !w.errored) {
-      w.errored = err;
+    if (w && (w.flags & kErrored) === 0) {
+      w.erroredValue = err;
+      w.flags |= kErrored;
     }
-    if (r && !r.errored) {
-      r.errored = err;
+    if (r && (r.flags & kErrored) === 0) {
+      r.erroredValue = err;
+      r.flags |= kErrored;
     }
   }
 }
@@ -39,12 +40,12 @@ function checkError(err, w, r) {
 // Backwards compat. cb() is undocumented and unused in core but
 // unfortunately might be used by modules.
 function destroy(err, cb) {
-  const r = this._readableState;
-  const w = this._writableState;
+  const r: ReadableState | undefined = this._readableState;
+  const w: WritableState | undefined = this._writableState;
   // With duplex streams we use the writable side for state.
-  const s = w || r;
+  const s = (w || r)!;
 
-  if ((w && (w[kState] & kDestroyed) !== 0) || (r && (r[kState] & kDestroyed) !== 0)) {
+  if ((w && (w.flags & kDestroyed) !== 0) || (r && (r.flags & kDestroyed) !== 0)) {
     if (typeof cb === "function") {
       cb();
     }
@@ -57,14 +58,14 @@ function destroy(err, cb) {
   checkError(err, w, r);
 
   if (w) {
-    w[kState] |= kDestroyed;
+    w.flags |= kDestroyed;
   }
   if (r) {
-    r[kState] |= kDestroyed;
+    r.flags |= kDestroyed;
   }
 
   // If still constructing then defer calling _destroy.
-  if ((s[kState] & kConstructed) === 0) {
+  if ((s.flags & kConstructed) === 0) {
     this.once(kDestroy, function (er) {
       _destroy(this, aggregateTwoErrors(er, err), cb);
     });
@@ -84,16 +85,16 @@ function _destroy(self, err, cb) {
     }
     called = true;
 
-    const r = self._readableState;
-    const w = self._writableState;
+    const r: ReadableState | undefined = self._readableState;
+    const w: WritableState | undefined = self._writableState;
 
     checkError(err, w, r);
 
     if (w) {
-      w[kState] |= kClosed;
+      w.flags |= kClosed;
     }
     if (r) {
-      r[kState] |= kClosed;
+      r.flags |= kClosed;
     }
 
     if (typeof cb === "function") {
@@ -119,17 +120,17 @@ function emitErrorCloseNT(self, err) {
 }
 
 function emitCloseNT(self) {
-  const r = self._readableState;
-  const w = self._writableState;
+  const r: ReadableState | undefined = self._readableState;
+  const w: WritableState | undefined = self._writableState;
 
   if (w) {
-    w[kState] |= kCloseEmitted;
+    w.flags |= kCloseEmitted;
   }
   if (r) {
-    r[kState] |= kCloseEmitted;
+    r.flags |= kCloseEmitted;
   }
 
-  if ((w && (w[kState] & kEmitClose) !== 0) || (r && (r[kState] & kEmitClose) !== 0)) {
+  if ((w && (w.flags & kEmitClose) !== 0) || (r && (r.flags & kEmitClose) !== 0)) {
     self.emit("close");
   }
 }
@@ -138,23 +139,39 @@ function emitErrorNT(self, err) {
   const r = self._readableState;
   const w = self._writableState;
 
-  if ((w && (w[kState] & kErrorEmitted) !== 0) || (r && (r[kState] & kErrorEmitted) !== 0)) {
+  if ((r === undefined || isReadableState(r)) && (w === undefined || isWritableState(w))) {
+    if ((w && (w.flags & kErrorEmitted) !== 0) || (r && (r.flags & kErrorEmitted) !== 0)) {
+      return;
+    }
+
+    if (w) {
+      w.flags |= kErrorEmitted;
+    }
+    if (r) {
+      r.flags |= kErrorEmitted;
+    }
+
+    self.emit("error", err);
+    return;
+  }
+
+  if ((w && (flagsOf(w) & kErrorEmitted) !== 0) || (r && (flagsOf(r) & kErrorEmitted) !== 0)) {
     return;
   }
 
   if (w) {
-    w[kState] |= kErrorEmitted;
+    addFlags(w, kErrorEmitted);
   }
   if (r) {
-    r[kState] |= kErrorEmitted;
+    addFlags(r, kErrorEmitted);
   }
 
   self.emit("error", err);
 }
 
 function undestroy() {
-  const r = this._readableState;
-  const w = this._writableState;
+  const r: ReadableState | undefined = this._readableState;
+  const w: WritableState | undefined = this._writableState;
 
   if (r) {
     r.constructed = true;
@@ -193,23 +210,41 @@ function errorOrDestroy(stream, err, sync?) {
   const r = stream._readableState;
   const w = stream._writableState;
 
-  if (
-    (w && (w[kState] ? (w[kState] & kDestroyed) !== 0 : w.destroyed)) ||
-    (r && (r[kState] ? (r[kState] & kDestroyed) !== 0 : r.destroyed))
-  ) {
-    return this;
+  if ((r === undefined || isReadableState(r)) && (w === undefined || isWritableState(w))) {
+    if ((w && (w.flags & kDestroyed) !== 0) || (r && (r.flags & kDestroyed) !== 0)) {
+      return;
+    }
+
+    if ((r && (r.flags & kAutoDestroy) !== 0) || (w && (w.flags & kAutoDestroy) !== 0)) {
+      stream.destroy(err);
+    } else if (err) {
+      checkError(err, w, r);
+      if (sync) {
+        ProcessNextTick(emitErrorNT, stream, err);
+      } else {
+        emitErrorNT(stream, err);
+      }
+    }
+    return;
   }
 
-  if ((r && (r[kState] & kAutoDestroy) !== 0) || (w && (w[kState] & kAutoDestroy) !== 0)) {
+  if (
+    (w && (flagsOf(w) ? (flagsOf(w) & kDestroyed) !== 0 : w.destroyed)) ||
+    (r && (flagsOf(r) ? (flagsOf(r) & kDestroyed) !== 0 : r.destroyed))
+  ) {
+    return;
+  }
+
+  if ((r && (flagsOf(r) & kAutoDestroy) !== 0) || (w && (flagsOf(w) & kAutoDestroy) !== 0)) {
     stream.destroy(err);
   } else if (err) {
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
     err.stack; // eslint-disable-line no-unused-expressions
 
-    if (w && (w[kState] & kErrored) === 0) {
+    if (w && (flagsOf(w) & kErrored) === 0) {
       w.errored = err;
     }
-    if (r && (r[kState] & kErrored) === 0) {
+    if (r && (flagsOf(r) & kErrored) === 0) {
       r.errored = err;
     }
     if (sync) {
@@ -225,14 +260,14 @@ function construct(stream, cb) {
     return;
   }
 
-  const r = stream._readableState;
-  const w = stream._writableState;
+  const r: ReadableState | undefined = stream._readableState;
+  const w: WritableState | undefined = stream._writableState;
 
   if (r) {
-    r[kState] &= ~kConstructed;
+    r.flags &= ~kConstructed;
   }
   if (w) {
-    w[kState] &= ~kConstructed;
+    w.flags &= ~kConstructed;
   }
 
   stream.once(kConstruct, cb);
@@ -255,18 +290,18 @@ function constructNT(stream) {
     }
     called = true;
 
-    const r = stream._readableState;
-    const w = stream._writableState;
-    const s = w || r;
+    const r: ReadableState | undefined = stream._readableState;
+    const w: WritableState | undefined = stream._writableState;
+    const s = (w || r)!;
 
     if (r) {
-      r[kState] |= kConstructed;
+      r.flags |= kConstructed;
     }
     if (w) {
-      w[kState] |= kConstructed;
+      w.flags |= kConstructed;
     }
 
-    if (s.destroyed) {
+    if ((s.flags & kDestroyed) !== 0) {
       stream.emit(kDestroy, err);
     } else if (err) {
       errorOrDestroy(stream, err, true);

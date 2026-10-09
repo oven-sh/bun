@@ -81,6 +81,13 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     if for_tests {
         args.push(b"--rewrite-jest-for-tests".to_vec());
     }
+    // What is a builtin module to the program that runs is one to the build.
+    if bun_resolve_builtins::expose_internals_enabled() {
+        args.push(b"--expose-internals".to_vec());
+    }
+    if bun_resolve_builtins::stream_iter_enabled() {
+        args.push(b"--experimental-stream-iter".to_vec());
+    }
 
     let mut option = |name: &[u8], value: &[u8]| args.push([name, b"=", value].concat());
     if let Some(define) = &ctx.args.define {

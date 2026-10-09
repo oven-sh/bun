@@ -1399,10 +1399,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // The internal modules the executable will carry bytecode for, as its builtins section has them.
     let target_builtins = c.options.target_builtins.clone();
     let internal_modules = (c.options.generate_internal_module_bytecode
-        && c.options.compile_mode.is_executable())
-    .then(|| builtins_of(target_builtins.as_deref()))
-    .flatten()
-    .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
+        && c.options.compile_mode.is_executable()
+        && !c.options.aot)
+        .then(|| builtins_of(target_builtins.as_deref()))
+        .flatten()
+        .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
     let mut linked_bytecode: Option<LinkedBytecode> = None;
     if let Some(order) = &bytecode_order {
         let table = external_string_table
@@ -1418,12 +1419,19 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
-        // The compiled program takes the place of the code of the first entry point, which is empty: `empty_first_entry_point`.
-        let typed_module = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()).and_then(|_| {
-            linked_bytecode_chunks.iter().position(|&(chunk_index, _, _)| {
-                chunks[chunk_index].is_entry_point() && chunks[chunk_index].entry_point.entry_point_id() == 0
+        // An entry function of the compiled program takes the place of the code of each of its entry points, which are empty:
+        // `empty_compiled_entry_points`.
+        let typed_modules: Vec<u32> = (c.facts.iter().filter(|facts| facts.typed.is_some()))
+            .flat_map(|facts| facts.entry_points.iter())
+            .filter_map(|path| {
+                let sources = c.parse_graph().input_files.items_source();
+                linked_bytecode_chunks.iter().position(|&(chunk_index, _, _)| {
+                    let chunk = &chunks[chunk_index];
+                    chunk.is_entry_point() && *sources[chunk.entry_point.source_index() as usize].path.text == **path
+                })
             })
-        });
+            .map(|position| position as u32)
+            .collect();
         let is_esm = c.options.output_format == options::Format::Esm;
         // What `IntermediateOutput::code` wrote where a text imports a chunk.
         let mut chunk_paths: Vec<Vec<u8>> = chunks
@@ -1471,8 +1479,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
         if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
-            if !linked.encoder.set_typed_program(typed, typed_module.unwrap_or(0) as u32, &replaced_strings) {
-                c.log_mut().add_error(None, bun_ast::Loc::EMPTY, b"The engine does not take the program the compiler made: they are of different versions");
+            if !linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings) {
+                c.log_mut().add_error(None, bun_ast::Loc::EMPTY, b"The engine refused the typed program: see the \"AOT:\" lines above");
+                return Err(crate::Error::BuildFailed);
             }
         }
         for ((chunk_index, bytecode_index, source_provider_url), names) in
@@ -1871,15 +1880,13 @@ fn wanted_internal_modules(
         }
         i += 1;
     }
-    let evaluated_by_the_first_tick: [&[u8]; 5] = [
-        b"internal:process/next_tick_queue",
-        b"internal:validators",
-        b"internal:shared",
-        b"internal:fixed_queue",
-        b"internal:async_hooks_tick",
-    ];
-    for name in evaluated_by_the_first_tick {
-        if let Some(id) = builtins.find(name) {
+    let manifest = bun_builtin_syntax::Archive::embedded().manifest();
+    for module in manifest
+        .evaluated_by_first_tick()
+        .iter()
+        .filter_map(|&id| manifest.module(id))
+    {
+        if let Some(id) = builtins.find(&module.name) {
             if !wanted.contains(&id) {
                 wanted.push(id);
             }

@@ -794,6 +794,42 @@ pub(crate) fn analyze_for_build(
     checked: TypeChecked,
     log: &mut bun_ast::Log,
 ) -> Option<bun_ast::type_tags::ProgramFacts> {
+    // `Bun.build` bundles on a thread of its own, which has less stack than a task of the checker asks for.
+    if bun_core::StackCheck::init().remaining() >= 8 << 20 {
+        return analyze_on_this_thread(checked, log);
+    }
+    struct Handed<T>(T);
+    // SAFETY: this thread waits for the other one, so what is handed over is used by one thread at a time.
+    unsafe impl<T> Send for Handed<T> {}
+    impl<T> Handed<T> {
+        fn take(self) -> T {
+            self.0
+        }
+    }
+    let handed = Handed((checked, log));
+    let analyzed = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn_scoped(scope, move || {
+                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
+                let (checked, log) = handed.take();
+                let found = analyze_on_this_thread(checked, log);
+                bun_core::Output::flush();
+                Handed(found)
+            })
+            .expect("a thread for the analysis")
+            .join()
+    });
+    match analyzed {
+        Ok(found) => found.take(),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn analyze_on_this_thread(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> Option<bun_ast::type_tags::ProgramFacts> {
     use bun_sema_driver::host::from_native;
     let TypeChecked {
         cwd,
@@ -801,19 +837,28 @@ pub(crate) fn analyze_for_build(
         conditions,
         loaders,
         entry_points,
+        own_entry_points,
         sources,
         imports,
         dropped_imports,
+        statements,
         texts,
         assets,
         defines,
         features,
+        rewrite_jest_for_tests,
+        preserve_source_paths,
     } = checked;
-    let constants = bun_aot::Constants {
+    let file_url = |path: &[u8]| format!("{}", bun_url::file_url_from_string(&bun_core::String::from_bytes(path))).into_bytes();
+    let mut constants = bun_aot::Constants {
+        own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
+        has_test_globals: rewrite_jest_for_tests,
+        root: from_native(cwd),
         defines: defines.iter().map(|(name, value)| (name.to_vec(), value.to_vec())).collect(),
         features: features.map(<[u8]>::to_vec).collect(),
         resolved: Some((imports.map(|(from, spec, to)| ((from_native(from), spec.to_vec()), from_native(to)))).collect()),
         dropped_imports: dropped_imports.map(|(from, spec)| (from_native(from), spec.to_vec())).collect(),
+        statements: bun_aot::Constants::statements_by_file(statements.map(|(path, start, verdict)| (from_native(path), start, verdict))),
         texts: texts.map(|(path, text)| (from_native(path), text.to_vec())).collect(),
         assets: assets.map(|(path, key)| (from_native(path), key.to_vec())).collect(),
     };
@@ -827,10 +872,15 @@ pub(crate) fn analyze_for_build(
         code.push(path.to_vec());
         (path, text)
     });
-    let provided = Provided {
+    let mut provided = Provided {
         already_read: already_read(cwd, &mut sources),
         ..Default::default()
     };
+    for &(name, text) in bun_aot::prelude::FILES {
+        let path = bun_aot::prelude::path_of(cwd, name);
+        provided.already_read.insert(from_native(&path), text.as_bytes().to_vec());
+        code.push(path);
+    }
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
@@ -838,6 +888,26 @@ pub(crate) fn analyze_for_build(
         .map(<[u8]>::to_vec)
         .collect();
     if paths.is_empty() {
+        return None;
+    }
+    // What one entry function runs: an entry point of the bundle, then what `bun:main` does once that has run.
+    let mut entry_functions: Vec<[Vec<u8>; 2]> = Vec::new();
+    for entry_point in own_entry_points.filter(|path| paths.iter().any(|it| it == path)) {
+        let name = match entry_functions.len() {
+            0 => "main.js".to_owned(),
+            number => format!("main.{number}.js"),
+        };
+        let main = bun_aot::prelude::path_of(cwd, &name);
+        let mut wrapper = bun_bundler::entry_points::ServerEntryPoint::default();
+        bun_bundler::entry_points::ServerEntryPoint::generate(&mut wrapper, false, entry_point).ok()?;
+        provided.already_read.insert(from_native(&main), wrapper.contents.into_vec());
+        code.push(main.clone());
+        if let Some(resolved) = &mut constants.resolved {
+            resolved.insert((from_native(&main), entry_point.to_vec()), from_native(entry_point));
+        }
+        entry_functions.push([entry_point.to_vec(), main]);
+    }
+    if entry_functions.is_empty() {
         return None;
     }
     if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_SNAPSHOT.get() {
@@ -852,22 +922,26 @@ pub(crate) fn analyze_for_build(
             already_read: provided.already_read.clone(),
             resolved: constants.resolved.clone().unwrap_or_default(),
             dropped_imports: constants.dropped_imports.iter().cloned().collect(),
+            statements: constants.statements.iter().flat_map(|(path, list)| list.iter().map(move |&(start, verdict)| (path.clone(), start, verdict))).collect(),
             texts: constants.texts.iter().map(|(path, text)| (path.clone(), text.clone())).collect(),
             assets: constants.assets.iter().map(|(path, key)| (path.clone(), key.clone())).collect(),
             defines: constants.defines.clone(),
             features: constants.features.clone(),
+            preserve_source_paths,
+            entry_functions: entry_functions.clone(),
         };
         let _ = std::fs::write(String::from_utf8_lossy(path).as_ref(), snapshot.to_bytes());
     }
     let found: bun_threading::Guarded<Option<bun_ast::type_tags::ProgramFacts>> =
         bun_threading::Guarded::new(None);
+    let not_compiled: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
     let translation = bun_aot::Translation::new(&constants);
     let begin = |program: &bun_sema_driver::Program| {
-        let roots: Vec<_> = (paths.iter())
-            .filter_map(|path| program.files.by_path.get(&from_native(path)))
+        // The executable runs its first entry point. The others are what it starts workers with.
+        let entry_points: Vec<Vec<_>> = (entry_functions.iter())
+            .map(|roots| roots.iter().filter_map(|path| program.files.by_path.get(&from_native(path))).collect())
             .collect();
-        // The executable runs its first entry point. The others are what it starts workers with, which are not compiled yet.
-        translation.begin(program, &roots[..roots.len().min(1)]);
+        translation.begin(program, &entry_points);
     };
     let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
         translation.translate_file(checker, file);
@@ -876,21 +950,21 @@ pub(crate) fn analyze_for_build(
         translation.note_file(checker, file);
     };
     let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
+    let compiled_entry_points = || entry_functions.iter().map(|roots| roots[0].clone().into_boxed_slice()).collect();
     let analyze = |program: &bun_sema_driver::Program,
                    in_parallel: bun_sema_driver::InParallel<'_>,
                    errors: &[(bun_sema_driver::FileId, u32)]|
      -> Vec<bool> {
         if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_FILE.get() {
-            if errors.is_empty()
-                && let Ok(typed) = std::fs::read(String::from_utf8_lossy(path).as_ref())
-            {
+            if let Ok(typed) = std::fs::read(String::from_utf8_lossy(path).as_ref()) {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
                     table: Box::default(),
                     tags: Default::default(),
                     typed: Some(typed.into_boxed_slice()),
+                    entry_points: compiled_entry_points(),
                 });
             }
-            return vec![true; errors.len()];
+            return vec![false; errors.len()];
         }
         let (typed, errors_that_stand) = translation.finish_for_engine(program, in_parallel, errors);
         match typed {
@@ -899,13 +973,10 @@ pub(crate) fn analyze_for_build(
                     table: Box::default(),
                     tags: Default::default(),
                     typed: Some(typed.into_boxed_slice()),
+                    entry_points: compiled_entry_points(),
                 });
             }
-            Err(problems) => {
-                for problem in problems {
-                    eprintln!("{problem}");
-                }
-            }
+            Err(problems) => *not_compiled.lock() = problems,
         }
         errors_that_stand
     };
@@ -927,6 +998,9 @@ pub(crate) fn analyze_for_build(
     };
     let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
     add_to_log(&report, log);
+    for problem in not_compiled.lock().iter() {
+        log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{problem}"));
+    }
     found.lock().take().filter(|_| report.is_ok())
 }
 
@@ -939,13 +1013,17 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         conditions,
         loaders,
         entry_points,
+        own_entry_points: _,
         sources,
         imports: _,
         dropped_imports: _,
+        statements: _,
         texts: _,
         assets: _,
         defines: _,
         features: _,
+        rewrite_jest_for_tests: _,
+        preserve_source_paths: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.

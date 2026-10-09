@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.

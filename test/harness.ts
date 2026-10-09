@@ -773,7 +773,7 @@ if (expect.extend)
         }
       }
     },
-    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+    toSpawn(actual: any, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
         throw new TypeError(
           `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
@@ -810,14 +810,14 @@ if (expect.extend)
         message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
-    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    toThrowWithCode(fn: any, cls: CallableFunction, code: string) {
       try {
         fn();
         return {
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -847,14 +847,14 @@ if (expect.extend)
         };
       }
     },
-    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    async toThrowWithCodeAsync(fn: any, cls: CallableFunction, code: string) {
       try {
         await fn();
         return {
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -885,7 +885,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -898,7 +898,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1138,17 +1138,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1271,7 +1260,7 @@ export async function describeWithContainer(
   // isDockerEnabled() may throw when docker is required but absent, so the
   // env-override and coordinator checks must short-circuit before it.
   if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
-    describe.todo(label);
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1345,7 +1334,7 @@ function failTestsOnBlockingWriteCall() {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
-        const actual = prop.get.call(this);
+        const actual = prop.get!.call(this);
         if (actual?.write && !actual.__proto__[didAttachSymbol]) {
           actual.__proto__[didAttachSymbol] = true;
           attachWriteMeasurement(actual);
@@ -1659,14 +1648,6 @@ export function disableAggressiveGCScope() {
     },
   };
 }
-
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
@@ -2032,11 +2013,11 @@ export class VerdaccioRegistry {
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       return data.token;
     }
 
-    throw new Error("Failed to create user:", response.statusText);
+    throw new Error("Failed to create user: " + response.statusText);
   }
 
   async authBunfig(user: string) {
@@ -2078,7 +2059,7 @@ export class VerdaccioRegistry {
           hoistPattern: opts.hoistPattern,
           hoist: opts.hoist,
         },
-      }),
+      })!,
     );
   }
 }

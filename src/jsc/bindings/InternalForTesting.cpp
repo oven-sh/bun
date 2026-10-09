@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/AOTTypedBuiltins.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/AtomStringImpl.h>
@@ -66,6 +67,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #else
     return JSValue::encode(jsBoolean(false));
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_aotTypedBuiltinMismatches, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    for (auto& mismatch : JSC::AOT::Typed::Builtins::singleton().mismatches(globalObject)) {
+        result->push(globalObject, jsString(vm, mismatch));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+#endif
+    return JSValue::encode(result);
 }
 
 // Net refcount change on the *original* StringImpl after a BunString owning

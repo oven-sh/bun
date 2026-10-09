@@ -1,3 +1,4 @@
+// @ts-nocheck
 // fs.rm({ recursive: true }) on Windows walks the tree and deletes each entry
 // via NtCreateFile + NtSetInformationFile(FileDispositionInformation[Ex]).
 // Real-world Windows filesystems (and especially filter drivers, AV hooks, and

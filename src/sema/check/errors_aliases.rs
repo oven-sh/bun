@@ -1306,7 +1306,7 @@ impl Checker<'_, '_> {
             }
             return false;
         }
-        if site.is_not_validated {
+        if site.is_not_validated || options.host_modules_without_paths.iter().any(|name| name == text) {
             return false;
         }
         // "See if this was possibly a projectReference redirect"

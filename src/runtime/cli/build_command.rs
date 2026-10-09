@@ -158,6 +158,7 @@ impl BuildCommand {
                 defines: &[],
                 features: &mut std::iter::empty(),
                 dropped_imports: &mut std::iter::empty(),
+                statements: &mut std::iter::empty(),
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
                 cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
@@ -165,8 +166,11 @@ impl BuildCommand {
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
+                own_entry_points: &mut core::iter::empty(),
                 sources: &mut core::iter::empty(),
                 imports: &mut core::iter::empty(),
+                rewrite_jest_for_tests: false,
+                preserve_source_paths: false,
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -286,6 +290,10 @@ impl BuildCommand {
         this_transpiler.options.aot = ctx.bundler_options.compile_aot;
         this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
+        // What is run from its sources finds out that a module is missing when it asks for it, if it ever does.
+        if ctx.bundler_options.compile_run {
+            this_transpiler.options.ignore_module_resolution_errors = true;
+        }
         this_transpiler.options.rewrite_jest_for_tests = ctx.bundler_options.rewrite_jest_for_tests;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
         this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;

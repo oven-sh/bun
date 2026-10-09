@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";

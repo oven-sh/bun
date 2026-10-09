@@ -1,7 +1,10 @@
+// @ts-check
 const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
+const NumberIsInteger = Number.isInteger;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -9,8 +12,16 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  * per the rules defined in RFC 7230
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
+function checkIsHttpToken(val): boolean {
+  if (typeof val !== "string") return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
+  const length = val.length;
+  if (length === 0) return false;
+  for (let i = 0; i < length; i++) {
+    const code = StringPrototypeCharCodeAt.$call(val, i);
+    const bits = code < 64 ? (code < 32 ? 0 : 0x03ff6cfa) : code < 96 ? 0xc7fffffe : code < 128 ? 0x57ffffff : 0;
+    if (((bits >>> (code & 31)) & 1) === 0) return false;
+  }
+  return true;
 }
 
 /*
@@ -27,7 +38,7 @@ function checkIsHttpToken(val) {
 */
 const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s=]+(?:=(")?[^;"\s]*\1)?)*$/;
 const linkValueForbiddenCharsRegExp = /[\r\n]/;
-function validateLinkHeaderFormat(value, name) {
+function validateLinkHeaderFormat(value, name: string): void {
   if (
     typeof value === "undefined" ||
     !RegExpPrototypeExec.$call(linkValueRegExp, value) ||
@@ -41,7 +52,7 @@ function validateLinkHeaderFormat(value, name) {
   }
 }
 
-function validateLinkHeaderValue(hints) {
+function validateLinkHeaderValue(hints: unknown): string {
   if (typeof hints === "string") {
     validateLinkHeaderFormat(hints, "hints");
     return hints;
@@ -73,15 +84,15 @@ function validateLinkHeaderValue(hints) {
   );
 }
 
-function validateString(value, name) {
+function validateString(value: unknown, name: string): asserts value is string {
   if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
-function validateFunction(value, name) {
+function validateFunction(value: unknown, name: string): asserts value is Function {
   if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
 }
 
-function validateBoolean(value, name) {
+function validateBoolean(value: unknown, name: string): asserts value is boolean {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
@@ -121,9 +132,126 @@ function getValidatedFsPath(p: any, propName: string = "path") {
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
+const validateObjectSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2);
+const validateIntegerSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0);
+const validateNumberSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0);
+const validateFiniteNumberSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateFiniteNumber", 0);
+const checkRangesOrGetDefaultSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0);
+const validatePortSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validatePort", 0);
+const validateAbortSignalSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateAbortSignal", 0);
+const validateArraySlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateArray", 0);
+const validateInt32Slow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0);
+const validateUint32Slow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0);
+const validateEncoding = $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0);
+const validateBufferSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0);
+const validateOneOfSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0);
+
+function validateObject(value: unknown, name: string, options?: unknown): asserts value is object {
+  if (typeof value === "object" && value !== null && !$isProxyObject(value) && !ArrayIsArray(value)) return;
+  return validateObjectSlow(value, name, options);
+}
+
+function validateInteger(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+  if (
+    typeof value === "number" &&
+    NumberIsInteger(value) &&
+    (min === undefined ? value >= -9007199254740991 : typeof min === "number" && value >= min) &&
+    (max === undefined ? value <= 9007199254740991 : typeof max === "number" && value <= max)
+  )
+    return;
+  return validateIntegerSlow(value, name, min, max);
+}
+
+function validateNumber(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+  if (
+    typeof value === "number" &&
+    (min === undefined || (typeof min === "number" && value >= min)) &&
+    (max === undefined || (typeof max === "number" && value <= max))
+  )
+    return;
+  return validateNumberSlow(value, name, min, max);
+}
+
+function validateFiniteNumber(number: unknown, name: string): boolean {
+  if (number === undefined) return false;
+  if (typeof number === "number" && number - number === 0) return true;
+  return validateFiniteNumberSlow(number, name);
+}
+
+function checkRangesOrGetDefault(number: unknown, name: string, lower: unknown, upper: unknown, def?: unknown): unknown {
+  if (number === undefined) return def;
+  if (
+    typeof number === "number" &&
+    typeof lower === "number" &&
+    typeof upper === "number" &&
+    number >= lower &&
+    number <= upper &&
+    number - number === 0
+  )
+    return number;
+  return checkRangesOrGetDefaultSlow(number, name, lower, upper, def);
+}
+
+function validatePort(port: unknown, name?: string, allowZero?: unknown): unknown {
+  if (typeof port === "number" && port > 0 && port <= 0xffff && NumberIsInteger(port)) return port;
+  return validatePortSlow(port, name, allowZero);
+}
+
+function validateAbortSignal(signal: unknown, name: string): void {
+  if (signal === undefined) return;
+  return validateAbortSignalSlow(signal, name);
+}
+
+function validateArray(value: unknown, name: string, minLength?: unknown): asserts value is object {
+  if (
+    $isJSArray(value) &&
+    (minLength === undefined || (typeof minLength === "number" && (value as any).length >= minLength))
+  )
+    return;
+  return validateArraySlow(value, name, minLength);
+}
+
+function validateInt32(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+  if (
+    typeof value === "number" &&
+    (value | 0) === value &&
+    (min === undefined || (typeof min === "number" && value >= min)) &&
+    (max === undefined || (typeof max === "number" && value <= max))
+  )
+    return;
+  return validateInt32Slow(value, name, min, max);
+}
+
+function validateUint32(value: unknown, name: string, positive?: unknown): asserts value is number {
+  if (typeof value === "number" && value >>> 0 === value && (value !== 0 || !positive)) return;
+  return validateUint32Slow(value, name, positive);
+}
+
+function validateBuffer(buffer: unknown, name?: string): void {
+  if ($isTypedArrayView(buffer)) return;
+  return validateBufferSlow(buffer, name);
+}
+
+function validateOneOf(value: unknown, name: string, oneOf: any): void {
+  const list: unknown = oneOf;
+  if (typeof value === "string" && $isJSArray(list)) {
+    for (let i = 0; i < oneOf.length; i++) {
+      if (oneOf[i] === value) return;
+    }
+  }
+  return validateOneOfSlow(value, name, oneOf);
+}
+
+function isUint8Array(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array;
+}
+
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
+hideFromStack(validateObject, validateInteger, validateNumber, validateFiniteNumber, checkRangesOrGetDefault);
+hideFromStack(validatePort, validateAbortSignal, validateArray, validateInt32, validateUint32, validateBuffer);
+hideFromStack(validateOneOf);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
@@ -138,40 +266,40 @@ export default {
   kValidateObjectAllowArray,
   kValidateObjectAllowFunction,
   /** (value, name[, kValidateObject* flags]) */
-  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
+  validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /** `(value, name, min, max)` */
-  validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
+  validateInteger,
   /** `(value, name, min, max)` */
-  validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
+  validateNumber,
   /** `(value, name)` */
   validateString,
   /** `(number, name)` */
-  validateFiniteNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateFiniteNumber", 0),
+  validateFiniteNumber,
   /** `(number, name, lower, upper, def)` */
-  checkRangesOrGetDefault: $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0),
+  checkRangesOrGetDefault,
   /** `(value, name)` */
   validateFunction,
   /** `(value, name)` */
   validateBoolean,
   /** `(port, name = 'Port', allowZero = true)` */
-  validatePort: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePort", 0),
+  validatePort,
   /** `(signal, name)` */
-  validateAbortSignal: $newCppFunction("NodeValidator.cpp", "jsFunction_validateAbortSignal", 0),
+  validateAbortSignal,
   /** `(value, name, minLength = 0)` */
-  validateArray: $newCppFunction("NodeValidator.cpp", "jsFunction_validateArray", 0),
+  validateArray,
   /** `(value, name, min = -2147483648, max = 2147483647)` */
-  validateInt32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0),
+  validateInt32,
   /** `(value, name, positive = false)` */
-  validateUint32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0),
+  validateUint32,
   /** `(data, encoding)` */
-  validateEncoding: $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0),
+  validateEncoding,
   /** `(buffer, name = 'buffer')` */
-  validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
+  validateBuffer,
   /** `(value, name, oneOf)` */
-  validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
+  validateOneOf,
+  isUint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

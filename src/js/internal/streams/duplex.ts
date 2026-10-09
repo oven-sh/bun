@@ -10,50 +10,57 @@ const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const destroyImpl = require("internal/streams/destroy");
-const { kOnConstructed } = require("internal/streams/utils");
+const { createReadableState, createWritableState, internals } =
+  require("internal/streams/state") as typeof import("internal/streams/state").default;
+type ReadableState = import("internal/streams/state").ReadableState;
+type WritableState = import("internal/streams/state").WritableState;
 
 const ObjectKeys = Object.keys;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
+function preallocatedEvents(): Record<string | symbol, unknown> {
+  return {
+      close: undefined,
+      error: undefined,
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+      data: undefined,
+      end: undefined,
+      readable: undefined,
+      // Skip uncommon events...
+      // pause: undefined,
+      // resume: undefined,
+      // pipe: undefined,
+      // unpipe: undefined,
+      // [destroyImpl.kConstruct]: undefined,
+      // [destroyImpl.kDestroy]: undefined,
+  };
+}
+
 function Duplex(options): void {
   if (!(this instanceof Duplex)) return new Duplex(options);
 
-  this._events ??= {
-    close: undefined,
-    error: undefined,
-    prefinish: undefined,
-    finish: undefined,
-    drain: undefined,
-    data: undefined,
-    end: undefined,
-    readable: undefined,
-    // Skip uncommon events...
-    // pause: undefined,
-    // resume: undefined,
-    // pipe: undefined,
-    // unpipe: undefined,
-    // [destroyImpl.kConstruct]: undefined,
-    // [destroyImpl.kDestroy]: undefined,
-  };
+  this._events ??= preallocatedEvents();
 
-  this._readableState = new Readable.ReadableState(options, this, true);
-  this._writableState = new Writable.WritableState(options, this, true);
+  const readableState = (this._readableState = createReadableState(options, this, true));
+  const writableState = (this._writableState = createWritableState(options, this, true));
 
   if (options) {
     this.allowHalfOpen = options.allowHalfOpen !== false;
 
     if (options.readable === false) {
-      this._readableState.readable = false;
-      this._readableState.ended = true;
-      this._readableState.endEmitted = true;
+      readableState.readable = false;
+      readableState.ended = true;
+      readableState.endEmitted = true;
     }
 
     if (options.writable === false) {
-      this._writableState.writable = false;
-      this._writableState.ending = true;
-      this._writableState.ended = true;
-      this._writableState.finished = true;
+      writableState.writable = false;
+      writableState.ending = true;
+      writableState.ended = true;
+      writableState.finished = true;
     }
 
     const { read, write, writev, destroy, final, construct, signal } = options;
@@ -78,8 +85,8 @@ function Duplex(options): void {
 
   if (this._construct != null) {
     destroyImpl.construct(this, () => {
-      this._readableState[kOnConstructed](this);
-      this._writableState[kOnConstructed](this);
+      internals.onReadableConstructed!(this, this._readableState);
+      internals.onWritableConstructed!(this, this._writableState);
     });
   }
 }
@@ -114,16 +121,18 @@ ObjectDefineProperties(Duplex.prototype, {
   destroyed: {
     __proto__: null,
     get() {
-      if (this._readableState === undefined || this._writableState === undefined) {
+      const readableState: ReadableState | undefined = this._readableState;
+      const writableState: WritableState | undefined = this._writableState;
+      if (readableState === undefined || writableState === undefined) {
         return false;
       }
-      return this._readableState.destroyed && this._writableState.destroyed;
+      return readableState.destroyed && writableState.destroyed;
     },
     set(value) {
       // Backward compatibility, the user is explicitly
       // managing destroyed.
-      const readableState = this._readableState;
-      let writableState;
+      const readableState: ReadableState | undefined = this._readableState;
+      let writableState: WritableState | undefined;
       if (readableState && (writableState = this._writableState)) {
         readableState.destroyed = value;
         writableState.destroyed = value;

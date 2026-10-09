@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";

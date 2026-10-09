@@ -26,6 +26,13 @@ pub struct Snapshot {
     pub assets: Vec<(Vec<u8>, Vec<u8>)>,
     pub defines: Vec<(Vec<u8>, Vec<u8>)>,
     pub features: Vec<Vec<u8>>,
+    /// `BundleOptions::preserve_source_paths`. A snapshot that ends before it was written without.
+    pub preserve_source_paths: bool,
+    /// What each entry function runs: an entry point of the bundle, then the file that does what `bun:main` does. A snapshot that ends
+    /// before it has none.
+    pub entry_functions: Vec<[Vec<u8>; 2]>,
+    /// `TypeChecked::statements`. A snapshot that ends before it was written without.
+    pub statements: Vec<(Vec<u8>, u32, bool)>,
 }
 
 const MAGIC: &[u8] = b"bun aot snapshot 4\n";
@@ -144,6 +151,19 @@ impl Snapshot {
         for feature in &self.features {
             put(&mut out, feature);
         }
+        put_count(&mut out, usize::from(self.preserve_source_paths));
+        put_count(&mut out, self.entry_functions.len());
+        for files in &self.entry_functions {
+            put(&mut out, &files[0]);
+            put(&mut out, &files[1]);
+        }
+        let mut statements: Vec<_> = self.statements.iter().collect();
+        statements.sort();
+        put_count(&mut out, statements.len());
+        for (path, start, verdict) in statements {
+            put(&mut out, path);
+            put_count(&mut out, (*start as usize) << 1 | usize::from(*verdict));
+        }
         out
     }
 
@@ -164,9 +184,16 @@ impl Snapshot {
         let assets = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
         let defines = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
         let features = reader.list()?;
+        let preserve_source_paths = reader.count().is_some_and(|it| it != 0);
+        let entry_functions = (0..reader.count().unwrap_or(0)).map(|_| Some([reader.bytes()?, reader.bytes()?])).collect::<Option<_>>()?;
+        let statements = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()?))).collect::<Option<Vec<_>>>()?;
+        let statements = statements.into_iter().map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0)).collect();
         Some(Snapshot {
+            entry_functions,
             defines,
             features,
+            preserve_source_paths,
+            statements,
             cwd,
             tsconfig: has_tsconfig.then_some(tsconfig),
             conditions,

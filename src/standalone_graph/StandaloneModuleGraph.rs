@@ -412,6 +412,9 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn aot_image(&self) -> &'static [u8] {
         self.aot_image
     }
+    fn program_data_index(&self, name: &[u8]) -> Option<u32> {
+        self.find_ref(name)?.program_data_index
+    }
     fn preserves_source_paths(&self) -> bool {
         self.flags.contains(Flags::PRESERVES_SOURCE_PATHS)
     }
@@ -1114,10 +1117,6 @@ impl StandaloneModuleGraph {
                     length: read_u32(record_at + 8),
                 };
                 record_at += 3 * size_of::<u32>();
-                if has_aot_image {
-                    builtin_bytecode.push((id, std::ptr::from_mut::<[u8]>(&mut []), pointer.offset));
-                    continue;
-                }
                 // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
                 let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, pointer) };
                 builtin_bytecode.push((id, bytes, 0));
@@ -1911,9 +1910,6 @@ pub(crate) fn to_bytes(
     let mut builtin_bytecode_table = builtin_bytecode_table;
     let mut program_data_indices: Vec<u8> = Vec::new();
     if aot_image.is_some() {
-        for record in builtin_bytecode_table[4..].as_chunks_mut::<12>().0 {
-            record[8..12].copy_from_slice(&0u32.to_le_bytes());
-        }
         for module in modules.iter_mut() {
             let entry = if module.bytecode.length != 0 {
                 module.bytecode.offset + 1

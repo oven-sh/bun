@@ -32,7 +32,9 @@ pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use options::ReactCompilerOptions;
+pub use pipeline::Analysis;
 pub use program::{
-    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
-    collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
+    CompileResult, Host, JsxImportKind, MemoStats, PendingCompile, ReactCompilerState,
+    analyze_pending, collect_import_bindings, finish, has_module_scope_opt_out,
+    maybe_compile_pending,
 };

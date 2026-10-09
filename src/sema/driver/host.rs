@@ -10,14 +10,15 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
-use bun_sema::hir;
+use bun_sema::hir::{self, FileKind};
 use bun_sema::json::Json;
+use bun_sema::program::{Builtin, Module};
 use bun_sema::resolve::{
     Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
-use bun_sema::util::{FxHashMap, ShardedMap};
+use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::OnceLock;
@@ -182,6 +183,16 @@ pub struct Disk {
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
+    /// `Request::is_one_program`: what is compiled.
+    pub(crate) compiled: Option<Compiled>,
+}
+
+/// What `Host::builtin_files` goes by, and what it has found.
+pub(crate) struct Compiled {
+    /// `Request::paths` and `Request::code`, by `tspath.Path`.
+    pub(crate) entry_points: Vec<Vec<u8>>,
+    pub(crate) code: FxHashSet<Vec<u8>>,
+    pub(crate) builtin_modules: bun_threading::Guarded<Option<crate::builtins::Found>>,
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as
@@ -203,6 +214,8 @@ pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
+    pub without_builtin_modules: bool,
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -381,6 +394,7 @@ impl Disk {
             script_kinds_by_extension: Vec::new(),
             before_read: None,
             scripts_of_page: None,
+            compiled: None,
         }
     }
 
@@ -1122,7 +1136,40 @@ impl Host for Disk {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension
     }
+    fn builtin_files(&self, loaded: &[Option<Module<'_>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
+        let Some(compiled) = &self.compiled else { return Vec::new() };
+        let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text);
+        let is_entry_point = |module: &Module<'_>| compiled.entry_points.iter().any(|path| **path == *module.path.text);
+        let has = |is_so: &dyn Fn(&Module<'_>) -> bool| -> Vec<bool> { loaded.iter().map(|module| module.as_ref().is_some_and(is_so)).collect() };
+        let mut is_compiled = has(&is_code);
+        // A bundle has its entry points. Without a bundler, the program is what they lead to.
+        let mut pending: Vec<usize> = (0..loaded.len()).filter(|&file| !is_compiled[file] && loaded[file].as_ref().is_some_and(is_entry_point)).collect();
+        while let Some(file) = pending.pop() {
+            let Some(module) = loaded[file].as_ref().filter(|module| module.hir.kind != FileKind::Declaration) else { continue };
+            if !std::mem::replace(&mut is_compiled[file], true) {
+                pending.extend(module.edges.iter().map(|edge| edge.idx()));
+            }
+        }
+        let found = crate::builtins::find(loaded, atoms, &is_compiled);
+        let archive = bun_builtin_syntax::Archive::embedded();
+        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id)));
+        let functions = archive.manifest().function_files().iter().map(|file| ([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), Builtin::Functions));
+        let files = modules.chain(functions).collect();
+        *compiled.builtin_modules.lock() = Some(found);
+        files
+    }
+    fn builtin_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
+        let importer = importer.strip_prefix(bun_builtin_syntax::VIRTUAL_ROOT)?;
+        let archive = bun_builtin_syntax::Archive::embedded();
+        let path = archive.manifest().resolve(specifier, importer).map(|id| archive.path(id));
+        // Without the extension, which an import does not name.
+        Some(path.and_then(|path| Some(path[..path.iter().rposition(|&byte| byte == b'.')?].to_vec())))
+    }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
+        // They are all written in TypeScript.
+        if path.starts_with(bun_builtin_syntax::VIRTUAL_ROOT) {
+            return (!is_declaration_file_name(path)).then_some(ScriptKind::Ts);
+        }
         if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {
             return None;
         }

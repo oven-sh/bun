@@ -15,6 +15,7 @@ const {
 const isWritable = stream => typeof stream?.write === "function";
 
 const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } = CSI;
+const kCSI = "\x1b[";
 
 class Readline {
   #autoCommit = false;
@@ -40,7 +41,7 @@ class Readline {
     validateInteger(x, "x");
     if (y != null) validateInteger(y, "y");
 
-    const data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+    const data = y == null ? kCSI + (x + 1) + "G" : kCSI + (y + 1) + ";" + (x + 1) + "H";
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
     else ArrayPrototypePush(this.#todo, data);
 
@@ -61,15 +62,15 @@ class Readline {
       let data = "";
 
       if (dx < 0) {
-        data += CSI`${-dx}D`;
+        data += kCSI + -dx + "D";
       } else if (dx > 0) {
-        data += CSI`${dx}C`;
+        data += kCSI + dx + "C";
       }
 
       if (dy < 0) {
-        data += CSI`${-dy}A`;
+        data += kCSI + -dy + "A";
       } else if (dy > 0) {
-        data += CSI`${dy}B`;
+        data += kCSI + dy + "B";
       }
       if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
       else ArrayPrototypePush(this.#todo, data);

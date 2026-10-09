@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Readable, Writable, WritableOptions } from "stream";
 

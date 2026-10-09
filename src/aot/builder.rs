@@ -142,6 +142,7 @@ impl FuncBuilder {
         let mut block = block;
         loop {
             // Up from `block` to where the variable has a value.
+            let mut with_one_pred_in_a_row = 0;
             let mut value = loop {
                 if let Some(&v) = self.states[block.idx()].defs.get(&var) {
                     break v;
@@ -153,8 +154,10 @@ impl FuncBuilder {
                     self.states[block.idx()].defs.insert(var, param);
                     break param;
                 }
-                // Or it has come round a circle of blocks that nothing leads into: a loop after a `return`.
-                if preds == 0 || awaiting.len() > self.states.len() {
+                // Or it has come round a circle of blocks that nothing leads into: a loop after a `return`. Each of those has one
+                // predecessor: a block where several meet has a value for the variable from when the walk first passes it. The length of
+                // `awaiting` does not tell: below such a block the walk passes the same blocks once more.
+                if preds == 0 || with_one_pred_in_a_row > self.states.len() {
                     let pos = self.pos;
                     let (blank, ty) = self.blanks.get(&var).cloned().unwrap_or((Op::Undefined, self.undefined));
                     let v = self.func.add_value(blank, pos, ty);
@@ -163,6 +166,7 @@ impl FuncBuilder {
                     break v;
                 }
                 if preds == 1 {
+                    with_one_pred_in_a_row += 1;
                     awaiting.push(Awaiting::Only(block));
                     block = self.states[block.idx()].preds[0];
                     continue;
@@ -173,6 +177,7 @@ impl FuncBuilder {
                 let first = preds[0];
                 awaiting.push(Awaiting::Join { block, param, preds, at: 0 });
                 block = first;
+                with_one_pred_in_a_row = 0;
             };
             // Back down with it.
             loop {

@@ -1,6 +1,7 @@
 // clang-format off
 #pragma once
 #include "JSBuffer.h"
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -155,6 +156,10 @@ BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(FORWARD_DECL_LAZY_GENERATOR)
 // while the module loads, as every export was before exports became lazy.
 inline bool isBunDefinedGetter(JSC::JSObject *getter) {
   auto *function = dynamicDowncast<JSC::JSFunction>(getter);
+#if ENABLE(AOT)
+  if (function && JSC::AOT::Typed::declaredAs(function) != JSC::AOT::Typed::DeclaredAs::NotCompiled)
+    return JSC::AOT::Typed::isOfBuiltinModule(function);
+#endif
   return function && (function->isNonBoundHostFunction() || function->isBuiltinFunction());
 }
 

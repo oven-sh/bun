@@ -43,8 +43,6 @@ const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
 
-export default cluster;
-
 const handles = new Map();
 cluster.isWorker = false;
 cluster.isMaster = true; // Deprecated alias. Must be same as isPrimary.
@@ -378,3 +376,5 @@ Worker.prototype.destroy = function (signo) {
 
   proc.kill(signal);
 };
+
+export default cluster;

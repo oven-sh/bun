@@ -5,6 +5,7 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
+pub(crate) mod builtin_syntax;
 pub mod error;
 pub mod function_identities;
 pub use error::Error;

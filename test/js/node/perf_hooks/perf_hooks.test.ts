@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";

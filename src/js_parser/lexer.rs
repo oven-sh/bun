@@ -288,6 +288,8 @@ pub struct Lexer<'a> {
     pub(crate) track_react_suppressions: bool,
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
+    /// `$name` is a private name: see `crate::builtin_syntax`.
+    pub(crate) bun_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
     /// Parallel to `all_comments`, in tolerant mode: the `sema::comments::flags` of each comment.
     pub(crate) comment_flags: Vec<u8>,
@@ -2716,6 +2718,19 @@ impl<'a> Lexer<'a> {
                     self.parse_string_literal::<0x60>()?;
                 }
 
+                0x24 if self.bun_builtin_syntax => {
+                    let advance = latin1_identifier_continue_length(&contents[self.current..]);
+
+                    self.end = self.current + advance;
+                    self.current = self.end;
+
+                    self.step_with(contents);
+
+                    let raw = self.raw();
+                    self.identifier = self.builtin_name(raw)?;
+                    self.token = T::TIdentifier;
+                }
+
                 0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
                     let advance = latin1_identifier_continue_length(&contents[self.current..]);
 
@@ -3402,6 +3417,7 @@ impl<'a> Lexer<'a> {
             track_comments: false,
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
+            bun_builtin_syntax: false,
             all_comments: Vec::new(),
             comment_flags: Vec::new(),
             token_full_start: 0,

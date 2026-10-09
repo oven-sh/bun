@@ -57,6 +57,9 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (!isStrictFrame) {
         if (auto* executable = stackFrame.stackFrame().ownerExecutable()) {
             isStrictFrame = executable->isInStrictContext();
+        } else if (stackFrame.stackFrame().isTypedAOTFrame()) {
+            // Compiled from the modules of a TypeScript program.
+            isStrictFrame = true;
         }
     }
 

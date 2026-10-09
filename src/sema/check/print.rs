@@ -38,6 +38,8 @@ const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
 const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+/// Not tsgo's. The constituents of a union that `CompareTypes` orders by nothing but their ids are in the order of their identities.
+const CANONICAL_UNION_ORDER: u32 = 1 << 17;
 /// What `typeToString` hands `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -134,6 +136,11 @@ impl Checker<'_, '_> {
     /// `typeToString`
     pub fn type_to_string(&mut self, ty: TypeId) -> Vec<u8> {
         self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING))
+    }
+
+    /// `typeToString`, as a function of the type alone: not of the order in which types were created, which goes by the plan of the check.
+    pub fn type_to_string_in_canonical_order(&mut self, ty: TypeId) -> Vec<u8> {
+        self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING | CANONICAL_UNION_ORDER))
     }
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
@@ -3550,9 +3557,22 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             UnionOrigin::Intersection(origin) => return self.intersection_to_node(origin),
             UnionOrigin::Union(_) | UnionOrigin::None => {}
         }
-        let types = self.format_union_types(ty);
+        let mut types = self.format_union_types(ty);
         if let [only] = types[..] {
             return self.type_to_node(only);
+        }
+        if self.flags & CANONICAL_UNION_ORDER != 0 {
+            let mut first = 0;
+            while first < types.len() {
+                let mut end = first + 1;
+                while end < types.len() && self.c.compare_types_without_ids(types[end - 1], types[end]).is_eq() {
+                    end += 1;
+                }
+                if end - first > 1 {
+                    types[first..end].sort_by_cached_key(|&member| self.c.identity_of_type(member));
+                }
+                first = end;
+            }
         }
         let nodes = self.map_to_type_nodes(&types, true);
         Node::union(nodes)

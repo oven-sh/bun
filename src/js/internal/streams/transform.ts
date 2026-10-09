@@ -43,8 +43,15 @@
 "use strict";
 
 const Duplex = require("internal/streams/duplex");
-const { getHighWaterMark } = require("internal/streams/state");
+const { getHighWaterMark, internals } = require("internal/streams/state") as typeof import("internal/streams/state").default;
+type ReadableState = import("internal/streams/state").ReadableState;
+type WritableState = import("internal/streams/state").WritableState;
 
+const kReadableEnded = 1 << 9;
+const kReadableSync = 1 << 12;
+const kWritableEnded = 1 << 30;
+
+const process = globalThis.process;
 const kCallback = Symbol("kCallback");
 
 function Transform(options): void {
@@ -71,7 +78,8 @@ function Transform(options): void {
   // We have implemented the _read method, and done the other things
   // that Readable wants before the first _read call, so unset the
   // sync guard flag.
-  this._readableState.sync = false;
+  const rState: ReadableState = this._readableState;
+  rState.flags &= ~kReadableSync;
 
   this[kCallback] = null;
 
@@ -131,8 +139,8 @@ Transform.prototype._transform = function (_chunk, _encoding, _callback) {
 };
 
 Transform.prototype._write = function (chunk, encoding, callback) {
-  const rState = this._readableState;
-  const wState = this._writableState;
+  const rState: ReadableState = this._readableState;
+  const wState: WritableState = this._writableState;
   const length = rState.length;
 
   this._transform(chunk, encoding, (err, val) => {
@@ -142,16 +150,17 @@ Transform.prototype._write = function (chunk, encoding, callback) {
     }
 
     if (val != null) {
-      this.push(val);
+      if (this.push === internals.pushMethod) internals.push!(this, rState, val, undefined);
+      else this.push(val);
     }
 
-    if (rState.ended) {
+    if ((rState.flags & kReadableEnded) !== 0) {
       // If user has called this.push(null) we have to
       // delay the callback to properly propagate the new
       // state.
       process.nextTick(callback);
     } else if (
-      wState.ended || // Backwards compat.
+      (wState.flags & kWritableEnded) !== 0 || // Backwards compat.
       length === rState.length || // Backwards compat.
       rState.length < rState.highWaterMark
     ) {

@@ -6884,7 +6884,23 @@ pub(crate) mod __gated_printer {
             self.print_semicolon_after_statement();
         }
 
+        /// Prints the `@` of a private name. Returns the name without its mark.
+        fn print_builtin_name_sigil<'i>(&mut self, identifier: &'i [u8]) -> &'i [u8] {
+            if let Some(name) = identifier.strip_prefix(bun_ast::Target::PRIVATE_NAME_PREFIX) {
+                self.print(b"@");
+                return name;
+            }
+            identifier
+                .strip_prefix(bun_ast::Target::PUBLIC_NAME_PREFIX)
+                .unwrap_or(identifier)
+        }
+
         pub(crate) fn print_identifier(&mut self, identifier: &[u8]) {
+            let identifier = if self.options.target == bun_ast::Target::BunBuiltins {
+                self.print_builtin_name_sigil(identifier)
+            } else {
+                identifier
+            };
             if ASCII_ONLY {
                 self.print_identifier_ascii_only(identifier);
             } else {

@@ -59,14 +59,7 @@ let FixedQueue;
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
-
-interface Listener extends Function {
-  listener?: Function;
-}
-
-interface ListenerList extends Array<Listener> {
-  warned?: boolean;
-}
+const kMaxEventsToCopy = 8;
 
 interface MaxListenersExceededWarning extends Error {
   emitter?: unknown;
@@ -74,35 +67,9 @@ interface MaxListenersExceededWarning extends Error {
   count?: number;
 }
 
-type EventName = string | symbol;
-
-declare class EventEmitter {
-  constructor(opts?: { captureRejections?: boolean });
-  _events?: Record<EventName, Listener | ListenerList | undefined>;
-  _eventsCount: number;
-  _maxListeners?: number;
-  [kCapture]?: boolean;
-  [kShapeMode]?: boolean;
-  setMaxListeners(n: number): this;
-  getMaxListeners(): number;
-  emit(type: EventName, ...args: unknown[]): boolean;
-  addListener(type: EventName, fn: Listener): this;
-  on(type: EventName, fn: Listener): this;
-  prependListener(type: EventName, fn: Listener): this;
-  once(type: EventName, fn: Listener): this;
-  prependOnceListener(type: EventName, fn: Listener): this;
-  removeListener(type: EventName, listener: Listener): this;
-  off(type: EventName, listener: Listener): this;
-  removeAllListeners(type: EventName): this;
-  listeners(type: EventName): Function[];
-  rawListeners(type: EventName): Function[];
-  listenerCount(type: EventName, method?: Function): number;
-  eventNames(): EventName[];
-}
-
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
-  if (this._events === undefined || this._events === this.__proto__._events) {
+  if (this._events === undefined || this._events === Object.getPrototypeOf(this)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
@@ -117,18 +84,12 @@ function EventEmitter(opts) {
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
     this[kCapture] = !!opts.captureRejections;
-    this.emit = emitWithRejectionCapture;
   } else {
     this[kCapture] = EventEmitterPrototype[kCapture];
-    const capture = EventEmitterPrototype[kCapture];
-    this[kCapture] = capture;
-    if (capture) {
-      this.emit = emitWithRejectionCapture;
-    }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {} as EventEmitter);
+const EventEmitterPrototype = (EventEmitter.prototype = {} as any);
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -150,12 +111,12 @@ function emitError(emitter, args) {
   if (events !== undefined) {
     const errorMonitor = events[kErrorMonitor];
     if (errorMonitor !== undefined) {
-      applyHandlers(errorMonitor, emitter, args);
+      applyHandlers(errorMonitor, emitter, kErrorMonitor, args);
     }
 
     const handlers = events.error;
     if (handlers !== undefined) {
-      applyHandlers(handlers, emitter, args);
+      applyHandlers(handlers, emitter, "error", args);
       return true;
     }
   }
@@ -184,27 +145,43 @@ function emitError(emitter, args) {
 // A listener list is a bare function for a single listener, else an array
 // (like node). Arrays are never mutated in place - mutators install a copy -
 // so a stored list can be iterated with no defensive clone.
-function applyHandlers(handlers, emitter, args) {
+function applyHandlers(handlers, emitter, type, args) {
   if (typeof handlers === "function") {
-    handlers.$apply(emitter, args);
+    const result = handlers.$apply(emitter, args);
+    if ($isObject(result) && emitter[kCapture]) addCatch(emitter, result, type, ...args);
     return;
   }
   for (let i = 0, { length } = handlers; i < length; i++) {
-    handlers[i].$apply(emitter, args);
+    const result = handlers[i].$apply(emitter, args);
+    if ($isObject(result) && emitter[kCapture]) addCatch(emitter, result, type, ...args);
   }
 }
 
-function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
-  });
+function addCatch(that, promise, type, ...args) {
+  // Handle Promises/A+ spec, then could be a getter
+  // that throws on second use.
+  try {
+    const then = promise.then;
+
+    if (typeof then === "function") {
+      then.$call(promise, undefined, function (err) {
+        // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+        process.nextTick(emitUnhandledRejectionOrErr, that, err, type, args);
+      });
+    }
+  } catch (err) {
+    that.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
+    // We have to disable the capture rejections mechanism, otherwise
+    // we might end up in an infinite loop.
+    const prev = emitter[kCapture];
+
     // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
     // We restore the previous value of kCapture in case the uncaughtException is present
     // and the exception is handled.
@@ -212,76 +189,23 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
       emitter[kCapture] = false;
       emitter.emit("error", err);
     } finally {
-      emitter[kCapture] = true;
+      emitter[kCapture] = prev;
     }
   }
 }
 
-const emitWithoutRejectionCapture = function emit(type, ...args) {
+// One body, and `args` is only ever read or spread in it: handed to another function as a value
+// the array would have to be made on every call, and a helper between here and the listener is a
+// level of inlining more.
+EventEmitterPrototype.emit = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
   if (type === "error") {
     return emitError(this, args);
   }
-  var { _events: events } = this;
+  const events = this._events;
   if (events === undefined) return false;
-  var handler = events[type];
-  if (handler === undefined) return false;
-  // For performance reasons Function.call(...) is used whenever possible.
-  if (typeof handler === "function") {
-    switch (args.length) {
-      case 0:
-        handler.$call(this);
-        break;
-      case 1:
-        handler.$call(this, args[0]);
-        break;
-      case 2:
-        handler.$call(this, args[0], args[1]);
-        break;
-      case 3:
-        handler.$call(this, args[0], args[1], args[2]);
-        break;
-      default:
-        handler.$apply(this, args);
-        break;
-    }
-    return true;
-  }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
-  for (let i = 0, { length } = handler; i < length; i++) {
-    const listener = handler[i];
-    switch (args.length) {
-      case 0:
-        listener.$call(this);
-        break;
-      case 1:
-        listener.$call(this, args[0]);
-        break;
-      case 2:
-        listener.$call(this, args[0], args[1]);
-        break;
-      case 3:
-        listener.$call(this, args[0], args[1], args[2]);
-        break;
-      default:
-        listener.$apply(this, args);
-        break;
-    }
-  }
-  return true;
-};
-
-const emitWithRejectionCapture = function emit(type, ...args) {
-  $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
-  if (type === "error") {
-    return emitError(this, args);
-  }
-  var { _events: events } = this;
-  if (events === undefined) return false;
-  var handler = events[type];
+  const handler = events[type];
   if (handler === undefined) return false;
   // For performance reasons Function.call(...) is used whenever possible.
   if (typeof handler === "function") {
@@ -303,15 +227,13 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
-      addCatch(this, result, type, args);
-    }
+    if ($isObject(result) && this[kCapture]) addCatch(this, result, type, ...args);
     return true;
   }
   // No defensive clone: stored arrays are never mutated in place (mutators
   // install a copy), so this list stays stable for the whole loop even if a
   // listener adds/removes listeners.
-  for (let i = 0, { length } = handler; i < length; i++) {
+  for (let i = 0, length = handler.length; i < length; i += 1) {
     const listener = handler[i];
     let result;
     switch (args.length) {
@@ -331,14 +253,10 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = listener.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
-      addCatch(this, result, type, args);
-    }
+    if ($isObject(result) && this[kCapture]) addCatch(this, result, type, ...args);
   }
   return true;
 };
-
-EventEmitterPrototype.emit = emitWithoutRejectionCapture;
 
 function _addListener(target, type, fn, prepend) {
   checkListener(fn);
@@ -371,12 +289,13 @@ function _addListener(target, type, fn, prepend) {
   }
 }
 
-EventEmitterPrototype.addListener = function addListener(type, fn) {
+const addListener = function addListener(type, fn) {
   _addListener(this, type, fn, false);
   return this;
 };
+EventEmitterPrototype.addListener = addListener;
 
-EventEmitterPrototype.on = EventEmitterPrototype.addListener;
+EventEmitterPrototype.on = addListener;
 
 EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   _addListener(this, type, fn, true);
@@ -388,7 +307,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 // An inline loop beats concat/slice here ~10x (host-call boundary).
 function copyWithInserted(list, fn, prepend) {
   const n = list.length;
-  const copy: ListenerList = $newArrayWithSize(n + 1);
+  const copy = $newArrayWithSize<any>(n + 1);
   // Two straight copies, not a per-element ternary (measured ~25% slower).
   if (prepend) {
     copy[0] = fn;
@@ -397,7 +316,7 @@ function copyWithInserted(list, fn, prepend) {
     for (let i = 0; i < n; i++) copy[i] = list[i];
     copy[n] = fn;
   }
-  if (list.warned) copy.warned = true;
+  if (list.warned) (copy as any).warned = true;
   return copy;
 }
 
@@ -451,7 +370,7 @@ EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, f
   return this;
 };
 
-EventEmitterPrototype.removeListener = function removeListener(type, listener) {
+const removeListener = function removeListener(type, listener) {
   checkListener(listener);
 
   const events = this._events;
@@ -472,7 +391,7 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
       // letting a long-lived emitter's Structure chain grow toward dictionary.
       this._events = Object.create(null);
     } else {
-      delete events[type];
+      removeEvent(this, events, type);
     }
     if (events.removeListener !== undefined) this.emit("removeListener", type, list.listener ?? listener);
     return this;
@@ -490,19 +409,44 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   // Copy-remove (arrays are never mutated in place), and store a lone
   // survivor bare like node does, so `_events[type]` shape matches theirs.
   const n = list.length;
-  const copy: ListenerList = $newArrayWithSize(n - 1);
-  for (let i = 0, j = 0; i < n; i++) {
-    if (i !== position) copy[j++] = list[i];
+  if (n === 2) {
+    events[type] = list[1 - position];
+  } else {
+    const copy = $newArrayWithSize<any>(n - 1);
+    for (let i = 0; i < position; i++) copy[i] = list[i];
+    for (let i = position + 1; i < n; i++) copy[i - 1] = list[i];
+    if (list.warned) (copy as any).warned = true;
+    events[type] = copy;
   }
-  if (list.warned) copy.warned = true;
-  events[type] = copy.length === 1 ? copy[0] : copy;
 
   if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener ?? listener);
 
   return this;
 };
+EventEmitterPrototype.removeListener = removeListener;
 
-EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
+// `delete` gives the object a new Structure each time and makes it a dictionary
+// after a few, and every access after that fills its caches anew. A fresh object
+// with the keys that are left has the Structure an emitter with those events has.
+function removeEvent(target, events, type) {
+  if (target._eventsCount > kMaxEventsToCopy) {
+    delete events[type];
+    return;
+  }
+  const removed = typeof type === "string" || typeof type === "symbol" ? type : ReflectOwnKeys({ [type]: undefined })[0];
+  const copy = Object.create(null);
+  const keys = ReflectOwnKeys(events);
+  for (let i = 0, length = keys.length; i < length; i++) {
+    const key = keys[i];
+    if (key !== removed) copy[key] = events[key];
+  }
+  target._events = copy;
+  // Whoever still holds the old object (emitError across an errorMonitor
+  // listener) finds no listener there, as after a `delete`.
+  events[removed] = undefined;
+}
+
+EventEmitterPrototype.off = removeListener;
 
 EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   const events = this._events;
@@ -515,7 +459,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
       this._eventsCount = 0;
     } else if (events[type] !== undefined) {
       if (--this._eventsCount === 0) this._events = Object.create(null);
-      else delete events[type];
+      else removeEvent(this, events, type);
     }
     this[kShapeMode] = false;
     return this;
@@ -621,20 +565,31 @@ async function once(emitter, type, options = kEmptyObject) {
     }
     $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, args);
   };
-  const opts = resistStopPropagation({ __proto__: null, once: true });
-  eventTargetAgnosticAddListener(emitter, type, resolver, opts);
+  let opts;
+  if (typeof emitter.on === "function") {
+    emitter.once(type, resolver);
+  } else {
+    opts = resistStopPropagation({ __proto__: null, once: true });
+    eventTargetAgnosticAddListener(emitter, type, resolver, opts);
+  }
   if (type !== "error" && typeof emitter.once === "function") {
     // EventTarget does not have `error` event semantics like Node
     // EventEmitters, we listen to `error` events only on EventEmitters.
     emitter.once("error", errorListener);
   }
-  function abortListener() {
-    eventTargetAgnosticRemoveListener(emitter, type, resolver);
-    eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
-  }
+  let abortListener;
   if (signal != null) {
-    eventTargetAgnosticAddListener(signal, "abort", abortListener, opts);
+    abortListener = function abortListener() {
+      eventTargetAgnosticRemoveListener(emitter, type, resolver);
+      eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
+    };
+    eventTargetAgnosticAddListener(
+      signal,
+      "abort",
+      abortListener,
+      opts ?? resistStopPropagation({ __proto__: null, once: true }),
+    );
   }
 
   return promise;
@@ -928,7 +883,7 @@ function lazyLoadAsyncResource() {
   }
 }
 
-class EventEmitterAsyncResource extends EventEmitter {
+class EventEmitterAsyncResource extends (EventEmitter as any) {
   #asyncResource;
 
   constructor(options) {
@@ -945,13 +900,6 @@ class EventEmitterAsyncResource extends EventEmitter {
     }
     super(options);
     this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
-    // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
-    // as an OWN property when captureRejections is on, which would shadow the
-    // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
-    // still run in the resource's async scope; the prototype emit re-checks
-    // this[kCapture] on every call, so rejection capture is preserved. delete
-    // is a no-op when the property is absent, so no own-property check needed.
-    delete (this as { emit? }).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private
@@ -971,13 +919,7 @@ class EventEmitterAsyncResource extends EventEmitter {
 
   emit(event, ...args) {
     const asyncResource = this.#asyncResource;
-    // The base EventEmitter picks its emit variant by stamping an own property;
-    // that own property is deleted in the constructor above, so pick per-call
-    // from this[kCapture]. The default branch reads super.emit at call time
-    // (Node routes through super.emit) so a userland monkeypatch of
-    // EventEmitter.prototype.emit is observed like it is for plain emitters.
-    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
-    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    ArrayPrototypeUnshift.$call(args, super.emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 

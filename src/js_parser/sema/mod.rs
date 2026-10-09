@@ -492,6 +492,10 @@ pub fn summarize<'s>(
         options.features.no_macros = true;
         options.features.top_level_await = true;
         options.features.standard_decorators = !experimental_decorators;
+        // For `Flags::REACT_HOOKS_SUPPRESSION`. Without a visit pass the lexer is all that looks at it.
+        if loader == bun_ast::Loader::Tsx {
+            options.features.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+        }
         options.suppress_warnings_about_weird_code = true;
         options.tolerant = true;
         // `initializeState`

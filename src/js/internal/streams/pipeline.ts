@@ -20,6 +20,9 @@ const {
   isReadableFinished,
 } = require("internal/streams/utils");
 
+const { isReadableState } = require("internal/streams/state") as typeof import("internal/streams/state").default;
+
+const process = globalThis.process;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
 const SymbolDispose = Symbol.dispose;
@@ -428,7 +431,13 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
 
   eos(src, { readable: true, writable: false }, err => {
     const rState = src._readableState;
-    if (err && err.code === "ERR_STREAM_PREMATURE_CLOSE" && rState?.ended && !rState.errored && !rState.errorEmitted) {
+    if (
+      err &&
+      err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
+      (isReadableState(rState)
+        ? rState.ended && !rState.errored && !rState.errorEmitted
+        : rState?.ended && !rState.errored && !rState.errorEmitted)
+    ) {
       // Some readable streams will emit 'close' before 'end'. However, since
       // this is on the readable side 'end' should still be emitted if the
       // stream has been ended and no error emitted. This should be allowed in

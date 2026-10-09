@@ -40,6 +40,8 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
+/** Whether this code is compiled ahead of time. A define: the arm of `if (IS_BUN_AOT)` that is not taken is not in the build. */
+declare const IS_BUN_AOT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

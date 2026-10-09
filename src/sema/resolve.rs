@@ -117,6 +117,20 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+    /// Called once, when the program and `Options::roots_for_code` are loaded, with every file so far. The sources of the runtime
+    /// that are compiled with them: they are loaded like `Options::roots_for_code`. Each with its `Module::builtin`.
+    fn builtin_files(
+        &self,
+        _loaded: &[Option<crate::program::Module<'_>>],
+        _atoms: &crate::atom::Interner<'_>,
+    ) -> Vec<(Vec<u8>, crate::program::Builtin)> {
+        Vec::new()
+    }
+    /// `None`: `importer` is none of `builtin_files`. Else the file that `specifier` stands for there, as a specifier that resolves to
+    /// it, or nothing. Such a file refers to its like alone: the disk is not asked.
+    fn builtin_import(&self, _importer: &[u8], _specifier: &[u8]) -> Option<Option<Vec<u8>>> {
+        None
+    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -398,6 +412,10 @@ pub struct Options {
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
+    /// `baseUrl`, which TypeScript has removed. Absolute. Empty: there is none. See `tolerate_removed_options`.
+    pub base_url: Vec<u8>,
+    /// See `ignore_paths_of`.
+    pub host_modules_without_paths: Vec<Vec<u8>>,
     /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
     pub skip_lib_check: bool,
     pub skip_default_lib_check: bool,
@@ -740,6 +758,7 @@ impl Options {
         };
         let target = lower(b"target");
         options.paths_base_dir = word(b"pathsBasePath").unwrap_or(base_dir).to_vec();
+        options.base_url = directory(b"baseUrl");
         if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
             for (pattern, targets) in paths {
                 let targets = targets.as_array().unwrap_or(&[]).iter();
@@ -919,6 +938,48 @@ impl Options {
             !text(b"sourceRoot").is_empty() || !text(b"mapRoot").is_empty();
         options.verify(compiler, b"");
         options
+    }
+
+    /// 5102, 5108: `createRemovedOptionDiagnostic`, an option, or a value of one, that TypeScript no longer has. 5090: a substitution
+    /// of `paths` that is no path, which is relative to `baseUrl` where there is one.
+    pub fn is_removed_option_error(&self, code: u32) -> bool {
+        matches!(code, 5102 | 5108) || code == 5090 && !self.base_url.is_empty()
+    }
+
+    /// For a program that is compiled: no declaration file comes of it, so what one could not say is no error.
+    pub fn emit_nothing(&mut self) {
+        self.composite = false;
+        self.emits_declarations = false;
+        self.isolated_declarations = false;
+        self.writes_declaration_maps = false;
+    }
+
+    /// For a program that is compiled or run, not checked for its own sake. That its configuration still has an option that TypeScript
+    /// has removed does not keep it from running, and is no error. Most of them are about what is emitted. `baseUrl` says where
+    /// modules are, and the bundler goes by it, so the types are looked for in the same places: `paths` are relative to it, and a
+    /// name that is no path is looked for in it before it is taken for a package.
+    pub fn tolerate_removed_options(&mut self) {
+        if !self.base_url.is_empty() {
+            self.paths_base_dir.clone_from(&self.base_url);
+            if !self.paths.iter().any(|path| path.0 == b"*") {
+                self.paths.push((b"*".to_vec(), vec![b"*".to_vec()]));
+            }
+        }
+        let mut problems = std::mem::take(&mut self.problems);
+        problems.retain(|problem| !self.is_removed_option_error(problem.code));
+        self.problems = problems;
+        let mut errors = std::mem::take(&mut self.errors);
+        errors.retain(|&code| !self.is_removed_option_error(code));
+        self.errors = errors;
+    }
+
+    /// For a program that is compiled. A specifier that names a module of the host is that module when the program runs, whatever
+    /// `paths` says, so the file that `paths` has for it is no part of the program. Nothing is known of such a module unless something
+    /// declares it.
+    pub fn ignore_paths_of(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
+        let (of_host, others) = std::mem::take(&mut self.paths).into_iter().partition(|path| is_host_module(&path.0));
+        self.paths = others;
+        self.host_modules_without_paths = of_host.into_iter().map(|path| path.0).collect();
     }
 
     /// Validates the options, which were built from `compiler`, in the configuration file at

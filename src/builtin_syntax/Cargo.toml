@@ -1,0 +1,13 @@
+[package]
+name = "bun_builtin_syntax"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_zstd.workspace = true
+
+[lints]
+workspace = true

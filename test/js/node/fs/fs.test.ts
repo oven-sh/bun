@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,

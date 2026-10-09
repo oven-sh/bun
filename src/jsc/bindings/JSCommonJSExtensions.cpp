@@ -252,7 +252,6 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         JSC::MarkedArgumentBuffer args;
         args.append(specifier);
         JSC::CallData callData = JSC::getCallData(requireESM);
-        ASSERT(callData.type == JSC::CallData::Type::JS);
         NakedPtr<JSC::Exception> returnedException = nullptr;
         JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
         if (returnedException) [[unlikely]] {

@@ -7,10 +7,11 @@ use crate::id::V;
 use crate::ir::{BinOp, Def, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, Why};
 
 pub const MAGIC: u32 = 0x5249_5442;
-pub const VERSION: u32 = 14;
+pub const VERSION: u32 = 26;
 pub const NONE: u32 = u32::MAX;
 /// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
+pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
 /// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
 pub const PARAMETER_IS_ANNOTATED: u32 = 1 << 31;
 
@@ -45,6 +46,7 @@ opcodes! {
     GetField,
     PutField,
     NewClosure,
+    NewClosureOnce,
     GetById,
     PutById,
     InById,
@@ -149,9 +151,11 @@ pub fn record(def: &Def) -> Record<'_> {
         Op::FreeGet { name, is_typeof } => (r.opcode, r.immediates[0]) = (if *is_typeof { Opcode::GetGlobalForTypeOf } else { Opcode::GetGlobal }, name.0),
         Op::FreeSet { name, value } => (r.opcode, r.immediates[0], r.children[0]) = (Opcode::PutGlobal, name.0, *value),
         Op::New(l) => (r.opcode, r.immediates[0]) = (Opcode::NewObjectWithShape, l.0),
+        Op::NewWith { layout, name, value } => (r.opcode, r.children[0], r.immediates) = (Opcode::NewObjectWithShape, *value, [layout.0, name.0]),
         Op::FieldGet { obj, layout, field } => (r.opcode, r.children[0], r.immediates) = (Opcode::GetField, *obj, [layout.0, *field]),
         Op::FieldSet { obj, layout, field, value } => (r.opcode, r.children[0], r.children[1], r.immediates) = (Opcode::PutField, *obj, *value, [layout.0, *field]),
-        Op::Closure { func, env } => (r.opcode, r.children[0], r.immediates[0]) = (Opcode::NewClosure, *env, func.0),
+        Op::Closure { func, captures } => (r.opcode, r.immediates[0], r.args) = (Opcode::NewClosure, func.0, captures),
+        Op::ClosureOnce { func, captures, env, field } => (r.opcode, r.children[0], r.immediates, r.args) = (Opcode::NewClosureOnce, *env, [func.0, *field], captures),
         Op::PropGet { obj, name } => (r.opcode, r.children[0], r.immediates[0]) = (Opcode::GetById, *obj, name.0),
         Op::PropSet { obj, name, value } => (r.opcode, r.children[0], r.children[1], r.immediates[0]) = (Opcode::PutById, *obj, *value, name.0),
         Op::PropHas { obj, name } => (r.opcode, r.children[0], r.immediates[0]) = (Opcode::InById, *obj, name.0),
@@ -217,17 +221,19 @@ pub fn record(def: &Def) -> Record<'_> {
         Op::Construct { callee, args } => (r.opcode, r.children[0], r.args) = (Opcode::Construct, *callee, args),
         Op::CallMethod { obj, name, args } => (r.opcode, r.children[0], r.immediates[0], r.args) = (Opcode::CallMethod, *obj, name.0, args),
         Op::CallDirect { func, args } => (r.opcode, r.immediates[0], r.args) = (Opcode::CallDirect, func.0, args),
-        Op::Coerce { value, to, why } => {
-            let why = match why {
+        Op::Coerce { value, to, why: asserted } => {
+            let why = match asserted {
                 Why::Store => 0,
                 Why::Cast => 1,
-                Why::NonNull => 2,
+                Why::NonNull(_) => 2,
                 Why::Claim => 3,
                 Why::Flow => 4,
                 Why::Upcast => 5,
                 Why::Coerce => 6,
             };
-            (r.opcode, r.children[0], r.immediates) = (Opcode::Cast, *value, [to.0, why]);
+            // The type is that of the value, but for `Why::Coerce`.
+            let first = if let Why::NonNull(text) = asserted { text.0 } else { to.0 };
+            (r.opcode, r.children[0], r.immediates) = (Opcode::Cast, *value, [first, why]);
         }
         Op::Caught => r.opcode = Opcode::CatchValue,
         Op::Poll => r.opcode = Opcode::LoopHint,
@@ -257,6 +263,68 @@ pub fn end_of(term: &Term) -> (u32, V, Vec<&Target>, Vec<i64>) {
     }
 }
 
+fn write_uleb128(out: &mut Vec<u8>, mut value: u32) {
+    while value >= 0x80 {
+        out.push(value as u8 | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+/// What it takes to get from a position in `text`, which counts bytes, to a line and a column, which counts UTF-16 code units.
+/// `line_starts`: where each line starts, the first at 0. All numbers are ULEB128:
+///
+/// * How many lines there are, and the length in bytes of each but the last, with what ends it.
+/// * How many lines have a character that is not ASCII. For each, in order: how many lines after the one before it it is, the first
+///   counting from line 0; how many such characters it has; and for each of those `gap << 2 | length - 2`. `gap`: the bytes between the
+///   end of the one before it, or the start of the line, and this one. `length`: the bytes it takes, 2 to 4.
+pub fn line_table(text: &[u8], line_starts: &[u32]) -> Vec<u8> {
+    let mut table = Vec::new();
+    write_uleb128(&mut table, line_starts.len() as u32);
+    for pair in line_starts.windows(2) {
+        write_uleb128(&mut table, pair[1] - pair[0]);
+    }
+    let (mut listed, mut number_listed, mut previous) = (Vec::new(), 0, 0);
+    let mut characters: Vec<u32> = Vec::new();
+    let is_ascii = text.is_ascii();
+    for (line, &start) in line_starts.iter().enumerate().filter(|_| !is_ascii) {
+        let end = line_starts.get(line + 1).map_or(text.len(), |&next| next as usize);
+        let of_line = &text[start as usize..end];
+        if of_line.is_ascii() {
+            continue;
+        }
+        characters.clear();
+        let (mut at, mut after_last) = (0, 0);
+        while at < of_line.len() {
+            let length = match of_line[at] {
+                0xC0..=0xDF => 2,
+                0xE0..=0xEF => 3,
+                0xF0..=0xFF => 4,
+                // ASCII, or a byte that no character starts with where one should start.
+                _ => {
+                    at += 1;
+                    continue;
+                }
+            };
+            characters.push(((at - after_last) as u32) << 2 | (length as u32 - 2));
+            at += length;
+            after_last = at;
+        }
+        if characters.is_empty() {
+            continue;
+        }
+        write_uleb128(&mut listed, line as u32 - previous);
+        write_uleb128(&mut listed, characters.len() as u32);
+        for &character in &characters {
+            write_uleb128(&mut listed, character);
+        }
+        (number_listed, previous) = (number_listed + 1, line as u32);
+    }
+    write_uleb128(&mut table, number_listed);
+    table.extend_from_slice(&listed);
+    table
+}
+
 #[derive(Default)]
 struct Writer {
     bytes: Vec<u8>,
@@ -275,7 +343,7 @@ struct Writer {
     targets: Vec<u32>,
 }
 
-const SIZES: [u32; 12] = [2, 8, 4, 16, 5, 5, 4, 2, 15, 10, 11, 3];
+const SIZES: [u32; 12] = [2, 8, 4, 18, 8, 5, 6, 5, 16, 10, 11, 3];
 
 impl Writer {
     /// The words as a list in the pool: where it starts and how long it is.
@@ -314,7 +382,7 @@ pub fn write(p: &Program) -> Vec<u8> {
                 Literal::Str(text) => [0, text.0, 0],
                 Literal::Num(value) => [1, value.to_bits() as u32, (value.to_bits() >> 32) as u32],
             }));
-            w.fields.extend([field.name.0, field.declared.0, field.flags as u32, literals[0], literals[1]]);
+            w.fields.extend([field.name.0, field.declared.0, field.flags as u32, literals[0], literals[1], field.type_text.0, field.only_function.0, field.only_function_flags as u32]);
         }
         for method in &layout.methods {
             w.methods.extend([method.name.0, method.func.0, method.kind as u32, method.flags as u32, method.key]);
@@ -339,24 +407,29 @@ pub fn write(p: &Program) -> Vec<u8> {
             layout.environment.0,
             static_fields[0],
             static_fields[1],
+            layout.declared_path.0,
+            layout.declared_line,
         ]);
     }
     for global in &p.globals {
-        w.variables.extend([global.name.0, global.module.0, global.declared.0, global.initialization as u32]);
+        w.variables.extend([global.name.0, global.module.0, global.declared.0, global.initialization as u32, global.only_function.0, global.only_function_flags as u32]);
     }
     for module in &p.modules {
-        w.modules.extend([module.path.0, module.init.0]);
+        w.modules.extend([module.path.0, module.init.0, module.display_path.0, w.bytes.len() as u32, module.line_table.len() as u32]);
+        w.bytes.extend_from_slice(&module.line_table);
     }
     for func in &p.funcs {
         let parameters = w.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.why_of_param(i) == Why::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
+        let captures = w.list(func.captures.iter().map(|ty| ty.0));
         let (blocks, values) = (w.blocks.len() as u32 / SIZES[9], w.values.len() as u32 / SIZES[10]);
         for value in &func.values {
             let r = record(&value.def);
             let arguments = w.list(r.args.iter().map(|v| v.0));
             let prediction = match value.prediction {
                 Prediction::None => NONE,
-                Prediction::Ty(ty) => ty.0,
+                Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
                 Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
+                Prediction::ByKey(property) => PREDICTION_IS_BY_KEY | property.0,
             };
             w.values.extend([
                 r.opcode as u32,
@@ -390,7 +463,8 @@ pub fn write(p: &Program) -> Vec<u8> {
             func.pos,
             func.kind as u32,
             func.flags as u32,
-            func.env.0,
+            captures[0],
+            captures[1],
             func.this_declared.0,
             parameters[0],
             parameters[1],
@@ -404,12 +478,17 @@ pub fn write(p: &Program) -> Vec<u8> {
     }
 
     let extended_globals = w.list(p.extended_globals.iter().map(|name| name.0));
+    let prototype_property_names = w.list(p.prototype_property_names.iter().map(|name| name.0));
+    let builtin_modules = w.list(p.builtin_modules.iter().flat_map(|&(id, func)| [id, func.0]));
+    let builtin_functions = w.list(p.builtin_functions.iter().flat_map(|&(id, func, visibility)| [id, func.0, visibility]));
+    let functions_by_key = w.list(p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
+    let entries = w.list(p.entries.iter().map(|func| func.0));
 
+    let number_of_bytes = w.bytes.len() as u32;
     while w.bytes.len() % 4 != 0 {
         w.bytes.push(0);
     }
-    const HEADER_WORDS: usize = 5 + 14 * 2 + 2 + 12;
-    let number_of_bytes = p.strs_len_in_bytes();
+    const HEADER_WORDS: usize = 5 + 14 * 2 + 12 + 12;
     let tables: [(&[u32], u32); 13] = [
         (&w.words, 1),
         (&w.strings, SIZES[0]),
@@ -425,7 +504,7 @@ pub fn write(p: &Program) -> Vec<u8> {
         (&w.values, SIZES[10]),
         (&w.targets, SIZES[11]),
     ];
-    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), p.entry.0];
+    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), crate::builtins_generated::BUILTINS_HASH];
     let mut offset = HEADER_WORDS * 4;
     header.extend([offset as u32, number_of_bytes]);
     offset += w.bytes.len();
@@ -434,6 +513,11 @@ pub fn write(p: &Program) -> Vec<u8> {
         offset += table.len() * 4;
     }
     header.extend(extended_globals);
+    header.extend(prototype_property_names);
+    header.extend(builtin_modules);
+    header.extend(builtin_functions);
+    header.extend(functions_by_key);
+    header.extend(entries);
     header.extend(SIZES.iter().map(|words| words * 4));
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);
@@ -446,8 +530,25 @@ pub fn write(p: &Program) -> Vec<u8> {
     out
 }
 
-impl Program {
-    fn strs_len_in_bytes(&self) -> u32 {
-        (0..self.strs.len()).map(|i| self.strs.get(crate::id::StrId::new(i)).len() as u32).sum()
+#[cfg(test)]
+mod tests {
+    use super::line_table;
+
+    #[test]
+    fn line_table_of_ascii() {
+        assert_eq!(line_table(b"", &[0]), [1, 0]);
+        assert_eq!(line_table(b"a\nbc\r\nd", &[0, 2, 6]), [3, 2, 4, 0]);
+        let long = [&[b'x'; 199][..], b"\ny"].concat();
+        assert_eq!(line_table(&long, &[0, 200]), [2, 0xC8, 0x01, 0]);
+    }
+
+    #[test]
+    fn line_table_lists_what_is_not_ascii() {
+        // Line 1 starts with a character of two bytes, line 2 with one of four.
+        assert_eq!(line_table("a\n\u{e9}=1\n\u{1f600}x".as_bytes(), &[0, 2, 7]), [3, 2, 5, 2, 1, 1, 0, 1, 1, 2]);
+        // Two of three bytes, after two bytes and after one.
+        assert_eq!(line_table("ab\u{20ac}c\u{20ac}".as_bytes(), &[0]), [1, 1, 0, 2, 2 << 2 | 1, 1 << 2 | 1]);
+        // The lines in between are not listed.
+        assert_eq!(line_table("\u{e9}\n\n\n\u{e9}".as_bytes(), &[0, 3, 4, 5]), [4, 3, 1, 1, 2, 0, 1, 0, 3, 1, 0]);
     }
 }

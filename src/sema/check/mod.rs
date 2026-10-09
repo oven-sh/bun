@@ -119,8 +119,14 @@ use task::{Open, OrderDependent, Stored, Task};
 pub use aot::{ClassFacts, MethodStore, ReplacedMethods};
 pub use aot::CodeOfImport;
 pub use aot::Identity;
-pub use aot::{AddedOver, BuiltIn, Candidate, Literal, Membership, Noted, Place, Question, Questions, Reach, WhyForeign};
-pub use aot::{Evaluates, Primitive, ReferenceRead, Storage};
+pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
+pub use aot::{BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
+pub use aot::{Cause, FieldTypes, Sizes, Subtypes};
+pub use aot::{Evaluates, FirstStore, Primitive, Recovery, ReferenceRead, Storage, kind};
+pub use aot::Claim;
+pub use aot::{Callee, Hole, OnlyFunction};
+pub use aot::{ByDoor, Certainty, Door, Doubt, EscapeCause, ForClosure};
+pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Keeper, Receiver, argument_use};
 pub use call::ResolvedCall;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
@@ -704,6 +710,7 @@ impl<'s> Program<'s> {
             lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
+            cross_product_limit: 100_000,
             instantiation_limit_hits: 0,
             comparisons_of_deeply_nested_types: 0,
             instantiations_up_to_a_limit: Default::default(),
@@ -1337,6 +1344,8 @@ pub struct Checker<'p, 's> {
     /// How many times `error_at_current_node` had nothing to report since `check_file` began: the
     /// computation in progress is not cached.
     limits: u64,
+    /// `checkCrossProductUnion` refuses a union of so many members. TypeScript's 100,000, but in `is_provably_assignable`.
+    cross_product_limit: usize,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the

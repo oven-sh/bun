@@ -20,6 +20,7 @@
 #include "napi_external.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSJsonWebKey.h"
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/AsyncFunctionPrototype.h>
 #include <JavaScriptCore/BigIntObject.h>
@@ -958,6 +959,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     GET_FIRST_VALUE
 
     auto* function = dynamicDowncast<JSFunction>(value);
+#if ENABLE(AOT)
+    if (function) {
+        auto declaredAs = JSC::AOT::Typed::declaredAs(function);
+        if (declaredAs == JSC::AOT::Typed::DeclaredAs::AsyncFunction || declaredAs == JSC::AOT::Typed::DeclaredAs::AsyncGeneratorFunction)
+            return JSValue::encode(jsBoolean(true));
+    }
+#endif
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -984,6 +992,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
 {
     GET_FIRST_VALUE
     auto* function = dynamicDowncast<JSFunction>(value);
+#if ENABLE(AOT)
+    if (function) {
+        auto declaredAs = JSC::AOT::Typed::declaredAs(function);
+        if (declaredAs == JSC::AOT::Typed::DeclaredAs::GeneratorFunction || declaredAs == JSC::AOT::Typed::DeclaredAs::AsyncGeneratorFunction)
+            return JSValue::encode(jsBoolean(true));
+    }
+#endif
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -1000,6 +1015,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorObject,
 {
     GET_FIRST_CELL
 
+#if ENABLE(AOT)
+    if (JSC::AOT::Typed::isGeneratorObject(cell))
+        return JSValue::encode(jsBoolean(true));
+#endif
     return JSValue::encode(jsBoolean(cell->type() == JSGeneratorType || cell->type() == JSAsyncGeneratorType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsPromise,

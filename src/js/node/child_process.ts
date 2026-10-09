@@ -40,6 +40,7 @@ var ArrayBufferIsView = ArrayBuffer.isView;
 var NumberIsInteger = Number.isInteger;
 var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
@@ -836,7 +837,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
     }
   }
 
-  args = [...execArgv, modulePath, ...args];
+  args = [...execArgv, modulePath, ...(args as string[])];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1083,30 +1084,32 @@ function normalizeSpawnArguments(file, args, options?) {
     });
   }
 
-  for (const key of envKeys) {
+  for (let i = 0; i < envKeys.length; i++) {
+    const key = envKeys[i];
     const value = env[key];
     if (value !== undefined) {
-      validateArgumentNullCheck(key, `options.env['${key}']`);
-      validateArgumentNullCheck(value, `options.env['${key}']`);
+      if (
+        StringPrototypeIndexOf.$call(key, "\u0000") !== -1 ||
+        (typeof value === "string" && StringPrototypeIndexOf.$call(value, "\u0000") !== -1)
+      ) {
+        validateArgumentNullCheck(key, `options.env['${key}']`);
+        validateArgumentNullCheck(value, `options.env['${key}']`);
+      }
       bunEnv[key] = value;
     }
   }
 
-  return {
-    // Make a shallow copy so we don't clobber the user's options object.
-    __proto__: null,
-    ...options,
-    args,
-    cwd,
-
-    detached: !!options.detached,
-    [kBunEnv]: bunEnv,
-    file,
-    windowsHide: !!options.windowsHide,
-    windowsVerbatimArguments: !!windowsVerbatimArguments,
-    argv0: options.argv0,
-    windowsBatchFileError,
-  };
+  // `options` is the shallow copy made above, so we don't clobber the user's options object.
+  options.args = args;
+  options.cwd = cwd;
+  options.detached = !!detached;
+  options[kBunEnv] = bunEnv;
+  options.file = file;
+  options.windowsHide = !!windowsHide;
+  options.windowsVerbatimArguments = !!windowsVerbatimArguments;
+  options.argv0 = argv0;
+  options.windowsBatchFileError = windowsBatchFileError;
+  return options;
 }
 
 function checkExecSyncError(ret, args, cmd?) {
@@ -1928,14 +1931,17 @@ function validateMaxBuffer(maxBuffer) {
 }
 
 function validateArgumentNullCheck(arg, propName) {
-  if (typeof arg === "string" && StringPrototypeIncludes.$call(arg, "\u0000")) {
+  if (typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1) {
     throw $ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
 
 function validateArgumentsNullCheck(args, propName) {
   for (let i = 0; i < args.length; ++i) {
-    validateArgumentNullCheck(args[i], `${propName}[${i}]`);
+    const arg = args[i];
+    if (typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1) {
+      validateArgumentNullCheck(arg, `${propName}[${i}]`);
+    }
   }
 }
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";

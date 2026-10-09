@@ -13,10 +13,10 @@
 
 use crate::build::Problem;
 use crate::declared::DeclaredTable;
-use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId};
-use crate::ir::{Def, Field, Func, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, STATIC_FIELD_IS_ANNOTATED, Strs, Value};
+use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
+use crate::ir::{Block, Def, Field, Func, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, STATIC_FIELD_IS_ANNOTATED, Strs, Value, Why};
 use bun_sema::bind::SymbolId;
-use bun_sema::check::{Identity, MethodStore, Noted};
+use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
 use std::sync::Mutex;
@@ -28,10 +28,12 @@ use std::sync::Mutex;
 pub enum FuncKey {
     /// Evaluates the module once, after what it imports.
     Module(FileId),
-    /// The evaluation of a module with top-level `await`, or that imports one.
-    AsyncModuleBody(FileId),
+    /// The statements of the module. `Module` calls it. Of a module with top-level `await`, or that imports one: what it imports too.
+    ModuleBody(FileId),
     /// `import("./file")`
     DynamicImport(FileId),
+    /// Evaluates the initializer of a variable of a module and stores it, when the variable is first read.
+    Initializer(FileId, SymbolId),
     Function(FileId, FnId),
     /// The constructor of a class that declares none.
     DefaultConstructor(FileId, ClassId),
@@ -46,8 +48,9 @@ impl FuncKey {
     pub fn file(self) -> FileId {
         match self {
             FuncKey::Module(file)
-            | FuncKey::AsyncModuleBody(file)
+            | FuncKey::ModuleBody(file)
             | FuncKey::DynamicImport(file)
+            | FuncKey::Initializer(file, _)
             | FuncKey::Function(file, _)
             | FuncKey::DefaultConstructor(file, _)
             | FuncKey::EnumObject(file, _)
@@ -131,6 +134,39 @@ pub struct Mentions {
     pub values: Vec<FuncId>,
 }
 
+/// A statement of the body of a module that need not run unless code that is reached mentions a variable it stores to: see `build::parts`.
+pub struct ModulePart {
+    /// The block it begins in, and how many operations of that come before it.
+    pub from: (BlockId, u32),
+    /// The block it ends in, and with how many operations of that it ends. If that is another block, those are all its own.
+    pub to: (BlockId, u32),
+    /// The blocks that were made for it, from the first to before the last of these numbers. The one it ends in is among them, unless it ends where it begins.
+    pub blocks: (u32, u32),
+    pub stores: Vec<GlobalId>,
+    pub mentions: Mentions,
+}
+
+impl ModulePart {
+    /// Its operations and the parameters of its blocks.
+    pub fn values(&self, func: &Func) -> Vec<V> {
+        let ((from, start), (to, end)) = (self.from, self.to);
+        if from == to {
+            return func.blocks[from.idx()].ops[start as usize..end as usize].to_vec();
+        }
+        let mut values = func.blocks[from.idx()].ops[start as usize..].to_vec();
+        for block in (self.blocks.0..self.blocks.1).map(BlockId) {
+            let Block { params, ops, term: _ } = &func.blocks[block.idx()];
+            if block == to {
+                values.extend_from_slice(&ops[..end as usize]);
+            } else {
+                values.extend_from_slice(params);
+                values.extend_from_slice(ops);
+            }
+        }
+        values
+    }
+}
+
 /// What goes with a function that the fragment defines.
 pub struct Body {
     /// Of a function of a class: the layout of the class. Nothing runs it unless the declaration of the class is evaluated.
@@ -140,6 +176,11 @@ pub struct Body {
     pub declares: Vec<LayoutId>,
     /// The classes that are laid out and whose class objects the function uses as values.
     pub classes_as_values: Vec<LayoutId>,
+    /// The names of the properties that the function makes and that none of its operations stores: a field of a class that starts as
+    /// `undefined`.
+    pub stored_besides: Vec<StrId>,
+    /// `Checker::number_flows_in`: those that the function runs, with strings of the fragment in the place of names.
+    pub number_flows: Vec<NumberFlow<StrId>>,
     pub notes: Notes,
     /// What holds besides if someone calls the function who does not know it, and hands it anything.
     pub notes_if_called_unknown: Notes,
@@ -153,6 +194,9 @@ pub struct Body {
     pub cut: Vec<(u32, u32)>,
     /// The import and export declarations that the bundler has dropped.
     pub dropped: Vec<(u32, u32)>,
+    /// Of the function that evaluates a module, in their order. The link takes them out or leaves them in, and then there are none.
+    pub parts: Vec<ModulePart>,
+    /// Without those of `parts`.
     pub mentions: Mentions,
 }
 
@@ -212,8 +256,14 @@ pub struct Fragment {
     pub funcs: Vec<Function>,
     /// `Checker::globals_altered_in`
     pub altered_globals: Vec<StrId>,
+    /// `Checker::prototype_property_names_in`
+    pub prototype_property_names: Vec<StrId>,
     /// `Checker::stores_to_methods_in`, with identities in the place of types. Every type in it is kept.
     pub stores_to_methods: Vec<MethodStore<Identity>>,
+    /// Of a file of builtin functions: what native code asks for a function by, the function, its `ImplementationVisibility` as a number.
+    pub builtin_functions: Vec<(u32, FuncKey, u32)>,
+    /// How many times the file has been translated, this time included: more than once if a task was invalid.
+    pub times_translated: u32,
 }
 
 /// In the place of the file of a fragment.
@@ -262,14 +312,23 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
         | Op::PropDelete { obj: _, name }
         | Op::CallMethod { obj: _, name, args: _ }
         | Op::Operation { name, args: _ } => pass!(ids.str(name)),
-        Op::FuncRef(func) | Op::Closure { func, env: _ } => pass!(ids.func(func, Used::AsValue)),
+        Op::FuncRef(func) | Op::Closure { func, captures: _ } | Op::ClosureOnce { func, captures: _, env: _, field: _ } => pass!(ids.func(func, Used::AsValue)),
         Op::CallDirect { func, args: _ } => pass!(ids.func(func, Used::Called)),
         Op::GlobalGet(global) | Op::GlobalSet(global, _) => pass!(ids.global(global)),
         Op::New(layout)
         | Op::FieldGet { obj: _, layout, field: _ }
         | Op::FieldSet { obj: _, layout, field: _, value: _ }
         | Op::IsInstance { value: _, layout } => pass!(ids.layout(layout)),
-        Op::Coerce { value: _, to, why: _ } => pass!(ids.ty(to)),
+        Op::NewWith { layout, name, value: _ } => {
+            pass!(ids.layout(layout));
+            pass!(ids.str(name));
+        }
+        Op::Coerce { value: _, to, why } => {
+            pass!(ids.ty(to));
+            if let Why::NonNull(text) = why {
+                pass!(ids.str(text));
+            }
+        }
         Op::Undefined
         | Op::Null
         | Op::Bool(_)
@@ -311,27 +370,38 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
 
 /// First what whoever calls the function has to know, then the values in their order. Blocks hold numbers of the function alone.
 pub fn for_each_id_of_func(func: &mut Func, ids: &mut impl Ids) {
-    let Func { name, module, pos: _, kind: _, flags: _, length: _, env, this_declared, params, annotated: _, result, blocks: _, values } = func;
+    for_each_id_of_header(func, ids);
+    for value in &mut func.values {
+        for_each_id_of_value(value, ids);
+    }
+}
+
+fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
+    let Func { name, module, pos: _, kind: _, flags: _, length: _, captures, this_declared, params, annotated: _, result, blocks: _, values: _ } = func;
     pass!(ids.str(name));
     pass!(ids.module(module));
-    pass!(ids.layout(env));
+    for capture in captures {
+        pass!(ids.ty(capture));
+    }
     pass!(ids.ty(this_declared));
     for param in params {
         pass!(ids.ty(param));
     }
     pass!(ids.ty(result));
-    for value in values {
-        let Value { def, pos: _, ty, prediction } = value;
-        pass!(ids.ty(ty));
-        match prediction {
-            Prediction::None => {}
-            Prediction::Ty(expected) => pass!(ids.ty(expected)),
-            Prediction::Closure(func) => pass!(ids.func(func, Used::Expected)),
-        }
-        match def {
-            Def::Param(..) => {}
-            Def::Op(op) => for_each_id_of_op(op, ids),
-        }
+}
+
+fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
+    let Value { def, pos: _, ty, prediction } = value;
+    pass!(ids.ty(ty));
+    match prediction {
+        Prediction::None => {}
+        Prediction::Ty(expected) | Prediction::Field(expected) => pass!(ids.ty(expected)),
+        Prediction::Closure(func) => pass!(ids.func(func, Used::Expected)),
+        Prediction::ByKey(property) => pass!(ids.str(property)),
+    }
+    match def {
+        Def::Param(..) => {}
+        Def::Op(op) => for_each_id_of_op(op, ids),
     }
 }
 
@@ -361,14 +431,18 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         admits_foreign: _,
         members,
         specializations,
+        declared_path,
+        declared_line: _,
     } = layout;
     let has_module_variables = environment.is_none();
     pass!(ids.str(name));
     pass!(ids.layout(base));
     for field in fields {
-        let Field { name, declared, flags: _, literals } = field;
+        let Field { name, declared, flags: _, literals, type_text, only_function, only_function_flags: _ } = field;
         pass!(ids.str(name));
         pass!(ids.ty(declared));
+        pass!(ids.str(type_text));
+        pass!(ids.func(only_function, Used::Expected));
         for literal in literals {
             match literal {
                 Literal::Str(text) => pass!(ids.str(text)),
@@ -395,13 +469,15 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
     for other in members.iter_mut().chain(specializations) {
         pass!(ids.layout(other));
     }
+    pass!(ids.str(declared_path));
 }
 
 pub fn for_each_id_of_global(global: &mut Global, ids: &mut impl Ids) {
-    let Global { name, module, declared, initialization: _ } = global;
+    let Global { name, module, declared, initialization: _, only_function, only_function_flags: _ } = global;
     pass!(ids.str(name));
     pass!(ids.module(module));
     pass!(ids.ty(declared));
+    pass!(ids.func(only_function, Used::Expected));
 }
 
 /// Finds the mentions of the functions and the layouts of one fragment, one after the other.
@@ -475,6 +551,20 @@ impl Mentioning {
         std::mem::take(&mut self.found)
     }
 
+    /// The same for the values that are meant, by their numbers. `with_header`: and for what whoever calls the function has to know.
+    pub fn of_values(&mut self, func: &mut Func, with_header: bool, is_meant: impl Fn(usize) -> bool) -> Mentions {
+        self.round += 1;
+        if with_header {
+            for_each_id_of_header(func, self);
+        }
+        for (index, value) in func.values.iter_mut().enumerate() {
+            if is_meant(index) {
+                for_each_id_of_value(value, self);
+            }
+        }
+        std::mem::take(&mut self.found)
+    }
+
     /// Nothing of the layout is changed.
     pub fn of_layout(&mut self, layout: &mut Layout) -> Mentions {
         self.round += 1;
@@ -498,9 +588,10 @@ impl Fragments {
         Fragments { by_file: (0..files).map(|_| Mutex::new(None)).collect() }
     }
 
-    pub fn put(&self, fragment: Box<Fragment>) {
-        let place = &self.by_file[fragment.file.idx()];
-        *place.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fragment);
+    pub fn put(&self, mut fragment: Box<Fragment>) {
+        let mut place = self.by_file[fragment.file.idx()].lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        fragment.times_translated += place.as_ref().map_or(0, |earlier| earlier.times_translated);
+        *place = Some(fragment);
     }
 
     /// Once every task has ended.

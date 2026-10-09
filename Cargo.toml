@@ -105,6 +105,7 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
+  "src/builtin_syntax",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -371,6 +372,7 @@ bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
 bun_aot = { path = "src/aot" }
+bun_builtin_syntax = { path = "src/builtin_syntax" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }

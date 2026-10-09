@@ -1611,6 +1611,13 @@ impl<'p, 's> Checker<'p, 's> {
                     stops,
                 )
             }
+            // In a builtin file `require("m")` yields the value of the builtin module `m`.
+            ExprKind::Call(_) if self.builtin_module_required_by(file, e).is_some() => {
+                let required = self.builtin_module_required_by(file, e).unwrap_or(file);
+                let module = self.files().file_symbol(required);
+                let value = self.files().module_export(module, known::default).unwrap_or_else(|| self.files().module_value(module));
+                (self.type_of_symbol(value), false)
+            }
             // `checkCallExpression`: the type of a `require` call is the module.
             // `resolveExternalModuleTypeByLiteral`
             ExprKind::Call(_) if self.is_commonjs_require(file, e) => {

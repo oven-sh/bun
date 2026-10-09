@@ -1885,6 +1885,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             prev_should_fold_typescript_constant_expressions;
     }
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if p.options.bun_builtin_syntax && p.expand_builtin_call(e) {
+            return p.visit_expr_in_out(e, in_);
+        }
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         p.call_target = e_.target.data;
@@ -2512,6 +2515,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if p.options.bun_builtin_syntax && p.expand_builtin_new(e) {
+            return p.visit_expr(e);
+        }
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         if p.options.inline_import_meta_paths && !p.is_control_flow_dead {

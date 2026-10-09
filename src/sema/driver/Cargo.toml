@@ -8,6 +8,8 @@ path = "lib.rs"
 
 [dependencies]
 bun_sema.workspace = true
+bun_builtin_syntax.workspace = true
+bun_resolve_builtins.workspace = true
 bun_js_parser.workspace = true
 bun_core.workspace = true
 bun_ast.workspace = true

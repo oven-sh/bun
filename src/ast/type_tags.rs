@@ -9,6 +9,8 @@ pub struct ProgramFacts {
     pub tags: HashMap<Box<[u8]>, Box<[(u32, u32)]>>,
     /// The program, compiled from its types as far as the code generator of the engine: it runs in the place of the entry point.
     pub typed: Option<Box<[u8]>>,
+    /// The paths of the entry points that `typed` has an entry function for, in the order of those.
+    pub entry_points: Box<[Box<[u8]>]>,
 }
 
 impl ProgramFacts {

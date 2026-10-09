@@ -5,7 +5,7 @@
     reason = "ported types consumed by sibling stubs not yet wired"
 )]
 
-use crate::diagnostics::CompilerError;
+use crate::diagnostics::{CompilerError, ErrorCategory, SourceLocation};
 
 /// Source location with index and filename fields for logger event serialization.
 /// Matches the Babel SourceLocation format that the TS compiler emits in logger events.
@@ -58,7 +58,13 @@ pub enum CompileOutput {
     },
 }
 
-pub struct CompileDiagnostic {}
+/// Why a function was left as written.
+pub struct CompileDiagnostic {
+    pub category: ErrorCategory,
+    pub reason: String,
+    pub description: Option<String>,
+    pub loc: Option<SourceLocation>,
+}
 
 /// An item in the ordered log, which can be either a logger event or a debug entry.
 #[derive(Debug, Clone)]

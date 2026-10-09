@@ -670,6 +670,12 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+export const aotTypedBuiltinMismatches: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotTypedBuiltinMismatches",
+  0,
+);
+
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

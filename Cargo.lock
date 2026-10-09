@@ -158,8 +158,12 @@ dependencies = [
 name = "bun_aot"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_ast",
+ "bun_builtin_syntax",
  "bun_core",
+ "bun_paths",
+ "bun_react_compiler",
  "bun_sema",
  "rustc-hash",
  "smallvec",
@@ -253,6 +257,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_builtin_syntax"
+version = "0.0.0"
+dependencies = [
+ "bun_zstd",
+]
+
+[[package]]
 name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
@@ -262,6 +273,7 @@ dependencies = [
  "bun_analytics",
  "bun_ast",
  "bun_base64",
+ "bun_builtin_syntax",
  "bun_collections",
  "bun_core",
  "bun_css",
@@ -821,6 +833,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_base64",
+ "bun_builtin_syntax",
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
@@ -1251,6 +1264,7 @@ dependencies = [
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_brotli",
+ "bun_builtin_syntax",
  "bun_bundler",
  "bun_bundler_jsc",
  "bun_bunfig",
@@ -1399,10 +1413,12 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_ast",
+ "bun_builtin_syntax",
  "bun_core",
  "bun_js_parser",
  "bun_parsers",
  "bun_paths",
+ "bun_resolve_builtins",
  "bun_sema",
  "bun_sys",
  "bun_threading",
@@ -1415,6 +1431,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_aot",
+ "bun_builtin_syntax",
  "bun_core",
  "bun_js_parser",
  "bun_paths",

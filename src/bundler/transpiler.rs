@@ -1477,6 +1477,7 @@ impl<'a> Transpiler<'a> {
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
                     jsc_builtin_syntax: false,
+                    bun_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
@@ -2192,6 +2193,7 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
         crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
+        crate::options_impl::Target::BunBuiltins => T::BunBuiltins,
     }
 }
 
@@ -2908,7 +2910,8 @@ impl<'a> Transpiler<'a> {
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::ServerComponentsSsr => self.print(
+                    | options::Target::ServerComponentsSsr
+                    | options::Target::BunBuiltins => self.print(
                         print_arena,
                         result,
                         &mut writer,

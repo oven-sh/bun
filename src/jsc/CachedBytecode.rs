@@ -121,7 +121,8 @@ unsafe extern "C" {
         this: *mut BytecodeLinkEncoder,
         program: *const u8,
         size: usize,
-        module: u32,
+        modules: *const u32,
+        number_of_modules: usize,
         replaced_strings: *const u8,
         replaced_strings_size: usize,
     ) -> bool;
@@ -449,7 +450,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
 pub(crate) fn __bun_jsc_bytecode_link_encoder_set_typed_program(
     encoder: NonNull<BytecodeLinkEncoder>,
     program: &[u8],
-    module: u32,
+    modules: &[u32],
     replaced_strings: &[u8],
 ) -> bool {
     unsafe {
@@ -457,7 +458,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_set_typed_program(
             encoder.as_ptr(),
             program.as_ptr(),
             program.len(),
-            module,
+            modules.as_ptr(),
+            modules.len(),
             replaced_strings.as_ptr(),
             replaced_strings.len(),
         )

@@ -62,6 +62,12 @@ const { StringDecoder } = require("node:string_decoder");
 // stays cheap. Constructing an Interface always calls setupHistoryManager.
 let ReplHistory;
 
+const StringPrototypeCharCodeAtFn = String.prototype.charCodeAt;
+const StringPrototypeIndexOfFn = String.prototype.indexOf;
+const StringPrototypeLastIndexOfFn = String.prototype.lastIndexOf;
+const StringPrototypeSliceFn = String.prototype.slice;
+const StringPrototypeSplitFn = String.prototype.split;
+
 const kMaxUndoRedoStackSize = 2048;
 const kMincrlfDelay = 100;
 /**
@@ -334,6 +340,44 @@ function InterfaceConstructor(input, output, completer, terminal) {
 }
 
 $toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
+
+function normalWriteOfAnything(self, string) {
+  if (self[kSawReturnAt] && DateNow() - self[kSawReturnAt] <= self.crlfDelay) {
+    if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
+    self[kSawReturnAt] = 0;
+  }
+
+  // Run test() on the new string chunk, not on the entire line buffer.
+  let newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
+  if (newPartContainsEnding !== null) {
+    if (self[kLine_buffer]) {
+      string = self[kLine_buffer] + string;
+      self[kLine_buffer] = null;
+      lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
+      newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
+    }
+    self[kSawReturnAt] = StringPrototypeEndsWith(string, "\r") ? DateNow() : 0;
+
+    const indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
+    let nextMatch;
+    while ((nextMatch = RegExpPrototypeExec(lineEnding, string)) !== null) {
+      ArrayPrototypePush(indexes, nextMatch.index, lineEnding.lastIndex);
+    }
+    const lastIndex = indexes.length - 1;
+    // Either '' or (conceivably) the unfinished portion of the next line
+    self[kLine_buffer] = StringPrototypeSlice(string, indexes[lastIndex]);
+    for (let i = 1; i < lastIndex; i += 2) {
+      self[kOnLine](StringPrototypeSlice(string, indexes[i - 1], indexes[i]));
+    }
+  } else if (string) {
+    // No newlines this time, save what we have for next time
+    if (self[kLine_buffer]) {
+      self[kLine_buffer] += string;
+    } else {
+      self[kLine_buffer] = string;
+    }
+  }
+}
 
 class Interface extends InterfaceConstructor {
   get columns() {
@@ -612,32 +656,65 @@ class Interface extends InterfaceConstructor {
       return;
     }
     let string = this[kDecoder].write(b);
+    if (typeof string !== "string") {
+      normalWriteOfAnything(this, string);
+      return;
+    }
     if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
-      if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
+      if (StringPrototypeCharCodeAtFn.$call(string, 0) === 10) string = StringPrototypeSliceFn.$call(string, 1);
       this[kSawReturnAt] = 0;
     }
 
-    // Run test() on the new string chunk, not on the entire line buffer.
-    let newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
-    if (newPartContainsEnding !== null) {
+    // Look at the new string chunk, not at the entire line buffer.
+    let lf = StringPrototypeIndexOfFn.$call(string, "\n");
+    let cr = StringPrototypeIndexOfFn.$call(string, "\r");
+    let ls = StringPrototypeIndexOfFn.$call(string, "\u2028");
+    let ps = StringPrototypeIndexOfFn.$call(string, "\u2029");
+    if (lf !== -1 || cr !== -1 || ls !== -1 || ps !== -1) {
       if (this[kLine_buffer]) {
         string = this[kLine_buffer] + string;
         this[kLine_buffer] = null;
-        lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
-        newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
+        // Start the search from the beginning of the string.
+        lf = StringPrototypeIndexOfFn.$call(string, "\n");
+        cr = StringPrototypeIndexOfFn.$call(string, "\r");
+        ls = StringPrototypeIndexOfFn.$call(string, "\u2028");
+        ps = StringPrototypeIndexOfFn.$call(string, "\u2029");
       }
-      this[kSawReturnAt] = StringPrototypeEndsWith(string, "\r") ? DateNow() : 0;
+      this[kSawReturnAt] = StringPrototypeCharCodeAtFn.$call(string, string.length - 1) === 13 ? DateNow() : 0;
 
-      const indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
-      let nextMatch;
-      while ((nextMatch = RegExpPrototypeExec(lineEnding, string)) !== null) {
-        ArrayPrototypePush(indexes, nextMatch.index, lineEnding.lastIndex);
+      let start = 0;
+      if (cr === -1 && ls === -1 && ps === -1) {
+        const lines = StringPrototypeSplitFn.$call(string, "\n");
+        const last = lines.length - 1;
+        // Either '' or (conceivably) the unfinished portion of the next line
+        this[kLine_buffer] = lines[last];
+        for (let i = 0; i < last; i++) {
+          this[kOnLine](lines[i]);
+        }
+        return;
       }
-      const lastIndex = indexes.length - 1;
-      // Either '' or (conceivably) the unfinished portion of the next line
-      this[kLine_buffer] = StringPrototypeSlice(string, indexes[lastIndex]);
-      for (let i = 1; i < lastIndex; i += 2) {
-        this[kOnLine](StringPrototypeSlice(string, indexes[i - 1], indexes[i]));
+
+      const rest =
+        MathMax(
+          StringPrototypeLastIndexOfFn.$call(string, "\n"),
+          StringPrototypeLastIndexOfFn.$call(string, "\r"),
+          StringPrototypeLastIndexOfFn.$call(string, "\u2028"),
+          StringPrototypeLastIndexOfFn.$call(string, "\u2029"),
+        ) + 1;
+      this[kLine_buffer] = StringPrototypeSliceFn.$call(string, rest);
+      while (start < rest) {
+        if (lf !== -1 && lf < start) lf = StringPrototypeIndexOfFn.$call(string, "\n", start);
+        if (cr !== -1 && cr < start) cr = StringPrototypeIndexOfFn.$call(string, "\r", start);
+        if (ls !== -1 && ls < start) ls = StringPrototypeIndexOfFn.$call(string, "\u2028", start);
+        if (ps !== -1 && ps < start) ps = StringPrototypeIndexOfFn.$call(string, "\u2029", start);
+        let end = rest;
+        if (lf !== -1) end = lf;
+        if (cr !== -1 && cr < end) end = cr;
+        if (ls !== -1 && ls < end) end = ls;
+        if (ps !== -1 && ps < end) end = ps;
+        const line = StringPrototypeSliceFn.$call(string, start, end);
+        start = end === cr && cr + 1 === lf ? end + 2 : end + 1;
+        this[kOnLine](line);
       }
     } else if (string) {
       // No newlines this time, save what we have for next time
@@ -1128,8 +1205,16 @@ class Interface extends InterfaceConstructor {
     let rows = 0;
     str = stripVTControlCharacters(str);
 
-    for (const char of new SafeStringIterator(str)) {
-      if (char === "\n") {
+    const length = str.length;
+    for (let i = 0; i < length; ) {
+      const start = i++;
+      const unit = StringPrototypeCharCodeAtFn.$call(str, start);
+      // Printable ASCII
+      if (unit >= 32 && unit < 127) {
+        offset++;
+        continue;
+      }
+      if (unit === 10) {
         // Rows must be incremented by 1 even if offset = 0 or col = +Infinity.
         rows += MathCeil(offset / col) || 1;
         // Only add prefix offset for continuation lines in user input (not prompts)
@@ -1137,10 +1222,15 @@ class Interface extends InterfaceConstructor {
         continue;
       }
       // Tabs must be aligned by an offset of the tab size.
-      if (char === "\t") {
+      if (unit === 9) {
         offset += this.tabSize - (offset % this.tabSize);
         continue;
       }
+      if (unit >= 0xd800 && unit <= 0xdbff && i < length) {
+        const trail = StringPrototypeCharCodeAtFn.$call(str, i);
+        if (trail >= 0xdc00 && trail <= 0xdfff) i++;
+      }
+      const char = StringPrototypeSliceFn.$call(str, start, i);
       const width = getStringWidth(char, false /* stripVTControlCharacters */);
       if (width === 0 || width === 1) {
         offset += width;

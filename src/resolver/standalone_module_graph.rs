@@ -149,6 +149,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn aot_image(&self) -> &'static [u8] {
         &[]
     }
+    /// The number of the module in the program data of `aot_image`.
+    fn program_data_index(&self, _name: &[u8]) -> Option<u32> {
+        None
+    }
     fn preserves_source_paths(&self) -> bool {
         false
     }

@@ -2,8 +2,8 @@
 
 use crate::declared::Part;
 use crate::format::{Opcode, end_of, record};
-use crate::id::{StrId, TyId, V};
-use crate::ir::{LayoutKind, Literal, Prediction, Program, Target, Term, Why, class_flags, method_flags};
+use crate::id::{FuncId, StrId, TyId, V};
+use crate::ir::{LayoutKind, Literal, Prediction, Program, Target, Term, Why, class_flags, method_flags, only_function_flags};
 use std::fmt::Write;
 
 impl Program {
@@ -33,6 +33,11 @@ impl Program {
                 let _ = write!(o, "{value}");
             }
         };
+        let only_function = |o: &mut String, func: FuncId, flags: u8| {
+            if func.is_some() {
+                let _ = write!(o, " only f{}{}", func.0, if flags & only_function_flags::IS_FACT != 0 { " fact" } else { "" });
+            }
+        };
         let ty = |o: &mut String, t: TyId| {
             if t.is_none() {
                 o.push('-');
@@ -42,11 +47,16 @@ impl Program {
         };
         let prediction = |o: &mut String, prediction: Prediction| match prediction {
             Prediction::None => {}
-            Prediction::Ty(ty) => {
+            Prediction::Ty(ty) | Prediction::Field(ty) => {
                 let _ = write!(o, " ~#{}", ty.0);
             }
             Prediction::Closure(func) => {
                 let _ = write!(o, " ~f{}", func.0);
+            }
+            Prediction::ByKey(property) => {
+                o.push_str(" ~[");
+                self.quoted(o, property);
+                o.push(']');
             }
         };
         let list = |o: &mut String, args: &[V]| {
@@ -110,6 +120,11 @@ impl Program {
             self.quoted(o, layout.name);
             o.push_str(" base ");
             index(o, layout.base.0);
+            if layout.declared_path.is_some() {
+                o.push_str(" declared ");
+                self.quoted(o, layout.declared_path);
+                let _ = write!(o, ":{}", layout.declared_line);
+            }
             if layout.kind == LayoutKind::Instance {
                 o.push_str(" constructor ");
                 index(o, layout.constructor.0);
@@ -127,6 +142,9 @@ impl Program {
                         o.push_str(what);
                     }
                 }
+            }
+            if layout.kind != LayoutKind::Instance && layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0 {
+                o.push_str(" other prototypes");
             }
             if layout.is_allocated {
                 o.push_str(" allocated");
@@ -162,6 +180,11 @@ impl Program {
                         }
                     }
                 }
+                if field.type_text.is_some() {
+                    o.push_str(" type ");
+                    self.quoted(o, field.type_text);
+                }
+                only_function(o, field.only_function, field.only_function_flags);
                 o.push('\n');
             }
             for (side, what) in [(0, "  method "), (method_flags::STATIC, "  static method ")] {
@@ -195,22 +218,53 @@ impl Program {
                 crate::ir::Initialization::NeverSeen => " never seen uninitialized",
                 crate::ir::Initialization::NeverSeenAndStoredOnce => " never seen uninitialized, stored once",
             });
+            only_function(o, global.only_function, global.only_function_flags);
             o.push('\n');
         }
         for (i, module) in self.modules.iter().enumerate() {
             let _ = write!(o, "module {i} ");
             self.quoted(o, module.path);
-            let _ = writeln!(o, " f{}", module.init.0);
+            let _ = write!(o, " f{} ", module.init.0);
+            self.quoted(o, module.display_path);
+            let _ = writeln!(o, " line table {} bytes", module.line_table.len());
         }
-        let _ = writeln!(o, "entry f{}", self.entry.0);
+        if !self.prototype_property_names.is_empty() {
+            o.push_str("prototype property names");
+            for &name in &self.prototype_property_names {
+                o.push(' ');
+                self.quoted(o, name);
+            }
+            o.push('\n');
+        }
+        for &(id, func) in &self.builtin_modules {
+            let _ = writeln!(o, "builtin module {id} f{}", func.0);
+        }
+        for &(id, func, visibility) in &self.builtin_functions {
+            let _ = writeln!(o, "builtin function {id} f{} visibility {visibility}", func.0);
+        }
+        for &(property, key, func) in &self.functions_by_key {
+            o.push_str("by key ");
+            self.quoted(o, property);
+            o.push(' ');
+            self.quoted(o, key);
+            let _ = writeln!(o, " f{}", func.0);
+        }
+        for entry in &self.entries {
+            let _ = writeln!(o, "entry f{}", entry.0);
+        }
         for (i, func) in self.funcs.iter().enumerate() {
             let _ = write!(o, "function {i} ");
             self.quoted(o, func.name);
             let _ = write!(o, " {:?} flags {} module ", func.kind, func.flags);
             index(o, func.module.0);
-            o.push_str(" environment ");
-            index(o, func.env.0);
-            o.push_str(" this ");
+            o.push_str(" captures (");
+            for (i, &capture) in func.captures.iter().enumerate() {
+                if i > 0 {
+                    o.push_str(", ");
+                }
+                ty(o, capture);
+            }
+            o.push_str(") this ");
             ty(o, func.this_declared);
             o.push_str(" (");
             for (i, &param) in func.params.iter().enumerate() {
@@ -272,11 +326,18 @@ impl Program {
                         Opcode::FunctionReference | Opcode::NewClosure | Opcode::CallDirect => {
                             let _ = write!(o, " f{}", r.immediates[0]);
                         }
+                        Opcode::NewClosureOnce => {
+                            let _ = write!(o, " field {} f{}", r.immediates[1], r.immediates[0]);
+                        }
                         Opcode::GetModuleVariable | Opcode::PutModuleVariable => {
                             let _ = write!(o, " variable {}", r.immediates[0]);
                         }
                         Opcode::NewObjectWithShape | Opcode::IsInstanceOfClass => {
                             let _ = write!(o, " shape {}", r.immediates[0]);
+                            if r.opcode == Opcode::NewObjectWithShape && StrId(r.immediates[1]).is_some() {
+                                o.push_str(" with ");
+                                self.quoted(o, StrId(r.immediates[1]));
+                            }
                         }
                         Opcode::GetField | Opcode::PutField => {
                             let _ = write!(o, " shape {} field {}", r.immediates[0], r.immediates[1]);
@@ -288,10 +349,15 @@ impl Program {
                                 o.push(' ');
                                 ty(o, TyId(r.immediates[0]));
                             }
+                            // The text of what is asserted.
+                            if r.immediates[1] == 2 && StrId(r.immediates[0]).is_some() {
+                                o.push(' ');
+                                self.quoted(o, StrId(r.immediates[0]));
+                            }
                         }
                         _ => {}
                     }
-                    if matches!(r.opcode, Opcode::NewArray | Opcode::Strcat | Opcode::Call | Opcode::Construct | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
+                    if matches!(r.opcode, Opcode::NewArray | Opcode::Strcat | Opcode::Call | Opcode::Construct | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation | Opcode::NewClosure | Opcode::NewClosureOnce) {
                         o.push(' ');
                         list(o, r.args);
                     }

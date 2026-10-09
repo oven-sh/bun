@@ -53,8 +53,6 @@ function makeConnectionHandle(fd) {
   };
 }
 
-export default cluster;
-
 cluster.isWorker = true;
 cluster.isMaster = false; // Deprecated alias. Must be same as isPrimary.
 cluster.isPrimary = false;
@@ -374,3 +372,5 @@ Worker.prototype.destroy = function () {
     process.once("disconnect", () => process.exit(kNoFailure));
   }
 };
+
+export default cluster;

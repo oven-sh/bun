@@ -4,6 +4,7 @@
 //! `bun check`, `bun build --check` and `bun run --check` all use this, with different roots and
 //! different output formatting.
 
+pub mod builtins;
 pub mod format;
 pub mod host;
 pub mod snapshot;
@@ -881,6 +882,8 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Request::is_one_program`: the modules of the runtime that are compiled with the program.
+    pub builtin_modules: Option<builtins::Found>,
 }
 
 impl Report {
@@ -1099,7 +1102,30 @@ pub fn check_provided_then<R>(
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
-    let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
+    let mut already_read = provided.already_read;
+    let compiles_builtin_modules = request.is_one_program && !provided.without_builtin_modules;
+    if compiles_builtin_modules {
+        let archive = bun_builtin_syntax::Archive::embedded();
+        let with_source = archive.manifest().modules().iter().filter(|module| !module.path.is_empty());
+        let files = with_source.map(|module| &module.path).chain(archive.manifest().function_files());
+        for file in files {
+            // What the caller provides goes before the archive.
+            if let std::collections::hash_map::Entry::Vacant(entry) = already_read.entry([bun_builtin_syntax::VIRTUAL_ROOT, file].concat())
+                && let Some(text) = bun_builtin_syntax::Archive::read(file)
+            {
+                entry.insert(text);
+            }
+        }
+    }
+    let mut disk = host::Disk::with_already_read(threads, already_read, &project);
+    if compiles_builtin_modules {
+        let path = |path: &Vec<u8>| to_path(&disk.as_written(&host::from_argument(&cwd, path)), disk.is_case_sensitive()).into_owned();
+        disk.compiled = Some(host::Compiled {
+            entry_points: request.paths.iter().map(path).collect(),
+            code: request.code.iter().map(path).collect(),
+            builtin_modules: Default::default(),
+        });
+    }
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
     if let Libs::Bundled(libs) = request.libs {
@@ -1115,6 +1141,7 @@ pub fn check_provided_then<R>(
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
+    report.builtin_modules = disk.compiled.as_ref().and_then(|compiled| compiled.builtin_modules.lock().take());
     report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
     report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
     let result = then(report);
@@ -1823,6 +1850,18 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.is_one_program {
+        project.options.tolerate_removed_options();
+        project.options.emit_nothing();
+        project.options.ignore_paths_of(|specifier| {
+            use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
+            Alias::has(specifier, bun_ast::Target::Bun, Cfg::default())
+        });
+        // What runs the program has all of ECMAScript, whatever `target` is. Without this `await using` in plain JavaScript is an error
+        // in no file: a global type that the library of the default target lacks.
+        if !project.options.specifies_lib && !project.options.no_lib {
+            project.options.libs = vec![b"esnext.full".to_vec()];
+        }
+        project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
         project.options.allow_js = true;
         project.references.clear();
         project.has_references = false;

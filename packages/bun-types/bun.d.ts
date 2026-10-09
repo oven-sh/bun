@@ -3794,7 +3794,7 @@ declare module "bun" {
      * platform and version of Bun that runs the build. Supported on arm64 macOS.
      * `Bun.build` throws when it cannot compile ahead of time.
      *
-     * Equivalent CLI flag: `--compile-aot`
+     * Equivalent CLI flag: `--aot`
      *
      * @default false
      */

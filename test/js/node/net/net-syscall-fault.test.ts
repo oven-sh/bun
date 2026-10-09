@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";

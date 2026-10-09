@@ -1561,7 +1561,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_bytecode_link_encoder_set_typed_program(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 program: &[u8],
-                module: u32,
+                modules: &[u32],
                 replaced_strings: &[u8],
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_finish(
@@ -1763,8 +1763,8 @@ pub mod bv2_impl {
                 ok
             }
             /// `replaced_strings`: pairs of a string of the program and what to put in its place, each a length in four bytes and the bytes.
-            pub(crate) fn set_typed_program(&mut self, program: &[u8], module: u32, replaced_strings: &[u8]) -> bool {
-                __bun_jsc_bytecode_link_encoder_set_typed_program(self.encoder, program, module, replaced_strings)
+            pub(crate) fn set_typed_program(&mut self, program: &[u8], modules: &[u32], replaced_strings: &[u8]) -> bool {
+                __bun_jsc_bytecode_link_encoder_set_typed_program(self.encoder, program, modules, replaced_strings)
             }
             pub(crate) fn finish_linked(
                 &mut self,
@@ -2610,18 +2610,59 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            let mut own_entry_points = (self.graph.entry_points.iter().map(|it| it.get() as usize))
+                .filter(|&index| loaders[index].is_javascript_like() && sources[index].path.is_file())
+                .map(|index| sources[index].path.text);
             // What is compiled includes the modules that only a plugin provides, which are not files. Each gets a path to go by.
-            let virtual_paths: Vec<Option<Box<[u8]>>> = (sources.iter())
-                .map(|source| {
-                    if analyze.is_none() || source.path.is_file() || source.index.is_runtime() {
+            // What is loaded as a constant (data, a text, the path a file ends up at) is compiled as the JSON text of that constant.
+            let parts = self.graph.ast.items_parts();
+            let json_texts: Vec<Option<Box<[u8]>>> = (sources.iter().zip(loaders))
+                .map(|(source, loader)| {
+                    use bun_ast::ExprData;
+                    let is_json_by_name = *loader == Loader::Json && source.path.text.ends_with(b".json");
+                    if analyze.is_none() || loader.is_javascript_like() || is_json_by_name || source.path.text.ends_with(b".module.css") {
                         return None;
                     }
-                    Some([b"/$virtual/", source.path.namespace, b"/", source.path.text].concat().into_boxed_slice())
+                    let stmt = *parts[source.index.get() as usize].as_slice().get(1)?.stmts.first()?;
+                    let bun_ast::StmtData::SLazyExport(root) = stmt.data else { return None };
+                    let root = match *root {
+                        // In an executable: `require` of the text, which is embedded.
+                        ExprData::ECall(_) if *loader == Loader::Text => {
+                            bun_ast::Expr::init(bun_ast::E::String { data: source.contents().into(), ..Default::default() }, stmt.loc).data
+                        }
+                        root @ (ExprData::EString(_)
+                        | ExprData::EObject(_)
+                        | ExprData::EArray(_)
+                        | ExprData::EObjectJSON(_)
+                        | ExprData::EArrayJSON(_)
+                        | ExprData::ENumber(_)
+                        | ExprData::EBoolean(_)
+                        | ExprData::ENull(_)) => root,
+                        _ => return None,
+                    };
+                    let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                    let options = bun_js_printer::PrintJsonOptions { minify_whitespace: true, ..Default::default() };
+                    bun_js_printer::print_json(&mut printer, bun_ast::Expr { data: root, loc: stmt.loc }, source, options).ok()?;
+                    Some(printer.ctx.written_without_trailing_zero().into())
+                })
+                .collect();
+            let json_texts = &json_texts;
+            let virtual_paths: Vec<Option<Box<[u8]>>> = (sources.iter().zip(loaders).zip(json_texts))
+                .map(|((source, loader), json_text)| {
+                    if analyze.is_none() || source.index.is_runtime() {
+                        return None;
+                    }
+                    // One file may be loaded in two ways.
+                    let extension = json_text.as_ref().map(|_| format!(".{loader:?}.json").to_ascii_lowercase()).unwrap_or_default();
+                    if source.path.is_file() {
+                        return json_text.is_some().then(|| [source.path.text, extension.as_bytes()].concat().into_boxed_slice());
+                    }
+                    Some([b"/$virtual/", source.path.namespace, b"/", source.path.text, extension.as_bytes()].concat().into_boxed_slice())
                 })
                 .collect();
             let virtual_paths = &virtual_paths;
             let path_of = move |source: &'_ bun_ast::Source| -> Option<&[u8]> {
-                if source.path.is_file() {
+                if source.path.is_file() && json_texts[source.index.get() as usize].is_none() {
                     // SAFETY-free: the text lives as long as the graph.
                     return Some(source.path.text);
                 }
@@ -2631,14 +2672,17 @@ pub mod bv2_impl {
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
                 .filter(|((source, loader), flags)| {
-                    loader.is_javascript_like_or_json()
+                    (loader.is_javascript_like() || **loader == Loader::Json || json_texts[source.index.get() as usize].is_some())
                         && path_of(source).is_some()
                         // What is compiled is what runs.
                         && !(analyze.is_none()
                             && flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .filter_map(|((source, loader), _)| Some((path_of(source)?, source.contents(), *loader)));
+                .filter_map(|((source, loader), _)| {
+                    let text = json_texts[source.index.get() as usize].as_deref().unwrap_or_else(|| source.contents());
+                    Some((path_of(source)?, text, *loader))
+                });
             let all_sources = self.graph.input_files.items_source();
             /// As it is written. An import that is not written, like that of the JSX runtime, has no range.
             fn specifier_of<'a>(source: &'a bun_ast::Source, record: &'a bun_ast::ImportRecord) -> Option<&'a [u8]> {
@@ -2677,13 +2721,20 @@ pub mod bv2_impl {
                     .map(|specifier| (path, specifier))
                     .collect()
             });
+            let mut statements = (all_sources.iter().zip(self.graph.ast.items_parts())).flat_map(|(source, parts)| {
+                let path = path_of(source);
+                parts.as_slice().iter().flat_map(move |part| {
+                    let verdict = part.can_be_removed_if_unused;
+                    part.stmts.slice().iter().filter_map(move |stmt| Some((path?, u32::try_from(stmt.loc.start).ok()?, verdict)))
+                })
+            });
             let mut texts = (all_sources.iter().zip(loaders))
-                .filter(|(source, loader)| **loader == Loader::Text && source.path.is_file())
+                .filter(|(source, loader)| **loader == Loader::Text && source.path.is_file() && json_texts[source.index.get() as usize].is_none())
                 .map(|(source, _)| (source.path.text, source.contents()));
             let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
             let mut assets = (all_sources.iter().zip(unique_keys))
                 .zip(loaders)
-                .filter(|((_, key), loader)| !key.is_empty() && **loader != Loader::Text)
+                .filter(|((source, key), loader)| !key.is_empty() && **loader != Loader::Text && json_texts[source.index.get() as usize].is_none())
                 .filter_map(|((source, key), _)| Some((path_of(source)?, &key[..])));
             let flags = self.transpiler.options.bundler_feature_flags.as_deref();
             let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
@@ -2695,19 +2746,30 @@ pub mod bv2_impl {
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
+                own_entry_points: &mut own_entry_points,
                 sources: &mut sources,
                 imports: &mut imports,
                 dropped_imports: &mut dropped_imports,
+                statements: &mut statements,
                 texts: &mut texts,
                 assets: &mut assets,
+                rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
+                preserve_source_paths: self.transpiler.options.preserve_source_paths,
             };
             // The analysis starts with the check that `type_check` is, which so runs once.
             if let Some(analyze) = analyze {
                 let facts = analyze(checked, self.transpiler.log_mut());
                 let is_compiled = facts.as_ref().is_some_and(|facts| facts.typed.is_some());
+                if !is_compiled && !self.transpiler.log().has_errors() {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("nothing can be compiled ahead of time: no entry point is JavaScript or TypeScript"),
+                    );
+                }
                 self.linker.facts = facts;
                 if is_compiled {
-                    self.empty_first_entry_point()?;
+                    self.empty_compiled_entry_points()?;
                 }
                 return match self.transpiler.log().has_errors() {
                     true => Err(crate::Error::BuildFailed),
@@ -2720,12 +2782,24 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
-        /// The compiled program is all that runs once the first entry point is run, so that file becomes an empty module, and what
-        /// only it imports is not in the bundle. The engine puts the program in the place of the code of that module.
-        fn empty_first_entry_point(&mut self) -> Result<(), Error> {
-            let Some(index) = self.graph.entry_points.first().map(|it| it.get() as usize) else {
-                return Ok(());
-            };
+        /// The compiled program is all that runs once one of its entry points is run, so those files become empty modules, and what
+        /// only they import is not in the bundle. The engine puts an entry function of the program in the place of the code of each.
+        fn empty_compiled_entry_points(&mut self) -> Result<(), Error> {
+            let compiled = self.linker.facts.as_ref().map_or(&[][..], |facts| &facts.entry_points);
+            let sources = self.graph.input_files.items_source();
+            let indices: Vec<usize> = (self.graph.entry_points.iter().map(|it| it.get() as usize))
+                .filter(|&index| compiled.iter().any(|path| **path == *sources[index].path.text))
+                .collect();
+            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
+            self.assets_of_compiled_program =
+                (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
+            for index in indices {
+                self.empty_entry_point(index)?;
+            }
+            Ok(())
+        }
+
+        fn empty_entry_point(&mut self, index: usize) -> Result<(), Error> {
             let heap = self.graph.heap;
             let target = self.graph.ast.items_target()[index];
             let path = self.graph.input_files.items_source()[index].path.clone();
@@ -2756,9 +2830,6 @@ pub mod bv2_impl {
                 .ok_or(Error::ParserError)?,
             );
             ast.target = target;
-            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
-            self.assets_of_compiled_program =
-                (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
             self.graph.input_files.items_source_mut()[index] = source.clone();
             self.graph.ast.set(index, ast);
             Ok(())

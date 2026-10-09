@@ -4,15 +4,17 @@
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
 
-const { SafeStringIterator, Symbol } = primordials;
+const { Symbol } = primordials;
 
-const { charLengthAt, CSI, emitKeys } = require("internal/readline/utils");
+const { charLengthAt, emitKeys } = require("internal/readline/utils");
 const { kSawKeyPress } = require("internal/readline/interface");
 
 const { clearTimeout, setTimeout } = require("node:timers");
-const { kEscape } = CSI;
 
 const { StringDecoder } = require("node:string_decoder");
+
+const StringPrototypeCharCodeAtFn = String.prototype.charCodeAt;
+const StringPrototypeSliceFn = String.prototype.slice;
 
 const KEYPRESS_DECODER = Symbol("keypress-decoder");
 const ESCAPE_DECODER = Symbol("escape-decoder");
@@ -29,10 +31,17 @@ function emitKeypressEvents(stream, iface = {}) {
 
   stream[KEYPRESS_DECODER] = new StringDecoder("utf8");
 
-  stream[ESCAPE_DECODER] = emitKeys(stream);
-  stream[ESCAPE_DECODER].next();
+  let next = (stream[ESCAPE_DECODER] = emitKeys(stream));
 
-  const triggerEscape = () => stream[ESCAPE_DECODER].next("");
+  const triggerEscape = () => {
+    try {
+      next("", -1);
+    } catch (err) {
+      // Nobody starts the decoder again here.
+      next = stream[ESCAPE_DECODER] = () => {};
+      throw err;
+    }
+  };
   const { escapeCodeTimeout = ESCAPE_CODE_TIMEOUT } = iface;
   let timeoutId;
 
@@ -46,24 +55,33 @@ function emitKeypressEvents(stream, iface = {}) {
         iface[kSawKeyPress] = charLengthAt(string, 0) === string.length;
         iface.isCompletionEnabled = false;
 
+        const total = string.length;
         let length = 0;
-        for (const character of new SafeStringIterator(string)) {
-          length += character.length;
-          if (length === string.length) {
+        while (length < total) {
+          const start = length++;
+          let unit = StringPrototypeCharCodeAtFn.$call(string, start);
+          if (unit >= 0xd800 && unit <= 0xdbff && length < total) {
+            const trail = StringPrototypeCharCodeAtFn.$call(string, length);
+            if (trail >= 0xdc00 && trail <= 0xdfff) {
+              length++;
+              unit = -1;
+            }
+          }
+          const character = StringPrototypeSliceFn.$call(string, start, length);
+          if (length === total) {
             iface.isCompletionEnabled = true;
           }
 
           try {
-            stream[ESCAPE_DECODER].next(character);
+            next(character, unit);
             // Escape letter at the tail position
-            if (length === string.length && character === kEscape) {
+            if (length === total && unit === 27) {
               timeoutId = setTimeout(triggerEscape, escapeCodeTimeout);
             }
           } catch (err) {
-            // If the generator throws (it could happen in the `keypress`
+            // If the decoder throws (it could happen in the `keypress`
             // event), we need to restart it.
-            stream[ESCAPE_DECODER] = emitKeys(stream);
-            stream[ESCAPE_DECODER].next();
+            next = stream[ESCAPE_DECODER] = emitKeys(stream);
             throw err;
           }
         }

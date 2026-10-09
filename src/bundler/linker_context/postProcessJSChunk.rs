@@ -12,6 +12,7 @@ use crate::{
 use bun_alloc::Arena;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_builtin_syntax::Manifest;
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
 use bun_core::perf;
@@ -97,6 +98,64 @@ fn module_preload_registration(
     }
     code.extend_from_slice(b"],0);\n");
     Ok(code)
+}
+
+/// What precedes the code of a builtin module: JavaScriptCore takes a function expression.
+fn builtin_module_head(c: &LinkerContext, chunk: &Chunk) -> Box<[u8]> {
+    let mut head = b"(function (){\"use strict\";".to_vec();
+    let path = c.parse_graph().input_files.items_source()
+        [chunk.entry_point.source_index() as usize]
+        .path
+        .text;
+    if let Some(module) = Manifest::installed().and_then(|manifest| manifest.module_for_path(path))
+    {
+        let uses = |name: &[u8]| {
+            chunk
+                .compile_results_for_chunk
+                .iter()
+                .any(|result| strings::contains(result.code(), name))
+        };
+        if uses(b"$debug_log") {
+            module.write_debug_log(&mut head);
+        }
+        if uses(b"$assert") {
+            module.write_assert(&mut head);
+        }
+    }
+    head.into_boxed_slice()
+}
+
+/// `return { a, b };`: what a builtin module with named exports evaluates to.
+fn return_of_exports(items: &[bun_ast::ClauseItem]) -> Stmt {
+    let mut properties = G::PropertyList::init_capacity(items.len());
+    for item in items {
+        VecExt::append(
+            &mut properties,
+            G::Property {
+                key: Some(Expr::init(
+                    E::String {
+                        data: item.alias.slice().into(),
+                        ..Default::default()
+                    },
+                    item.alias_loc,
+                )),
+                value: Some(Expr::init_identifier(item.name.ref_, item.name.loc)),
+                ..Default::default()
+            },
+        );
+    }
+    Stmt::alloc(
+        S::Return {
+            value: Some(Expr::init(
+                E::Object {
+                    properties,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            )),
+        },
+        bun_ast::Loc::EMPTY,
+    )
 }
 
 /// This runs after we've already populated the compile results
@@ -450,7 +509,14 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
+    let entry_target = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+    let is_builtin_module = entry_target == options::Target::BunBuiltins;
+    if is_builtin_module {
+        let head = builtin_module_head(c, chunk);
+        line_offset.advance(&head);
+        j.push_owned(head);
+    }
+    let is_bun = entry_target.is_bun() && !is_builtin_module;
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =
@@ -765,6 +831,10 @@ pub(crate) fn post_process_js_chunk(
             }
         }
         _ => {}
+    }
+
+    if is_builtin_module {
+        j.push_static(b"})\n");
     }
 
     j.ensure_newline_at_end();
@@ -1095,13 +1165,17 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         if !items.is_empty() {
-                            stmts.push(Stmt::alloc(
-                                S::ExportClause {
-                                    items: bun_ast::StoreSlice::new_mut(items),
-                                    is_single_line: false,
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ));
+                            stmts.push(if ast.target == options::Target::BunBuiltins {
+                                return_of_exports(items)
+                            } else {
+                                Stmt::alloc(
+                                    S::ExportClause {
+                                        items: bun_ast::StoreSlice::new_mut(items),
+                                        is_single_line: false,
+                                    },
+                                    bun_ast::Loc::EMPTY,
+                                )
+                            });
                         }
                         let items = &items[..own_len];
 

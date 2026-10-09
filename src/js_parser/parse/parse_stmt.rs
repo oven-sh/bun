@@ -1548,6 +1548,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 )
             }
 
+            T::TDefault if p.options.bun_builtin_syntax => {
+                p.esm_export_keyword = previous_export_keyword;
+                p.lexer.next()?;
+                p.parse_builtin_module_value(loc)
+            }
+
             T::TDefault => {
                 if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;

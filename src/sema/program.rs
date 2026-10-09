@@ -115,6 +115,15 @@ fn few<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
     ArenaFew::from_iter_in(list.into_iter(), arena)
 }
 
+/// What a source of the runtime is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Builtin {
+    /// A module, by its id in the registry.
+    Module(u32),
+    /// Functions that native code and the other sources call by name.
+    Functions,
+}
+
 pub struct Module<'s> {
     /// `text`: `Path()`, which identifies the file. `pretty`: `FileName()`.
     pub path: Path<'s>,
@@ -206,6 +215,8 @@ pub struct Module<'s> {
     /// adds no global declaration, no ambient module and no augmentation. It is not checked. It is a module whatever
     /// `moduleDetection` says, and imports JavaScript whatever `allowJs` says, as in the bundle.
     pub is_only_code: bool,
+    /// It is a source of the runtime that is compiled with the program (`Host::builtin_files`).
+    pub builtin: Option<Builtin>,
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
@@ -348,6 +359,18 @@ impl<'s> Module<'s> {
 }
 
 impl Module<'_> {
+    /// Whether the compiler goes by no type that is written in it: JavaScript, a file with `// @ts-nocheck`, and a builtin module
+    /// without `// @ts-check`.
+    pub fn is_untyped(&self) -> bool {
+        self.hir.is_js || self.hir.check_directive == Some(false) || self.builtin.is_some() && self.hir.check_directive != Some(true)
+    }
+
+    /// Whether it is host code to whatever is found out about the types of the program: an untyped builtin file. What it does to an object of
+    /// the program goes by the generic operations, which ask the object.
+    pub fn is_opaque(&self) -> bool {
+        self.builtin.is_some() && self.is_untyped()
+    }
+
     /// Whether its top-level declarations are local to it.
     pub fn is_module(&self) -> bool {
         self.hir.has_module_syntax || self.is_commonjs()
@@ -4207,6 +4230,11 @@ impl<'s> Files<'s> {
             allow_js: true,
             ..options.clone()
         });
+        // `Host::builtin_files` are all named: what they import, they import for its types, which count for nothing in them.
+        let options_for_builtin_files = options_for_code.as_ref().map(|options| Options {
+            no_resolve: true,
+            ..options.clone()
+        });
         let is_loading_code = std::cell::Cell::new(false);
         // `taskDataByPath.LoadOrStore`
         let mut add = |path: &[u8],
@@ -4435,6 +4463,9 @@ impl<'s> Files<'s> {
         let mut starts_for_code: Vec<FileId> = Vec::new();
         // The program when they are about to be loaded.
         let mut without_code: Option<WithoutCode> = None;
+        // `Host::builtin_files`, once it has been asked: the paths, which count as further root files, and the files.
+        let mut builtin_roots: Option<Vec<Vec<u8>>> = None;
+        let mut builtin_files: Vec<(FileId, Builtin)> = Vec::new();
         // (file, how many of its edges have been followed)
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         let mut seen: Vec<bool> = Vec::new();
@@ -4507,7 +4538,10 @@ impl<'s> Files<'s> {
                         let results: Vec<Guarded<Option<Box<Loaded>>>> =
                             missing.iter().map(|_| Guarded::new(None)).collect();
                         let paths: Vec<&[u8]> = missing.iter().map(|it| it.path.pretty).collect();
-                        let as_code = options_for_code.as_ref().filter(|_| is_loading_code.get());
+                        let as_code = match builtin_roots {
+                            Some(_) => options_for_builtin_files.as_ref(),
+                            None => options_for_code.as_ref().filter(|_| is_loading_code.get()),
+                        };
                         read_and_work(host, &paths, &|at, text| {
                             *results[at].lock() = Some(Box::new(Self::load_one(
                                 session.arena(),
@@ -4666,8 +4700,27 @@ impl<'s> Files<'s> {
                     }
                     None => {
                         let Some(task) = root_tasks.get(next_root_task).copied() else {
-                            if options_for_code.is_none() || is_loading_code.replace(true) {
+                            if options_for_code.is_none() || builtin_roots.is_some() {
                                 break 'load;
+                            }
+                            if is_loading_code.replace(true) {
+                                let found = host.builtin_files(&modules, &atoms);
+                                for (index, (path, builtin)) in found.iter().enumerate() {
+                                    let file = add(path, false, &mut modules, &mut depths, &mut all_found);
+                                    root_of_start.push((roots.len() + index) as u32);
+                                    starts_for_code.push(file);
+                                    root_tasks.push(Some(file));
+                                    builtin_files.push((file, *builtin));
+                                    let task = SubTask {
+                                        file,
+                                        increases_depth: false,
+                                        is_elided_on_depth: false,
+                                        package: None,
+                                    };
+                                    queued.push((task, 0));
+                                }
+                                builtin_roots = Some(found.into_iter().map(|it| it.0).collect());
+                                continue 'load;
                             }
                             let found = all_found.files.iter().zip(&depths);
                             without_code = Some(WithoutCode {
@@ -4797,6 +4850,19 @@ impl<'s> Files<'s> {
                 module.edges = &[];
             }
         }
+        for &(file, builtin) in &builtin_files {
+            if let Some(module) = &mut modules[file.idx()] {
+                module.builtin = Some(builtin);
+            }
+        }
+        let with_builtin_roots: Vec<Vec<u8>>;
+        let roots = match builtin_roots {
+            Some(more) if !more.is_empty() => {
+                with_builtin_roots = roots.iter().cloned().chain(more).collect();
+                &with_builtin_roots[..]
+            }
+            _ => roots,
+        };
         if let Some(without_code) = &without_code {
             for (file, module) in modules.iter_mut().enumerate() {
                 let is_in_program = without_code.is_in_program.get(file) == Some(&true);
@@ -5900,6 +5966,12 @@ impl<'s> Files<'s> {
             if text.is_empty() {
                 continue;
             }
+            let among_builtin_files = host.builtin_import(from, text);
+            let text = match &among_builtin_files {
+                Some(Some(path)) => &path[..],
+                Some(None) => continue,
+                None => text,
+            };
             let Some(resolved) = resolver.resolve_module_name(text, from, mode) else {
                 continue;
             };
@@ -6079,6 +6151,7 @@ impl<'s> Files<'s> {
             redirect_for_resolution,
             is_from_external_library: false,
             is_only_code: false,
+            builtin: None,
             is_leaf: false,
             adds_nothing: false,
             has_conditional_or_mapped_type: false,

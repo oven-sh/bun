@@ -75,8 +75,6 @@ let warned = false;
 // assert module must conform to the following interface.
 
 const assert: nodeAssert = ok as any;
-export default assert;
-
 const NO_EXCEPTION_SENTINEL = {};
 
 interface ErrorLike {
@@ -979,3 +977,5 @@ assert.strict.Assert = Assert as unknown as nodeAssert["Assert"];
 assert.strict.strict = assert.strict;
 
 assert.Assert = Assert as unknown as nodeAssert["Assert"];
+
+export default assert;

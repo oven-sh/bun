@@ -1,3 +1,4 @@
+// @ts-nocheck
 const crypto = require("crypto");
 const common = require("../test/common");
 

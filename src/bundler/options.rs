@@ -273,6 +273,7 @@ pub trait TargetExt: Copy {
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
             Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
+            Target::BunBuiltins => DEFAULT_MAIN_FIELDS_BUN,
         })
     }
 
@@ -282,6 +283,7 @@ pub trait TargetExt: Copy {
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
             Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+            Target::BunBuiltins => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
         })
     }
@@ -292,7 +294,9 @@ impl TargetExt for Target {
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
             Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
-            Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
+            Target::BunMacro | Target::Bun | Target::Node | Target::BunBuiltins => {
+                crate::bake_types::Graph::Server
+            }
         }
     }
 
@@ -1208,6 +1212,9 @@ pub struct TypeChecked<'a, 'i> {
     /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
     /// page imports.
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// Those of `entry_points` that are entry points of the bundle themselves, in their order: what the executable runs, and what it
+    /// starts workers with.
+    pub own_entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
@@ -1217,6 +1224,9 @@ pub struct TypeChecked<'a, 'i> {
     /// The imports that are not in the bundle: the path of the file and the specifier. An import of TypeScript that turned out to be
     /// of types only, and what a barrel file re-exports and nothing asks it for.
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
+    /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
+    pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
     /// The path and the text of each file of the bundle that is imported as a string.
     pub texts: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     /// The path of each file that is copied next to the bundle, or into the executable, and what stands for its final path until that
@@ -1226,6 +1236,10 @@ pub struct TypeChecked<'a, 'i> {
     pub defines: &'a [(Box<[u8]>, Box<[u8]>)],
     /// The flags for which `feature()` of `bun:bundle` is true.
     pub features: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// `BundleOptions::rewrite_jest_for_tests`
+    pub rewrite_jest_for_tests: bool,
+    /// `BundleOptions::preserve_source_paths`
+    pub preserve_source_paths: bool,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
@@ -1940,7 +1954,7 @@ impl<'a> BundleOptions<'a> {
                 opts.import_path_format = ImportPathFormat::Relative;
                 opts.allow_runtime = false;
             }
-            Target::Bun => {
+            Target::Bun | Target::BunBuiltins => {
                 opts.import_path_format =
                     if opts.import_path_format == ImportPathFormat::AbsoluteUrl {
                         ImportPathFormat::AbsoluteUrl

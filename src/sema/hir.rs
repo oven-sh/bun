@@ -363,6 +363,9 @@ bitflags::bitflags! {
         /// A namespace that is synthesized from a JSDoc tag of a class element. In tsgo it is an
         /// element of that class (`parseListIndex`). Here it is a statement before the class.
         const CLASS_ELEMENT = 1 << 27;
+        /// `Function::HasReactHooksSuppression` of the parser: an `eslint-disable` comment for a rule of `react-hooks` applies to the
+        /// function. Only in a file with JSX.
+        const REACT_HOOKS_SUPPRESSION = 1 << 28;
     }
 }
 

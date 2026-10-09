@@ -1001,6 +1001,8 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+        nullptr, // requireBuiltinModule
+        nullptr, // nativeBinding
     };
     return table;
 }

@@ -8,8 +8,12 @@ path = "lib.rs"
 
 [dependencies]
 bun_sema.workspace = true
+bun_builtin_syntax.workspace = true
 bun_core.workspace = true
 bun_ast.workspace = true
+bun_alloc.workspace = true
+bun_paths.workspace = true
+bun_react_compiler = { path = "../react_compiler" }
 rustc-hash = "2"
 smallvec.workspace = true
 

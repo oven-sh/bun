@@ -167,6 +167,12 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
+#if ENABLE(AOT)
+        if (frame.isTypedAOTFrame() && JSC::AOT::isClosureOfTypedFunction(callerObject, frame.typedAOTFunction())) {
+            removeCount = i + 1;
+            break;
+        }
+#endif
         if (frame.hasLineAndColumnInfo()) {
             if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject); callerFunction && callerFunction->executable() == frame.ownerExecutable()) {
                 removeCount = i + 1;
@@ -249,8 +255,10 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 intptr_t JSCStackFrame::sourceID() const
 {
-    if (m_isCompiledAheadOfTime)
-        return m_stackFrame->ownerExecutable()->sourceID();
+    if (m_isCompiledAheadOfTime) {
+        auto* executable = m_stackFrame->ownerExecutable();
+        return executable ? executable->sourceID() : JSC::noSourceID;
+    }
     return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 }
 
@@ -569,6 +577,12 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
             break;
         }
         }
+
+#if ENABLE(AOT)
+        if (frame.isTypedAOTFrame() && codeType == JSC::CodeType::FunctionCode) {
+            functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction());
+        }
+#endif
 
         if (functionName.isEmpty()) {
             functionName = Zig::functionName(vm, codeType, frame.ownerExecutable());

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";

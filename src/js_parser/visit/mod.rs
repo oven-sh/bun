@@ -1051,6 +1051,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.record_declared_symbol(shadow_ref);
 
         if let Some(extends) = class.extends.as_mut() {
+            if self.options.bun_builtin_syntax {
+                self.keep_public_heritage(extends);
+            }
             self.visit_expr(extends);
         }
 

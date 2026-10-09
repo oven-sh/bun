@@ -594,6 +594,35 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
     }
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
+    p: *const u8,
+    len: usize,
+    out: *mut u16,
+) -> SimdutfResult {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = match core::str::from_utf8(unsafe { bytes(p, len) }) {
+        Ok(text) => text,
+        // simdutf's HEADER_BITS
+        Err(error) => {
+            return SimdutfResult {
+                status: 1,
+                count: error.valid_up_to(),
+            };
+        }
+    };
+    let mut written = 0;
+    for unit in text.encode_utf16() {
+        // SAFETY: the caller has reserved room for the longest possible result, as simdutf
+        // requires.
+        unsafe { out.add(written).write(unit) };
+        written += 1;
+    }
+    SimdutfResult {
+        status: 0,
+        count: written,
+    }
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__base64_encode(
     _p: *const u8,
     _len: usize,

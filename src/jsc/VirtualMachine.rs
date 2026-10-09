@@ -151,6 +151,8 @@ pub struct VirtualMachine {
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
+    /// The entry point was compiled ahead of time, together with what `bun:main` does after it.
+    pub main_is_compiled: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -801,7 +803,7 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint && !vm.main_is_compiled {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
@@ -3110,6 +3112,7 @@ unsafe extern "C" {
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__AOT__isCompiledEntryPoint(module: u32) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3499,7 +3502,12 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        if !self.main_is_html_entrypoint {
+        self.main_is_compiled = self.preload.is_empty()
+            && (self.standalone_module_graph)
+                .and_then(|graph| graph.program_data_index(entry_path))
+                .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module));
+
+        if !self.main_is_html_entrypoint && !self.main_is_compiled {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3508,7 +3516,7 @@ impl VirtualMachine {
             }
         }
 
-        if !self.transpiler.options.disable_transpilation {
+        if !self.transpiler.options.disable_transpilation && !self.main_is_compiled {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.

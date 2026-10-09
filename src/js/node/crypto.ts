@@ -172,7 +172,7 @@ function Sign(algorithm, options): void {
   this[kHandle] = new _Sign();
   this[kHandle].init(algorithm);
 
-  Writable.$apply(this, [options]);
+  Writable.$call(this, options);
 }
 $toClass(Sign, "Sign", Writable);
 
@@ -207,7 +207,7 @@ function Verify(algorithm, options): void {
   this[kHandle] = new _Verify();
   this[kHandle].init(algorithm);
 
-  Writable.$apply(this, [options]);
+  Writable.$call(this, options);
 }
 $toClass(Verify, "Verify", Writable);
 
@@ -237,7 +237,7 @@ function Hash(algorithm, options?): void {
   const handle = new _Hash(algorithm, options);
   this[kHandle] = handle;
 
-  LazyTransform.$apply(this, [options]);
+  LazyTransform.$call(this, options);
 }
 $toClass(Hash, "Hash", LazyTransform);
 
@@ -274,7 +274,7 @@ function Hmac(hmac, key, options?): void {
   const handle = new _Hmac(hmac, key, options);
   this[kHandle] = handle;
 
-  LazyTransform.$apply(this, [options]);
+  LazyTransform.$call(this, options);
 }
 $toClass(Hmac, "Hmac", LazyTransform);
 
@@ -464,7 +464,7 @@ crypto_exports.createECDH = function createECDH(curve) {
     }
 
     this[kHandle] = new Cipher(false, cipher, key, iv, options);
-    LazyTransform.$apply(this, [options]);
+    LazyTransform.$call(this, options);
     this._decoder = null;
   }
   $toClass(Cipheriv, "Cipheriv", LazyTransform);
@@ -522,7 +522,7 @@ crypto_exports.createECDH = function createECDH(curve) {
     }
 
     this[kHandle] = new Cipher(true, cipher, key, iv, options);
-    LazyTransform.$apply(this, [options]);
+    LazyTransform.$call(this, options);
     this._decoder = null;
   }
   $toClass(Decipheriv, "Decipheriv", LazyTransform);

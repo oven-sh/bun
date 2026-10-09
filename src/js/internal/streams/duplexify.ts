@@ -21,8 +21,8 @@ const from = require("internal/streams/from");
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 class Duplexify extends Duplex {
-  declare _readableState: { readable: boolean; ended: boolean; endEmitted: boolean };
-  declare _writableState: { writable: boolean; ending: boolean; ended: boolean; finished: boolean };
+  declare _readableState: import("internal/streams/state").ReadableState;
+  declare _writableState: import("internal/streams/state").WritableState;
 
   constructor(options) {
     super(options);

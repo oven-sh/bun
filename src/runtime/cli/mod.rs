@@ -312,6 +312,7 @@ pub(crate) mod arguments;
 pub(crate) use arguments as Arguments;
 #[path = "aot.rs"]
 pub(crate) mod aot;
+pub(crate) mod builtins_manifest;
 #[path = "run_command.rs"]
 pub(crate) mod run_command;
 

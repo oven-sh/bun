@@ -1,3 +1,4 @@
+#define BUN_DYNAMIC_JS_LOAD_PATH "" // TEMPORARY: scratch/main/test_js_load_path.py
 #include "InternalModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
@@ -23,7 +24,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/AOTProgramData.h>
+#include <JavaScriptCore/AOTFunction.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
@@ -86,16 +87,12 @@ static String internalModuleString(uint32_t offset, uint32_t length)
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
-    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
-    auto contents = WTF::FileSystemImpl::readEntireFile(file);
-    if (!contents) {
-        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().legacyCStringPointer(), file.utf8().legacyCStringPointer());
-        CRASH();
+    if (const char* directory = getenv("BUN_TEST_JS_LOAD_PATH")) {
+        auto contents = WTF::FileSystemImpl::readEntireFile(makeString(WTF::String::fromUTF8(directory), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id])));
+        if (contents)
+            return WTF::String::fromUTF8(contents.value());
     }
-    return WTF::String::fromUTF8(contents.value());
+    return internalModuleString(m.codeOffset, m.codeLength);
 }
 #else
 static String internalModuleSource(uint32_t id)
@@ -108,31 +105,30 @@ static String internalModuleSource(uint32_t id)
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
+        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
+        RELEASE_AND_RETURN(throwScope, JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id));
+    }
+#endif
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
+    maybeAddCodeCoverage(vm, source);
+
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
-    bool hasBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset);
-    auto* program = hasBytecode ? JSC::AOT::VMProgram::of(vm) : nullptr;
-    FunctionExecutable* linked = program
-        ? program->builtinFunctionFor(cachedEntryOffset, bun_internal_modules_header.sourceStamp, internalModuleSource(id), SourceOrigin(WTF::URL(internalModuleString(m.urlOffset, m.urlLength))), moduleName)
-        : nullptr;
-    SourceCode source = linked ? SourceCode { Ref { *linked->source().provider() } } : makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
-    maybeAddCodeCoverage(vm, source);
-
     UnlinkedFunctionExecutable* executable = nullptr;
-    if (linked)
-        s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
-    else if (hasBytecode && cachedSize) {
+    if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
         executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!executable && !linked)
+    if (!executable)
         executable = createInternalModuleExecutable(vm, source, moduleName);
 
-    JSFunction* func = JSFunction::create(vm, globalObject, linked ? linked : executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
+    JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
     if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {

@@ -1406,6 +1406,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.error_at_current_node(2590);
             return None;
         }
+        if size >= self.cross_product_limit {
+            self.note_limit();
+            self.mark_tainted_from(0);
+            return None;
+        }
         Some(size)
     }
 
@@ -1918,7 +1923,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `CompareTypes` without its final fallback, the ids.
-    fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+    pub(super) fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering::Equal;
         if a == b {
             return Equal;

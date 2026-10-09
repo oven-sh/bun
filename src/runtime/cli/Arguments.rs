@@ -455,6 +455,15 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--rewrite-jest-for-tests         (internal) The entry points are test files"
         ),
         parse_param!(
+            "--expose-internals               (internal) What is built is run with --expose-internals"
+        ),
+        parse_param!(
+            "--experimental-stream-iter       (internal) What is built is run with --experimental-stream-iter"
+        ),
+        parse_param!(
+            "--builtins-manifest <STR>        (internal) With --target=bun_builtins: the tables src/codegen/builtins-manifest.ts wrote"
+        ),
+        parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
@@ -2120,6 +2129,12 @@ fn parse_build_command_options(
     ctx.bundler_options.compile_aot = args.flag(b"--compile-aot");
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
     ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
+    if args.flag(b"--expose-internals") {
+        bun_resolve_builtins::set_expose_internals_enabled(true);
+    }
+    if args.flag(b"--experimental-stream-iter") {
+        bun_resolve_builtins::set_stream_iter_enabled(true);
+    }
     ctx.bundler_options.compile_run_args = slice_to_owned(args.options(b"--compile-run-arg"));
     ctx.bundler_options.bytecode = args.flag(b"--bytecode") || ctx.bundler_options.compile_aot;
     if let Some(depth) = args.option(b"--bytecode-depth") {
@@ -2279,6 +2294,7 @@ fn parse_build_command_options(
                     }
                 }
                 b"bun" => api::Target::Bun,
+                b"bun_builtins" => api::Target::BunBuiltins,
                 _ => cli::invalid_target(diag, target),
             }));
 
@@ -2310,6 +2326,21 @@ fn parse_build_command_options(
                     );
                 }
             }
+        }
+    }
+
+    match (
+        opts.target == Some(api::Target::BunBuiltins),
+        args.option(b"--builtins-manifest"),
+    ) {
+        (true, Some(path)) => cli::builtins_manifest::install(path, opts),
+        (false, None) => {}
+        _ => {
+            Output::err_generic(
+                "--target=bun_builtins and --builtins-manifest need each other",
+                (),
+            );
+            Global::exit(1);
         }
     }
 

@@ -13,7 +13,9 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
-use crate::diagnostics::{CompilerError, ErrorCategory, cold_diagnostic};
+use crate::diagnostics::{
+    CompilerError, CompilerErrorOrDiagnostic, ErrorCategory, cold_diagnostic,
+};
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::EnvironmentConfig;
@@ -38,7 +40,7 @@ use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
-use crate::pipeline;
+use crate::pipeline::{self, Analysis};
 
 /// JSX runtime symbols the compiler may need to reference in generated code.
 /// Mirrors `bun_js_parser::JSXImport` without the crate dependency.
@@ -1012,8 +1014,21 @@ fn handle_error(
     diagnostics: &mut Vec<CompileDiagnostic>,
     opts: &ReactCompilerOptions,
 ) -> Option<CompileOutput> {
-    for _ in &err.details {
-        diagnostics.push(CompileDiagnostic {});
+    for detail in &err.details {
+        diagnostics.push(match detail {
+            CompilerErrorOrDiagnostic::Diagnostic(d) => CompileDiagnostic {
+                category: d.category,
+                reason: d.reason.clone(),
+                description: d.description.clone(),
+                loc: d.primary_location().copied(),
+            },
+            CompilerErrorOrDiagnostic::ErrorDetail(d) => CompileDiagnostic {
+                category: d.category,
+                reason: d.reason.clone(),
+                description: d.description.clone(),
+                loc: d.loc,
+            },
+        });
     }
 
     let should_panic = match opts.panic_threshold.as_deref().unwrap_or("none") {
@@ -1228,6 +1243,11 @@ impl ReactCompilerState {
             _ => false,
         }
     }
+
+    /// Why the functions handed over since the last call were left as written.
+    pub fn take_diagnostics(&mut self) -> Vec<CompileDiagnostic> {
+        core::mem::take(&mut self.diagnostics)
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1255,6 +1275,32 @@ pub struct PendingCompile {
 pub struct CompileResult {
     pub args: StoreSlice<G::Arg>,
     pub flags: flags::FunctionSet,
+    pub memo: MemoStats,
+}
+
+/// What upstream's `CompileSuccess` event reports.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct MemoStats {
+    pub slots: u32,
+    pub blocks: u32,
+    pub values: u32,
+    pub pruned_blocks: u32,
+    pub pruned_values: u32,
+    pub outlined: u32,
+}
+
+fn pending_fn(pending: &PendingCompile, body: &mut [Stmt]) -> G::Fn {
+    G::Fn {
+        name: None,
+        open_parens_loc: pending.args_loc,
+        args: pending.args,
+        body: G::FnBody {
+            loc: pending.body_loc,
+            stmts: StoreSlice::new_mut(body),
+        },
+        flags: pending.flags,
+        ..G::Fn::default()
+    }
 }
 
 /// Compile hook called from `visit_stmts` between its visit phase and its
@@ -1269,17 +1315,8 @@ pub fn maybe_compile_pending(
     body: &mut [Stmt],
     name: Option<&[u8]>,
 ) -> Option<(Vec<Stmt>, CompileResult)> {
-    let tmp = G::Fn {
-        name: None,
-        open_parens_loc: pending.args_loc,
-        args: pending.args,
-        body: G::FnBody {
-            loc: pending.body_loc,
-            stmts: StoreSlice::new_mut(body),
-        },
-        flags: pending.flags,
-        ..G::Fn::default()
-    };
+    let tmp = pending_fn(pending, body);
+    let outlined_before = state.outlined_decls.len();
     let cf = maybe_compile_node(
         state,
         host,
@@ -1296,17 +1333,72 @@ pub fn maybe_compile_pending(
         CompileResult {
             args: leak_args(cf.params),
             flags,
+            memo: MemoStats {
+                slots: cf.memo_slots_used,
+                blocks: cf.memo_blocks,
+                values: cf.memo_values,
+                pruned_blocks: cf.pruned_memo_blocks,
+                pruned_values: cf.pruned_memo_values,
+                outlined: (state.outlined_decls.len() - outlined_before) as u32,
+            },
         },
     ))
 }
 
-fn maybe_compile_node(
+/// [`maybe_compile_pending`] without codegen: nothing is minted on the host
+/// and `body` stays as it is.
+pub fn analyze_pending(
     state: &mut ReactCompilerState,
-    host: &mut dyn Host,
-    node: FunctionNode<'_>,
+    host: &dyn Host,
+    pending: &PendingCompile,
+    body: &mut [Stmt],
+    name: Option<&[u8]>,
+) -> Option<Analysis> {
+    let tmp = pending_fn(pending, body);
+    let node = FunctionNode::Function(&tmp);
+    let selected = select_node(state, host, &node, name, pending.in_react_hoc)?;
+    let analyzed = pipeline::analyze_fn(
+        &node,
+        selected.fn_name.as_deref(),
+        host,
+        selected.fn_type,
+        &state.env_config,
+        &mut state.context,
+        &state.import_bindings,
+    )
+    .and_then(|mut analysis| {
+        if analysis.env.has_errors() {
+            Err(analysis.env.take_errors())
+        } else {
+            Ok(analysis)
+        }
+    });
+    match analyzed {
+        Ok(analysis) => Some(analysis),
+        Err(err) => {
+            if let Some(fatal) = handle_error(err, &mut state.diagnostics, &state.options) {
+                state.fatal = Some(fatal);
+            }
+            None
+        }
+    }
+}
+
+/// A function that goes through the pipeline.
+struct Selected {
+    fn_type: ReactFunctionType,
+    fn_name: Option<String>,
+    /// By a directive.
+    is_opted_in: bool,
+}
+
+fn select_node(
+    state: &mut ReactCompilerState,
+    host: &dyn Host,
+    node: &FunctionNode<'_>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
-) -> Option<CodegenFunction> {
+) -> Option<Selected> {
     bun_core::scoped_log!(
         react_compiler,
         "maybe_compile_node name={:?}",
@@ -1316,7 +1408,7 @@ fn maybe_compile_node(
         bun_core::scoped_log!(react_compiler, "  -> bail: prior fatal");
         return None;
     }
-    state.lazy_init(&*host);
+    state.lazy_init(host);
     if state.fatal.is_some() {
         bun_core::scoped_log!(react_compiler, "  -> bail: fatal after lazy_init");
         return None;
@@ -1324,9 +1416,9 @@ fn maybe_compile_node(
 
     let body_directives = collect_body_directives(node.body().stmts.slice());
     let fn_type = get_react_function_type(
-        &*host,
+        host,
         name,
-        &node,
+        node,
         &body_directives,
         in_react_hoc,
         &state.options,
@@ -1371,6 +1463,23 @@ fn maybe_compile_node(
     // function-declaration path needs statement-level access; for now a valid
     // directive only opts the function in and registers no extra import.
 
+    Some(Selected {
+        fn_type,
+        fn_name,
+        is_opted_in: find_directive_enabling_memoization(&body_directives).is_some()
+            || dynamic_gating_ident.is_some(),
+    })
+}
+
+fn maybe_compile_node(
+    state: &mut ReactCompilerState,
+    host: &mut dyn Host,
+    node: FunctionNode<'_>,
+    name: Option<&[u8]>,
+    in_react_hoc: bool,
+) -> Option<CodegenFunction> {
+    let selected = select_node(state, &*host, &node, name, in_react_hoc)?;
+
     // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
     // and outlives the `&mut dyn Host` borrow for the duration of this call.
     let arena: &bun_alloc::Arena =
@@ -1378,10 +1487,10 @@ fn maybe_compile_node(
 
     match pipeline::compile_fn(
         &node,
-        fn_name.as_deref(),
+        selected.fn_name.as_deref(),
         host,
         arena,
-        fn_type,
+        selected.fn_type,
         &state.env_config,
         &mut state.context,
         &state.import_bindings,
@@ -1398,8 +1507,7 @@ fn maybe_compile_node(
                 return None;
             }
             if state.context.opts.compilation_mode.as_deref() == Some("annotation")
-                && find_directive_enabling_memoization(&body_directives).is_none()
-                && dynamic_gating_ident.is_none()
+                && !selected.is_opted_in
             {
                 return None;
             }

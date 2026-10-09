@@ -382,9 +382,9 @@ extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* en
     return true;
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncoder* encoder, const uint8_t* program, size_t size, uint32_t module, const uint8_t* replacedStrings, size_t replacedStringsSize)
+extern "C" bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncoder* encoder, const uint8_t* program, size_t size, const uint32_t* modules, size_t numberOfModules, const uint8_t* replacedStrings, size_t replacedStringsSize)
 {
-    return encoder->setTypedProgram({ program, size }, module, { replacedStrings, replacedStringsSize });
+    return encoder->setTypedProgram({ program, size }, std::span { modules, numberOfModules }, { replacedStrings, replacedStringsSize });
 }
 
 extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeLinkEncoder* encoder, const uint8_t* blob, size_t blobSize, const uint32_t* stringSlots, size_t stringSlotCount, const uint32_t* graphModuleIndices, size_t addCount)
@@ -543,6 +543,15 @@ static int openExecutable()
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 #endif
+
+extern "C" bool Bun__AOT__isCompiledEntryPoint(uint32_t module)
+{
+#if ENABLE(AOT)
+    return JSC::AOT::Typed::isEntryPoint(module);
+#else
+    return false;
+#endif
+}
 
 extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, size_t* result)
 {

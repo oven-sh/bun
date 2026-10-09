@@ -155,16 +155,12 @@ describe("--parallel: an error that no test owns", () => {
   test.each([
     { when: "between two files", flag: "--no-isolate", files: [late, good], errors: 2 },
     { when: "after the last file", flag: "--no-isolate", files: [good, late], errors: 2 },
+    { when: "in exit listeners", flag: "--no-isolate", files: [exitListeners, good], errors: 2 },
     // This one was counted before too. The worker now reports it the same way as the others.
     { when: "after a file's last test", flag: "--isolate", files: [afterLastTest, good], errors: 1 },
   ])("is counted $when ($flag)", async ({ flag, files: [a, b], errors }) => {
     expect(await run(flag, a, b)).toEqual(counted(errors));
   });
-
-  // The timeout: node:test and bun:internal-for-testing take seconds to load on a debug build.
-  test("is counted in exit listeners (--no-isolate)", async () => {
-    expect(await run("--no-isolate", exitListeners, good)).toEqual(counted(2));
-  }, 60_000);
 
   // The swap also raises errors in files whose code throws nothing (a socket it closes mid-request),
   // so an error that fires there stays as it was: printed, not counted.

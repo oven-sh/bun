@@ -1,7 +1,7 @@
 use crate::js::format::identifier;
 use crate::js::utils::call_expression::strip_chain_element_wrappers;
 use crate::js::utils::member_chain::chain_member::FormatComputedMemberExpressionWithoutObject;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -186,6 +186,23 @@ fn should_inline_in<'a>(
     is_in_member: bool,
     f: &Formatter<'a>,
 ) -> bool {
+    // For Prettier the parentheses of a type cast are a node, which is none of those that matter here.
+    if f.comments().has_type_cast_comments() {
+        let mut inner = e;
+        loop {
+            if is_cast_target_that_hides_its_kind(inner, f) {
+                return false;
+            }
+            match inner.parent() {
+                Node::Expr(it)
+                    if matches!(it.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::NonNull) =>
+                {
+                    inner = it;
+                }
+                _ => break,
+            }
+        }
+    }
     match outer {
         Node::Expr(it) if !matches!(it.tag(), ExprTag::Assign | ExprTag::New) => return false,
         Node::VarDecl(_) if is_in_member => return false,

@@ -1,6 +1,7 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::expression::ExpressionLeftSide;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -51,6 +52,9 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
 
         if !is_jsx && !f.is_quiet() && has_argument_leading_comments(argument, f) {
             write!(f, ["(", block_indent(&argument), ")"]);
+        } else if is_cast_target_that_hides_its_kind(argument, f) {
+            // For Prettier it is a `ParenthesizedExpression`, whatever is in it.
+            write!(f, argument);
         } else if (matches!(argument.kind(), ExprKind::Binary { .. }) && !is_sequence)
             || (f.options().experimental_ternaries
                 && matches!(argument.kind(), ExprKind::Cond { yes, no, .. }

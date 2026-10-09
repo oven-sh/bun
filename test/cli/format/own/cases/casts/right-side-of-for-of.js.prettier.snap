@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+for (const value of /** @type {First[]} */ (/** @type {Second[]} */ (values))) {
+}
+for (const value of /** @type {First[]} */ (
+  /** @type {unknown[]} */ ([
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ])
+)) {
+  value;
+}
+for (const key in /** @type {First} */ (/** @type {Second} */ (values))) {
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+for (const value of /** @type {First[]} */ (/** @type {Second[]} */ (values))) {
+}
+for (const value of /** @type {First[]} */ (
+  /** @type {unknown[]} */ ([
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ])
+)) {
+  value;
+}
+for (const key in /** @type {First} */ (/** @type {Second} */ (values))) {
+}
+
+===================== End =====================

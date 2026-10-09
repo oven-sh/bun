@@ -17,6 +17,13 @@ pub(crate) fn is_cast_target<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         && !cast_parentheses(e, f).is_empty()
 }
 
+/// The same, where only Prettier takes the parentheses for what is there. oxfmt looks at what is in them: in the
+/// argument of `return` and `throw`, in a branch of a conditional expression, in the object of a member access.
+#[inline]
+pub(crate) fn is_cast_target_that_hides_its_kind<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_cast_target(e, f) && !f.options().flavor.is_oxfmt()
+}
+
 /// The parentheses around `e` that stay, from the outside in.
 fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
     e.parens()

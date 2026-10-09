@@ -1,6 +1,7 @@
 //! `a ? b : c` and `A extends B ? C : D`. Prettier's `printTernary`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use super::typecast::is_cast_target_that_hides_its_kind;
 use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::write;
@@ -190,12 +191,13 @@ fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
 }
 
 impl<'a> FormatConditionalLike<'a> {
-    fn layout(&self) -> ConditionalLayout {
+    fn layout(&self, f: &Formatter<'a>) -> ConditionalLayout {
         match (self.conditional, self.conditional.parent()) {
+            // For Prettier the parentheses of a type cast are a node, which is what it is in then.
             (
                 ConditionalLike::ConditionalExpression(e),
                 AstNodes::ConditionalExpression(parent),
-            ) => match parent.kind() {
+            ) if !is_cast_target_that_hides_its_kind(e, f) => match parent.kind() {
                 ExprKind::Cond { test, .. } if test == e => ConditionalLayout::NestedTest {
                     jsx_chain: is_jsx_conditional_chain(e),
                 },
@@ -403,7 +405,7 @@ struct FormatConditionalLike<'a> {
 
 impl<'a> Format<'a> for FormatConditionalLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let layout = self.layout();
+        let layout = self.layout(f);
         let should_extra_indent = self.should_extra_indent(layout);
         let is_jsx_chain = self.jsx_chain || layout.is_jsx_chain();
 

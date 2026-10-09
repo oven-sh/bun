@@ -586,12 +586,17 @@ pub(crate) fn comment_placements(
             };
             continue;
         }
+        // The parentheses of a type cast are a node, which starts right behind the comment.
+        let is_before_cast = f.comments().is_type_cast_comment(comment)
+            && source.next_non_whitespace_byte_is(comment.span.end, b'(');
         gap_end = gap_end
             .filter(|&end| {
-                source.all_bytes(Span::after(comment.span, end), |b| {
-                    b.is_ascii_whitespace() || b == b'('
-                })
+                is_before_cast
+                    || source.all_bytes(Span::after(comment.span, end), |b| {
+                        b.is_ascii_whitespace() || b == b'('
+                    })
             })
+            .or_else(|| is_before_cast.then_some(0))
             .map(|_| comment.span.start);
         if gap_end.is_some() {
             *placement = CommentPlacement::BeforeNode;

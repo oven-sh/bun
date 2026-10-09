@@ -695,14 +695,12 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             ..Default::default()
         });
     }
-    for path in &report.incomplete {
+    for file in &report.incomplete {
+        let path = bun_sema_driver::host::to_native(&file.path);
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!(
-                "ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.",
-                BStr::new(bun_sema_driver::host::to_native(path))
-            ),
+            format_args!("{}", BStr::new(&file.message(&path))),
         );
     }
     report.is_ok()

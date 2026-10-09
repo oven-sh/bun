@@ -675,12 +675,12 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         (report.diagnostics.iter()).filter(|d| d.category == Category::Error && !d.path.is_empty());
     let mut by_file = count_by_file(in_files);
     let files_with_errors = by_file.len();
-    for path in &report.incomplete {
+    for file in &report.incomplete {
         pretty!(
             out,
             style.color,
-            "<red>error<r><d>:<r> ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.\n",
-            relative_path(path, style.cwd, style)
+            "<red>error<r><d>:<r> {}\n",
+            BStr::new(&file.message(&relative_path(&file.path, style.cwd, style)))
         );
     }
     // A repository can have a hundred fixtures that nobody installs.

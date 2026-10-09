@@ -2828,6 +2828,19 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    test("100,000 signs that begin a decorator", async () => {
+      using dir = project({
+        "a.ts": `${repeat("@", 100_000)}\n`,
+        "b.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(stderr.split("\n")[0]).toBe(
+        "error: the code in a.ts is nested too deeply: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The parser reads a run of `!` in a loop, so nothing bounds its length.
     test.each([
       [

@@ -888,13 +888,39 @@ pub struct TaskOutput {
     pub listed_files: usize,
 }
 
+/// A file that is not fully checked.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Incomplete {
+    pub path: Vec<u8>,
+    /// `hir::File::ran_out_of_stack`: the stack was too small for the tree. Otherwise it was too
+    /// small for a query of the checker, which was abandoned.
+    pub is_nested_too_deeply: bool,
+}
+
+impl Incomplete {
+    /// What is said about the file, which is shown as `path`.
+    pub fn message(&self, path: &[u8]) -> Vec<u8> {
+        let (before, after): (&[u8], &[u8]) = match self.is_nested_too_deeply {
+            true => (
+                b"the code in ",
+                b" is nested too deeply: errors in this file may be missing.",
+            ),
+            false => (
+                b"ran out of stack in ",
+                b". This is a bug in Bun: errors in this file may be missing.",
+            ),
+        };
+        [before, path, after].concat()
+    }
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
     /// position.
     pub diagnostics: Vec<Diagnostic>,
-    /// Files in which a query was abandoned because the stack ran out: errors may be missing.
-    pub incomplete: Vec<Vec<u8>>,
+    /// Files of which errors may be missing.
+    pub incomplete: Vec<Incomplete>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
     /// By `package.json`.
@@ -2940,7 +2966,7 @@ fn check_named_files(
     let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     // `GetDeclarationDiagnostics`
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
-    let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
@@ -3137,8 +3163,10 @@ fn check_named_files(
         // The diagnostics that were found are reported. Others may be missing, so the report lists
         // the file as incomplete.
         for file in outcome.incomplete {
-            let path = program.files.modules[file.idx()].file_name().to_vec();
-            incomplete.lock().push(path);
+            incomplete.lock().push(Incomplete {
+                path: program.files.modules[file.idx()].file_name().to_vec(),
+                is_nested_too_deeply: program.files.hir(file).ran_out_of_stack,
+            });
         }
         unfinished.lock().extend(outcome.checked);
     };

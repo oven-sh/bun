@@ -4,6 +4,8 @@ use bun_lint::rule::Plugin;
 /// Require destructuring from arrays and/or objects.
 pub struct PreferDestructuring {
     config: Config,
+    /// An option of typescript-eslint's rule, which oxlint's port of this one has.
+    enforce_for_declaration_with_type_annotation: bool,
 }
 
 pub const PREFER_DESTRUCTURING: Message =
@@ -162,13 +164,21 @@ impl Rule for PreferDestructuring {
     fn new(options: &Options) -> Self {
         PreferDestructuring {
             config: Config::new(options),
+            enforce_for_declaration_with_type_annotation: options
+                .object(1)
+                .bool_or("enforceForDeclarationWithTypeAnnotation", false),
         }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         let is_enabled = |it: Enabled| it.array || it.object;
         if is_enabled(self.config.variable_declarator) {
-            on.var_decls(|rule, declaration, cx| rule.config.check_variable_declarator(declaration, cx, true));
+            on.var_decls(|rule, declaration, cx| {
+                let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
+                if !has_type_annotation || rule.enforce_for_declaration_with_type_annotation {
+                    rule.config.check_variable_declarator(declaration, cx, !has_type_annotation);
+                }
+            });
         }
         if is_enabled(self.config.assignment_expression) {
             on.exprs([ExprTag::Assign], |rule, e, cx| rule.config.check_assignment_expression(e, cx));

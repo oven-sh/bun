@@ -662,6 +662,46 @@ test.concurrent(
   },
 );
 
+// The bun.lock has no trustedDependencies key: it was saved before package.json got the list.
+test.concurrent.each(["hoisted", "isolated"] as const)(
+  "an empty trustedDependencies list holds on a bun.lock without the key under --frozen-lockfile, ci and --production (%s)",
+  async linker => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const preinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+    const dependencies = { electron: "1.0.0" };
+
+    await verdaccio.writeBunfig(packageDir, { linker });
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    await runBunInstall(env, packageDir);
+    expect(await exists(preinstall)).toBeTrue();
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).not.toContain("trustedDependencies");
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: [] }));
+    for (const args of [["install", "--frozen-lockfile"], ["ci"], ["install", "--production"]]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect({
+        args,
+        installed: await exists(join(packageDir, "node_modules", "electron", "package.json")),
+        ran: await exists(preinstall),
+      }).toEqual({ args, installed: true, ran: false });
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+      expect(code).toBe(0);
+    }
+  },
+);
+
 test.concurrent(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
   async () => {

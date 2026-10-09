@@ -81,6 +81,10 @@ impl SortVars {
                 });
             }
             is_fixed = true;
+            // oxlint compares with the one before, ESLint with the last that was in order.
+            if cx.language().is_oxlint {
+                memo = declaration;
+            }
         }
     }
 }

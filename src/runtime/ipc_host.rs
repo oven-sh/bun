@@ -494,6 +494,7 @@ pub(crate) fn get_ipc_instance(
     bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
     vm.event_loop_mut().ensure_waker();
+    let reads_held = vm.transpiler_store.ipc_reads_held();
 
     #[cfg(not(windows))]
     let instance: *mut IPCInstance = {
@@ -514,6 +515,12 @@ pub(crate) fn get_ipc_instance(
         // SAFETY: `instance` was just boxed above and is non-null.
         CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
 
+        // SAFETY: `send_queue` is live (owned by `instance`).
+        let options = if unsafe { (*send_queue).set_reads_held_before_open(reads_held) } {
+            0
+        } else {
+            bun_uws::LIBUS_SOCKET_OPEN_PAUSED
+        };
         // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
         // the freshly-allocated SendQueue (root raw pointer, stored in the
         // socket ext slot for the socket's lifetime).
@@ -523,6 +530,7 @@ pub(crate) fn get_ipc_instance(
                 bun_uws::SocketKind::SpawnIpc,
                 fd,
                 send_queue,
+                options,
                 true,
             )
         };
@@ -558,6 +566,8 @@ pub(crate) fn get_ipc_instance(
         // SAFETY: `instance` was just boxed above and is non-null.
         CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
 
+        // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
+        unsafe { (*send_queue).set_reads_held_before_open(reads_held) };
         // `windows_configure_client` STORES the `*mut SendQueue` in
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
         // allocation's root raw pointer.
@@ -578,6 +588,14 @@ pub(crate) fn get_ipc_instance(
     unsafe { (*instance).data().write_version_packet(vm.global()) };
 
     Some(instance)
+}
+
+/// `RuntimeHooks::hold_ipc_reads`.
+pub(crate) fn hold_ipc_reads(hold: bool) {
+    if let Some(inst) = CHANNEL.get() {
+        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+        unsafe { inst.as_ref() }.data().set_reads_held(hold);
+    }
 }
 
 // HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)

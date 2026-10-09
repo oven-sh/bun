@@ -77,6 +77,8 @@ fn write_document(
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         tab_width: u32::from(options.indent_width.value()),
+        is_oxfmt: options.flavor.is_oxfmt(),
+        is_last_document: true,
         printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
         out,

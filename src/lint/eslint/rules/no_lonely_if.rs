@@ -36,6 +36,10 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
     Some(fixer.replace(outer, [separator, node.text()].concat()))
 }
 
+fn is_else_if(statement: Stmt) -> bool {
+    matches!(statement.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::If)
+}
+
 impl Rule for NoLonelyIf {
     const META: Meta = Meta::eslint("no-lonely-if", Kind::Suggestion).fixable(Fixable::Code);
     type State<'a> = ();
@@ -51,6 +55,8 @@ impl Rule for NoLonelyIf {
                 && let Node::Stmt(outer) = block.parent()
                 && matches!(outer.kind(), StmtKind::If { no: Some(no), .. } if no == block)
                 && !ast_utils::are_braces_necessary(block)
+                // oxlint says nothing after an `else if`.
+                && !(cx.language().is_oxlint && is_else_if(outer))
             {
                 cx.report(node, UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
             }

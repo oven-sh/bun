@@ -26,7 +26,7 @@ async function run(withWaiterThread: boolean) {
 
   await proc.exited;
 
-  const resourceUsage = proc.resourceUsage();
+  const resourceUsage = proc.resourceUsage()!;
 
   // Assert we didn't use 100% of CPU time
   console.log(resourceUsage.cpuTime);

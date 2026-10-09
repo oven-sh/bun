@@ -4,13 +4,15 @@ import { expect, test } from "bun:test";
 import net from "node:net";
 import tls from "node:tls";
 
+type WithHandle<T> = T & { _handle?: any };
+
 test("socket._handle.fd should be accessible on TCP sockets", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
 
   let serverFd: number | undefined;
   let clientFd: number | undefined;
 
-  const server = net.createServer(socket => {
+  const server = net.createServer((socket: WithHandle<net.Socket>) => {
     // Server-side socket should have _handle.fd
     expect(socket._handle).toBeDefined();
     expect(socket._handle.fd).toBeTypeOf("number");
@@ -21,7 +23,7 @@ test("socket._handle.fd should be accessible on TCP sockets", async () => {
   });
 
   server.listen(0, "127.0.0.1", () => {
-    const client = net.connect({
+    const client: WithHandle<net.Socket> = net.connect({
       host: "127.0.0.1",
       port: (server.address() as any).port,
     });
@@ -62,7 +64,7 @@ test("socket._handle.fd should be accessible on TCP sockets", async () => {
 test("socket._handle.fd should remain consistent during connection lifetime", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-  const server = net.createServer(socket => {
+  const server = net.createServer((socket: WithHandle<net.Socket>) => {
     const initialFd = socket._handle.fd;
 
     // Send multiple messages to ensure fd doesn't change
@@ -77,7 +79,7 @@ test("socket._handle.fd should remain consistent during connection lifetime", as
   });
 
   server.listen(0, "127.0.0.1", () => {
-    const client = net.connect({
+    const client: WithHandle<net.Socket> = net.connect({
       host: "127.0.0.1",
       port: (server.address() as any).port,
     });
@@ -118,7 +120,7 @@ test("socket._handle.fd should be accessible on TLS sockets", async () => {
   let serverFd: number | undefined;
   let clientFd: number | undefined;
 
-  const server = tls.createServer(tlsCert, socket => {
+  const server = tls.createServer(tlsCert, (socket: WithHandle<tls.TLSSocket>) => {
     // Server-side TLS socket should have _handle.fd
     expect(socket._handle).toBeDefined();
     expect(socket._handle.fd).toBeTypeOf("number");
@@ -130,7 +132,7 @@ test("socket._handle.fd should be accessible on TLS sockets", async () => {
   });
 
   server.listen(0, "127.0.0.1", () => {
-    const client = tls.connect({
+    const client: WithHandle<tls.TLSSocket> = tls.connect({
       host: "127.0.0.1",
       port: (server.address() as any).port,
       rejectUnauthorized: false,

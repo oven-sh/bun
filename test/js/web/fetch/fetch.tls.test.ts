@@ -35,7 +35,7 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
       return new Response("Hello World");
     },
   });
-  await callback(server.port);
+  await callback(server.port!);
 }
 
 describe.concurrent("fetch-tls", () => {
@@ -347,7 +347,7 @@ describe.concurrent("fetch-tls", () => {
         expect(result?.size).toBeGreaterThan(0);
         expect(called).toBe(true);
       }
-      const promises = [];
+      const promises: Promise<void>[] = [];
       for (let i = 0; i < 5; i++) {
         promises.push(request());
       }
@@ -971,7 +971,7 @@ describe.concurrent("fetch-tls", () => {
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         // Reply to any complete request so the control fetch below can
         // round-trip.
@@ -1037,7 +1037,7 @@ describe.concurrent("fetch-tls", () => {
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         // Reply once the request headers have fully arrived.
         if (Buffer.concat(chunks).includes("\r\n\r\n")) {
@@ -1079,7 +1079,7 @@ describe.concurrent("fetch-tls", () => {
     let connections = 0;
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         if (Buffer.concat(chunks).includes("\r\n\r\n")) {
           chunks.length = 0;
@@ -1347,7 +1347,7 @@ describe.concurrent("fetch-tls", () => {
       socket => {
         secureConnections++;
         const chunks: Buffer[] = [];
-        socket.on("data", chunk => {
+        socket.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           if (Buffer.concat(chunks).includes("\r\n\r\n")) {
             socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
@@ -1424,7 +1424,7 @@ describe.concurrent("fetch-tls", () => {
     await createServer(CERT_EXPIRED, async port => {
       const url = `https://localhost:${port}`;
 
-      const promises = [];
+      const promises: Promise<number>[] = [];
       for (let i = 0; i < 2; i++) {
         const proc = Bun.spawn({
           env: {
@@ -1529,7 +1529,7 @@ describe.concurrent("fetch-tls", () => {
         }
         return new Response(body);
       },
-    });
+    } as Bun.Serve.Options<undefined>);
     const start = performance.now();
     const TIMEOUT = 200;
     const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
@@ -1540,7 +1540,7 @@ describe.concurrent("fetch-tls", () => {
         tls: { ca: validTls.cert },
       }).then(res => res.text());
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e.name).toBe("TimeoutError");
     } finally {
       const total = performance.now() - start;
@@ -1563,7 +1563,7 @@ describe.concurrent("fetch-tls", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: server.url,
+        SERVER: server.url as any,
         NODE_EXTRA_CA_CERTS: cert_path,
       },
       stderr: "inherit",
@@ -1591,7 +1591,7 @@ describe.concurrent("fetch-tls", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: server.url,
+        SERVER: server.url as any,
         NODE_EXTRA_CA_CERTS: bundlePath,
       },
       stderr: "inherit",
@@ -1616,7 +1616,7 @@ describe.concurrent("fetch-tls", () => {
       const proc = Bun.spawn({
         env: {
           ...bunEnv,
-          SERVER: server.url,
+          SERVER: server.url as any,
           NODE_EXTRA_CA_CERTS: invalid,
         },
         stderr: "pipe",
@@ -1649,7 +1649,7 @@ describe.concurrent("fetch-tls", () => {
       const proc = Bun.spawn({
         env: {
           ...bunEnv,
-          SERVER: server.url,
+          SERVER: server.url as any,
           NODE_EXTRA_CA_CERTS: invalid,
         },
         stderr: "pipe",

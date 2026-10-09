@@ -421,7 +421,7 @@ describe.concurrent.skipIf(skip)(
       const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
         let buf = Buffer.alloc(0);
         let upgraded = false;
-        sock.on("data", chunk => {
+        sock.on("data", (chunk: Buffer) => {
           if (upgraded) return; // absorb frames (including close) without replying
           buf = Buffer.concat([buf, chunk]);
           const end = buf.indexOf("\r\n\r\n");

@@ -454,6 +454,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags,
                         source: PropSource::Type(ty),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     let earlier = if has_many {
                         places.get(&name).copied()

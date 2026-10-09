@@ -1141,6 +1141,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(member),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     let source = Self::copy_of(TypeId::ANY, &[&declared], true, self.arena);
                     (PropFlags::empty(), source)
@@ -1152,6 +1153,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             if let Some(&earlier) = index_of_name.get(&value) {
                 shape.props[earlier] = literal_prop;
@@ -2183,14 +2185,15 @@ impl<'p, 's> Checker<'p, 's> {
             // Properties that the rest of the constraint filters out would not have passed through
             // the mapping.
             if let Some(limited) = limited
-                && let Some(key) = self.key_type_of_name(prop.name)
+                && let Some(key) = self.key_type_of_prop(source, prop)
                 && !self.is_assignable(key, limited)
             {
                 continue;
             }
             // `links.propertyType = c.getTypeOfSymbol(prop)`
             self.type_of_prop_with_missing(prop, members.mapper);
-            let mut flags = PropFlags::empty();
+            // It has the `nameType` and the `Declarations` of `prop`, and no `ValueDeclaration`.
+            let mut flags = self.name_flag_of_copy(source, prop, true);
             if !adds_optional && prop.flags.contains(PropFlags::OPTIONAL) {
                 flags |= PropFlags::OPTIONAL;
             }
@@ -2205,6 +2208,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.list_of(Self::declared_properties(&[prop], self.arena)),
                 ),
                 mapper: MapperId::IDENTITY,
+                name_type: self.name_type_of_copy(source, prop),
             });
         }
         shape

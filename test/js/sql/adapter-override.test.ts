@@ -6,7 +6,7 @@ describe("Adapter Override", () => {
     const sql = new SQL("postgres://localhost:5432/testdb", {
       adapter: "sqlite",
       filename: ":memory:",
-    });
+    } as SQL.Options);
 
     expect(sql.options.adapter).toBe("sqlite");
     expect(sql.options.filename).toBe(":memory:");
@@ -39,10 +39,13 @@ describe("Adapter Override", () => {
   });
 
   test("no URL with adapter='sqlite' and filename works", async () => {
-    const sql = new SQL(undefined, {
-      adapter: "sqlite",
-      filename: ":memory:",
-    });
+    const sql = new SQL(
+      undefined as never,
+      {
+        adapter: "sqlite",
+        filename: ":memory:",
+      } as SQL.Options,
+    );
 
     expect(sql.options.adapter).toBe("sqlite");
     expect(sql.options.filename).toBe(":memory:");

@@ -268,7 +268,7 @@ describe("https.request agent TLS options inheritance", () => {
 
       try {
         // Create HttpsProxyAgent for the proxy connection
-        const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`, {
+        const agent = new HttpsProxyAgent<string>(`http://127.0.0.1:${proxyPort}`, {
           rejectUnauthorized: false,
         });
 
@@ -307,7 +307,7 @@ describe("https.request agent TLS options inheritance", () => {
 
       try {
         // Create HttpsProxyAgent for the proxy connection
-        const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`, {
+        const agent = new HttpsProxyAgent<string>(`http://127.0.0.1:${proxyPort}`, {
           ca: tlsCerts.ca,
         });
 
@@ -344,7 +344,7 @@ describe("https.request agent TLS options inheritance", () => {
 
       try {
         // Create HttpsProxyAgent for the proxy connection
-        const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`, {
+        const agent = new HttpsProxyAgent<string>(`http://127.0.0.1:${proxyPort}`, {
           rejectUnauthorized: false,
           cert: tlsCerts.cert,
           key: tlsCerts.key,

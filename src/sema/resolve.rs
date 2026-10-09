@@ -115,6 +115,11 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+    /// Whether what is read at `path` is not what is on the disk: a project of the build has emitted it. Another program of
+    /// the build may find there what is on the disk.
+    fn is_emitted(&self, _path: &[u8]) -> bool {
+        false
+    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,

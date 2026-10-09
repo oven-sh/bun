@@ -68,7 +68,7 @@ it("should encrypt & decrypt using streaming interface", () => {
   // Since Node 26, read() with no size returns one buffered chunk at a time,
   // so drain the stream instead of assuming a single read returns everything.
   const readAll = stream => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     for (let chunk; (chunk = stream.read()) !== null; ) chunks.push(chunk);
     return Buffer.concat(chunks);
   };
@@ -238,7 +238,7 @@ it("should not accept negative authTagLength, or other coercable values", () => 
   for (const length of lengths) {
     expect(() => {
       createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {
-        authTagLength: length,
+        authTagLength: length as any,
       });
     }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
   }

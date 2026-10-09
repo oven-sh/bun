@@ -576,6 +576,10 @@ pub struct Prop<'s> {
     pub source: PropSource<'s>,
     /// The mapper to instantiate the type from `source` with.
     pub mapper: MapperId,
+    /// `links.nameType` of a symbol that is made from another (`getSpreadSymbol`, `getSpreadType`,
+    /// `createSymbolWithType`), where that is a member of an enum: `source` no longer leads to it,
+    /// and the name only spells it. `TypeId::UNRESOLVED`: `name`, `STRING_NAME` and `source` tell.
+    pub name_type: TypeId,
 }
 
 const _: () = assert!(size_of::<Prop<'static>>() <= 40);
@@ -3304,7 +3308,8 @@ follow_struct!(Prop<'_> {
     name,
     flags,
     source,
-    mapper
+    mapper,
+    name_type
 });
 follow_enum!(IndexComponent {
     IndexComponent::Property(a, b) => (a, b),
@@ -3566,7 +3571,8 @@ clone_in_struct!(Prop {
     name,
     flags,
     source,
-    mapper
+    mapper,
+    name_type
 });
 clone_in_struct!(Shape {
     symbol_declared_at,

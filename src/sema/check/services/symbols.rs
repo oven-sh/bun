@@ -187,6 +187,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             flags: prop_flags,
             source: PropSource::Symbol(sym),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         });
         if let Some(entry) = self.symbols.get_mut(symbol.0 as usize) {
             entry.prop = Some((prop, MapperId::IDENTITY));

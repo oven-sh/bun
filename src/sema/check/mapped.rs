@@ -456,6 +456,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// number is the number only if it is a numeric literal in the source. A property without a
     /// declaration, like a tuple element, is named by a string.
     pub(super) fn key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
+        if prop.name_type != TypeId::UNRESOLVED {
+            return Some(prop.name_type);
+        }
+        if let PropSource::Mapped(of, ..) = prop.source
+            && let Some(name) = self.name_type_of_mapped_prop(of, prop)
+        {
+            return Some(name);
+        }
         if prop.flags.contains(PropFlags::STRING_NAME) {
             return Some(self.string_literal(prop.name, false));
         }
@@ -510,6 +518,67 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(ty);
         }
         self.key_type_of_name(prop.name)
+    }
+
+    /// `Prop::name_type` of a symbol that is made from `prop`, a property of `owner`.
+    pub(super) fn name_type_of_copy(&mut self, owner: TypeId, prop: &Prop) -> TypeId {
+        if prop.name_type != TypeId::UNRESOLVED {
+            return prop.name_type;
+        }
+        // A `nameType` is stored for a late-bound name (`lateBindMember`), for a computed name in an
+        // object literal (`checkObjectLiteral`), and by a mapped type.
+        let is_stored = match &prop.source {
+            PropSource::Type(_) => false,
+            PropSource::Symbol(sym) => {
+                matches!(self.files().value_declaration(*sym), Some((file, Decl::Member(m)))
+                    if matches!(self.hir(file)[m].key, PropKey::Computed(_)))
+            }
+            PropSource::Literal(file, written) => {
+                matches!(self.hir(*file)[*written].key, PropKey::Computed(_))
+            }
+            PropSource::Mapped(..)
+            | PropSource::Intersected(..)
+            | PropSource::Copy(..)
+            | PropSource::ReverseMapped(..) => true,
+        };
+        let key = is_stored.then(|| self.key_type_of_prop(owner, prop));
+        match key.flatten() {
+            Some(key) if self.flags(key) & tf::ENUM_LITERAL != 0 => key,
+            _ => TypeId::UNRESOLVED,
+        }
+    }
+
+    /// `nameType` of `prop`, a property of the mapped type `of`: `propNameType` of
+    /// `addMemberForKeyTypeWorker`, for all the keys that map to its name. A member of an enum is
+    /// not the string that it spells. `None`: it is not known from which key.
+    fn name_type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop) -> Option<TypeId> {
+        let TypeData::Anon {
+            origin: Origin::Mapped(file, node),
+            ..
+        } = *self.data(of)
+        else {
+            return None;
+        };
+        let mapped = self.mapped_decl(file, node);
+        let param = self.type_param(file, mapped.param);
+        let key = self.types().map(prop.mapper, param)?;
+        let names = if mapped.name_ty.is_some() {
+            let declared = self.declared_name_type_of_mapped(file, node);
+            self.instantiate(declared, prop.mapper)
+        } else {
+            key
+        };
+        let mut spelling_it: SmallVec<[TypeId; 2]> = SmallVec::new();
+        for &name in self.parts(names) {
+            if self.property_name_of_type(name) == Some(prop.name) {
+                spelling_it.push(name);
+            }
+        }
+        match spelling_it[..] {
+            [] => None,
+            [one] => Some(one),
+            _ => Some(self.union(&spelling_it)),
+        }
     }
 
     /// `GetNonAssignedNameOfDeclaration` of the assignment or the call `e`, which declares a
@@ -2885,6 +2954,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 flags,
                                 source: PropSource::Mapped(of, strips, declared),
                                 mapper: with_key,
+                                name_type: TypeId::UNRESOLVED,
                             });
                         }
                     },

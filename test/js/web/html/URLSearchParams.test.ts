@@ -84,7 +84,6 @@ describe("URLSearchParams", () => {
       params.set(key, props[key as keyof typeof props]);
     }
 
-    // @ts-expect-error
     expect(params.toJSON()).toEqual(props);
 
     expect(Array.from(params.keys())).toHaveLength(params.size);
@@ -119,7 +118,7 @@ describe("URLSearchParams", () => {
       params.append("foo", "boop");
       params.append("bar", "baz");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         foo: ["bar", "boop"],
         bar: "baz",
       });
@@ -195,7 +194,7 @@ describe("URLSearchParams", () => {
       params.append("100", "second");
       params.append("name", "test");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         "100": ["first", "second"],
         "name": "test",
       });
@@ -221,7 +220,7 @@ it("size property should be configurable (issue #9251)", () => {
 
 it(".delete second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  params.delete("a", 1);
+  params.delete("a", 1 as any);
   params.delete("b", undefined);
   expect(params + "").toBe("a=2");
 });
@@ -300,9 +299,9 @@ describe("USVString conversion of lone surrogates", () => {
 
 it(".has second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  expect(params.has("a", 1)).toBe(true);
-  expect(params.has("a", 2)).toBe(true);
-  expect(params.has("a", 3)).toBe(false);
-  expect(params.has("b", 3)).toBe(true);
-  expect(params.has("b", 4)).toBe(false);
+  expect(params.has("a", 1 as any)).toBe(true);
+  expect(params.has("a", 2 as any)).toBe(true);
+  expect(params.has("a", 3 as any)).toBe(false);
+  expect(params.has("b", 3 as any)).toBe(true);
+  expect(params.has("b", 4 as any)).toBe(false);
 });

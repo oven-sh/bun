@@ -2158,32 +2158,17 @@ impl<'f, 's> Binder<'f, 's> {
         self.b
             .entries
             .reserve_exact(self.tables.iter().map(|table| table.len()).sum());
-        for (id, table) in self.tables.iter().enumerate() {
+        for table in &self.tables {
             let start = self.b.entries.len();
             self.b
                 .entries
                 .extend(table.iter().map(|(&name, &symbol)| (name, symbol)));
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             self.b.tables.push((start as u32, table.len() as u32));
-            if table.len() > BoundBuilder::SCANNED {
-                let places = (start as u32..).zip(&self.b.entries[start..]);
-                self.b
-                    .large_tables
-                    .extend(places.map(|(place, e)| ((TableId(id as u32), e.0), place)));
-            }
         }
-        // `Bound::nested_names`, at 8 bits per name.
-        let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some();
-        let nested = || self.b.scopes.iter().filter(is_nested);
-        let count: usize = nested().map(|s| self.b.table(s.locals).len()).sum();
-        if count > 0 {
-            let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
-            for &(name, _) in nested().flat_map(|s| self.b.table(s.locals)) {
-                let (word, bit) = bit_of_nested_name(filter.len(), name);
-                filter[word] |= bit;
-            }
-            self.b.nested_names = filter;
-        }
+        let places = large_table_places(&self.b.tables, &self.b.entries);
+        self.b.large_tables.extend(places);
+        self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Labels.
         let (mut kept, mut not_cached) = (0, 0);
         for label in &self.label_edges {

@@ -359,6 +359,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags: PropFlags::empty(),
             source: PropSource::Type(ty),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         });
         self.synth(Shape {
             props: vec_from_iter_in(members, self.arena),

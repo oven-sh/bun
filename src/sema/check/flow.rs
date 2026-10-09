@@ -1706,7 +1706,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// The entry of `quick_initializers` for a declaration whose resolutions are right below
     /// `stack[to]`.
     pub(super) fn resolutions_below(&self, to: usize) -> (usize, usize) {
-        let mut below = self.stack[..to].iter();
+        // A declaration whose name is a pattern has no symbol and so no resolution: those of the
+        // binding element are below the frames of the patterns around it.
+        let is_pattern = |q: &&Query| matches!(**q, Query::Pat(..)) && !self.is_resolution(**q);
+        let patterns = self.stack[..to].iter().rev().take_while(is_pattern).count();
+        let mut below = self.stack[..to - patterns].iter();
         let from = below
             .rposition(|&q| !self.is_resolution(q))
             .map_or(0, |i| i + 1);

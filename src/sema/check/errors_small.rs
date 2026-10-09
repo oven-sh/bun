@@ -702,12 +702,29 @@ impl<'p> Checker<'p, '_> {
         if self.is_valid_spread_type(ty) {
             return;
         }
-        // JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
+        let at = self.place_of_spread(file, owner, p);
+        self.error_at(at, 2698, &[]);
+    }
+
+    /// JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
+    fn place_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
+        let hir = self.hir(file);
         if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-            self.error_at(self.span_of_parenthesized_expr(file, prop.value), 2698, &[]);
-        } else {
-            self.error(file, p, 2698, &[]);
+            return self.span_of_parenthesized_expr(file, hir[p].value);
         }
+        let (start, end) = self.get_error_range_for_node(file, hir.node(p));
+        (file, start, end)
+    }
+
+    /// 2698 for the spread `p` in `owner`, whose type is not valid in `CheckModeInferential`. The
+    /// argument is checked again without it, so what its frames report is dropped. The call infers
+    /// once.
+    pub(super) fn report_spread_in_inference(&mut self, file: FileId, owner: ExprId, p: PropId) {
+        let at = self.place_of_spread(file, owner, p);
+        let diagnostic = self.new_diagnostic(at, 2698, &[]);
+        let is_call = |q: &&Query| matches!(q, Query::Call(..));
+        let call = self.stack.iter().rev().find(is_call).copied();
+        self.add_diagnostic_of(call, diagnostic);
     }
 
     /// `allTypesAssignableToKind(ty, TypeFlagsPrimitive)`

@@ -14,6 +14,7 @@ import {
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { endChildren, longLimit, spawn } from "../children";
+import { modulesInRings } from "./differential";
 
 afterAll(endChildren);
 
@@ -640,43 +641,19 @@ describe.concurrent("bun check", () => {
     `);
   });
 
-  test("modules that enter the same cycles produce the same output on any number of threads", async () => {
-    // Whichever file is checked first enters each cycle: the variances of type parameters, recursive aliases, and
-    // functions and constants without annotations, each through a ring of modules.
+  // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
+  test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;
-    const files: Record<string, string> = {};
-    for (let i = 0; i < n; i++) {
-      const [a, b, d] = [(i + 1) % n, (i + 7) % n, (i * 3 + 2) % n];
-      files[`m${i}.ts`] = [
-        ...[...new Set([a, b, d])]
-          .filter(j => j !== i)
-          .map(j => `import { f${j}, g${j}, C${j}, v${j}, type T${j}, type R${j} } from "./m${j}";`),
-        `export interface T${i}<A> { a: A; next: T${a}<A[]> | null; take(x: T${b}<A>): void; give(): T${d}<A> }`,
-        `export type R${i}<X, N extends unknown[] = []> = N["length"] extends 6 ? X : R${a}<{ m${i}: X }, [...N, 1]>;`,
-        `export function f${i}(x: number) { return x > 0 ? { k: "m${i}" as const, inner: f${a}(x - 1) } : null; }`,
-        `export function g${i}(x: number) { return ${i === 0 ? "x" : `{ k: ${i}, inner: g${Math.floor(i / 2)}(x) }`}; }`,
-        `export class C${i}<A> { constructor(public v: A) {} map<B>(h: (a: A) => B): C${b}<B> { return new C${b}(h(this.v)); } }`,
-        `export const v${i} = new C${a}(${i}).map(x => [x, v${d}] as const);`,
-        // `never` puts the types in the messages.
-        `const r${i}: never = f${d}(1);`,
-        `const s${i}: never = g${b}(1);`,
-        `const t${i}: T${a}<string> = null! as T${a}<unknown>;`,
-        `const u${i}: T${b}<unknown> = null! as T${b}<string>;`,
-        `const w${i}: never = null! as R${d}<${i}>;`,
-        `const y${i}: never = v${b};`,
-        `r${i}; s${i}; t${i}; u${i}; w${i}; y${i};\n`,
-      ].join("\n");
-    }
-    using dir = project(files);
-    const [one, ...others] = await Promise.all(
-      [1, 2, 3, 8, 16].map(threads => check(dir, ["--threads", String(threads)])),
+    using dir = project(modulesInRings(n));
+    const [two, ...others] = await Promise.all(
+      [2, 3, 8, 16].map(threads => check(dir, ["--threads", String(threads)])),
     );
-    expect(one.stdout.split("\n").length).toBeGreaterThan(n * 6);
+    expect(two.stdout.split("\n").length).toBeGreaterThan(n * 6);
     for (const { stdout, exitCode } of others) {
-      expect(stdout).toBe(one.stdout);
+      expect(stdout).toBe(two.stdout);
       expect(exitCode).toBe(1);
     }
-    expect(one.exitCode).toBe(1);
+    expect(two.exitCode).toBe(1);
   });
 
   test("prints related information under an error", async () => {
@@ -1111,7 +1088,7 @@ describe.concurrent("bun check", () => {
       expect({ parsed, stdout, exitCode }).toEqual({ parsed: loaded / 2 + 1, stdout: "", exitCode: 0 });
     });
 
-    test("the projects of a build parse the library once", async () => {
+    test("the projects of a build parse a declaration file once", async () => {
       const config = (references: string[]) =>
         JSON.stringify({
           compilerOptions: { composite: true, strict: true, outDir: "dist", types: [], lib: ["es2022"] },
@@ -1136,7 +1113,8 @@ describe.concurrent("bun check", () => {
         parsed: count(all.stderr, /(\d+) files parsed for all projects/),
         stdout: all.stdout,
         exitCode: all.exitCode,
-      }).toEqual({ loaded: 3 * library + 5, parsed: library, stdout: "", exitCode: 0 });
+        // And what b and c emit.
+      }).toEqual({ loaded: 3 * library + 5, parsed: library + 2, stdout: "", exitCode: 0 });
     });
 
     test("two directories", async () => {
@@ -1638,6 +1616,53 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
       for (const threads of ["1", "8"]) {
         const { stdout } = await check(dir, ["--threads", threads]);
         expect(stdout).toBe(expected);
+      }
+    });
+
+    // The projects of one check share what they read. `tsc -b` shares it by path alone, so there `late` and `later`
+    // get the old file too, although it has written the new one by then, and the next `tsc -b` finds the new one in all.
+    test("an old declaration file on the disk is what a project before the one that emits it sees, and no other", async () => {
+      const compilerOptions = { ...options, outDir: "dist", rootDir: "src" };
+      const config = (references: { path: string }[]) =>
+        JSON.stringify({ compilerOptions, files: ["src/index.ts"], references });
+      const names = (path: string) =>
+        `import * as lib from "${path}";\nexport const names: never = null! as keyof typeof lib;\nexport const keys: never = null! as keyof lib.Shape;\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          files: [],
+          references: [{ path: "./early" }, { path: "./lib" }, { path: "./late" }, { path: "./later" }],
+        }),
+        "lib/tsconfig.json": config([]),
+        "lib/src/index.ts": `export const fresh = "fresh" as const;\nexport interface Shape { fresh: 1 }\n`,
+        "lib/dist/index.d.ts": `export declare const stale: "stale";\nexport interface Shape { stale: 1 }\n`,
+        "early/tsconfig.json": config([]),
+        "early/src/index.ts": names("../../lib/dist/index"),
+        "late/tsconfig.json": config([{ path: "../lib" }]),
+        "late/src/index.ts": names("../../lib/src/index"),
+        "later/tsconfig.json": config([]),
+        "later/src/index.ts": names("../../lib/dist/index"),
+      });
+      const expected = `early/src/index.ts(2,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+early/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+late/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.`;
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
+      }
+      // Each directory is a build of its own. What `lib` emits for `late` is not on the disk, where `later` looks.
+      const separately = `late/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(2,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+later/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type 'never'.`;
+      for (const directories of [
+        ["late", "later"],
+        ["later", "late"],
+      ]) {
+        const { stdout, exitCode } = await check(dir, directories);
+        expect({ stdout, exitCode }).toEqual({ stdout: separately, exitCode: 1 });
       }
     });
 
@@ -3133,6 +3158,37 @@ export const alsoWrong = wrong.nope;
       expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
       expect(exitCode).toBe(1);
     });
+
+    // The literal has its members when the properties that assignments declare are added, and above eight properties
+    // a name is looked up in an index.
+    test.each([
+      ["allowJs alone", [], "", 0],
+      [
+        "checkJs",
+        ["--checkJs"],
+        `a.js(5,5): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ a(): void; b(): void; c(): void; d(): void; e(): void; f(): void; g(): void; h(): void; i(): void; }'.
+a.js(5,10): error TS2304: Cannot find name 'k'.`,
+        1,
+      ],
+    ])(
+      "an object literal of nine methods in JavaScript, one of which assigns to this[k], %s",
+      async (_, flags, expected, code) => {
+        using dir = project({
+          "a.js": `const o = {
+  a() {}, b() {}, c() {}, d() {},
+  e() {}, f() {}, g() {},
+  h() {
+    this[k] = 1;
+  },
+  i() {},
+};
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--allowJs", ...flags]);
+        expect(stdout).toBe(expected);
+        expect(exitCode).toBe(code);
+      },
+    );
 
     // The way Kobalte types a component that renders as any element. Where `Elements[keyof Elements]` is a
     // parameter its members meet in one intersection. Whether that is `never` is decided name by name, and

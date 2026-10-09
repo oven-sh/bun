@@ -933,7 +933,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if source.ends_with(b"\\") || text::includes(source, b"\\\n") {
             return false;
         }
-        let value = scalar_source(kind, source).unwrap_or_default();
+        let value = scalar_source(kind, source);
         match self.prose_wrap {
             ProseWrap::Never => !strings::contains_char(&value, b'\n'),
             _ => strings::index_of_any(&value, b"\n ").is_none(),

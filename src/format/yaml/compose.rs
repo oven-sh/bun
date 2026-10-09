@@ -69,7 +69,7 @@ pub(crate) struct Node<'t> {
 }
 
 impl Node<'_> {
-    /// `scalar.source`, of a scalar that has been composed without an error.
+    /// `scalar.source`
     fn source<'a>(&self, text: &'a [u8]) -> Cow<'a, [u8]> {
         let (start, end) = match self.src_token {
             Some(Token::BlockScalar { source, .. }) => *source,
@@ -77,7 +77,7 @@ impl Node<'_> {
         };
         let written = text.get(start as usize..end as usize).unwrap_or_default();
         match self.kind {
-            NodeKind::Scalar(kind) => scalar_source(kind, written).unwrap_or_default(),
+            NodeKind::Scalar(kind) => scalar_source(kind, written),
             _ => Cow::Borrowed(written),
         }
     }
@@ -415,27 +415,24 @@ fn check_flow_scalar(kind: ScalarType, source: &[u8]) -> Result<()> {
             Some(b'\t' | b',' | b'%' | b'|' | b'>' | b'@' | b'`')
         ),
         ScalarType::QuoteSingle => source.ends_with(b"'") && source.len() != 1,
-        ScalarType::QuoteDouble => double_quoted_value(source).is_ok(),
+        ScalarType::QuoteDouble => double_quoted_value(source).1,
         ScalarType::BlockFolded | ScalarType::BlockLiteral => true,
     };
     if is_valid { Ok(()) } else { Err(SyntaxError) }
 }
 
-/// `scalar.source`, for a scalar that is written `source`. Of a block scalar: all that is asked of it is what is in it
-/// apart from white space.
-pub(crate) fn scalar_source(kind: ScalarType, source: &[u8]) -> Result<Cow<'_, [u8]>> {
+/// `scalar.source`, for a scalar that is written `source`. As in `yaml`, every text has one: whether the text is a
+/// scalar is what `check_flow_scalar` says. Of a block scalar: all that is asked of it is what is in it apart from
+/// white space.
+pub(crate) fn scalar_source(kind: ScalarType, source: &[u8]) -> Cow<'_, [u8]> {
     match kind {
-        ScalarType::QuoteDouble => return double_quoted_value(source),
-        _ => check_flow_scalar(kind, source)?,
-    }
-    Ok(match kind {
         ScalarType::Plain => fold_lines(source),
         ScalarType::QuoteSingle => single_quoted_value(source),
-        _ => Cow::Borrowed(source),
-    })
+        ScalarType::QuoteDouble => double_quoted_value(source).0,
+        ScalarType::BlockFolded | ScalarType::BlockLiteral => Cow::Borrowed(source),
+    }
 }
 
-/// `source` has both quotes.
 fn single_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
     let folded = fold_lines(
         source
@@ -458,19 +455,19 @@ fn single_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
-    if !source.ends_with(b"\"") || source.len() == 1 {
-        return Err(SyntaxError);
-    }
-    let inner = &source[1..source.len() - 1];
+/// The value, and whether `yaml` reports no error. An escape that is none stays as it is written.
+fn double_quoted_value(source: &[u8]) -> (Cow<'_, [u8]>, bool) {
+    let mut is_valid = source.ends_with(b"\"") && source.len() != 1;
+    let end = source.len().saturating_sub(1);
+    let inner = source.get(1..end).unwrap_or_default();
     if strings::index_of_any(inner, b"\\\n").is_none() {
-        return Ok(Cow::Borrowed(inner));
+        return (Cow::Borrowed(inner), is_valid);
     }
     let at = |i: usize| source.get(i).copied();
     let is_blank = |ch: Option<u8>| matches!(ch, Some(b' ' | b'\t'));
     let mut result = Vec::with_capacity(inner.len());
     let mut i = 1;
-    while i < source.len() - 1 {
+    while i < end {
         let ch = source[i];
         if ch == b'\n' {
             // `foldNewline`
@@ -487,7 +484,7 @@ fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
             }
         } else if ch == b'\\' {
             i += 1;
-            let next = at(i).ok_or(SyntaxError)?;
+            let next = source[i];
             let escape: Option<&str> = match next {
                 b'0' => Some("\0"),
                 b'a' => Some("\x07"),
@@ -522,21 +519,31 @@ fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
                     b'u' => 4,
                     _ => 8,
                 };
-                let digits = source
+                // `parseCharCode`
+                let code = source
                     .get(i + 1..i + 1 + length)
                     .filter(|it| it.iter().all(u8::is_ascii_hexdigit))
-                    .ok_or(SyntaxError)?;
-                let code = digits.iter().fold(0u32, |code, &digit| {
-                    code * 16 + (digit as char).to_digit(16).unwrap_or(0)
-                });
-                if code > 0x10FFFF {
-                    return Err(SyntaxError);
+                    .map(|digits| {
+                        digits.iter().fold(0u32, |code, &digit| {
+                            code * 16 + (digit as char).to_digit(16).unwrap_or(0)
+                        })
+                    })
+                    .filter(|&code| code <= 0x10FFFF);
+                match code {
+                    Some(code) => {
+                        let character = char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER);
+                        result.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
+                    }
+                    None => {
+                        is_valid = false;
+                        result
+                            .extend_from_slice(&source[i - 1..(i + 1 + length).min(source.len())]);
+                    }
                 }
-                let character = char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER);
-                result.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
                 i += length;
             } else {
-                return Err(SyntaxError);
+                is_valid = false;
+                result.extend_from_slice(&source[i - 1..=i]);
             }
         } else if matches!(ch, b' ' | b'\t') {
             // White space at the end of a line is nothing.
@@ -552,7 +559,7 @@ fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
         }
         i += 1;
     }
-    Ok(Cow::Owned(result))
+    (Cow::Owned(result), is_valid)
 }
 
 /// The value of a plain scalar without a tag, in the core schema and in that of YAML 1.1 alike as far as
@@ -907,11 +914,11 @@ impl<'t, 'a> Context<'t, 'a> {
         {
             Some(b"timestamp")
                 if !self.directives.is_version_1_1
-                    && !is_timestamp(&scalar_source(kind, source)?) =>
+                    && !is_timestamp(&scalar_source(kind, source)) =>
             {
                 return Err(SyntaxError);
             }
-            Some(b"binary") if !is_base64(&scalar_source(kind, source)?) => {
+            Some(b"binary") if !is_base64(&scalar_source(kind, source)) => {
                 return Err(SyntaxError);
             }
             _ => {}

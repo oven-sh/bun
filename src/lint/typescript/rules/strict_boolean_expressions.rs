@@ -525,7 +525,8 @@ impl StrictBooleanExpressions {
         {
             return unless(self.allow_nullable_enum, ConditionError::NullableEnum);
         }
-        if is(ANY) {
+        // For tsgolint `T | null` is as `T`.
+        if is(ANY) || (is_oxlint && is(NULLISH | ANY)) {
             return unless(self.allow_any, ConditionError::Any);
         }
         Some(ConditionError::Other)

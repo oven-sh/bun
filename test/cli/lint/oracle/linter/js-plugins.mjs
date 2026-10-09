@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { random, report, runBunLint } from "./shared.mjs";
+import { bunLintPrints, random, report, reportsOfOxlint, runBunLint, strictly } from "./shared.mjs";
 
 const oxlint = resolve(process.env.OXLINT ?? "oxlint");
 const show = Number(process.argv[2] ?? 6);
@@ -96,6 +96,7 @@ const ourRefusal = text => /^Error: (.*)$/m.exec(text)?.[1] ?? text.split("\n")[
 
 const root = mkdtempSync(join(tmpdir(), "js-plugins-"));
 const cases = [];
+const strict = strictly("js plugins, by the command line", { withoutRefused: true, show });
 const expected = [];
 try {
   for (let i = 0; i < 160; i++) {
@@ -127,10 +128,9 @@ try {
       mkdirSync(dirname(name), { recursive: true });
       writeFileSync(name, text);
     }
-    const { stdout } = spawnSync(oxlint, ["--format", "json", "--threads", "1", ...Object.keys(sources)], {
-      cwd: basePath,
-      maxBuffer: 1 << 26,
-    });
+    const args = ["--format", "json", "--threads", "1", ...Object.keys(sources)];
+    const { stdout } = spawnSync(oxlint, args, { cwd: basePath, maxBuffer: 1 << 26 });
+    strict.add(JSON.stringify(config), reportsOfOxlint(stdout.toString()), reportsOfOxlint(bunLintPrints(["--allow-unsupported", ...args], basePath)));
     cases.push({ basePath, flavor: "oxlint", jsPlugins: true, config, extended, sources });
     let answer;
     try {
@@ -175,6 +175,7 @@ try {
     }
   });
   report("js plugins", flat.cases, flat.expected, flat.actual, show);
+  strict.report();
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

@@ -1,6 +1,7 @@
 // `oxlint-disable`, `eslint-disable` and the like as oxlint itself applies them against `Linter::lint` with a configuration of
 // oxlint: generated files are linted by both, in one run. Compared: which rule reports with which severity at which line and
-// column, and what is said about comments that do nothing, with its place.
+// column, and what is said about comments that do nothing, with its place. And once more through the command line: all that
+// `-f json` of the two has about a report.
 //
 // The last 400 files start with comments that configure ESLint. oxlint takes these for ordinary comments, even where ESLint
 // reports them.
@@ -11,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { random, report, runBunLint } from "./shared.mjs";
+import { bunLintPrints, random, report, reportsOfOxlint, runBunLint, strictly } from "./shared.mjs";
 
 const oxlint = resolve(process.env.OXLINT ?? "oxlint");
 const show = Number(process.argv[2] ?? 8);
@@ -126,6 +127,13 @@ try {
       ...(id === null ? [message] : []),
     ]);
   }
+  const [theirs, ours] = [stdout.toString(), bunLintPrints(["--format", "json", "."], basePath)].map(reportsOfOxlint);
+  const strict = strictly("oxlint directives, by the command line", { show });
+  for (const path of Object.keys(sources)) {
+    const name = path.slice(basePath.length + 1);
+    strict.add(name, { [name]: theirs[name] ?? [] }, { [name]: ours?.[name] ?? [] });
+  }
+  strict.report();
   const [actual] = runBunLint("project", [{ basePath, flavor: "oxlint", detailed: true, config, sources }]);
   const sorted = rows =>
     [...rows].sort((a, b) => a[2] - b[2] || a[3] - b[3] || (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));

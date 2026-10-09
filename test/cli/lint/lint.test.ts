@@ -1562,7 +1562,9 @@ describe.concurrent("bun lint", () => {
       const expected = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
 
-      test(
+      // The tests that lint hundreds of directories are serial: beside them the others do not get the processor in time.
+
+      test.serial(
         "the rules report what oxlint's report, where they report it",
         async () => {
           const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
@@ -1578,8 +1580,8 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs, which run at the same time: one takes seconds in a debug build.
-      test.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
           const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
@@ -1812,7 +1814,7 @@ describe.concurrent("bun lint", () => {
       const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
         [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
       );
-      test.each(kindsOfFixes)(
+      test.serial.each(kindsOfFixes)(
         "the flags of %s change what they change with oxlint (rules that need types: %p)",
         async (flags, typed) => {
           // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.

@@ -7,7 +7,7 @@
 //
 // Run them with Node.js: ESLint quotes the messages of V8's `JSON.parse`.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -29,6 +29,62 @@ export function runBunLint(command, cases) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * What `-f json` of oxlint, or of `bun lint` with a configuration of oxlint, says: for each file the reports as texts, sorted: of each
+ * label where it starts, how long it is, its line and its column, then the code, the severity and the message. Not the `url`, the
+ * `help` and the texts of labels. `null`: it is not JSON: the configuration is refused.
+ */
+export function reportsOfOxlint(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const byFile = {};
+  for (const { filename, labels, code = null, severity, message } of parsed.diagnostics) {
+    const places = labels.map(({ span }) => [span.offset, span.length, span.line, span.column]);
+    (byFile[filename] ??= []).push(JSON.stringify([places, code, severity, message]));
+  }
+  for (const rows of Object.values(byFile)) rows.sort();
+  return byFile;
+}
+
+/**
+ * Counts in how many of the things that it is given (projects, files) two answers of `reportsOfOxlint` are the same.
+ * `withoutRefused`: not the files about which one of the two says something without a code: it refuses them.
+ */
+export function strictly(name, { withoutRefused = false, show = 6 } = {}) {
+  let [same, differ, refused] = [0, 0, 0];
+  return {
+    add(what, expected, actual) {
+      if (expected === null || actual === null) return void refused++;
+      const isRefused = rows => withoutRefused && (rows ?? []).some(it => JSON.parse(it)[1] === null);
+      const files = [...new Set([...Object.keys(expected), ...Object.keys(actual)])]
+        .filter(it => !isRefused(expected[it]) && !isRefused(actual[it]))
+        .sort();
+      const only = (one, other) => files.flatMap(it => (one[it] ?? []).filter(row => !(other[it] ?? []).includes(row)).map(row => `${it} ${row}`));
+      if (files.every(it => isDeepStrictEqual(expected[it] ?? [], actual[it] ?? []))) return void same++;
+      if (differ++ < show) {
+        console.log(`──── ${name} ${what}`);
+        for (const it of only(expected, actual).slice(0, 4)) console.log(`only oxlint:   ${it}`);
+        for (const it of only(actual, expected).slice(0, 4)) console.log(`only bun lint: ${it}`);
+      }
+    },
+    report() {
+      if (refused > 0) console.log(`${name}: ${refused} left out, one of the two refuses the configuration`);
+      console.log(`${name}: ${same} of ${same + differ} agree`);
+      if (differ > 0) process.exitCode = 1;
+    },
+  };
+}
+
+/** `bun lint <args>` in `cwd`: what it prints. */
+export function bunLintPrints(args, cwd) {
+  const env = { ...process.env, AGENT: "0", NO_COLOR: "1" };
+  return spawnSync(bunLint, ["cli", ...args], { cwd, env, maxBuffer: 1 << 28 }).stdout.toString();
 }
 
 /** A small deterministic random number generator. */

@@ -25,17 +25,32 @@ writeFileSync(join(dir, "read.js"), names.map(it => `${it};\n`).join(""));
 writeFileSync(join(dir, "write.js"), names.map(it => `${it} = 0;\n`).join(""));
 const env = { ...process.env, AGENT: "0", NO_COLOR: "1", ESLINT_USE_FLAT_CONFIG: "false" };
 const run = (command, ...args) => spawnSync(command, [...args, "-f", "json", "read.js", "write.js"], { cwd: dir, env, maxBuffer: 1 << 28 }).stdout.toString();
-/** `<file>:<name>` of each report. `null`: the tool refuses the configuration. */
+/** The second of two that are the same is another one than the first. */
+function counted(reports) {
+  const seen = new Map();
+  return new Set(reports.map(it => `${it} #${seen.set(it, (seen.get(it) ?? 0) + 1).get(it)}`));
+}
+/** Of each report the file, the rule, the name, the place with its end, the severity and the text. `null`: the tool refuses the configuration. */
 const ofOxlint = out => {
   try {
-    return new Set(JSON.parse(out).diagnostics.map(it => `${it.filename}:${it.code}:${names[it.labels[0].span.line - 1]}`));
+    return counted(
+      JSON.parse(out).diagnostics.map(({ filename, code, severity, message, labels: [{ span }] }) =>
+        [filename, code, names[span.line - 1], `${span.column}+${span.length}`, severity, message].join(":"),
+      ),
+    );
   } catch {
     return null;
   }
 };
 const ofEslint = out => {
   try {
-    return new Set(JSON.parse(out).flatMap(file => file.messages.map(it => `${file.filePath.slice(dir.length + 1)}:${it.ruleId}:${names[it.line - 1]}`)));
+    return counted(
+      JSON.parse(out).flatMap(file =>
+        file.messages.map(it =>
+          [file.filePath.slice(dir.length + 1), it.ruleId, names[it.line - 1], `${it.column}-${it.endLine}:${it.endColumn}`, it.severity, it.messageId, it.message].join(":"),
+        ),
+      ),
+    );
   } catch {
     return null;
   }

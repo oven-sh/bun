@@ -78,6 +78,11 @@ impl RestrictPlusOperands {
                 false => (!self.allow_any && is_type_any_type(sub_base_type)) || is_deeply_object_type(sub_base_type),
             };
             if is_invalid {
+                // tsgolint reports an operand once, with the whole of its type.
+                if cx.language().is_oxlint {
+                    self.report_invalid(cx, base_node, base_type);
+                    return true;
+                }
                 self.report_invalid(cx, base_node, sub_base_type);
                 had_individual_complaint = true;
             }

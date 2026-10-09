@@ -96,7 +96,7 @@ function tuplesOf(stdout, isOurs) {
     if (!span || (diagnostic.code && !rule)) continue;
     const file = path.resolve(project, diagnostic.filename);
     // Without a code: a syntax error, or a comment that disables nothing.
-    tuples.push({ file: path.relative(project, file), ...position(file, span), rule: rule ?? "(none)" });
+    tuples.push({ file: path.relative(project, file), ...position(file, span), length: span.length, rule: rule ?? "(none)" });
   }
   return { tuples, files: parsed.number_of_files };
 }
@@ -116,7 +116,7 @@ const keyed = tuples => {
   const seen = new Map();
   return new Map(
     tuples.map(it => {
-      const key = `${it.file}:${it.line}:${it.column} ${canonical(it.rule)}`;
+      const key = `${it.file}:${it.line}:${it.column}+${it.length} ${canonical(it.rule)}`;
       const nth = (seen.get(key) ?? 0) + 1;
       seen.set(key, nth);
       return [nth === 1 ? key : `${key} (${nth})`, it];

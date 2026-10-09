@@ -1,6 +1,7 @@
 // `.oxlintrc.json` as oxlint itself applies it (`categories`, `rules`, `overrides`, `ignorePatterns`, `extends`)
 // against `Config::from_rc_json`: generated projects are linted by both, and
-// which rule reports with which severity on which line of which file is compared.
+// which rule reports with which severity on which line of which file is compared. And once more through the command line: all
+// that `-f json` of the two has about a report, of all rules that the categories turn on.
 //
 //   OXLINT=<the oxlint executable> node oxlintrc.mjs
 
@@ -8,7 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { bunLint, random, report, runBunLint } from "./shared.mjs";
+import { bunLint, bunLintPrints, random, report, reportsOfOxlint, runBunLint, strictly } from "./shared.mjs";
 
 const oxlint = resolve(process.env.OXLINT ?? "oxlint");
 const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules", "--oxlint"]).toString()));
@@ -73,6 +74,8 @@ const file = canExtend => ({
 
 const root = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "bun-lint-oxlintrc-"));
 const cases = [], expected = [];
+// What one of the two refuses to parse has oracles of its own.
+const strict = strictly("oxlintrc, by the command line", { withoutRefused: true });
 try {
   for (let i = 0; i < 400; i++) {
     // In one of four the configuration is in a directory of its own, and most files are outside of that.
@@ -90,7 +93,9 @@ try {
       writeFileSync(name, text);
     }
     const where = basePath === project ? [] : ["-c", join(basePath, ".oxlintrc.json")];
-    const { stdout } = spawnSync(oxlint, [...where, "--format", "json", "--threads", "1", "."], { cwd: project, maxBuffer: 1 << 26 });
+    const args = [...where, "--format", "json", "--threads", "1", "."];
+    const { stdout } = spawnSync(oxlint, args, { cwd: project, maxBuffer: 1 << 26 });
+    strict.add(JSON.stringify(config), reportsOfOxlint(stdout.toString()), reportsOfOxlint(bunLintPrints(["--allow-unsupported", ...args], project)));
     let answer;
     try {
       answer = JSON.parse(stdout.toString());
@@ -125,3 +130,4 @@ cases.forEach(({ basePath, config, extended, sources }, i) => Object.keys(source
   flat.actual.push(actual[i].error ?? sorted(actual[i][name]));
 }));
 report("oxlintrc", flat.cases, flat.expected, flat.actual, 6);
+strict.report();

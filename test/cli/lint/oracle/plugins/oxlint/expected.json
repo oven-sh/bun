@@ -1156,5 +1156,151 @@
   "b.js:1:5 eslint(no-redeclare)",
   "b.js:2:5 eslint(no-redeclare)"
  ],
- "no-useless-concat/parentheses": []
+ "no-useless-concat/parentheses": [],
+ "no-shadow/function-name-in-the-value": [
+  "a.ts:10:33 eslint(no-shadow)",
+  "a.ts:13:25 eslint(no-shadow)",
+  "a.ts:4:33 eslint(no-shadow)",
+  "a.ts:5:38 eslint(no-shadow)",
+  "a.ts:8:37 eslint(no-shadow)"
+ ],
+ "no-shadow/import-used-as-type": [
+  "a.ts:4:25 eslint(no-shadow)",
+  "a.ts:8:20 eslint(no-shadow)"
+ ],
+ "no-useless-assignment/finally": [
+  "a.js:4:27 eslint(no-useless-assignment)",
+  "a.js:6:27 eslint(no-useless-assignment)",
+  "a.js:8:27 eslint(no-useless-assignment)"
+ ],
+ "no-shadow/import-that-is-exported": [
+  "a.ts:2:19 eslint(no-shadow)"
+ ],
+ "sort-keys/one-report": [
+  "a.js:1:5 eslint(sort-keys)",
+  "a.js:2:5 eslint(sort-keys)",
+  "a.js:4:6 eslint(sort-keys)",
+  "a.js:8:5 eslint(sort-keys)"
+ ],
+ "sort-vars/the-one-before": [
+  "a.js:1:8 eslint(sort-vars)",
+  "a.js:2:8 eslint(sort-vars)",
+  "a.js:3:11 eslint(sort-vars)",
+  "a.js:3:14 eslint(sort-vars)",
+  "a.js:3:8 eslint(sort-vars)",
+  "a.js:4:17 eslint(sort-vars)"
+ ],
+ "no-else-return/place": [
+  "a.js:19:5 eslint(no-else-return)",
+  "a.js:26:22 eslint(no-else-return)",
+  "a.js:30:12 eslint(no-else-return)",
+  "a.js:30:21 eslint(no-else-return)",
+  "a.js:3:5 eslint(no-else-return)"
+ ],
+ "grouped-accessor-pairs/place": [
+  "a.js:2:3 eslint(grouped-accessor-pairs)",
+  "a.js:9:3 eslint(grouped-accessor-pairs)"
+ ],
+ "adjacent-overload-signatures/place": [
+  "a.ts:2:3 typescript(adjacent-overload-signatures)",
+  "a.ts:2:3 typescript(adjacent-overload-signatures)",
+  "a.ts:8:10 typescript(adjacent-overload-signatures)",
+  "a.ts:9:10 typescript(adjacent-overload-signatures)"
+ ],
+ "max-statements/place": [
+  "a.js:1:8 eslint(max-statements)",
+  "a.js:2:29 eslint(max-statements)",
+  "a.js:2:53 eslint(max-statements)",
+  "a.js:2:8 eslint(max-statements)",
+  "a.js:3:19 eslint(max-statements)"
+ ],
+ "max-lines-per-function/place": [
+  "a.js:10:6 eslint(max-lines-per-function)",
+  "a.js:1:8 eslint(max-lines-per-function)",
+  "a.js:6:4 eslint(max-lines-per-function)"
+ ],
+ "complexity/place": [
+  "a.js:1:8 eslint(complexity)",
+  "a.js:2:31 eslint(complexity)",
+  "a.js:2:8 eslint(complexity)",
+  "a.js:3:15 eslint(complexity)",
+  "a.js:3:26 eslint(complexity)"
+ ],
+ "consistent-type-definitions/interface": [
+  "a.ts:1:1 typescript(consistent-type-definitions)",
+  "a.ts:2:8 typescript(consistent-type-definitions)",
+  "a.ts:3:9 typescript(consistent-type-definitions)",
+  "a.ts:4:16 typescript(consistent-type-definitions)"
+ ],
+ "consistent-type-definitions/type": [
+  "a.ts:1:1 typescript(consistent-type-definitions)",
+  "a.ts:2:8 typescript(consistent-type-definitions)",
+  "a.ts:3:9 typescript(consistent-type-definitions)",
+  "a.ts:4:16 typescript(consistent-type-definitions)",
+  "a.ts:4:16 typescript(consistent-type-definitions)"
+ ],
+ "no-empty-interface/place": [
+  "a.ts:1:1 typescript(no-empty-interface)",
+  "a.ts:2:8 typescript(no-empty-interface)",
+  "a.ts:3:8 typescript(no-empty-interface)",
+  "a.ts:4:1 typescript(no-empty-interface)"
+ ],
+ "ban-ts-comment/place": [
+  "a.ts:1:3 typescript(ban-ts-comment)",
+  "a.ts:3:3 typescript(ban-ts-comment)",
+  "a.ts:5:5 typescript(ban-ts-comment)",
+  "a.ts:6:3 typescript(ban-ts-comment)"
+ ],
+ "no-dynamic-delete/place": [
+  "a.ts:1:1 typescript(no-dynamic-delete)",
+  "a.ts:2:5 typescript(no-dynamic-delete)"
+ ],
+ "no-prototype-builtins/place": [
+  "a.js:1:1 eslint(no-prototype-builtins)",
+  "a.js:2:5 eslint(no-prototype-builtins)",
+  "a.js:3:1 eslint(no-prototype-builtins)"
+ ],
+ "no-inferrable-types/place": [
+  "a.ts:1:8 typescript(no-inferrable-types)",
+  "a.ts:2:13 typescript(no-inferrable-types)",
+  "a.ts:3:12 typescript(no-inferrable-types)"
+ ],
+ "consistent-generic-constructors/constructor": [
+  "a.ts:1:8 typescript(consistent-generic-constructors)",
+  "a.ts:2:12 typescript(consistent-generic-constructors)",
+  "a.ts:3:13 typescript(consistent-generic-constructors)"
+ ],
+ "consistent-generic-constructors/type-annotation": [
+  "a.ts:1:18 typescript(consistent-generic-constructors)",
+  "a.ts:2:22 typescript(consistent-generic-constructors)"
+ ],
+ "explicit-member-accessibility/place": [
+  "a.ts:2:3 typescript(explicit-member-accessibility)",
+  "a.ts:3:12 typescript(explicit-member-accessibility)",
+  "a.ts:4:10 typescript(explicit-member-accessibility)",
+  "a.ts:5:7 typescript(explicit-member-accessibility)",
+  "a.ts:6:24 typescript(explicit-member-accessibility)",
+  "a.ts:6:3 typescript(explicit-member-accessibility)",
+  "a.ts:7:6 typescript(explicit-member-accessibility)",
+  "a.ts:8:11 typescript(explicit-member-accessibility)"
+ ],
+ "no-negated-condition/place": [
+  "a.js:1:5 eslint(no-negated-condition)",
+  "a.js:2:5 eslint(no-negated-condition)",
+  "a.js:3:5 eslint(no-negated-condition)",
+  "a.js:4:6 eslint(no-negated-condition)"
+ ],
+ "no-empty-object-type/place": [
+  "a.ts:1:13 typescript(no-empty-object-type)",
+  "a.ts:2:33 typescript(no-empty-object-type)",
+  "a.ts:3:8 typescript(no-empty-object-type)",
+  "a.ts:5:12 typescript(no-empty-object-type)",
+  "a.ts:5:32 typescript(no-empty-object-type)"
+ ],
+ "consistent-indexed-object-style/place": [
+  "a.ts:2:3 typescript(consistent-indexed-object-style)",
+  "a.ts:4:10 typescript(consistent-indexed-object-style)",
+  "a.ts:5:12 typescript(consistent-indexed-object-style)",
+  "a.ts:6:10 typescript(consistent-indexed-object-style)"
+ ]
 }

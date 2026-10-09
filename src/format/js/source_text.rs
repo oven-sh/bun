@@ -27,6 +27,20 @@ fn line_terminator_len_back(text: &[u8]) -> usize {
     }
 }
 
+fn has_line_terminator(mut rest: &[u8]) -> bool {
+    if matches!(rest, [] | [_, b'\n', ..]) {
+        return !rest.is_empty();
+    }
+    // 0xE2 starts U+2028 and U+2029, and many other characters.
+    while let Some(at) = bun_core::strings::index_of_any(rest, b"\n\r\xE2") {
+        if line_terminator_len(&rest[at..]) != 0 {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
+}
+
 /// `WhiteSpace` of the specification at the start of `text`: its length.
 #[inline]
 fn white_space_len(text: &[u8]) -> usize {
@@ -79,16 +93,11 @@ impl<'a> SourceText<'a> {
     }
 
     #[inline]
-    pub(crate) fn slice_range(self, start: u32, end: u32) -> &'a [u8] {
-        self.text
-            .get(start as usize..end.max(start) as usize)
-            .unwrap_or_default()
-    }
-
-    #[inline]
     pub(crate) fn text_for(self, it: &impl Spanned) -> &'a [u8] {
         let span = it.span();
-        self.slice_range(span.start, span.end)
+        self.text
+            .get(span.start as usize..span.end.max(span.start) as usize)
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -134,22 +143,7 @@ impl<'a> SourceText<'a> {
     }
 
     pub(crate) fn contains_newline(self, span: Span) -> bool {
-        self.contains_newline_between(span.start, span.end)
-    }
-
-    pub(crate) fn contains_newline_between(self, start: u32, end: u32) -> bool {
-        let mut rest = self.slice_range(start, end);
-        if matches!(rest, [] | [_, b'\n', ..]) {
-            return !rest.is_empty();
-        }
-        // 0xE2 starts U+2028 and U+2029, and many other characters.
-        while let Some(at) = bun_core::strings::index_of_any(rest, b"\n\r\xE2") {
-            if line_terminator_len(&rest[at..]) != 0 {
-                return true;
-            }
-            rest = &rest[at + 1..];
-        }
-        false
+        has_line_terminator(self.text_for(&span))
     }
 
     /// The number of line breaks between `end` and the next thing that is not whitespace. 0 if
@@ -266,11 +260,11 @@ impl<'a> SourceText<'a> {
             match rest {
                 [b' ' | b'\t', tail @ ..] => rest = tail,
                 [b'/', b'/', tail @ ..] => {
-                    return SourceText::new(tail).contains_newline_between(0, tail.len() as u32);
+                    return has_line_terminator(tail);
                 }
                 [b'/', b'*', tail @ ..] => {
                     let end = bun_core::strings::index_of(tail, b"*/").unwrap_or(tail.len());
-                    if SourceText::new(tail).contains_newline_between(0, end as u32) {
+                    if has_line_terminator(&tail[..end]) {
                         return true;
                     }
                     rest = tail.get(end + 2..).unwrap_or_default();

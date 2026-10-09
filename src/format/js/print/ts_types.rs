@@ -205,7 +205,7 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
             };
             let digits = f
                 .source_text()
-                .slice_range(last.span.end, ty.span().end)
+                .text_for(&Span::after(last.span, ty.span().end))
                 .trim_ascii_start();
             let operand = format_args!(
                 FormatLeadingComments::Comments(comments),
@@ -669,8 +669,8 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
         options.braces_span(),
     );
     let entries = options.entries();
-    let is_expanded = |f: &Formatter<'a>, open: u32, first: u32| {
-        f.options().expand == Expand::Auto && f.source_text().contains_newline_between(open, first)
+    let is_expanded = |f: &Formatter<'a>, before_first: Span| {
+        f.options().expand == Expand::Auto && f.source_text().contains_newline(before_first)
     };
     let has_space = f.options().bracket_spacing.value();
 
@@ -698,7 +698,7 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
                 soft_block_indent_with_maybe_space(&format_entries, has_space),
                 "}"
             ))
-            .should_expand(is_expanded(f, inner.start, first.span().start))
+            .should_expand(is_expanded(f, Span::before(inner.start, first.span())))
         );
     });
     let format_property = format_with(|f| {
@@ -728,7 +728,7 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
             soft_block_indent_with_maybe_space(&format_property, has_space),
             "}"
         ))
-        .should_expand(is_expanded(f, outer.start, keyword.start))
+        .should_expand(is_expanded(f, Span::before(outer.start, keyword)))
     );
 }
 

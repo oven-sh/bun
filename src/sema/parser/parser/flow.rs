@@ -1275,8 +1275,8 @@ impl Parser<'_> {
         }
     }
 
-    /// The modifiers on the stack from `base` on are before what is a class in the tree only.
-    fn flow_refuse_decorators(&mut self, base: usize) {
+    /// The modifiers on the stack from `base` on are before what has no decorators.
+    pub(crate) fn flow_refuse_decorators(&mut self, base: usize) {
         let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
         let written = self.s.modifiers.get(base..).unwrap_or_default();
         if written.iter().any(is_decorator) {
@@ -1428,6 +1428,9 @@ impl Parser<'_> {
     /// `declare class A<T> extends B<T> mixins C implements D { }`, at `class`.
     pub(crate) fn flow_declare_class(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         self.flow_refuse_decorators(base);
+        if flags.contains(Flags::ABSTRACT) {
+            self.fail();
+        }
         self.next();
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();

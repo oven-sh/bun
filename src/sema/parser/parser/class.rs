@@ -498,6 +498,9 @@ impl Parser<'_> {
 
     /// `parseClassStaticBlockDeclaration`, at `static`.
     fn class_static_block(&mut self, start: Start, first_modifier: usize) {
+        if self.is_flow {
+            self.flow_refuse_decorators(first_modifier);
+        }
         // The checker reports them.
         let modifiers = self.take_modifiers(first_modifier);
         self.next();

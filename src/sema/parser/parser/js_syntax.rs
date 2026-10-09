@@ -90,7 +90,11 @@ impl Parser<'_> {
             return;
         };
         if !is_class_declaration {
-            return self.js_error(first, 1206, b"");
+            // `js_error` says nothing in Flow, whose parsers refuse this too.
+            return match self.is_flow {
+                true => self.fail(),
+                false => self.js_error(first, 1206, b""),
+            };
         }
         let Some(export_index) = index_of(Flags::EXPORT) else {
             return;

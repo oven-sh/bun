@@ -407,27 +407,33 @@ class Database implements SqliteTypes.Database {
 
       if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
 
-      if (options.create) {
+      const create = options.create;
+      if (create) {
         flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
       }
 
-      if (options.readwrite) {
+      const readwrite = options.readwrite;
+      if (readwrite) {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
 
-      if ("strict" in options || "safeIntegers" in options) {
-        if (options.safeIntegers) {
-          this.#internalFlags |= kSafeIntegersFlag;
-        }
-
-        if (options.strict) {
-          this.#internalFlags |= kStrictFlag;
-        }
-
-        // If they only set strict: true, reset it back.
-        if (flags === 0) {
+      // Every mode option is falsy here: `undefined` keeps the default, any other value turns that option off.
+      if (flags === 0) {
+        if (readwrite !== undefined) {
+          flags = constants.SQLITE_OPEN_READONLY;
+        } else if (create !== undefined) {
+          flags = constants.SQLITE_OPEN_READWRITE;
+        } else {
           flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
         }
+      }
+
+      if (options.safeIntegers) {
+        this.#internalFlags |= kSafeIntegersFlag;
+      }
+
+      if (options.strict) {
+        this.#internalFlags |= kStrictFlag;
       }
     } else if (typeof options === "number") {
       flags = options;
@@ -485,6 +491,9 @@ class Database implements SqliteTypes.Database {
     const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized)
       ? new Uint8Array(serialized as ArrayBufferLike)
       : (serialized as NodeJS.TypedArray);
+    if (!isTypedArray(bytes)) {
+      throw new TypeError(`Expected 'serialized' to be a TypedArray or ArrayBuffer, got '${typeof serialized}'`);
+    }
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
       return new Database(bytes, { readonly: options });

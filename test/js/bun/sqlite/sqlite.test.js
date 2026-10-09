@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
@@ -380,6 +380,165 @@ it.each([1, 16, 256, 512, 768])("should work with duplicate columns in values() 
     }
     prevResult = result;
   }
+});
+
+describe("Database open mode from an options object", () => {
+  // What each open mode does to a missing file, an existing file and ":memory:".
+  const readWriteCreate = { missing: "opened, file created", existing: "writable", memory: "opened" };
+  const readWrite = { missing: "SQLITE_CANTOPEN, no file", existing: "writable", memory: "opened" };
+  const readOnly = {
+    missing: "SQLITE_CANTOPEN, no file",
+    existing: "SQLITE_READONLY",
+    memory: "Cannot open an anonymous database in read-only mode.",
+  };
+  // SQLITE_OPEN_READONLY | SQLITE_OPEN_READWRITE is not a mode.
+  const misuse = {
+    missing: "SQLITE_MISUSE, no file",
+    existing: "SQLITE_MISUSE",
+    memory: "Cannot open an anonymous database in read-only mode.",
+  };
+
+  const _ = undefined;
+  const F = false;
+  const T = true;
+  // [readonly, create, readwrite]. A row that contradicts itself pins what the constructor does with it today.
+  const cells = [
+    [_, _, _, readWriteCreate],
+    [_, _, F, readOnly],
+    [_, _, T, readWrite],
+    [_, F, _, readWrite],
+    [_, F, F, readOnly],
+    [_, F, T, readWrite],
+    [_, T, _, readWriteCreate],
+    [_, T, F, readWriteCreate],
+    [_, T, T, readWriteCreate],
+    [F, _, _, readWriteCreate],
+    [F, _, F, readOnly],
+    [F, _, T, readWrite],
+    [F, F, _, readWrite],
+    [F, F, F, readOnly],
+    [F, F, T, readWrite],
+    [F, T, _, readWriteCreate],
+    [F, T, F, readWriteCreate],
+    [F, T, T, readWriteCreate],
+    [T, _, _, readOnly],
+    [T, _, F, readOnly],
+    [T, _, T, misuse],
+    [T, F, _, readOnly],
+    [T, F, F, readOnly],
+    [T, F, T, misuse],
+    [T, T, _, readWriteCreate],
+    [T, T, F, readWriteCreate],
+    [T, T, T, readWriteCreate],
+  ].map(([readonly, create, readwrite, mode]) => {
+    const options = {};
+    if (readonly !== undefined) options.readonly = readonly;
+    if (create !== undefined) options.create = create;
+    if (readwrite !== undefined) options.readwrite = readwrite;
+    return [options, mode];
+  });
+
+  const cross = (modes, others) =>
+    modes.flatMap(([options, mode]) => others.map(other => [{ ...options, ...other }, mode]));
+  const rows = [
+    // A `strict` key does not change the mode.
+    ...cross(cells, [{}, { strict: true }]),
+    // `undefined` is an absent option. Any other falsy value turns the option off.
+    ...cross(
+      [
+        [{ create: undefined, readwrite: undefined }, readWriteCreate],
+        [{ create: null }, readWrite],
+        [{ create: 0 }, readWrite],
+        [{ readwrite: null }, readOnly],
+        [{ readwrite: 0 }, readOnly],
+      ],
+      [{}, { strict: true }],
+    ),
+    // The value of `strict` and a `safeIntegers` key do not change the mode.
+    ...cross(
+      [
+        [{}, readWriteCreate],
+        [{ create: false }, readWrite],
+        [{ readwrite: false }, readOnly],
+      ],
+      [{ strict: false }, { safeIntegers: true }, { safeIntegers: false }, { strict: true, safeIntegers: true }],
+    ),
+  ];
+
+  // Returns a function that opens a missing file, an existing file and ":memory:" with `options`.
+  function observer(dir, open = (filename, options) => new Database(filename, options)) {
+    const existing = path.join(dir, "existing.sqlite");
+    {
+      using db = new Database(existing);
+      db.run("CREATE TABLE t (a)");
+    }
+    let files = 0;
+    return options => {
+      const missing = path.join(dir, `missing-${files++}.sqlite`);
+      let onMissing = "opened";
+      try {
+        open(missing, options).close();
+      } catch (e) {
+        onMissing = e.code ?? e.message;
+      }
+      onMissing += existsSync(missing) ? ", file created" : ", no file";
+
+      let onExisting, strict, safeIntegers;
+      try {
+        using db = open(existing, options);
+        const row = db.query("SELECT $a AS a, 1 AS b").get({ a: 1 });
+        strict = row.a !== null;
+        safeIntegers = typeof row.b === "bigint";
+        // Rolled back, because a commit for each row makes these tests slow.
+        db.run("BEGIN");
+        db.run("INSERT INTO t VALUES (1)");
+        db.run("ROLLBACK");
+        onExisting = "writable";
+      } catch (e) {
+        onExisting = e.code ?? e.message;
+      }
+
+      let onMemory = "opened";
+      try {
+        open(":memory:", options).close();
+      } catch (e) {
+        onMemory = e.code ?? e.message;
+      }
+      return { missing: onMissing, existing: onExisting, memory: onMemory, strict, safeIntegers };
+    };
+  }
+
+  let dir;
+  let observe;
+  beforeAll(() => {
+    dir = tempDir("sqlite-open-mode", {});
+    observe = observer(String(dir));
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  const title = options => {
+    const entries = Object.entries(options).map(([key, value]) => `${key}: ${value}`);
+    return entries.length ? `{ ${entries.join(", ")} }` : "{}";
+  };
+
+  it.each(rows.map(([options, mode]) => [title(options), options, mode]))("%s", (_title, options, mode) => {
+    expect(observe(options)).toEqual({
+      ...mode,
+      ...(mode !== misuse && { strict: options.strict === true, safeIntegers: options.safeIntegers === true }),
+    });
+  });
+
+  it.each([
+    ["Database.open()", (filename, options) => Database.open(filename, options)],
+    ["a subclass", (filename, options) => new (class extends Database {})(filename, options)],
+  ])("%s chooses the same mode", (_title, open) => {
+    using ownDir = tempDir("sqlite-open-mode-entry", {});
+    expect(observer(String(ownDir), open)({ create: false, strict: true })).toEqual({
+      ...readWrite,
+      strict: true,
+      safeIntegers: false,
+    });
+  });
 });
 
 it("Database.open", () => {
@@ -777,6 +936,21 @@ it("Database.deserialize should support readonly when passed as a flag or boolea
   } catch (e) {
     expect(e.message).toContain("attempt to write a readonly database");
   }
+});
+
+it("Database.deserialize throws on a value that is not a TypedArray or an ArrayBuffer", () => {
+  using dir = tempDir("sqlite-deserialize-type", {});
+  const filename = path.join(String(dir), "db.sqlite");
+  for (const options of [undefined, false, true, {}, { strict: true }, { readonly: true }]) {
+    const call = () => Database.deserialize(filename, options);
+    expect(call).toThrow(TypeError);
+    expect(call).toThrow("Expected 'serialized' to be a TypedArray or ArrayBuffer, got 'string'");
+  }
+  expect(existsSync(filename)).toBe(false);
+
+  const call = () => Database.deserialize(undefined, { strict: true });
+  expect(call).toThrow(TypeError);
+  expect(call).toThrow("Expected 'serialized' to be a TypedArray or ArrayBuffer, got 'undefined'");
 });
 
 it("db.query()", () => {

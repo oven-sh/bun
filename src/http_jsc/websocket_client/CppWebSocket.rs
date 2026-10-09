@@ -55,6 +55,7 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     );
+    safe fn WebSocket__deliverInitialData(websocket_context: &CppWebSocket);
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
     safe fn WebSocket__didReceiveHandshakeResponse(
         websocket_context: &CppWebSocket,
@@ -184,6 +185,23 @@ impl CppWebSocket {
         WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params);
         event_loop.exit();
     }
+
+    /// No event-loop scope here: each message gets its own microtask checkpoint, as on a socket read.
+    pub(crate) fn deliver_initial_data(&self) {
+        WebSocket__deliverInitialData(self);
+    }
+
+    /// Call when the scope around `open` has ended. `overflow_owner` is the WebSocket with bytes behind its 101.
+    pub(crate) fn deliver_initial_data_after_open(overflow_owner: Option<CppWebSocketRef>) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        // Under a nested event-loop spin (`expect().resolves`) that scope drained nothing.
+        if event_loop.entered_event_loop_count > 0 {
+            let _ = event_loop.drain_microtasks();
+        }
+        if let Some(ws) = overflow_owner {
+            ws.deliver_initial_data();
+        }
+    }
 }
 
 impl CppWebSocket {
@@ -206,8 +224,7 @@ impl CppWebSocket {
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
-/// scope (e.g. stored on a queued task).
+/// [`CppWebSocket::unref`]. C++ has room for one such ref at a time.
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
@@ -218,8 +235,16 @@ impl CppWebSocketRef {
     }
 }
 
+impl core::ops::Deref for CppWebSocketRef {
+    type Target = CppWebSocket;
+
+    fn deref(&self) -> &CppWebSocket {
+        CppWebSocket::opaque_ref(self.0.as_ptr())
+    }
+}
+
 impl Drop for CppWebSocketRef {
     fn drop(&mut self) {
-        CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
+        self.unref();
     }
 }

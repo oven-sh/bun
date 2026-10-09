@@ -7,6 +7,10 @@ import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import path from "path";
 
+// A debug build runs each awaited query about 100 times slower than a release build.
+// The cases that run one query per row use this count to stay well under the default timeout there.
+const largeRowCount = isDebug ? 100 : 1000;
+
 describe("Connection & Initialization", () => {
   describe("common default connection strings", () => {
     test("should parse common connection strings", () => {
@@ -2125,7 +2129,7 @@ describe("Performance & Edge Cases", () => {
 
     await sql`CREATE TABLE large (id INTEGER PRIMARY KEY, data TEXT)`;
 
-    const rowCount = 1000;
+    const rowCount = largeRowCount;
     const data = Buffer.alloc(100, "x").toString();
 
     await sql.begin(async tx => {
@@ -2261,7 +2265,7 @@ describe("Memory and resource management", () => {
 
     // Debug builds run the serial awaited inserts 10-100x slower, so use a
     // smaller workload there to stay under the default timeout.
-    const iterations = isDebug ? 1000 : 10000;
+    const iterations = isDebug ? 400 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -2290,14 +2294,14 @@ describe("Memory and resource management", () => {
     await sql`CREATE TABLE concurrent_test (id INTEGER, value TEXT)`;
 
     const promises: Promise<void>[] = [];
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < largeRowCount; i++) {
       promises.push(sql`INSERT INTO concurrent_test VALUES (${i}, ${"value" + i})`);
     }
 
     await Promise.all(promises);
 
     const result = await sql`SELECT COUNT(*) as count FROM concurrent_test`;
-    expect(result[0].count).toBe(1000);
+    expect(result[0].count).toBe(largeRowCount);
 
     const selectPromises: Promise<any>[] = [];
     for (let i = 0; i < 100; i++) {
@@ -2798,8 +2802,9 @@ describe("Indexes and Query Optimization", () => {
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
     await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
-        const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
+      for (let i = 1; i <= largeRowCount; i++) {
+        const percentile = (i * 100) / largeRowCount;
+        const type = percentile <= 90 ? "common" : percentile <= 99 ? "uncommon" : "rare";
         await tx`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
       }
     });
@@ -2845,7 +2850,7 @@ describe("VACUUM and Database Maintenance", () => {
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
     await sql.begin(async tx => {
-      for (let i = 0; i < 1000; i++) {
+      for (let i = 0; i < largeRowCount; i++) {
         await tx`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
       }
     });
@@ -4161,7 +4166,7 @@ describe("Query Explain and Optimization", () => {
     )`;
 
     await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
+      for (let i = 1; i <= largeRowCount; i++) {
         await tx`INSERT INTO large_table VALUES (
           ${i},
           ${"category" + (i % 10)},

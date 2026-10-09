@@ -2333,7 +2333,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.index.remove(&_key).is_some()
     }
 
-    /// Where the next new key stores its value. See [`Self::forget_since`].
+    /// Where the next new key stores its value, for [`Self::forget_since`].
     pub fn mark(&mut self) -> BSSMapMark {
         let _guard = self.mutex.lock();
         BSSMapMark {
@@ -2342,9 +2342,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         }
     }
 
-    /// Forgets every key that got its value since `mark`, and every key that
-    /// has no value (`NOT_FOUND`, `UNASSIGNED`): the next lookup of such a key
-    /// misses. The values stay allocated, so a handle to one stays valid.
+    /// Forgets each key that got its value since `mark` and each key without a value. The values stay allocated.
     pub fn forget_since(&mut self, mark: BSSMapMark) {
         let _guard = self.mutex.lock();
         // `NOT_FOUND` and `UNASSIGNED` are above every `backing` mark.

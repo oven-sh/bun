@@ -131,10 +131,8 @@ pub(crate) fn filter<'a>(
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
-    // The scan and the run share the resolver's directory caches, and the run
-    // can create a file (a preload that generates code) after the scan looked
-    // for it. What the scan caches is forgotten before the run starts.
-    let directory_cache_mark = vm.transpiler.resolver.directory_cache_mark();
+    // A preload can create a file that the scan looked for, so the run must not read what the scan cached.
+    let _scan_directory_cache = vm.transpiler.resolver.scoped_directory_cache();
 
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
@@ -178,9 +176,6 @@ pub(crate) fn filter<'a>(
     ) {
         Ok(b) => b,
         Err(err) => {
-            vm.transpiler
-                .resolver
-                .forget_directories_since(directory_cache_mark);
             // Fall back to running every test rather than aborting the run.
             bun_core::warn!(
                 "--changed: failed to build module graph ({}); running all tests",
@@ -314,9 +309,6 @@ pub(crate) fn filter<'a>(
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };
-    vm.transpiler
-        .resolver
-        .forget_directories_since(directory_cache_mark);
 
     Ok(Result {
         test_files: &mut test_files[0..write],

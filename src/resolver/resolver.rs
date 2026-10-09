@@ -575,11 +575,26 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
-/// [`Resolver::directory_cache_mark`].
-#[derive(Clone, Copy)]
-pub struct DirectoryCacheMark {
+/// RAII guard returned by [`Resolver::scoped_directory_cache`].
+pub struct DirectoryCacheScope {
+    mutex: &'static Mutex,
+    dir_cache: *mut DirInfo::HashMap,
+    rfs: *mut Fs::file_system::RealFS,
     dir_infos: bun_alloc::BSSMapMark,
     entries: bun_alloc::BSSMapMark,
+}
+
+impl Drop for DirectoryCacheScope {
+    #[cold]
+    fn drop(&mut self) {
+        let _unlock = self.mutex.lock_guard();
+        // SAFETY: both point at process-lifetime singletons, and the resolver
+        // mutex serializes every access to them.
+        unsafe {
+            (*self.dir_cache).forget_since(self.dir_infos);
+            (*self.rfs).forget_entries_since(self.entries);
+        }
+    }
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -2455,24 +2470,18 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// What the process-wide directory caches hold now. See
-    /// [`Self::forget_directories_since`].
-    pub fn directory_cache_mark(&mut self) -> DirectoryCacheMark {
+    /// On drop, the guard forgets each directory that a resolver cached since, and each directory not found.
+    pub fn scoped_directory_cache(&mut self) -> DirectoryCacheScope {
         let _unlock = self.mutex.lock_guard();
-        DirectoryCacheMark {
-            dir_infos: self.dir_cache_mut().mark(),
-            entries: self.fs_mut().fs.entries_mark(),
+        let dir_infos = self.dir_cache_mut().mark();
+        let entries = self.fs_mut().fs.entries_mark();
+        DirectoryCacheScope {
+            mutex: self.mutex,
+            dir_cache: self.dir_cache,
+            rfs: self.rfs_ptr(),
+            dir_infos,
+            entries,
         }
-    }
-
-    /// Forgets every directory that a resolver of this process read since
-    /// `mark`, and every directory that one looked for and did not find. The
-    /// next lookup reads the directory from disk.
-    #[cold]
-    pub fn forget_directories_since(&mut self, mark: DirectoryCacheMark) {
-        let _unlock = self.mutex.lock_guard();
-        self.dir_cache_mut().forget_since(mark.dir_infos);
-        self.fs_mut().fs.forget_entries_since(mark.entries);
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve

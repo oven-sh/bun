@@ -105,7 +105,9 @@ bitflags::bitflags! {
         const IS_EXECUTABLE = 1 << 0;
         const HAS_HTML_CHUNK = 1 << 1;
         const IS_BROWSER_CHUNK_FROM_SERVER_BUILD = 1 << 2;
-        // _padding: u5 = 0
+        /// The file of this entry point is in a chunk that `split_chunks_by_evaluation_order` made.
+        const ENTRY_POINT_FILE_IS_SPLIT_OFF = 1 << 3;
+        // _padding: u4 = 0
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{Index, IndexInt, LinkerContext};
 
 const NONE: u32 = u32::MAX;
 
-/// The files with one `File.entry_bits`, outside of the chunk of an entry point.
+/// The files with one `File.entry_bits` that several entry points load.
 struct Group {
     /// The entry points that can be the first to load the files (`EntryLoadGraph::load_class`).
     load_class: AutoBitSet,
@@ -35,7 +35,6 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let loaders = c.parse_graph().input_files.items_loader();
-    let entry_point_kinds = c.graph.files.items_entry_point_kind();
 
     // Only the order of files that run something when they load can be observed.
     let mut key_of_file: Vec<u32> = vec![NONE; files_len];
@@ -50,7 +49,6 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
             || !c.graph.files_live.is_set(id)
             || css[id].is_some()
             || loaders[id] == Loader::Html
-            || entry_point_kinds[id].is_entry_point()
             || file_entry_bits[id].count() < 2
         {
             continue;

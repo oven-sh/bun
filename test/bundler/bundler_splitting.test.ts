@@ -2499,6 +2499,41 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "member\nroot\nuser 1\na" },
   });
 
+  // m0.js and m1.js import each other, so they are in the chunk of five.js and six.js, with the runtime. They are
+  // files of that chunk like the others: a cycle, so the chunk stays whole.
+  itBundled("splitting/SharedFilesInTwoOrdersEntryPointsImportEachOther", {
+    files: {
+      "/m0.js": `import * as five from "./five.js"; import * as one from "./m1.js"; console.log("m0", Object.keys(five), Object.keys(one));`,
+      "/m1.js": `import * as six from "./six.js"; import "./m0.js"; export const v1 = 1; console.log("m1", Object.keys(six));`,
+      "/five.js": `console.log("five"); export const v5 = 5;`,
+      "/six.js": `console.log("six"); export const v6 = 6;`,
+    },
+    entryPoints: ["/m0.js", "/m1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/m0.js", stdout: `five\nsix\nm1 [ "v6" ]\nm0 [ "v5" ] [ "v1" ]` },
+  });
+
+  // No two entry points disagree here, so the chunk of main.js imports its chunks as before: the one with main.js
+  // first. four.js requires its way back to main.js at load, and main.js has to be the file that is entered first.
+  itBundled("splitting/SharedFilesInOneOrderKeepImportsOfEntryPointChunk", {
+    files: {
+      "/main.js": `import { six } from "./six.js"; import "./three.js"; export const main = "main"; console.log("main", six);`,
+      "/other.js": `export const later = () => require("./three.js");`,
+      "/three.js": `import { four } from "./four.js"; export { four };`,
+      "/four.js": `import { six } from "./six.js"; const seven = require("./seven.js"); export const four = typeof seven; console.log("four", six);`,
+      "/six.js": `export const six = ["six"].join();`,
+      "/seven.js": `export * as main from "./main.js";`,
+    },
+    entryPoints: ["/main.js", "/other.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "four six\nmain six" },
+  });
+
   // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
   itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
     files: {

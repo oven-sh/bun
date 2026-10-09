@@ -287,6 +287,17 @@ pub(crate) fn compute_chunks(
     } else {
         Vec::new()
     };
+    if !run_of_file.is_empty() {
+        let entry_source_indices = this.graph.entry_points.items_source_index();
+        for (entry_id, &source_index) in entry_source_indices.iter().enumerate() {
+            let chunk_index = entry_point_to_js_chunk_idx[entry_id];
+            if run_of_file[source_index as usize] != 0 && chunk_index != u32::MAX {
+                js_chunks.values_mut()[chunk_index as usize]
+                    .flags
+                    .insert(chunk::Flags::ENTRY_POINT_FILE_IS_SPLIT_OFF);
+            }
+        }
+    }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 

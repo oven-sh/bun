@@ -856,8 +856,11 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
-    // The file of an entry point is in another chunk when another entry point imports it.
-    if chunk.entry_point.is_entry_point() {
+    // The load enters at the file of the entry point, which is in another chunk.
+    if chunk
+        .flags
+        .contains(chunk::Flags::ENTRY_POINT_FILE_IS_SPLIT_OFF)
+    {
         roots.insert(0, chunk.entry_point.source_index());
     }
 
@@ -893,7 +896,9 @@ fn reached_chunks_in_order(
             visited.set(source_index as usize);
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
-                chunk_of_file[source_index as usize] == chunk_index
+                // Several chunks can have one key (`split_chunks_by_evaluation_order`).
+                entry_bits.eql(&file_entry_bits[source_index as usize])
+                    && matches!(chunk_of_file[source_index as usize], other if other == chunk_index || other == u32::MAX)
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

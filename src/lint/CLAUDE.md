@@ -4,17 +4,17 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 
 ## Layout
 
-| Path                                   | Crate                  | What                                                                                                                                           |
-| -------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/lint/`                            | `bun_lint`             | The API: `ast/`, `semantic/`, `tokens/`, `types`, `code_path`, `regex`, `rule.rs`, `context.rs`, `fix.rs`, `options.rs`, `utils/`, `runner.rs` |
-| `src/lint/eslint/rules/*.rs`           | `bun_lint_eslint`      | One file per ESLint core rule                                                                                                                  |
-| `src/lint/typescript/rules/*.rs`       | `bun_lint_typescript`  | One file per typescript-eslint rule                                                                                                            |
+| Path                                   | Crate                  | What                                                                                                                                            |
+| -------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lint/`                            | `bun_lint`             | The API: `ast/`, `semantic/`, `tokens/`, `types`, `code_path`, `regex`, `rule.rs`, `context.rs`, `fix.rs`, `options.rs`, `utils/`, `runner.rs`  |
+| `src/lint/eslint/rules/*.rs`           | `bun_lint_eslint`      | One file per ESLint core rule                                                                                                                   |
+| `src/lint/typescript/rules/*.rs`       | `bun_lint_typescript`  | One file per typescript-eslint rule                                                                                                             |
 | `src/lint/plugins/rules/*.rs`          | `bun_lint_plugins`     | Rules of plugins: `react-hooks`, `import`, `n`, and oxlint's `oxc`, `promise`, `node`, `import`, `vue`                                          |
 | `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, .. | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration only |
-| `src/lint/oxlint/`                     | `bun_lint_oxlint`      | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                        |
-| `src/lint/standalone/`                 | `bun_lint_standalone`  | `bun-lint`, the test harness. Links without the rest of Bun                                                                                    |
-| `src/lint/conformance/`                | `bun_lint_conformance` | Runs the test cases below, in `bun-lint` and in `bun lint --run-eslint-tests` (debug and canary builds)                                        |
-| `test/cli/lint/conformance/bundle.zst` |                        | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                      |
+| `src/lint/oxlint/`                     | `bun_lint_oxlint`      | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                         |
+| `src/lint/standalone/`                 | `bun_lint_standalone`  | `bun-lint`, the test harness. Links without the rest of Bun                                                                                     |
+| `src/lint/conformance/`                | `bun_lint_conformance` | Runs the test cases below, in `bun-lint` and in `bun lint --run-eslint-tests` (debug and canary builds)                                         |
+| `test/cli/lint/conformance/bundle.zst` |                        | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                       |
 
 ## Writing a rule
 

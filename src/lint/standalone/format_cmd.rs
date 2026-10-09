@@ -244,9 +244,7 @@ fn format_text_with_cursor(
         return bun_format::yaml::format(code, options, &mut Default::default(), &mut out)
             .map(|()| with_cursor(code, out));
     }
-    if options.flavor.is_oxfmt()
-        && options.parser.is_none()
-        && bun_format::toml::is_toml_path(name)
+    if options.flavor.is_oxfmt() && options.parser.is_none() && bun_format::toml::is_toml_path(name)
     {
         let mut out = Vec::new();
         return bun_format::toml::format(code, options, &mut out).map(|()| with_cursor(code, out));

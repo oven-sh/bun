@@ -924,6 +924,36 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  test("no-useless-assignment: the name of a class declaration is one variable around the class and another in it", async () => {
+    // What is expected is what ESLint 10.12.0 reports.
+    const cases: [string, string[]][] = [
+      ["(v0 = v0); class v0 extends (function () { return v0; }) { }", ["1:2"]],
+      ["const v1 = (() => (v3)); class v3 extends [({ k: [(v3 = v3)] })] { }", ["1:52"]],
+      ["class v4 extends v4 { static p = v4; } let [[v5 = (v4 = v4)]] = (0);", ["1:52"]],
+      ["function v6() { v7; class v7 extends ([v7] = (0)) { } }", []],
+      ["({ v8 } = v8); class v8 extends v8 { }", ["1:4"]],
+      ["let [q = v9] = 0; class v9 extends (v9 = 0) { }", []],
+      ["let r = v10; class v10 extends (v10 = 0) { }", []],
+      ["class a extends (a = 0) { } g(a);", []],
+      ["class a { m() { return a; } } a = 0;", []],
+      ["class a { m() { return a; } } a = 0; g(a);", []],
+      ["class a { static p = (a = 0); } g(a);", []],
+      ["class a { m() { a = 0; } } g(a);", []],
+    ];
+    const files: Record<string, string> = {
+      "eslint.config.js": `export default [{ languageOptions: { sourceType: "script" }, rules: { "no-useless-assignment": "error" } }];\n`,
+    };
+    cases.forEach(([code], i) => (files[`c${i}.cjs`] = code + "\n"));
+    const { raw } = await lint(files, ["-f", "json", "*.cjs"]);
+    const reported = Object.fromEntries(
+      JSON.parse(raw).map((it: any) => [
+        it.filePath.replace(/^.*[\\/]/, ""),
+        it.messages.map((it: any) => `${it.line}:${it.column}`),
+      ]),
+    );
+    expect(reported).toEqual(Object.fromEntries(cases.map(([, places], i) => [`c${i}.cjs`, places])));
+  });
+
   describe("comments", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),

@@ -1,5 +1,6 @@
 use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_of_code_path};
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
@@ -29,9 +30,11 @@ type Assignments<'a> = SmallVec<[Assignment<'a>; 1]>;
 struct ScopeStack<'a> {
     scope: Scope<'a>,
     /// `None` for a variable that is not looked at.
-    assignments: FxHashMap<Symbol<'a>, Option<Assignments<'a>>>,
+    assignments: FxHashMap<Binding<'a>, Option<Assignments<'a>>>,
     /// In the order of the source.
     try_statement_blocks: Vec<Span>,
+    /// Those of them that have a `finally`, with a configuration of oxlint.
+    finalized_blocks: Vec<Span>,
     segments: Segments<'a>,
 }
 
@@ -183,6 +186,63 @@ fn is_exported(variable: Symbol<'_>) -> bool {
         Declaration::Class(class) => class.flags().contains(Flags::EXPORT),
         _ => false,
     }) || variable.references().any(|reference| matches!(reference.node(), Node::ExportSpec(_)))
+}
+
+/// A variable as ESLint has it. The name of a class declaration is two of them: one in the scope
+/// around the class, and one in the scope of the class, which is what the name means in the class,
+/// from the `extends` on.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct Binding<'a> {
+    symbol: Symbol<'a>,
+    /// For the variable in the scope of a class declaration.
+    class: Option<Class<'a>>,
+}
+
+impl std::hash::Hash for Binding<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.symbol.hash(state);
+    }
+}
+
+impl<'a> Binding<'a> {
+    /// What `symbol` is in the scope that it is declared in.
+    fn outer(symbol: Symbol<'a>) -> Binding<'a> {
+        Binding {
+            symbol,
+            class: None,
+        }
+    }
+
+    /// What `reference`, which is one to `symbol`, refers to.
+    fn of(symbol: Symbol<'a>, reference: Reference<'a>) -> Binding<'a> {
+        if !symbol
+            .declaration_kinds()
+            .contains(DeclarationKinds::CLASS_NAME)
+        {
+            return Binding::outer(symbol);
+        }
+        let class = reference.scope().chain().find_map(|it| match it.node() {
+            Node::Class(class) if class.symbol() == Some(symbol) => {
+                Some(class).filter(|it| matches!(it.owner(), Node::Stmt(_)))
+            }
+            _ => None,
+        });
+        Binding { symbol, class }
+    }
+
+    fn scope(self) -> Scope<'a> {
+        self.class
+            .and_then(Class::scope)
+            .unwrap_or_else(|| self.symbol.scope())
+    }
+
+    fn references(self) -> SmallVec<[Reference<'a>; 8]> {
+        let all = self.symbol.references();
+        match (self.symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME) {
+            true => all.filter(|it| Binding::of(self.symbol, *it) == self).collect(),
+            false => all.collect(),
+        }
+    }
 }
 
 const NONE: u32 = u32::MAX;
@@ -1265,8 +1325,8 @@ struct Uses<'a> {
 }
 
 impl<'a> Uses<'a> {
-    fn of(variable: Symbol<'a>) -> Self {
-        let mut all: SmallVec<[Use; 8]> = (variable.references())
+    fn of(variable: Binding<'a>, references: &[Reference<'a>]) -> Self {
+        let mut all: SmallVec<[Use; 8]> = (references.iter())
             .map(|it| Use {
                 start: it.ident().start(),
                 is_read: it.is_read(),
@@ -1840,20 +1900,46 @@ impl<'a> Uses<'a> {
     }
 }
 
+/// Where the outermost of `blocks` around `identifier` ends. They are in the order of the source, and each ends where
+/// the last of those up to it ends.
+fn end_of_block_around(blocks: &[Span], identifier: Span) -> Option<u32> {
+    let before = blocks.partition_point(|block| block.start <= identifier.start);
+    let block = blocks.get(before.checked_sub(1)?)?;
+    (identifier.end <= block.end).then_some(block.end)
+}
+
 impl NoUselessAssignment {
-    /// Finds out whether the code path that `variable` is declared in has to be analyzed.
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !variable.has_writes() || !variable.has_reads() {
             return;
         }
-        let mut uses = Uses::of(variable);
+        let mut bindings: SmallVec<[Binding<'a>; 2]> = smallvec![Binding::outer(variable)];
+        if variable
+            .declaration_kinds()
+            .contains(DeclarationKinds::CLASS_NAME)
+        {
+            for reference in variable.references() {
+                let binding = Binding::of(variable, reference);
+                if !bindings.contains(&binding) {
+                    bindings.push(binding);
+                }
+            }
+        }
+        for binding in bindings {
+            Self::check_binding(binding, cx);
+        }
+    }
+
+    /// Finds out whether the code path that `variable` is declared in has to be analyzed.
+    fn check_binding<'a>(variable: Binding<'a>, cx: &mut Cx<'a, Self>) {
+        let references = variable.references();
+        let mut uses = Uses::of(variable, &references);
         let (nearest, writers) = (&mut cx.state.code_path_scopes, &mut cx.state.writers);
         let scope = code_path_scope(variable.scope(), nearest);
         // What a function assigns to a variable from outside it is not looked at.
-        let is_unknown = variable
-            .references()
+        let is_unknown = (references.iter())
             .filter(|it| it.is_write())
-            .any(|reference| {
+            .any(|&reference| {
                 written_by(reference, writers)
                     .is_some_and(|written| !uses.is_known_to_be_read(&written))
                     && code_path_scope(reference.scope(), nearest) == scope
@@ -1865,8 +1951,7 @@ impl NoUselessAssignment {
             return;
         };
         // What a function reads can be read at any time.
-        if variable
-            .references()
+        if (references.iter())
             .any(|it| it.is_read() && code_path_scope(it.scope(), nearest) != Some(scope))
         {
             return;
@@ -1910,25 +1995,29 @@ impl NoUselessAssignment {
     fn verify<'a>(mut target: ScopeStack<'a>, cx: &mut Cx<'a, Self>) {
         // Each block ends where the last of those up to it ends: a block that starts before an
         // identifier is around it if one of these ends after it.
-        let mut end = 0;
-        for block in &mut target.try_statement_blocks {
-            end = end.max(block.end);
-            block.end = end;
+        for blocks in [&mut target.try_statement_blocks, &mut target.finalized_blocks] {
+            let mut end = 0;
+            for block in blocks {
+                end = end.max(block.end);
+                block.end = end;
+            }
         }
-        let is_in_try_statement_block = |identifier: Span| {
-            let blocks = &target.try_statement_blocks;
-            let before = blocks.partition_point(|block| block.start <= identifier.start);
-            before
-                .checked_sub(1)
-                .and_then(|it| blocks.get(it))
-                .is_some_and(|block| identifier.end <= block.end)
+        let is_in_try_statement_block =
+            |identifier: Span| end_of_block_around(&target.try_statement_blocks, identifier).is_some();
+        // For oxlint every statement of a `try` block with a `finally` can be the last one that runs before what
+        // follows the `try` statement, as if there were a `catch`: in `let a = 0; try { a = f(); } finally { g(); }
+        // return a;` the 0 is used.
+        let oxlint_takes_for_used = |following: Option<&Assignment<'a>>, last_read: Option<&Span>| {
+            following
+                .and_then(|it| end_of_block_around(&target.finalized_blocks, it.identifier))
+                .is_some_and(|end| last_read.is_some_and(|it| it.start >= end))
         };
         'variables: for (variable, assignments) in target.assignments {
             let Some(mut assignments) = assignments else {
                 continue;
             };
             let mut read_references: SmallVec<[Span; 8]> = SmallVec::new();
-            for reference in variable.references().filter(|it| it.is_read()) {
+            for reference in variable.references().into_iter().filter(|it| it.is_read()) {
                 // It can be called at any time.
                 let start = cx.state.code_path_start_scopes.around(reference.scope());
                 if start != Some(target.scope) {
@@ -1951,16 +2040,17 @@ impl NoUselessAssignment {
                 let identifier = assignment.identifier;
                 if !is_in_try_statement_block(identifier)
                     && uses.is_assignment_unused(index, next, &mut target.segments)
+                    && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
                 {
                     cx.report(identifier, UNNECESSARY_ASSIGNMENT)
-                        .data("name", variable.name());
+                        .data("name", variable.symbol.name());
                 }
             }
         }
     }
 
     fn add_assignment<'a>(
-        variable: Option<Symbol<'a>>,
+        variable: Option<Binding<'a>>,
         identifier: Span,
         expression: Option<Span>,
         cx: &mut Cx<'a, Self>,
@@ -1974,8 +2064,8 @@ impl NoUselessAssignment {
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
                 let is_ignored = state.code_path_start_scopes.around(scope) != Some(top.scope)
-                    || variable.is_marked_used()
-                    || scope.kind() == ScopeKind::Module && is_exported(variable);
+                    || variable.class.is_none() && variable.symbol.is_marked_used()
+                    || scope.kind() == ScopeKind::Module && is_exported(variable.symbol);
                 entry.insert((!is_ignored).then(SmallVec::new))
             }
         };
@@ -1994,6 +2084,7 @@ impl NoUselessAssignment {
             scope,
             assignments: FxHashMap::default(),
             try_statement_blocks: Vec::new(),
+            finalized_blocks: Vec::new(),
             segments: Segments {
                 initial: path.initial_segment(),
                 started: Vec::new(),
@@ -2029,9 +2120,13 @@ impl NoUselessAssignment {
     /// At a `try` statement, or at an `import a = b.c`, whose `b` is a reference.
     fn on_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
-            StmtKind::Try { block, .. } => {
+            StmtKind::Try { block, finalizer, .. } => {
+                let is_finalized = finalizer.is_some() && cx.language().is_oxlint;
                 if let Some(top) = cx.state.stack.last_mut() {
                     top.try_statement_blocks.push(block.span());
+                    if is_finalized {
+                        top.finalized_blocks.push(block.span());
+                    }
                 }
             }
             StmtKind::ImportEquals(import) => {
@@ -2075,7 +2170,8 @@ impl NoUselessAssignment {
                     } else {
                         pat.span()
                     };
-                    Self::add_assignment(pat.symbol(), identifier, Some(init.span()), cx);
+                    let variable = pat.symbol().map(Binding::outer);
+                    Self::add_assignment(variable, identifier, Some(init.span()), cx);
                 });
                 return;
             }
@@ -2093,7 +2189,9 @@ impl NoUselessAssignment {
             _ => return,
         };
         extract_identifiers_from_pattern(pattern, |identifier| {
-            let variable = identifier.reference().and_then(Reference::symbol);
+            let variable = identifier
+                .reference()
+                .and_then(|it| Some(Binding::of(it.symbol()?, it)));
             Self::add_assignment(variable, identifier.span(), expression, cx);
         });
     }

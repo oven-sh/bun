@@ -632,7 +632,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `shouldBreakList`, for `node`, which is in `self.value_stack`.
     fn should_break_list(&self, statement: Statement<'_, 'a>, node: ValueRef<'_>) -> bool {
-        super::printer::is_list_with_comma_group(node.values, node.id)
+        super::printer::is_list_with_comma_group(node.values, node.id, self.is_oxfmt)
             && self.is_top_level_of_value(statement)
             && match statement.node().kind {
                 Kind::Decl => !statement.node().prop.starts_with(b"--"),

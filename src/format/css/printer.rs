@@ -11,7 +11,7 @@ use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
-use super::value_parser::{ValueId, ValueKind, Values};
+use super::value_parser::{Before, ValueId, ValueKind, Values};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
 use std::borrow::Cow;
 
@@ -635,7 +635,7 @@ impl<'a> Printer<'a, '_> {
 
         // `path.call(() => shouldBreakList(path), "value", "group", "group")`
         let should_break_top_level_list = matches!(node.value, Value::Parsed(value)
-            if top_level_group(statement.values, value).is_some_and(|group| is_list_with_comma_group(statement.values, group)))
+            if top_level_group(statement.values, value).is_some_and(|group| is_list_with_comma_group(statement.values, group, self.is_oxfmt)))
             && !node.prop.starts_with(b"--");
         let is_on_its_own_line = !is_colon
             && last_line_has_inline_comment(trimmed_between)
@@ -1317,13 +1317,27 @@ pub(crate) fn top_level_group(values: &Values, root: ValueId) -> Option<ValueId>
     Some(value.group)
 }
 
-/// The first condition of `shouldBreakList`.
-pub(crate) fn is_list_with_comma_group(values: &Values, id: ValueId) -> bool {
+/// `-apple-system`, `+3em`: to postcss-value-parser a sign that is not the first thing in a value is an operator,
+/// so to Prettier this is two things.
+fn is_signed_word(values: &Values, id: ValueId) -> bool {
+    matches!(*values.groups(id), [sign, word]
+        if values.node(sign).kind == ValueKind::Operator
+            && matches!(values.node(sign).first_byte, b'-' | b'+')
+            && values.node(word).before == Before::Empty)
+}
+
+/// The first condition of `shouldBreakList`. `signed_word_is_one`: as for oxfmt, which keeps
+/// `font-family: a, -apple-system` on one line.
+pub(crate) fn is_list_with_comma_group(
+    values: &Values,
+    id: ValueId,
+    signed_word_is_one: bool,
+) -> bool {
     let node = values.node(id);
     node.kind == ValueKind::ParenGroup
         && node.open == 0
-        && values
-            .groups(id)
-            .iter()
-            .any(|&it| values.node(it).kind == ValueKind::CommaGroup)
+        && values.groups(id).iter().any(|&it| {
+            values.node(it).kind == ValueKind::CommaGroup
+                && !(signed_word_is_one && is_signed_word(values, it))
+        })
 }

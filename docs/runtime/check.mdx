@@ -653,6 +653,7 @@ These differences are intentional:
 - **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
 - **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
+- **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that names the `package.json` and says how to run `bun install` for it.
 - **A note tells you when type checking did not run.** If a syntax error or an invalid option stops the check, `bun check` adds a line that says [how many files it did not check](#stopped-before-type-checking).

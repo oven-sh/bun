@@ -633,6 +633,37 @@ describe.concurrent("bun check", () => {
     `);
   });
 
+  // Nothing is asserted about the long file: in a debug build the stack can run out before the 2,000 levels of TS2563.
+  test.each([
+    ["is checked", "a-generated.ts", {}],
+    ["is JavaScript that is not checked, as with the tsconfig.json of bun init", "a-generated.js", { allowJs: true }],
+  ])(
+    "a file that is too long for control flow analysis and %s takes no error from the files after it",
+    async (_, generated, options) => {
+      using dir = project({
+        [generated]: "const data = [];\n" + "data[0] = 0;\n".repeat(3000) + "export default data;\n",
+        "wrong.ts": `declare let s: string;\nexport const a: number = s;\nexport function f(x: string): number {\n  return x;\n}\nexport const b = s.nope;\n`,
+        "right.ts": `type S = { k: "a" } | { k: "b" };\ndeclare function assertNever(x: never): never;\nexport function f(s: S) {\n  switch (s.k) {\n    case "a":\n      return 1;\n    case "b":\n      return 2;\n    default:\n      return assertNever(s);\n  }\n}\n`,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true, types: [], ...options },
+          files: [generated, "right.ts", "wrong.ts"],
+        }),
+      });
+      const runs = await Promise.all([1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])));
+      for (const { stdout, exitCode } of runs) {
+        const others = stdout.split("\n").filter(line => !line.startsWith("a-generated."));
+        expect(others.join("\n")).toBe(
+          [
+            "wrong.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.",
+            "wrong.ts(4,3): error TS2322: Type 'string' is not assignable to type 'number'.",
+            "wrong.ts(6,20): error TS2339: Property 'nope' does not exist on type 'string'.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
   // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
   test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;

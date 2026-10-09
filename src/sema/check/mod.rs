@@ -1460,7 +1460,7 @@ pub struct Checker<'p, 's> {
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
     /// `flowAnalysisDisabled`. Only `checkBlock` restores it, so after a reference outside any
-    /// function or module block it stays set for the files that this checker checks afterwards.
+    /// function or module block it stays set for the rest of the file.
     flow_analysis_disabled: bool,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,

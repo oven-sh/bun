@@ -5,6 +5,11 @@
 // at half the size: twice as long is linear, four times is quadratic.
 // With COMMAND="<a release build of bun> format --check" and NAMES=a.html,a.vue,.. (one for each variant) that command is run on a file
 // of that name in the place of the fuzzer, which is many times slower than Bun. SLOW_MS: what counts as slow, 1000 unless set.
+// ONLY="n times": only the inputs whose description has that in it.
+// A word that is repeated from the first byte on is often a syntax error at once. nests.json has what nests in a context: the ending of the
+// name of the file, what is before, what opens, what is in the middle, what closes, what is after. Those for the target are run too, each as
+// the variant that its ending stands for: before + n times what opens + the middle + n times what closes + after.
+// STACK_KB: the stack, 4096 unless set. With 1024 and the build with AddressSanitizer a recursion that nothing checks shows at a tenth of the size.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,7 +32,7 @@ const CLOSERS: [RegExp, (m: RegExpExecArray) => string][] = [
 function repeated(unit: Buffer, size: number) {
   return Buffer.alloc(Math.max(unit.length, size - (size % unit.length)), unit);
 }
-type Shape = { name: string; make: (size: number) => Buffer };
+type Shape = { name: string; make: (size: number) => Buffer; variant?: number; second?: number };
 const shapes: Shape[] = [];
 for (const word of words) {
   const name = JSON.stringify(word.toString("latin1"));
@@ -46,33 +51,70 @@ for (const word of words) {
   }
 }
 
+/** For each target: the variant (format.rs: `TARGETS`, lint.rs: `VARIANTS`, parser.rs: `PATHS`) for the ending of a name. */
+const ENDINGS: Record<string, Record<string, number>> = {
+  js: { js: 0, jsx: 1, ts: 2, tsx: 3, mjs: 4, cjs: 5, mts: 6, cts: 7, "d.ts": 8 },
+  lint: { js: 0, cjs: 2, jsx: 3, ts: 4, tsx: 5, "d.ts": 6, cts: 7, mts: 8, mjs: 11 },
+  parser: { ts: 0, tsx: 1, js: 2, jsx: 3, "d.ts": 4, mts: 5, cts: 6, mjs: 7, cjs: 8 },
+  html: { html: 0, vue: 1, "component.html": 2 },
+  css: { css: 0, scss: 1, less: 2 },
+  markdown: { md: 0, mdx: 1 },
+  md: { md: 0 },
+  json: { json: 0, json5: 1, "package.json": 4 },
+  yaml: { yaml: 0 },
+  graphql: { graphql: 0 },
+  handlebars: { hbs: 0 },
+};
+for (const [ending, before, open, middle, close, after] of JSON.parse(readFileSync(join(import.meta.dir, "nests.json"), "utf8")) as string[][]) {
+  const variant = ENDINGS[target]?.[ending];
+  const isFlow = before.includes("@flow");
+  if (variant === undefined || (isFlow && target == "lint")) continue;
+  // The second byte of an input of `parser` is the dialect: those of tsc and Babel, or the two of Flow.
+  for (const second of target != "parser" ? [0] : isFlow ? [4, 5] : [0, 3]) {
+    shapes.push({
+      name: `${ending}${second ? " dialect " + second : ""}: ${JSON.stringify(before)} + n times ${JSON.stringify(open)} + ${JSON.stringify(middle)} + n times ${JSON.stringify(close)} + ${JSON.stringify(after)}`,
+      make: size => Buffer.from(before + open.repeat(Math.floor(size / (open.length + close.length))) + middle + close.repeat(Math.floor(size / (open.length + close.length))) + after + "\n"),
+      variant,
+      second,
+    });
+  }
+}
+
 const directory = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "repeats-"));
-const { COMMAND, NAMES = "", SLOW_MS = "1000" } = process.env;
+const { COMMAND, NAMES = "", SLOW_MS = "1000", ONLY = "", STACK_KB = "4096" } = process.env;
 function run(variant: number, shape: Shape, size: number, slot: number) {
   const path = COMMAND ? join(directory, `${slot}-${NAMES.split(",")[variant]}`) : join(directory, String(slot));
   const header = Buffer.alloc(COMMAND ? 0 : 10);
   if (!COMMAND) header[0] = variant;
+  if (!COMMAND) header[1] = shape.second ?? 0;
   writeFileSync(path, Buffer.concat([header, shape.make(size)]));
   const script = COMMAND
-    ? `ulimit -c 0; ulimit -v 8000000; exec timeout 20 ${COMMAND} "$1"`
-    : `ulimit -c 0; ulimit -s 4096; exec "$0" -timeout=20 -rss_limit_mb=4096 -malloc_limit_mb=2048 "$1"`;
+    ? `ulimit -c 0; ulimit -v 8000000; exec /usr/bin/time -f "CPU %U %S" timeout 20 ${COMMAND} "$1"`
+    : `ulimit -c 0; ulimit -s ${STACK_KB}; exec /usr/bin/time -f "CPU %U %S" "$0" -timeout=20 -rss_limit_mb=4096 -malloc_limit_mb=2048 "$1"`;
   return new Promise<{ ms: number; died: string }>(done => {
-    const began = performance.now();
     const child = spawn("/bin/sh", ["-c", script, join(binaries, `fuzz_${target}`), path], {
-      env: { ...process.env, FUZZ_FINDINGS: join(directory, "findings"), FUZZ_SLOW_MS: "100000", ASAN_OPTIONS: "detect_leaks=0:detect_stack_use_after_return=0:allocator_may_return_null=1" },
+      env: { ...process.env, FUZZ_STACK_KB: STACK_KB, FUZZ_FINDINGS: join(directory, "findings"), FUZZ_SLOW_MS: "100000", ASAN_OPTIONS: "detect_leaks=0:detect_stack_use_after_return=0:allocator_may_return_null=1" },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let errors = "";
     child.stderr.on("data", data => (errors = (errors + data).slice(-20000)));
     child.on("close", (code, signal) => {
-      const why = /ERROR: (AddressSanitizer: [\w-]+|libFuzzer: [\w- ]+)/.exec(errors)?.[1] ?? `${signal ?? code}`;
+      const why = /ERROR: (AddressSanitizer: [\w-]+|libFuzzer: [\w- ]+)|(has overflowed its stack|terminated by signal \d+)/.exec(errors)?.slice(1).find(Boolean) ?? `${signal ?? code}`;
+      // Processor time, not the time of day: other processes want the processor too.
+      const [, user, system] = /CPU ([\d.]+) ([\d.]+)/.exec(errors) ?? [];
+      const ms = (Number(user) + Number(system)) * 1000;
       // The exit codes of `bun format --check`: 1: not formatted, 2: a syntax error.
-      done({ ms: performance.now() - began, died: code == 0 || (COMMAND && (code == 1 || code == 2)) ? "" : why });
+      done({ ms, died: code == 0 || (COMMAND && (code == 1 || code == 2)) ? "" : why });
     });
   });
 }
 
-const all = variants.split(",").flatMap(variant => shapes.map(shape => ({ variant: Number(variant), shape })));
+const wanted = shapes.filter(shape => shape.name.includes(ONLY));
+const all = [
+  ...variants.split(",").flatMap(variant => wanted.filter(shape => shape.variant === undefined).map(shape => ({ variant: Number(variant), shape }))),
+  // With COMMAND the variants are those of NAMES.
+  ...wanted.filter(shape => shape.variant !== undefined && !COMMAND).map(shape => ({ variant: shape.variant!, shape })),
+];
 let next = 0;
 const found = { died: 0, slow: 0 };
 await Promise.all(

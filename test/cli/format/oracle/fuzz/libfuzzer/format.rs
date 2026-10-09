@@ -1,8 +1,11 @@
 //! `bun format` on bytes. `FUZZ_TARGET`, or the name of the program after `fuzz_`, says which
-//! language: html, handlebars, css, yaml, markdown, graphql, json, js. `md` is not the formatter: `bun_md`, which is behind
-//! `Bun.markdown`, renders the text as HTML.
+//! language: html, handlebars, css, yaml, markdown, graphql, json, js. `embedded`: the text is in a text in another language.
+//! `imports`: JavaScript with what plugins of Prettier and oxfmt do: sorted imports, formatted JSDoc comments.
+//! `md` is not the formatter: `bun_md`, which is behind `Bun.markdown`, renders the text as HTML.
 
 #![no_main]
+
+mod kept;
 
 use bun_format::FormatOptions;
 use bun_fuzz::{Input, Run, shape, show, shows};
@@ -19,7 +22,219 @@ struct Target {
     growth: usize,
 }
 
+/// Where the text of the target `embedded` is: the name of the file, what is before the text, what is after it, and whether that
+/// is a template of JavaScript.
+type Place = (&'static str, &'static str, &'static str, bool);
+
+/// seeds.ts knows the order.
+const PLACES: &[Place] = &[
+    ("a.js", "html`", "`;\n", true),
+    ("a.js", "/* HTML */ `", "`;\n", true),
+    ("a.ts", "@Component({\n  template: `", "`,\n})\nclass A {}\n", true),
+    ("a.js", "const a = {\n  b: [\n    html`", "`,\n  ],\n};\n", true),
+    ("a.md", "```html\n", "\n```\n", false),
+    ("a.md", "```vue\n", "\n```\n", false),
+    ("a.md", "- a\n\n  ```html\n  ", "\n  ```\n", false),
+    ("a.vue", "<template>\n", "\n</template>\n", false),
+    ("a.vue", "<template lang=\"html\">\n", "\n</template>\n", false),
+    ("a.vue", "<template lang=\"pug\">\n", "\n</template>\n", false),
+    ("a.vue", "<script>\n", "\n</script>\n", false),
+    ("a.vue", "<script setup lang=\"ts\">\n", "\n</script>\n", false),
+    ("a.vue", "<script lang=\"tsx\">\n", "\n</script>\n", false),
+    ("a.vue", "<style>\n", "\n</style>\n", false),
+    ("a.vue", "<style lang=\"scss\" scoped>\n", "\n</style>\n", false),
+    ("a.vue", "<style lang=\"less\">\n", "\n</style>\n", false),
+    ("a.vue", "<i18n>\n", "\n</i18n>\n", false),
+    ("a.vue", "<custom lang=\"json\">\n", "\n</custom>\n", false),
+    ("a.vue", "<docs lang=\"markdown\">\n", "\n</docs>\n", false),
+    ("a.vue", "<custom lang=\"yaml\">\n", "\n</custom>\n", false),
+    ("a.vue", "<template><a :b=\"", "\" /></template>\n", false),
+    ("a.vue", "<template><a @b=\"", "\" /></template>\n", false),
+    ("a.vue", "<template><a v-for=\"", "\" /></template>\n", false),
+    ("a.vue", "<template><a #b=\"", "\" /></template>\n", false),
+    ("a.vue", "<template>{{ ", " }}</template>\n", false),
+    ("a.vue", "<script setup lang=\"ts\" generic=\"", "\"></script>\n", false),
+    ("a.html", "<script>\n", "\n</script>\n", false),
+    ("a.html", "<script type=\"module\">", "</script>\n", false),
+    ("a.html", "<script type=\"application/json\">", "</script>\n", false),
+    ("a.html", "<script type=\"text/markdown\">\n", "\n</script>\n", false),
+    ("a.html", "<script type=\"text/x-handlebars-template\">\n", "\n</script>\n", false),
+    ("a.html", "<script type=\"text/babel\" lang=\"tsx\">", "</script>\n", false),
+    ("a.html", "<div><style>\n", "\n</style></div>\n", false),
+    ("a.html", "<a style=\"", "\"></a>\n", false),
+    ("a.html", "<a class=\"", "\"></a>\n", false),
+    ("a.html", "<img srcset=\"", "\" sizes=\"a\" />\n", false),
+    ("a.html", "<a onclick=\"", "\"></a>\n", false),
+    ("a.html", "---\n", "\n---\n<a></a>\n", false),
+    ("a.html", "<pre>\n", "</pre>\n", false),
+    ("a.html", "<!-- ", " -->\n", false),
+    ("a.component.html", "<a [b]=\"", "\"></a>\n", false),
+    ("a.component.html", "<a (b)=\"", "\"></a>\n", false),
+    ("a.component.html", "<a *ngFor=\"", "\"></a>\n", false),
+    ("a.component.html", "<a i18n=\"", "\"></a>\n", false),
+    ("a.component.html", "<a b=\"{{ ", " }}\"></a>\n", false),
+    ("a.component.html", "{{ ", " }}\n", false),
+    ("a.component.html", "@if (", ") {\n  a\n}\n", false),
+    ("a.component.html", "@for (", ") {\n  a\n}\n", false),
+    ("a.component.html", "@defer (", ") {\n  a\n}\n", false),
+    ("a.component.html", "@let a = ", ";\n", false),
+    ("a.js", "css`", "`;\n", true),
+    ("a.js", "styled.a`", "`;\n", true),
+    ("a.jsx", "<style jsx>{`", "`}</style>;\n", true),
+    ("a.js", "graphql`", "`;\n", true),
+    ("a.js", "/* GraphQL */ `", "`;\n", true),
+    ("a.js", "markdown`", "`;\n", true),
+    ("a.md", "```js\n", "\n```\n", false),
+    ("a.md", "```tsx\n", "\n```\n", false),
+    ("a.md", "```css\n", "\n```\n", false),
+    ("a.md", "```json\n", "\n```\n", false),
+    ("a.md", "```yaml\n", "\n```\n", false),
+    ("a.md", "```graphql\n", "\n```\n", false),
+    ("a.md", "```md\n", "\n```\n", false),
+    ("a.md", "```hbs\n", "\n```\n", false),
+    ("a.md", "---\n", "\n---\n\na\n", false),
+    ("a.css", "---\n", "\n---\na {\n}\n", false),
+    ("a.mdx", "export const a = ", ";\n\nb\n", false),
+    ("a.mdx", "<A b={", "} />\n", false),
+];
+
+/// The text that is formatted. In a template the bytes 1, 2 and 3 are substitutions, and a backtick has a backslash before it.
+fn in_its_place((_, before, after, is_template): Place, text: &[u8]) -> Vec<u8> {
+    let mut whole = before.as_bytes().to_vec();
+    for &byte in text {
+        match byte {
+            1 if is_template => whole.extend_from_slice(b"${x}"),
+            2 if is_template => whole.extend_from_slice(b"${a.b(c, d)}"),
+            3 if is_template => whole.extend_from_slice(b"${html`<e>${f}</e>`}"),
+            b'`' if is_template => whole.extend_from_slice(b"\\`"),
+            _ => whole.push(byte),
+        }
+    }
+    whole.extend_from_slice(after.as_bytes());
+    whole
+}
+
+/// Where the text of the target `imports` is. seeds.ts knows the order.
+const PLACES_OF_IMPORTS: [Place; 16] = [
+    ("a.ts", "", "", false),
+    ("a.js", "", "", false),
+    ("a.tsx", "", "", false),
+    ("a.jsx", "", "", false),
+    ("a.mts", "", "", false),
+    ("a.md", "```ts\n", "\n```\n", false),
+    ("a.md", "```js\n", "\n```\n", false),
+    ("a.md", "```tsx\n", "\n```\n", false),
+    ("a.md", "a\n\n```jsx\n", "\n```\n\nb\n", false),
+    ("a.mdx", "", "\n\n# a\n", false),
+    ("a.mdx", "```ts\n", "\n```\n", false),
+    ("a.vue", "<script>\n", "\n</script>\n", false),
+    ("a.vue", "<script setup lang=\"ts\">\n", "\n</script>\n\n<template>\n  <a />\n</template>\n", false),
+    ("a.vue", "<script lang=\"tsx\">\n", "\n</script>\n", false),
+    ("a.html", "<script type=\"module\">\n", "\n</script>\n", false),
+    ("a.html", "<script lang=\"ts\">\n", "\n</script>\n", false),
+];
+
+/// For the target `imports`: options that are not Prettier's own. seeds.ts and imports-oracle.mjs know the order.
+const EXTRAS: [&[(&str, &str)]; 16] = [
+    &[
+        ("plugins", r#"["@trivago/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["^@a/(.*)$", "<THIRD_PARTY_MODULES>", "^[./]"]"#),
+        ("importOrderSeparation", "true"),
+        ("importOrderSortSpecifiers", "true"),
+    ],
+    &[
+        ("plugins", r#"["@trivago/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["<BUILTIN_MODULES>", "^[./]"]"#),
+        ("importOrderGroupNamespaceSpecifiers", "true"),
+        ("importOrderCaseInsensitive", "true"),
+        ("importOrderSideEffects", "false"),
+        ("importOrderSortByLength", "asc"),
+    ],
+    &[
+        ("plugins", r#"["@trivago/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["<THIRD_PARTY_TS_TYPES>", "<TS_TYPES>^[./]", "^[./]"]"#),
+        ("importOrderGroupNamespaceSpecifiers", "true"),
+        ("importOrderSeparation", "true"),
+    ],
+    &[
+        ("plugins", r#"["@trivago/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["^a", "<SEPARATOR>", "<THIRD_PARTY_MODULES>", "^[./]"]"#),
+        ("importOrderSeparation", "true"),
+        ("importOrderSortByLength", "desc"),
+        ("importOrderImportAttributesKeyword", "assert"),
+    ],
+    &[("plugins", r#"["@ianvs/prettier-plugin-sort-imports"]"#)],
+    &[
+        ("plugins", r#"["@ianvs/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["<BUILTIN_MODULES>", "", "<THIRD_PARTY_MODULES>", "<TYPES>", "", "^[.]", "<TYPES>^[.]"]"#),
+        ("importOrderTypeScriptVersion", "5.0.0"),
+        ("importOrderCaseSensitive", "true"),
+        ("importOrderSafeSideEffects", r#"["^[.]"]"#),
+    ],
+    &[
+        ("plugins", r#"["@ianvs/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["", "<BUILTIN_MODULES>", "", "<THIRD_PARTY_MODULES>", "", "^[./]"]"#),
+        ("importOrderTypeScriptVersion", "5.0.0"),
+    ],
+    &[
+        ("plugins", r#"["@ianvs/prettier-plugin-sort-imports"]"#),
+        ("importOrder", r#"["^[./]", "<THIRD_PARTY_MODULES>"]"#),
+        ("importOrderTypeScriptVersion", "4.0.0"),
+    ],
+    &[("plugins", r#"["prettier-plugin-organize-imports"]"#)],
+    &[
+        ("plugins", r#"["prettier-plugin-organize-imports"]"#),
+        ("organizeImportsSkipDestructiveCodeActions", "true"),
+        ("organizeImportsTypeOrder", "first"),
+        ("tsconfig.jsx", "react"),
+    ],
+    &[
+        ("plugins", r#"["prettier-plugin-organize-imports"]"#),
+        ("organizeImportsTypeOrder", "inline"),
+        ("tsconfig.jsx", "react"),
+        ("tsconfig.jsxFactory", "a.b"),
+    ],
+    &[("flavor", "oxfmt"), ("sortImports", "{}")],
+    &[
+        ("flavor", "oxfmt"),
+        (
+            "sortImports",
+            r#"{"ignoreCase":false,"newlinesBetween":false,"order":"desc","partitionByComment":true,"partitionByNewline":true,"sortSideEffects":true}"#,
+        ),
+    ],
+    &[
+        ("flavor", "oxfmt"),
+        (
+            "sortImports",
+            r#"{"customGroups":[{"groupName":"a","elementNamePattern":["a","a-*"]},{"groupName":"b","elementNamePattern":["@*/**"],"modifiers":["type"]},{"groupName":"c","selector":"style"}],"groups":["a","b",["builtin","external"],{"newlinesBetween":false},"side_effect","unknown","c"],"internalPattern":["@a/"]}"#,
+        ),
+    ],
+    &[("flavor", "oxfmt"), ("jsdoc", "true")],
+    &[
+        ("flavor", "oxfmt"),
+        ("jsdoc", "true"),
+        ("jsdoc.capitalizeDescriptions", "false"),
+        ("jsdoc.commentLineStrategy", "multiline"),
+        ("jsdoc.separateTagGroups", "true"),
+        ("jsdoc.descriptionWithDot", "true"),
+        ("jsdoc.preferCodeFences", "true"),
+        ("jsdoc.lineWrappingStyle", "balance"),
+    ],
+];
+
 const TARGETS: &[Target] = &[
+    // See `PLACES_OF_IMPORTS` and `EXTRAS`.
+    Target {
+        name: "imports",
+        variants: &[],
+        growth: 8,
+    },
+    // See `PLACES`.
+    Target {
+        name: "embedded",
+        variants: &[],
+        growth: 8,
+    },
     Target {
         name: "html",
         variants: &[
@@ -32,6 +247,16 @@ const TARGETS: &[Target] = &[
             ("a.html", Some("__ng_binding")),
             ("a.html", Some("__ng_directive")),
             ("a.html", Some("__ng_interpolation")),
+            // What the name of a file says.
+            ("a.htm", None),
+            ("a.xhtml", None),
+            ("A.HTML", None),
+            ("a.hta", None),
+            ("a.inc", None),
+            ("a.xht", None),
+            ("a.html.hl", None),
+            ("a.Component.Html", None),
+            ("a.VUE", None),
         ],
         growth: 8,
     },
@@ -109,7 +334,7 @@ const FLAGS: [(&str, &str); 30] = [
     ("experimentalOperatorPosition", "start"),
     ("bracketSpacing", "false"),
     ("jsxSingleQuote", "true"),
-    ("embeddedHtml", "true"),
+    ("sortPackageJson", "true"),
     ("flavor", "oxfmt"),
     ("jsdoc", "true"),
     ("checkIgnorePragma", "true"),
@@ -129,12 +354,14 @@ fn target() -> &'static Target {
 
 /// The options that `input` asks for, and the same as flags of the command line.
 fn options_of(input: &Input, parser: Option<&str>) -> (FormatOptions, String) {
-    let (mut options, mut flags) = (FormatOptions::default(), String::new());
+    // As `bun format` has it.
+    let mut options = FormatOptions {
+        embedded_html: true,
+        ..FormatOptions::default()
+    };
+    let mut flags = String::new();
     let mut set = |name: &str, value: &str| {
-        match name {
-            "embeddedHtml" => options.embedded_html = true,
-            _ => _ = options.set(name.as_bytes(), value.as_bytes()),
-        }
+        let _ = options.set(name.as_bytes(), value.as_bytes());
         flags.push_str(&format!(" --{name}={value}"));
     };
     if let Some(parser) = parser {
@@ -199,6 +426,155 @@ fn render_markdown(data: &[u8], input: &Input) {
     if html.len() / 32 > input.text.len() + 64 {
         run.report("growth", "md", &format!("{} bytes become {}", input.text.len(), html.len()));
     }
+    // `Bun.markdown.ansi` and `bun file.md`. No images: that would read files.
+    let theme = bun_md::root::ansi::Theme {
+        light: input.has(28),
+        columns: u16::from(input.width),
+        colors: input.has(29),
+        hyperlinks: input.has(30),
+        kitty_graphics: false,
+        remote_image_paths: None,
+        image_base_dir: None,
+    };
+    let rendered = run.guarded(|| bun_md::root::ansi::render_to_ansi(input.text, options, theme));
+    if let Some(Ok(Some(rendered))) = rendered {
+        if shows() {
+            show("for a terminal", &rendered);
+        }
+        if str::from_utf8(input.text).is_ok() && str::from_utf8(&rendered).is_err() {
+            run.report("not-utf8", "ansi", "");
+        }
+    }
+}
+
+/// `options` without what moves or removes things: sorted imports, sorted keys, formatted JSDoc comments. Nothing: they ask
+/// for none of that.
+fn without_steps(options: &FormatOptions) -> Option<FormatOptions> {
+    let has_steps = options.sort_imports.is_some() || options.jsdoc.is_some() || options.sort_package_json.is_some();
+    has_steps.then(|| FormatOptions {
+        sort_imports: None,
+        jsdoc: None,
+        sort_package_json: None,
+        ..options.clone()
+    })
+}
+
+/// The words of the JSDoc comments among `comments`, in small letters, without the names of tags, and the other comments.
+fn split_comments(comments: &kept::Counts) -> (kept::Counts, kept::Counts) {
+    let (mut words, mut others) = (kept::Counts::new(), kept::Counts::new());
+    for (comment, &count) in comments {
+        if !comment.starts_with(b"/**") {
+            others.insert(comment.clone(), count);
+            continue;
+        }
+        let mut text = comment.to_ascii_lowercase();
+        let mut is_in_tag = false;
+        for byte in &mut text {
+            is_in_tag = *byte == b'@' || (is_in_tag && byte.is_ascii_alphabetic());
+            if is_in_tag {
+                *byte = b' ';
+            }
+        }
+        for (word, more) in kept::words(&text) {
+            *words.entry(word).or_default() += count * more;
+        }
+    }
+    (words, others)
+}
+
+/// `plain`: the text formatted without the steps that move or remove things. `stepped`: with them, as `options` has it.
+fn check_what_is_kept(run: &Run, variant: &str, path: &str, (plain, stepped): (&[u8], &[u8]), options: &FormatOptions) {
+    let report = |kind: &str, all: Vec<&[u8]>| {
+        let Some(first) = all.first() else {
+            return;
+        };
+        let readable: Vec<_> = all.iter().map(|it| String::from_utf8_lossy(it).replace('\0', " ")).collect();
+        run.report(kind, &format!("{variant}-{}", shape(first)), &readable.join("\n"));
+    };
+    let is_code = [".ts", ".js", ".tsx", ".jsx", ".mts"].iter().any(|it| path.ends_with(it));
+    let program = |text: &[u8]| kept::program(path.as_bytes(), text).filter(|_| is_code);
+    let Some((a, b)) = program(plain).zip(program(stepped)) else {
+        let (a, b) = (kept::words(plain), kept::words(stepped));
+        let missing = |a, b| {
+            let mut all = kept::missing(a, b);
+            all.retain(|it| !kept::is_part_of_an_import(it));
+            all
+        };
+        // A tag can go, and a word can get a capital letter.
+        let (lost, added) = match options.jsdoc {
+            Some(_) => ("word-lost-with-jsdoc", "word-added-with-jsdoc"),
+            None => ("word-lost", "word-added"),
+        };
+        report(lost, missing(&a, &b));
+        report(added, missing(&b, &a));
+        // Merged imports name their module once.
+        if options.jsdoc.is_none() {
+            let mut less_often = kept::fewer(&a, &b);
+            less_often.retain(|it| !kept::is_part_of_an_import(it));
+            report("word-less-often", less_often);
+        }
+        let applies = options.sort_imports.as_deref().is_none_or(|it| it.applies_to_embedded_code());
+        if !applies && !is_code && options.jsdoc.is_none() && plain != stepped {
+            run.report("changed-by-a-step-that-does-not-apply", variant, "");
+        }
+        if options.sort_package_json.is_some() {
+            report("word-more-often", kept::fewer(&b, &a));
+        }
+        return;
+    };
+    // `prettier-plugin-organize-imports` removes what nothing uses. A name that is nowhere else is not used.
+    let removes_unused = options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
+    let is_named = |import: &&[u8]| a.locals.get(*import).is_none_or(|local| a.words.contains_key(local));
+    let (lost, removed): (Vec<&[u8]>, Vec<&[u8]>) =
+        kept::missing(&a.names, &b.names).into_iter().partition(|it| !removes_unused || is_named(it));
+    report(if removes_unused { "import-removed-though-named" } else { "import-lost" }, lost);
+    report("import-added", kept::missing(&b.names, &a.names));
+    report("import-less-often", kept::fewer(&a.names, &b.names));
+    report("import-more-often", kept::fewer(&b.names, &a.names));
+    if a.rest != b.rest {
+        let same = a.rest.iter().zip(&b.rest).take_while(|(x, y)| x == y).count();
+        let from = |rest: &[u8]| String::from_utf8_lossy(&rest[same.min(rest.len())..(same + 60).min(rest.len())]).into_owned();
+        let (x, y) = (from(&a.rest), from(&b.rest));
+        run.report("rest-changed", &format!("{variant}-{}~{}", shape(x.as_bytes()), shape(y.as_bytes())), &format!("- {x}\n+ {y}"));
+    }
+    let ((words, others), (words_after, others_after)) = match options.jsdoc {
+        Some(_) => (split_comments(&a.comments), split_comments(&b.comments)),
+        None => ((kept::Counts::new(), a.comments), (kept::Counts::new(), b.comments)),
+    };
+    report("jsdoc-word-lost", kept::missing(&words, &words_after));
+    report("jsdoc-word-added", kept::missing(&words_after, &words));
+    // The comments of an import go with it.
+    if removed.is_empty() {
+        report("comment-lost", kept::missing(&others, &others_after));
+        report("comment-less-often", kept::fewer(&others, &others_after));
+    }
+    report("comment-added", kept::missing(&others_after, &others));
+    report("comment-more-often", kept::fewer(&others_after, &others));
+}
+
+/// With `FUZZ_RECORD=<file>`: what was formatted, how, what has become of it, and what becomes of it without the steps that
+/// move or remove things, is appended to the file, for imports-oracle.mjs. Each part has its length before it, in four bytes.
+fn record(how: &str, text: &[u8], results: [Option<&Result<Vec<u8>, Refusal>>; 2]) {
+    let Some(path) = std::env::var_os("FUZZ_RECORD") else {
+        return;
+    };
+    let mut all = Vec::new();
+    let mut add = |part: &[u8]| {
+        all.extend_from_slice(&(part.len() as u32).to_le_bytes());
+        all.extend_from_slice(part);
+    };
+    add(how.as_bytes());
+    add(text);
+    for result in results {
+        match result {
+            Some(Ok(out)) => [b"formatted", &out[..]].map(&mut add),
+            Some(Err(refusal)) => [format!("{refusal:?}").as_bytes(), b""].map(&mut add),
+            None => [&b""[..], b""].map(&mut add),
+        };
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
+        let _ = std::io::Write::write_all(&mut file, &all);
+    }
 }
 
 fn run(data: &[u8]) {
@@ -209,22 +585,58 @@ fn run(data: &[u8]) {
     if target.name == "md" {
         return render_markdown(data, &input);
     }
-    let (path, parser) = target.variants[input.variant as usize % target.variants.len()];
-    let (options, flags) = options_of(&input, parser);
-    let variant = parser.unwrap_or(path);
+    let which = input.variant as usize;
+    let whole;
+    let (path, parser, mut variant, text) = match (target.name, target.variants) {
+        ("imports", _) => {
+            let place = PLACES_OF_IMPORTS[which % PLACES_OF_IMPORTS.len()];
+            whole = in_its_place(place, input.text);
+            (place.0, None, format!("{}", which % PLACES_OF_IMPORTS.len()), &whole[..])
+        }
+        (_, []) => {
+            whole = in_its_place(PLACES[which % PLACES.len()], input.text);
+            (PLACES[which % PLACES.len()].0, None, format!("{}", which % PLACES.len()), &whole[..])
+        }
+        (_, variants) => {
+            let (path, parser) = variants[which % variants.len()];
+            (path, parser, parser.unwrap_or(path).to_owned(), input.text)
+        }
+    };
+    let (mut options, mut flags) = options_of(&input, parser);
+    let _ = options.set(b"filepath", path.as_bytes());
+    if target.name == "imports" {
+        let mut settings = bun_format::sort_imports::Settings::default();
+        let extra = which / PLACES_OF_IMPORTS.len() % EXTRAS.len();
+        variant.push_str(&format!("-{extra}"));
+        for (name, value) in EXTRAS[extra] {
+            if !settings.set(name.as_bytes(), value.as_bytes()) {
+                let _ = options.set(name.as_bytes(), value.as_bytes());
+            }
+            flags.push_str(&format!(" --{name}={value}"));
+        }
+        options.sort_imports = settings.compile().ok().flatten();
+    }
     let mut run = Run::new(data);
     run.how = format!("{path}{flags}");
-    let text = input.text;
+    // For triage.ts.
+    if let Some(path) = std::env::var_os("FUZZ_TEXT") {
+        let _ = std::fs::write(path, text);
+    }
     if shows() {
         show(&run.how, text);
     }
-    let format = |text: &[u8]| {
-        run.guarded(|| format_for_tests(path.as_bytes(), text, &options, true).map(|it| it.0))
+    let format_with = |text: &[u8], options: &FormatOptions| {
+        run.guarded(|| format_for_tests(path.as_bytes(), text, options, true).map(|it| it.0))
     };
+    let format = |text: &[u8]| format_with(text, &options);
     let size = text.len().max(1).ilog2();
-    let once = match format(text) {
-        None => return,
-        Some(Err(refusal)) => {
+    let Some(result) = format(text) else {
+        return;
+    };
+    let plain = without_steps(&options).and_then(|plain| format_with(text, &plain));
+    record(&run.how, text, [Some(&result), plain.as_ref()]);
+    let once = match result {
+        Err(refusal) => {
             if shows() {
                 show(&format!("{refusal:?}"), b"");
             }
@@ -235,6 +647,9 @@ fn run(data: &[u8]) {
                 let _ = std::fs::write(out, printed.0);
             }
             match refusal {
+                Refusal::Syntax if matches!(plain, Some(Ok(_))) => {
+                    run.report("refused-only-with-the-step", &format!("{variant}-2e{size}"), "");
+                }
                 Refusal::Syntax => {}
                 Refusal::Bug(what) => run.report("alarm", &format!("{variant}-{what}-2e{size}"), what),
                 // Prettier damages it too, or the check is wrong, or the formatter is.
@@ -242,7 +657,18 @@ fn run(data: &[u8]) {
             }
             return;
         }
-        Some(Ok(once)) => once,
+        Ok(once) => once,
+    };
+    // To see that the checks notice: the first line that imports something is dropped.
+    let once = match std::env::var_os("FUZZ_SABOTAGE") {
+        Some(_) => {
+            let mut lines: Vec<&[u8]> = once.split_inclusive(|&it| it == b'\n').collect();
+            if let Some(at) = lines.iter().position(|it| it.trim_ascii_start().starts_with(b"import ")) {
+                lines.remove(at);
+            }
+            lines.concat()
+        }
+        None => once,
     };
     if shows() {
         show("formatted", &once);
@@ -252,12 +678,32 @@ fn run(data: &[u8]) {
         let _ = std::fs::write(path, &once);
     }
     if str::from_utf8(text).is_ok() && str::from_utf8(&once).is_err() {
-        run.report("not-utf8", variant, "");
+        run.report("not-utf8", &variant, "");
     }
     let printed = len_without_indentation(&once);
     if printed / target.growth.max(1) > text.len() + 64 && target.growth != usize::MAX {
         let detail = format!("{} bytes become {printed}, and {} with the indentation", text.len(), once.len());
-        run.report("growth", variant, &detail);
+        run.report("growth", &variant, &detail);
+    }
+    match &plain {
+        Some(Ok(plain)) => {
+            if shows() {
+                show("formatted without the steps", plain);
+            }
+            check_what_is_kept(&run, &variant, path, (plain, &once), &options);
+        }
+        Some(Err(refusal)) => run.report("accepted-only-with-the-step", &format!("{variant}-{refusal:?}-2e{size}"), ""),
+        // No formatter adds or drops a letter. The pragma has some.
+        None if !options.insert_pragma && without_steps(&options).is_none() => {
+            let (before, after) = (kept::letters(text), kept::letters(&once));
+            if let Some(at) = (0..before.len()).find(|&at| before[at] != after[at]) {
+                let letter = if at < 26 { (b'a' + at as u8) as char } else { '~' };
+                let way = if before[at] > after[at] { "lost" } else { "added" };
+                let detail = format!("{letter}: {} times, then {} times", before[at], after[at]);
+                run.report(&format!("letter-{way}"), &format!("{variant}-{letter}"), &detail);
+            }
+        }
+        None => {}
     }
     // Only a whole text is formatted to what stays as it is.
     if input.flags >> 30 >= 2 {
@@ -272,9 +718,11 @@ fn run(data: &[u8]) {
             }
             let (a, b) = first_difference(&once, &twice);
             let detail = format!("- {}\n+ {}", String::from_utf8_lossy(a), String::from_utf8_lossy(b));
-            run.report("unstable", &format!("{variant}-{}~{}", shape(a), shape(b)), &detail);
+            // There are many of these.
+            let kind = if options.jsdoc.is_some() { "unstable-with-jsdoc" } else { "unstable" };
+            run.report(kind, &format!("{variant}-{}~{}", shape(a), shape(b)), &detail);
         }
-        Some(Err(Refusal::Loss(_))) => {}
+        Some(Err(Refusal::Loss(what))) => run.report("loss-in-its-own", &format!("{variant}-2e{size}"), what),
         Some(Err(refusal)) => {
             run.report("refuses-its-own", &format!("{variant}-{refusal:?}-2e{size}"), &format!("{refusal:?}"));
         }

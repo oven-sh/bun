@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // Two more natives, which only a build with debug assertions refers to. Nothing that is fuzzed calls them.
 #[unsafe(no_mangle)]
@@ -91,9 +91,12 @@ pub fn target_name() -> String {
 /// Before the first input, on the thread that runs them.
 fn settings() -> &'static Settings {
     SETTINGS.get_or_init(|| {
+        let variable = |name: &str| std::env::var(name).ok().filter(|it| !it.is_empty());
         // That of a thread of Bun's pool, which is what formats and lints. `run.sh` limits the stack
-        // of the process to the same size.
-        let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+        // of the process to the same size. `FUZZ_STACK_KB`: a smaller one, with which a recursion
+        // that nothing checks runs out of stack on a short input.
+        let stack = (variable("FUZZ_STACK_KB").and_then(|it| it.parse::<usize>().ok()))
+            .map_or(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize, |it| it << 10);
         native::set_stack_size(stack - (256 << 10));
         std::panic::set_hook(Box::new(|info| {
             let place = info.location().map_or_else(String::new, |it| {
@@ -107,7 +110,6 @@ fn settings() -> &'static Settings {
                 .unwrap_or_default();
             PANIC.set(Some((place, message)));
         }));
-        let variable = |name: &str| std::env::var(name).ok().filter(|it| !it.is_empty());
         Settings {
             directory: variable("FUZZ_FINDINGS").map(PathBuf::from),
             only: variable("FUZZ_ONLY"),
@@ -125,6 +127,17 @@ fn file_name(key: &str) -> String {
         .collect();
     name.truncate(140);
     name
+}
+
+/// How long the thread has been running. Not the time of day: other processes want the processor too.
+fn cpu_time() -> Duration {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a place for the result.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time) };
+    Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
 }
 
 /// One run of a target on one input.
@@ -186,9 +199,9 @@ impl<'a> Run<'a> {
 
     /// The result of `work`, or nothing if it panics, which is reported. What takes long is too.
     pub fn guarded<R>(&self, work: impl FnOnce() -> R) -> Option<R> {
-        let started = Instant::now();
+        let started = cpu_time();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
-        let elapsed = started.elapsed();
+        let elapsed = cpu_time().saturating_sub(started);
         if elapsed > settings().slow {
             let size = self.data.len().max(1).ilog2();
             self.report("slow", &format!("2e{size}"), &format!("{} ms", elapsed.as_millis()));

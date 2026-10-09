@@ -121,3 +121,7 @@ rustflags = ["-Cinstrument-coverage"]
 
 [profile.coverage.package.bun_sema]
 rustflags = ["-Cinstrument-coverage"]
+
+# For the link: that is what brings the part of the runtime that writes the counts when the process ends.
+[profile.coverage.package.bun_fuzz]
+rustflags = ["-Cinstrument-coverage"]

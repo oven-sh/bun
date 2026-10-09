@@ -21,9 +21,9 @@ triple=$(echo "$host" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${triple}_LINKER=${CXX:-clang++}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/fuzz}/$mode"
 cd "$here"
-RUSTFLAGS="$flags" cargo build --profile $profile --locked --target "$host"
+RUSTFLAGS="$flags" cargo build --profile $profile --target "$host"
 out="$CARGO_TARGET_DIR/$host/$profile"
-for language in html handlebars css yaml markdown md graphql json js; do
+for language in imports embedded html handlebars css yaml markdown md graphql json js; do
   ln -sf fuzz_format "$out/fuzz_$language"
 done
 echo "built: $out"

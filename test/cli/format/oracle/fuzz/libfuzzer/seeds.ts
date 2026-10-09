@@ -50,19 +50,38 @@ const BY_ENDING: [string, string, number][] = [
 const LINT = [0, 3, 4, 5, 11, 2, 8, 7, 6, 0, 0, 0];
 const PARSER = [2, 3, 0, 1, 7, 8, 5, 6, 4, 2, 2, 2];
 
+/** For a target and a variant: where such a text can be in a text in another language (format.rs: `PLACES`). */
+const PLACES: Record<string, number[]> = {
+  "html 0": [0, 1, 3, 4, 6, 7, 8],
+  "html 1": [5],
+  "html 2": [2],
+  "css 0": [13, 32, 50, 51, 52, 58],
+  "css 1": [14],
+  "css 2": [15],
+  "js 0": [10, 26, 27, 56],
+  "js 2": [11],
+  "js 3": [12, 31, 57],
+  "json 0": [16, 17, 28, 59],
+  "yaml 0": [19, 37, 60, 64, 65],
+  "markdown 0": [18, 29, 55, 62],
+  "graphql 0": [53, 54, 61],
+  "handlebars 0": [30, 63],
+};
+
 const counts = new Map<string, number>();
-function write(target: string, variant: number, second: number, text: Uint8Array) {
+function write(target: string, variant: number, second: number, text: Uint8Array, flags = 0) {
   if (text.length > LARGEST) return;
   const header = new Uint8Array(10);
   header[0] = variant;
   header[1] = second;
+  new DataView(header.buffer).setUint32(2, flags, true);
   const bytes = Buffer.concat([header, text]);
   if (!counts.has(target)) mkdirSync(join(into, target), { recursive: true });
   writeFileSync(join(into, target, createHash("sha1").update(bytes).digest("hex")), bytes);
   counts.set(target, (counts.get(target) ?? 0) + 1);
 }
 
-function take(name: string, text: Uint8Array) {
+function take(name: string, text: Uint8Array, isSmallSet = true) {
   if (name.includes("__snapshots__") || name.endsWith(".snap") || name.endsWith("format.test.js")) return;
   name = name.replace(/\.input$/, "");
   const found = BY_ENDING.find(([ending]) => name.toLowerCase().endsWith(ending));
@@ -75,7 +94,10 @@ function take(name: string, text: Uint8Array) {
   if (target == "html" && top == "vue") variant = 1;
   if (target == "js" && top == "flow" && variant == 0) variant = 9;
   write(target, variant, 0, text);
+  // With `sortPackageJson` (format.rs: `FLAGS`).
+  if (name.endsWith("package.json")) write("json", 4, 0, text, 1 << 26);
   if (target == "markdown" && variant == 0) write("md", 0, 0, text);
+  if (isSmallSet && text.length <= 2048) for (const place of PLACES[`${target} ${variant}`] ?? []) write("embedded", place, 0, text);
   if (target == "js") {
     write("lint", LINT[variant], 0, text);
     // The second byte is the dialect: that of tsc, and that of Babel or of Flow.
@@ -84,24 +106,52 @@ function take(name: string, text: Uint8Array) {
   }
 }
 
-function walk(directory: string) {
+function walk(directory: string, isSmallSet: boolean) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) walk(path);
-    else take(path, readFileSync(path));
+    if (entry.isDirectory()) walk(path, isSmallSet);
+    else take(path, readFileSync(path), isSmallSet);
   }
 }
 
 for (const [name, text] of readBundle(join(import.meta.dir, "../../../prettier/bundle.zst"))) take(name, text);
-walk(join(import.meta.dir, "../../../own/cases"));
-more.forEach(walk);
-// One case in eight: there are tens of thousands, and most differ in a word.
+walk(join(import.meta.dir, "../../../own/cases"), true);
+more.forEach(directory => walk(directory, false));
+// For `imports`: the variant is where the text is (format.rs: `PLACES_OF_IMPORTS`) + 16 * which of `EXTRAS`.
+const PLACES_OF_IMPORTS: Record<string, number[]> = {
+  ts: [0, 4, 5, 10, 12, 15],
+  js: [1, 6, 9, 11, 14],
+  tsx: [2, 7, 13],
+  jsx: [3, 8],
+};
+function writeImports(name: string, extras: readonly number[], text: Uint8Array) {
+  const [file, ...elsewhere] = PLACES_OF_IMPORTS[/\.[cm]?(ts|js|tsx|jsx)$/.exec(name)?.[1] ?? "js"];
+  for (const extra of extras) write("imports", file + 16 * extra, 0, text);
+  // In a file in another language: with the first set of options.
+  if (text.length <= 1024) for (const place of elsewhere) write("imports", place + 16 * extras[0], 0, text);
+}
+for (const [plugin, extras] of [["trivago", [0, 1, 2, 3]], ["ianvs", [4, 5, 6, 7]], ["organize", [8, 9, 10]], ["oxfmt", [11, 12, 13]]] as const) {
+  const cases = JSON.parse(readFileSync(join(import.meta.dir, `../../../sort-imports/${plugin}.json`), "utf8"));
+  for (const it of cases) writeImports(it.filename, extras, Buffer.from(it.input));
+}
+for (const [name, text] of readBundle(join(import.meta.dir, "../../../oxfmt/bundle.zst"))) {
+  if (name.includes("jsdoc") && !name.endsWith(".snap")) writeImports(name, [14, 15], text);
+  if (name.endsWith("package.json")) write("json", 4, 0, text, 1 << 26);
+}
+// One case in eight: there are tens of thousands, and most differ in a word. All that have options: a comment sets them.
 let at = 0;
 for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/conformance/bundle.zst"))) {
   if (!name.endsWith(".json") || name.includes("node_modules/") || name.includes("-project/")) continue;
-  for (const it of JSON.parse(text.toString()).cases ?? []) {
-    if (typeof it.code != "string" || at++ % 8) continue;
+  const fixture = JSON.parse(text.toString());
+  for (const it of fixture.cases ?? []) {
+    const hasOptions = Array.isArray(it.options) && it.options.length > 0;
+    if (typeof it.code != "string" || (at++ % 8 && !hasOptions)) continue;
     const isTypeScript = name.includes("typescript-eslint/");
+    if (hasOptions) {
+      const { plugin, rule } = fixture;
+      const id = plugin == "eslint" ? rule : `${plugin == "typescript-eslint" ? "@typescript-eslint" : plugin}/${rule}`;
+      it.code = `/* eslint ${id}: ${JSON.stringify([2, ...it.options]).replaceAll("*/", "*\\/")} */\n${it.code}`;
+    }
     write("lint", isTypeScript ? (it.code.includes("</") ? 5 : 4) : it.code.includes("</") ? 3 : 0, 0, Buffer.from(it.code));
   }
 }

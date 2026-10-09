@@ -12,8 +12,9 @@ import { join, resolve } from "node:path";
 
 const [binaries, work, prettierDirectory, ...only] = process.argv.slice(2);
 const prettier = await import(resolve(prettierDirectory, "node_modules/prettier/index.mjs"));
-const NOT_OF_PRETTIER = new Set(["embeddedHtml", "flavor", "jsdoc"]);
+const NOT_OF_PRETTIER = new Set(["flavor", "jsdoc", "sortPackageJson"]);
 const out = join(work, `triage-${process.pid}.out`);
+const whole = join(work, `triage-${process.pid}.text`);
 
 async function ask(text: string, options: Record<string, unknown>) {
   try {
@@ -38,16 +39,16 @@ for (const target of readdirSync(findings).sort()) {
       for (const flag of flags) {
         const [, key, value] = /^--([^=]+)=(.*)$/.exec(flag) ?? [];
         if (!key) continue;
-        if (NOT_OF_PRETTIER.has(key)) isOnlyOurs = true;
+        if (NOT_OF_PRETTIER.has(key) || target == "imports") isOnlyOurs = true;
         else options[key] = value == "true" ? true : value == "false" ? false : /^\d+$/.test(value) ? Number(value) : value;
       }
       rmSync(out, { force: true });
       const ran = spawnSync(join(binaries, `fuzz_${target}`), ["-timeout=20", "-rss_limit_mb=4096", path], {
-        env: { ...process.env, FUZZ_OUT: out, FUZZ_FINDINGS: join(work, "triage-findings"), ASAN_OPTIONS: "detect_leaks=0:detect_stack_use_after_return=0" },
+        env: { ...process.env, FUZZ_OUT: out, FUZZ_TEXT: whole, FUZZ_FINDINGS: join(work, "triage-findings"), ASAN_OPTIONS: "detect_leaks=0:detect_stack_use_after_return=0" },
         stdio: "ignore",
       });
       const ours = existsSync(out) ? readFileSync(out) : undefined;
-      const bytes = readFileSync(path).subarray(10);
+      const bytes = readFileSync(whole);
       const theirs = await ask(bytes.toString("utf8"), options);
       let verdict: string;
       if (ran.status != 0) verdict = `dies (${ran.signal ?? ran.status})`;
@@ -65,3 +66,4 @@ for (const target of readdirSync(findings).sort()) {
   }
 }
 rmSync(out, { force: true });
+rmSync(whole, { force: true });

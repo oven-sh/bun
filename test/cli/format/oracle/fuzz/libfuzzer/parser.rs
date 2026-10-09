@@ -51,6 +51,13 @@ fn compare_one(
 ) -> Option<(&'static str, String)> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
+    // The other parser does not read Flow.
+    if dialect.flow {
+        if let Ok(parsed) = bun_sema_parser::parse(text, options_for(path, dialect), &atoms, scratch) {
+            scratch.recycle(parsed.file);
+        }
+        return None;
+    }
     let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
     let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
         dialect,

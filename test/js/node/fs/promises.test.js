@@ -420,57 +420,255 @@ it("teardown waits for every concurrent in-flight write", async () => {
 });
 
 // readFile, writeFile and appendFile of fs.promises take a FileHandle and run on its
-// descriptor number. close() must wait for them, as it waits for the FileHandle methods.
-it.each([
-  ["readFile", handle => fsPromises.readFile(handle)],
-  ["writeFile", handle => fsPromises.writeFile(handle, "data")],
-  ["writeFile with an iterable", handle => fsPromises.writeFile(handle, ["da", "ta"])],
-  ["appendFile", handle => fsPromises.appendFile(handle, "data")],
-])("fs.promises.%s(handle) keeps the descriptor open until it settles", async (_name, call) => {
-  await using dir = tempDir("handle-argument", { "x.txt": "hello" });
-  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
-  const fd = fh.fd;
-  const pending = call(fh);
-  const closed = fh.close();
-  expect(fh.fd).toBe(fd);
-  await pending;
-  await closed;
-  expect(fh.fd).toBe(-1);
+// descriptor number. They hold the handle until they settle, as the FileHandle methods do.
+describe("fs.promises functions with a FileHandle argument", () => {
+  it.each([
+    ["readFile(handle)", handle => fsPromises.readFile(handle, "utf8"), "hello", "hello"],
+    ["writeFile(handle, string)", handle => fsPromises.writeFile(handle, "HELLO"), undefined, "HELLO"],
+    ["writeFile(handle, iterable)", handle => fsPromises.writeFile(handle, ["HE", "LLO"]), undefined, "HELLO"],
+    ["appendFile(handle, string)", handle => fsPromises.appendFile(handle, "HELLO"), undefined, "HELLO"],
+  ])("%s keeps the descriptor open until it settles", async (_name, call, value, content) => {
+    await using dir = tempDir("handle-argument", { "x.txt": "hello" });
+    const file = join(dir, "x.txt");
+    const fh = await fsPromises.open(file, "r+");
+    const fd = fh.fd;
+    const pending = call(fh);
+    // close() in the same tick waits for the call
+    const closed = fh.close();
+    expect(fh.fd).toBe(fd);
+    expect(await pending).toBe(value);
+    await closed;
+    expect(fh.fd).toBe(-1);
+    expect(fs.readFileSync(file, "utf8")).toContain(content);
+  });
+
+  it.each([
+    ["a fulfilled call", handle => fsPromises.readFile(handle), undefined],
+    ["an argument error", handle => fsPromises.readFile(handle, { encoding: "no-such-encoding" }), "ERR_INVALID_ARG_VALUE"],
+    ["a signal that is already aborted", handle => fsPromises.readFile(handle, { signal: AbortSignal.abort() }), "ABORT_ERR"],
+    // the handle is open for reading only
+    ["a task that fails", handle => fsPromises.writeFile(handle, "x"), expect.any(String)],
+    [
+      "an iterable that throws",
+      handle =>
+        fsPromises.writeFile(
+          handle,
+          (function* () {
+            throw new Error("from the iterable");
+          })(),
+        ),
+      "from the iterable",
+    ],
+  ])("releases the handle after %s", async (_name, call, outcome) => {
+    await using dir = tempDir("handle-argument-settled", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+    expect(
+      await call(fh).then(
+        () => undefined,
+        err => err.code ?? err.message,
+      ),
+    ).toEqual(outcome);
+    // nothing holds the handle any more, so close() does not wait
+    const closed = fh.close();
+    expect(fh.fd).toBe(-1);
+    await closed;
+  });
+
+  it("a closed handle rejects with ERR_OUT_OF_RANGE and takes no part in a close() that is in progress", async () => {
+    await using dir = tempDir("handle-argument-closed", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    const fd = fh.fd;
+    const read = fh.read(Buffer.alloc(1), 0, 1, 0);
+    const closed = fh.close();
+    await read;
+    // the read released the last ref: fd reads -1 and the descriptor is being closed
+    expect(fh.fd).toBe(-1);
+    const outcomes = [
+      fsPromises.readFile(fh),
+      fsPromises.writeFile(fh, "x"),
+      fsPromises.writeFile(fh, ["x"]),
+      fsPromises.appendFile(fh, "x"),
+    ].map(call =>
+      call.then(
+        () => "fulfilled",
+        err => err.code,
+      ),
+    );
+    expect(await Promise.all(outcomes)).toEqual([
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+    ]);
+    await closed;
+    // close() settled after the descriptor was closed. Nothing else opens a file in this
+    // process between the close and this check.
+    expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  });
+
+  it("a getter that closes the handle does not take the descriptor from the call", async () => {
+    await using dir = tempDir("handle-argument-getter", { "iterable.txt": "", "options.txt": "" });
+    {
+      const file = join(dir, "iterable.txt");
+      const fh = await fsPromises.open(file, "r+");
+      const fd = fh.fd;
+      let closed, fdInGetter;
+      const data = {
+        get [Symbol.iterator]() {
+          closed ??= fh.close();
+          fdInGetter ??= fh.fd;
+          return function* () {
+            yield "from the iterable";
+          };
+        },
+      };
+      await fsPromises.writeFile(fh, data);
+      expect(fdInGetter).toBe(fd);
+      await closed;
+      expect(fs.readFileSync(file, "utf8")).toBe("from the iterable");
+    }
+    {
+      const file = join(dir, "options.txt");
+      const fh = await fsPromises.open(file, "r+");
+      const fd = fh.fd;
+      let closed, fdInGetter;
+      const options = {
+        get encoding() {
+          closed ??= fh.close();
+          fdInGetter ??= fh.fd;
+          return "utf8";
+        },
+      };
+      await fsPromises.writeFile(fh, "from the string", options);
+      expect(fdInGetter).toBe(fd);
+      await closed;
+      expect(fs.readFileSync(file, "utf8")).toBe("from the string");
+    }
+  });
+});
+
+// The close of an autoClose writer() or pullSync() is synchronous. It waits, like close(),
+// when another operation of the handle is pending.
+describe("autoClose of FileHandle.writer() and pullSync() under another pending operation", () => {
+  it.each([
+    ["writer().endSync()", handle => handle.writer({ autoClose: true }).endSync()],
+    ["writer().fail()", handle => handle.writer({ autoClose: true }).fail(new Error("stop"))],
+    ["writer()[Symbol.dispose]()", handle => handle.writer({ autoClose: true })[Symbol.dispose]()],
+    ["return() of a pullSync() iterator", handle => handle.pullSync({ autoClose: true })[Symbol.iterator]().return()],
+  ])("%s waits for the operation", async (_name, teardown) => {
+    await using dir = tempDir("autoclose-pending", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    const fd = fh.fd;
+    let closeEvents = 0;
+    fh.on("close", () => closeEvents++);
+    const stat = fh.stat();
+    teardown(fh);
+    // 'close' is emitted at once, the descriptor stays until the stat is done
+    expect({ fd: fh.fd, closeEvents }).toEqual({ fd, closeEvents: 1 });
+    expect((await stat).size).toBe(5);
+    expect({ fd: fh.fd, closeEvents }).toEqual({ fd: -1, closeEvents: 1 });
+  });
+
+  it("a second teardown is a no-op while the first one waits", async () => {
+    await using dir = tempDir("autoclose-twice", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+    const fd = fh.fd;
+    const stat = fh.stat();
+    const source = fh.pullSync({ autoClose: true });
+    const first = source[Symbol.iterator]();
+    const second = source[Symbol.iterator]();
+    first.return();
+    expect(fh.fd).toBe(fd);
+    second.return();
+    expect(fh.fd).toBe(fd);
+    await stat;
+    expect(fh.fd).toBe(-1);
+  });
+
+  it("a teardown after close() throws as before, and a 'close' listener that throws is not swallowed", async () => {
+    await using dir = tempDir("autoclose-throws", { "x.txt": "hello" });
+    const file = join(dir, "x.txt");
+    {
+      const fh = await fsPromises.open(file, "r+");
+      const writer = fh.writer({ autoClose: true });
+      const stat = fh.stat();
+      const closed = fh.close();
+      expect(() => writer.endSync()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      await stat;
+      await closed;
+    }
+    {
+      const fh = await fsPromises.open(file, "r+");
+      const fd = fh.fd;
+      fh.on("close", () => {
+        throw new Error("from the listener");
+      });
+      const stat = fh.stat();
+      expect(() => fh.writer({ autoClose: true }).endSync()).toThrow("from the listener");
+      expect(fh.fd).toBe(fd);
+      await stat;
+      expect(fh.fd).toBe(-1);
+    }
+  });
+
+  it("does not go through FileHandle.prototype.readFile or close", async () => {
+    await using dir = tempDir("autoclose-patched", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    const fd = fh.fd;
+    const prototype = Object.getPrototypeOf(fh);
+    const { readFile, close } = prototype;
+    let calls = 0;
+    prototype.readFile = function (...args) {
+      calls++;
+      return readFile.apply(this, args);
+    };
+    prototype.close = function (...args) {
+      calls++;
+      return close.apply(this, args);
+    };
+    try {
+      expect(await fsPromises.readFile(fh, "utf8")).toBe("hello");
+      const stat = fh.stat();
+      fh.writer({ autoClose: true }).endSync();
+      expect({ calls, fd: fh.fd }).toEqual({ calls: 0, fd });
+      await stat;
+    } finally {
+      prototype.readFile = readFile;
+      prototype.close = close;
+    }
+    expect(fh.fd).toBe(-1);
+  });
 });
 
 // Each form parks one read of a FileHandle on a named pipe. While the read is pending, the
 // handle is closed or dropped, or a writer()/pullSync() with autoClose ends. Then another
 // file takes the descriptor number if the number is free. The read must give the bytes of
-// the pipe, and the descriptor must stay open under it.
-describe.skipIf(isWindows)("a pending read keeps the descriptor of its FileHandle", () => {
-  test.concurrent.each([
-    "readFile-closed",
-    "readFile-dropped",
-    "writer-endSync",
-    "writer-fail",
-    "writer-dispose",
-    "pullSync-return",
-  ])("%s", async form => {
-    using dir = tempDir("handle-pending-read", {});
-    mkfifo(join(String(dir), "pipe"), 0o666);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fs-promises-filehandle-pending-op-fixture.ts"), form, String(dir)],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      fulfilled: "bytes of the pipe;",
-      openWhilePending: true,
-      otherTookTheNumber: false,
-      collected: 0,
-      // The dropped handle is never closed: nobody holds it to close it.
-      ...(form === "readFile-dropped" ? {} : { closedAfterTheRead: true }),
-    });
-    expect(exitCode).toBe(0);
+// the pipe, and the descriptor must stay open under it. One child process runs all forms.
+it.skipIf(isWindows)("a pending read keeps the descriptor of its FileHandle", async () => {
+  // The dropped form leaves its handle open, so it is last.
+  const forms = ["readFile-closed", "writer-endSync", "writer-fail", "writer-dispose", "pullSync-return", "readFile-dropped"];
+  using dir = tempDir("handle-pending-read", {});
+  for (const form of forms) mkfifo(join(String(dir), "pipe-" + form), 0o666);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-promises-filehandle-pending-op-fixture.ts"), String(dir), ...forms],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const held = { fulfilled: "bytes of the pipe;", openWhilePending: true, otherTookTheNumber: false, collected: 0 };
+  const heldThenClosed = { ...held, closedAfterTheRead: true };
+  expect(JSON.parse(stdout)).toEqual({
+    "readFile-closed": heldThenClosed,
+    "writer-endSync": heldThenClosed,
+    "writer-fail": heldThenClosed,
+    "writer-dispose": heldThenClosed,
+    "pullSync-return": heldThenClosed,
+    // nobody holds the dropped handle to close it
+    "readFile-dropped": held,
+  });
+  expect(exitCode).toBe(0);
 });
 
 // node rejects abortable fs APIs with an AbortError (an Error whose code is the

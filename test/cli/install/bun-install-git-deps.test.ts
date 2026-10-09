@@ -1017,6 +1017,36 @@ for (const spelling of ghSpellings) {
   );
 }
 
+test.concurrent(
+  "bun update <package name> takes changed bytes of a github: dependency that another key declares",
+  async () => {
+    const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+    const fx = ghFixture();
+    await using _ = fx;
+    const archive = await ghArchive(gh.locked, "v1");
+    fx.serve(branch.ref, archive);
+    fx.serve(gh.locked, archive);
+    fx.manifest({ dependencies: { "other-key": branch.spec } });
+    const first = await fx.bun("warm", "install");
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    fx.removeNodeModules();
+    const changed = await ghArchive(gh.locked, "v2");
+    fx.serve(branch.ref, changed);
+    fx.serve(gh.locked, changed);
+
+    const { stderr, exitCode } = await fx.bun("cold", "update", gh.name);
+
+    expect(stderr).not.toContain("error:");
+    expect({
+      installed: await installedVersionOf(fx.project, "other-key"),
+      locked: Object.values(await lockedPackages(fx.project)).map(entry => entry.slice(2)),
+    }).toEqual({ installed: "v2", locked: [[`${gh.owner}-${gh.repo}-${gh.locked}`, integrityOf(changed)]] });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 // The full hash of a commit names the same commit as the short hash bun.lock holds.
 test.concurrent(
   "a github: dependency refuses changed bytes at the locked commit when a new workspace member writes that commit as a full hash",

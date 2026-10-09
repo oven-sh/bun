@@ -880,6 +880,50 @@ fn pin_for_unresolved_tarball(
     }
 }
 
+/// `is_refresh` for a `github:` row that has no package yet. `bun update <name>`
+/// names a package, and the row has no package name before its fetch, so the
+/// packages the lockfile loaded for the same repository answer for it.
+#[cold]
+fn is_github_refresh(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    repository: &Repository,
+) -> bool {
+    if is_refresh(
+        this,
+        dependency,
+        dependency_id,
+        dependency.name_hash,
+        dependency.name,
+    ) {
+        return true;
+    }
+    if !this.to_update || this.update_requests.is_empty() {
+        return false;
+    }
+    let loaded = (this.lockfile.loaded_package_count as usize).min(this.lockfile.packages.len());
+    for package_id in 0..loaded {
+        let resolution = this.lockfile.packages.items_resolution()[package_id];
+        if resolution.tag != ResolutionTag::Github {
+            continue;
+        }
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        let locked = resolution.github();
+        if !locked.owner.eql(repository.owner, buf, buf)
+            || !locked.repo.eql(repository.repo, buf, buf)
+        {
+            continue;
+        }
+        let name = this.lockfile.packages.items_name()[package_id];
+        let name_hash = this.lockfile.packages.items_name_hash()[package_id];
+        if is_update_target(this, dependency, dependency_id, name_hash, name) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Does the command ask for the bytes a tarball or a ref has now? `bun update`
 /// does for its targets, and `bun add` for the dependency it names. `name` is
 /// the package's own name when the lockfile knows it.
@@ -1774,8 +1818,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // holds for its commit. `bun update` and a `bun add` of the
             // dependency ask for the bytes the ref has now.
             let pinned_by_commit =
-                !is_refresh(this, dependency, id, dependency.name_hash, dependency.name)
-                    && this.load_github_pins();
+                !is_github_refresh(this, dependency, id, dep) && this.load_github_pins();
             let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,

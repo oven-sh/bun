@@ -97,8 +97,9 @@ impl<'a> Printer<'a> {
         self.tree.list(range)
     }
 
+    #[inline]
     fn token(&mut self, text: &str) {
-        self.out.text(text.as_bytes());
+        self.out.token(text);
     }
 
     fn start_group(&mut self) {

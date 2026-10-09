@@ -8,6 +8,9 @@
 //! What it prints is `Elements`: the parts of a document one after the other, in one list. `Doc` is a tree like
 //! Prettier's, for who takes documents apart and puts them together in other ways. It is written to `Elements` to be
 //! printed.
+//!
+//! The list is shorter than the document: texts that follow each other are one element, and a group with nothing but
+//! text in it is one element before its text. So whoever wants to know where an element is asks `position`.
 
 use crate::options::{FormatOptions, IndentStyle, LineEnding};
 use std::borrow::Cow;
@@ -454,6 +457,19 @@ impl Elements {
         let start = self.texts.len() as u32;
         self.texts.extend_from_slice(text);
         self.add_text(start, text.len() as u32, string_width(text) as u32);
+    }
+
+    /// `text`, for what the printers write of their own: printable ASCII, so it is as wide as it is long. Where it is
+    /// written, how long it is is known most of the time.
+    #[inline]
+    pub(crate) fn token(&mut self, text: &str) {
+        debug_assert!(crate::ir::width::is_all_printable(text.as_bytes()));
+        if text.is_empty() {
+            return;
+        }
+        let (start, len) = (self.texts.len() as u32, text.len() as u32);
+        self.texts.extend_from_slice(text.as_bytes());
+        self.add_text(start, len, len);
     }
 
     /// Texts that follow each other, here and in `texts`, are one.

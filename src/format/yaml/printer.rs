@@ -287,7 +287,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             self.print(tag, false);
         }
         if node.tag.is_some() && node.anchor.is_some() {
-            self.out.text(b" ");
+            self.out.token(" ");
         }
         if let Some(anchor) = node.anchor {
             self.print(anchor, false);
@@ -309,7 +309,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && node.middle_comments.is_empty()
             {
                 true => self.out.hard_line(),
-                false => self.out.text(b" "),
+                false => self.out.token(" "),
             }
         }
         if !node.middle_comments.is_empty() {
@@ -350,7 +350,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             });
             self.out.start_line_suffix();
             if !(node.kind == Kind::MappingValue && node.children.is_empty()) {
-                self.out.text(b" ");
+                self.out.token(" ");
             }
             if !(is_key_of_mapping && is_inline_node(Some(node))) {
                 self.out.break_parent();
@@ -405,9 +405,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         if should_print_hardline {
                             self.out.hard_line();
                         }
-                        self.out.text(b"...");
+                        self.out.token("...");
                         if let Some(comment) = document.trailing_comment {
-                            self.out.text(b" ");
+                            self.out.token(" ");
                             self.print(comment, false);
                         }
                     }
@@ -436,9 +436,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         self.print(head_id, is_last_descendant);
                         self.out.hard_line();
                     }
-                    self.out.text(b"---");
+                    self.out.token("---");
                     if let Some(comment) = head.trailing_comment {
-                        self.out.text(b" ");
+                        self.out.token(" ");
                         self.print(comment, false);
                     }
                     has_head = true;
@@ -485,12 +485,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
-                self.out.text(b"%");
+                self.out.token("%");
                 let parts = strings::split_any(text::trim(node.value), b" \t")
                     .filter(|part| !part.is_empty());
                 for (index, part) in parts.enumerate() {
                     if index > 0 {
-                        self.out.text(b" ");
+                        self.out.token(" ");
                     }
                     self.out.text(if index == 0 {
                         part.strip_prefix(b"%").unwrap_or(part)
@@ -500,16 +500,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 }
             }
             Kind::Comment => {
-                self.out.text(b"#");
+                self.out.token("#");
                 self.out.text(node.value);
             }
             Kind::Alias => {
-                self.out.text(b"*");
+                self.out.token("*");
                 self.out.text(node.value);
             }
             Kind::Tag => self.out.text(self.source(node)),
             Kind::Anchor => {
-                self.out.text(b"&");
+                self.out.token("&");
                 self.out.text(node.value);
             }
             Kind::Plain => self.print_flow_scalar_content(node, self.source(node)),
@@ -517,7 +517,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Kind::BlockFolded | Kind::BlockLiteral => self.print_block(node, is_last_descendant),
             Kind::Mapping | Kind::Sequence => self.print_children(node, is_last_descendant),
             Kind::SequenceItem => {
-                self.out.text(b"- ");
+                self.out.token("- ");
                 self.start_align(2);
                 if let Some(content) = node.children.first() {
                     self.print(content, is_last_descendant);
@@ -813,11 +813,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
         match node.chomping {
             Chomping::Clip => {}
-            Chomping::Keep => self.out.text(b"+"),
-            Chomping::Strip => self.out.text(b"-"),
+            Chomping::Keep => self.out.token("+"),
+            Chomping::Strip => self.out.token("-"),
         }
         if let Some(comment) = node.indicator_comment {
-            self.out.text(b" ");
+            self.out.token(" ");
             self.print(comment, false);
         }
         let lines = self.block_value_line_contents(node, parent_indent, is_last_descendant);
@@ -888,7 +888,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             let Some(next) = child.next else {
                 break;
             };
-            self.out.text(b",");
+            self.out.token(",");
             self.out.line(Line::Space);
             if child.position.start.line != self.node(next).position.start.line
                 && self.has_next_empty_line(child)
@@ -898,7 +898,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
         if self.trailing_comma {
             self.out.start_if_break(0);
-            self.out.text(b",");
+            self.out.token(",");
             self.out.otherwise();
             self.out.end_if_break();
         }
@@ -953,7 +953,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let parent = self.parent(node);
         let (is_empty_key, is_empty_value) = (is_empty_node(key), is_empty_node(value));
         if is_empty_key && is_empty_value {
-            return self.out.text(b": ");
+            return self.out.token(": ");
         }
         let (key_content, value_content) = (self.first_child(key), self.first_child(value));
         // `needsSpaceInFrontOfMappingValue`
@@ -979,16 +979,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             {
                 self.print(key_id, is_last_descendant);
                 self.out.text(space_before_colon);
-                return self.out.text(b":");
+                return self.out.token(":");
             }
-            self.out.text(b"? ");
+            self.out.token("? ");
             self.start_align(2);
             self.print(key_id, is_last_descendant);
             return self.out.end_indent();
         }
 
         if is_empty_key {
-            self.out.text(b": ");
+            self.out.token(": ");
             self.start_align(2);
             self.print(value_id, is_last_descendant);
             return self.out.end_indent();
@@ -996,7 +996,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         // An explicit key.
         if !value.leading_comments.is_empty() || !is_inline_node(key_content) {
-            self.out.text(b"? ");
+            self.out.token("? ");
             self.start_align(2);
             self.print(key_id, is_last_descendant);
             self.out.end_indent();
@@ -1006,7 +1006,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.print(comment, false);
                 self.out.hard_line();
             }
-            self.out.text(b": ");
+            self.out.token(": ");
             self.start_align(2);
             self.print(value_id, is_last_descendant);
             return self.out.end_indent();
@@ -1037,7 +1037,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         {
             self.print(key_id, is_last_descendant);
             self.out.text(space_before_colon);
-            self.out.text(b": ");
+            self.out.token(": ");
             return self.print(value_id, is_last_descendant);
         }
 
@@ -1046,14 +1046,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let has_end_comments = !value.end_comments.is_empty();
         let write_colon = |out: &mut Elements| {
             out.text(space_before_colon);
-            out.text(b":");
+            out.token(":");
             if has_end_comments
                 && value_content.is_some_and(|it| {
                     matches!(it.kind, Kind::FlowMapping | Kind::FlowSequence)
                         && it.children.is_empty()
                 })
             {
-                out.text(b" ");
+                out.token(" ");
             } else if value_content.is_some_and(|it| !it.leading_comments.is_empty())
                 || (has_end_comments && value_content.is_some_and(|it| !is_block_collection(it)))
                 || (parent.is_some_and(|it| it.kind == Kind::Mapping)
@@ -1067,7 +1067,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             } else if value_content.is_some() {
                 out.line(Line::Space);
             } else if value.trailing_comment.is_some() {
-                out.text(b" ");
+                out.token(" ");
             }
         };
 
@@ -1091,7 +1091,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let group_id = self.last_group_id;
         self.out.start_group(Group::default());
         self.out.start_if_break(0);
-        self.out.text(b"? ");
+        self.out.token("? ");
         self.out.otherwise();
         self.out.end_if_break();
         self.out.start_group(Group {
@@ -1106,7 +1106,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         self.out.start_if_break(group_id);
         self.out.hard_line();
-        self.out.text(b": ");
+        self.out.token(": ");
         self.start_align(2);
         let value_start = self.out.position();
         self.print(value_id, is_last_descendant);

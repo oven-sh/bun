@@ -230,7 +230,7 @@ impl<'o> Sink<'o> {
     #[inline]
     pub(crate) fn token(&mut self, text: &'static str) {
         if self.is_document {
-            self.elements.text(text.as_bytes());
+            self.elements.token(text);
         } else if let Some(printer) = &mut self.printer {
             match *text.as_bytes() {
                 [byte] => printer.out.push(byte),

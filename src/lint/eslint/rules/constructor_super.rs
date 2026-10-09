@@ -16,8 +16,36 @@ const BAD_SUPER: Message = Message::new(
     "Unexpected 'super()' because 'super' is not a constructor.",
 );
 
+/// What oxlint's `is_invalid_super_class` does not hold for: everything but what is known to be a primitive value, so
+/// `(A as B)` too, which ESLint knows nothing about.
+fn oxlint_is_possible_constructor(mut e: Expr<'_>) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return true;
+    }
+    loop {
+        e = match e.kind() {
+            ExprKind::Assign { op: None | Some(BinOp::And), value, .. } => value,
+            ExprKind::Assign { op: Some(op), .. } => return matches!(op, BinOp::Or | BinOp::Nullish),
+            ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } => right,
+            ExprKind::Binary { op, .. } => return matches!(op, BinOp::Or | BinOp::Nullish),
+            ExprKind::Cond { yes, .. } if oxlint_is_possible_constructor(yes) => return true,
+            ExprKind::Cond { no, .. } => no,
+            ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::BigInt(_)
+            | ExprKind::Null => return false,
+            _ => return true,
+        };
+    }
+}
+
 /// ESLint's `isPossibleConstructor`
 fn is_possible_constructor(mut e: Expr<'_>) -> bool {
+    if e.file().language().is_oxlint {
+        return oxlint_is_possible_constructor(e);
+    }
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
     }

@@ -343,6 +343,7 @@ fn write_document_with_cursor(
         is_nested_too_deeply: false,
         has_typescript_script: None,
         cursor,
+        css_scratch: Default::default(),
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
@@ -402,6 +403,7 @@ fn format_angular_expression(
             is_nested_too_deeply: false,
             has_typescript_script: None,
             cursor: Cursor::Nowhere,
+            css_scratch: Default::default(),
         };
         let in_html = InHtml {
             root,

@@ -55,11 +55,14 @@ pub(crate) struct Sink<'o> {
     line_breaks: u32,
     /// The unit takes a document.
     has_failed: bool,
+    /// The style sheet is in HTML, where Prettier calls `cleanDoc` with its document.
+    is_cleaned: bool,
 }
 
 impl<'o> Sink<'o> {
-    pub(crate) fn to_output(printer: doc::Printer<'o>) -> Self {
+    pub(crate) fn to_output(printer: doc::Printer<'o>, is_cleaned: bool) -> Self {
         Sink {
+            is_cleaned,
             line_start: printer.out.len(),
             printer: Some(printer),
             is_document: false,
@@ -77,6 +80,7 @@ impl<'o> Sink<'o> {
 
     pub(crate) fn to_document() -> Self {
         Sink {
+            is_cleaned: false,
             printer: None,
             is_document: true,
             elements: Elements::default(),
@@ -425,7 +429,10 @@ impl<'o> Sink<'o> {
     pub(crate) fn end_fill(&mut self) {
         if self.is_document {
             self.elements.end_item();
-            self.elements.end_fill();
+            match self.is_cleaned {
+                true => self.elements.end_cleaned_fill(),
+                false => self.elements.end_fill(),
+            }
         }
     }
 

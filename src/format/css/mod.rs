@@ -354,7 +354,8 @@ pub fn format(
         );
         return Ok(());
     }
-    let sink = Sink::to_output(doc::Printer::new(options, original, out));
+    let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
+    let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
     let result = parse_and_print(text, parser, options, sink, &mut scratch.memo).map(drop);
     result.inspect_err(|_| out.truncate(start))
 }

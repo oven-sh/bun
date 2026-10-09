@@ -245,6 +245,27 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 .out
                 .foreign(|f| js::write_program(f, code, syntax, source_type, in_html))
         };
+        if let Some(parser) = crate::css::Parser::from_name(parser)
+            && self.out.indent_level().is_some()
+            && !self.options.has_parent_parser
+        {
+            // Nothing in a style sheet depends on what is around it but the width that is left, which is known in a
+            // file of HTML.
+            let mut scratch = std::mem::take(&mut self.css_scratch);
+            let is_written = self.write_printed_text(false, |options, out| {
+                let options = FormatOptions {
+                    in_html,
+                    ..options.clone()
+                };
+                crate::css::format(code, parser, &options, &mut scratch, out)?;
+                match out.is_empty() {
+                    true => Err(FormatError::SyntaxError),
+                    false => Ok(()),
+                }
+            });
+            self.css_scratch = scratch;
+            return is_written;
+        }
         if let Some(parser) = crate::css::Parser::from_name(parser) {
             let options = js::options_in_html(self.options.format, in_html);
             return match crate::css::document(code, parser, &options) {

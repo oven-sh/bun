@@ -26,6 +26,8 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     /// `isVueSfcWithTypescriptScript`, once it has been asked.
     pub(crate) has_typescript_script: Option<bool>,
     pub(crate) cursor: Cursor,
+    /// For the style sheets.
+    pub(crate) css_scratch: crate::css::Scratch,
 }
 
 /// What `printBetweenLine` returns.

@@ -788,6 +788,20 @@ impl Elements {
         self.break_groups();
     }
 
+    /// Ends a `fill` the way `cleanDoc` leaves it: with a single item, it is that item.
+    pub(crate) fn end_cleaned_fill(&mut self) {
+        let has_one_item = self.open.last().is_some_and(|&start| {
+            matches!(
+                self.list.get(start as usize + 1),
+                Some(&Element::StartItem { end }) if end as usize + 1 == self.list.len()
+            )
+        });
+        match has_one_item {
+            true => self.end_fill_as_array(),
+            false => self.end_fill(),
+        }
+    }
+
     /// Ends a `fill` that is to be an array of its items after all.
     pub(crate) fn end_fill_as_array(&mut self) {
         let Some(start) = self.open.pop() else {

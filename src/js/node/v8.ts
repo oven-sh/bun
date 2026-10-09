@@ -17,7 +17,7 @@ const {
   stopGCProfiler: (id: number) => any[];
   discardGCProfiler: (id: number) => void;
   getHeapStatisticsArray: () => [
-    heapSize: number,
+    heapUsed: number,
     heapCapacity: number,
     extraMemorySize: number,
     globalObjectCount: number,
@@ -190,7 +190,7 @@ function totalmem() {
 function getHeapStatistics() {
   // Indexed reads: a destructure would run a user-replaced Array.prototype[Symbol.iterator].
   const stats = getHeapStatisticsArray();
-  const heapSize = stats[0];
+  const heapUsed = stats[0];
   const heapCapacity = stats[1];
   const extraMemorySize = stats[2];
   const globalObjectCount = stats[3];
@@ -202,14 +202,14 @@ function getHeapStatistics() {
   // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
   //
   return {
-    total_heap_size: heapSize,
-    total_heap_size_executable: Math.floor(heapSize / 2),
+    total_heap_size: heapUsed,
+    total_heap_size_executable: Math.floor(heapUsed / 2),
     total_physical_size: peakRSS,
-    total_available_size: totalmem() - heapSize,
-    used_heap_size: heapSize,
+    total_available_size: totalmem() - heapUsed,
+    used_heap_size: heapUsed,
     total_allocated_bytes: heapCapacity,
     heap_size_limit: Math.min(peakRSS * 10, totalmem()),
-    malloced_memory: heapSize,
+    malloced_memory: heapUsed,
     peak_malloced_memory: peakRSS,
 
     // -- Copied from Node:
@@ -243,13 +243,13 @@ const kHeapSpaces = [
 ];
 function getHeapSpaceStatistics() {
   const stats = getHeapStatisticsArray();
-  const heapSize = stats[0];
+  const heapUsed = stats[0];
   const heapCapacity = stats[1];
   const spaces = [];
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];
     const isHeap = space_name === "old_space";
-    const used = isHeap ? heapSize : 0;
+    const used = isHeap ? heapUsed : 0;
     const size = isHeap ? heapCapacity : 0;
     $arrayPush(spaces, {
       space_name,

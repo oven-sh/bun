@@ -72,6 +72,7 @@
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
+#include "NodeV8.h"
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
@@ -794,10 +795,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        auto& wvm = workerCtx.vm();
-        double heapSize = static_cast<double>(wvm.heap.size());
-        double capacity = static_cast<double>(wvm.heap.capacity());
-        double extra = static_cast<double>(wvm.heap.extraMemorySize());
+        const Bun::HeapSizes sizes = Bun::heapSizes(workerCtx.vm());
+        double heapSize = static_cast<double>(sizes.used);
+        double capacity = static_cast<double>(sizes.capacity);
+        double extra = static_cast<double>(sizes.extraMemory);
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
                 JSObject* o = constructEmptyObject(go);

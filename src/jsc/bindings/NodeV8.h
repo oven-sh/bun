@@ -18,6 +18,14 @@
 
 namespace Bun {
 
+// The heap numbers behind v8.getHeapStatistics() and worker.getHeapStatistics(). O(1), on the VM's thread only.
+struct HeapSizes {
+    size_t used;
+    size_t capacity;
+    size_t extraMemory;
+};
+HeapSizes heapSizes(JSC::VM&);
+
 // One record per garbage collection observed while at least one GCProfiler is
 // running. Only values JavaScriptCore actually measures are stored; the shape
 // node:v8 reports is assembled in src/js/node/v8.ts.

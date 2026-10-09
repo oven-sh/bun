@@ -939,4 +939,16 @@ impl Alias {
         }
         None
     }
+
+    /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
+    #[inline]
+    pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
+        Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
+        (!name.starts_with(b"node:") && lookup(&NODE_ALIAS_MAP, name).is_some()).then_some(name)
+    }
 }

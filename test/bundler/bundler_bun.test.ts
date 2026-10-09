@@ -176,6 +176,88 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+
+  const unknownBunSpecifiers = [
+    "bun:not-a-builtin",
+    "bun:not-a-builtin/star",
+    "bun:not-a-builtin/export-star",
+    "bun:not-a-builtin/export-named",
+    "bun:not-a-builtin/require",
+    "bun:not-a-builtin/require-resolve",
+    "bun:not-a-builtin/dynamic",
+    "bun:./not-a-builtin.js",
+    // The part after "bun:" is a builtin, but not a bare Node.js name.
+    "bun:node:fs",
+    "bun:bun:test",
+    "bun:ws",
+  ];
+  for (const backend of ["cli", "api"] as const) {
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`bun/UnknownBunSpecifierIsPrintedAsWritten-${backend}-${format}`, {
+        backend,
+        format,
+        target: "bun",
+        metafile: true,
+        files: {
+          "/entry.js": /* js */ `
+            import real from "bun:not-a-builtin";
+            import * as star from "bun:not-a-builtin/star";
+            export * from "bun:not-a-builtin/export-star";
+            export { named } from "bun:not-a-builtin/export-named";
+            const required = require("bun:not-a-builtin/require");
+            const resolved = require.resolve("bun:not-a-builtin/require-resolve");
+            const dynamic = import("bun:not-a-builtin/dynamic");
+            const relative = import("bun:./not-a-builtin.js");
+            const builtins = [import("bun:node:fs"), import("bun:bun:test"), import("bun:ws")];
+            console.log(real, star, required, resolved, dynamic, relative, builtins);
+          `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          for (const specifier of unknownBunSpecifiers) {
+            expect(out).toContain(JSON.stringify(specifier));
+            // The specifier without "bun:" names a different module.
+            expect(out).not.toContain(JSON.stringify(specifier.slice("bun:".length)));
+          }
+
+          const [input] = Object.values<any>(JSON.parse(api.readFile("/metafile.json")).inputs);
+          const external = input.imports.filter((record: any) => record.external);
+          expect(external.map((record: any) => record.path)).toEqual(unknownBunSpecifiers);
+        },
+      });
+    }
+  }
+  itBundled("bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import real from "bun:not-a-builtin";
+        console.log(real);
+      `,
+      "/node_modules/not-a-builtin/package.json": JSON.stringify({ name: "not-a-builtin", main: "index.js" }),
+      "/node_modules/not-a-builtin/index.js": `module.exports = "the package named like the suffix";`,
+    },
+    run: {
+      exitCode: 1,
+      validate({ stdout, stderr }) {
+        expect(stdout).toBe("");
+        expect(stderr).toContain("'bun:not-a-builtin'");
+      },
+    },
+  });
+  // "bun:fs" is not a module, but it has always loaded "fs", and programs import it.
+  itBundled("bun/BunPrefixedBuiltinLoadsTheBuiltin", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import { existsSync } from "bun:fs";
+        const path = require("bun:path");
+        const { EventEmitter } = await import("bun:events");
+        console.log(typeof existsSync, typeof path.join, typeof EventEmitter);
+      `,
+    },
+    run: { stdout: "function function function" },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

@@ -169,6 +169,29 @@ test("an SSL_CTX build fails for a protocol version bound BoringSSL does not acc
   expect(sslCtxLiveCount()).toBe(before);
 });
 
+test("Bun.connect with a tls.maxVersion that is not a version builds no SSL_CTX", async () => {
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  Bun.gc(true);
+  await new Promise<void>(r => setImmediate(r));
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  let rejected = 0;
+  for (let i = 0; i < 100; i++) {
+    try {
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { maxVersion: 13 } as any,
+        socket: { data() {} },
+      });
+    } catch (e: any) {
+      if (e.code === "ERR_TLS_INVALID_PROTOCOL_VERSION") rejected++;
+    }
+  }
+  expect({ rejected, contexts: sslCtxLiveCount() - before }).toEqual({ rejected: 100, contexts: 0 });
+});
+
 // Same-CA inline configs across repeated `Bun.connect` calls resolve to one
 // CTX — the cache is keyed by digest. (Not shared with `new WebSocket`, which
 // projects via `asUSocketsForClientVerification()` → different `request_cert`

@@ -750,6 +750,12 @@ interface TLSOptions {
   /** Reduce TLS memory usage */
   lowMemoryMode?: boolean;
 
+  /** Maximum TLS protocol version (default: "TLSv1.3") */
+  maxVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3";
+
+  /** Minimum TLS protocol version (default: "TLSv1.2") */
+  minVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3";
+
   /** Private key passphrase */
   passphrase?: string;
 

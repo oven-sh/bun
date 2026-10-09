@@ -122,10 +122,15 @@ export const i64: IntegerType = makeSignedType(64);
 
 export abstract class LooseIntegerType extends Type {}
 
-function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
+/** `strict` on the native side, converted from JS by `idlType`. `header` declares that converter. */
+function makeConvertedIntegerType(
+  strict: IntegerType,
+  idlType: string,
+  header?: string,
+): LooseIntegerType {
   return new (class extends LooseIntegerType {
     get idlType() {
-      return `::Bun::IDLLooseInteger<${strict.cppType}>`;
+      return idlType;
     }
     get bindgenType() {
       return strict.bindgenType;
@@ -136,7 +141,14 @@ function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
     toCpp(value: number | bigint): string {
       return strict.toCpp(value);
     }
+    getHeaders(result: Set<string>): void {
+      if (header) result.add(header);
+    }
   })();
+}
+
+function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
+  return makeConvertedIntegerType(strict, `::Bun::IDLLooseInteger<${strict.cppType}>`);
 }
 
 export const LooseU8: LooseIntegerType = makeLooseIntegerType(u8);
@@ -162,6 +174,21 @@ const looseSignedTypes: { [width: number]: LooseIntegerType } = {
   32: LooseI32,
   64: LooseI64,
 };
+
+/**
+ * `TLSOptions.minVersion` / `maxVersion`. An `i32` on the native side. The values it accepts are
+ * in `BunIDLConvertTLSProtocolVersion.h`.
+ */
+function makeTLSProtocolVersionType(bound: "Minimum" | "Maximum"): Type {
+  return makeConvertedIntegerType(
+    i32,
+    `::Bun::IDLTLSProtocolVersion<::Bun::TLSProtocolBound::${bound}>`,
+    "BunIDLConvertTLSProtocolVersion.h",
+  );
+}
+
+export const TLSMinVersion: Type = makeTLSProtocolVersionType("Minimum");
+export const TLSMaxVersion: Type = makeTLSProtocolVersionType("Maximum");
 
 export const f64 = new (class extends Type {
   /** Does not allow NaN or infinities. */

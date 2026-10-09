@@ -1278,6 +1278,17 @@ impl ServerConfig {
                 global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
             );
         }
+        // QUIC has no TLS version below 1.3, so a lower cap would bind the TCP listener only.
+        if args.http3
+            && args.ssl_config.as_ref().is_some_and(|ssl| {
+                ssl.ssl_max_version != 0
+                    && ssl.ssl_max_version < i32::from(bun_boringssl_sys::TLS1_3_VERSION)
+            })
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "HTTP/3 requires TLS 1.3, but 'tls.maxVersion' is lower"
+            )));
+        }
         if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 without enabling http2 or http3"

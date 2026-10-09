@@ -4823,6 +4823,34 @@ declare module "bun" {
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
+    /**
+     * The minimum TLS protocol version to allow. Takes the same names as
+     * `node:tls`: `"TLSv1"`, `"TLSv1.1"`, `"TLSv1.2"` or `"TLSv1.3"`.
+     * `undefined` and `null` use the default. A string that is not one of
+     * these names throws `ERR_TLS_INVALID_PROTOCOL_VERSION`.
+     *
+     * The default does not follow the `--tls-min-v1.x` and `--tls-max-v1.x`
+     * flags or `tls.DEFAULT_MIN_VERSION` and `tls.DEFAULT_MAX_VERSION`. Those
+     * apply to `node:tls`.
+     *
+     * In a `tls: [...]` array for SNI, the entries after the first use the
+     * range of the first entry. HTTP/3 always uses TLS 1.3: `Bun.serve` with
+     * `http3: true` throws for a `maxVersion` below `"TLSv1.3"`, and `fetch`
+     * with `protocol: "http3"` rejects a request that sets either option.
+     *
+     * @default "TLSv1.2"
+     */
+    minVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3" | undefined;
+
+    /**
+     * The maximum TLS protocol version to allow. Takes the same values as
+     * `minVersion`. A `maxVersion` below `"TLSv1.2"` also needs a
+     * `minVersion`, because the default minimum is `"TLSv1.2"`.
+     *
+     * @default "TLSv1.3"
+     */
+    maxVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3" | undefined;
+
     ALPNProtocols?: string | BufferSource;
 
     ciphers?: string;

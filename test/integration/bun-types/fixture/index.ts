@@ -472,3 +472,17 @@ controller.signal.addEventListener("abort", event => {
 controller.signal.removeEventListener("abort", event => {
   expectType(event).is<Event>();
 });
+
+const tlsVersionOptions: Bun.TLSOptions = {
+  minVersion: "TLSv1.2",
+  maxVersion: "TLSv1.3",
+};
+// The two keys have node's type, so they pass between the two option objects.
+const nodeTlsVersionOptions: import("node:tls").SecureContextOptions = {
+  minVersion: tlsVersionOptions.minVersion,
+  maxVersion: tlsVersionOptions.maxVersion,
+};
+// @ts-expect-error
+const tlsVersionOptionsWithUnknownName: Bun.TLSOptions = { minVersion: "TLSv9" };
+// @ts-expect-error
+const tlsVersionOptionsWithNumber: Bun.TLSOptions = { minVersion: 13 };

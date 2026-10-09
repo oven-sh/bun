@@ -184,6 +184,8 @@ pub(super) struct FlowMemo {
     type_predicates_in_progress: SmallVec<[(FileId, FnId); 2]>,
     /// `flowNodePostSuper`
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
+    /// `finalArrayType` of an evolving array type whose element type is a union.
+    final_array_types: FxHashMap<TypeId, TypeId>,
     /// One bit per flow node of the file `settled_calls_of`: the `Flow::Call` nodes for whose calls
     /// `effects_signatures` has an entry, and those of them for which that is `None`.
     settled_calls: Vec<(u64, u64)>,
@@ -6153,13 +6155,20 @@ impl<'p, 's> Checker<'p, 's> {
         if element.is_never() {
             return self.auto_array_type;
         }
-        let element = if self.is_union(element) {
-            let parts = self.parts(element);
-            self.union_reduced(parts)
-        } else {
-            element
-        };
-        self.array_of(element)
+        if !self.is_union(element) {
+            return self.array_of(element);
+        }
+        if let Some(&known) = self.flow_memo.final_array_types.get(&ty) {
+            return known;
+        }
+        let scope = self.begin_scope();
+        let parts = self.parts(element);
+        let element = self.union_reduced(parts);
+        let result = self.array_of(element);
+        if self.end_scope_by_counters(scope).is_ok() {
+            self.flow_memo.final_array_types.insert(ty, result);
+        }
+        result
     }
 
     /// The type at a join of control flow paths. Evolving arrays stay evolving if all the types are
@@ -6665,8 +6674,11 @@ impl<'p, 's> Checker<'p, 's> {
         let reference = &walk.reference;
         while let Some((then, shared_flow)) = pending.pop() {
             // A condition is applied to the finalized array type; if it narrows nothing, the array
-            // stays evolving.
-            let seen = self.finalize_evolving_array(ty);
+            // stays evolving. `getTypeAtFlowArrayMutation` does not finalize it.
+            let seen = match then {
+                Pending::Mutation(_) | Pending::Nothing => ty,
+                _ => self.finalize_evolving_array(ty),
+            };
             let narrowed = match then {
                 // Applied to the finalized array type: the array stops evolving.
                 Pending::NonNull => {

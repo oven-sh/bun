@@ -690,6 +690,29 @@ describe.concurrent("bun check", () => {
     });
   });
 
+  // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.
+  test("an array without a type that is filled line by line", async () => {
+    const n = isDebug || isASAN ? 200 : 1000;
+    const lines = (line: (i: number) => string, count = n) => Array.from({ length: count }, (_, i) => line(i)).join("");
+    const end = "export const probe: never = rows;\n";
+    using dir = project({
+      "assigned.ts": "const rows = [];\n" + lines(i => `rows[${i}] = { id: ${i} };\n`) + end,
+      "pushed.ts": "const rows = [];\n" + lines(i => `rows.push({ id: ${i} });\n`) + end,
+      // Half as many: each line has three flow nodes, and 2,000 levels are the limit of TS2563.
+      "pushed-if.ts":
+        "declare const c: boolean;\nconst rows = [];\n" + lines(i => `if (c) rows.push({ id: ${i} });\n`, n / 2) + end,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `assigned.ts(${n + 2},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+        `pushed-if.ts(${n / 2 + 3},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+        `pushed.ts(${n + 2},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
   test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;

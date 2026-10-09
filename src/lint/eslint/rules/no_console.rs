@@ -56,6 +56,13 @@ impl NoConsole {
         if !obj.is_ident("console") || self.is_allowed(member) || member.is_jsx_tag_name() {
             return;
         }
+        // oxlint says nothing about `console[a]`.
+        if cx.language().is_oxlint
+            && member.tag() == ExprTag::Index
+            && ast_utils::get_static_property_name(member).is_none()
+        {
+            return;
+        }
         let Some(reference) = obj.reference() else {
             return;
         };

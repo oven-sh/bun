@@ -9,6 +9,9 @@
 // A word that is repeated from the first byte on is often a syntax error at once. nests.json has what nests in a context: the ending of the
 // name of the file, what is before, what opens, what is in the middle, what closes, what is after. Those for the target are run too, each as
 // the variant that its ending stands for: before + n times what opens + the middle + n times what closes + after.
+// PAIRS=1: in the place of all that, every two of them that have the same ending, before and after, in turn: n times (what opens the first, what
+// opens the second) .. A recursion through two constructs that neither checks shows at 64 KB; look-ahead in look-ahead, which takes exponential
+// time, at 512 bytes: `type X = ` + `({[K in a as ` x 16 + `x` + `]: b})` x 16 took 18 s.
 // STACK_KB: the stack, 4096 unless set. With 1024 and the build with AddressSanitizer a recursion that nothing checks shows at a tenth of the size.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -65,7 +68,17 @@ const ENDINGS: Record<string, Record<string, number>> = {
   graphql: { graphql: 0 },
   handlebars: { hbs: 0 },
 };
-for (const [ending, before, open, middle, close, after] of JSON.parse(readFileSync(join(import.meta.dir, "nests.json"), "utf8")) as string[][]) {
+let nests = JSON.parse(readFileSync(join(import.meta.dir, "nests.json"), "utf8")) as string[][];
+// Two kinds in turn.
+if (process.env.PAIRS) {
+  shapes.length = 0;
+  nests = nests.flatMap(([ending, before, open, , close, after]) =>
+    nests
+      .filter(inner => inner[0] == ending && inner[1] == before && inner[5] == after && inner[2] != open)
+      .map(inner => [ending, before, open + inner[2], inner[3], inner[4] + close, after]),
+  );
+}
+for (const [ending, before, open, middle, close, after] of nests) {
   const variant = ENDINGS[target]?.[ending];
   const isFlow = before.includes("@flow");
   if (variant === undefined || (isFlow && target == "lint")) continue;

@@ -1,6 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint::utils::ts_utils;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
@@ -185,7 +187,38 @@ fn is_function_name_initializer_exception<'a>(variable: &Variable<'a>, shadowed:
         Node::Param(param) => param.default(),
         _ => None,
     };
-    matches!((owner, initializer), (Node::Expr(e), Some(initializer)) if unwrap_expression(e) == initializer)
+    let Node::Expr(e) = owner else {
+        return false;
+    };
+    // For oxlint it can be anywhere in the value of a variable, with no other scope between:
+    // `const A = wrap(function A() {})`, `const { A } = wrap(function A() {})`.
+    if e.file().language().is_oxlint && matches!(shadowed.definition, Declaration::Var(_)) {
+        let of_declarator = || {
+            Node::Pat(outer).ancestors().find_map(|it| match it {
+                Node::VarDecl(declarator) => Some(declarator.init()),
+                _ => None,
+            })?
+        };
+        return initializer.or_else(of_declarator).is_some_and(|it| it.outer_span().contains(e.span()))
+            && variable.scope.parent() == Some(shadowed.scope);
+    }
+    initializer.is_some_and(|it| unwrap_expression(e) == it)
+}
+
+/// oxlint's `is_value_import_used_only_as_type`: a value can have the name of what is imported if the file only uses
+/// that as a type.
+fn oxlint_is_import_used_only_as_type<'a>(
+    variable: &Variable<'a>,
+    shadowed: &Variable<'a>,
+    known: &mut FxHashMap<Symbol<'a>, bool>,
+) -> bool {
+    variable.is_value
+        && import_of(shadowed.definition).is_some()
+        && *known.entry(shadowed.symbol).or_insert_with(|| {
+            let mut references = shadowed.symbol.references().peekable();
+            let is_type = |it: Reference<'a>| it.is_type() && !it.is_value() || reference_contains_type_query(it);
+            references.peek().is_some() && references.all(is_type)
+        })
 }
 
 /// ESLint's `getOuterScope`.
@@ -464,6 +497,7 @@ impl Checker {
         shadowed: Option<Symbol<'a>>,
         is_global_value: bool,
         global_augmentations: &[Scope<'a>],
+        only_types: &mut FxHashMap<Symbol<'a>, bool>,
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
@@ -498,6 +532,7 @@ impl Checker {
             || (self.ignore_on_initialization && is_init_pattern_node(&variable, &shadowed))
             || self.is_in_tdz(&variable, &shadowed)
             || self.is_external_declaration_merging(&variable, &shadowed)
+            || file.language().is_oxlint && oxlint_is_import_used_only_as_type(&variable, &shadowed, only_types)
         {
             return;
         }
@@ -518,6 +553,8 @@ impl Checker {
         if file.has_stmts([StmtTag::Module]) {
             global_augmentations.extend(file.scopes().filter(|it| is_scope_of_global_augmentation(*it)));
         }
+        // Whether the file uses what it imports only as a type.
+        let mut only_types = FxHashMap::default();
         for scope in file.scopes() {
             let Some(upper) = scope.parent() else {
                 continue;
@@ -535,7 +572,7 @@ impl Checker {
                 // What TypeScript merges from several namespaces is listed in the scope of each.
                 if (shadowed.is_some() || global.is_some()) && symbol.scope() == scope {
                     let is_global_value = global.is_none_or(|it| it.is_value);
-                    self.check_variable(cx, symbol, shadowed, is_global_value, &global_augmentations);
+                    self.check_variable(cx, symbol, shadowed, is_global_value, &global_augmentations, &mut only_types);
                 }
             }
         }

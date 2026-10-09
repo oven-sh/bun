@@ -24,7 +24,7 @@ function fixture(
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
-let server: Bun.Server;
+let server: Bun.Server<undefined>;
 const verdaccio = new VerdaccioRegistry();
 
 beforeAll(async () => {

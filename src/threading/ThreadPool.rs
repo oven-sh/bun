@@ -290,6 +290,20 @@ impl ThreadPool {
         // Wake all the threads to check for idle events.
         self.idle_event.wake_all();
     }
+
+    /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
+    /// when it is next idle, and wakes them. Does not wait for any of them.
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+        let mut next = self.threads.load(Ordering::Acquire);
+        while let Some(thread) = NonNull::new(next) {
+            // A registered worker stays in the list, and alive, until the pool shuts down:
+            // `Thread::pop` walks the same links.
+            let thread = bun_ptr::BackRef::from(thread);
+            thread.push_idle_task(new_task());
+            next = thread.next;
+        }
+        self.wake_for_idle_events();
+    }
 }
 
 /// Shut down the thread pool and stop the worker threads.
@@ -516,7 +530,28 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values);
+        self.each_impl(ctx, ByValue(run_fn), values, || {});
+    }
+
+    /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
+    /// after it has returned.
+    pub fn each_while<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: Copy + core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+    }
+
+    /// The most threads that this pool starts.
+    pub fn max_threads(&self) -> usize {
+        self.max_threads as usize
     }
 
     /// Like `each`, but calls `run_fn` with a pointer to the value.
@@ -529,17 +564,22 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values);
+        self.each_impl(ctx, ByPtr(run_fn), values, || {});
     }
 
-    fn each_impl<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
-    where
+    fn each_impl<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
         if values.is_empty() {
-            return;
+            return on_calling_thread();
         }
 
         struct WaitContext<Ctx, V, F> {
@@ -598,6 +638,7 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
+        on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
@@ -1255,17 +1296,21 @@ impl Thread {
         }
     }
 
-    pub(crate) fn drain_idle_events(&self) {
+    /// Returns how many it ran.
+    pub(crate) fn drain_idle_events(&self) -> usize {
         let Ok(mut consumer) = self.idle_queue.try_acquire_consumer() else {
-            return;
+            return 0;
         };
+        let mut ran = 0;
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
             let task = unsafe { Task::from_node(node) };
             // SAFETY: `task` was dequeued from this thread's idle queue; it is a
             // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
+            ran += 1;
         }
+        ran
     }
 
     /// Try to dequeue a Node/Task from the ThreadPool.
@@ -1372,6 +1417,7 @@ impl Event {
     fn wait(&self, worker: Option<&Thread>) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut word = self.state.load(Ordering::Relaxed);
+        let mut is_idle: bool = false;
         let mut has_swept: bool = false;
 
         loop {
@@ -1423,7 +1469,10 @@ impl Event {
                 // A `wake_all()` from here on changes the word the futex wait below expects. The
                 // fence puts the idle tasks of the one whose epoch `word` has in the queue.
                 fence(Ordering::Acquire);
-                worker.drain_idle_events();
+                if worker.drain_idle_events() != 0 {
+                    // What the tasks freed is there for the fallback sweep below to give back.
+                    has_swept = false;
+                }
             }
 
             // Wait on the event until a notify() or shutdown().
@@ -1433,18 +1482,30 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
-            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
-            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
-            let timeout_ns: Option<u64> = if !has_swept {
+            // Idle only once a wait TIMED OUT: 100ms without work, not parking between tasks
+            // (sweeping on every park cost ~13% of vite preview rps). The locals are reset when
+            // notify() returns; a racing notify() stays NOTIFIED, never lost.
+            //
+            // An idle thread hands its heaps to mimalloc's scavenger for the wait that has no
+            // timeout: one sweep never takes the free blocks of a large page that was just
+            // allocated from, and the scavenger comes back for them while this thread sleeps.
+            // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+            let handed_off = is_idle && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
+            if is_idle && !handed_off && !has_swept {
+                // No scavenger to hand off to.
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
+            }
+            let timeout_ns: Option<u64> = if !is_idle {
                 Some(100_000_000) // 100ms
             } else {
                 None
             };
-            if Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err() {
-                has_swept = true;
-                bun_alloc::mimalloc::mi_on_thread_idle();
+            let timed_out = Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err();
+            if handed_off {
+                bun_alloc::mimalloc::mi_on_thread_idle_end();
             }
+            is_idle |= timed_out;
             word = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
         }

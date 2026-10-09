@@ -1,5 +1,6 @@
 import {
   callerSourceOrigin,
+  // @ts-expect-error deprecated alias
   describeArray,
   deserialize,
   drainMicrotasks,
@@ -11,6 +12,7 @@ import {
   heapSize,
   heapStats,
   isRope,
+  // @ts-expect-error deprecated alias
   describe as jscDescribe,
   memoryUsage,
   numberOfDFGCompiles,
@@ -96,13 +98,83 @@ describe("bun:jsc", () => {
     expect(releaseWeakRefs()).toBeUndefined();
   });
   it("totalCompileTime", () => {
-    expect(totalCompileTime(count)).toBeGreaterThanOrEqual(0);
+    expect((totalCompileTime as any)(count)).toBeGreaterThanOrEqual(0);
   });
   it("reoptimizationRetryCount", () => {
     expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
   });
-  it("drainMicrotasks", () => {
-    expect(drainMicrotasks()).toBeUndefined();
+  describe("drainMicrotasks", () => {
+    it("returns undefined", () => {
+      expect(drainMicrotasks()).toBeUndefined();
+    });
+
+    it("runs promise reactions, queueMicrotask() and process.nextTick() callbacks", () => {
+      const ran: string[] = [];
+      Promise.resolve().then(() => ran.push("promise"));
+      queueMicrotask(() => ran.push("queueMicrotask"));
+      process.nextTick(() => ran.push("nextTick"));
+      drainMicrotasks();
+      expect(ran.sort()).toEqual(["nextTick", "promise", "queueMicrotask"]);
+    });
+
+    it("does not run a task that this thread has queued", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        port2.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        // A message to a port of the same thread is a task in the event loop's queue from here on.
+        port1.postMessage("from port1");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from port1");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    it("does not run a task that another thread has posted", async () => {
+      const ready = new Int32Array(new SharedArrayBuffer(4));
+      const url = URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = ({ data: ready }) => {
+              postMessage("from worker");
+              Atomics.store(ready, 0, 1);
+              Atomics.notify(ready, 0);
+            };`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(url);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        worker.onerror = reject;
+        worker.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        worker.postMessage(ready);
+        // Block until the worker has posted its message, so that the task is in the queue for certain.
+        expect(Atomics.wait(ready, 0, 0, 30_000)).not.toBe("timed-out");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from worker");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
   });
   it("startRemoteDebugger", () => {
     // try {
@@ -171,7 +243,7 @@ describe("bun:jsc", () => {
   });
 
   it.todoIf(isBuildKite && isWindows)("profile async", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<object>();
     const result = await profile(
       async function hey(arg1: number) {
         await Bun.sleep(10).then(() => resolve(arguments));

@@ -223,8 +223,17 @@ pub(crate) fn view(
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
+                        let value = prop.value.expect("infallible: prop has value");
+                        // The registry controls this value. `Expr::set` below requires an object.
+                        if !value.is_object() {
+                            Output::err_generic(
+                                "failed to parse package manifest: version <b>{}<r> is not an object",
+                                (bun_fmt::quote(version_str),),
+                            );
+                            Global::exit(1);
+                        }
                         version = version_str;
-                        manifest = prop.value.expect("infallible: prop has value");
+                        manifest = value;
                         break 'brk;
                     }
                 }

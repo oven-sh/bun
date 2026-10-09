@@ -54,6 +54,10 @@ BroadcastChannel::~BroadcastChannel()
 
 ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue)
 {
+    // Made or kept by the script of a disposed Bun.ModuleGraph: like a MessagePort of one it says nothing,
+    // to the script (the stop closes it a turn later) or to anyone listening on the name.
+    if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph() && context->isStopped())
+        return {};
     if (isClosed())
         return Exception { InvalidStateError, "This BroadcastChannel is closed"_s };
 
@@ -101,6 +105,15 @@ void BroadcastChannel::close()
     if (prev & Closed)
         return;
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
+}
+
+// Its context stopped (a worker's, or a disposed Bun.ModuleGraph's): nobody is left to close() it,
+// so what it holds of the event loop goes too.
+void BroadcastChannel::stop()
+{
+    close();
+    if (auto* context = scriptExecutionContext())
+        jsUnref(context->jsGlobalObject());
 }
 
 void BroadcastChannel::contextDestroyed()

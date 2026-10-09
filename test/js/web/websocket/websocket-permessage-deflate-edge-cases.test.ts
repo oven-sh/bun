@@ -230,7 +230,7 @@ test("WebSocket client rejects decompression bombs", async () => {
     });
     let buffer = Buffer.alloc(0);
 
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buffer = Buffer.concat([buffer, data]);
 
       // Look for end of HTTP headers

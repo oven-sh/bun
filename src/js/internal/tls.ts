@@ -149,7 +149,7 @@ function processPfxOptions(options) {
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
-  const pfxCAs = [];
+  const pfxCAs: string[] = [];
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
   for (const entry of entries) {
     let buf = entry;

@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import net from "node:net";
 
 describe("path parameters", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -82,10 +82,10 @@ describe("path parameters", () => {
       Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
     ]);
     const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     const chunks: Buffer[] = [];
     socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     socket.on("connect", () => socket.write(request));
     const response = await promise;
@@ -95,7 +95,7 @@ describe("path parameters", () => {
 });
 
 describe("HTTP methods", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -284,7 +284,7 @@ describe("implicit HEAD for per-method route objects", () => {
 });
 
 describe("static responses", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -328,7 +328,7 @@ describe("static responses", () => {
 });
 
 describe("route precedence", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -381,7 +381,7 @@ describe("route precedence", () => {
 });
 
 describe("error handling", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -420,7 +420,7 @@ describe("error handling", () => {
 });
 
 describe("request properties", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -455,7 +455,7 @@ describe("request properties", () => {
       },
     });
     expect(res.status).toBe(200);
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers["x-test"]).toBe("value");
     expect(headers["user-agent"]).toBe("test-agent");
   });
@@ -469,7 +469,7 @@ describe("request properties", () => {
   it("provides correct URL properties", async () => {
     const res = await fetch(`${server.url}echo-url?foo=bar`);
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data: any = await res.json();
     expect(data.url).toInclude("echo-url?foo=bar");
     expect(data.pathname).toBe("/echo-url");
   });
@@ -496,7 +496,7 @@ describe("request properties", () => {
 });
 
 describe("route reloading", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -682,7 +682,7 @@ describe("reload() keeps the server able to answer", () => {
 });
 
 describe("many route params", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -712,7 +712,7 @@ describe("many route params", () => {
     const res = await fetch(new URL(path, server.url).href);
     expect(res.status).toBe(200);
 
-    const params = await res.json();
+    const params: any = await res.json();
     expect(Object.keys(params)).toHaveLength(65);
 
     for (let i = 1; i <= 65; i++) {
@@ -763,6 +763,7 @@ it("fetch() is optional when routes are specified", async () => {
 
 it("throws a validation error when passing invalid routes", () => {
   expect(() => {
+    // @ts-expect-error
     Bun.serve({ routes: { "/test": 123 } });
   }).toThrowErrorMatchingInlineSnapshot(`
     "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
@@ -830,6 +831,7 @@ it("throws a validation error when routes object is empty and fetch is not speci
 
 it("throws a validation error when routes object is undefined and fetch is not specified", async () => {
   expect(() =>
+    // @ts-expect-error
     Bun.serve({
       port: 0,
       routes: undefined,
@@ -981,7 +983,7 @@ it("routes absolute-form request targets by path and derives request.url from th
     let received = "";
     Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(socket) {
           socket.write(
@@ -1028,7 +1030,7 @@ it("routes absolute-form request targets by path and derives request.url from th
       let received = "";
       Bun.connect({
         hostname: "127.0.0.1",
-        port: server.port,
+        port: server.port!,
         socket: {
           open(socket) {
             socket.write(`GET ${target} HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);

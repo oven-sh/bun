@@ -8,10 +8,11 @@ import { isBroken, isMacOS } from "harness";
 import { routes, runStress, stressMethods, stressPaths } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static (stress, don't access .body)", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
+      // @ts-expect-error legacy option name
       static: routes,
       port: 0,
       fetch: () => new Response("fallback", { status: 404 }),

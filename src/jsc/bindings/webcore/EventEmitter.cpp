@@ -265,7 +265,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();

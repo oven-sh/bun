@@ -33,6 +33,8 @@ export const PROXY_ENV_KEYS = [
   "http_proxy",
   "HTTPS_PROXY",
   "https_proxy",
+  "ALL_PROXY",
+  "all_proxy",
 ] as const;
 
 export function clearProxyEnv(): Record<string, string | undefined> {
@@ -60,6 +62,8 @@ export const proxyFreeEnv = {
   http_proxy: undefined,
   HTTPS_PROXY: undefined,
   https_proxy: undefined,
+  ALL_PROXY: undefined,
+  all_proxy: undefined,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -546,7 +550,7 @@ function buildResponse(opts: AdversarialOriginOptions, reqBody: Buffer): Buffer 
   const framing = opts.framing ?? "content-length";
   const encoded = encodeBody(rawBody, encoding);
 
-  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : STATUS_TEXT[status] ?? "Status"}\r\n`;
+  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : (STATUS_TEXT[status] ?? "Status")}\r\n`;
   for (const [k, v] of Object.entries(opts.headers ?? {})) head += `${k}: ${v}\r\n`;
   if (encoding !== "identity") head += `Content-Encoding: ${encoding}\r\n`;
 
@@ -581,14 +585,14 @@ export async function createAdversarialOrigin(opts: AdversarialOriginOptions = {
 
   const handleClient = (sock: net.Socket) => {
     sock.on("error", () => {});
-    let buf = Buffer.alloc(0);
+    let buf: Buffer = Buffer.alloc(0);
     let headParsed = false;
     let method = "";
     let path = "";
     let headers: Record<string, string> = {};
     let bodyNeed = 0;
     let chunked = false;
-    let body = Buffer.alloc(0);
+    let body: Buffer = Buffer.alloc(0);
 
     const finish = () => {
       requests.push({ method, path, headers, body });
@@ -627,7 +631,7 @@ export async function createAdversarialOrigin(opts: AdversarialOriginOptions = {
       }
     };
 
-    sock.on("data", chunk => {
+    sock.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!headParsed) {
         const end = buf.indexOf("\r\n\r\n");

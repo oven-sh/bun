@@ -189,6 +189,8 @@ struct Reader<'t, 'c> {
     tree: &'c mut Tree,
     /// The number of line breaks in what [`Reader::skip_trivia`] has skipped since it was reset.
     line_breaks: u32,
+    /// The same for U+2028 and U+2029, which end a line for who asks whether the next one is empty.
+    line_separators: u32,
     /// The comments from this index on do not know what follows them yet.
     unresolved: usize,
 }
@@ -221,6 +223,7 @@ pub(super) fn parse(
         config,
         tree,
         line_breaks: 0,
+        line_separators: 0,
         unresolved: 0,
     }
     .run()
@@ -299,6 +302,7 @@ impl Reader<'_, '_> {
                 if !is_js_whitespace(c) {
                     return Ok(false);
                 }
+                self.line_separators += u32::from(matches!(c, 0x2028 | 0x2029));
                 self.at += len;
             }
             _ => self.at += 1,
@@ -597,6 +601,7 @@ impl Reader<'_, '_> {
         let (enclosing, preceding) = (Owner::node(open.node), open.last_child);
 
         self.line_breaks = 0;
+        self.line_separators = 0;
         self.skip_trivia(enclosing, preceding)?;
         let end = if container == Kind::Object {
             b'}'
@@ -611,7 +616,7 @@ impl Reader<'_, '_> {
                     return Ok(self.close());
                 }
                 // What is asked skips any number of commas: those of holes too.
-                if (self.line_breaks > 1 || self.peek() == Some(b','))
+                if (self.line_breaks + self.line_separators > 1 || self.peek() == Some(b','))
                     && !self.config.is_stringify()
                 {
                     let is_blank = match container {
@@ -864,11 +869,20 @@ impl Reader<'_, '_> {
     fn number(&mut self) -> Result<u32> {
         let start = self.at;
         let text = self.text;
+        // How many digits there are at `at`, with the `_` between them. A `_` is between two digits.
         let digits = |at: usize, is_digit: fn(&u8) -> bool| {
-            text[at..]
-                .iter()
-                .take_while(|b| is_digit(b) || **b == b'_')
-                .count()
+            let (mut len, mut previous) = (0, b'_');
+            for byte in &text[at..] {
+                if !is_digit(byte) && (*byte != b'_' || previous == b'_') {
+                    break;
+                }
+                previous = *byte;
+                len += 1;
+            }
+            match len > 0 && previous == b'_' {
+                true => Err(SyntaxError),
+                false => Ok(len),
+            }
         };
         let decimal = |b: &u8| b.is_ascii_digit();
         let mut at = start;
@@ -880,28 +894,39 @@ impl Reader<'_, '_> {
         };
         let mut is_integer = false;
         if let Some(is_digit) = radix {
-            let len = digits(at + 2, is_digit);
+            let len = digits(at + 2, is_digit)?;
             if len == 0 {
                 return Err(SyntaxError);
             }
             at += 2 + len;
         } else {
-            let integer = digits(at, decimal);
+            let integer = digits(at, decimal)?;
+            // After a zero there is no `_`. If there is no 8 and no 9 either, the number is octal, and
+            // that is all of it.
+            let after_zero: &[u8] = match text[at] {
+                b'0' => &text[at + 1..at + integer],
+                _ => &[],
+            };
+            if bun_core::strings::contains_char(after_zero, b'_') {
+                return Err(SyntaxError);
+            }
+            let is_octal = !after_zero.is_empty()
+                && bun_core::strings::index_of_any(after_zero, b"89").is_none();
             at += integer;
             is_integer = true;
             let mut fraction = 0;
-            if text.get(at) == Some(&b'.') {
+            if text.get(at) == Some(&b'.') && !is_octal {
                 is_integer = false;
-                fraction = digits(at + 1, decimal);
+                fraction = digits(at + 1, decimal)?;
                 at += 1 + fraction;
             }
             if integer + fraction == 0 {
                 return Err(SyntaxError);
             }
-            if matches!(text.get(at), Some(b'e' | b'E')) {
+            if matches!(text.get(at), Some(b'e' | b'E')) && !is_octal {
                 is_integer = false;
                 let sign = usize::from(matches!(text.get(at + 1), Some(b'+' | b'-')));
-                let exponent = digits(at + 1 + sign, decimal);
+                let exponent = digits(at + 1 + sign, decimal)?;
                 if exponent == 0 {
                     return Err(SyntaxError);
                 }

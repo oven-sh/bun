@@ -35,14 +35,28 @@ impl ContextParameter {
         if from_parameters.is_dead() {
             return ContextParameter::Absent;
         }
+        let from_parameters = from_parameters.to_utf8();
         // Every function body parses as an async generator's, every arrow function's as an async one's.
-        let prefix: &[u8] = if is_arrow_function { b"(async " } else { b"(async function*" };
-        let text = [prefix, from_parameters.to_utf8().slice(), b")"].concat();
+        // `super.x` and `this.#x` only do in a method of a class, where all is strict mode code.
+        let around: [(&[u8], &[u8]); 2] = if is_arrow_function {
+            [(b"(async ", b")"), (b"(class{m(){(async ", b")}})")]
+        } else {
+            [(b"(async function*", b")"), (b"(class{async*m", b"})")]
+        };
+        around
+            .iter()
+            .find_map(|(before, after)| {
+                Self::parse(&[before, from_parameters.slice(), after].concat(), is_arrow_function, index)
+            })
+            .unwrap_or(ContextParameter::Other(None))
+    }
 
+    /// `None`: `text` does not parse.
+    fn parse(text: &[u8], is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
         let arena = bun_alloc::Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
-        let source = bun_ast::Source::init_path_string(&b"function.js"[..], &text[..]);
+        let source = bun_ast::Source::init_path_string(&b"function.js"[..], text);
         let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
         options.features.no_macros = true;
         options.suppress_warnings_about_weird_code = true;
@@ -54,7 +68,19 @@ impl ContextParameter {
                     let [Stmt { data: StmtData::SExpr(only), .. }] = parsed.stmts else {
                         return ContextParameter::Absent;
                     };
-                    let (args, has_rest_arg): (&[G::Arg], bool) = match &only.value.data {
+                    let mut function = &only.value.data;
+                    if let Data::EClass(class) = function
+                        && let [G::Property { value: Some(method), .. }] = class.properties.slice()
+                    {
+                        function = match &method.data {
+                            Data::EFunction(m) if is_arrow_function => match m.func.body.stmts.slice() {
+                                [Stmt { data: StmtData::SExpr(arrow), .. }] => &arrow.value.data,
+                                _ => return ContextParameter::Absent,
+                            },
+                            method => method,
+                        };
+                    }
+                    let (args, has_rest_arg): (&[G::Arg], bool) = match function {
                         Data::EArrow(arrow) => (arrow.args.slice(), arrow.has_rest_arg),
                         Data::EFunction(function) => (
                             function.func.args.slice(),
@@ -75,7 +101,7 @@ impl ContextParameter {
                     }
                 })
             })
-            .unwrap_or(ContextParameter::Absent)
+            .ok()
     }
 
     fn properties(properties: &[bun_ast::b::Property], arena: &bun_alloc::Arena) -> ContextParameter {

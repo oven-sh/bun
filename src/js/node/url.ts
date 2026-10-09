@@ -1227,7 +1227,7 @@ function getPathFromURLWin32(url: URL): string {
       }
     }
   }
-  pathname = pathname.replace(/\//g, "\\");
+  pathname = `${pathname}`.replace(/\//g, "\\");
   pathname = decodeURIComponent(pathname);
   if (hostname !== "") {
     // UNC path: \\hostname\path
@@ -1254,7 +1254,8 @@ function getPathFromURLPosix(url: URL): string {
       }
     }
   }
-  return decodeURIComponent(pathname);
+  // As in Node, a `pathname` that is not a string stays what it is, for the caller's path check to refuse.
+  return `${pathname}`.includes("%") ? decodeURIComponent(pathname) : pathname;
 }
 
 function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {

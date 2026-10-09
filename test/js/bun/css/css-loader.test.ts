@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -619,6 +619,34 @@ describe.concurrent("css module exports", () => {
       [`error: Could not resolve: "./b\uFFFD.css"`, 1],
       [`error: Could not resolve: "./b\uFFFD.png"`, 1],
     ]);
+  });
+
+  test("composes from an absolute path about as long as a path buffer", async () => {
+    using dir = tempDir("css-module-long-composes", {
+      "e.ts": `import styles from "./a.module.css";\nconsole.log(JSON.stringify(styles));`,
+    });
+    // Its parent directory exists, so the resolver goes on to try the name with each extension.
+    const root = String(dir).replaceAll("\\", "/") + "/";
+    const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+    const names: string[] = [];
+    let css = "";
+    for (let length = limit - 16; length <= limit + 4; length++) {
+      names.push(`c${names.length}`);
+      css += `.${names.at(-1)} { composes: x from "${root}${Buffer.alloc(length - root.length, "c")}" }\n`;
+    }
+    writeFileSync(join(String(dir), "a.module.css"), css);
+
+    const [runtime, bundler] = await Promise.all([
+      run(String(dir), "e.ts"),
+      run(String(dir), "build", "e.ts", "--outdir=out"),
+    ]);
+    expect({ ...runtime, stdout: JSON.parse(runtime.stdout) }).toEqual({
+      stdout: Object.fromEntries(names.map(name => [name, `${name}_BLNoTg`])),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(bundler.stderr.match(/^error: Could not resolve: /gm)).toHaveLength(names.length);
+    expect(bundler.exitCode).toBe(1);
   });
 
   test("a plugin's path that is longer than a path buffer", async () => {

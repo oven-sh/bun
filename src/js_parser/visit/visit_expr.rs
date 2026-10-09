@@ -665,8 +665,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
             p.visit_expr(tag);
-            if p.options.features.inject_jest_globals {
-                drop_namespace_of_lowered_callee(&p.symbols, tag);
+            if p.options.features.inject_jest_globals
+                && drop_namespace_of_lowered_callee(&p.symbols, tag)
+            {
+                p.did_apply_test_feature = true;
             }
         }
 
@@ -1879,7 +1881,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        let is_import_meta_glob = p.has_import_meta && p.is_import_meta_glob_call(&e_);
+        let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
+            .then(|| p.read_import_meta_glob_call(&e_, expr.loc));
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1958,8 +1961,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             _ => {}
         }
 
-        if p.options.features.inject_jest_globals {
-            drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target);
+        if p.options.features.inject_jest_globals
+            && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
+        {
+            p.did_apply_test_feature = true;
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
@@ -2170,8 +2175,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        if is_import_meta_glob {
-            p.expand_import_meta_glob(e, in_.is_object_keys_argument);
+        if let Some(arguments) = import_meta_glob {
+            p.expand_import_meta_glob(e, arguments, in_.is_object_keys_argument);
             return;
         }
 

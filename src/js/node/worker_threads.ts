@@ -39,7 +39,7 @@ function validateWorkerFilename(filename) {
   if (typeof filename !== "string") {
     const { isURL, toPathIfFileURL } = require("internal/url");
     if (isURL(filename)) {
-      if (filename.protocol === "data:") return filename.href;
+      if (filename.protocol === "data:") return `${filename}`;
       // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
       return toPathIfFileURL(filename);
     }

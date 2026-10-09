@@ -1,20 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult};
 
-use super::super::jest::Jest;
+use super::super::jest::{FileColumns as _, Jest};
 use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
-fn append_first(global: &JSGlobalObject, target: JSValue, source: JSValue, count: u32) -> JsResult<()> {
-    let mut iter = source.array_iterator(global)?;
-    while iter.i < count {
-        let Some(tester) = iter.next()? else { break };
-        target.push(global, tester)?;
-    }
-    Ok(())
-}
-
 impl Expect {
-    /// The testers of preload scripts and of the current test file, or what an [`EqualityTestersScope`] put in their place.
+    /// The testers that hold now, or what an [`EqualityTestersScope`] put in their place.
     pub(crate) fn equality_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = ExpectMatcherUtils::singleton(global);
         let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
@@ -24,19 +15,36 @@ impl Expect {
         let file = Jest::file_generation(global);
         let same_file = utils.testers_file.replace(file) == file;
         let Some(testers) = js::equality_testers_get_cached(utils_value) else { return Ok(None) };
-        if same_file {
+        if same_file || !utils.testers_of_file.get().contains(&true) {
             return Ok(Some(testers));
         }
 
-        let from_preload = utils.preload_testers.get();
-        if from_preload == 0 {
+        let of_file = utils.testers_of_file.replace(Vec::new());
+        let kept = JSValue::create_empty_array(global, 0)?;
+        let mut count = 0;
+        let mut iter = testers.array_iterator(global)?;
+        for is_of_file in of_file {
+            let Some(tester) = iter.next()? else { break };
+            if !is_of_file {
+                kept.put_index(global, count, tester)?;
+                count += 1;
+            }
+        }
+        utils.testers_of_file.set(vec![false; count as usize]);
+        if count == 0 {
             js::equality_testers_set_cached(utils_value, global, JSValue::ZERO);
             return Ok(None);
         }
-        let kept = JSValue::create_empty_array(global, 0)?;
-        append_first(global, kept, testers, from_preload)?;
         js::equality_testers_set_cached(utils_value, global, kept);
         Ok(Some(kept))
+    }
+
+    /// Whether the function that made the call in `frame` is in the test file that is running.
+    fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
+        let Some(runner) = Jest::runner() else { return false };
+        let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
+        let path = runner.files.items_source()[buntest.get().file_id as usize].path.text;
+        frame.get_caller_src_loc(global).str.eql_utf8(path)
     }
 
     pub(crate) fn add_equality_testers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -45,9 +53,26 @@ impl Expect {
             return Err(global.throw_invalid_argument_type_value("testers", "array", testers));
         }
 
-        let added = JSValue::create_empty_array(global, 0)?;
+        let utils_value = ExpectMatcherUtils::singleton(global);
+        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(JSValue::UNDEFINED) };
+        // SAFETY: `utils_value` is on the stack and owns the payload.
+        let utils = unsafe { &*utils };
+
+        // A new array: script may hold the old one, as `customTesters`.
+        let all = JSValue::create_empty_array(global, 0)?;
+        let mut count = 0;
+        if let Some(registered) = Self::equality_testers(global)? {
+            let mut iter = registered.array_iterator(global)?;
+            while let Some(tester) = iter.next()? {
+                all.put_index(global, count, tester)?;
+                count += 1;
+            }
+        }
+        let registered = count;
+
+        let is_of_file = Self::is_called_by_test_file(global, frame);
         let mut iter = testers.array_iterator(global)?;
-        while let Some(tester) = iter.next()? {
+        'testers: while let Some(tester) = iter.next()? {
             if !tester.is_callable() {
                 return Err(global.throw_invalid_argument_type_value(
                     format!("testers[{}]", iter.i - 1),
@@ -55,30 +80,25 @@ impl Expect {
                     tester,
                 ));
             }
-            added.push(global, tester)?;
+            // A helper that every test file calls registers its tester once.
+            if !is_of_file {
+                for index in 0..registered {
+                    if all.get_direct_index(global, index)? == tester
+                        && utils.testers_of_file.get().get(index as usize) == Some(&false)
+                    {
+                        continue 'testers;
+                    }
+                }
+            }
+            all.put_index(global, count, tester)?;
+            count += 1;
         }
-        if iter.len == 0 {
+        if count == registered {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let all = match Self::equality_testers(global)? {
-            Some(registered) => {
-                let all = JSValue::create_empty_array(global, 0)?;
-                append_first(global, all, registered, u32::MAX)?;
-                append_first(global, all, added, u32::MAX)?;
-                all
-            }
-            None => added,
-        };
-
-        let utils_value = ExpectMatcherUtils::singleton(global);
         js::equality_testers_set_cached(utils_value, global, all);
-        if global.bun_vm().is_in_preload {
-            if let Some(utils) = ExpectMatcherUtils::from_js(utils_value) {
-                // SAFETY: `utils_value` is on the stack and owns the payload.
-                unsafe { &*utils }.preload_testers.set(all.get_length(global)? as u32);
-            }
-        }
+        utils.testers_of_file.with_mut(|of_file| of_file.resize(count as usize, is_of_file));
         Ok(JSValue::UNDEFINED)
     }
 

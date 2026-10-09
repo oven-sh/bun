@@ -116,6 +116,13 @@ function summary(stderr: string) {
   return stderr.match(/^ *\d+ (?:pass|fail|error)s?$/gm)?.map(line => line.trim());
 }
 
+/** "pass" or "fail" by the name of the test. */
+function verdicts(stderr: string) {
+  return Object.fromEntries(
+    Array.from(stderr.matchAll(/^\((pass|fail)\) (.+?)(?: \[[\d.]+ms\])?$/gm), ([, verdict, name]) => [name, verdict]),
+  );
+}
+
 describe.concurrent("test environment", () => {
   test("vitest's comment is found where vitest finds it, Jest's where Jest does", async () => {
     // Expectations are what vitest 5.0.3's `detectCodeBlock` and jest-docblock 30's `extract` return for the same text.
@@ -767,9 +774,29 @@ describe.concurrent("test environment", () => {
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).toContain(
-        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis is no longer configurable\n`,
+        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis can no longer be redefined\n`,
       );
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js happy-dom#1 http://localhost:3000"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the rest of an environment is taken away after a property that cannot be put back", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": `// ${VITEST} happy-dom
+          import { test } from "bun:test";
+          test("happy-dom", () => {
+            delete globalThis.Request;
+            Object.preventExtensions(globalThis);
+          });`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).toContain(
+        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis can no longer be redefined\n`,
+      );
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js node "]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
       expect(exitCode).toBe(1);
     });
@@ -1354,7 +1381,7 @@ describe.concurrent("test environment with the real", () => {
     using dir = project({
       "a.test.js": `// ${VITEST} jsdom
         import { test } from "bun:test";
-        test.failing("throws in a frame callback", done => {
+        test("throws in a frame callback", done => {
           requestAnimationFrame(() => {
             throw new Error("from the frame callback");
           });
@@ -1367,8 +1394,11 @@ describe.concurrent("test environment with the real", () => {
         });`,
     });
     const { stderr, exitCode } = await bunTest(String(dir));
+    expect(stderr).toContain("error: from the frame callback");
     expect(stderr).toContain("error: from the listener");
-    expect(summary(stderr)).toEqual(["1 pass", "1 fail"]);
+    expect(stderr).not.toContain("# Unhandled error between tests");
+    expect(verdicts(stderr)).toEqual({ "throws in a frame callback": "fail", "throws in a listener": "fail" });
+    expect(summary(stderr)).toEqual(["0 pass", "2 fail"]);
     expect(exitCode).toBe(1);
   });
 
@@ -1435,12 +1465,12 @@ describe.concurrent("test environment with the real", () => {
     ])("%s", async (_, files) => {
       using dir = project(
         Object.fromEntries(
-          files.map(([code, isReported], i) => [
+          files.map(([code], i) => [
             `${String(i).padStart(2, "0")}.test.js`,
             `// ${VITEST} jsdom
             import { test } from "bun:test";
             ${throwInListener}
-            test${isReported ? ".failing" : ""}("file ${i}", () => {
+            test("file ${i}", () => {
               const listener = () => {};
               ${code}
               throwInListener();
@@ -1449,9 +1479,14 @@ describe.concurrent("test environment with the real", () => {
         ),
       );
       const { stderr, exitCode } = await bunTest(String(dir));
-      expect(stderr).not.toContain("(fail)");
-      expect(summary(stderr)).toEqual([`${files.length} pass`, "0 fail"]);
-      expect(exitCode).toBe(0);
+      const reported = files.filter(([, isReported]) => isReported).length;
+      expect(stderr).toContain("error: from the listener");
+      expect(stderr).not.toContain("# Unhandled error between tests");
+      expect(verdicts(stderr)).toEqual(
+        Object.fromEntries(files.map(([, isReported], i) => [`file ${i}`, isReported ? "fail" : "pass"])),
+      );
+      expect(summary(stderr)).toEqual([`${files.length - reported} pass`, `${reported} fail`]);
+      expect(exitCode).toBe(1);
     });
 
     test("an error event of an element only if it bubbles up to the window, as in vitest", async () => {
@@ -1470,7 +1505,7 @@ describe.concurrent("test environment with the real", () => {
           import { test } from "bun:test";
           ${events
             .map(
-              ([code, isReported], i) => `test${isReported ? ".failing" : ""}("event ${i}", () => {
+              ([code], i) => `test("event ${i}", () => {
                 const error = new Error("of an element");
                 const element = document.body.appendChild(document.createElement("div"));
                 ${code}
@@ -1479,9 +1514,13 @@ describe.concurrent("test environment with the real", () => {
             .join("\n")}`,
       });
       const { stderr, exitCode } = await bunTest(String(dir));
-      expect(stderr).not.toContain("(fail)");
-      expect(summary(stderr)).toEqual([`${events.length} pass`, "0 fail"]);
-      expect(exitCode).toBe(0);
+      expect(stderr).toContain("error: of an element");
+      expect(stderr).not.toContain("# Unhandled error between tests");
+      expect(verdicts(stderr)).toEqual(
+        Object.fromEntries(events.map(([, isReported], i) => [`event ${i}`, isReported ? "fail" : "pass"])),
+      );
+      expect(summary(stderr)).toEqual(["3 pass", "2 fail"]);
+      expect(exitCode).toBe(1);
     });
 
     test("--rerun-each", async () => {
@@ -1519,7 +1558,7 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
-  test("a window that a file closed is not the next file's", async () => {
+  describe("a window that a file closed", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";
       test("${name}", () => {
@@ -1527,16 +1566,30 @@ describe.concurrent("test environment with the real", () => {
         expect(document.querySelector("b").textContent).toBe("1");
         ${code}
       });`;
-    using dir = project({
-      "1.test.js": file("jsdom", "window.close();"),
-      "2.test.js": file("jsdom", ""),
-      "3.test.js": file("happy-dom", "window.close();"),
-      "4.test.js": file("happy-dom", ""),
+
+    test("is not the next file's", async () => {
+      using dir = project({
+        "1.test.js": file("jsdom", "window.close();"),
+        "2.test.js": file("jsdom", ""),
+        "3.test.js": file("happy-dom", "window.close();"),
+        "4.test.js": file("happy-dom", ""),
+      });
+      const { stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
     });
-    const { stderr, exitCode } = await bunTest(String(dir));
-    expect(stderr).not.toContain("error:");
-    expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
-    expect(exitCode).toBe(0);
+
+    test.each([[[]], [["--isolate"]]])("is not the next run's of --rerun-each %j", async flags => {
+      using dir = project({
+        "1.test.js": file("jsdom", "window.close();"),
+        "2.test.js": file("happy-dom", "window.close();"),
+      });
+      const { stderr, exitCode } = await bunTest(String(dir), "--rerun-each=2", ...flags);
+      expect(stderr).not.toContain("error:");
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Bun's builtin modules go on using Bun's own classes, and take the typed arrays of jsdom's realm.

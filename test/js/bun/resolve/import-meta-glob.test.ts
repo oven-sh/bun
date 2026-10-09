@@ -169,6 +169,9 @@ describe.concurrent("import.meta.glob", () => {
     [`{ query: "?x", import: "setup" }`, `() => import("./dir/a.ts?x").then((m) => m.setup)`],
     [`{ import: "not an identifier" }`, `() => import("./dir/a.ts").then((m) => m["not an identifier"])`],
     [`{ as: "other" }`, `() => import("./dir/a.ts?other")`],
+    // A minifier writes `!1` for `false`.
+    [`{ eager: !1, exhaustive: !0, caseSensitive: !!1 }`, `() => import("./dir/a.ts")`],
+    [`{ query: { minus: -1, plus: +2, not: !0 } }`, `() => import("./dir/a.ts?minus=-1&plus=2&not=true")`],
   ])("a lazy entry with %s", async (options, expected) => {
     expect(await runEntry(`console.log(String(import.meta.glob("./dir/a.ts", ${options})["./dir/a.ts"]));`)).toEqual({
       stdout: expected,
@@ -564,23 +567,109 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  test("in a CommonJS module", async () => {
-    const files = {
-      "proj/src/lazy.cjs": `module.exports = import.meta.glob("./dir/[ab].ts", { import: "name" });`,
-      "proj/src/eager.cjs": `module.exports = import.meta.glob("./dir/[ab].ts", { eager: true });`,
-    };
-    expect(
-      await runEntry(`const lazy = require("./lazy.cjs"); console.log(await lazy["./dir/b.ts"]());`, files),
-    ).toEqual({ stdout: "b", stderr: "", exitCode: 0 });
-    const { stdout, stderr, exitCode } = await runEntry(`require("./eager.cjs");`, files);
-    expect({ stdout, stderr: stderr.split("\n").filter(line => /^error|^ +at /.test(line)), exitCode }).toEqual({
-      stdout: "",
-      stderr: [
-        "error: Cannot use import statement with CommonJS-only features",
-        "    at <dir>/proj/src/eager.cjs:1:35",
-      ],
-      exitCode: 1,
+  describe("in a CommonJS module", () => {
+    const eager = `import.meta.glob("./dir/[ab].ts", { eager: true, import: "name" })`;
+    const guarded = `typeof import.meta.glob === "function" ? ${eager} : "fallback"`;
+    /** What `require()` of each file gives. */
+    async function requireEach(files: Record<string, string>) {
+      const { stdout, stderr, exitCode } = await runEntry(
+        `console.log(JSON.stringify(${JSON.stringify(Object.keys(files))}.map(file => {
+           try { return require("./" + file); } catch (error) { return error.name + ": " + error.message; }
+         })));`,
+        Object.fromEntries(Object.entries(files).map(([file, code]) => ["proj/src/" + file, code])),
+      );
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    test("one that only calls it where it exists runs as it did without it", async () => {
+      expect(
+        await requireEach({
+          "guarded.cjs": `module.exports = ${guarded};`,
+          "later.js": `const found = ${guarded}; module.exports = found;`,
+          "exports.js": `exports.found = ${guarded};`,
+        }),
+      ).toEqual(["fallback", "fallback", { found: "fallback" }]);
     });
+
+    test("an eager call throws when it is reached, and the others are replaced", async () => {
+      const message = `TypeError: The "import.meta.glob" option "eager" needs import statements, which a CommonJS module cannot have`;
+      expect(
+        await requireEach({
+          "lazy.cjs": `module.exports = Object.keys(import.meta.glob("./dir/[ab].ts", { import: "name" }));`,
+          "eager.cjs": `module.exports = ${eager};`,
+          "later.js": `const load = () => ${eager}; module.exports = load();`,
+          "unreached.cjs": `module.exports = String(() => ${eager}).includes("CommonJS");`,
+          // Where an object literal would be taken apart.
+          "unused.cjs": `
+            let thrown;
+            try { ${eager}; } catch (error) { thrown = error.name + ": " + error.message; }
+            module.exports = [typeof import.meta.glob, Object.keys(import.meta.glob("./dir/a.ts")), thrown];`,
+          "property.cjs": `module.exports = ${eager}["./dir/a.ts"];`,
+          "imports-nothing.cjs": `
+            module.exports = [typeof import.meta.glob, Object.keys(${eager}), import.meta.glob("./none/*.ts", { eager: true })];`,
+          // Nothing in it is CommonJS but its name.
+          "module.cjs": `globalThis.found = ${eager}; export default globalThis.found;`,
+        }),
+      ).toEqual([
+        ["./dir/a.ts", "./dir/b.ts"],
+        message,
+        message,
+        true,
+        ["function", ["./dir/a.ts"], message],
+        message,
+        ["function", ["./dir/a.ts", "./dir/b.ts"], {}],
+        { default: { "./dir/a.ts": "a", "./dir/b.ts": "b" } },
+      ]);
+    });
+  });
+
+  test.each([
+    ["paths in tsconfig.json", "@null/*.js"],
+    ["imports in package.json", "#null/*.js"],
+  ])("a null byte in %s", async (_, pattern) => {
+    using dir = tempDir("import-meta-glob", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@null/*": ["./di\0r/*"] } } }),
+      "package.json": JSON.stringify({ name: "null", imports: { "#null/*": "./di\0r/*" } }),
+      "di/a.js": "",
+      "entry.js": `
+        try { console.log(JSON.stringify(Object.keys(import.meta.glob("${pattern}")))); }
+        catch (error) { console.log(error.name + ": " + error.message); }`,
+    });
+    expect(await run(String(dir), ["entry.js"])).toEqual({
+      stdout: `TypeError: Expected the path alias of "${pattern}" without a null byte\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The project root is read once for a call, so what is found is below one directory.
+  test("process.chdir() while modules that call it load", async () => {
+    using dir = tempDir("import-meta-glob", {
+      "short/x/a.js": "",
+      "a-much-longer-name-than-the-other/x/b.js": "",
+      "a-much-longer-name-than-the-other/x/c.js": "",
+      "module.js": `export default Object.keys(import.meta.glob("/x/*.js")).join();`,
+      "entry.js": `
+        const directories = ["short", "a-much-longer-name-than-the-other"].map(name => import.meta.dir + "/" + name);
+        const found = new Set();
+        let loading = true;
+        const loaded = (async () => {
+          for (let i = 0; i < 2000; i += 20) {
+            const modules = Array.from({ length: 20 }, (_, j) => import("./module.js?" + (i + j)));
+            for (const module of await Promise.all(modules)) found.add(module.default);
+          }
+          loading = false;
+        })();
+        for (let i = 0; loading; i++) {
+          process.chdir(directories[i & 1]);
+          if (i % 50 === 0) await new Promise(resolve => setImmediate(resolve));
+        }
+        await loaded;
+        for (const keys of ["", "/x/a.js", "/x/b.js,/x/c.js"]) found.delete(keys);
+        console.log(JSON.stringify([...found]));`,
+    });
+    expect(await run(String(dir), ["entry.js"])).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
   });
 
   test("in a module that a plugin made up", async () => {
@@ -735,11 +824,11 @@ describe("errors", () => {
     ['import.meta.glob(["./dir/*.ts", ...variable])', 'Expected a glob pattern to be a string literal, but got ...', 48],
     ['import.meta.glob("./dir/*.ts", 1)', 'Expected the options of "import.meta.glob" to be an object literal, but got number', 47],
     ['import.meta.glob("./dir/*.ts", null)', 'Expected the options of "import.meta.glob" to be an object literal, but got null', 47],
-    ['import.meta.glob("./dir/*.ts", undefined)', 'Expected the options of "import.meta.glob" to be an object literal, but got undefined', 47],
+    ['import.meta.glob("./dir/*.ts", undefined)', 'Expected the options of "import.meta.glob" to be an object literal, but got identifier', 47],
     ['import.meta.glob("./dir/*.ts", variable)', 'Expected the options of "import.meta.glob" to be an object literal, but got identifier', 47],
     ['import.meta.glob("./dir/*.ts", { eager: variable })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got identifier', 56],
     ['import.meta.glob("./dir/*.ts", { eager: "yes" })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got string', 56],
-    ['import.meta.glob("./dir/*.ts", { eager: undefined })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got undefined', 56],
+    ['import.meta.glob("./dir/*.ts", { eager: undefined })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got identifier', 56],
     ['import.meta.glob("./dir/*.ts", { exhaustive: 1 })', 'Expected the "import.meta.glob" option "exhaustive" to be a boolean literal, but got number', 61],
     ['import.meta.glob("./dir/*.ts", { import: 1 })', 'Expected the "import.meta.glob" option "import" to be a string literal, but got number', 57],
     ['import.meta.glob("./dir/*.ts", { base: 1 })', 'Expected the "import.meta.glob" option "base" to be a string literal, but got number', 55],
@@ -767,13 +856,28 @@ describe("errors", () => {
     ['import.meta.glob("./d\\0ir/*.ts")', 'Expected a glob pattern without a null byte', 33],
     ['import.meta.glob(["./dir/*.ts", "!/\\0/*.ts"])', 'Expected a glob pattern without a null byte', 48],
     ['import.meta.glob("./*.ts", { base: "./dir/\\0" })', 'Expected the "import.meta.glob" option "base" without a null byte', 51],
+    // What is inlined or folded is not a literal: `bun run` and `bun build` do not inline and fold the same.
+    ['import.meta.glob(constant)', 'Expected a glob pattern to be a string literal, but got identifier', 33],
+    ['import.meta.glob([constant])', 'Expected a glob pattern to be a string literal, but got identifier', 34],
+    ['import.meta.glob(Enum.member)', 'Expected a glob pattern to be a string literal, but got dot', 33],
+    ['import.meta.glob("./dir" + "/*.ts")', 'Expected a glob pattern to be a string literal, but got binary', 33],
+    ['import.meta.glob(["./dir/" + "a.ts"])', 'Expected a glob pattern to be a string literal, but got binary', 34],
+    ['import.meta.glob(true ? "./dir/*.ts" : "")', 'Expected a glob pattern to be a string literal, but got if', 33],
+    ['import.meta.glob(("", "./dir/*.ts"))', 'Expected a glob pattern to be a string literal, but got binary', 34],
+    ['import.meta.glob("./dir/*.ts", { eager: yes })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got identifier', 56],
+    ['import.meta.glob("./dir/*.ts", { eager: !yes })', 'Expected the "import.meta.glob" option "eager" to be a boolean literal, but got unary', 56],
+    ['import.meta.glob("./dir/*.ts", { import: constant })', 'Expected the "import.meta.glob" option "import" to be a string literal, but got identifier', 57],
+    ['import.meta.glob("./dir/*.ts", { query: "?a" + "b" })', 'Expected the "import.meta.glob" option "query" to be a string or an object literal, but got binary', 56],
+    ['import.meta.glob("./dir/*.ts", { query: { a: 1 + 1 } })', 'Expected a value of the "import.meta.glob" option "query" to be a string, number or boolean literal, but got binary', 61],
+    ['import.meta.glob("./dir/*.ts", import.meta.glob("./none/*.ts"))', 'Expected the options of "import.meta.glob" to be an object literal, but got call', 47],
   ];
+  const declarations = `const variable: any = [], constant = "./dir/*.ts", yes = true; enum Enum { member = "./dir/*.ts" }`;
   let actual: [message: string, line: number, column: number][];
   beforeAll(async () => {
     using dir = tempDir("import-meta-glob", {
       ...tree,
       ...Object.fromEntries(
-        errors.map(([code], i) => [`proj/src/errors/${i}.ts`, `const variable: any = [];\nexport default ${code};\n`]),
+        errors.map(([code], i) => [`proj/src/errors/${i}.ts`, `${declarations}\nexport default ${code};\n`]),
       ),
       "proj/src/entry.ts": `
         const out = [];

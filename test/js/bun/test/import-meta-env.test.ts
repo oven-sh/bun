@@ -1,5 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { jscDescribe } from "bun:jsc";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, mock, test, vi } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import assert from "node:assert";
+import { stringify } from "node:querystring";
+import { DatabaseSync } from "node:sqlite";
+import { format, inspect, isDeepStrictEqual } from "node:util";
+import { createContext, runInContext, runInNewContext } from "node:vm";
 
 const viteVariables = ["BASE_URL", "MODE", "DEV", "PROD", "SSR"] as const;
 const env: Record<PropertyKey, any> = import.meta.env;
@@ -318,7 +325,151 @@ describe("import.meta.env in a test file", () => {
 
     test("the message of a failed matcher has the variables of process.env", () => {
       expect(messageOf(() => expect(env).toEqual({}))).toContain('"GREETING": "hello"');
-      expect(messageOf(() => expect({ nested: env }).toStrictEqual({}))).toContain('"GREETING": "hello"');
+      expect(messageOf(() => expect<unknown>({ nested: env }).toStrictEqual({}))).toContain('"GREETING": "hello"');
+    });
+
+    // Native code that reads an object past its hooks sees an empty one here. Each of these is given `import.meta.env`
+    // and then an ordinary object with the same properties.
+    describe("is to every API what an ordinary object with the same properties is", () => {
+      const defaults = { DEV: false, BASE_URL: "/", MODE: "test", PROD: false, SSR: true };
+      const unnamed = (printed: string) => printed.replaceAll("ImportMetaEnv ", "");
+      const outcome = (matcher: () => void) => unnamed(messageOf(matcher));
+      const names = (object: object) => {
+        const names: string[] = [];
+        for (const name in object) names.push(name);
+        return names;
+      };
+      const apis: Record<string, (object: any) => unknown> = {
+        "Object.keys": object => Object.keys(object),
+        "Object.values": object => Object.values(object),
+        "Object.entries": object => Object.entries(object),
+        "Object.getOwnPropertyNames": object => Object.getOwnPropertyNames(object),
+        "Object.getOwnPropertyDescriptors": object => Object.getOwnPropertyDescriptors(object),
+        "Reflect.ownKeys": object => Reflect.ownKeys(object),
+        "for-in": names,
+        "for-in of an object that inherits from it": object => names(Object.create(object)),
+        "in, Object.hasOwn, propertyIsEnumerable": object =>
+          ["GREETING", "MODE", "MISSING"].map(name => [
+            name in object,
+            Object.hasOwn(object, name),
+            Object.prototype.propertyIsEnumerable.call(object, name),
+          ]),
+        "spread": object => ({ ...object }),
+        "rest": ({ MODE, ...rest }) => [MODE, rest],
+        "Object.assign": object => Object.assign({}, object),
+        "with": object => new Function("object", "with (object) return [GREETING, MODE, typeof MISSING];")(object),
+        "a Proxy of it": object => [Object.keys(new Proxy(object, {})), JSON.stringify(new Proxy(object, {}))],
+        "JSON.stringify": object => JSON.stringify(object),
+        "JSON.stringify, nested and indented": object => JSON.stringify({ object, list: [object] }, null, 2),
+        "JSON.stringify with a list of names": object => JSON.stringify(object, ["GREETING", "SSR"]),
+        "JSON.stringify with a replacer": object =>
+          JSON.stringify(object, (key, value) => (key === "MODE" ? 1 : value)),
+        "Response.json": object => Response.json(object).text(),
+        "Bun.YAML.stringify": object => Bun.YAML.stringify(object),
+        "Bun.inspect": object => unnamed(Bun.inspect(object)),
+        "Bun.inspect, sorted": object => unnamed(Bun.inspect(object, { sorted: true })),
+        "Bun.inspect, sorted and nested": object => unnamed(Bun.inspect({ object, list: [object] }, { sorted: true })),
+        "Bun.inspect, compact": object => unnamed(Bun.inspect([object], { compact: true })),
+        "Bun.inspect.table": object => [Bun.inspect.table(object), Bun.inspect.table([object])],
+        "util.inspect": object => [
+          inspect(object),
+          inspect(object, { showHidden: true, sorted: true, compact: false }),
+        ],
+        "util.format": object => format("%o %O %j", object, object, object),
+        "Bun.deepEquals": object => [
+          Bun.deepEquals(object, whole),
+          Bun.deepEquals(whole, object),
+          Bun.deepEquals(object, { ...whole, MORE: 1 }),
+          Bun.deepEquals(object, defaults),
+          Bun.deepEquals(defaults, object),
+        ],
+        "Bun.deepMatch": object => [
+          Bun.deepMatch({ GREETING: "hello" }, object),
+          Bun.deepMatch({ GREETING: "other" }, object),
+          Bun.deepMatch(object, whole),
+          Bun.deepMatch(object, defaults),
+        ],
+        "util.isDeepStrictEqual": object => [
+          isDeepStrictEqual(object, whole),
+          isDeepStrictEqual(whole, object),
+          isDeepStrictEqual(object, defaults),
+        ],
+        "assert.deepEqual": object => [
+          outcome(() => assert.deepEqual(object, whole)),
+          outcome(() => assert.deepEqual(whole, object)),
+          outcome(() => assert.deepEqual(object, defaults)),
+          outcome(() => assert.partialDeepStrictEqual(object, { GREETING: "hello" })),
+          outcome(() => assert.partialDeepStrictEqual(object, { GREETING: "other" })),
+        ],
+        "toEqual": object => [
+          outcome(() => expect(object).toEqual(whole)),
+          outcome(() => expect(whole).toEqual(object)),
+          outcome(() => expect([object]).toContainEqual(whole)),
+          outcome(() => expect(object).not.toEqual(defaults)),
+          outcome(() => expect(defaults).not.toEqual(object)),
+        ],
+        "toMatchObject": object => [
+          outcome(() => expect(object).toMatchObject({ GREETING: "hello", MODE: "test" })),
+          outcome(() => expect(object).not.toMatchObject({ GREETING: "other" })),
+          outcome(() => expect(whole).toMatchObject(object)),
+          outcome(() => expect(defaults).not.toMatchObject(object)),
+        ],
+        "expect.objectContaining": object => [
+          outcome(() => expect(object).toEqual(expect.objectContaining({ GREETING: "hello" }))),
+          outcome(() => expect(object).not.toEqual(expect.objectContaining({ GREETING: "other" }))),
+          outcome(() => expect(whole).toEqual(expect.objectContaining(object))),
+          outcome(() => expect(defaults).not.toEqual(expect.objectContaining(object))),
+        ],
+        "toHaveProperty": object => [
+          outcome(() => expect(object).toHaveProperty("GREETING", "hello")),
+          outcome(() => expect({ object }).toHaveProperty("object.MODE", "test")),
+          outcome(() => expect(object).not.toHaveProperty("MISSING")),
+        ],
+        "toContainKeys, toContainValues": object => [
+          outcome(() => expect(object).toContainKey("GREETING")),
+          outcome(() => expect(object).toContainAllKeys(Object.keys(whole))),
+          outcome(() => expect(object).not.toContainKey("MISSING")),
+          outcome(() => expect(object).toContainValue("hello")),
+          outcome(() => expect(object).toContainAllValues(Object.values(whole))),
+          outcome(() => expect(object).not.toBeEmptyObject()),
+        ],
+        "toHaveBeenCalledWith": object => {
+          const fn = mock();
+          fn(object);
+          return [
+            outcome(() => expect(fn).toHaveBeenCalledWith(whole)),
+            outcome(() => expect(fn).not.toHaveBeenCalledWith(defaults)),
+          ];
+        },
+        "what a failed toEqual prints": object => outcome(() => expect<unknown>({ object }).toEqual({})),
+        "what a failed toStrictEqual prints": object => outcome(() => expect<unknown>({ object }).toStrictEqual({})),
+        "what a failed toMatchObject prints": object => outcome(() => expect({ object }).toMatchObject({ object: 1 })),
+        "what a failed toMatchInlineSnapshot prints": object =>
+          outcome(() => expect({ object }).toMatchInlineSnapshot(`other`)),
+        "new Headers": object => [...new Headers(object)],
+        "the headers of a Request": object => [...new Request("http://localhost/", { headers: object }).headers],
+        "new URLSearchParams": object => new URLSearchParams(object).toString(),
+        "querystring.stringify": object => stringify(object),
+        "new Bun.CookieMap": object => [...new Bun.CookieMap(object)],
+        "the parameters of a bun:sqlite statement": object => {
+          using database = new Database(":memory:", { strict: true });
+          return database.query("select $GREETING as greeting, $MODE as mode").get(object);
+        },
+        "the parameters of a node:sqlite statement": object => {
+          using database = new DatabaseSync(":memory:");
+          const statement = database.prepare("select $GREETING as greeting, $MODE as mode");
+          statement.setAllowUnknownNamedParameters(true);
+          return { ...statement.get(object) };
+        },
+        "the sandbox of vm.runInNewContext": object =>
+          runInNewContext("[GREETING, MODE, typeof MISSING, Object.keys(globalThis)]", object),
+        "the define of a Bun.Transpiler": object =>
+          outcome(() => void new Bun.Transpiler({ define: object }).transformSync("GREETING")),
+      };
+
+      test.each(Object.keys(apis))("%s", async name => {
+        expect(await apis[name](env)).toEqual(await apis[name]({ ...whole }));
+      });
     });
 
     test("structuredClone refuses it", () => {
@@ -340,6 +491,28 @@ describe("import.meta.env in a test file", () => {
       }).toThrow(TypeError);
       expect(() => delete env.HIDDEN).toThrow(TypeError);
       expect(env.HIDDEN).toBe("secret");
+    });
+
+    test("a variable of Vite's that process.env has and does not enumerate is not enumerated", () => {
+      Object.defineProperty(process.env, "MODE", { value: "hidden", configurable: true });
+      const { MODE, ...enumerable } = whole;
+      const names: string[] = [];
+      for (const name in env) names.push(name);
+      expect({
+        keys: Object.keys(env),
+        forIn: names,
+        entries: Object.entries(env),
+        spread: { ...env },
+        json: JSON.parse(JSON.stringify(env)),
+      }).toEqual({
+        keys: Object.keys(enumerable),
+        forIn: Object.keys(enumerable),
+        entries: Object.entries(enumerable),
+        spread: enumerable,
+        json: enumerable,
+      });
+      expect(Reflect.ownKeys(env)).toContain("MODE");
+      expect(env.MODE).toBe("hidden");
     });
 
     test("an accessor runs on process.env, and only its result is seen", () => {
@@ -535,6 +708,63 @@ describe("import.meta.env in a test file", () => {
 
     child.__proto__ = null;
     expect(Object.getPrototypeOf(child)).toBe(null);
+  });
+
+  // Native code that writes to an object past its hooks leaves here what no script can see or delete.
+  describe("every write is a write to process.env", () => {
+    /** The names of the properties in the storage of the cell. */
+    const stored = () => /\{(.*?)\}/.exec(jscDescribe(env))![1];
+    const writes: Record<string, (object: any) => unknown> = {
+      "an assignment": object => void (object.ADDED = "x"),
+      "delete": object => delete object.GREETING,
+      "delete of a variable of Vite's": object => delete object.MODE,
+      "Object.defineProperty": object =>
+        void Object.defineProperty(object, "ADDED", {
+          value: "x",
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        }),
+      "Object.defineProperty of an accessor": object =>
+        void Object.defineProperty(object, "ADDED", { get: () => "computed", enumerable: true, configurable: true }),
+      "__defineGetter__": object => void object.__defineGetter__("ADDED", () => "computed"),
+      "Object.assign": object => void Object.assign(object, { ADDED: "x", MODE: "assigned" }),
+      "Reflect.set": object => Reflect.set(object, "ADDED", "x"),
+      "a class field": object => {
+        class Returns {
+          constructor(object: object) {
+            return object;
+          }
+        }
+        class Defines extends Returns {
+          ADDED = "x";
+        }
+        new Defines(object);
+      },
+      "Array.prototype.push": object => Array.prototype.push.call(object, "x"),
+      "vi.stubEnv": object => {
+        vi.stubEnv("GREETING", "stubbed");
+        const stubbed = object.GREETING;
+        vi.unstubAllEnvs();
+        return stubbed;
+      },
+      "an assignment in a node:vm context of it": object => runInContext("ADDED = 'x'", createContext(object)),
+    };
+
+    test.each(Object.keys(writes))("%s", name => {
+      const after = (object: () => object) => {
+        process.env = { GREETING: "hello" };
+        const result = writes[name](object());
+        return { result, env: { ...env }, "process.env": { ...process.env } };
+      };
+      expect(after(() => env)).toEqual(after(() => process.env));
+      expect(stored()).toBe("");
+    });
+
+    test("Error.captureStackTrace, which does not write to process.env, is refused", () => {
+      expect(() => Error.captureStackTrace(env)).toThrow("invalid_argument");
+      expect(stored()).toBe("");
+    });
   });
 
   describe("when process.env is", () => {

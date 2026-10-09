@@ -64,7 +64,7 @@ Bun implements most of Jest's matchers, but compatibility isn't 100%. See the co
 
 ---
 
-Replace `testEnvironment: "jsdom"` in your Jest config with `environment` in `bunfig.toml`, and install `jsdom` itself (`bun add -d jsdom`). `@jest-environment` comments in test files work as they are. [`happy-dom`](https://github.com/capricorn86/happy-dom) is a leaner and faster alternative. See [DOM testing](/test/dom#test-environments).
+Replace `testEnvironment: "jsdom"` in your Jest config with `environment` in `bunfig.toml`, and install `jsdom` itself (`bun add -d jsdom`). `@jest-environment jsdom` and `@jest-environment node` comments in test files work as they are. Change any other name, such as `jest-environment-jsdom`, to one of these: Bun prints a warning for it and runs the file without a DOM. [`happy-dom`](https://github.com/capricorn86/happy-dom) is a leaner and faster alternative. See [DOM testing](/test/dom#test-environments).
 
 ```toml bunfig.toml icon="settings"
 [test]

@@ -66,6 +66,11 @@ describe("url.fileURLToPath", () => {
     assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname, auth: null }), {
       code: "ERR_INVALID_ARG_TYPE",
     });
+    // Not made a string: whoever takes the path refuses it.
+    assert.strictEqual(url.fileURLToPath({ href, protocol, hostname, pathname: 5 }, { windows: false }), 5);
+    assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname: 5 }, { windows: true }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
   });
 
   test("general", () => {

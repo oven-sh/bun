@@ -22,20 +22,22 @@ bun_dispatch::link_interface! {
     }
 }
 
-/// What a file does with `import.meta.glob`.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+/// What a file does with `import.meta.glob`. The greatest one that applies.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) enum ImportMetaGlobUse {
     #[default]
     None,
-    /// It assigns to it, so it calls a function of its own.
-    Assigned,
     /// It calls it, and no call could be replaced. Whether one can depends on more than the source.
     Called,
+    /// Each call that was replaced needs import statements, which a CommonJS module cannot have.
+    ImportedEagerly,
     /// A call was replaced by the files that match.
     Expanded,
+    /// It assigns to it, so it calls a function of its own.
+    Assigned,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Options<'a> {
     eager: bool,
     exhaustive: bool,
@@ -183,16 +185,49 @@ fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
 }
 
 /// Why a call is not replaced.
-struct Invalid {
+#[derive(Clone, Copy)]
+pub(crate) struct Invalid<'a> {
     loc: Loc,
-    message: String,
+    message: &'a [u8],
 }
 
-fn invalid<Valid>(loc: Loc, message: core::fmt::Arguments<'_>) -> Result<Valid, Invalid> {
-    Err(Invalid {
-        loc,
-        message: message.to_string(),
-    })
+/// The arguments of a call, which are literals.
+pub(crate) struct Literals<'a> {
+    /// Each pattern, and where it is.
+    globs: &'a [(&'a [u8], Loc)],
+    options: Options<'a>,
+}
+
+/// `-1`, `+1` and `!0`, which is how a minifier writes `true`, as the literals they stand for.
+fn literal(expr: Expr) -> Expr {
+    let mut operators = Vec::new();
+    let mut operand = expr;
+    while let ExprData::EUnary(unary) = operand.data {
+        operators.push(unary.op);
+        operand = unary.value;
+    }
+    let mut data = operand.data;
+    for operator in operators.into_iter().rev() {
+        data = match (operator, data) {
+            (js_ast::OpCode::UnNeg, ExprData::ENumber(number)) => {
+                ExprData::ENumber(E::Number::new(-number.value()))
+            }
+            (js_ast::OpCode::UnPos, ExprData::ENumber(_)) => data,
+            (js_ast::OpCode::UnNot, ExprData::ENumber(number)) => ExprData::EBoolean(E::Boolean {
+                value: number.value() == 0.0 || number.value().is_nan(),
+            }),
+            (js_ast::OpCode::UnNot, ExprData::EBoolean(boolean)) => {
+                ExprData::EBoolean(E::Boolean {
+                    value: !boolean.value,
+                })
+            }
+            _ => return expr,
+        };
+    }
+    Expr {
+        data,
+        loc: expr.loc,
+    }
 }
 
 impl Pattern {
@@ -344,16 +379,24 @@ impl<'a> Arguments<'a, '_> {
         }
     }
 
-    fn expand(
-        &mut self,
-        call: &E::Call,
+    fn invalid<Valid>(
+        &self,
         loc: Loc,
-        host: ImportMetaGlobHost,
-        is_bundling: bool,
-    ) -> Result<Expansion<'a>, Invalid> {
+        message: core::fmt::Arguments<'_>,
+    ) -> Result<Valid, Invalid<'a>> {
+        Err(Invalid {
+            loc,
+            message: bun_alloc::arena_format!(in self.arena, "{message}")
+                .into_bump_str()
+                .as_bytes(),
+        })
+    }
+
+    /// `call` is not visited yet.
+    fn read(&mut self, call: &E::Call, loc: Loc) -> Result<Literals<'a>, Invalid<'a>> {
         let args = call.args.slice();
         if args.is_empty() || args.len() > 2 {
-            return invalid(
+            return self.invalid(
                 loc,
                 format_args!(
                     "\"import.meta.glob\" expects 1 or 2 arguments, but got {}",
@@ -373,7 +416,7 @@ impl<'a> Arguments<'a, '_> {
                 ExprData::EString(mut glob) => {
                     let glob = glob.slice(self.arena);
                     if strings::contains_char(glob, 0) {
-                        return invalid(
+                        return self.invalid(
                             item.loc,
                             format_args!("Expected a glob pattern without a null byte"),
                         );
@@ -381,7 +424,7 @@ impl<'a> Arguments<'a, '_> {
                     globs.push((glob, item.loc));
                 }
                 _ => {
-                    return invalid(
+                    return self.invalid(
                         item.loc,
                         format_args!(
                             "Expected a glob pattern to be a string literal, but got {}",
@@ -392,10 +435,22 @@ impl<'a> Arguments<'a, '_> {
             }
         }
 
-        let options = match args.get(1) {
-            Some(options) => self.options(*options)?,
-            None => Options::default(),
-        };
+        Ok(Literals {
+            globs: self.arena.alloc_slice_copy(&globs),
+            options: match args.get(1) {
+                Some(options) => self.options(*options)?,
+                None => Options::default(),
+            },
+        })
+    }
+
+    fn expand(
+        &mut self,
+        &Literals { globs, options }: &Literals<'a>,
+        loc: Loc,
+        host: ImportMetaGlobHost,
+        is_bundling: bool,
+    ) -> Result<Expansion<'a>, Invalid<'a>> {
         // Vite's `?raw` and `?url` are loaders here, and the bundler resolves no path with a query.
         let loader = match options.query {
             b"?raw" => Some((js_ast::Loader::Text, b"text".as_slice())),
@@ -419,7 +474,9 @@ impl<'a> Arguments<'a, '_> {
         };
         expansion.path_loc = path_loc;
 
-        let root = fs::FileSystem::instance().top_level_dir();
+        // `process.chdir()` overwrites it in place, on another thread, and ends it with a NUL.
+        let root = fs::FileSystem::instance().top_level_dir().to_vec();
+        let root = &root[..strings::index_of_char_usize(&root, 0).unwrap_or(root.len())];
         let source = self.source;
         let importer_dir = (source.path.is_file() && bun_paths::is_absolute(source.path.text))
             .then(|| source.path.name().dir);
@@ -427,7 +484,7 @@ impl<'a> Arguments<'a, '_> {
             .iter()
             .all(|(glob, _)| matches!(glob.first(), Some(b'.' | b'!')));
         if importer_dir.is_none() && options.base.is_empty() && is_relative {
-            return invalid(
+            return self.invalid(
                 path_loc,
                 format_args!(
                     "Expected a glob pattern in a module that is not a file to start with \"/\", but got \"{}\"",
@@ -441,14 +498,14 @@ impl<'a> Arguments<'a, '_> {
             base => join(importer_dir.unwrap_or(root), base),
         };
         let Some(base_dir) = base_dir else {
-            return invalid(
+            return self.invalid(
                 loc,
                 format_args!("The \"import.meta.glob\" option \"base\" is too long for a path"),
             );
         };
 
         let mut patterns = Vec::with_capacity(globs.len());
-        for &(glob, glob_loc) in &globs {
+        for &(glob, glob_loc) in globs {
             let (negated, glob) = match glob {
                 [b'!', glob @ ..] => (true, glob),
                 _ => (false, glob),
@@ -468,11 +525,21 @@ impl<'a> Arguments<'a, '_> {
                 } else {
                     Pattern::new(negated, root, glob)
                 }
-            } else if let Some((dir, glob)) = host.resolve_alias(importer_dir.unwrap_or(root), glob)
+            } else if let Some((dir, aliased)) =
+                host.resolve_alias(importer_dir.unwrap_or(root), glob)
             {
-                Pattern::new(negated, &dir, &glob)
+                if strings::contains_char(&dir, 0) || strings::contains_char(&aliased, 0) {
+                    return self.invalid(
+                        glob_loc,
+                        format_args!(
+                            "Expected the path alias of \"{}\" without a null byte",
+                            bstr::BStr::new(glob)
+                        ),
+                    );
+                }
+                Pattern::new(negated, &dir, &aliased)
             } else {
-                return invalid(
+                return self.invalid(
                     glob_loc,
                     format_args!(
                         "Expected a glob pattern to start with \"/\", \"./\", \"../\", \"**\" or a path alias, but got \"{}\"",
@@ -481,7 +548,7 @@ impl<'a> Arguments<'a, '_> {
                 );
             };
             let Some(pattern) = pattern else {
-                return invalid(
+                return self.invalid(
                     glob_loc,
                     format_args!("The glob pattern is too long for a path"),
                 );
@@ -492,7 +559,7 @@ impl<'a> Arguments<'a, '_> {
         let files = match find_files(&patterns, options.exhaustive, source.path.text) {
             Ok(files) => files,
             Err(message) => {
-                return invalid(path_loc, format_args!("{message}"));
+                return self.invalid(path_loc, format_args!("{message}"));
             }
         };
 
@@ -513,7 +580,7 @@ impl<'a> Arguments<'a, '_> {
                 })
             };
             let (Some(import_path), Some(key)) = (import_path, key) else {
-                return invalid(
+                return self.invalid(
                     path_loc,
                     format_args!(
                         "The way to \"{}\" is too long for a path",
@@ -544,11 +611,11 @@ impl<'a> Arguments<'a, '_> {
         &mut self,
         property: &G::Property,
         object_loc: Loc,
-    ) -> Result<(&'a [u8], Expr, Expr), Invalid> {
+    ) -> Result<(&'a [u8], Expr, Expr), Invalid<'a>> {
         let (G::PropertyKind::Normal, Some(key), Some(value)) =
             (property.kind, property.key, property.value)
         else {
-            return invalid(
+            return self.invalid(
                 property
                     .key
                     .or(property.value)
@@ -557,7 +624,7 @@ impl<'a> Arguments<'a, '_> {
             );
         };
         let ExprData::EString(mut name) = key.data else {
-            return invalid(
+            return self.invalid(
                 key.loc,
                 format_args!(
                     "Expected the name of an \"import.meta.glob\" option to be a literal, but got {}",
@@ -565,12 +632,12 @@ impl<'a> Arguments<'a, '_> {
                 ),
             );
         };
-        Ok((name.slice(self.arena), key, value))
+        Ok((name.slice(self.arena), key, literal(value)))
     }
 
-    fn options(&mut self, arg: Expr) -> Result<Options<'a>, Invalid> {
+    fn options(&mut self, arg: Expr) -> Result<Options<'a>, Invalid<'a>> {
         let ExprData::EObject(object) = arg.data else {
-            return invalid(
+            return self.invalid(
                 arg.loc,
                 format_args!(
                     "Expected the options of \"import.meta.glob\" to be an object literal, but got {}",
@@ -594,7 +661,7 @@ impl<'a> Arguments<'a, '_> {
                 }
                 (b"caseSensitive", ExprData::EBoolean(E::Boolean { value: true })) => continue,
                 (b"caseSensitive", ExprData::EBoolean(_)) => {
-                    return invalid(
+                    return self.invalid(
                         value.loc,
                         format_args!(
                             "The \"import.meta.glob\" option \"caseSensitive: false\" is not supported"
@@ -612,7 +679,7 @@ impl<'a> Arguments<'a, '_> {
                         && !options.base.starts_with(b"./")
                         && !options.base.starts_with(b"../")
                     {
-                        return invalid(
+                        return self.invalid(
                             value.loc,
                             format_args!(
                                 "Expected the \"import.meta.glob\" option \"base\" to start with \"/\", \"./\" or \"../\", but got \"{}\"",
@@ -621,7 +688,7 @@ impl<'a> Arguments<'a, '_> {
                         );
                     }
                     if strings::contains_char(options.base, 0) {
-                        return invalid(
+                        return self.invalid(
                             value.loc,
                             format_args!(
                                 "Expected the \"import.meta.glob\" option \"base\" without a null byte"
@@ -646,7 +713,7 @@ impl<'a> Arguments<'a, '_> {
                 (b"import" | b"base" | b"as", _) => "a string",
                 (b"query", _) => "a string or an object",
                 _ => {
-                    return invalid(
+                    return self.invalid(
                         key.loc,
                         format_args!(
                             "Unknown \"import.meta.glob\" option \"{}\"",
@@ -655,7 +722,7 @@ impl<'a> Arguments<'a, '_> {
                     );
                 }
             };
-            return invalid(
+            return self.invalid(
                 value.loc,
                 format_args!(
                     "Expected the \"import.meta.glob\" option \"{}\" to be {} literal, but got {}",
@@ -668,7 +735,7 @@ impl<'a> Arguments<'a, '_> {
 
         if !r#as.is_empty() {
             if !options.query.is_empty() {
-                return invalid(
+                return self.invalid(
                     arg.loc,
                     format_args!(
                         "The \"import.meta.glob\" options \"as\" and \"query\" cannot be used together"
@@ -677,7 +744,7 @@ impl<'a> Arguments<'a, '_> {
             }
             if matches!(r#as, b"raw" | b"url") {
                 if !matches!(options.import, b"" | b"default" | b"*") {
-                    return invalid(
+                    return self.invalid(
                         arg.loc,
                         format_args!(
                             "Expected the \"import.meta.glob\" option \"import\" to be \"default\" or \"*\" when \"as\" is \"{}\", but got \"{}\"",
@@ -701,7 +768,7 @@ impl<'a> Arguments<'a, '_> {
         Ok(options)
     }
 
-    fn query(&mut self, query: &E::Object, loc: Loc) -> Result<&'a [u8], Invalid> {
+    fn query(&mut self, query: &E::Object, loc: Loc) -> Result<&'a [u8], Invalid<'a>> {
         let mut out = Vec::new();
         for property in query.properties.slice() {
             let (name, _, value) = self.option(property, loc)?;
@@ -714,7 +781,7 @@ impl<'a> Arguments<'a, '_> {
                 _ => value,
             };
             let ExprData::EString(mut text) = text.data else {
-                return invalid(
+                return self.invalid(
                     value.loc,
                     format_args!(
                         "Expected a value of the \"import.meta.glob\" option \"query\" to be a string, number or boolean literal, but got {}",
@@ -849,7 +916,9 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         self.macro_call_count != 0
             || matches!(
                 self.import_meta_glob_use,
-                ImportMetaGlobUse::Called | ImportMetaGlobUse::Expanded
+                ImportMetaGlobUse::Called
+                    | ImportMetaGlobUse::ImportedEagerly
+                    | ImportMetaGlobUse::Expanded
             )
     }
 
@@ -874,8 +943,26 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         self.options.import_meta_glob.is_some()
             && self.import_meta_glob_use != ImportMetaGlobUse::Assigned
             && !self.is_revisit_for_substitution
+            && !self.is_control_flow_dead
             && call.optional_chain.is_none()
             && is_import_meta_glob(call.target)
+    }
+
+    /// Before `call` is visited: afterwards what was inlined or folded looks like a literal, and
+    /// `bun run` and `bun build` do not inline and fold the same.
+    #[cold]
+    pub(crate) fn read_import_meta_glob_call(
+        &mut self,
+        call: &E::Call,
+        loc: Loc,
+    ) -> &'a Result<Literals<'a>, Invalid<'a>> {
+        let arguments = Arguments {
+            log: self.log(),
+            source: self.source,
+            arena: self.arena,
+        }
+        .read(call, loc);
+        self.arena.alloc(arguments)
     }
 
     fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr {
@@ -893,34 +980,50 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
     /// `e` is an `import.meta.glob(...)` that was visited. One that cannot be replaced throws when
     /// it is reached, as a call of what is not a function does.
-    pub(crate) fn expand_import_meta_glob(&mut self, e: &mut Expr, only_keys: bool) {
+    pub(crate) fn expand_import_meta_glob(
+        &mut self,
+        e: &mut Expr,
+        arguments: &Result<Literals<'a>, Invalid<'a>>,
+        only_keys: bool,
+    ) {
         let (ExprData::ECall(mut call), Some(host)) = (e.data, self.options.import_meta_glob)
         else {
             return;
         };
         // A define can have replaced the target.
-        if self.is_control_flow_dead || !is_import_meta_glob(call.target) {
+        if !is_import_meta_glob(call.target) {
             return;
         }
         let loc = e.loc;
         let is_bundling = self.options.bundle;
-        let mut arguments = Arguments {
+        let mut finder = Arguments {
             log: self.log(),
             source: self.source,
             arena: self.arena,
         };
-        let expansion = match arguments.expand(&call, loc, host, is_bundling) {
+        let expansion = match arguments {
+            Ok(literals) => finder.expand(literals, loc, host, is_bundling),
+            Err(invalid) => Err(*invalid),
+        };
+        let expansion = match expansion {
             Ok(expansion) => expansion,
             Err(invalid) => {
-                arguments.warn(invalid.loc, format_args!("{}", invalid.message));
-                if self.import_meta_glob_use == ImportMetaGlobUse::None {
-                    self.import_meta_glob_use = ImportMetaGlobUse::Called;
-                }
-                call.target = self.import_meta_glob_throws(invalid.message.as_bytes(), invalid.loc);
+                finder.warn(
+                    invalid.loc,
+                    format_args!("{}", bstr::BStr::new(invalid.message)),
+                );
+                self.import_meta_glob_use =
+                    self.import_meta_glob_use.max(ImportMetaGlobUse::Called);
+                call.target = self.import_meta_glob_throws(invalid.message, invalid.loc);
                 return;
             }
         };
-        self.import_meta_glob_use = ImportMetaGlobUse::Expanded;
+        let has_imports = expansion.eager && !only_keys && !expansion.entries.is_empty();
+        self.import_meta_glob_use = self.import_meta_glob_use.max(if has_imports {
+            ImportMetaGlobUse::ImportedEagerly
+        } else {
+            ImportMetaGlobUse::Expanded
+        });
 
         let mut properties: G::PropertyList = bun_alloc::AstAlloc::vec();
         properties.reserve(expansion.entries.len());
@@ -946,12 +1049,60 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             },
             loc,
         );
+        // Whether the module is CommonJS is known after the visit pass, which takes an object
+        // literal apart where it is not used, and leaves a call as it is.
+        if has_imports
+            && self.options.features.commonjs_at_runtime
+            && self.esm_export_keyword.len == 0
+            && self.top_level_await_keyword.len == 0
+        {
+            *e = Expr::init(
+                E::Call {
+                    target: arrow(self.arena, &[], *e),
+                    ..Default::default()
+                },
+                loc,
+            );
+            self.import_meta_glob_eager_calls.push(*e);
+        }
+    }
+
+    /// The module turns out to be CommonJS, which cannot have the import statements of
+    /// `{ eager: true }`: those calls throw when they are reached, like any that is not replaced.
+    pub(crate) fn reject_eager_import_meta_globs(&mut self) {
+        for stmt in self.import_meta_glob_imports.drain(..) {
+            if let js_ast::StmtData::SImport(import) = stmt.data {
+                self.import_records.items_mut()[import.import_record_index as usize]
+                    .flags
+                    .insert(js_ast::ImportRecordFlags::IS_UNUSED);
+            }
+        }
+        let calls = core::mem::replace(
+            &mut self.import_meta_glob_eager_calls,
+            bun_alloc::ArenaVec::new_in(self.arena),
+        );
+        for call in calls {
+            if let ExprData::ECall(mut eager) = call.data {
+                eager.target = self.import_meta_glob_throws(
+                    b"The \"import.meta.glob\" option \"eager\" needs import statements, which a CommonJS module cannot have",
+                    call.loc,
+                );
+            }
+        }
+        if self.import_meta_glob_use == ImportMetaGlobUse::ImportedEagerly {
+            self.import_meta_glob_use = ImportMetaGlobUse::Called;
+        }
     }
 
     /// `import.meta.glob = () => { throw ... }` for a module whose calls were replaced, so that
     /// `typeof import.meta.glob === "function"` agrees with them. Vite's module runner has one too.
     pub(crate) fn import_meta_glob_definition(&mut self) -> Option<Stmt> {
-        if self.import_meta_glob_use != ImportMetaGlobUse::Expanded || self.options.bundle {
+        if self.options.bundle
+            || !matches!(
+                self.import_meta_glob_use,
+                ImportMetaGlobUse::ImportedEagerly | ImportMetaGlobUse::Expanded
+            )
+        {
             return None;
         }
         let loc = Loc::EMPTY;

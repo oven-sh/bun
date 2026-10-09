@@ -108,9 +108,8 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Modules that were being loaded when they were to be evicted: they go once they have loaded (evictModulesAndTheirImporters).
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
-        // The one of them whose load a reaction is waiting for.
-        String moduleAwaitedToEvict;
-        // For those that are being loaded as a mock that has been replaced or removed since: that mock (keepModuleMockOfLoadInFlight).
+        // The mock that a module is being fetched as, while its factory waits to be called (Bun::runModuleMock), and once the factory has
+        // been called and the mock replaced or removed (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
 
         // The callbacks whose filter matches `path`, in the order they were registered. Those before `next` have been asked.

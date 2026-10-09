@@ -167,6 +167,57 @@ describe.concurrent("a file that imports from a test module", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  test.each(["--no-isolate", "--isolate"])(
+    "a name that a preload script has put on globalThis is not replaced: %s",
+    async flag => {
+      const own = `
+        describe("own", () => {
+          test("test", () => expect(1).to.equal(1));
+        });
+        it("the other globals", () => {});
+      `;
+      using dir = tempDir("jest-globals", {
+        "preload.ts": `
+          globalThis.expect = value => ({ to: { equal: other => console.log("own expect", value === other) } });
+          globalThis.describe = (name, fn) => (console.log("own describe"), fn());
+        `,
+        "a.test.ts": `import { test } from "bun:test"; ${own}`,
+        "b.test.cjs": `const { test } = require("@jest/globals"); ${own}`,
+        "c.test.ts": `import { test } from "vitest"; ${own}`,
+        "d-imports-nothing.test.ts": `
+          describe("builtin", () => {
+            test("test", () => expect(1).toBe(1));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--preload=./preload.ts", flag]);
+      expect({
+        stdout: stdout.split("\n").filter(line => line.startsWith("own")),
+        results: stderr.match(/^\((pass|fail)\) [a-z >]+/gm),
+        exitCode,
+      }).toEqual({
+        stdout: [
+          "own describe",
+          "own expect true",
+          "own describe",
+          "own expect true",
+          "own describe",
+          "own expect true",
+        ],
+        results: [
+          "(pass) test",
+          "(pass) the other globals",
+          "(pass) test",
+          "(pass) the other globals",
+          "(pass) test",
+          "(pass) the other globals",
+          "(pass) builtin > test",
+        ].map(line => line + " "),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe.concurrent("the transpiler cache", () => {
@@ -229,6 +280,28 @@ describe.concurrent("the transpiler cache", () => {
       { stdout: "function function", exitCode: 0 },
       { stdout: "string undefined", exitCode: 0 },
       { stdout: "function function", exitCode: 0 },
+    ]);
+  });
+
+  test("keeps apart what a file is with and without a global of a preload script", async () => {
+    using dir = tempDir("jest-globals-cache", {
+      "preload.ts": `globalThis.expect = () => "own";`,
+      "cached.test.ts": `
+        import { test } from "bun:test";
+        test("test", () => console.log(typeof expect(1)));
+        ${padding}
+      `,
+    });
+    const results = [];
+    for (const flags of [[], ["--preload=./preload.ts"], [], ["--preload=./preload.ts"]]) {
+      const { stdout, exitCode } = await run(String(dir), ["test", ...flags, "cached.test.ts"], cacheEnv(String(dir)));
+      results.push({ stdout: stdout.trim().split("\n").at(-1), exitCode });
+    }
+    expect(results).toEqual([
+      { stdout: "object", exitCode: 0 },
+      { stdout: "string", exitCode: 0 },
+      { stdout: "object", exitCode: 0 },
+      { stdout: "string", exitCode: 0 },
     ]);
   });
 });

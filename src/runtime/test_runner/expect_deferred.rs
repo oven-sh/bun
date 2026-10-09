@@ -58,15 +58,19 @@ pub(crate) struct RunningEntry {
     buntest: BunTestPtrWeak,
     /// `Execution`, without an entry for a group. Anything else: the file.
     entry: RefDataValue,
-    /// Where `Unclaimed::calls` has the call, which a group or the file waits for.
+    /// Where `Unclaimed::calls` has the call.
     unclaimed: Option<usize>,
 }
 
-/// The matcher calls of a test file that wait for a promise and that no test or hook is known to have made.
+/// The matcher calls of a test file that wait for a promise.
 #[derive(Default)]
 pub(crate) struct Unclaimed {
     /// `ExpectDeferred` cells. `None`: it no longer waits.
     calls: Vec<Option<Strong>>,
+    /// A test or a hook has ended that some of `calls` were made by.
+    pub(crate) some_ended: bool,
+    /// What the promises of those reject with. It unwinds what awaits them, and is not reported.
+    ended_error: Option<Strong>,
     /// How many of them the file waits for.
     of_file: u32,
     /// When the file, whose tests have run, stops waiting. `EPOCH`: never.
@@ -77,6 +81,23 @@ impl Unclaimed {
     fn add(&mut self, global: &JSGlobalObject, deferred: JSValue) -> usize {
         self.calls.push(Some(Strong::create(deferred, global)));
         self.calls.len() - 1
+    }
+
+    fn ended_error(&mut self, global: &JSGlobalObject) -> JSValue {
+        self.ended_error
+            .get_or_insert_with(|| {
+                let error = global.create_error_instance(format_args!(
+                    "The test that called this matcher has ended"
+                ));
+                Strong::create(error, global)
+            })
+            .get()
+    }
+
+    pub(crate) fn is_ended_error(&self, value: JSValue) -> bool {
+        self.ended_error
+            .as_ref()
+            .is_some_and(|error| value == error.get() || value.to_error() == Some(error.get()))
     }
 
     fn remove(&mut self, index: usize) {
@@ -192,9 +213,7 @@ impl RunningEntry {
         if let Some(pending_matchers) = self.pending_matchers(&buntest) {
             // SAFETY: as in `pending_matchers`.
             unsafe { *pending_matchers.as_ptr() += 1 };
-            if self.sequence(&buntest).is_none() {
-                self.unclaimed = Some(buntest.get().unclaimed.add(global, deferred));
-            }
+            self.unclaimed = Some(buntest.get().unclaimed.add(global, deferred));
         }
         self
     }
@@ -287,6 +306,7 @@ pub(crate) struct Pass {
     /// `Role::Matcher`: an array of the answers so far, `STRIDE` elements each: as in `recent_kinds`, `Question::who`,
     /// `Question::what`, and the answer. Empty until the matcher has to wait or `recent` is full: most matchers never
     /// wait. `Role::Replaying`: the `ExpectDeferred`.
+    /// Its elements are defined and read as own properties: nothing that script puts on a prototype sees or changes them.
     journal: Cell<JSValue>,
     /// `Question::who`, `Question::what` and the answer, so far, while there is no `journal`.
     recent: [[Cell<JSValue>; 3]; Pass::RECENT],
@@ -350,13 +370,17 @@ impl Pass {
         unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
     }
 
+    /// The frame around this pass, if it runs a matcher again.
+    #[inline]
+    fn replaying_frame(&self) -> Option<&Pass> {
+        // SAFETY: as in `current`.
+        unsafe { self.outer.get().as_ref() }.filter(|outer| outer.role == Role::Replaying)
+    }
+
     /// The `ExpectDeferred` whose matcher this pass runs again.
     #[inline]
     fn replayed(&self) -> Option<JSValue> {
-        // SAFETY: as in `current`.
-        unsafe { self.outer.get().as_ref() }
-            .filter(|outer| outer.role == Role::Replaying)
-            .map(|outer| outer.journal.get())
+        self.replaying_frame().map(|frame| frame.journal.get())
     }
 
     /// What `ask()`, which runs user code, returns or throws. It is called once per call of a matcher, however often
@@ -469,25 +493,29 @@ impl Pass {
         let journal = self.journal(global, at)?;
         let index = at * Self::STRIDE;
         if u64::from(index) < journal.get_length(global)? {
-            let kind = journal.get_index(global, index)?.to_int32();
+            let kind = journal.get_direct_index(global, index)?;
             // An answer is for who was asked about what, not for whoever asks at the same point.
-            if kind >> 1 != question.asked as i32
-                || journal.get_index(global, index + 1)? != question.who
-                || !journal.get_index(global, index + 2)?.is_same_value(question.what, global)?
+            if !kind.is_int32()
+                || kind.to_int32() >> 1 != question.asked as i32
+                || journal.get_direct_index(global, index + 1)? != question.who
+                || !journal
+                    .get_direct_index(global, index + 2)?
+                    .is_same_value(question.what, global)?
             {
                 return Err(Self::took_another_path(global));
             }
-            // SAFETY: as in `current`.
-            if let Some(replaying) = unsafe { self.outer.get().as_ref() } {
-                replaying.cursor.set(at + 1);
+            let threw = kind.to_int32() & 1 != 0;
+            if let Some(frame) = self.replaying_frame() {
+                frame.cursor.set(at + 1);
             }
-            return Self::return_or_throw(global, kind & 1 != 0, journal.get_index(global, index + 3)?);
+            return Self::return_or_throw(global, threw, journal.get_direct_index(global, index + 3)?);
         }
         let answer = ask();
         let (threw, value) = Self::returned_or_thrown(global, answer)?;
         let kind = (question.asked as i32) << 1 | i32::from(threw);
-        for element in [JSValue::js_number_from_int32(kind), question.who, question.what, value] {
-            journal.push(global, element)?;
+        let elements = [JSValue::js_number_from_int32(kind), question.who, question.what, value];
+        for (index, element) in (index..).zip(elements) {
+            journal.put_index(global, index, element)?;
         }
         Self::return_or_throw(global, threw, value)
     }
@@ -535,6 +563,8 @@ pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,
     /// How often the matcher has run again.
     replays: Cell<u32>,
+    /// Its promise has been rejected without the matcher having run to its end.
+    is_abandoned: Cell<bool>,
 }
 
 pub(crate) mod js {
@@ -549,6 +579,7 @@ impl ExpectDeferred {
         ExpectDeferred {
             held: JsCell::new(None),
             replays: Cell::new(0),
+            is_abandoned: Cell::new(false),
         }
         .to_js(global)
     }
@@ -631,14 +662,18 @@ impl ExpectDeferred {
         };
         // SAFETY: `deferred` is an argument of the running call, and owns `this`.
         let this = unsafe { &*this };
-        // What waited for the matcher has ended, or is about to.
-        if this
-            .held
-            .get()
-            .as_ref()
-            .is_some_and(|held| !held.is_running() || held.has_timed_out())
-        {
+        if this.is_abandoned.get() {
             return Ok(());
+        }
+        if let Some(held) = this.held.get() {
+            if !held.is_running() {
+                let buntest = held.buntest.upgrade();
+                return this.abandon(global, deferred, buntest.as_ref());
+            }
+            // The runner is about to end what waits for the matcher: see `settle_ended`.
+            if held.has_timed_out() {
+                return Ok(());
+            }
         }
 
         this.replays.set(this.replays.get() + 1);
@@ -734,18 +769,22 @@ impl ExpectDeferred {
                 (
                     Some(RefDataValue::Execution {
                         group_index: held_by,
-                        ..
+                        entry_data: None,
                     }),
                     group_index,
                 ) => group_index == Some(held_by),
+                (Some(RefDataValue::Execution { .. }), _) => false,
                 (Some(_), group_index) => group_index.is_none(),
                 (None, _) => false,
             };
             if !is_held {
                 continue;
             }
-            buntest.get().unclaimed.remove(index - 1);
-            if js::promise_get_cached(deferred).is_some_and(|promise| ExpectDeferred__isHandled(promise)) {
+            let is_handled = js::promise_get_cached(deferred)
+                .is_some_and(|promise| ExpectDeferred__isHandled(promise));
+            // SAFETY: as above; `deferred` is on the stack.
+            crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
+            if is_handled {
                 continue;
             }
             let error = global.create_error_instance(message);
@@ -756,6 +795,49 @@ impl ExpectDeferred {
                 .get()
                 .on_uncaught_exception(global, Some(error), false, &RefDataValue::Start);
         }
+    }
+
+    /// The matcher will not run. What awaits its promise goes on, to its `finally` blocks.
+    fn abandon(
+        &self,
+        global: &JSGlobalObject,
+        deferred: JSValue,
+        buntest: Option<&BunTestPtr>,
+    ) -> JsResult<()> {
+        self.is_abandoned.set(true);
+        let held = self.held.take();
+        let Some(buntest) = buntest else {
+            return Ok(());
+        };
+        if let Some(index) = held.and_then(|held| held.unclaimed) {
+            buntest.get().unclaimed.remove(index);
+        }
+        let Some(promise) = js::promise_get_cached(deferred).and_then(JSValue::as_promise) else {
+            return Ok(());
+        };
+        let error = buntest.get().unclaimed.ended_error(global);
+        JSPromise::opaque_mut(promise).reject_as_handled(global, error)
+    }
+
+    /// Abandons the calls of the tests and hooks that have ended.
+    pub(crate) fn settle_ended(buntest: &BunTestPtr, global: &JSGlobalObject) -> JsResult<()> {
+        let mut index = 0;
+        while let Some(call) = buntest.get().unclaimed.calls.get(index) {
+            index += 1;
+            let Some(deferred) = call.as_ref().map(Strong::get) else {
+                continue;
+            };
+            let Some(this) = Self::from_js(deferred) else {
+                continue;
+            };
+            // SAFETY: `unclaimed` keeps the wrapper, which owns the payload, alive; then `deferred`, on the stack, does.
+            let this = unsafe { &*this };
+            if this.held.get().as_ref().is_none_or(RunningEntry::is_running) {
+                continue;
+            }
+            this.abandon(global, deferred, Some(buntest))?;
+        }
+        Ok(())
     }
 
     /// The tests of a group of concurrent tests have ended, the last one that could at its time limit.

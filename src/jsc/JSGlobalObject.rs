@@ -1489,6 +1489,10 @@ extern "C" fn Bun__resolveWithOnResolve(
     query: &mut BunString,
 ) -> bool {
     crate::mark_binding();
+    // None is asked by a callback, or a catch-all that calls it would call itself without end.
+    if global.bun_vm().is_in_on_resolve.get() {
+        return false;
+    }
     let path;
     let specifier = if specifier.starts_with_ascii(b"file://") {
         path = bun_url::path_from_file_url(specifier);

@@ -1418,14 +1418,23 @@ static ALWAYS_INLINE JSC::JSValue valueOfMockImplementation(JSC::JSGlobalObject*
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static NEVER_INLINE JSC::JSValue runMockImplementationThatIsNoFunction(JSC::JSGlobalObject* globalObject, JSMockImplementation* impl, JSC::JSValue thisValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (impl->kind == JSMockImplementation::Kind::ThrowValue) {
+        throwException(globalObject, scope, impl->underlyingValue.get());
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, valueOfMockImplementation(globalObject, impl, thisValue));
+}
+
+// Of any kind: script that ran while the call was recorded may have configured the mock, which changes `impl` in place.
 static ALWAYS_INLINE JSC::JSValue runMockImplementation(JSC::JSGlobalObject* globalObject, JSMockImplementation* impl, JSC::JSValue thisValue, const JSC::ArgList& args)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (impl->kind != JSMockImplementation::Kind::Call) [[unlikely]]
+        RELEASE_AND_RETURN(scope, runMockImplementationThatIsNoFunction(globalObject, impl, thisValue));
     JSValue function = impl->underlyingValue.get();
-    if (impl->kind == JSMockImplementation::Kind::ThrowValue) [[unlikely]] {
-        throwException(globalObject, scope, function);
-        return {};
-    }
     JSC::CallData callData = JSC::getCallData(function);
     if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
         throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
@@ -1592,7 +1601,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     if (constructs)
         returnValue = JSC::construct(globalObject, constructor, constructData, args, newTarget);
     else if (impl)
-        returnValue = runsScriptOrThrows(impl) ? runMockImplementation(globalObject, impl, thisValue, args) : valueOfMockImplementation(globalObject, impl, thisValue);
+        returnValue = runMockImplementation(globalObject, impl, thisValue, args);
     // In Jest the result of `new` is what the implementation returned, in Vitest the instance.
     JSValue resultValue = returnValue;
     if (!scope.exception()) {

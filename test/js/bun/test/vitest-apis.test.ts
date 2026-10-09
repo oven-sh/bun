@@ -1202,6 +1202,45 @@ describe("expect.addEqualityTesters", () => {
     ]);
   });
 
+  test("a tester is asked about two values that are the same", () => {
+    const unequal = 918273645;
+    expect.addEqualityTesters([(a, b) => (a === unequal || b === unequal ? false : undefined)]);
+    class Holder {
+      a = unequal;
+    }
+    const key = Symbol("key");
+    for (const make of [
+      () => unequal,
+      () => [unequal],
+      () => ({ a: unequal }),
+      () => ({ a: 1, b: unequal }),
+      () => ({ [key]: unequal }),
+      () => new Holder(),
+      () => ({ nested: { a: [{ b: unequal }] } }),
+      () => new Map([["key", unequal]]),
+      () => new Uint32Array([unequal]),
+      () => new Float64Array([1, unequal]),
+    ]) {
+      expect(make()).not.toEqual(make());
+      expect(make()).not.toStrictEqual(make());
+      expect([make()]).not.toContainEqual(make());
+      if (!(make() instanceof Map)) expect({ a: make() }).not.toMatchObject({ a: make() });
+    }
+    expect({ a: unequal, b: 1 }).not.toEqual({ b: 1, a: unequal });
+    expect(new Float64Array([1, 2])).toEqual(new Float64Array([1, 2]));
+    expect(new Float64Array([1, 2])).not.toEqual(new Float64Array([1, 3]));
+  });
+
+  test("a tester is asked about the elements of typed arrays", () => {
+    expect.addEqualityTesters([
+      (a, b) =>
+        typeof a === "number" && typeof b === "number" && a > 5e8 && b > 5e8 ? Math.abs(a - b) < 1 : undefined,
+    ]);
+    expect(new Float64Array([1, 6e8])).toEqual(new Float64Array([1, 6e8 + 0.5]));
+    expect(new Float64Array([1, 6e8])).not.toEqual(new Float64Array([1, 6e8 + 2]));
+    expect(new Float64Array([1, 6e8])).not.toEqual(new Float64Array([2, 6e8]));
+  });
+
   test("the testers survive garbage collection", () => {
     expect.addEqualityTesters([
       (() => {
@@ -1275,6 +1314,44 @@ describe("expect.addEqualityTesters", () => {
     expect(results).toEqual(["(pass) one tester", "(pass) one tester", "(pass) one tester"]);
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent.each([[[]], [["--isolate"]]])(
+    "a tester that a module registers holds in every test file that imports the module %j",
+    async args => {
+      const file = (name: string) => `
+        import { expect, test } from "bun:test";
+        import { Celsius, Fahrenheit } from "./tester";
+        import { registerAgain } from "./registers";
+        registerAgain();
+        test("${name}", () => {
+          expect(new Celsius(100)).toEqual(new Fahrenheit(212));
+          let count = -1;
+          expect.extend({ toCountTesters() { count = this.customTesters.length; return { pass: true, message: () => "" }; } });
+          expect(1).toCountTesters();
+          expect(count).toBe(1);
+        });
+      `;
+      const { results, exitCode } = await runTests(
+        {
+          "tester.ts": perFile["tester.ts"],
+          "registers.ts": `
+            import { expect } from "bun:test";
+            import { sameTemperature } from "./tester";
+            expect.addEqualityTesters([sameTemperature]);
+            export function registerAgain() {
+              expect.addEqualityTesters([sameTemperature]);
+            }
+          `,
+          "a.test.ts": file("a"),
+          "b.test.ts": file("b"),
+          "c.test.ts": file("c"),
+        },
+        args,
+      );
+      expect(results).toEqual(["(pass) a", "(pass) b", "(pass) c"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent.each([[[]], [["--isolate"]]])(
     "a tester from a preload script lasts for every file %j",

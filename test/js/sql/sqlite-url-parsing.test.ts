@@ -1,5 +1,7 @@
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 
 describe("SQLite URL Parsing Matrix", () => {
   const protocols = [
@@ -310,15 +312,25 @@ describe("SQLite URL Parsing Matrix", () => {
   });
 
   describe("a URL of another implementation", () => {
-    function foreignURL(input: string) {
-      const { href, protocol, hostname, pathname } = new URL(input);
-      return { href, protocol, hostname, pathname } as URL;
+    class ForeignURL {
+      #url: URL;
+      constructor(input: string) {
+        this.#url = new URL(input);
+      }
+      get href() {
+        return this.#url.href;
+      }
+      get protocol() {
+        return this.#url.protocol;
+      }
     }
+    const foreignURL = (input: string) => new ForeignURL(input) as URL;
 
     test.each([
       ["new SQL(url)", (url: URL) => new SQL(url)],
       ["new SQL({ url })", (url: URL) => new SQL({ url })],
     ])("%s", async (_, connect) => {
+      using dir = tempDir("sql-foreign-url", {});
       await using postgres = connect(foreignURL("postgres://user:pass@example.com:1234/db"));
       const { adapter, hostname, port, username, database } = postgres.options as Bun.SQL.PostgresOrMySQLOptions;
       expect({ adapter, hostname, port, username, database }).toEqual({
@@ -329,8 +341,20 @@ describe("SQLite URL Parsing Matrix", () => {
         database: "db",
       });
 
-      await using sqlite = connect(foreignURL("sqlite:///tmp/test.db?mode=memory"));
+      await using sqlite = connect(foreignURL(Bun.pathToFileURL(join(String(dir), "test.db")).href));
       expect(sqlite.options.adapter).toBe("sqlite");
+    });
+
+    test("options with an href and a protocol are options", async () => {
+      const options = { adapter: "mysql", hostname: "h", database: "d", protocol: "mysql", href: "zzz" };
+      await using sql = new SQL(options as Bun.SQL.Options);
+      const { adapter, hostname, port, database } = sql.options as Bun.SQL.PostgresOrMySQLOptions;
+      expect({ adapter, hostname, port, database }).toEqual({
+        adapter: "mysql",
+        hostname: "h",
+        port: 3306,
+        database: "d",
+      });
     });
   });
 });

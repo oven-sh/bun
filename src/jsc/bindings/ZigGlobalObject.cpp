@@ -813,6 +813,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::Gl
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
+    // Among them are those that were to be evicted once they had loaded.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun::evictModulesThatHaveLoaded(globalObject);
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+
     std::sort(awaiting.begin(), awaiting.end(), [](auto& a, auto& b) { return a.first < b.first; });
     std::sort(fetching.begin(), fetching.end(), WTF::codePointCompareLessThan);
 
@@ -2962,14 +2968,15 @@ JSC::JSFunction* GlobalObject::utilInspectFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue nodeUtilValue = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    // Not node:util's `inspect`, which script can replace.
+    JSValue exports = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::InternalUtilInspect);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(nodeUtilValue.isObject());
-    auto prop = nodeUtilValue.getObject()->getIfPropertyExists(this, Identifier::fromString(vm, "inspect"_s));
+    JSValue inspect = exports.get(this, Identifier::fromString(vm, "inspect"_s));
     RETURN_IF_EXCEPTION(scope, nullptr);
-    ASSERT(prop);
-    m_utilInspectFunction.set(vm, this, uncheckedDowncast<JSFunction>(prop));
-    return uncheckedDowncast<JSFunction>(prop);
+    auto* function = dynamicDowncast<JSFunction>(inspect);
+    RELEASE_ASSERT(function);
+    m_utilInspectFunction.set(vm, this, function);
+    return function;
 }
 
 JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
@@ -3837,28 +3844,46 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
 
+    using EntryStatus = JSC::ModuleRegistryEntry::Status;
+    const auto isBeingFetched = [&](JSC::ModuleRegistryEntry* entry) {
+        return !entry->record() && entry->ensureFetchPromise(globalObject)->status() == JSC::JSPromise::Status::Pending;
+    };
+
     // Script that the fetch runs (an onLoad() callback, the factory of a module mock) may require() a module that imports this one, which
     // fetches it again from there. JSC takes an entry that is still new for one that nothing has been asked of.
-    JSC::ModuleRegistryEntry* newEntry = nullptr;
-    bool isBeingFetchedBelow = false;
-    if (auto& plugins = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins; plugins.hasVirtualModules() || !plugins.isEmpty()) [[unlikely]] {
-        if (auto* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript)) {
-            if (entry->status() == JSC::ModuleRegistryEntry::Status::New) {
-                newEntry = entry;
-                entry->setStatus(JSC::ModuleRegistryEntry::Status::Fetching);
-            } else
-                isBeingFetchedBelow = entry->status() == JSC::ModuleRegistryEntry::Status::Fetching && !entry->loadPromise();
-        }
-    }
+    auto& plugins = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins;
+    bool runsScript = plugins.hasVirtualModules() || !plugins.isEmpty();
+    JSC::ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript);
+    bool isFirstFetch = entry && entry->status() == EntryStatus::New;
+    if (isFirstFetch && runsScript)
+        entry->setStatus(EntryStatus::Fetching);
 
-    // Not thrown: JSC would leave the entry as it is, for good. Unless the fetch below is to go on: a rejection would settle that one.
-    const auto rejectedWithCaughtException = [&]() -> JSC::JSPromise* {
-        JSValue error = scope.exception()->value();
-        if (!isBeingFetchedBelow && scope.tryClearException())
-            return rejectedInternalPromise(globalObject, error);
-        if (newEntry)
-            newEntry->setStatus(JSC::ModuleRegistryEntry::Status::New);
+    // A failure is thrown: that fails the load that asked. A rejection would settle the fetch promise of the entry, which belongs to every
+    // load that waits for it. But JSC leaves the entry that it has made for this fetch new, for good, and each module that imports this one
+    // would fetch it again: that entry is told.
+    const auto didThrow = [&]() -> JSC::JSPromise* {
+        if (!isFirstFetch || entry->status() != (runsScript ? EntryStatus::Fetching : EntryStatus::New) || !isBeingFetched(entry))
+            return nullptr;
+        entry->setStatus(EntryStatus::New);
+        JSC::Exception* exception = scope.exception();
+        if (scope.tryClearException()) {
+            entry->setFetchError(globalObject, exception->value());
+            scope.throwException(globalObject, exception);
+        }
         return nullptr;
+    };
+
+    // JSC settles the fetch promise of the entry with a promise that has settled, whether or not script that this fetch ran has fetched the
+    // module meanwhile. If none has, the entry is as JSC left it: a load that script asked for provides the source to an entry that is new.
+    const auto unlessFetchedMeanwhile = [&](JSC::JSPromise* promise) -> JSC::JSPromise* {
+        if (!runsScript || !entry)
+            return promise;
+        if (isBeingFetched(entry)) {
+            if (isFirstFetch && entry->status() == EntryStatus::Fetching)
+                entry->setStatus(EntryStatus::New);
+            return promise;
+        }
+        return promise->status() == JSC::JSPromise::Status::Pending ? promise : JSC::JSPromise::create(vm, globalObject->promiseStructure());
     };
 
     // require(esm) needs the entire dependency graph to load without yielding
@@ -3877,12 +3902,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
             &source,
             typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
         if (scope.exception()) [[unlikely]]
-            return rejectedWithCaughtException();
+            return didThrow();
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(result))
-            return promise;
+            return unlessFetchedMeanwhile(promise);
         if (result && result.inherits<JSC::JSSourceCode>())
-            return resolvedInternalPromise(globalObject, result);
-        return rejectedInternalPromise(globalObject, result ? result : JSC::jsUndefined());
+            return unlessFetchedMeanwhile(resolvedInternalPromise(globalObject, result));
+        return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result ? result : JSC::jsUndefined()));
     }
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
@@ -3895,12 +3920,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
 
     if (scope.exception()) [[unlikely]]
-        return rejectedWithCaughtException();
+        return didThrow();
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
-        return promise;
+        return unlessFetchedMeanwhile(promise);
     }
-    return rejectedInternalPromise(globalObject, result);
+    return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));
 }
 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject*, VM&, JSModuleLoader*, const Identifier&, const SourceCode&, bun_ModuleInfoDeserialized*);

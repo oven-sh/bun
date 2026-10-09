@@ -1946,6 +1946,275 @@ describe("a faked process.nextTick and queueMicrotask", () => {
   });
 });
 
+describe("what a faked tick throws", () => {
+  const toFake = ["nextTick", "queueMicrotask", "setTimeout", "performance"] as const;
+  const drivers = {
+    advanceTimersByTime: () => vi.advanceTimersByTime(100),
+    runOnlyPendingTimers: () => vi.runOnlyPendingTimers(),
+    advanceTimersToNextFrame: () => vi.advanceTimersToNextFrame(),
+    advanceTimersByTimeAsync: () => vi.advanceTimersByTimeAsync(100),
+    runOnlyPendingTimersAsync: () => vi.runOnlyPendingTimersAsync(),
+    waitFor: () => vi.waitFor(() => {}, { interval: 100 }),
+    waitUntil: () => vi.waitUntil(() => true, { interval: 100 }),
+    "expect.poll": () => expect.poll(() => 1, { interval: 100 }).toBe(1),
+  };
+  const throws = () => {
+    throw new Error("from a tick");
+  };
+
+  /** What `drive` threw or rejected with, which of a tick behind the one that throws and of a timer at 7ms it ran, and where it left the clock. */
+  async function outcome(drive: () => unknown, arrange: (queue: () => void) => void) {
+    vi.useFakeTimers({ toFake: [...toFake] });
+    const ran: string[] = [];
+    arrange(() => {
+      process.nextTick(throws);
+      queueMicrotask(() => ran.push("the next tick"));
+    });
+    setTimeout(() => ran.push("the timer at 7ms"), 7);
+    let thrown: unknown;
+    try {
+      await drive();
+    } catch (error) {
+      thrown = error;
+    }
+    return { thrown, ran, now: performance.now(), pending: vi.getTimerCount() };
+  }
+
+  // In vitest too, where it does not hang: a tick that throws between two timers of advanceTimersByTime() is run again for ever.
+  describe.each(Object.entries(drivers))("ends %s()", (_, drive) => {
+    test("before the first timer", async () => {
+      expect(await outcome(drive, queue => queue())).toEqual({
+        thrown: new Error("from a tick"),
+        ran: [],
+        now: 0,
+        pending: 2,
+      });
+    });
+
+    test("between two timers", async () => {
+      expect(await outcome(drive, queue => setTimeout(queue, 5))).toEqual({
+        thrown: new Error("from a tick"),
+        ran: [],
+        now: 5,
+        pending: 2,
+      });
+    });
+
+    test("after the last timer", async () => {
+      expect(await outcome(drive, queue => setTimeout(queue, 9))).toEqual({
+        thrown: new Error("from a tick"),
+        ran: ["the timer at 7ms"],
+        now: 9,
+        pending: 1,
+      });
+    });
+
+    test("and the next call goes on from there", async () => {
+      await outcome(drive, queue => setTimeout(queue, 5));
+      const ran = vi.fn();
+      queueMicrotask(ran);
+      setTimeout(ran, 1);
+      vi.advanceTimersByTime(1);
+      expect({ calls: ran.mock.calls.length, now: performance.now() }).toEqual({ calls: 2, now: 6 });
+    });
+  });
+
+  test.each([
+    "advanceTimersByTime",
+    "runOnlyPendingTimers",
+    "advanceTimersByTimeAsync",
+    "runOnlyPendingTimersAsync",
+  ] as const)("%s() throws it rather than what a timer threw before", async name => {
+    vi.useFakeTimers({ toFake: [...toFake] });
+    setTimeout(() => {
+      process.nextTick(throws);
+      throw new Error("from a timer");
+    }, 5);
+    let thrown: unknown;
+    try {
+      await drivers[name]();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(new Error("from a tick"));
+  });
+
+  test.each([undefined, null, 0, "", false])("also %p", async value => {
+    for (const drive of [drivers.advanceTimersByTime, drivers.advanceTimersByTimeAsync]) {
+      vi.useFakeTimers({ toFake: [...toFake] });
+      process.nextTick(() => {
+        throw value;
+      });
+      const after = vi.fn();
+      process.nextTick(after);
+      let thrown: unknown = "nothing";
+      try {
+        await drive();
+      } catch (error) {
+        thrown = error;
+      }
+      expect({ thrown, after: after.mock.calls.length }).toEqual({ thrown: value, after: 0 });
+    }
+  });
+});
+
+// Each in a process of its own: what the loop limit does not stop does not return, and no timeout of a test ends it.
+describe("a faked tick that queues itself again", () => {
+  const limit = "Aborting after running 100 timers, assuming an infinite loop!";
+  const prelude = `
+    import { describe, expect, test, vi } from "bun:test";
+    const options = { toFake: ["nextTick", "queueMicrotask", "setTimeout", "performance"], loopLimit: 100 };
+    let ticks = 0, timers = 0;
+    function count() {
+      if (++ticks > 1000) {
+        console.log("goes on past the loop limit");
+        process.exit(7);
+      }
+    }
+    const again = () => (count(), process.nextTick(again));
+    const throwsAndAgain = () => {
+      count();
+      queueMicrotask(throwsAndAgain);
+      throw new Error("from a tick");
+    };
+  `;
+  /** What the fixture printed, a line of JSON each, or the line itself. */
+  const printed = (stdout: string) =>
+    stdout
+      .replace(/^bun test .*\n/, "")
+      .trim()
+      .split("\n")
+      .map(line => (line.startsWith("{") ? JSON.parse(line) : line));
+
+  test.concurrent.each([
+    ["vi.advanceTimersByTime(10)", 0],
+    ["vi.runOnlyPendingTimers()", 0],
+    ["vi.advanceTimersToNextFrame()", 0],
+    ["vi.advanceTimersByTimeAsync(10)", 0],
+    ["vi.runOnlyPendingTimersAsync()", 0],
+    // Runs the next timer first.
+    ["vi.advanceTimersToNextTimerAsync()", 1],
+    ["vi.waitFor(() => {})", 0],
+    ["vi.waitUntil(() => true)", 0],
+    ["expect.poll(() => 1).toBe(1)", 0],
+  ])("%s stops at the loop limit", async (drive, timers) => {
+    using dir = tempDir("fake-timers-endless-ticks", {
+      "endless.test.ts": `${prelude}
+        test.each([again, throwsAndAgain])("%p", async tick => {
+          vi.useFakeTimers(options);
+          ticks = timers = 0;
+          process.nextTick(tick);
+          setTimeout(() => timers++, 5);
+          let thrown;
+          try {
+            await ${drive};
+          } catch (error) {
+            thrown = error;
+          }
+          console.log(JSON.stringify({ thrown: thrown?.message, ticks, timers, now: performance.now() }));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode, signalCode } = await run(["test", "./endless.test.ts"], String(dir));
+    expect({ printed: printed(stdout), exitCode, signalCode }, stderr).toEqual({
+      printed: [
+        { thrown: limit, ticks: 100, timers, now: timers * 5 },
+        { thrown: "from a tick", ticks: 1, timers, now: timers * 5 },
+      ],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent("what polls in microtasks for a timer to fire gets the error of the loop limit", async () => {
+    using dir = tempDir("fake-timers-endless-ticks", {
+      "endless.test.ts": `${prelude}
+        test("polls", () => {
+          vi.useFakeTimers(options);
+          let fired = false;
+          const wait = () => (count(), fired || queueMicrotask(wait));
+          wait();
+          setTimeout(() => (fired = true), 100);
+          expect(() => vi.advanceTimersByTime(100)).toThrow(${JSON.stringify(limit)});
+          console.log(JSON.stringify({ fired, ticks, now: performance.now() }));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode, signalCode } = await run(["test", "./endless.test.ts"], String(dir));
+    expect({ printed: printed(stdout), exitCode, signalCode }, stderr).toEqual({
+      printed: [{ fired: false, ticks: 101, now: 0 }],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent.each([
+    ["shouldAdvanceTime", "vi.useFakeTimers({ ...options, shouldAdvanceTime: true, advanceTimeDelta: 1 })"],
+    ["interval mode", 'vi.useFakeTimers(options).setTimerTickMode("interval", 1)'],
+    ["next timer mode", 'vi.useFakeTimers(options).setTimerTickMode("nextTimerAsync")'],
+  ])("%s: it is one uncaught error, and the clock no longer advances by itself", async (_, install) => {
+    using dir = tempDir("fake-timers-endless-ticks", {
+      "endless.test.ts": `${prelude}
+        describe.each([again, throwsAndAgain])("%p", tick => {
+          test("fails the test that waits", async () => {
+            ${install};
+            ticks = 0;
+            process.nextTick(tick);
+            setTimeout(() => timers++, 5);
+            await new Promise(() => {});
+          });
+          test("and then nothing", async () => {
+            // No event says that the clock has not moved: several times the delta of 1ms.
+            for (let i = 0; i < 5; i++) {
+              Bun.sleepSync(2);
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            console.log(JSON.stringify({ ticks, timers, now: performance.now() }));
+          });
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode, signalCode } = await run(["test", "./endless.test.ts"], String(dir));
+    expect({ printed: printed(stdout), errors: stderr.match(/^error: .*$/gm), exitCode, signalCode }, stderr).toEqual({
+      printed: [
+        { ticks: 100, timers: 0, now: 0 },
+        { ticks: 1, timers: 0, now: 0 },
+      ],
+      errors: [`error: ${limit}`, "error: from a tick"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+});
+
+describe("as in @sinonjs/fake-timers", () => {
+  const toFake = ["nextTick", "setTimeout", "setImmediate", "performance"] as const;
+
+  test.each([
+    ["runAllTimers", () => vi.runAllTimers()],
+    ["advanceTimersToNextTimer", () => vi.advanceTimersToNextTimer()],
+    ["runAllTimersAsync", () => vi.runAllTimersAsync()],
+  ])("the immediate of a tick that is pending for %s() is due at once", async (_, drive) => {
+    vi.useFakeTimers({ toFake: [...toFake] });
+    const at: number[] = [];
+    process.nextTick(() => setImmediate(() => at.push(performance.now())));
+    await drive();
+    expect(at).toEqual([0]);
+  });
+
+  test("a timer that a pending tick schedules is not pending for runOnlyPendingTimersAsync(), as for runOnlyPendingTimers()", async () => {
+    vi.useFakeTimers({ toFake: [...toFake] });
+    const fired: string[] = [];
+    process.nextTick(() => setTimeout(() => fired.push("of the tick"), 1000));
+    await vi.runOnlyPendingTimersAsync();
+    expect({ fired, now: performance.now() }).toEqual({ fired: [], now: 0 });
+    setTimeout(() => fired.push("pending"), 10);
+    process.nextTick(() => setTimeout(() => fired.push("of the second tick"), 2000));
+    await vi.runOnlyPendingTimersAsync();
+    expect({ fired, now: performance.now() }).toEqual({ fired: ["pending", "of the tick"], now: 1000 });
+  });
+});
+
 describe("a faked requestAnimationFrame", () => {
   const dom = globalThis as unknown as {
     requestAnimationFrame?: (callback: (now: number) => void) => number;

@@ -3640,6 +3640,84 @@ describe("expect()", () => {
       different.other.back = { v: 3 };
       expect(received).not.toMatchObject(different);
     });
+    test("an object that occurs twice shows, in each place, what the pattern there says", () => {
+      const number = expect.any(Number);
+      const shared = { id: 123.5, k: 2.5 };
+      const pattern = { id: number };
+      expect({ a: shared, b: shared }).toMatchInlineSnapshot(
+        { a: pattern, b: pattern },
+        `
+{
+  "a": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+  "b": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+}
+`,
+      );
+      expect({ a: shared, b: shared, c: [shared, shared] }).toMatchInlineSnapshot(
+        { a: { id: number }, b: { k: number }, c: [{ id: number, k: number }, {}] },
+        `
+{
+  "a": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+  "b": {
+    "id": 123.5,
+    "k": Any<Number>,
+  },
+  "c": [
+    {
+      "id": Any<Number>,
+      "k": Any<Number>,
+    },
+    {
+      "id": 123.5,
+      "k": 2.5,
+    },
+  ],
+}
+`,
+      );
+      const cycle = { id: 1.5 };
+      cycle.self = cycle;
+      const cyclicPattern = { id: number };
+      cyclicPattern.self = cyclicPattern;
+      expect(cycle).toMatchInlineSnapshot(
+        cyclicPattern,
+        `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`,
+      );
+      expect(shared).toEqual({ id: 123.5, k: 2.5 });
+    });
+    test("the copy of an array keeps the holes at its end", () => {
+      const received = [1.5, 2];
+      received.length = 4;
+      const pattern = [expect.any(Number), 2];
+      pattern.length = 4;
+      expect({ received }).toMatchInlineSnapshot(
+        { received: pattern },
+        `
+{
+  "received": [
+    Any<Number>,
+    2,
+    undefined,
+    undefined,
+  ],
+}
+`,
+      );
+    });
     test("leaves the received object as it is", () => {
       class Point {
         x = 1;

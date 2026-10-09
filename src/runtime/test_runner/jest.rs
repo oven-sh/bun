@@ -9,6 +9,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
+    StringJsc as _,
 };
 use crate::timer::ElTimespec;
 
@@ -328,6 +329,18 @@ pub(crate) mod Jest {
         unsafe { RUNNER.read() }
     }
 
+    /// `RuntimeFeatures::own_test_globals`, before a test file is loaded.
+    pub(crate) fn own_globals(global: &JSGlobalObject) -> JsResult<u32> {
+        let mut found = 0;
+        for (index, &name) in bun_js_parser::Jest::GLOBALS.iter().enumerate() {
+            let name = bun_core::String::static_(name).to_js(global)?;
+            if global.to_js_value().has_own_property_value(global, name)? {
+                found |= 1 << index;
+            }
+        }
+        Ok(found)
+    }
+
     /// `BunTestRoot::file_generation`. 0 outside of `bun test`, and in a worker thread: the runner belongs to the main thread.
     pub(crate) fn file_generation(global: &JSGlobalObject) -> u32 {
         if global.bun_vm().worker_ref().is_some() {
@@ -635,6 +648,9 @@ pub(crate) mod on_unhandled_rejection {
             // dereferenced for this scope. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+            if buntest.unclaimed.is_ended_error(rejection) {
+                return;
+            }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
@@ -642,8 +658,13 @@ pub(crate) mod on_unhandled_rejection {
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
             if let Some(entry) = entry_ptr {
+                // SAFETY: an entry of the file that is running.
+                let mode = unsafe { (*entry).base.mode };
                 if let Some(sequence) = current_state_data.sequence(buntest) {
-                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
+                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
+                        // The failure it expects is one of its own function, not whatever goes wrong meanwhile.
+                        || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
+                    {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     }

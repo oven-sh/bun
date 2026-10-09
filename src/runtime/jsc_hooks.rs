@@ -907,6 +907,15 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         unsafe { (*vm).preload.clear() };
     }
 
+    // SAFETY: per fn contract; `global` is the live global of `vm`.
+    unsafe {
+        if (*vm).transpiler.options.rewrite_jest_for_tests {
+            (*vm).transpiler.options.own_test_globals =
+                crate::test_runner::jest::Jest::own_globals(&*global)
+                    .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
+    }
+
     Ok(ptr::null_mut())
 }
 
@@ -2997,9 +3006,8 @@ fn transpile_source_code_inner(
                     return Err(crate::Error::AsyncModule);
                 }
 
-                let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-                    || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                let depends_on_more_than_source = parse_result.ast.depends_on_more_than_source;
+                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
+                let is_commonjs_module = printed_ast.is_commonjs_module;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3121,13 +3129,13 @@ fn transpile_source_code_inner(
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source(
+                            printed_ast,
                             written,
                             input_specifier,
                             path.text,
                             None,
                         )
                     };
-                    resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
@@ -3221,14 +3229,11 @@ fn transpile_source_code_inner(
                 // :251-256 `defer` fires on every exit path.)
 
                 return Ok(ResolvedSource {
-                    source_code,
                     source_url: input_specifier.create_if_different(path.text),
-                    is_commonjs_module,
-                    depends_on_more_than_source,
                     module_info,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
-                    ..Default::default()
+                    ..ResolvedSource::printed(printed_ast, source_code)
                 });
             }
         }

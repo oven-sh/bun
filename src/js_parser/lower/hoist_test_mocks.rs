@@ -26,9 +26,7 @@ impl MockApi {
     }
 }
 
-pub(crate) fn is_test_module(path: &[u8]) -> bool {
-    matches!(path, b"bun:test" | b"vitest" | b"@jest/globals")
-}
+pub(crate) use bun_ast::import_record::is_test_module;
 
 /// When a top-level statement runs, in a file that hoists mocks.
 #[derive(Clone, Copy)]
@@ -39,26 +37,50 @@ pub(crate) enum MockHoistOrder {
     InPlace,
 }
 
-/// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`.
-pub(crate) fn drop_namespace_of_lowered_callee(symbols: &[js_ast::Symbol], callee: &mut Expr) {
+/// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`. Returns whether it is one.
+pub(crate) fn drop_namespace_of_lowered_callee(
+    symbols: &[js_ast::Symbol],
+    callee: &mut Expr,
+) -> bool {
     let ExprData::EImportIdentifier(import) = callee.data else {
-        return;
+        return false;
     };
     let symbol = &symbols[import.ref_.inner_index() as usize];
     // A name of another block of a TypeScript namespace has an alias too, and keeps its `this`.
-    if import.was_originally_identifier()
+    let is_lowered = import.was_originally_identifier()
         && symbol.kind == js_ast::symbol::Kind::Import
-        && symbol.namespace_alias.is_some()
-    {
+        && symbol.namespace_alias.is_some();
+    if is_lowered {
         *callee = Expr {
             data: crate::prefill::data::ZERO,
             loc: callee.loc,
         }
         .join_with_comma(*callee);
     }
+    is_lowered
 }
 
 impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEMA> {
+    /// Whether `bun test` may transpile this file to something else than `bun run` does. Both find
+    /// the same answer: it is made of what the visit pass leaves behind with or without
+    /// `inject_jest_globals`.
+    pub(crate) fn uses_test_api(&self) -> bool {
+        self.import_records
+            .items()
+            .iter()
+            .any(|record| is_test_module(record.path.text))
+            || Jest::GLOBALS.iter().any(|global| {
+                self.module_scope()
+                    .members
+                    .get(global.as_bytes())
+                    .is_some_and(|member| {
+                        let symbol = &self.symbols[member.ref_.inner_index() as usize];
+                        symbol.kind == js_ast::symbol::Kind::Unbound
+                            && symbol.use_count_estimate > 0
+                    })
+            })
+    }
+
     fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
             return MockApi::from_export_name(Jest::GLOBALS[global].as_bytes());
@@ -173,6 +195,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         if !stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt)) {
             return None;
         }
+        self.did_apply_test_feature = true;
 
         let mut exported = RefMap::default();
         for stmt in stmts {
@@ -328,6 +351,10 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
     /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Returns whether it visited the first argument.
     pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
+        // Uses in dead code are not counted, so `uses_test_api()` does not know of this one.
+        if self.is_control_flow_dead {
+            return false;
+        }
         let ExprData::EDot(dot) = call.target.data else {
             return false;
         };
@@ -359,6 +386,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         self.visit_expr(&mut import.options);
         self.is_control_flow_dead = was_control_flow_dead;
         *path = import.expr;
+        self.did_apply_test_feature = true;
         true
     }
 }

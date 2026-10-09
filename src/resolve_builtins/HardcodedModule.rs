@@ -826,6 +826,15 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
+// The transpiler cache shares the output of every other file between `bun test` and `bun run`.
+const _: () = {
+    let mut i = 0;
+    while i < BUN_TEST_EXTRA_ALIAS_KVS.len() {
+        assert!(import_record::is_test_module(BUN_TEST_EXTRA_ALIAS_KVS[i].0));
+        i += 1;
+    }
+};
+
 // A lazily-built `HashMap` per alias table (see `lookup`).
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];

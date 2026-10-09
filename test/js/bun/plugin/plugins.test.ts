@@ -3990,6 +3990,41 @@ describe.concurrent("import.meta.resolve()", () => {
       exitCode: 0,
     });
   });
+
+  it.skipIf(process.platform === "win32")("of a path, in an onResolve callback, asks no callback", async () => {
+    using dir = tempDir("plugin-import-meta-resolve-in-callback", {
+      "src/a.ts": `export const a = 1;`,
+      "entry.ts": `
+        const root = import.meta.url.slice(0, -"/entry.ts".length);
+        const specifiers = ["./src/a.ts", "../" + import.meta.dir.split("/").at(-1) + "/src/a.ts", import.meta.dir + "/src/a.ts", root + "/src/a.ts"];
+        let calls = 0;
+        Bun.plugin({
+          name: "asks",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, ({ path, importer }) => {
+              calls++;
+              for (const specifier of specifiers) console.log(import.meta.resolve(specifier).replace(root, "<root>"));
+              console.log(import.meta.resolve(path, importer).replace(root, "<root>"));
+            });
+          },
+        });
+        console.log(Object.keys(await import("./src/a.ts")), calls);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: Buffer.alloc("<root>/src/a.ts\n".length * 5, "<root>/src/a.ts\n").toString() + `[ "a" ] 1\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe.concurrent("a module made from an object", () => {
@@ -4086,6 +4121,171 @@ describe.concurrent("a module made from an object", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: Array.from({ length: 8 }, (_, i) => `${i},${i},served${i}`).join(" ") + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent("an onLoad callback that loads a module which imports the one it is asked for", () => {
+  const files = {
+    "k.js": `export const a = "file";`,
+    "l.js": `export const l = "l";`,
+    "m.js": `import { l } from "./l.js"; import { a } from "./k.js"; export const m = l + "+" + a;`,
+    "imports-m.js": `import { m } from "./m.js"; export const x = m;`,
+    "imports-k.js": `import { a } from "./k.js"; export const x = "x+" + a;`,
+  };
+  async function run(source: string, ...args: string[]) {
+    using dir = tempDir("plugin-onload-nested", { ...files, "main.js": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it("and throws fails the import that asked for it", async () => {
+    const source = `
+      let calls = 0;
+      Bun.plugin({
+        name: "fails",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]k\\.js$/ }, () => {
+            if (++calls > 1) throw new Error("call 2 fails");
+            try {
+              require("./imports-m.js");
+            } catch (error) {
+              console.log("require() in call 1:", error.message);
+            }
+            throw new Error("call 1 fails");
+          });
+        },
+      });
+      const settled = promise => promise.then(() => "fulfilled", error => error.message);
+      console.log("import(m):", await settled(import("./m.js")));
+      console.log("import(m):", await settled(import("./m.js")));
+      console.log("calls:", calls);
+    `;
+    expect(await run(source)).toEqual({
+      stdout: ["require() in call 1: call 2 fails", "import(m): call 1 fails", "import(m): call 1 fails", "calls: 2"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and is terminated leaves the module to be loaded", async () => {
+    const source = `
+      const vm = require("node:vm");
+      globalThis.load = () => require("./m.js");
+      let spins = true;
+      Bun.plugin({
+        name: "spins",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]k\\.js$/ }, () => {
+            while (spins);
+          });
+        },
+      });
+      try {
+        vm.runInThisContext("load()", { timeout: 20 });
+      } catch (error) {
+        console.log("require(m):", error.code);
+      }
+      spins = false;
+      console.log("import(k):", JSON.stringify(await import("./k.js")));
+    `;
+    expect(await run(source)).toEqual({
+      stdout: ["require(m): ERR_SCRIPT_EXECUTION_TIMEOUT", 'import(k): {"a":"file"}'],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // import(m) waits for call 1. require(m) asks again: call 2, which requires a module that imports k: call 3.
+  const askedAgain = `
+    const fails = process.argv[2];
+    const asked = Promise.withResolvers(), gate = Promise.withResolvers();
+    const attempt = load => {
+      try {
+        return load();
+      } catch (error) {
+        return error.message;
+      }
+    };
+    let calls = 0;
+    Bun.plugin({
+      name: "asked again",
+      setup(build) {
+        build.onLoad({ filter: /[\\\\/]k\\.js$/ }, () => {
+          const call = ++calls;
+          const answer = { contents: 'export const a = "call ' + call + '";', loader: "js" };
+          if (call === 1) return asked.resolve(), gate.promise.then(() => answer);
+          if (call === 2) console.log("require() in call 2:", attempt(() => require("./imports-k.js").x));
+          if (fails === "call " + call) throw new Error(fails + " fails");
+          return answer;
+        });
+      },
+    });
+    const settled = promise => promise.then(exports => JSON.stringify(exports), error => error.message);
+    const first = import("./m.js");
+    await asked.promise;
+    console.log("require(m):", attempt(() => require("./m.js").m));
+    gate.resolve();
+    console.log("import(m), started first:", await settled(first));
+    console.log("import(k):", await settled(import("./k.js")));
+    console.log("import(m):", await settled(import("./m.js")));
+    console.log("import(imports-k):", await settled(import("./imports-k.js")));
+    console.log("calls:", calls);
+  `;
+
+  it("which that loads, and throws, fails the require() that asked", async () => {
+    expect(await run(askedAgain, "call 2")).toEqual({
+      stdout: [
+        "require() in call 2: x+call 3",
+        "require(m): call 2 fails",
+        'import(m), started first: {"m":"l+call 3"}',
+        'import(k): {"a":"call 3"}',
+        "import(m): call 2 fails",
+        'import(imports-k): {"x":"x+call 3"}',
+        "calls: 3",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("which fails to load there, and answers", async () => {
+    expect(await run(askedAgain, "call 3")).toEqual({
+      stdout: [
+        "require() in call 2: call 3 fails",
+        "require(m): l+call 2",
+        'import(m), started first: {"m":"l+call 2"}',
+        'import(k): {"a":"call 2"}',
+        'import(m): {"m":"l+call 2"}',
+        "import(imports-k): call 3 fails",
+        "calls: 3",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("which that loads, and answers", async () => {
+    expect(await run(askedAgain, "none")).toEqual({
+      stdout: [
+        "require() in call 2: x+call 3",
+        "require(m): l+call 3",
+        'import(m), started first: {"m":"l+call 3"}',
+        'import(k): {"a":"call 3"}',
+        'import(m): {"m":"l+call 3"}',
+        'import(imports-k): {"x":"x+call 3"}',
+        "calls: 3",
+      ],
       stderr: "",
       exitCode: 0,
     });

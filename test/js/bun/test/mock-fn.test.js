@@ -4066,6 +4066,288 @@ if (isBun) {
       },
     );
 
+    describe.each(flavors)("%s: a mock that is as new is found again", (_, isVitest, fn, spy) => {
+      const initial = isVitest ? "initial" : undefined;
+      const asNew = { calls: [], contexts: [], instances: [], invocationCallOrder: [], results: [] };
+      const makeAsNew = [
+        ["clearAllMocks() and resetAllMocks()", () => (jest.clearAllMocks(), jest.resetAllMocks())],
+        ["mockClear() and mockReset()", mocked => mocked.mockClear().mockReset()],
+        ["mockRestore()", mocked => mocked.mockRestore()],
+        [
+          "all of them, twice",
+          mocked => {
+            for (let i = 0; i < 2; i++) {
+              mocked.mockClear().mockReset().mockRestore();
+              jest.clearAllMocks();
+              jest.resetAllMocks();
+              jest.restoreAllMocks();
+            }
+          },
+        ],
+      ];
+
+      describe.each(makeAsNew)("after %s", (_, makeAsNew) => {
+        test.each([
+          ["a call", mocked => mocked()],
+          ["a call with a receiver", mocked => mocked.call({})],
+          ["new", mocked => new mocked()],
+          ["Reflect.construct()", mocked => Reflect.construct(mocked, [], class {})],
+          ["a call that throws", mocked => expect(() => mocked.mockThrowOnce(new Error("thrown"))()).toThrow("thrown")],
+          ["a write to what `mock` gives", mocked => mocked.mock.calls.push(["written"])],
+        ])("by clearAllMocks(), after %s", (_, record) => {
+          const mocked = fn(() => "initial");
+          for (let round = 0; round < 3; round++) {
+            record(mocked);
+            makeAsNew(mocked);
+            expect(mocked.mock).toEqual(asNew);
+            makeAsNew(mocked);
+            record(mocked);
+            expect(mocked.mock).not.toEqual(asNew);
+            jest.clearAllMocks();
+            expect(mocked.mock).toEqual(asNew);
+          }
+        });
+
+        test.each([
+          ["mockImplementation()", mocked => mocked.mockImplementation(() => "configured")],
+          ["mockImplementationOnce()", mocked => mocked.mockImplementationOnce(() => "configured")],
+          ["mockReturnValue()", mocked => mocked.mockReturnValue("configured")],
+          ["mockReturnValueOnce()", mocked => mocked.mockReturnValueOnce("configured")],
+          [
+            "two mockReturnValueOnce(), one of them used",
+            mocked => mocked.mockReturnValueOnce("used").mockReturnValueOnce("configured")(),
+          ],
+          [
+            "mockReturnValue() and a mockReturnValueOnce() that is used",
+            mocked => mocked.mockReturnValue("configured").mockReturnValueOnce("used")(),
+          ],
+          ["mockReturnThis()", mocked => mocked.mockReturnThis()],
+          ["mockResolvedValue()", mocked => mocked.mockResolvedValue("configured")],
+          ["mockResolvedValueOnce()", mocked => mocked.mockResolvedValueOnce("configured")],
+          ["mockRejectedValue()", mocked => mocked.mockRejectedValue("configured")],
+          ["mockRejectedValueOnce()", mocked => mocked.mockRejectedValueOnce("configured")],
+          ["mockThrow()", mocked => mocked.mockThrow("configured")],
+          ["mockThrowOnce()", mocked => mocked.mockThrowOnce("configured")],
+          [
+            "a withImplementation() whose callback throws",
+            mocked =>
+              expect(() =>
+                mocked.withImplementation(
+                  () => "configured",
+                  () => {
+                    throw new Error("thrown");
+                  },
+                ),
+              ).toThrow("thrown"),
+          ],
+        ])("by resetAllMocks(), after %s", (_, configure) => {
+          const mocked = fn(() => "initial");
+          for (let round = 0; round < 3; round++) {
+            configure(mocked);
+            makeAsNew(mocked);
+            expect(mocked.call("this")).toBe(initial);
+            makeAsNew(mocked);
+            configure(mocked);
+            jest.resetAllMocks();
+            expect(mocked.call("this")).toBe(initial);
+          }
+        });
+
+        if (fn !== mock) {
+          test("by resetAllMocks(), after mockName()", () => {
+            const mocked = fn();
+            const name = mocked.getMockName();
+            for (let round = 0; round < 3; round++) {
+              mocked.mockName("named");
+              makeAsNew(mocked);
+              expect(mocked.getMockName()).toBe(name);
+              mocked.mockName("named");
+              jest.resetAllMocks();
+              expect(mocked.getMockName()).toBe(name);
+            }
+          });
+        }
+
+        test("by restoreAllMocks(), after spyOn()", () => {
+          const method = () => "original";
+          const object = { method };
+          for (let round = 0; round < 3; round++) {
+            makeAsNew(spy(object, "method"));
+            jest.restoreAllMocks();
+            expect(object.method).toBe(method);
+            spy(object, "method");
+            expect(object.method).not.toBe(method);
+            jest.restoreAllMocks();
+            expect(object.method).toBe(method);
+          }
+        });
+      });
+
+      test("after a garbage collection", () => {
+        const object = { method: () => "original" };
+        const mocked = fn(() => "initial").mockReturnValue("configured");
+        const spied = spy(object, "method");
+        for (let i = 0; i < 200; i++) {
+          fn().mockReturnValue(i)();
+          spy({ method() {} }, "method")();
+        }
+        mocked();
+        object.method();
+        Bun.gc(true);
+        jest.resetAllMocks();
+        expect([mocked.mock.calls.length, spied.mock.calls.length, mocked()]).toEqual([0, 0, initial]);
+        Bun.gc(true);
+        jest.restoreAllMocks();
+        expect(jest.isMockFunction(object.method)).toBe(false);
+        mocked.mockReturnValue("configured")();
+        Bun.gc(true);
+        mocked.mockReset();
+        Bun.gc(true);
+        mocked.mockReturnValue("configured")();
+        jest.resetAllMocks();
+        expect([mocked.mock.calls.length, mocked()]).toEqual([0, initial]);
+      });
+    });
+
+    test("the mock of a method on the prototype of an automocked class, which the instances record on", () => {
+      const { Class } = vi.mockObject({
+        Class: class {
+          method() {}
+        },
+      });
+      const instance = new Class();
+      for (let round = 0; round < 3; round++) {
+        Class.prototype.method.mockReturnValueOnce("once");
+        vi.clearAllMocks();
+        expect(instance.method("argument")).toBe("once");
+        expect([Class.prototype.method.mock.calls, instance.method.mock.calls]).toEqual([
+          [["argument"]],
+          [["argument"]],
+        ]);
+        vi.clearAllMocks();
+        expect([Class.prototype.method.mock.calls, instance.method.mock.calls]).toEqual([[], []]);
+        Class.prototype.method.mockReturnValueOnce("once").mockReturnValueOnce("left");
+        instance.method();
+        vi.resetAllMocks();
+        expect(instance.method()).toBeUndefined();
+      }
+    });
+
+    test("a mock that is configured again while resetAllMocks() resets it", () => {
+      let configureAgain = false;
+      const implementation = new Proxy(function () {}, {
+        get(target, key, receiver) {
+          if (key === "prototype" && configureAgain) {
+            configureAgain = false;
+            mocked.mockReturnValue("configured again");
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const mocked = vi.fn(implementation).mockReturnValue("configured");
+      mocked.prototype;
+      configureAgain = true;
+      vi.resetAllMocks();
+      expect(mocked()).toBe("configured again");
+      vi.resetAllMocks();
+      expect(mocked()).toBeUndefined();
+    });
+
+    test("a mock that is cleared while a call is recorded", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { jest, vi } = Bun.jest(import.meta.path);
+          for (const fn of [jest.fn, vi.fn]) {
+            const mocked = fn();
+            let clear = false;
+            Object.defineProperty(Array.prototype, 1, {
+              configurable: true,
+              set(value) {
+                Object.defineProperty(this, 1, { value, writable: true, enumerable: true, configurable: true });
+                if (!clear) return;
+                clear = false;
+                mocked.mockClear();
+              },
+            });
+            mocked("first");
+            clear = true;
+            mocked("second");
+            delete Array.prototype[1];
+            const recorded = Object.values(mocked.mock).map(array => array.length);
+            jest.clearAllMocks();
+            console.log(JSON.stringify(recorded), JSON.stringify(mocked.mock));
+          }
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const asNew = `{"calls":[],"contexts":[],"instances":[],"results":[],"invocationCallOrder":[]}`;
+      expect(stdout).toBe(`[0,1,1,1,1] ${asNew}\n[0,1,1,1,1] ${asNew}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a mock that is configured while a call is recorded", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { jest, vi, mock } = Bun.jest(import.meta.path);
+          const configurations = {
+            mockReturnValue: mocked => mocked.mockReturnValue("configured"),
+            mockReturnThis: mocked => mocked.mockReturnThis(),
+            mockThrow: mocked => mocked.mockThrow("configured"),
+            mockImplementation: mocked => mocked.mockImplementation(() => "configured"),
+            mockResolvedValue: mocked => mocked.mockResolvedValue("configured"),
+          };
+          for (const fn of [jest.fn, vi.fn, mock]) {
+            const seen = [];
+            for (const configure of Object.values(configurations)) {
+              for (const construct of [false, true]) {
+                const mocked = fn(function () { return "initial"; });
+                mocked();
+                let armed = true;
+                Object.defineProperty(Array.prototype, 1, {
+                  configurable: true,
+                  set(value) {
+                    Object.defineProperty(this, 1, { value, writable: true, enumerable: true, configurable: true });
+                    if (!armed) return;
+                    armed = false;
+                    configure(mocked);
+                  },
+                });
+                let result;
+                try {
+                  result = construct ? typeof new mocked() : mocked.call("this");
+                } catch (thrown) {
+                  result = "thrown: " + thrown;
+                }
+                delete Array.prototype[1];
+                seen.push(result instanceof Promise ? "promise" : result);
+              }
+            }
+            console.log(seen.join());
+          }
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // `new` on a mock of `vi` constructs with the function that it has taken before the call is recorded.
+      const seen = thrownByNew =>
+        `configured,object,this,object,thrown: configured,${thrownByNew},configured,object,promise,object\n`;
+      expect(stdout).toBe(seen("thrown: configured") + seen("object") + seen("thrown: configured"));
+      expect(exitCode).toBe(0);
+    });
+
     describe.each(flavors)("%s: resetAllMocks() finds what withImplementation() has put back", (_, isVitest, fn) => {
       const initial = isVitest ? "initial" : undefined;
       const configured = () =>

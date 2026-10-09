@@ -1359,9 +1359,49 @@ declare module "bun" {
      */
     exhaustive?: boolean;
   }
+
+  namespace __internal {
+    // `ImportMeta` inherits `glob`: the `ImportMeta.glob` of another package, such as
+    // `vite/client`, then replaces it whichever of the two is loaded first.
+    interface ImportMetaGlob {
+      /**
+       * Import every module that matches a glob pattern. Compatible with
+       * [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import).
+       *
+       * Bun's transpiler and bundler replace the call with an object literal, so
+       * the arguments must be literals.
+       *
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx");
+       * // {
+       * //   "./pages/about.tsx": () => import("./pages/about.tsx"),
+       * //   "./pages/home.tsx": () => import("./pages/home.tsx"),
+       * // }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options?: Bun.ImportMetaGlobOptions & { eager?: false },
+      ): Record<string, () => Promise<TModule>>;
+      /**
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx", { eager: true });
+       * // import * as about from "./pages/about.tsx";
+       * // import * as home from "./pages/home.tsx";
+       * // { "./pages/about.tsx": about, "./pages/home.tsx": home }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options: Bun.ImportMetaGlobOptions & { eager: true },
+      ): Record<string, TModule>;
+    }
+  }
 }
 
-interface ImportMeta {
+interface ImportMeta extends Bun.__internal.ImportMetaGlob {
   /**
    * `file://` url string for the current module.
    *
@@ -1440,40 +1480,6 @@ interface ImportMeta {
 
   /** Alias of `import.meta.path`. Exists for Node.js compatibility */
   filename: string;
-
-  /**
-   * Import every module that matches a glob pattern. Compatible with
-   * [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import).
-   *
-   * Bun's transpiler and bundler replace the call with an object literal, so
-   * the arguments must be literals.
-   *
-   * @example
-   * ```ts
-   * const pages = import.meta.glob("./pages/*.tsx");
-   * // {
-   * //   "./pages/about.tsx": () => import("./pages/about.tsx"),
-   * //   "./pages/home.tsx": () => import("./pages/home.tsx"),
-   * // }
-   * ```
-   */
-  glob<TModule = unknown>(
-    pattern: string | string[],
-    options?: Bun.ImportMetaGlobOptions & { eager?: false },
-  ): Record<string, () => Promise<TModule>>;
-  /**
-   * @example
-   * ```ts
-   * const pages = import.meta.glob("./pages/*.tsx", { eager: true });
-   * // import * as about from "./pages/about.tsx";
-   * // import * as home from "./pages/home.tsx";
-   * // { "./pages/about.tsx": about, "./pages/home.tsx": home }
-   * ```
-   */
-  glob<TModule = unknown>(
-    pattern: string | string[],
-    options: Bun.ImportMetaGlobOptions & { eager: true },
-  ): Record<string, TModule>;
 }
 
 /**

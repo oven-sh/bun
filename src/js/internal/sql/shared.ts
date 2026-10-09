@@ -1717,7 +1717,14 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   let sslMode: SSLMode | null = null;
   let adapter: Bun.SQL.__internal.Adapter | null = null;
 
-  stringOrUrlOrOptions = textOfForeignURL(stringOrUrlOrOptions);
+  // Options may have an `href` and a `protocol` too, of their own: a URL inherits its accessors.
+  if (
+    typeof stringOrUrlOrOptions === "object" &&
+    stringOrUrlOrOptions &&
+    !Object.hasOwn(stringOrUrlOrOptions, "href")
+  ) {
+    stringOrUrlOrOptions = textOfForeignURL(stringOrUrlOrOptions);
+  }
   if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
     stringOrUrl = stringOrUrlOrOptions;
     options = definitelyOptionsButMaybeEmpty;

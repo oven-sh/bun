@@ -4,7 +4,15 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 
-async function runTests(files: Record<string, string>, args: string[] = [], env: Record<string, string> = {}) {
+// A run that never ends is killed, and what it printed is compared: a test that times out leaves it running.
+const beforeTheTestTimesOut = 4000;
+
+async function runTests(
+  files: Record<string, string>,
+  args: string[] = [],
+  env: Record<string, string> = {},
+  killedAfterMs?: number,
+) {
   using dir = tempDir("vitest-flavor", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
@@ -12,6 +20,8 @@ async function runTests(files: Record<string, string>, args: string[] = [], env:
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
+    timeout: killedAfterMs,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const results = stderr
@@ -1992,6 +2002,61 @@ test.concurrent("test.fails passes whatever it is that fails", async () => {
   }
 });
 
+test.concurrent.each([
+  ["vitest", "fails"],
+  ["bun:test", "fails"],
+  ["bun:test", "failing"],
+])("%s: an error that nothing caught is not the failure that test.%s expects", async (module, modifier) => {
+  const { results, errors, stderr, exitCode } = await runTests({
+    "a.test.js": `
+      import { test } from "${module}";
+      const thrown = Promise.withResolvers();
+      test("leaves a timer behind", () => {
+        setTimeout(() => {
+          thrown.resolve();
+          throw new Error("of an earlier test");
+        }, 0);
+      });
+      test.${modifier}("runs when the timer fires", () => thrown.promise);
+      test.${modifier}("rejects a promise that nothing waits for", async () => {
+        Promise.reject(new Error("rejected"));
+        await new Promise(resolve => setImmediate(resolve));
+      });
+      test.${modifier}("throws", () => {
+        throw new Error("expected");
+      });
+      test.${modifier}("returns a promise that is rejected", () => Promise.reject(new Error("expected")));
+      test.${modifier}("returns a promise that is rejected later", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        throw new Error("expected");
+      });
+      if ("${module}" === "bun:test") {
+        test.${modifier}("done(error)", done => done(new Error("expected")));
+        test.${modifier}("done(error) later", done => void setImmediate(() => done(new Error("expected"))));
+      }
+    `,
+  });
+  expect({
+    results,
+    errors,
+    betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+    exitCode,
+  }).toEqual({
+    results: [
+      "(pass) leaves a timer behind",
+      "(fail) runs when the timer fires",
+      "(fail) rejects a promise that nothing waits for",
+      "(pass) throws",
+      "(pass) returns a promise that is rejected",
+      "(pass) returns a promise that is rejected later",
+      ...(module === "bun:test" ? ["(pass) done(error)", "(pass) done(error) later"] : []),
+    ],
+    errors: ["error: of an earlier test", "error: rejected"],
+    betweenTests: 2,
+    exitCode: 1,
+  });
+});
+
 test.concurrent("test.fails: what the hooks see, retries, repeats and inheritance", async () => {
   const { log, results, exitCode } = await runTests({
     "a.test.js": `
@@ -2520,6 +2585,156 @@ describe.concurrent("test.extend()", () => {
     });
   }
 
+  describe("file-scoped fixtures that the hooks of a preload script ask for are torn down after those hooks", () => {
+    const files = (hooks: string) => ({
+      "preload.js": `
+        import { test } from "vitest";
+        const fixture = name => [async ({}, use) => { console.log(name, "setup"); await use(name); console.log(name, "teardown"); }, { scope: "file" }];
+        globalThis.extended = test.extend({ shared: fixture("shared"), first: fixture("first"), last: fixture("last") });
+        ${hooks}
+      `,
+      "a.test.js": `
+        import { afterAll } from "vitest";
+        afterAll(() => console.log("afterAll of a"));
+        extended("a", ({ shared }) => console.log("a", shared));
+      `,
+      "b.test.js": `
+        import { test } from "vitest";
+        test("b", () => console.log("b"));
+      `,
+    });
+    const before = ["first setup", "beforeAll first"];
+    const after = ["last setup", "afterAll shared last", "last teardown", "shared teardown"];
+    const a = ["shared setup", "a shared", "afterAll of a"];
+
+    test.each([
+      // The hooks of a preload script run before the first file and after the last one.
+      [
+        "--no-isolate",
+        [
+          [...before, ...a, "shared teardown", "first teardown"],
+          ["b", "shared setup", ...after],
+        ],
+      ],
+      // The preload script runs for each file.
+      [
+        "--isolate",
+        [
+          [...before, ...a, ...after, "first teardown"],
+          [...before, "b", "shared setup", ...after, "first teardown"],
+        ],
+      ],
+    ])("%s", async (flag, [logOfA, logOfB]) => {
+      const hooks = `
+        extended.beforeAll(({ first }) => console.log("beforeAll", first));
+        extended.afterAll(({ shared, last }) => console.log("afterAll", shared, last));
+      `;
+      const run = (...args: string[]) =>
+        runTests(files(hooks), ["--preload=./preload.js", ...args], {}, beforeTheTestTimesOut);
+      const [once, twice] = await Promise.all([run(flag), run(flag, "--rerun-each=2")]);
+      expect({ log: once.log, exitCode: once.exitCode }).toEqual({ log: [...logOfA, ...logOfB], exitCode: 0 });
+      expect({ log: twice.log, exitCode: twice.exitCode }).toEqual({
+        log: [...logOfA, ...logOfA, ...logOfB, ...logOfB],
+        exitCode: 0,
+      });
+    });
+
+    test("--parallel", async () => {
+      const { stdout, stderr, exitCode } = await runTests(
+        files(`extended.beforeAll(({ first }) => console.log("beforeAll", first));`),
+        ["--preload=./preload.js", "--parallel=1"],
+      );
+      const expected = [...before, ...a, "shared teardown", "first teardown", ...before, "b", "first teardown"];
+      expect({ log: (stdout + stderr).split("\n").filter(line => expected.includes(line)), exitCode }).toEqual({
+        log: expected,
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("a file-scoped fixture that has failed fails each test that asks for it, at once", async () => {
+    const { log, results, errors, stderr, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test as base } from "vitest";
+          const scope = { scope: "file" };
+          const test = base
+            .extend({
+              throws: [({}, use) => { console.log("throws"); throw new Error("throws"); }, scope],
+              throwsAfterUse: [({}, use) => { console.log("throwsAfterUse"); use(1); throw new Error("throwsAfterUse"); }, scope],
+              thenThrows: [({}, use) => { console.log("thenThrows"); return { then() { throw new Error("thenThrows"); } }; }, scope],
+              thenGetterThrows: [({}, use) => { console.log("thenGetterThrows"); return { get then() { throw new Error("thenGetterThrows"); } }; }, scope],
+            })
+            .extend("builderThrows", scope, () => { console.log("builderThrows"); throw new Error("builderThrows"); });
+          for (const nth of [1, 2]) {
+            test("throws " + nth, ({ throws }) => console.log("unreachable"));
+            test("throwsAfterUse " + nth, ({ throwsAfterUse }) => console.log("unreachable"));
+            test("thenThrows " + nth, ({ thenThrows }) => console.log("unreachable"));
+            test("thenGetterThrows " + nth, ({ thenGetterThrows }) => console.log("unreachable"));
+            test("builderThrows " + nth, ({ builderThrows }) => console.log("unreachable"));
+          }
+          test.afterAll(({ throws }) => console.log("unreachable"));
+        `,
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
+    const names = ["throws", "throwsAfterUse", "thenThrows", "thenGetterThrows", "builderThrows"];
+    expect({ log, results, errors, timedOut: stderr.includes("timed out"), exitCode }).toEqual({
+      log: names,
+      results: [...names.map(name => `(fail) ${name} 1`), ...names.map(name => `(fail) ${name} 2`), "(fail) (unnamed)"],
+      errors: [...names, ...names, "throws"].map(name => `error: ${name}`),
+      timedOut: false,
+      exitCode: 1,
+    });
+  });
+
+  test("a fixture that calls use() when what asked for it has ended is told to tear itself down", async () => {
+    const { log, results, exitCode } = await runTests({
+      "shared.js": `export const sameFile = Promise.withResolvers(), nextFile = Promise.withResolvers();`,
+      "a.test.js": `
+        import { test as base } from "vitest";
+        import { sameFile, nextFile } from "./shared.js";
+        const fixture = (name, gate) => async ({}, use) => { await gate.promise; console.log(name, "use"); await use(1); console.log(name, "teardown"); };
+        const test = base.extend({
+          early: fixture("early", sameFile),
+          perTest: fixture("perTest", nextFile),
+          perFile: [fixture("perFile", nextFile), { scope: "file" }],
+        });
+        test("early", { timeout: 1 }, ({ early }) => console.log("unreachable"));
+        test("perTest", { timeout: 1 }, ({ perTest }) => console.log("unreachable"));
+        test("perFile", { timeout: 1 }, ({ perFile }) => console.log("unreachable"));
+        test("a later test", async () => {
+          sameFile.resolve();
+          await new Promise(resolve => setImmediate(resolve));
+          console.log("a later test");
+        });
+      `,
+      "b.test.js": `
+        import { test } from "vitest";
+        import { nextFile } from "./shared.js";
+        nextFile.resolve();
+        await new Promise(resolve => setImmediate(resolve));
+        test("the next file", () => console.log("the next file"));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "early use",
+        "early teardown",
+        "a later test",
+        "perTest use",
+        "perFile use",
+        "perTest teardown",
+        "perFile teardown",
+        "the next file",
+      ],
+      results: ["(fail) early", "(fail) perTest", "(fail) perFile", "(pass) a later test", "(pass) the next file"],
+      exitCode: 1,
+    });
+  });
+
   test("concurrent tests have their own fixtures, and share those of the file", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -2721,6 +2936,40 @@ describe.concurrent("test.extend()", () => {
       `,
     });
     expect({ log, exitCode }).toEqual({ log: ["300 0"], exitCode: 0 });
+  });
+
+  test("a callback that is only valid where it was written gets its fixtures", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        const test = base.extend({ a: async ({}, use) => use("A") });
+        class Base {
+          inherited() { return "inherited"; }
+        }
+        class Tests extends Base {
+          #secret = "private";
+          register() {
+            test("arrow function: private name", ({ a }) => console.log(a, this.#secret));
+            test("arrow function: #x in", ({ a }) => console.log(a, #secret in this));
+            test("arrow function: super", ({ a }) => console.log(a, super.inherited()));
+            test("arrow function: new.target", ({ a }) => console.log(a, new.target));
+            test("function: private name", function ({ a }) { console.log(a, new Tests().#secret); });
+          }
+          method({ a }) { console.log(a, super.inherited()); }
+        }
+        new Tests().register();
+        test("method of a class: super", Tests.prototype.method);
+        test("method of an object: super", { __proto__: new Base(), method({ a }) { console.log(a, super.inherited()); } }.method);
+      `,
+      "b.test.cjs": `
+        const test = require("vitest").test.extend({ a: async ({}, use) => use("A") });
+        test("not strict mode code", function ({ a }) { with ({ b: 010 }) console.log(a, b); });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["A private", "A true", "A inherited", "A undefined", "A private", "A inherited", "A inherited", "A 8"],
+      exitCode: 0,
+    });
   });
 
   test("a fixture may have the name of an array index", async () => {

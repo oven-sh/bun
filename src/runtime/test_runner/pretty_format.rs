@@ -332,6 +332,8 @@ pub(crate) struct Formatter<'a> {
     ancestors: ObjectList,
     /// The objects that print without the name of their class: see `find_merged`.
     merged: ObjectList,
+    /// See `count_copied`.
+    copied: usize,
     /// pretty-format's `printBasicPrototype`: `Object {}` and `Array []`.
     print_basic_prototype: bool,
     /// The plugins of `expect.addSnapshotSerializer()`.
@@ -357,6 +359,7 @@ impl<'a> Formatter<'a> {
             same_as_older_bun: true,
             ancestors: ObjectList::default(),
             merged: ObjectList::default(),
+            copied: 0,
             print_basic_prototype: false,
             serializers: None,
             config: None,
@@ -3012,6 +3015,7 @@ enum Kind {
     /// What only says that it is one.
     Function,
     Symbol,
+    Promise,
 }
 
 impl Kind {
@@ -3019,7 +3023,7 @@ impl Kind {
         unsafe extern "C" {
             safe fn SnapshotFormat__kindOf(global: &JSGlobalObject, object: JSValue) -> u8;
         }
-        const KINDS: [Kind; 12] = [
+        const KINDS: [Kind; 13] = [
             Kind::Object,
             Kind::Arguments,
             Kind::List,
@@ -3032,6 +3036,7 @@ impl Kind {
             Kind::RegExp,
             Kind::Function,
             Kind::Symbol,
+            Kind::Promise,
         ];
         let kind = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__kindOf(global, object))?;
         Ok(KINDS[usize::from(kind)])
@@ -3335,10 +3340,16 @@ impl Formatter<'_> {
         self.print_like_pretty_format(out, value, false)
     }
 
+    /// `bytes` more of what is printed were moved from one buffer to another, which is as limited as what is printed.
+    pub(crate) fn count_copied(&mut self, bytes: usize) -> JsResult<()> {
+        self.copied = self.copied.saturating_add(bytes);
+        self.check_length(self.copied)
+    }
+
     /// As long as a string can be where Jest and Vitest run, where pretty-format ends with a `RangeError` too.
-    fn check_length(&self, out: &[u8]) -> JsResult<()> {
+    pub(crate) fn check_length(&self, length: usize) -> JsResult<()> {
         const MAX_LENGTH: usize = (1 << 29) - 24;
-        if out.len() > MAX_LENGTH {
+        if length > MAX_LENGTH {
             return Err(self.global_this.throw_value(
                 self.global_this.create_range_error_instance(format_args!("The value is too large to print in a snapshot")),
             ));
@@ -3358,6 +3369,9 @@ impl Formatter<'_> {
             return Ok(());
         }
         let global = self.global_this;
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return Err(global.throw_stack_overflow());
+        }
         self.merged.push(global, received)?;
         let format = self.snapshot_format;
         for_each_sorted_property(global, properties, format, &mut |key, property| match received.get_own_by_value(global, key)? {
@@ -3398,7 +3412,7 @@ impl Formatter<'_> {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(global.throw_stack_overflow());
         }
-        self.check_length(out)?;
+        self.check_length(out.len())?;
         if self.serializers.is_some() && self.print_with_serializer(out, value)? {
             return Ok(());
         }
@@ -3487,6 +3501,7 @@ impl Formatter<'_> {
             Kind::WeakMap => out.extend_from_slice(b"WeakMap {}"),
             Kind::WeakSet => out.extend_from_slice(b"WeakSet {}"),
             Kind::Function => out.extend_from_slice(b"[Function]"),
+            Kind::Promise if self.snapshot_format == SnapshotFormat::Jest => out.extend_from_slice(b"Promise {}"),
             Kind::Symbol => {
                 // `String(value).replace(/^Symbol\((.*)\)(.*)$/, "Symbol($1)")`
                 let text = value.to_bun_string(global)?;
@@ -3648,7 +3663,7 @@ impl Formatter<'_> {
                 return Ok(());
             }
             for i in 0..length_of(global, list)? {
-                this.check_length(out)?;
+                this.check_length(out.len())?;
                 this.new_line(out);
                 let value = if list.is_object() { item(global, list, i)? } else { JSValue::UNDEFINED };
                 if !value.is_undefined() || has_index(global, list, i)? {
@@ -3690,7 +3705,7 @@ impl Formatter<'_> {
                 if member(global, current, "done")?.to_boolean() {
                     return Ok(());
                 }
-                this.check_length(out)?;
+                this.check_length(out.len())?;
                 this.new_line(out);
                 let value = member(global, current, "value")?;
                 match separator {
@@ -3922,7 +3937,7 @@ impl Formatter<'_> {
                 let key = item(global, member(global, record, "_keys")?, i)?;
                 i += 1;
                 let value = call_method(global, record, "get", &[key])?;
-                this.check_length(out)?;
+                this.check_length(out.len())?;
                 this.new_line(out);
                 this.print_child(out, key)?;
                 out.extend_from_slice(b": ");
@@ -3962,26 +3977,28 @@ impl Formatter<'_> {
                 self.new_line(out);
                 out.extend_from_slice(key.to_utf8().slice());
                 out.push(b'=');
+                // Between braces unless it is a string, and on lines of its own when it has several: it is printed
+                // where those would put it, and moved back when it has one.
+                let braces = !value.is_string_literal();
+                let open = out.len() + 1;
                 self.indent += 1;
-                let mut printed = Vec::new();
-                let result = self.print_child(&mut printed, value);
-                if value.is_string_literal() {
-                    out.extend_from_slice(&printed);
-                } else if strings::contains_char(&printed, b'\n') {
+                if braces {
                     out.push(b'{');
                     self.new_line(out);
-                    out.extend_from_slice(&printed);
-                    self.indent -= 1;
-                    self.new_line(out);
-                    self.indent += 1;
-                    out.push(b'}');
-                } else {
-                    out.push(b'{');
-                    out.extend_from_slice(&printed);
+                }
+                let start = out.len();
+                let result = self.print_child(out, value);
+                self.indent -= 1;
+                result?;
+                if braces {
+                    if strings::contains_char(&out[start..], b'\n') {
+                        self.new_line(out);
+                    } else {
+                        out.drain(open..start);
+                    }
                     out.push(b'}');
                 }
-                self.indent -= 1;
-                result
+                Ok(())
             })
         });
         self.indent -= 1;
@@ -4049,7 +4066,7 @@ impl Formatter<'_> {
 
     fn print_markup_child(&mut self, out: &mut Vec<u8>, child: JSValue) -> JsResult<()> {
         let global = self.global_this;
-        self.check_length(out)?;
+        self.check_length(out.len())?;
         self.new_line(out);
         if !child.is_string_literal() {
             return self.print_child(out, child);

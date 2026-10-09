@@ -100,7 +100,7 @@ This is equivalent to using `--environment` on the command line, which overrides
 bun test --environment=happy-dom
 ```
 
-A `// @vitest-environment <name>` or `// @jest-environment <name>` comment in a test file overrides both.
+A `// @vitest-environment <name>` comment in a test file, or a `/** @jest-environment <name> */` comment at its very top, overrides both.
 
 ### Globals
 
@@ -112,6 +112,8 @@ globals = "vitest" # default "bun"
 ```
 
 What a file imports from `"bun:test"` or `"@jest/globals"` keeps the semantics of that module. The `--globals` flag overrides `bunfig.toml`.
+
+In a file that imports from one of the three modules, a name that a preload script has put on `globalThis` (`globalThis.expect = chai.expect`) is not replaced.
 
 ### Path Ignore Patterns
 

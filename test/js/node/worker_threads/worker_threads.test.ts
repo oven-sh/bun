@@ -212,7 +212,7 @@ test.each([
   ["file:", new URL("./worker.js", import.meta.url)],
   ["data:", new URL("data:text/javascript,")],
 ])("the filename can be a %s URL of another implementation", async (_, { href, protocol, hostname, pathname }) => {
-  const worker = new Worker({ href, protocol, hostname, pathname } as URL);
+  const worker = new Worker({ href, protocol, hostname, pathname, toString: () => href } as URL);
   await once(worker, "online");
   await worker.terminate();
 });

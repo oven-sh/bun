@@ -371,7 +371,7 @@ pub struct VirtualMachine {
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     /// An `onResolve` callback of `Bun.plugin()` is on the stack.
-    is_in_on_resolve: Cell<bool>,
+    pub(crate) is_in_on_resolve: Cell<bool>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -4905,6 +4905,7 @@ impl VirtualMachine {
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &mut self,
+        ast: crate::resolved_source::PrintedAst,
         code: &[u8],
         specifier: &bun_core::String,
         source_url: &[u8],
@@ -4914,7 +4915,7 @@ impl VirtualMachine {
         if code.is_empty() {
             return ResolvedSource {
                 source_url: specifier.create_if_different(source_url),
-                ..Default::default()
+                ..ResolvedSource::printed(ast, Default::default())
             };
         }
         let source = self.ref_counted_string::<true>(code, hash_);
@@ -4923,9 +4924,8 @@ impl VirtualMachine {
         let source_ref = unsafe { &*source };
 
         ResolvedSource {
-            source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
             source_url: specifier.create_if_different(source_url),
-            ..Default::default()
+            ..ResolvedSource::printed(ast, bun_core::String::retain_wtf_impl(source_ref.impl_))
         }
     }
 

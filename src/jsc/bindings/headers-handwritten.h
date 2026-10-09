@@ -440,18 +440,21 @@ struct DeepMatchState {
     // The (value, pattern) pairs that have been compared or are being compared.
     std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seen;
     JSC::MarkedArgumentBuffer gcBuffer;
-    // When `records`: for each property that matched an asymmetric matcher, its object and the matcher; for each
-    // nested object that was compared, the object it is in and itself.
+    // When `records`, four values for each property that was compared: the object it is a property of, the pattern that
+    // object was compared with, and either the asymmetric matcher it matched and undefined, or the object it holds and
+    // the pattern of that.
     bool records { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 
-    void recordIfAsked(JSC::JSObject* holder, const JSC::Identifier& name, JSC::JSValue value)
+    void recordIfAsked(JSC::JSObject* holder, JSC::JSObject* pattern, const JSC::Identifier& name, JSC::JSValue value, JSC::JSValue patternOfValue)
     {
         if (!records)
             return;
         recorded.append(holder);
+        recorded.append(pattern);
         recorded.append(value);
+        recorded.append(patternOfValue);
         recordedNames.append(name);
     }
 };

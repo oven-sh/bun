@@ -6,8 +6,8 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::Arena;
+use bun_ast::ASTMemoryAllocator;
 use bun_ast::Loader;
-use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
@@ -33,6 +33,7 @@ use bun_watcher::Watcher;
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
+use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType,
@@ -1096,9 +1097,8 @@ impl TranspilerJob {
             );
         }
 
-        let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-            || parse_result.ast.exports_kind == ExportsKind::Cjs;
-        let depends_on_more_than_source = parse_result.ast.depends_on_more_than_source;
+        let printed_ast = PrintedAst::new(&parse_result.ast);
+        let is_commonjs_module = printed_ast.is_commonjs_module;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1197,15 +1197,12 @@ impl TranspilerJob {
             break 'brk result;
         };
         self.resolved_source = ResolvedSource {
-            source_code,
-            is_commonjs_module,
-            depends_on_more_than_source,
             module_info: module_info.map(|mi| {
                 use analyze_transpiled_module::ModuleInfoExt;
                 mi.into_deserialized()
             }),
             tag: this_tag,
-            ..Default::default()
+            ..ResolvedSource::printed(printed_ast, source_code)
         };
 
         // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores

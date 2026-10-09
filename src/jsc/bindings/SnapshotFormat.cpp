@@ -29,6 +29,7 @@ enum class SnapshotKind : uint8_t {
     RegExp,
     Function,
     Symbol,
+    Promise,
 };
 
 extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, EncodedJSValue encodedObject)
@@ -46,6 +47,7 @@ extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, Enc
         { "[object Function]"_s, SnapshotKind::Function },
         { "[object GeneratorFunction]"_s, SnapshotKind::Function },
         { "[object Symbol]"_s, SnapshotKind::Symbol },
+        { "[object Promise]"_s, SnapshotKind::Promise },
         { "[object ArrayBuffer]"_s, SnapshotKind::List },
         { "[object DataView]"_s, SnapshotKind::List },
         { "[object Float32Array]"_s, SnapshotKind::List },

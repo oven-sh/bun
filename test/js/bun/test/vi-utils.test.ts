@@ -633,6 +633,55 @@ describe.concurrent("vi.setConfig", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  describe.each(["--isolate", "--parallel=1", "--isolate --rerun-each=2"])(
+    "does not reach the next file, which has a global object of its own: %s",
+    flags => {
+      const setsAll = `vi.setConfig({ testTimeout: 10, hookTimeout: 10, maxConcurrency: 1, clearMocks: false });`;
+      const observes = `
+        import { beforeAll, describe, test, vi } from "vitest";
+        const fn = vi.fn();
+        beforeAll(() => Bun.sleep(40));
+        test("slow", () => Bun.sleep(40));
+        test("calls", () => void fn());
+        test("after it", () => console.log("calls:", fn.mock.calls.length));
+        describe.concurrent("concurrent", () => {
+          let started = 0;
+          for (let i = 0; i < 2; i++) {
+            test("test " + i, async () => {
+              started++;
+              await new Promise(resolve => setImmediate(resolve));
+              if (i === 0) console.log("started:", started);
+            });
+          }
+        });
+      `;
+      const files = {
+        "a.test.ts": `import { test, vi } from "vitest"; ${setsAll} test("a", () => {}, 5000);`,
+        "b.test.ts": observes,
+        "c-does-not-load.test.ts": `import { vi } from "vitest"; ${setsAll} throw new Error("does not load");`,
+        "d.test.ts": observes,
+      };
+
+      test.each([
+        ["", "calls: 0"],
+        [`import { vi } from "vitest"; vi.setConfig({ clearMocks: false });`, "calls: 1"],
+      ])("after the preload %j", async (preload, calls) => {
+        const { stdout, stderr, exitCode } = await run(["test", "--preload=./preload.ts", ...flags.split(" ")], {
+          ...files,
+          "preload.ts": preload,
+        });
+        const lines = (stdout + stderr).split("\n");
+        const runsOfEachFile = flags.includes("--rerun-each=2") ? 2 : 1;
+        expect({
+          seen: [...new Set(lines.filter(line => /^(calls|started):/.test(line)))].sort(),
+          failed: results(stderr).filter(line => !line.startsWith("(pass)")),
+          passed: results(stderr).filter(line => line.startsWith("(pass)")).length,
+          exitCode,
+        }).toEqual({ seen: [calls, "started: 2"], failed: [], passed: (1 + 5 + 5) * runsOfEachFile, exitCode: 1 });
+      });
+    },
+  );
+
   test("rejects a config that is not an object and a testTimeout that is not a number", () => {
     // @ts-expect-error
     expect(() => vi.setConfig()).toThrow('The "config" argument must be of type object. Received undefined');

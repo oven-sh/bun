@@ -54,7 +54,9 @@ declare module "bun:test" {
     /**
      * Creates a mock class. `new` on the mock constructs through `Class`.
      */
-    <T extends new (...args: any[]) => any>(Class: T): Mock<(...args: ConstructorParameters<T>) => InstanceType<T>>;
+    <Args extends any[], Instance>(Class: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
+    // Repeated: `ReturnType<typeof mock>` and `Parameters<typeof mock>` read the last overload.
+    <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
      * Replace the module `id` with the return value of `factory`.
@@ -199,9 +201,9 @@ declare module "bun:test" {
     function clearAllMocks(): typeof jest;
     function resetAllMocks(): typeof jest;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
-    function fn<T extends new (...args: any[]) => any>(
-      func: T,
-    ): Mock<(...args: ConstructorParameters<T>) => InstanceType<T>>;
+    function fn<Args extends any[], Instance>(func: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
+    // Repeated: `ReturnType<typeof jest.fn>` and `Parameters<typeof jest.fn>` read the last overload.
+    function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     /**
      * Whether `fn` is a mock function or a spy.
      */
@@ -320,16 +322,16 @@ declare module "bun:test" {
      * The real time in milliseconds since the epoch, whatever is faked.
      */
     function getRealSystemTime(): number;
-    function spyOn<T extends object, K extends keyof T>(
-      obj: T,
-      methodOrPropertyValue: K,
-    ): Mock<Extract<T[K], (...args: any[]) => any>>;
     function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       property: K,
       accessType: "set",
     ): Mock<(value: T[K]) => void>;
+    function spyOn<T extends object, K extends keyof T>(
+      obj: T,
+      methodOrPropertyValue: K,
+    ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
     /**
      * Constructs the type of a mock function, such as the return type of `jest.fn()`.
@@ -378,13 +380,6 @@ declare module "bun:test" {
   }
 
   /**
-   * Create a spy on an object property or method
-   */
-  export function spyOn<T extends object, K extends keyof T>(
-    obj: T,
-    methodOrPropertyValue: K,
-  ): Mock<Extract<T[K], (...args: any[]) => any>>;
-  /**
    * Create a spy on the getter of a property. It calls the original getter until it is given another implementation.
    *
    * @example
@@ -401,6 +396,13 @@ declare module "bun:test" {
     property: K,
     accessType: "set",
   ): Mock<(value: T[K]) => void>;
+  /**
+   * Create a spy on an object property or method
+   */
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    methodOrPropertyValue: K,
+  ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
   /**
    * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
@@ -432,6 +434,10 @@ declare module "bun:test" {
      */
     mockObject<T>(value: T, options?: { spy?: boolean | undefined }): Mocked<T>;
     /**
+     * Like `vi.mock(id, factory)`, with the module written as `import("./math")`: `importOriginal` is typed as that module.
+     */
+    mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
+    /**
      * Replace a module with the return value of `factory`. The call is moved above the imports of the file.
      *
      * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
@@ -446,7 +452,6 @@ declare module "bun:test" {
      * ```
      */
     mock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): void | Promise<void>;
-    mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
     /**
      * Like `vi.mock`, but the call stays where it is written: it applies to the imports that run after it.
      *
@@ -507,7 +512,7 @@ declare module "bun:test" {
      *
      * The real timers come back at the end of the test file, unless a preload made this call at its top level.
      */
-    useFakeTimers(options?: FakeTimersOptions): typeof vi;
+    useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof vi;
     /**
      * Put the real timer functions and clocks back, and drop the fake timers that are pending.
      */
@@ -706,7 +711,7 @@ declare module "bun:test" {
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: Describe<T>;
+    todo: ((label: DescribeLabel) => void) & Describe<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
@@ -764,6 +769,8 @@ declare module "bun:test" {
      * The table as a tagged template: the first line names the columns, and each row is an object.
      */
     each(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
+    // Repeated: `Parameters<typeof describe.each>` and `ReturnType<typeof describe.each>` read the last overload.
+    each<const T>(table: T[]): Describe<[T]>;
     /**
      * Like `each()`, but a row that is an array is not spread over the parameters.
      */
@@ -998,7 +1005,7 @@ declare module "bun:test" {
      * a `.todo` test that passes is marked as `fail` in the results: remove
      * the `.todo` or check that the test is implemented correctly.
      */
-    todo: Test<T>;
+    todo: ((label: string) => void) & Test<T>;
     /**
      * Marks this test as failing.
      *
@@ -1097,6 +1104,8 @@ declare module "bun:test" {
      * ```
      */
     each(headings: TemplateStringsArray, ...values: any[]): Test<[row: any]>;
+    // Repeated: `Parameters<typeof test.each>` and `ReturnType<typeof test.each>` read the last overload.
+    each<const T>(table: T[]): Test<[T]>;
     /**
      * Like `each()`, but a row that is an array is not spread over the parameters,
      * and the second argument is the {@link TestContext}.
@@ -1243,7 +1252,10 @@ declare module "bun:test" {
       | [Fixture<Added[Name], Omit<Added, Name> & Context & TestContext>, FixtureOptions];
   };
 
-  interface ExtendTest<Context> {
+  /**
+   * The type of `test.extend`.
+   */
+  export interface ExtendTest<Context> {
     <Added extends Record<string, any> = object>(
       fixtures: Fixtures<Added, Context>,
     ): TestWithContext<Omit<Context, keyof Added> & Added>;
@@ -1296,7 +1308,7 @@ declare module "bun:test" {
     ): void;
     only: TestWithContext<Context, Row>;
     skip: TestWithContext<Context, Row>;
-    todo: TestWithContext<Context, Row>;
+    todo: ((label: string) => void) & TestWithContext<Context, Row>;
     failing: TestWithContext<Context, Row>;
     fails: TestWithContext<Context, Row>;
     concurrent: TestWithContext<Context, Row>;
@@ -1791,7 +1803,8 @@ declare module "bun:test" {
     [K in Exclude<keyof Matchers<T>, keyof MatchersBuiltin>]: Matchers<T>[K] extends (...args: infer Args) => unknown
       ? (...args: Args) => Promise<void>
       : Matchers<T>[K];
-  };
+    // `infer Args` reads the last overload of a custom matcher and drops its type parameters: the rest come from here.
+  } & Matchers<T>;
 
   export interface MatchersBuiltin<T = unknown, R = void> {
     /**
@@ -2980,8 +2993,8 @@ declare module "bun:test" {
        */
       matcherHint(
         matcherName: string,
-        received?: string,
-        expected?: string,
+        received?: unknown,
+        expected?: unknown,
         options?: {
           isNot?: boolean;
           promise?: string;

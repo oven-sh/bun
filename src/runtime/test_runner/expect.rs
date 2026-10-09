@@ -1346,9 +1346,8 @@ impl Expect {
         match runner.snapshots.match_or_write(self, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
-                // Bun used to add to the files of Jest in its own format.
                 let received = if property_matchers.is_some() { Received::Value(shown) } else { received };
-                if format != SnapshotFormat::Vitest
+                if runner.snapshots.may_hold_entries_of_bun()
                     && Self::was_written_by_another(&[], !same_as_older_bun, global_this, received, property_matchers, &saved)?
                 {
                     runner.snapshots.passed += 1;
@@ -1599,6 +1598,37 @@ impl Expect {
         global_this.throw_value(err)
     }
 
+    /// `call([received, ...rest])`, with the values where the collector sees them for as long as the call takes: on the
+    /// stack, or, when they are many, in a `MarkedArgumentBuffer` as well.
+    #[inline]
+    fn with_matcher_args<R>(
+        received: JSValue,
+        rest_len: usize,
+        mut rest: impl FnMut(usize) -> JsResult<JSValue>,
+        call: impl FnOnce(&[JSValue]) -> JsResult<R>,
+    ) -> JsResult<R> {
+        const ON_STACK: usize = 8;
+        if rest_len < ON_STACK {
+            let mut args = [JSValue::UNDEFINED; ON_STACK];
+            args[0] = received;
+            for (index, arg) in args[1..=rest_len].iter_mut().enumerate() {
+                *arg = rest(index)?;
+            }
+            return call(&args[..=rest_len]);
+        }
+        bun_jsc::MarkedArgumentBuffer::new(|roots| {
+            let mut args = Vec::with_capacity(rest_len.saturating_add(1));
+            roots.append(received);
+            args.push(received);
+            for index in 0..rest_len {
+                let arg = rest(index)?;
+                roots.append(arg);
+                args.push(arg);
+            }
+            call(&args)
+        })
+    }
+
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
@@ -1759,17 +1789,10 @@ impl Expect {
 
         expect.increment_expect_call_counter();
 
-        // prepare the args array
         let args = call_frame.arguments();
-        // MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
-        // since execute_custom_matcher takes &[JSValue].
-        let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
-        matcher_args.push(value);
-        for arg in args {
-            matcher_args.push(*arg);
-        }
-
-        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), expect.parent.as_ref(), false)?;
+        Self::with_matcher_args(value, args.len(), |index| Ok(args[index]), |matcher_args| {
+            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, expect.flags.get(), expect.parent.as_ref(), false)
+        })?;
 
         Ok(this_value)
     }
@@ -2769,14 +2792,10 @@ impl ExpectCustomAsymmetricMatcher {
         captured_args.ensure_still_alive();
 
         // prepare the args array as `[received, ...captured_args]`
-        let args_count = captured_args.get_length(global_this)?;
-        let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
-        matcher_args.push(received);
-        for i in 0..args_count {
-            matcher_args.push(captured_args.get_index(global_this, i as u32)?);
-        }
-
-        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, None, true)
+        let args_count = captured_args.get_length(global_this)? as usize;
+        Expect::with_matcher_args(received, args_count, |index| captured_args.get_index(global_this, index as u32), |matcher_args| {
+            Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, matcher_args, this.flags, None, true)
+        })
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2996,9 +3015,10 @@ impl HintColor {
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 #[derive(Default)]
 pub(crate) struct ExpectMatcherUtils {
-    /// How many of the leading equality testers preload scripts registered. Those outlive the test file.
-    pub(crate) preload_testers: Cell<u32>,
-    /// `BunTestRoot::file_generation` of the test file that registered the other equality testers.
+    /// For each equality tester, whether the code of a test file registered it. The others, of preload scripts and of
+    /// modules that test files import, outlive the file: such a module is evaluated once for all the files that import it.
+    pub(crate) testers_of_file: bun_jsc::JsCell<Vec<bool>>,
+    /// `BunTestRoot::file_generation` of that test file.
     pub(crate) testers_file: Cell<u32>,
     /// The same two for the snapshot serializers, of which those of preload scripts are the last.
     pub(crate) preload_serializers: Cell<u32>,

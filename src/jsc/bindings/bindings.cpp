@@ -1319,14 +1319,21 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
+            // An equality tester may say that a value does not equal itself.
+            bool sameIsEqual = true;
+            if constexpr (enableAsymmetricMatchers)
+                sameIsEqual = !hasEqualityTesters(globalObject);
+
             for (size_t i = 0; i < pairs.size(); i += 2) {
                 JSValue left = pairs.at(i);
                 JSValue right = pairs.at(i + 1);
 
-                if (left == right) continue;
-                auto same = JSC::sameValue(globalObject, left, right);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (same) continue;
+                if (sameIsEqual) [[likely]] {
+                    if (left == right) continue;
+                    auto same = JSC::sameValue(globalObject, left, right);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) continue;
+                }
 
                 auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1826,6 +1833,23 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         const void* rightVector = right->vector();
         if (!vector || !rightVector) [[unlikely]] {
             return false;
+        }
+
+        // The equality testers are asked about each element.
+        if (mode.enableAsymmetricMatchers && hasEqualityTesters(globalObject)) [[unlikely]] {
+            size_t length = left->length();
+            for (size_t i = 0; i < length; i++) {
+                JSValue leftElement = left->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue rightElement = right->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool elementsEqual = mode.deepEquals(globalObject, leftElement, rightElement, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!elementsEqual)
+                    return false;
+            }
+            if (compareOwnProperties) break;
+            return true;
         }
 
         if (vector == rightVector) [[unlikely]] {
@@ -2366,7 +2390,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    state.recordIfAsked(obj, property, subsetProp);
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2398,9 +2422,9 @@ bool Bun__deepMatch(
             } else {
                 state.gcBuffer.append(prop);
                 state.gcBuffer.append(subsetProp);
+                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
                 // This value has met this pattern before: it matched, or the two are being compared (a cycle).
                 if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
-                state.recordIfAsked(obj, property, prop);
                 bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
@@ -3397,38 +3421,60 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    // Not with the others: it is not configurable. Holes at the end are only in it.
+    if (auto* array = dynamicDowncast<JSArray>(copy)) {
+        array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     return copy;
 }
 
 // `root` with each property that matched an asymmetric matcher replaced by that matcher: copies, as far as that takes any.
-static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root)
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
 {
-    UncheckedKeyHashMap<JSObject*, JSObject*> copies;
+    using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
+    auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
+    auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
+    size_t records = state.recordedNames.size();
+
+    // One for each object under each pattern: an object that occurs twice shows, in each place, what the pattern there says.
+    std::map<Pair, JSObject*> copies;
+    for (size_t i = 0; i < records; i++) {
+        if (matchedMatcher(i))
+            copies.emplace(pairAt(i * 4), nullptr);
+    }
+    // And for what leads to those, cycles included.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (size_t i = records; i-- > 0;) {
+            if (!matchedMatcher(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
+                changed = true;
+        }
+    }
+
     MarkedArgumentBuffer keepAlive;
-    // A nested object was recorded before what is in it.
-    for (size_t i = state.recordedNames.size(); i-- > 0;) {
-        JSObject* holder = asObject(state.recorded.at(i * 2));
-        JSValue value = state.recorded.at(i * 2 + 1);
-        if (!value.isCell() || value.asCell()->type() != JSC::JSType(JSDOMWrapperType)) {
-            auto copyOfValue = copies.find(value.getObject());
-            if (copyOfValue == copies.end() || !copyOfValue->value)
-                continue;
-            value = copyOfValue->value;
-        }
-        auto copy = copies.find(holder);
-        if (copy == copies.end()) {
-            JSObject* made = shallowCopyForDeepMatch(globalObject, scope, holder);
-            RETURN_IF_EXCEPTION(scope, {});
-            keepAlive.append(made ? JSValue(made) : jsUndefined());
-            copy = copies.add(holder, made).iterator;
-        }
-        if (!copy->value)
+    for (auto& [pair, copy] : copies) {
+        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (copy)
+            keepAlive.append(copy);
+    }
+    for (size_t i = 0; i < records; i++) {
+        auto holder = copies.find(pairAt(i * 4));
+        if (holder == copies.end() || !holder->second)
             continue;
-        copy->value->putDirectMayBeIndex(globalObject, state.recordedNames[i], value);
+        JSValue value = state.recorded.at(i * 4 + 2);
+        if (!matchedMatcher(i)) {
+            auto nested = copies.find(pairAt(i * 4 + 2));
+            if (nested == copies.end() || !nested->second)
+                continue;
+            value = nested->second;
+        }
+        holder->second->putDirectMayBeIndex(globalObject, state.recordedNames[i], value);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto copyOfRoot = copies.find(root.getObject());
-    return copyOfRoot != copies.end() && copyOfRoot->value ? JSValue(copyOfRoot->value) : root;
+    auto copyOfRoot = copies.find({ JSValue::encode(root), JSValue::encode(rootPattern) });
+    return copyOfRoot != copies.end() && copyOfRoot->second ? JSValue(copyOfRoot->second) : root;
 }
 
 // `replaced`, unless it is null: what a diff or a snapshot shows for `JSValue0` when the result is `replaceWhen`.
@@ -3444,7 +3490,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
-        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj) : obj;
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
         RETURN_IF_EXCEPTION(scope, false);
         *replaced = JSValue::encode(shown);
     }
@@ -5565,7 +5611,7 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-// callOwnGetters: an own accessor gives what its getter returns, and what the getter throws ends the walk.
+// callOwnGetters: an own accessor gives what its getter returns, and itself when the getter throws.
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
@@ -5677,8 +5723,13 @@ restart:
 
             if (callOwnGetters) {
                 if (objectToUse == object && propertyValue.isGetterSetter()) {
-                    propertyValue = uncheckedDowncast<GetterSetter>(propertyValue)->callGetter(globalObject, object);
-                    RETURN_IF_EXCEPTION(scope, );
+                    JSC::JSValue accessor = propertyValue;
+                    propertyValue = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = accessor;
+                    }
                 }
             }
 
@@ -5782,7 +5833,11 @@ restart:
                     }
                 } else if (callOwnGetters && iterating == object && slot.isAccessor()) {
                     propertyValue = slot.getValue(globalObject, property);
-                    RETURN_IF_EXCEPTION(scope, );
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = slot.getterSetter();
+                    }
                 } else if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
                     if (!slot.isCacheableGetter()) {
@@ -5927,7 +5982,11 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             if (callGetters) {
                 propertyValue = slot.getValue(globalObject, property);
-                RETURN_IF_EXCEPTION(scope, );
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.tryClearException())
+                        return;
+                    propertyValue = slot.getPureResult();
+                }
             } else {
                 propertyValue = slot.getPureResult();
             }
@@ -7185,6 +7244,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     // Get the util.inspect function from the global object
     auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available

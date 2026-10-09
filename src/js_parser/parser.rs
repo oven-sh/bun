@@ -195,6 +195,8 @@ pub mod Runtime {
         pub inject_jest_globals: bool,
         /// Those are the exports of "vitest" in every file.
         pub vitest_globals: bool,
+        /// A bit for each of `Jest::GLOBALS` that script has put on `globalThis` itself.
+        pub own_test_globals: u32,
 
         pub no_macros: bool,
 
@@ -289,6 +291,7 @@ pub mod Runtime {
                 inlining: false,
                 inject_jest_globals: false,
                 vitest_globals: false,
+                own_test_globals: 0,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
@@ -362,7 +365,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 19] = [
+            let bools: [bool; 17] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -380,8 +383,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                self.inject_jest_globals,
-                self.vitest_globals,
+                // `inject_jest_globals` and `vitest_globals`: `hash_test_features_for_runtime_transpiler`
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -405,6 +407,15 @@ pub mod Runtime {
                 hasher.update(b"define");
                 hasher.update(&define_hash.to_le_bytes());
             }
+        }
+
+        /// What else is in the key of a file with `P::uses_test_api`.
+        pub(crate) fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+            hasher.update(&[
+                u8::from(self.inject_jest_globals),
+                u8::from(self.vitest_globals),
+            ]);
+            hasher.update(&self.own_test_globals.to_le_bytes());
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -1787,7 +1798,7 @@ pub struct Jest {
 impl Jest {
     /// The exports of "bun:test" and "vitest" that a file can use without importing them, in the
     /// order `_parse` emits them.
-    pub(crate) const GLOBALS: &'static [&'static str] = &[
+    pub const GLOBALS: &'static [&'static str] = &[
         "test",
         "it",
         "describe",

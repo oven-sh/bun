@@ -1530,6 +1530,7 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.vitest_globals = self.options.vitest_globals;
+                opts.features.own_test_globals = self.options.own_test_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;

@@ -256,13 +256,17 @@ Use it to track known bugs you plan to fix later, or for test-driven development
 
 `test.fails()` is Vitest's version. It passes if anything about the test fails: the callback, a `beforeEach` or `afterEach` hook, the timeout, or `expect.assertions()`. `test.failing()` only accepts an error from the test callback.
 
+Neither accepts an uncaught exception or an unhandled rejection, which may be left over from an earlier test. Bun reports it as an unhandled error between tests.
+
 ### Combining modifiers
 
 Modifiers chain in any order. Repeating one changes nothing, and `skip` wins over `todo`, which wins over `failing`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test.skipIf(isWindows).skipIf(isCI)("skipped on Windows and in CI", () => {});
-test.skipIf(isWindows).failing("skipped on Windows, expected to fail elsewhere", () => {});
+test.skipIf(isWindows).failing("skipped on Windows, expected to fail elsewhere", () => {
+  expect(0.1 + 0.2).toBe(0.3);
+});
 ```
 
 ## Conditional Tests for Describe Blocks
@@ -604,13 +608,13 @@ test("1 L is 1000 mL", () => {
 });
 ```
 
-A tester registered in a test file applies until the end of that file. Register it in a [preload script](/test/lifecycle#global-setup-and-teardown) to apply it to every file.
+A tester that a test file registers applies until the end of that file. One that a [preload script](/test/lifecycle#global-setup-and-teardown) or a module that test files import registers applies to every file after it.
 
 To compare nested values inside a tester, call `this.equals(a, b, customTesters)` with the third argument the tester receives.
 
 ## Test State
 
-`expect.getState()` returns what `expect` knows about the running test. Custom matchers find the same properties on `this`.
+`expect.getState()` returns what `expect` knows about the running test. Custom matchers find the properties below on `this`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 describe("math", () => {
@@ -621,15 +625,15 @@ describe("math", () => {
 });
 ```
 
-| Property                   | Description                                               |
-| -------------------------- | --------------------------------------------------------- |
-| `currentTestName`          | The `describe` names and the test name, joined by a space |
-| `testPath`                 | The absolute path of the test file                        |
-| `assertionCalls`           | How many assertions the test has made                     |
-| `expectedAssertionsNumber` | The argument of `expect.assertions()`, or `null`          |
-| `isExpectingAssertions`    | Whether `expect.hasAssertions()` was called               |
+| Property                   | Description                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `currentTestName`          | The `describe` names and the test name, joined by a space (by `>` in a `"vitest"` test) |
+| `testPath`                 | The absolute path of the test file                                                      |
+| `assertionCalls`           | How many assertions the test has made                                                   |
+| `expectedAssertionsNumber` | The argument of `expect.assertions()`, or `null`                                        |
+| `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()` |
 
-`expect.setState(state)` merges your own properties into that object, and can set the three assertion counters.
+`expect.setState(state)` merges your own properties into what `expect.getState()` returns, and can set the three assertion counters. Your own properties are not on the `this` of a custom matcher.
 
 ## Type Testing
 

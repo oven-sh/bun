@@ -1978,6 +1978,41 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["named twice", ["./a.test.ts", "./a.test.ts"], ["LOADED a"], "Ran 1 test across 2 files."],
+    ["named in three ways", ["./a.test.ts", "a.test.ts", "ABSOLUTE"], ["LOADED a"], "Ran 1 test across 3 files."],
+    [
+      "imported by the file after it",
+      ["./a.test.ts", "./b.test.ts"],
+      ["LOADED a", "LOADED b"],
+      "Ran 2 tests across 2 files.",
+    ],
+    [
+      "imported by the file before it",
+      ["./b.test.ts", "./a.test.ts"],
+      ["LOADED a", "LOADED b"],
+      "Ran 2 tests across 2 files.",
+    ],
+  ])("a test file that is %s is loaded once", async (_, args, loaded, ran) => {
+    using dir = tempDir("test-file-twice", {
+      "a.test.ts": `import { test } from "bun:test"; console.log("LOADED a"); test("a", () => {});`,
+      "b.test.ts": `import { test } from "bun:test"; import "./a.test.ts"; console.log("LOADED b"); test("b", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args.map(arg => (arg === "ABSOLUTE" ? join(String(dir), "a.test.ts") : arg))],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(line => line.startsWith("LOADED"))).toEqual(loaded);
+    expect(stderr).toContain(ran);
+    expect(exitCode).toBe(0);
+  });
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

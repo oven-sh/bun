@@ -26,8 +26,10 @@ static constexpr std::array viteVariableNames { "BASE_URL"_s, "MODE"_s, "DEV"_s,
 static std::optional<ViteVariable> viteVariableNamed(PropertyName propertyName)
 {
     auto* name = propertyName.publicName();
+    if (!name)
+        return std::nullopt;
     for (size_t i = 0; i < viteVariableNames.size(); i++) {
-        if (WTF::equal(name, viteVariableNames[i]))
+        if (name->length() == viteVariableNames[i].length() && WTF::equal(name, viteVariableNames[i]))
             return static_cast<ViteVariable>(i);
     }
     return std::nullopt;
@@ -45,29 +47,6 @@ static bool startedInProduction(Zig::GlobalObject* globalObject)
     EncodedSlice name = { nodeEnv.data(), nodeEnv.size() };
     EncodedSlice value = { nullptr, 0 };
     return Bun__getEnvValue(globalObject, &name, &value) && WTF::equalSpans(std::span { Zig::untag(value.ptr), value.len }, "production"_s.span8());
-}
-
-static JSValue defaultValueOf(Zig::GlobalObject* globalObject, ViteVariable variable)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    switch (variable) {
-    case ViteVariable::BaseURL:
-        return vm.smallStrings.singleCharacterString('/');
-    case ViteVariable::Mode:
-        return jsNontrivialString(vm, "test"_s);
-    case ViteVariable::Dev:
-        return jsBoolean(!startedInProduction(globalObject));
-    case ViteVariable::Prod:
-        return jsBoolean(startedInProduction(globalObject));
-    case ViteVariable::SSR: {
-        bool hasDocument = globalObject->hasProperty(globalObject, Identifier::fromString(vm, "document"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        return jsBoolean(!hasDocument);
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // `import.meta.env` under `bun test`: a view of `process.env` that has Vite's variables. The cell holds nothing: its hooks never look at its own storage.
@@ -96,6 +75,7 @@ public:
         auto* structure = Bun::createClassStructure(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
         auto* env = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaEnv))) ImportMetaEnv(vm, structure);
         env->finishCreation(vm);
+        env->setPerCellBit(startedInProduction(globalObject));
         return env;
     }
 
@@ -116,7 +96,10 @@ private:
     }
 
     Zig::GlobalObject* zigGlobalObject() const { return uncheckedDowncast<Zig::GlobalObject>(globalObject()); }
+    // Kept in the one bit of a cell that is its class's to use.
+    bool isProduction() const { return perCellBit(); }
     JSObject* processEnv(JSGlobalObject*) const;
+    JSValue defaultValueOf(ViteVariable) const;
 };
 
 const ClassInfo ImportMetaEnv::s_info = { "ImportMetaEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaEnv) };
@@ -134,12 +117,43 @@ JSObject* ImportMetaEnv::processEnv(JSGlobalObject* lexicalGlobalObject) const
     }
 
     auto* globalObject = zigGlobalObject();
-    JSValue env = globalObject->processObject()->get(globalObject, Identifier::fromString(vm, "env"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* process = globalObject->processObject();
+    auto& name = WebCore::builtinNames(vm).envPublicName();
+    unsigned attributes = 0;
+    JSValue env = process->getDirect(vm, name, attributes);
+    // Not made yet, or an accessor.
+    if (!env || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[unlikely]] {
+        env = process->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     JSObject* object = env.getObject();
-    if (!object || object->inherits<ImportMetaEnv>()) [[unlikely]]
+    if (!object || object->classInfo() == info()) [[unlikely]]
         return globalObject->processEnvObject();
     return object;
+}
+
+JSValue ImportMetaEnv::defaultValueOf(ViteVariable variable) const
+{
+    auto* globalObject = zigGlobalObject();
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    switch (variable) {
+    case ViteVariable::BaseURL:
+        return vm.smallStrings.singleCharacterString('/');
+    case ViteVariable::Mode:
+        return jsNontrivialString(vm, "test"_s);
+    case ViteVariable::Dev:
+        return jsBoolean(!isProduction());
+    case ViteVariable::Prod:
+        return jsBoolean(isProduction());
+    case ViteVariable::SSR: {
+        bool hasDocument = globalObject->hasProperty(globalObject, WebCore::builtinNames(vm).documentPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        return jsBoolean(!hasDocument);
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 bool ImportMetaEnv::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -157,7 +171,7 @@ bool ImportMetaEnv::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(scope, false);
     // Its own slot, so that an accessor of `process.env` runs on `process.env` and only its result gets out.
     PropertySlot envSlot(env, PropertySlot::InternalMethodType::GetOwnProperty);
-    bool exists = env->methodTable()->getOwnPropertySlot(env, globalObject, propertyName, envSlot);
+    bool exists = env->getOwnPropertySlotInline(globalObject, propertyName, envSlot);
     RETURN_IF_EXCEPTION(scope, false);
 
     JSValue value;
@@ -172,7 +186,7 @@ bool ImportMetaEnv::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     if (!exists) {
         if (!variable)
             return false;
-        value = defaultValueOf(thisObject->zigGlobalObject(), *variable);
+        value = thisObject->defaultValueOf(*variable);
         RETURN_IF_EXCEPTION(scope, false);
         slot.setValue(thisObject, 0, value);
         return true;
@@ -239,8 +253,18 @@ void ImportMetaEnv::getOwnPropertyNames(JSObject* object, JSGlobalObject* global
     RETURN_IF_EXCEPTION(scope, );
     env->methodTable()->getOwnPropertyNames(env, globalObject, propertyNames, mode);
     RETURN_IF_EXCEPTION(scope, );
-    for (auto name : viteVariableNames)
-        propertyNames.add(Identifier::fromString(vm, name));
+    for (auto literal : viteVariableNames) {
+        auto name = Identifier::fromString(vm, literal);
+        // One that `process.env` has and does not enumerate is not enumerable here either.
+        if (mode == DontEnumPropertiesMode::Exclude) {
+            PropertySlot slot(env, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool exists = env->methodTable()->getOwnPropertySlot(env, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, );
+            if (exists && (slot.attributes() & PropertyAttribute::DontEnum))
+                continue;
+        }
+        propertyNames.add(name);
+    }
 }
 
 bool ImportMetaEnv::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -255,6 +279,12 @@ bool ImportMetaEnv::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 JSObject* createImportMetaEnvForTests(Zig::GlobalObject* globalObject)
 {
     return ImportMetaEnv::create(getVM(globalObject), globalObject);
+}
+
+// As with a Proxy, script never sees what native code puts in the storage of the cell.
+bool isImportMetaEnvForTests(JSObject* object)
+{
+    return object->inherits<ImportMetaEnv>();
 }
 
 }

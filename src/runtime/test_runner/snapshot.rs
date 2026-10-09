@@ -77,6 +77,8 @@ struct Entry {
     value: Box<[u8]>,
     /// A snapshot matcher asked for it in this run.
     checked: bool,
+    /// None did, and it is not obsolete: see `remove_obsolete`.
+    stays: bool,
 }
 
 pub(crate) enum Outcome {
@@ -222,6 +224,9 @@ pub(crate) struct File {
     file: Option<bun_sys::File>,
     /// What `values` holds is not what the file holds. Jest's and Vitest's formats, which are written as a whole.
     dirty: bool,
+    /// Bun used to take any file for its own, and to append to it: entries with its keys and its way of printing.
+    /// Jest and Vitest keep their files sorted, so one whose keys are in order has none.
+    may_hold_entries_of_bun: bool,
 }
 
 /// `path` of the snapshot file of a test file, and how much of it is the directory.
@@ -417,8 +422,26 @@ impl Snapshots {
         if format != Format::Bun {
             self.file_buf = Vec::new();
         }
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false });
+        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted()?;
+        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
         Ok(format)
+    }
+
+    fn keys_are_sorted(&self) -> Result<bool, Error> {
+        let mut previous: Vec<u16> = Vec::new();
+        for key in self.values.keys() {
+            let key = strings::to_utf16_alloc_for_real(key, false, false).map_err(|_| Error::ParseError)?;
+            if natural_compare(&previous, &key).is_gt() {
+                return Ok(false);
+            }
+            previous = key;
+        }
+        Ok(true)
+    }
+
+    /// Whether a snapshot of the current file that does not match may be one that an older Bun wrote.
+    pub(crate) fn may_hold_entries_of_bun(&self) -> bool {
+        self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
     /// Compares `received` with the snapshot of the running test that it is the next one of, or saves it.
@@ -445,17 +468,34 @@ impl Snapshots {
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
         let mut counter_string_buf = [0u8; 32];
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
-        key.extend_from_slice(bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter));
+        key.extend_from_slice(counter);
 
-        if let Some(entry) = self.values.get_mut(&key) {
+        let mut key_in_file = None;
+        if self.values.contains(&key) {
+            key_in_file = Some(key.clone());
+        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
+            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+            key_of_bun.push(b' ');
+            key_of_bun.extend_from_slice(counter);
+            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
+        }
+
+        if let Some(key_in_file) = key_in_file
+            && let Some(entry) = self.values.get_mut(&key_in_file)
+        {
             entry.checked = true;
-            if format.matches(&entry.value, received) {
+            let is_to_be_renamed = self.update_snapshots && key_in_file != key;
+            if format.matches(&entry.value, received) && !is_to_be_renamed {
                 self.passed += 1;
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
+            }
+            if is_to_be_renamed {
+                self.values.swap_remove(&key_in_file);
             }
         } else if crate::cli::ci_info::is_ci() && !self.update_snapshots {
             self.last_error_snapshot_name = Some(key.into_boxed_slice());
@@ -473,7 +513,7 @@ impl Snapshots {
             file.dirty = true;
         }
         self.added += 1;
-        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true });
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
         Ok(Outcome::Written)
     }
 
@@ -545,7 +585,7 @@ impl Snapshots {
                                                 let value = value_string.slice(&arena);
                                                 self.values.insert(
                                                     key,
-                                                    Entry { value: Box::<[u8]>::from(value), checked: false },
+                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false },
                                                 );
                                             }
                                         }
@@ -579,33 +619,49 @@ impl Snapshots {
             .collect();
         Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
         file.dirty = true;
-        self.values.retain(|_, entry| entry.checked);
+        self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
+    /// Marks the entries of the tests under `root`, but for those in `except`.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
         format: Format,
-        scope: &DescribeScope,
+        root: &DescribeScope,
         except: &[*const ExecutionEntry],
     ) {
-        for entry in &scope.entries {
-            match entry {
-                TestScheduleEntry::Describe(describe) => Self::keep_entries_of_tests(values, format, describe, except),
-                TestScheduleEntry::TestCallback(test) => {
-                    if except.contains(&core::ptr::from_ref::<ExecutionEntry>(test)) {
-                        continue;
-                    }
-                    let name = full_test_name(test, format.name_separator(), format == Format::Jest);
-                    for i in 0..values.len() {
-                        let Some(rest) = values.keys()[i].strip_prefix(name.as_slice()) else { continue };
-                        if rest.starts_with(format.hint_separator())
-                            || rest.strip_prefix(b" ").is_some_and(|count| count.iter().all(u8::is_ascii_digit))
-                        {
-                            values.values_mut()[i].checked = true;
+        let mut except = except.to_vec();
+        except.sort_unstable();
+        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut scopes = vec![root];
+        while let Some(scope) = scopes.pop() {
+            for entry in &scope.entries {
+                match entry {
+                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
+                    TestScheduleEntry::TestCallback(test) => {
+                        if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
+                            names.insert(&full_test_name(test, format.name_separator(), format == Format::Jest), ());
                         }
                     }
                 }
             }
+        }
+
+        let separator = format.hint_separator();
+        for i in 0..values.len() {
+            // The name of a test, perhaps a hint, and a number.
+            let key = &values.keys()[i];
+            let Some(end) = strings::last_index_of_char(key, b' ') else { continue };
+            if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
+                continue;
+            }
+            let name = &key[..end];
+            let mut is_of_a_test = names.contains_key(name);
+            let mut from = 0;
+            while let Some(at) = strings::index_of(&name[from..], separator).filter(|_| !is_of_a_test) {
+                is_of_a_test = names.contains_key(&name[..from + at]);
+                from += at + 1;
+            }
+            values.values_mut()[i].stays = is_of_a_test;
         }
     }
 
@@ -710,8 +766,10 @@ impl Snapshots {
             .map_err(|_| Error::FailedToWriteSnapshotFile)?;
         // Insertion, because the comparison is not known to be a total order, which `sort_by` may panic on.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
+        // What this run has not seen may still be an entry of Bun's: the file goes on saying so.
+        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(|entry| !entry.checked);
         for (i, key) in keys.iter().enumerate() {
-            let at = order.partition_point(|other| natural_compare(&keys[*other], key).is_le());
+            let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);
         }
 

@@ -773,10 +773,11 @@ impl BunTest {
         });
     }
 
-    /// `callback` runs after the `afterAll` hooks of the file, before what was deferred earlier.
-    pub(crate) fn defer_to_file_end(&mut self, callback: JSValue, timeout: u32) {
-        if self.file_end.is_none() {
-            return;
+    /// `callback` runs after the `afterAll` hooks of the file, before what was deferred earlier. `false`: it is too late for that.
+    pub(crate) fn defer_to_file_end(&mut self, callback: JSValue, timeout: u32) -> bool {
+        // The group of `file_end` is the last one.
+        if self.file_end.is_none() || self.phase != Phase::Execution || self.execution.group_index + 1 >= self.execution.groups.len() {
+            return false;
         }
         let entry = self.create_vitest_entry(callback, timeout, false).as_ptr();
         if let Some(file_end) = self.file_end.as_deref_mut() {
@@ -787,6 +788,7 @@ impl BunTest {
             }
             file_end.next = Some(entry);
         }
+        true
     }
 
     /// An entry made while the tests run, for the caller to link into a sequence. It is freed with the file.
@@ -919,6 +921,23 @@ impl BunTest {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `done(error)` of a test is a failure of that test. Of a hook, it is reported as an error that nothing caught is.
+    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+        if let Some(strong) = clone_active_strong() {
+            let this = strong.get();
+            let is_running_test = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
+                // SAFETY: it points into `this.execution.sequences`, which nothing else borrows here.
+                let sequence = unsafe { sequence.as_ref() };
+                sequence.active_entry == sequence.test_entry
+            });
+            if is_running_test {
+                this.on_uncaught_exception(global_this, Some(error), false, entry);
+                return;
+            }
+        }
+        let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+    }
+
     pub(crate) fn bun_test_done_callback(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -941,7 +960,8 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                // SAFETY: see above — `this` is a live `*mut DoneCallback`.
+                Self::on_done_error(global_this, &unsafe { (*this).entry }, value);
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
@@ -1159,6 +1179,10 @@ impl BunTest {
                     seed,
                 });
 
+                let preload = &self.bun_test_root.get().hook_scope;
+                if preload.before_all.iter().chain(&preload.after_all).any(|hook| hook.fixtures.is_some()) {
+                    self.expect_file_scoped_fixtures();
+                }
                 let root = self.bun_test_root.get();
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
                     order.generate_all_order(&root.hook_scope.before_all, true)?
@@ -1188,15 +1212,15 @@ impl BunTest {
                     }
                 }
                 beforeall_order.set_failure_skip_to(&mut order);
-                if let Some(file_end) = &self.file_end {
-                    order.generate_all_order(core::slice::from_ref(file_end), true)?;
-                }
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all, true)?
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
                 afterall_order.set_failure_skip_to(&mut order);
+                if let Some(file_end) = &self.file_end {
+                    order.generate_all_order(core::slice::from_ref(file_end), true)?;
+                }
 
                 if let (true, Some(reporter)) = (order.shuffled, self.reporter) {
                     // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s `&mut`; no other borrow is live here.
@@ -1451,6 +1475,13 @@ impl BunTest {
         };
 
         bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
+
+        // It has unwound the function of a test that has ended. In one that is running it is an error like any other.
+        if handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+            && exception.is_some_and(|exception| self.unclaimed.is_ended_error(exception))
+        {
+            return;
+        }
 
         if let (Phase::Execution, Some(thrown)) = (self.phase, exception)
             && let Err(err) = self.execution.record_error(global_this, user_data, thrown)

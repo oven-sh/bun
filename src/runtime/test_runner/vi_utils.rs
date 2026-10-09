@@ -66,16 +66,22 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// The next test file shares `global`.
-pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
+/// `next_load_shares_global`: else `global` goes with all it holds, and the preload scripts run again.
+pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
+    if let Some(runner) = Jest::runner() {
+        if !next_load_shares_global {
+            runner.vi_config_of_preload = Config::default();
+        }
+        runner.vi_config = runner.vi_config_of_preload;
+    }
+    if !next_load_shares_global {
+        return;
+    }
     run(global, JSMock__didFinishTestFile);
     run(global, ViUtils__unstubAllEnvs);
     run(global, ViUtils__unstubAllGlobals);
     run(global, ViUtils__stubWhatPreloadStubbed);
     ViUtils__forgetDynamicImports(global);
-    if let Some(runner) = Jest::runner() {
-        runner.vi_config = runner.vi_config_of_preload;
-    }
 }
 
 /// 0, which is "none", for what is not a positive finite number: so vitest treats a timeout.

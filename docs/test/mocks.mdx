@@ -684,9 +684,9 @@ Call `mock.restore()` in an `afterEach` block, or in your test preload script, i
 
 ### Mock Functions End with the Test File
 
-When a test file ends, Bun restores the spies that are left and clears the calls of the file's mocks. `clearAllMocks()`, `resetAllMocks()` and `restoreAllMocks()` in the next file do not touch them.
+When a test file ends, Bun restores the spies that are left and clears the calls that mocks have recorded. What `mockReturnValue()`, `mockImplementation()` and the like have set stays until the mock is reset: a mock in a module that several test files import keeps it from one file to the next.
 
-Spies and mocks made in a `--preload` script stay as they are for every test file.
+Spies and mocks made in a `--preload` script, or in a `beforeAll()` of it, stay as they are for every test file.
 
 ## Vitest Compatibility
 

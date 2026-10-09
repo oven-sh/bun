@@ -328,6 +328,27 @@ describe("async support", () => {
   });
 });
 
+it("passes any number of arguments on", () => {
+  let seen;
+  expect.extend({
+    _toSeeArguments(...args) {
+      seen = args;
+      return { pass: true, message: () => "" };
+    },
+  });
+  for (const count of [0, 1, 6, 7, 8, 9, 40]) {
+    const args = Array.from({ length: count }, (_, i) => ({ i }));
+    const received = { received: count };
+    expect(received)._toSeeArguments(...args);
+    expect(seen).toEqual([received, ...args]);
+    expect(seen.every((arg, i) => arg === (i ? args[i - 1] : received))).toBe(true);
+    seen = undefined;
+    expect({ a: received }).toEqual({ a: expect._toSeeArguments(...args) });
+    expect(seen.every((arg, i) => arg === (i ? args[i - 1] : received))).toBe(true);
+    expect(seen).toHaveLength(count + 1);
+  }
+});
+
 it("should not crash under intensive usage", () => {
   withoutAggressiveGC(() => {
     for (let i = 0; i < 10000; ++i) {

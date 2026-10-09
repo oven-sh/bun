@@ -128,7 +128,7 @@ test("renders the page", async () => {
 });
 ```
 
-A string is compared with the contents of the file as it is; any other value is printed as in a snapshot first. Bun writes a file that does not exist (not in CI), and `--update-snapshots` rewrites one that differs.
+A string is compared with the contents of the file as it is. Any other value is printed first, always as Vitest prints it ([`pretty-format`](#snapshots-from-jest-and-vitest)), also in a test imported from `"bun:test"`. Bun writes a file that does not exist (not in CI), and `--update-snapshots` rewrites one that differs.
 
 ## Advanced Snapshot Usage
 
@@ -291,9 +291,9 @@ A new snapshot file has Vitest's format when its tests are imported from `"vites
 
 An inline snapshot does not say who wrote it. Bun compares it with what the runner that the test is imported from would write, and when that differs, with what the other runners would. It writes and updates inline snapshots as the former.
 
-With `--update-snapshots`, a file in the format of Jest or Vitest loses the entries that no test asks for any more. The entries of tests that were skipped, filtered out or failed stay.
+With `--update-snapshots`, a file in the format of Jest or Vitest loses the entries that no test asks for any more. The entries of tests that were skipped, filtered out or failed stay. A file in Bun's format keeps only the entries of the tests that ran.
 
-No existing snapshot has to be updated: when a snapshot does not match, Bun also compares it with what earlier versions printed for the value (`[native code]` for an accessor, own properties that are not enumerable, DOM-like objects as plain objects). Such a snapshot passes and is left as it is until `--update-snapshots` rewrites it.
+Earlier versions of Bun printed some values differently: `[native code]` for an accessor instead of its value, own properties that are not enumerable, DOM nodes as plain objects. When a snapshot does not match, Bun also compares it with what those versions printed for the value. Such a snapshot passes and is left as it is until `--update-snapshots` rewrites it.
 
 ## Best Practices
 

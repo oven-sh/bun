@@ -163,6 +163,15 @@ impl TestContext {
         self.deferred.with_mut(|deferred| deferred.push((when, entry)));
     }
 
+    /// `false`, and `callback` never runs, once the test has finished.
+    pub(crate) fn defer_while_running(&self, this_value: JSValue, when: Deferred, callback: JSValue, timeout: u32) -> bool {
+        let Some((buntest, _)) = self.running(this_value) else {
+            return false;
+        };
+        self.defer(buntest.get(), when, callback, timeout);
+        true
+    }
+
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {
         self.deferred.with_mut(|deferred| {
             let next = (0..deferred.len()).rev().min_by_key(|&index| deferred[index].0)?;

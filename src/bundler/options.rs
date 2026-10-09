@@ -1369,6 +1369,8 @@ pub struct BundleOptions<'a> {
     pub rewrite_jest_for_tests: bool,
     /// `bun test --globals=vitest`
     pub vitest_globals: bool,
+    /// `RuntimeFeatures::own_test_globals`
+    pub own_test_globals: u32,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
@@ -1608,6 +1610,7 @@ impl<'a> BundleOptions<'a> {
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             vitest_globals: self.vitest_globals,
+            own_test_globals: self.own_test_globals,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1867,6 +1870,7 @@ impl<'a> BundleOptions<'a> {
             load_package_json: true,
             rewrite_jest_for_tests: false,
             vitest_globals: false,
+            own_test_globals: 0,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {

@@ -328,6 +328,10 @@ const kept = new $Map<string, Environment>();
 // A module with a top-level await cannot be required the first time and can the second: every file gets the first answer.
 const failedToLoad = new $Map<string, unknown>();
 
+function isClosed(window: Environment["window"]) {
+  return window.closed || !window.document;
+}
+
 /** Returns why not, if it cannot. */
 function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file: string, keep: boolean) {
   const requireFromTest = createRequire(file);
@@ -340,7 +344,7 @@ function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
-  if (last && !last.window.closed && last.window.document) return last;
+  if (last && !isClosed(last.window)) return last;
 
   let options;
   try {
@@ -400,7 +404,10 @@ function enter(name: string, environment: Environment, keep: boolean) {
   environment.forgetLastFile?.();
 
   return function teardown(isLoadingFileAgain: boolean) {
-    if (isLoadingFileAgain) return environment.forgetLastFile?.();
+    if (isLoadingFileAgain) {
+      environment.forgetLastFile?.();
+      return isClosed(environment.window);
+    }
 
     let stuck: string | undefined;
     for (let i = 0; i < defined.length; i++) {
@@ -411,13 +418,14 @@ function enter(name: string, environment: Environment, keep: boolean) {
       if (current) properties.$set(key, current);
       else properties.$delete(key);
 
+      if (putBack(key, originals[i])) continue;
       // A property of its own that the file made permanent is the file's to leave behind, like any other global.
-      if (!putBack(key, originals[i]) && current!.get === ours.get && current!.value === ours.value) stuck ??= key;
+      if (!current || (current.get === ours.get && current.value === ours.value)) stuck ??= key;
     }
     const closed = keep ? undefined : environment.close();
     if (stuck !== undefined) {
       throw new Error(
-        `The "${name}" test environment cannot be taken away: "${stuck}" of globalThis is no longer configurable`,
+        `The "${name}" test environment cannot be taken away: "${stuck}" of globalThis can no longer be redefined`,
       );
     }
     return closed;

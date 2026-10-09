@@ -1571,7 +1571,7 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (thisObject->m_sandbox) {
-        thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+        thisObject->m_sandbox->methodTable()->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }
 

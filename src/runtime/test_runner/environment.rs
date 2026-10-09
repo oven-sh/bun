@@ -133,11 +133,18 @@ impl Environment {
             }
         } else if let Some(function) = &self.teardown {
             // --rerun-each
-            if let Err(err) = function
+            let is_closed = match function
                 .get()
                 .call(vm.global(), JSValue::UNDEFINED, &[JSValue::TRUE])
             {
-                return rejected(vm, err);
+                Ok(is_closed) => is_closed.to_boolean(),
+                Err(err) => return rejected(vm, err),
+            };
+            if is_closed {
+                self.teardown(vm);
+                if let Some(rejected) = self.enter(vm, path)? {
+                    return Ok(rejected);
+                }
             }
         }
         Ok(vm.load_entry_point_for_test_runner(path)?)

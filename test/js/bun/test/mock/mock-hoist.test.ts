@@ -658,6 +658,24 @@ describe.concurrent("vi.mock(import(path))", () => {
     ).toEqual([["mocked", "mocked other", ["./a", "./b", "./c", "./d", "./e", "./variable"]]]);
   });
 
+  test.each(["vi.mock", "vi.unmock", "jest.doMock", "jest.doUnmock"])(
+    "%s() in code that never runs, in a module that uses nothing else of the test APIs",
+    async mock => {
+      expect(
+        await events({
+          "dead.js": `
+            if (false) ${mock}(import("./mod", class {}), class { static {} });
+            (globalThis.events ??= []).push("load dead");
+          `,
+          "hoist.test.ts": `
+            import "./dead.js";
+            ${print}
+          `,
+        }),
+      ).toEqual([["load dead"]]);
+    },
+  );
+
   // Each of these opens a scope, and the parser visits scopes in the order it parsed them.
   test.each([
     `class {}`,

@@ -243,6 +243,15 @@ describe("bundler", () => {
     run: { stdout: [...invalid.map(message => "TypeError: " + message), "fallback"].join("\n") },
   });
 
+  // A constant that is inlined is not a literal.
+  itBundled("import-meta-glob/CallsThatCannotBeReplacedAreTheSameWithMinifySyntax", {
+    entryPoints: ["/entry.ts"],
+    files: { ...modules, "/entry.ts": invalidCalls },
+    minifySyntax: true,
+    bundleWarnings: { "/entry.ts": [...invalid, invalid[0]] },
+    run: { stdout: [...invalid.map(message => "TypeError: " + message), "fallback"].join("\n") },
+  });
+
   itBundled("import-meta-glob/NoWarningForAPackage", {
     entryPoints: ["/entry.ts"],
     files: { ...modules, "/entry.ts": `import "dep";`, "/node_modules/dep/index.js": invalidCalls },

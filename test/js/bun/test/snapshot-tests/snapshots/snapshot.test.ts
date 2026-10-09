@@ -592,23 +592,45 @@ Received: Instance {
     expect(read).toEqual([]);
   });
 
-  test("what the getter throws is the error", () => {
-    const thrown = new Error("from the getter");
+  test("a getter that throws leaves the accessor, which is what there was before getters were called", () => {
     const throws = () => ({
       before: 1,
       nested: {
         get a() {
-          throw thrown;
+          throw new Error("from the getter");
+        },
+        get b() {
+          return 2;
         },
       },
       after: 2,
     });
-    expect(() => expect(throws()).toMatchInlineSnapshot()).toThrow(thrown);
-    expect(() => expect(throws()).toMatchSnapshot()).toThrow(thrown);
-    expect(() => expect(throws()).toEqual({})).toThrow(thrown);
-    expect(() => expect(throws()).toBeNull()).toThrow(thrown);
-    expect(() => expect(throws(), "with a label").toBeNull()).toThrow(thrown);
-    expect(() => expect(1).toBe(throws())).toThrow(thrown);
+    const messageOf = (fn: () => void) => {
+      try {
+        fn();
+      } catch (error) {
+        return (error as Error).message.replaceAll(/\x1b\[\d+m/g, "");
+      }
+    };
+    expect(throws()).toMatchInlineSnapshot(`
+      {
+        "after": 2,
+        "before": 1,
+        "nested": {
+          "a": [native code],
+          "b": 2,
+        },
+      }
+    `);
+    expect(messageOf(() => expect(throws()).toEqual({}))).toBe(
+      'expect(received).toEqual(expected)\n\n- {}\n+ {\n+   "after": 2,\n+   "before": 1,\n+   "nested": {\n+     "a": [native code],\n+     "b": 2,\n+   },\n+ }\n\n- Expected  - 1\n+ Received  + 8\n',
+    );
+    const printed = "{\n  before: 1,\n  nested: {\n    a: [Getter],\n    b: 2,\n  },\n  after: 2,\n}";
+    expect(messageOf(() => expect(throws()).toBeNull())).toBe(`expect(received).toBeNull()\n\nReceived: ${printed}\n`);
+    expect(messageOf(() => expect(throws(), "with a label").toBeNull())).toBe(`with a label\n\nReceived: ${printed}\n`);
+    expect(messageOf(() => expect(1).toBe(throws()))).toBe(
+      `expect(received).toBe(expected)\n\nExpected: ${printed}\nReceived: 1\n`,
+    );
   });
 
   test("console.log() and Bun.inspect() do not call it", () => {
@@ -1238,7 +1260,7 @@ const headers = {
 // snapshots in the fixtures. To add a case, let that runner write it. Never update them with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
   const timeout = isDebug ? 120_000 : 20_000;
-  const tests = { vitest: 475, jest: 454 };
+  const tests = { vitest: 557, jest: 536 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -1440,21 +1462,90 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     timeout,
   );
 
-  test(
-    "what Bun used to add to a file of Jest, in its own format, still passes",
-    async () => {
-      const mixed = headers.jest + entries.jest.replace("[Function]", "[Function: named]");
-      using dir = tempDir("snapshot-mixed-file", { "a.test.js": body, "__snapshots__/a.test.js.snap": mixed });
-      const read = await runTests(String(dir), { CI: "true" });
-      expect({ pass: read.pass, stderr: read.pass ? "" : read.stderr }).toEqual({ pass: 1, stderr: "" });
-      expect(snap(dir)).toBe(mixed);
-      expect(read.exitCode).toBe(0);
+  describe.each(["jest", "vitest"] as const)(
+    "what Bun used to append to a file of %s, with its keys and its way of printing",
+    format => {
+      const old = '\nexports[`z old 1`] = `\n{\n  "a": 1,\n}\n`;\n';
+      const appendedTo = headers[format] + old + entries.bun;
+      const tests = body + `test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });`;
 
-      const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
-      expect(snap(dir)).toBe(headers.jest + entries.jest);
-      expect(updated.exitCode).toBe(0);
+      test.each(["true", "false"])(
+        "still passes, and stays as it is (CI: %s)",
+        async CI => {
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": tests,
+            "__snapshots__/a.test.js.snap": appendedTo,
+          });
+          const { pass, stderr, exitCode } = await runTests(String(dir), { CI });
+          expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+          expect(stderr).toContain(" 4 snapshots, ");
+          expect(snap(dir)).toBe(appendedTo);
+          expect(exitCode).toBe(0);
+        },
+        timeout,
+      );
+
+      test.each(["true", "false"])(
+        "still fails when the value is another (CI: %s)",
+        async CI => {
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": tests.replace('expect(1).toMatchSnapshot("hint")', 'expect(2).toMatchSnapshot("hint")'),
+            "__snapshots__/a.test.js.snap": appendedTo,
+          });
+          const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI });
+          expect({ pass, fail }).toEqual({ pass: 1, fail: 1 });
+          expect(stderr).toContain("Expected: 1\nReceived: 2");
+          expect(snap(dir)).toBe(appendedTo);
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test(
+        "is still known for what it is after a run that adds an entry and does not see the others",
+        async () => {
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": tests + `test("a new", () => { expect(() => {}).toMatchSnapshot(); });`,
+            "__snapshots__/a.test.js.snap": appendedTo,
+          });
+          const added = await runTests(String(dir), { CI: "false" }, "-t", "a new");
+          expect(added.stderr).toContain("+1 added");
+          expect(snap(dir)).toBe(appendedTo + "\nexports[`a new 1`] = `[Function]`;\n");
+          const all = await runTests(String(dir), { CI: "true" });
+          expect({ pass: all.pass, stderr: all.pass === 3 ? "" : all.stderr }).toEqual({ pass: 3, stderr: "" });
+          expect([added.exitCode, all.exitCode]).toEqual([0, 0]);
+        },
+        timeout,
+      );
+
+      test(
+        "--update-snapshots makes a file of the runner's of it",
+        async () => {
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": tests,
+            "__snapshots__/a.test.js.snap": appendedTo,
+          });
+          const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+          expect(snap(dir)).toBe(headers[format] + entries[format] + old);
+          expect(exitCode).toBe(0);
+        },
+        timeout,
+      );
+
+      test(
+        "is not looked for in a file whose keys are in the runner's order, which Bun has not appended to",
+        async () => {
+          const sorted = headers[format] + entries[format].replace("[Function]", "[Function: named]");
+          using dir = tempDir("snapshot-sorted", { "a.test.js": body, "__snapshots__/a.test.js.snap": sorted });
+          const { fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+          expect(fail).toBe(1);
+          expect(stderr).toContain('-   "f": [Function: named],\n+   "f": [Function],');
+          expect(snap(dir)).toBe(sorted);
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
     },
-    timeout,
   );
 
   test(
@@ -2265,6 +2356,23 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   );
 
   test(
+    "passes when it is what an older Bun wrote for an accessor that throws",
+    async () => {
+      const printed = `{\n  "bad": [native code],\n  "good": [native code],\n  "ok": 1,\n}`;
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": `
+          const value = () => ({ ok: 1, get good() { return 2; }, get bad() { throw new Error("not ready"); } });
+          test("in a file", () => { expect(value()).toMatchSnapshot(); });
+          test("inline", () => { expect(value()).toMatchInlineSnapshot(\`\n${printed}\n\`); });
+        `,
+        "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
+      });
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+
+  test(
     "what an older Bun wrote counts as passed, stays as it is, and --update-snapshots rewrites it once",
     async () => {
       const older = headers.bun + `\nexports[\`in a file 1\`] = \`\n${olderBun}\n\`;\n`;
@@ -2562,6 +2670,139 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
         vitest.log.map(line => [...JSON.parse(line).slice(0, 2), "Error"]),
       );
       expect([vitest.exitCode, bun.exitCode]).toEqual([0, 0]);
+    },
+    timeout,
+  );
+
+  test(
+    "a look-alike of a DOM node with members of other types than the DOM gives them",
+    async () => {
+      using dir = tempDir("snapshot-look-alikes", {});
+      cpSync(join(import.meta.dir, "..", "formats", "look-alikes"), String(dir), { recursive: true });
+      const snap = () => readFileSync(join(String(dir), "__snapshots__", "dom.fixture.js.snap"), "latin1");
+      const before = snap();
+      const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "./dom.fixture.js");
+      expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 19, stderr: "" });
+      expect(snap()).toBe(before);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "a value that is its own property matchers, nested too deeply to walk, is a RangeError",
+    async () => {
+      const file = (module: string) => `
+        import { test, expect } from ${JSON.stringify(module)};
+        test("t", () => {
+          let value = 1;
+          for (let i = 0; i < 100_000; i++) value = { a: value };
+          for (const matcher of ["toMatchSnapshot", "toMatchInlineSnapshot"]) {
+            try {
+              expect(value)[matcher](value);
+            } catch (error) {
+              console.log(matcher, error.name + ": " + error.message);
+            }
+          }
+        });
+      `;
+      const results = await Promise.all([
+        logOf({ "a.test.js": file("vitest") }),
+        logOf({ "a.test.js": file("bun:test"), "__snapshots__/a.test.js.snap": headers.jest }),
+        logOf({ "a.test.js": file("bun:test") }),
+      ]);
+      const expected = {
+        log: [
+          "toMatchSnapshot RangeError: Maximum call stack size exceeded.",
+          "toMatchInlineSnapshot RangeError: Maximum call stack size exceeded.",
+        ],
+        exitCode: 0,
+      };
+      expect(results.map(({ log, exitCode }) => ({ log, exitCode }))).toEqual([expected, expected, expected]);
+    },
+    timeout,
+  );
+
+  test(
+    "what holds itself in a way that pretty-format does not notice either is a RangeError, and soon",
+    async () => {
+      using dir = tempDir("snapshot-cycles", {
+        "a.test.js": `
+          import { test, expect } from "vitest";
+          const element = (type, props) => ({ $$typeof: Symbol.for("react.transitional.element"), type, props });
+          const json = members => ({ $$typeof: Symbol.for("react.test.json"), type: "a", props: {}, children: null, ...members });
+          class HTMLDivElement {
+            nodeType = 1;
+            tagName = "DIV";
+            attributes = [];
+            childNodes = [];
+          }
+          const tied = (value, tie) => (tie(value), value);
+          const cycles = {
+            "an element in its props": tied(element("a", {}), it => (it.props.it = it)),
+            "an element among its children": tied(element("a", {}), it => (it.props.children = [it])),
+            "a test renderer's object in its props": tied(json(), it => (it.props.it = it)),
+            "a test renderer's object among its children": tied(json(), it => (it.children = [it])),
+            "a DOM element in an attribute": tied(new HTMLDivElement(), it => (it.attributes = [{ name: "it", value: it }])),
+            "a DOM element among its children": tied(new HTMLDivElement(), it => (it.childNodes = [it])),
+            "a DOM element in an element in an attribute": tied(
+              new HTMLDivElement(),
+              it => (it.attributes = [{ name: "it", value: element("a", { it }) }]),
+            ),
+            "an Immutable.List among its values": tied(
+              { "@@__IMMUTABLE_ITERABLE__@@": true, "@@__IMMUTABLE_LIST__@@": true },
+              it => (it.values = () => [it].values()),
+            ),
+            "an asymmetric matcher in its sample": tied(
+              { $$typeof: Symbol.for("jest.asymmetricMatcher"), toString: () => "ObjectContaining" },
+              it => (it.sample = { it }),
+            ),
+          };
+          test("t", () => {
+            for (const [name, value] of Object.entries(cycles)) {
+              try {
+                expect(value).toMatchInlineSnapshot(\`other\`);
+              } catch (error) {
+                console.log(name + ": " + error.name + ": " + error.message);
+              }
+            }
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout", String(timeout)],
+        env: { ...bunEnv, CI: "true" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeout / 2,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const log = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
+      // How deep the stack goes before that much is printed depends on the build.
+      const error = "RangeError: <Maximum call stack size exceeded. or The value is too large to print in a snapshot>";
+      expect({
+        log: log.map(line =>
+          line.replace(
+            /RangeError: (Maximum call stack size exceeded\.|The value is too large to print in a snapshot)$/,
+            error,
+          ),
+        ),
+        exitCode,
+      }).toEqual({
+        log: [
+          "an element in its props",
+          "an element among its children",
+          "a test renderer's object in its props",
+          "a test renderer's object among its children",
+          "a DOM element in an attribute",
+          "a DOM element among its children",
+          "a DOM element in an element in an attribute",
+          "an Immutable.List among its values",
+          "an asymmetric matcher in its sample",
+        ].map(name => `${name}: ${error}`),
+        exitCode: 0,
+      });
     },
     timeout,
   );

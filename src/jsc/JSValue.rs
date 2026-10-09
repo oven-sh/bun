@@ -2512,7 +2512,7 @@ impl JSValue {
         scope.return_if_exception()
     }
     /// [`for_each_property`](Self::for_each_property) for `bun:test`: an own accessor gives what its
-    /// getter returns, and what the getter throws is the error.
+    /// getter returns, and itself when the getter throws.
     #[inline(always)]
     pub(crate) fn for_each_property_calling_own_getters(
         self,
@@ -2584,7 +2584,7 @@ impl JSValue {
         result
     }
     /// [`for_each_property_ordered`](Self::for_each_property_ordered) for `bun:test`: an accessor
-    /// gives what its getter returns, and what the getter throws is the error. True when
+    /// gives what its getter returns, and itself when the getter throws. True when
     /// [`for_each_property_ordered_with_non_enumerable`](Self::for_each_property_ordered_with_non_enumerable)
     /// is sure to give the same.
     #[inline(always)]

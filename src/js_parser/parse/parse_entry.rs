@@ -250,6 +250,7 @@ impl<'a> Options<'a> {
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
                 vitest_globals: f.vitest_globals,
+                own_test_globals: f.own_test_globals,
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
@@ -329,6 +330,11 @@ impl<'a> Options<'a> {
         }
 
         self.features.hash_for_runtime_transpiler(hasher);
+    }
+
+    pub fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+        self.features
+            .hash_test_features_for_runtime_transpiler(hasher);
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
@@ -1408,40 +1414,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Lowered or not, they come before the imports that the file has itself.
-        let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
-        for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
-            let is_lowered = !hoisted_mocks.is_empty()
-                && matches!(
-                    stmt.data,
-                    js_ast::StmtData::SImport(import)
-                        if matches!(
-                            p.plan_import(&import, &Default::default()),
-                            MockHoistOrder::LoweredImport
-                        )
-                );
-            let sliced = p.arena.alloc_slice_copy(&[stmt]);
-            p.append_part(
-                if is_lowered {
-                    &mut lowered_glob_imports
-                } else {
-                    &mut before
-                },
-                sliced,
-            )?;
-        }
-        lowered_glob_imports.append(&mut imports_after_hoisted_mocks);
-        let mut imports_after_hoisted_mocks = lowered_glob_imports;
-        if let Some(stmt) = p.import_meta_glob_definition() {
-            before.insert(
-                0,
-                js_ast::Part {
-                    stmts: p.arena.alloc_slice_copy(&[stmt]).into(),
-                    ..Default::default()
-                },
-            );
-        }
-
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here
@@ -2177,6 +2149,43 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if reject_import_statements {
+            p.reject_eager_import_meta_globs();
+        }
+        // Lowered or not, they come before the imports that the file has itself.
+        let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
+        for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
+            let is_lowered = !hoisted_mocks.is_empty()
+                && matches!(
+                    stmt.data,
+                    js_ast::StmtData::SImport(import)
+                        if matches!(
+                            p.plan_import(&import, &Default::default()),
+                            MockHoistOrder::LoweredImport
+                        )
+                );
+            let sliced = p.arena.alloc_slice_copy(&[stmt]);
+            p.append_part(
+                if is_lowered {
+                    &mut lowered_glob_imports
+                } else {
+                    &mut before
+                },
+                sliced,
+            )?;
+        }
+        lowered_glob_imports.append(&mut imports_after_hoisted_mocks);
+        let mut imports_after_hoisted_mocks = lowered_glob_imports;
+        if let Some(stmt) = p.import_meta_glob_definition() {
+            before.insert(
+                0,
+                js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&[stmt]).into(),
+                    ..Default::default()
+                },
+            );
+        }
+
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:
@@ -2276,21 +2285,45 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // Before the import of the globals is added, which only `bun test` does.
+        let uses_test_api = (cfg!(debug_assertions)
+            || p.options
+                .features
+                .runtime_transpiler_cache_mut()
+                .is_some_and(|cache| cache.input_hash.is_some()))
+            && p.uses_test_api();
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {
                 break 'outer;
             }
 
+            // A file that imports from the test module used to get none: there, what is on `globalThis` stays.
+            let left_alone = if p
+                .import_records
+                .items()
+                .iter()
+                .any(|record| bun_ast::import_record::is_test_module(record.path.text))
+            {
+                p.options.features.own_test_globals
+            } else {
+                0
+            };
             // A name the file binds itself shadows the global, whose symbol then has no uses.
             let mut used = bun_alloc::vec_from_iter_in(
                 Jest::GLOBALS
                     .iter()
                     .copied()
                     .zip(p.jest.refs)
-                    .filter(|(_, global)| {
-                        p.symbols.as_slice()[global.inner_index() as usize].use_count_estimate > 0
-                    }),
+                    .enumerate()
+                    .filter(|(index, (_, global))| {
+                        left_alone & (1 << index) == 0
+                            && p.symbols.as_slice()[global.inner_index() as usize]
+                                .use_count_estimate
+                                > 0
+                    })
+                    .map(|(_, used)| used),
                 p.arena,
             );
 
@@ -2308,6 +2341,7 @@ impl<'a> Parser<'a> {
             if used.is_empty() {
                 break 'outer;
             }
+            p.did_apply_test_feature = true;
 
             let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
             declared_symbols.ensure_total_capacity(used.len())?;
@@ -2671,9 +2705,11 @@ impl<'a> Parser<'a> {
                     cache.input_hash = None;
                 } else {
                     cache.exports_kind = exports_kind;
+                    cache.uses_test_api = uses_test_api;
                 }
             }
         }
+        debug_assert!(uses_test_api || !p.did_apply_test_feature);
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 

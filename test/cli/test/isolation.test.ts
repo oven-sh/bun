@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -2079,10 +2079,22 @@ describe.concurrent("the SourceProvider cache does not keep what is made from mo
     `,
     "3.test.ts": `
       import { expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
       test("the third file, which uses require()", () => {
         expect({ matched: require("./globs.ts").matched, value: require("./calls-macro.ts").value }).toEqual({
           matched: ["./globbed/a.ts", "./globbed/b.ts", "./globbed/c.ts"],
           value: "third",
+        });
+        writeFileSync(import.meta.dir + "/globbed/d.ts", "");
+        writeFileSync(import.meta.dir + "/value.txt", "fourth");
+      });
+    `,
+    "4.test.ts": `
+      import { expect, test } from "bun:test";
+      test("the fourth file, which does too", () => {
+        expect({ matched: require("./globs.ts").matched, value: require("./calls-macro.ts").value }).toEqual({
+          matched: ["./globbed/a.ts", "./globbed/b.ts", "./globbed/c.ts", "./globbed/d.ts"],
+          value: "fourth",
         });
       });
     `,
@@ -2107,8 +2119,27 @@ describe.concurrent("the SourceProvider cache does not keep what is made from mo
       stdout: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(stderr).toContain(" 4 pass\n 0 fail\n");
     expect(exitCode).toBe(0);
+  });
+
+  // On Windows `bun test --watch` is a parent process that restarts the runner.
+  test.skipIf(isWindows).each(["--watch", "--hot"])("--isolate %s", async flag => {
+    using dir = tempDir("isolate-more-than-source-watch", files("small"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", flag, "--no-clear-screen"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    let stderr = "";
+    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+      stderr += chunk;
+      if (stderr.includes("Ran 4 tests across 4 files.")) break;
+    }
+    expect(stderr).toContain(" 4 pass\n 0 fail\n");
   });
 });
 

@@ -3454,3 +3454,26 @@ test.concurrent("contexts that nothing refers to are collected, the last one mad
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
 });
+
+test.each([
+  ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+  ["import.meta.env", () => import.meta.env],
+])("the global lists the properties of a contextified object that lists them itself: %s", (_, object) => {
+  const env = process.env;
+  process.env = { first: "one", second: "two" };
+  try {
+    const context = createContext(object());
+    const listed = runInContext(
+      `(() => {
+        const names = [];
+        for (const name in globalThis) names.push(name);
+        return { keys: Object.keys(globalThis), ownKeys: Reflect.ownKeys(globalThis), forIn: names };
+      })()`,
+      context,
+    );
+    const both = expect.arrayContaining(["first", "second"]);
+    expect(listed).toEqual({ keys: both, ownKeys: both, forIn: both });
+  } finally {
+    process.env = env;
+  }
+});

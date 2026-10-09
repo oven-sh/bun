@@ -526,10 +526,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) jest: Jest,
     /// The `vi` / `vitest` / `jest` this file imports from a test module.
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// `inject_jest_globals` changed what this file is transpiled to.
+    pub(crate) did_apply_test_feature: bool,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
     /// The `S::Import`s of the `import.meta.glob(..., { eager: true })` calls visited so far.
     pub(crate) import_meta_glob_imports: List<'a, Stmt>,
+    /// `(() => ({ ... }))()`, which read what those import, where the module may be CommonJS.
+    pub(crate) import_meta_glob_eager_calls: List<'a, Expr>,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     pub(crate) import_records: ImportRecordList<'a>,
@@ -10021,8 +10025,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),
+            did_apply_test_feature: false,
             import_meta_glob_use: Default::default(),
             import_meta_glob_imports: BumpVec::new_in(arena),
+            import_meta_glob_eager_calls: BumpVec::new_in(arena),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
             import_symbol_property_uses: Default::default(),

@@ -650,7 +650,10 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
-        sequence.pending_matchers = 0;
+        if core::mem::take(&mut sequence.pending_matchers) > 0 {
+            // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
+            unsafe { (*buntest.as_ptr()).unclaimed.some_ended = true };
+        }
         sequence.callback_done = false;
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
@@ -1148,6 +1151,9 @@ fn step_sequence_one(
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
+    if core::mem::take(&mut buntest_strong.get().unclaimed.some_ended) {
+        ExpectDeferred::settle_ended(buntest_strong, global_this)?;
+    }
     let buntest = buntest_strong.get();
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;

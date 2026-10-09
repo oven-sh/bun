@@ -5273,7 +5273,9 @@ impl<'a> Resolver<'a> {
 
         let ext_buf = bufs!(extension_path);
 
-        let base = &mut ext_buf[0..b"index".len() + ext.len()];
+        let Some(base) = ext_buf.get_mut(0..b"index".len() + ext.len()) else {
+            return MatchStatus::NotFound;
+        };
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
@@ -5305,7 +5307,10 @@ impl<'a> Resolver<'a> {
                 let out_buf: &[u8] = {
                     if lookup.entry().abs_path.is_empty() {
                         let parts = [dir_info.abs_path, &base[..]];
-                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        let Some(out_buf_) = self.fs_ref().abs_buf_checked(&parts, bufs!(index))
+                        else {
+                            return MatchStatus::NotFound;
+                        };
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
@@ -5795,7 +5800,12 @@ impl<'a> Resolver<'a> {
                 let abs_path: &'static [u8] = {
                     if query.entry().abs_path.is_empty() {
                         let abs_path_parts = [query.entry().dir, query.entry().base()];
-                        let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
+                        let Some(joined) = self
+                            .fs_ref()
+                            .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
+                        else {
+                            dec_ret!(None);
+                        };
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *query.entry }.abs_path = Interned::from_static(
@@ -5816,8 +5826,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Try the path with extensions
-        bufs!(load_as_file)[..path.len()].copy_from_slice(path);
+        // Try the path with extensions. What does not fit a path buffer cannot name a file.
+        let Some(prefix) = bufs!(load_as_file).get_mut(..path.len()) else {
+            dec_ret!(None);
+        };
+        prefix.copy_from_slice(path);
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (matches `extra_cjs_extensions` loop below).
@@ -5856,7 +5869,9 @@ impl<'a> Resolver<'a> {
                 tail[..segment.len()].copy_from_slice(segment);
 
                 for ext_to_replace in exts {
-                    let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
+                    let Some(buffer) = tail.get_mut(0..segment.len() + ext_to_replace.len()) else {
+                        continue;
+                    };
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
@@ -5952,7 +5967,7 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
+        let buffer = bufs!(load_as_file).get_mut(0..path.len() + ext.len())?;
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
 

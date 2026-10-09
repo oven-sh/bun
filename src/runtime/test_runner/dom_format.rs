@@ -66,11 +66,12 @@ pub(crate) fn print_in_snapshot(
     writer: &mut dyn bun_io::Write,
     value: JSValue,
 ) -> JsResult<bool> {
-    if !is_dom(formatter.global_this, value)? {
+    let format = formatter.snapshot_format;
+    // What the test of a plugin of pretty-format throws is thrown.
+    if !if format.is_pretty_format() { classify(formatter.global_this, value)?.is_some() } else { is_dom(formatter.global_this, value)? } {
         return Ok(false);
     }
     let indent = formatter.indent;
-    let format = formatter.snapshot_format;
     let mut printer = Printer {
         global: formatter.global_this,
         host: formatter,
@@ -85,6 +86,7 @@ pub(crate) fn print_in_snapshot(
         return Ok(false);
     }
     let out = printer.out;
+    formatter.count_copied(out.len())?;
     let extra_line_breaks = indent == 0 && !format.is_pretty_format() && strings::contains_char(&out, b'\n');
     if extra_line_breaks {
         let _ = writer.write_all(b"\n");
@@ -99,6 +101,10 @@ pub(crate) fn print_in_snapshot(
 /// The formatter that met the DOM value. It prints what is not DOM.
 trait Host {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32) -> JsResult<()>;
+    /// With `printed` bytes in a buffer, `copied` of which are about to be moved to another.
+    fn check_length(&mut self, _printed: usize, _copied: usize) -> JsResult<()> {
+        Ok(())
+    }
 }
 
 impl Host for console_object::Formatter<'_> {
@@ -115,6 +121,12 @@ impl Host for console_object::Formatter<'_> {
 impl Host for pretty_format::Formatter<'_> {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32) -> JsResult<()> {
         let global = self.global_this;
+        if self.snapshot_format.is_pretty_format() {
+            let prev_indent = core::mem::replace(&mut self.indent, indent);
+            let result = self.print_like_pretty_format(out, value, false);
+            self.indent = prev_indent;
+            return result;
+        }
         let tag = pretty_format::Tag::get(value, global)?;
         let mut bridge = bun_io::AsFmt::new(out);
         let mut writer = bun_io::write::FmtAdapter::new(&mut bridge);
@@ -125,6 +137,11 @@ impl Host for pretty_format::Formatter<'_> {
         self.indent = prev_indent;
         self.quote_strings = prev_quote_strings;
         result
+    }
+
+    fn check_length(&mut self, printed: usize, copied: usize) -> JsResult<()> {
+        pretty_format::Formatter::check_length(self, printed)?;
+        self.count_copied(copied)
     }
 }
 
@@ -325,6 +342,7 @@ impl Printer<'_> {
         if self.out.len() >= self.give_up_at {
             return Ok(true);
         }
+        self.host.check_length(self.out.len(), 0)?;
         let Some(dom) = classify(self.global, value)? else {
             return Ok(false);
         };
@@ -594,6 +612,7 @@ impl Printer<'_> {
         }
         let start = self.out.len();
         self.print_value(value, indent, depth)?;
+        self.host.check_length(start, self.out.len() - start)?;
         Ok(Printed::Other(self.out.split_off(start)))
     }
 

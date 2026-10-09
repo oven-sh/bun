@@ -82,14 +82,20 @@ enum Outcome {
     RecoveredDifferently(String),
 }
 
-fn compare_one(
-    path: &[u8],
-    text: &[u8],
-    decorators: bool,
+/// How both parsers read a text.
+#[derive(Clone, Copy)]
+struct Reading {
     dialect: Dialect,
+    decorators: bool,
     recovers: bool,
-    scratch: &mut Scratch,
-) -> Outcome {
+}
+
+fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> Outcome {
+    let Reading {
+        dialect,
+        decorators,
+        recovers,
+    } = how;
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
@@ -444,14 +450,12 @@ fn compare(args: &[String]) {
             },
         };
         let outcome = SCRATCH.with_borrow_mut(|scratch| {
-            compare_one(
-                input.path.as_bytes(),
-                text,
+            let how = Reading {
+                dialect: input.dialect,
                 decorators,
-                input.dialect,
                 recovers,
-                scratch,
-            )
+            };
+            compare_one(input.path.as_bytes(), text, how, scratch)
         });
         totals.lock().add(&input.id, outcome);
     });
@@ -504,9 +508,12 @@ fn fuzz(args: &[String]) {
             thread_local! {
                 static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
             }
-            match SCRATCH
-                .with_borrow_mut(|scratch| compare_one(path, text, false, dialect, false, scratch))
-            {
+            let how = Reading {
+                dialect,
+                decorators: false,
+                recovers: false,
+            };
+            match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, how, scratch)) {
                 Outcome::Identical(_) => fuzz::Verdict::Identical,
                 Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
                 Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),

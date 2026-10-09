@@ -170,6 +170,12 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     use_mimalloc_in_dependencies();
 
+    // Before the first WTF string or table: a hash made earlier would not match the ones made later.
+    unsafe extern "C" {
+        safe fn Bun__initializeHashSecrets();
+    }
+    Bun__initializeHashSecrets();
+
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other

@@ -30,20 +30,32 @@ function isOpen(fd: number) {
   }
 }
 
+type ReadResult = { fulfilled: string } | { rejected: string };
+// Takes the outcome when the read is created. The script waits for other things before it
+// looks at the read, and a read that rejects meanwhile must not be an unhandled rejection.
+function outcome(pending: Promise<string>): Promise<ReadResult> {
+  return pending.then(
+    value => ({ fulfilled: value }),
+    err => ({ rejected: err?.code ?? String(err) }),
+  );
+}
+
 let number!: number;
-let read: Promise<string>;
+let read: Promise<ReadResult>;
 // Settles when the handle has closed its descriptor. The dropped form has no handle to ask.
 let closed: Promise<void> | undefined;
 
 if (form === "readFile-dropped") {
   const { promise: started, resolve } = Promise.withResolvers<void>();
-  read = (async () => {
-    const handle = await fsp.open(pipe, "r");
-    number = handle.fd;
-    const pending = fsp.readFile(handle, "utf8");
-    resolve();
-    return pending;
-  })();
+  read = outcome(
+    (async () => {
+      const handle = await fsp.open(pipe, "r");
+      number = handle.fd;
+      const pending = fsp.readFile(handle, "utf8");
+      resolve();
+      return pending;
+    })(),
+  );
   await started;
   // Only the pending read can reach the handle now.
   for (let i = 0; i < 8 && isOpen(number); i++) {
@@ -54,13 +66,13 @@ if (form === "readFile-dropped") {
   const handle = await fsp.open(pipe, "r");
   number = handle.fd;
   if (form === "readFile-closed") {
-    read = fsp.readFile(handle, "utf8");
+    read = outcome(fsp.readFile(handle, "utf8"));
     closed = handle.close();
     // A close() that did not wait for the read has already set fd to -1. Let it finish.
     if (handle.fd === -1) await closed;
   } else {
     // The method holds a ref on the handle until the read settles.
-    read = handle.readFile("utf8");
+    read = outcome(handle.readFile("utf8"));
     // writer() and pullSync() are not in the type declarations of FileHandle yet.
     const streams = handle as any;
     if (form === "writer-endSync") streams.writer({ autoClose: true }).endSync();
@@ -73,15 +85,12 @@ if (form === "readFile-dropped") {
 }
 
 const openWhilePending = isOpen(number);
-// Somebody else's file takes the descriptor number if the number is free.
+// Another file takes the descriptor number if the number is free.
 const otherTookTheNumber = fs.openSync(other, "r") === number;
 fs.writeSync(feeder, "bytes of the pipe;");
 fs.closeSync(feeder); // the pipe ends
 
-const result = await read.then(
-  value => ({ fulfilled: value }),
-  err => ({ rejected: err?.code ?? String(err) }),
-);
+const result = await read;
 let closedAfterTheRead: boolean | undefined;
 if (closed && !otherTookTheNumber) {
   await closed;

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -703,6 +703,125 @@ describe.concurrent("bun test --changed", () => {
     const testNames = ["directory.test.ts", "other.test.ts", "package.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["directory.test.ts", "package.test.ts"]);
     expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // A deleted file is not in the module graph, but its importers are, and
+  // they no longer load.
+  test.each([
+    ["rm", (cwd: string) => rmSync(join(cwd, "src", "other.ts"))],
+    ["git rm", (cwd: string) => void git(cwd, "rm", "-q", "src/other.ts")],
+    // git names only the new path of a rename unless it is told --no-renames.
+    ["git mv", (cwd: string) => void git(cwd, "mv", "src/other.ts", "src/moved.ts")],
+  ] as const)("a deleted dependency selects the importing test (%s)", async (_label, remove) => {
+    using dir = tempDir("test-changed-deleted", fixture);
+    initRepo(String(dir));
+    remove(String(dir));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
+    expect(stderr).toContain("Cannot find module './src/other'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a deleted transitive dependency selects the importing test", async () => {
+    using dir = tempDir("test-changed-deleted-transitive", fixture);
+    initRepo(String(dir));
+
+    // a.test.ts -> util.ts -> helper.ts
+    rmSync(join(String(dir), "src", "helper.ts"));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
+    expect(stderr).toContain("Cannot find module './helper'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--changed=<ref> sees a committed deletion", async () => {
+    using dir = tempDir("test-changed-deleted-ref", fixture);
+    initRepo(String(dir));
+    git(String(dir), "rm", "-q", "src/other.ts");
+    git(String(dir), "commit", "-q", "-m", "delete other");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed=HEAD~1"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a deleted file that no test imports selects nothing", async () => {
+    using dir = tempDir("test-changed-deleted-unrelated", fixture);
+    initRepo(String(dir));
+    rmSync(join(String(dir), "README.md"));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual([]);
+    expect(stderr).toContain("1 changed file, but no test files are affected");
+    expect(exitCode).toBe(0);
+  });
+
+  // A preload file runs before every test file without being imported by one.
+  const preloadFixture = {
+    ...fixture,
+    "setup.ts": `import "./setup-dep";\n`,
+    "setup-dep.ts": `(globalThis as any).fromPreload = 1;\n`,
+  };
+  test.each([
+    ["bunfig.toml", "setup.ts", { "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n` }, []],
+    ["--preload", "setup.ts", {}, ["--preload", "./setup.ts"]],
+    ["a file that the preload imports", "setup-dep.ts", {}, ["--preload", "./setup.ts"]],
+  ] as const)("a changed preload file selects every test (%s)", async (_label, edited, config, args) => {
+    using dir = tempDir("test-changed-preload", { ...preloadFixture, ...config });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), edited), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), [...args]);
+    expect(ranFiles(stderr, names)).toEqual(names);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a changed snapshot file selects the test that reads it", async () => {
+    using dir = tempDir("test-changed-snapshot", {
+      ...fixture,
+      "snap.test.ts": `import { test, expect } from "bun:test";\ntest("snap", () => expect({ one: 1 }).toMatchSnapshot());\n`,
+      "__snapshots__/snap.test.ts.snap": `// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[\`snap 1\`] = \`\n{\n  "one": 1,\n}\n\`;\n`,
+    });
+    initRepo(String(dir));
+    const snapshot = join(String(dir), "__snapshots__", "snap.test.ts.snap");
+    writeFileSync(snapshot, readFileSync(snapshot, "utf8").replace(`"one": 1`, `"one": 2`));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, [...names, "snap.test.ts"])).toEqual(["snap.test.ts"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a git failure is an error, not an empty set of changes", async () => {
+    using dir = tempDir("test-changed-git-fails", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "c.test.ts"), "// touched\n");
+    // Every `git diff` and `git ls-files` exits 128 on a truncated index.
+    truncateSync(join(String(dir), ".git", "index"), 20);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual([]);
+    expect(stderr).toContain("error: --changed: fatal:");
+    expect(stderr).not.toContain("nothing to run");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a repository without commits runs every untracked test file", async () => {
+    using dir = tempDir("test-changed-no-commits", fixture);
+    git(String(dir), "init", "-q");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(names);
     expect(exitCode).toBe(0);
   });
 });

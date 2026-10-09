@@ -43,15 +43,4 @@ impl<'a> QueryBindingIterator<'a> {
             Self::Objects(iter) => iter.any_failed,
         }
     }
-
-    pub(crate) fn to(&mut self, index: u32) {
-        match self {
-            Self::Array(iter) => iter.i = index,
-            Self::Objects(iter) => {
-                iter.cell_i = index % iter.columns_count;
-                iter.row_i = index / iter.columns_count;
-                iter.current_row = JSValue::ZERO;
-            }
-        }
-    }
 }

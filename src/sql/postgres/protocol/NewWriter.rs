@@ -38,6 +38,23 @@ impl<C: WriterContext> LengthWriter<C> {
     }
 }
 
+/// The Int16 format codes of a Bind message. Each is text (0) until `set_binary` flips it to binary (1).
+#[derive(Copy, Clone)]
+pub struct FormatCodes<C: WriterContext> {
+    index: usize,
+    count: u16,
+    context: NewWriter<C>,
+}
+
+impl<C: WriterContext> FormatCodes<C> {
+    #[inline]
+    pub fn set_binary(self, slot: usize) -> Result<(), AnyPostgresError> {
+        debug_assert!(slot < usize::from(self.count));
+        self.context
+            .pwrite(&1u16.to_be_bytes(), self.index + slot * 2)
+    }
+}
+
 impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
@@ -50,6 +67,29 @@ impl<C: WriterContext> NewWriter<C> {
         self.int4(0)?;
         Ok(LengthWriter {
             index: i,
+            context: self,
+        })
+    }
+
+    /// Writes the Int16 count and then `count` text format codes.
+    #[inline]
+    pub fn format_codes(self, count: u16) -> Result<FormatCodes<C>, AnyPostgresError> {
+        let mut chunk = [0u8; 64];
+        chunk[..2].copy_from_slice(&count.to_be_bytes());
+        let index = self.offset() + 2;
+        let mut remaining = 2 + usize::from(count) * 2;
+        loop {
+            let n = remaining.min(chunk.len());
+            self.write(&chunk[..n])?;
+            remaining -= n;
+            if remaining == 0 {
+                break;
+            }
+            chunk[..2].fill(0);
+        }
+        Ok(FormatCodes {
+            index,
+            count,
             context: self,
         })
     }

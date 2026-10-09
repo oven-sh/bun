@@ -1171,13 +1171,14 @@ try {
 
 ### Query Errors
 
-| Query Errors                         | Description                                |
-| ------------------------------------ | ------------------------------------------ |
-| `ERR_POSTGRES_SYNTAX_ERROR`          | Invalid SQL syntax (extends `SyntaxError`) |
-| `ERR_POSTGRES_SERVER_ERROR`          | General error from PostgreSQL server       |
-| `ERR_POSTGRES_INVALID_QUERY_BINDING` | Invalid parameter binding                  |
-| `ERR_POSTGRES_QUERY_CANCELLED`       | Query was cancelled                        |
-| `ERR_POSTGRES_NOT_TAGGED_CALL`       | Query was called without a tagged call     |
+| Query Errors                         | Description                                                                                                                                                                                                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERR_POSTGRES_SYNTAX_ERROR`          | Invalid SQL syntax (extends `SyntaxError`)                                                                                                                                                                                                                      |
+| `ERR_POSTGRES_SERVER_ERROR`          | General error from PostgreSQL server                                                                                                                                                                                                                            |
+| `ERR_POSTGRES_INVALID_QUERY_BINDING` | Invalid parameter binding                                                                                                                                                                                                                                       |
+| `ERR_POSTGRES_QUERY_CANCELLED`       | Query was cancelled                                                                                                                                                                                                                                             |
+| `ERR_POSTGRES_NOT_TAGGED_CALL`       | Query was called without a tagged call                                                                                                                                                                                                                          |
+| `ERR_INVALID_ARG_TYPE`               | A value bound to a `boolean` parameter is not a boolean or a string, or a value bound to a `bytea` parameter is not a `Buffer`, `TypedArray`, `ArrayBuffer` or string. This is a `TypeError`, not an `SQL.PostgresError`. Bun raises it before anything is sent |
 
 ### Data Type Errors
 

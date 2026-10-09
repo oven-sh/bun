@@ -28,8 +28,11 @@ const OID = {
   int4: 23,
   text: 25,
   json: 114,
+  float4: 700,
   float8: 701,
+  int4Array: 1007,
   timestamptz: 1184,
+  numeric: 1700,
   jsonb: 3802,
 };
 // Above u16::MAX, so the client treats it as a type it does not know.
@@ -103,6 +106,25 @@ const cases: [string, unknown, number, number, 0 | 1, Buffer | null][] = [
   ["Buffer as bytea", Buffer.from([1, 2, 3]), OID.bytea, OID.bytea, 1, Buffer.from([1, 2, 3])],
   ["string for a binary type stays text", "42", OID.int4, 0, 0, Buffer.from("42")],
   ["string for an unknown type", "happy", CUSTOM_OID, 0, 0, Buffer.from("happy")],
+  // A binary encoder takes only the class it represents exactly. Any other
+  // value goes as text, and the server parses or rejects it.
+  ["object for an int4 parameter goes as text", {}, OID.int4, 0, 0, Buffer.from("[object Object]")],
+  ["object for a float8 parameter goes as text", {}, OID.float8, 0, 0, Buffer.from("[object Object]")],
+  [
+    "Invalid Date for a timestamptz parameter goes as text",
+    new Date(NaN),
+    OID.timestamptz,
+    0,
+    0,
+    Buffer.from("Invalid Date"),
+  ],
+  ["array for a timestamptz parameter goes as text", [1, 2], OID.timestamptz, 0, 0, Buffer.from("1,2")],
+  // Types that only the decoder knows in binary: text bytes with the text format code.
+  ["toString value for a numeric parameter", { toString: () => "12.50" }, OID.numeric, 0, 0, Buffer.from("12.50")],
+  ["toString value for a float4 parameter", { toString: () => "1.5" }, OID.float4, 0, 0, Buffer.from("1.5")],
+  ["toString value for an int4[] parameter", { toString: () => "{1,2}" }, OID.int4Array, 0, 0, Buffer.from("{1,2}")],
+  // A double that holds an integer is still an exact int4.
+  ["integral double as int4", new Float64Array([5])[0], OID.int4, OID.int4, 1, Buffer.from("00000005", "hex")],
 ];
 
 describe("named statements", () => {
@@ -201,6 +223,53 @@ describe("named statements", () => {
         pgSync(),
       ]),
     );
+  });
+
+  test("a value the client refuses for a boolean or a bytea parameter sends no Bind", async () => {
+    try {
+      const sockets = received.size;
+      const refused: [string, number, unknown][] = [
+        ["boolean", OID.bool, []],
+        ["bytea", OID.bytea, [1, 2]],
+      ];
+      for (const [type, oid, value] of refused) {
+        const query = `select $1 as v /* refused ${type}: params=${oid} cols=${OID.text} */`;
+        const code = () =>
+          sql.unsafe(query, [value]).then(
+            () => "resolved",
+            e => e.code,
+          );
+        expect(await code()).toBe("ERR_INVALID_ARG_TYPE");
+        const first = drain();
+        const statement = statementName(first);
+        // The Bind waits for the ParameterDescription, and then it is never written.
+        expect(first).toEqual(hex([pgParse(statement, query, [0]), pgDescribe("S", statement), pgSync()]));
+        // The statement is prepared now: the next execution sends nothing.
+        expect(await code()).toBe("ERR_INVALID_ARG_TYPE");
+        expect(drain()).toEqual([]);
+      }
+
+      // The next query binds, on the same socket.
+      const query = `select $1 as v /* after a refusal: params=${OID.int4} cols=${OID.text} */`;
+      await sql.unsafe(query, [7]);
+      const stream = drain();
+      const statement = statementName(stream);
+      expect(stream).toEqual(
+        hex([
+          pgParse(statement, query, [OID.int4]),
+          pgDescribe("S", statement),
+          pgSync(),
+          pgBind({ statement, paramFormats: [1], params: [Buffer.from("00000007", "hex")], resultFormats: [] }),
+          pgExecute(),
+          pgFlush(),
+          pgSync(),
+        ]),
+      );
+      expect(received.size).toBe(sockets);
+    } finally {
+      // Leave nothing behind for the next test if an expectation above fails.
+      drain();
+    }
   });
 });
 

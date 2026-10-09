@@ -1,6 +1,7 @@
 use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
+use bun_jsc::ArrayBuffer;
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
@@ -69,6 +70,107 @@ fn invalid_bind_value(
     ))))
 }
 
+/// How one bound parameter goes on the wire. `param_encoding` decides it once,
+/// so the format code and the bytes of a parameter cannot disagree.
+enum ParamEncoding {
+    Bool(bool),
+    Int4(i32),
+    Float8(f64),
+    /// Microseconds since 2000-01-01.
+    Timestamp(i64),
+    Bytes(ArrayBuffer),
+    /// `JSON.stringify(value)` in text format.
+    Json,
+    /// `String(value)` in text format. The server parses it as the parameter's type.
+    Text,
+}
+
+const _: () = assert!(core::mem::size_of::<ParamEncoding>() <= 48);
+
+/// A binary encoder runs only for the JS class it represents exactly. Any other
+/// value goes as text, so the server rejects what it cannot parse. Boolean and
+/// bytea input accept text that is not such a value (`String([true])`, any
+/// string), so those two slots reject here.
+#[inline(always)]
+fn param_encoding(
+    global: &JSGlobalObject,
+    tag: types::Tag,
+    value: JSValue,
+    index: usize,
+) -> Result<ParamEncoding, AnyPostgresError> {
+    Ok(match tag {
+        types::Tag::json | types::Tag::jsonb => ParamEncoding::Json,
+        // A string is never converted: the server parses it, so Bun cannot, for
+        // example, strip a time zone differently than Postgres does.
+        types::Tag::bool
+        | types::Tag::bytea
+        | types::Tag::int4
+        | types::Tag::float8
+        | types::Tag::timestamp
+        | types::Tag::timestamptz
+            if value.is_string() =>
+        {
+            ParamEncoding::Text
+        }
+        types::Tag::bool => {
+            if !value.is_boolean() {
+                return Err(invalid_bind_value(
+                    global,
+                    index,
+                    "boolean",
+                    "a boolean or a string",
+                    value,
+                ));
+            }
+            ParamEncoding::Bool(value.as_boolean())
+        }
+        types::Tag::bytea => match value.as_array_buffer(global) {
+            Some(buffer) => ParamEncoding::Bytes(buffer),
+            None => {
+                return Err(invalid_bind_value(
+                    global,
+                    index,
+                    "bytea",
+                    "a Buffer, TypedArray, ArrayBuffer or string",
+                    value,
+                ));
+            }
+        },
+        types::Tag::int4 => exact_int4(value).map_or(ParamEncoding::Text, ParamEncoding::Int4),
+        types::Tag::float8 if value.is_number() => ParamEncoding::Float8(value.as_number()),
+        types::Tag::timestamp | types::Tag::timestamptz => {
+            let ms = if value.is_date() {
+                value.get_unix_timestamp()
+            } else if value.is_number() {
+                value.as_number()
+            } else {
+                f64::NAN
+            };
+            // NaN is an Invalid Date. As text, the server's error names it.
+            if ms.is_nan() {
+                ParamEncoding::Text
+            } else {
+                ParamEncoding::Timestamp(crate::postgres::types::date::from_unix_ms(ms))
+            }
+        }
+        _ => ParamEncoding::Text,
+    })
+}
+
+/// The `i32` that a JS number holds exactly, if any.
+fn exact_int4(value: JSValue) -> Option<i32> {
+    if value.is_int32() {
+        return Some(value.as_int32());
+    }
+    if !value.is_number() {
+        return None;
+    }
+    let double = value.as_number();
+    let fits =
+        double.trunc() == double && double >= f64::from(i32::MIN) && double <= f64::from(i32::MAX);
+    fits.then_some(double as i32)
+}
+
 fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
@@ -92,100 +194,74 @@ fn write_bind<Context: WriterContext>(
 
     let len: u16 = u16::try_from(parameter_fields.len()).expect("int cast");
 
-    // The number of parameter format codes that follow (denoted C
-    // below). This can be zero to indicate that there are no
-    // parameters or that the parameters all use the default format
-    // (text); or one, in which case the specified format code is
-    // applied to all parameters; or it can equal the actual number
-    // of parameters.
-    writer.short(len)?;
-
-    let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
-        .map_err(js_error_to_postgres)?;
-    for i in 0..(len as usize) {
-        let parameter_field = parameter_fields[i];
-        let is_custom_type = (Short::MAX as Int4) < parameter_field;
-        let tag: types::Tag = if is_custom_type {
-            types::Tag::text
-        } else {
-            types::Tag(Short::try_from(parameter_field).unwrap())
-        };
-
-        let force_text = is_custom_type
-            || (tag.is_binary_format_supported()
-                && 'brk: {
-                    iter.to(i as u32);
-                    if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                        break 'brk value.is_string();
-                    }
-                    if iter.any_failed() {
-                        return Err(AnyPostgresError::InvalidQueryBinding);
-                    }
-                    break 'brk false;
-                });
-
-        if force_text {
-            // If they pass a value as a string, let's avoid attempting to
-            // convert it to the binary representation. This minimizes the room
-            // for mistakes on our end, such as stripping the timezone
-            // differently than what Postgres does when given a timestamp with
-            // timezone.
-            writer.short(0)?;
-            continue;
-        }
-
-        writer.short(tag.format_code())?;
-    }
+    // One format code per parameter. Each starts as text (0). A parameter that
+    // is written in binary below sets its own code.
+    let format_codes = writer.format_codes(len)?;
 
     // The number of parameter values that follow (possibly zero). This
     // must match the number of parameters needed by the query.
     writer.short(len)?;
 
     bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
-    iter.to(0);
+    let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
+        .map_err(js_error_to_postgres)?;
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        let tag: types::Tag = 'brk: {
-            if i >= len as usize {
-                // parameter in array but not in parameter_fields
-                // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
-                // with will describe better the error saying exactly how many parameters are missing and are expected
-                // Example:
-                // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
-                // errno: "08P01",
-                // code: "ERR_POSTGRES_SERVER_ERROR"
-                break 'brk types::Tag::text;
-            }
-            let parameter_field = parameter_fields[i];
-            let is_custom_type = (Short::MAX as Int4) < parameter_field;
-            break 'brk if is_custom_type {
-                types::Tag::text
-            } else {
-                types::Tag(Short::try_from(parameter_field).unwrap())
-            };
+        let tag: types::Tag = match parameter_fields.get(i) {
+            // An extra value goes as text. The server reports the count mismatch (08P01).
+            None => types::Tag::text,
+            // An OID above `Short::MAX` is a user-defined type.
+            Some(&parameter_field) if (Short::MAX as Int4) < parameter_field => types::Tag::text,
+            Some(&parameter_field) => types::Tag(Short::try_from(parameter_field).unwrap()),
         };
         if value.is_empty_or_undefined_or_null() {
             bun_core::scoped_log!(Postgres, "  -> NULL");
             //  As a special case, -1 indicates a
             // NULL parameter value. No value bytes follow in the NULL case.
             writer.int4((-1i32) as u32)?;
+            // A NULL has no bytes for the code to disagree with. It takes its type's code.
+            if tag.format_code() == 1 {
+                format_codes.set_binary(i)?;
+            }
             i += 1;
             continue;
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
-        // If they pass a value as a string, let's avoid attempting to
-        // convert it to the binary representation. This minimizes the room
-        // for mistakes on our end, such as stripping the timezone
-        // differently than what Postgres does when given a timestamp with
-        // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
-            types::Tag::text
-        } else {
-            tag
-        };
-        match effective_tag {
-            types::Tag::jsonb | types::Tag::json => {
+        let binary = match param_encoding(global, tag, value, i)? {
+            ParamEncoding::Bool(boolean) => {
+                let l = writer.length()?;
+                writer.write(&[boolean as u8])?;
+                l.write_excluding_self()?;
+                true
+            }
+            ParamEncoding::Int4(int) => {
+                let l = writer.length()?;
+                writer.int4(int as u32)?;
+                l.write_excluding_self()?;
+                true
+            }
+            ParamEncoding::Float8(double) => {
+                let l = writer.length()?;
+                writer.f64(double)?;
+                l.write_excluding_self()?;
+                true
+            }
+            ParamEncoding::Timestamp(microseconds) => {
+                let l = writer.length()?;
+                writer.int8(microseconds)?;
+                l.write_excluding_self()?;
+                true
+            }
+            ParamEncoding::Bytes(buffer) => {
+                let bytes = buffer.byte_slice();
+                let l = writer.length()?;
+                bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
+                writer.write(bytes)?;
+                l.write_excluding_self()?;
+                true
+            }
+            ParamEncoding::Json => {
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 let str = value
                     .json_stringify_fast(global)
@@ -194,62 +270,9 @@ fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
+                false
             }
-            types::Tag::bool => {
-                if !value.is_boolean() {
-                    return Err(invalid_bind_value(
-                        global,
-                        i,
-                        "boolean",
-                        "a boolean or a string",
-                        value,
-                    ));
-                }
-                let l = writer.length()?;
-                writer.write(&[value.as_boolean() as u8])?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::timestamp | types::Tag::timestamptz => {
-                let l = writer.length()?;
-                writer.int8(
-                    crate::postgres::types::date::from_js(global, value)
-                        .map_err(js_error_to_postgres)?,
-                )?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::bytea => {
-                let Some(buf) = value.as_array_buffer(global) else {
-                    return Err(invalid_bind_value(
-                        global,
-                        i,
-                        "bytea",
-                        "a Buffer, TypedArray, ArrayBuffer or string",
-                        value,
-                    ));
-                };
-                let bytes = buf.byte_slice();
-                let l = writer.length()?;
-                bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
-                writer.write(bytes)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4 => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::float8 => {
-                let l = writer.length()?;
-                writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
-                l.write_excluding_self()?;
-            }
-
-            _ => {
+            ParamEncoding::Text => {
                 let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
@@ -258,10 +281,17 @@ fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
+                false
             }
+        };
+        if binary {
+            format_codes.set_binary(i)?;
         }
 
         i += 1;
+    }
+    if iter.any_failed() {
+        return Err(AnyPostgresError::InvalidQueryBinding);
     }
 
     let mut any_non_text_fields: bool = false;

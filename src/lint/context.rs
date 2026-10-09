@@ -2,7 +2,7 @@
 //! means to report.
 
 use crate::ast::{File, Ident, Name};
-use crate::fix::{Fix, Fixer, IntoFix};
+use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::rule::{Message, Rule};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
@@ -44,6 +44,7 @@ pub struct Suggestion {
     /// What the placeholders of the message stand for, which ESLint passes on with a suggestion.
     pub data: Vec<(&'static str, Vec<u8>)>,
     pub fix: Fix,
+    pub kind: SuggestionKind,
 }
 
 /// Collects what the rules report about one file.
@@ -247,7 +248,32 @@ impl<'a> Report<'a> {
 
     /// The same for a message with `{{placeholders}}`.
     pub fn suggest_with<F: IntoFix>(
+        self,
+        message: Message,
+        data: &[(&'static str, &[u8])],
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        self.suggest_as(SuggestionKind::Suggestion, message, data, fix)
+    }
+
+    /// oxlint's `diagnostic_with_dangerous_fix`. It is a suggestion that says what the report says.
+    pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
+        // The text is there when the report is made.
+        self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+    }
+
+    /// oxlint's `diagnostic_with_dangerous_suggestion`.
+    pub fn suggest_dangerously<F: IntoFix>(
+        self,
+        message: Message,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        self.suggest_as(SuggestionKind::DangerousSuggestion, message, &[], fix)
+    }
+
+    fn suggest_as<F: IntoFix>(
         mut self,
+        kind: SuggestionKind,
         message: Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
@@ -263,6 +289,7 @@ impl<'a> Report<'a> {
                 }),
                 data: data.iter().map(|it| (it.0, it.1.to_vec())).collect(),
                 fix,
+                kind,
             });
         }
         self
@@ -275,6 +302,11 @@ impl Drop for Report<'_> {
             diagnostic.message = interpolate(self.message, |name| {
                 self.data.iter().find(|it| it.0 == name).map(|it| &*it.1)
             });
+            for suggestion in &mut diagnostic.suggestions {
+                if suggestion.kind == SuggestionKind::DangerousFix {
+                    suggestion.message.clone_from(&diagnostic.message);
+                }
+            }
             let suggested = diagnostic
                 .suggestions
                 .iter()

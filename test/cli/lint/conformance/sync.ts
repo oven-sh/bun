@@ -4,11 +4,12 @@
 //   export ESLINT_PLUGIN_N_DIR=.. OXC_DIR=..                  # the checkouts that the fixtures were recorded with
 //   bun test/cli/lint/conformance/sync.ts [<fixtures>]        # `fixtures` next to this file, unless named
 //   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # `more/<name>/` is what `<directory>/<plugin>/<rule>.json` are
+//   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # `oxlint/` is what `extract-oxlint.ts` wrote to `<directory>`
 //   bun test/cli/lint/conformance/sync.ts --extract <part of a path, or ""> <directory>
 //
-// Each of the first two leaves the rest of the bundle as it is.
+// Each of the first three leaves the rest of the bundle as it is.
 import { $ } from "bun";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { collect, extract, readBundle, writeBundle } from "../../format/bundle.ts";
 
@@ -87,12 +88,26 @@ if (first === "--extract" && rest.length === 2) {
   for (const [path, bytes] of found) files.set(`more/${name}/${path}`, bytes);
   writeBundle(bundle, files);
   console.log(`more/${name}: ${summary(found)}. In all: ${summary(files)}`);
+} else if (first === "--oxlint" && rest.length === 1) {
+  const [directory] = rest;
+  const files = kept(path => !path.startsWith("oxlint/") && !path.startsWith("oxlint-import-project/"));
+  const found = new Map<string, Uint8Array>();
+  for (const plugin of readdirSync(directory).sort()) {
+    if (statSync(join(directory, plugin)).isDirectory()) collect(directory, plugin, found, () => false);
+  }
+  clean(found, [directory]);
+  // The files that the cases of `import` are next to are not tests.
+  for (const [path, bytes] of found) files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
+  writeBundle(bundle, files);
+  console.log(`oxlint: ${summary(found)}. In all: ${summary(files)}`);
 } else if (first?.startsWith("--")) {
-  console.error("usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --extract <part of a path> <directory>");
+  console.error(
+    "usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --oxlint <directory> | --extract <part of a path> <directory>",
+  );
   process.exit(1);
 } else {
   const fixtures = first ?? join(here, "fixtures");
-  const files = kept(path => path.startsWith("more/"));
+  const files = kept(path => path.startsWith("more/") || path.startsWith("oxlint"));
   for (const directory of ["eslint", "typescript-eslint", "react-hooks", "import", "n", "oxc"]) collect(fixtures, directory, files, () => false);
   for (const directory of ["typescript-eslint-project", "import-project", "n-project"]) collect(fixtures, directory, files, () => false);
 

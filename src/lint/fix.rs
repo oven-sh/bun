@@ -11,6 +11,18 @@ pub struct Fix {
     pub text: Vec<u8>,
 }
 
+/// How much a change that `--fix` does not make can be trusted: oxlint's `FixKind`. ESLint knows the first only.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum SuggestionKind {
+    /// It may change what the program does: `--fix-suggestions` makes it.
+    #[default]
+    Suggestion,
+    /// It may break the program: `--fix-dangerously` makes it.
+    DangerousFix,
+    /// Both flags together make it.
+    DangerousSuggestion,
+}
+
 /// Makes [`Fix`]es, as ESLint's `fixer`. Each method takes a node, a token, a comment or a
 /// [`Span`].
 #[derive(Copy, Clone)]

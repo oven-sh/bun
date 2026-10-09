@@ -248,13 +248,15 @@ class Parser {
 // Test cases
 // ---------------------------------------------------------------------------
 
-interface Case {
+export interface Case {
   name: string;
   code: string;
   options?: unknown[];
   filename?: string;
   languageOptions?: Record<string, unknown>;
   settings?: Record<string, unknown>;
+  /** The part of an `.oxlintrc.json` that the case is linted with, as it is written. */
+  oxlintrc?: Record<string, unknown>;
 }
 
 interface Stats {
@@ -382,6 +384,7 @@ export function casesOfFile(
           for (const other of others) {
             if (typeof other === "string" && EXTENSIONS.test(other)) made.filename = other;
             if (!isObject(other)) continue;
+            made.oxlintrc = other;
             if (isObject(other.settings)) made.settings = other.settings;
             let globals: Record<string, unknown> = {};
             for (const [environment, isOn] of Object.entries(other.env ?? {})) {
@@ -454,6 +457,7 @@ if (import.meta.main) {
       const own = new Set<string>();
       const kept = cases.filter(it => {
         if (seen.has(key(it.code, it.options))) return (stats.upstream++, false);
+        delete it.oxlintrc;
         const full = JSON.stringify({ ...it, name: undefined });
         if (own.has(full)) return (stats.duplicates++, false);
         own.add(full);

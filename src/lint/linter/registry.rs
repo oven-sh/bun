@@ -69,15 +69,24 @@ const TYPESCRIPT_COMPATIBLE_ESLINT_RULES: [&[u8]; 18] = [
 /// Rules that typescript-eslint extends and oxlint has in `typescript` only.
 const ONLY_IN_TYPESCRIPT_IN_OXLINT: [&[u8]; 2] = [b"consistent-return", b"dot-notation"];
 
-/// The plugins of oxlint of which something is implemented here, as it calls them, in the order in
-/// which it looks for a rule that is written without its plugin.
-const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 6] = [
+/// The plugins of oxlint, as it calls them, in the order in which it looks for a rule that is written
+/// without its plugin.
+const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 15] = [
     (Plugin::Eslint, b"eslint"),
     (Plugin::Import, b"import"),
+    (Plugin::Jest, b"jest"),
+    (Plugin::Jsdoc, b"jsdoc"),
+    (Plugin::JsxA11y, b"jsx-a11y"),
+    (Plugin::Nextjs, b"nextjs"),
     (Plugin::Node, b"node"),
     (Plugin::Oxc, b"oxc"),
-    (Plugin::ReactHooks, b"react"),
+    (Plugin::Promise, b"promise"),
+    (Plugin::React, b"react"),
+    (Plugin::ReactPerf, b"react-perf"),
     (Plugin::TypeScript, b"typescript"),
+    (Plugin::Unicorn, b"unicorn"),
+    (Plugin::Vitest, b"vitest"),
+    (Plugin::Vue, b"vue"),
 ];
 
 /// oxlint's `is_eslint_rule_adapted_to_typescript`.
@@ -105,6 +114,8 @@ pub fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
         b"import-x" => b"import",
         b"jsx_a11y" | b"jsx-a11y-x" | b"jsx_a11y-x" => b"jsx-a11y",
         b"react_perf" => b"react-perf",
+        // `unalias_plugin_name`
+        b"@next/next" | b"@next" => b"nextjs",
         name => name,
     }
 }
@@ -171,7 +182,10 @@ pub fn oxlint_filter_keys(name: &[u8]) -> Vec<Vec<u8>> {
 /// The category that oxlint has the rule in that [`oxlint_rule_key`] writes `key`.
 pub fn oxlint_category_of_key(key: &[u8]) -> Option<&'static str> {
     let (prefix, name) = parse_rule_id(key);
-    oxlint_category(Plugin::of_prefix(prefix)?, std::str::from_utf8(name).ok()?)
+    oxlint_category(
+        Plugin::of_oxlint_prefix(prefix)?,
+        std::str::from_utf8(name).ok()?,
+    )
 }
 
 /// ESLint's `parseRuleId`: the name of the plugin, which is empty for a rule of ESLint itself, and
@@ -215,8 +229,9 @@ impl Registry {
             .ok()
     }
 
-    /// The same as [`Registry::get`]. With `prefers_typescript`, for a rule of ESLint that
-    /// typescript-eslint extends and that understands TypeScript in oxlint, the extension.
+    /// The same as [`Registry::get`]. With `prefers_typescript`, which is with a configuration of
+    /// oxlint: for a rule of ESLint that typescript-eslint extends and that understands TypeScript in
+    /// oxlint, the extension. Without it: not a rule that only oxlint has.
     pub fn get_preferring(
         &self,
         plugin: Plugin,
@@ -232,13 +247,16 @@ impl Registry {
         {
             return Some(extension);
         }
-        self.get(plugin, name).or_else(|| match plugin {
+        let found = self.get(plugin, name).or_else(|| match plugin {
+            // oxlint has them in one plugin.
+            Plugin::React if prefers_typescript => self.get(Plugin::ReactHooks, name),
             // oxlint has rules in `node` that ESLint has given up: `no-sync`, `global-require`.
             Plugin::Node if prefers_typescript && is_in_oxlint(plugin, name) => {
                 self.get(Plugin::Eslint, name)
             }
             _ => None,
-        })
+        });
+        found.filter(|it| prefers_typescript || !it.meta.follows_oxlint)
     }
 
     /// The same as [`Registry::find`], with what [`Registry::get_preferring`] does.
@@ -248,7 +266,11 @@ impl Registry {
         prefers_typescript: bool,
     ) -> Option<&'static RuleEntry> {
         let (prefix, name) = parse_rule_id(id);
-        self.get_preferring(Plugin::of_prefix(prefix)?, name, prefers_typescript)
+        let plugin = match prefers_typescript {
+            true => Plugin::of_oxlint_prefix(prefix),
+            false => Plugin::of_prefix(prefix),
+        };
+        self.get_preferring(plugin?, name, prefers_typescript)
     }
 
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,

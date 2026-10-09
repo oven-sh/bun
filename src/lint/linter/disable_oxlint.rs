@@ -13,7 +13,7 @@ use super::message::{LintMessage, Locator, RuleId, Suggestion, Suppression};
 use super::space::{space_len, trim_end, trim_start};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Fix, SuggestionKind};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -461,6 +461,7 @@ pub(crate) fn apply<'a>(
                     span,
                     text: Vec::new(),
                 },
+                kind: SuggestionKind::Suggestion,
             });
         }
         problems.push(problem);

@@ -2,7 +2,7 @@
 
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Fix, SuggestionKind};
 use crate::js_plugin;
 use crate::options::Json;
 use crate::rule::{Meta, Plugin};
@@ -110,6 +110,7 @@ pub struct Suggestion {
     /// What the placeholders of the message stand for.
     pub data: Vec<(Cow<'static, str>, Vec<u8>)>,
     pub fix: Fix,
+    pub kind: SuggestionKind,
 }
 
 impl From<crate::context::Suggestion> for Suggestion {
@@ -122,6 +123,7 @@ impl From<crate::context::Suggestion> for Suggestion {
                 .map(|(name, value)| (Cow::Borrowed(name), value))
                 .collect(),
             fix: it.fix,
+            kind: it.kind,
         }
     }
 }
@@ -138,6 +140,7 @@ impl From<js_plugin::Suggested> for Suggestion {
                 .map(|(name, value)| (Cow::Owned(name.into()), value))
                 .collect(),
             fix: it.fix,
+            kind: SuggestionKind::Suggestion,
         }
     }
 }

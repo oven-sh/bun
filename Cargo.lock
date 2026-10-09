@@ -1079,6 +1079,7 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
+ "bun_glob",
  "bun_lint",
  "rustc-hash",
  "smallvec",

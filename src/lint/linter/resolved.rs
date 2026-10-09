@@ -213,8 +213,10 @@ impl ResolvedConfig {
             }
             _ => options,
         };
+        // The schemas are those of the rules for ESLint.
         if severity != Severity::Off
             && self.error.is_none()
+            && !entry.meta.follows_oxlint
             && let Err(lines) = super::schema::validate(entry.meta, options)
         {
             let id = super::RuleId::Known(entry.meta).to_vec();

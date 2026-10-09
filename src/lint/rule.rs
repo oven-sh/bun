@@ -89,6 +89,26 @@ pub enum Plugin {
     Node,
     /// `oxc/no-accumulating-spread`
     Oxc,
+    /// `unicorn/no-null`
+    Unicorn,
+    /// `react/jsx-key`
+    React,
+    /// `react-perf/jsx-no-new-object-as-prop`
+    ReactPerf,
+    /// `jsx-a11y/alt-text`
+    JsxA11y,
+    /// `@next/next/no-img-element`
+    Nextjs,
+    /// `promise/param-names`
+    Promise,
+    /// `jest/no-focused-tests`
+    Jest,
+    /// `vitest/no-focused-tests`
+    Vitest,
+    /// `jsdoc/require-param`
+    Jsdoc,
+    /// `vue/no-dupe-keys`
+    Vue,
 }
 
 impl Plugin {
@@ -101,6 +121,16 @@ impl Plugin {
             Plugin::Import => "import",
             Plugin::Node => "n",
             Plugin::Oxc => "oxc",
+            Plugin::Unicorn => "unicorn",
+            Plugin::React => "react",
+            Plugin::ReactPerf => "react-perf",
+            Plugin::JsxA11y => "jsx-a11y",
+            Plugin::Nextjs => "@next/next",
+            Plugin::Promise => "promise",
+            Plugin::Jest => "jest",
+            Plugin::Vitest => "vitest",
+            Plugin::Jsdoc => "jsdoc",
+            Plugin::Vue => "vue",
         }
     }
 
@@ -116,6 +146,32 @@ impl Plugin {
             b"oxc" => Plugin::Oxc,
             _ => return None,
         })
+    }
+
+    /// The same in a configuration of oxlint and in the comments of a file that is linted with one. oxlint has more plugins built
+    /// in. With ESLint these are packages of the project, which have other messages and other options.
+    pub fn of_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
+        Some(match prefix {
+            b"unicorn" => Plugin::Unicorn,
+            b"react" | b"react-hooks" | b"react_hooks" => Plugin::React,
+            b"react-perf" | b"react_perf" => Plugin::ReactPerf,
+            b"jsx-a11y" | b"jsx_a11y" => Plugin::JsxA11y,
+            b"nextjs" | b"@next/next" => Plugin::Nextjs,
+            b"promise" => Plugin::Promise,
+            b"jest" => Plugin::Jest,
+            b"vitest" => Plugin::Vitest,
+            b"jsdoc" => Plugin::Jsdoc,
+            b"vue" => Plugin::Vue,
+            _ => return Plugin::of_prefix(prefix),
+        })
+    }
+
+    /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
+    pub const fn in_oxlint(self) -> Plugin {
+        match self {
+            Plugin::ReactHooks => Plugin::React,
+            plugin => plugin,
+        }
     }
 }
 
@@ -173,6 +229,9 @@ pub struct Meta {
     pub extends_base_rule: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
+    /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
+    /// the options are oxlint's. It exists only with a configuration of oxlint.
+    pub follows_oxlint: bool,
 }
 
 impl Meta {
@@ -188,6 +247,7 @@ impl Meta {
             is_deprecated: false,
             extends_base_rule: None,
             needs_modules: false,
+            follows_oxlint: false,
         }
     }
 
@@ -202,6 +262,13 @@ impl Meta {
     /// A rule of another plugin.
     pub const fn plugin(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
         Meta::new(plugin, name, kind)
+    }
+
+    /// A rule of a plugin that is built into oxlint, as oxlint has it: [`Meta::follows_oxlint`].
+    pub const fn oxlint(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
+        let mut meta = Meta::new(plugin, name, kind);
+        meta.follows_oxlint = true;
+        meta
     }
 
     pub const fn fixable(mut self, fixable: Fixable) -> Meta {

@@ -225,7 +225,10 @@ impl Reader<'_> {
                 settings.push(setting);
                 continue;
             }
-            setting.written_for = Plugin::of_prefix(prefix);
+            setting.written_for = match self.prefers_typescript_rules {
+                true => Plugin::of_oxlint_prefix(prefix),
+                false => Plugin::of_prefix(prefix),
+            };
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
             }

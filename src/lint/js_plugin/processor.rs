@@ -9,7 +9,7 @@ use super::host::{Host, number};
 use super::offsets::Offsets;
 use super::wire::{self, result};
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Fix, SuggestionKind};
 use crate::linter::{
     LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets, write_json,
 };
@@ -125,6 +125,7 @@ fn suggestion_of(json: &Json, offsets: &Offsets) -> Option<Suggestion> {
         message: json.get(b"desc")?.as_str()?.to_vec(),
         data: data.collect(),
         fix: fix_of(json.get(b"fix"), offsets)?,
+        kind: SuggestionKind::Suggestion,
     })
 }
 

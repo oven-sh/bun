@@ -16,7 +16,23 @@ const version = /[\d.]+/.exec(execFileSync(oxlint, ["--version"]).toString())[0]
 const rules = JSON.parse(execFileSync(oxlint, ["--rules", "--format", "json"], { maxBuffer: 1 << 26 }).toString());
 const categories = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
 // The plugins of which something is implemented here.
-const plugins = ["eslint", "typescript", "react", "import", "node", "oxc"];
+const plugins = [
+  "eslint",
+  "typescript",
+  "react",
+  "import",
+  "node",
+  "oxc",
+  "unicorn",
+  "react_perf",
+  "jsx_a11y",
+  "nextjs",
+  "promise",
+  "jest",
+  "vitest",
+  "jsdoc",
+  "vue",
+];
 // Where the executable does something else than the source says. Each was tried: a file of each kind that the rule reports.
 const corrections = {
   // 1.80 reports `require()` in JavaScript files too.

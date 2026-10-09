@@ -42,6 +42,7 @@ fn scope(prefix: &[u8]) -> &[u8] {
         b"" => b"eslint",
         b"@typescript-eslint" => b"typescript",
         b"n" => b"node",
+        b"@next/next" => b"next",
         prefix => prefix,
     }
 }
@@ -462,10 +463,12 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
 
 /// The plugin of oxlint that has the rules with the prefix `prefix`.
 fn plugin(prefix: &[u8]) -> &[u8] {
-    if prefix == b"react-hooks" {
-        b"react"
-    } else {
-        scope(prefix)
+    match prefix {
+        b"react-hooks" => b"react",
+        b"react-perf" => b"react_perf",
+        b"jsx-a11y" => b"jsx_a11y",
+        b"@next/next" => b"nextjs",
+        prefix => scope(prefix),
     }
 }
 
@@ -513,7 +516,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
                 b"default",
                 Json::Bool(
                     category == Some("correctness")
-                        && matches!(scope, b"eslint" | b"typescript" | b"oxc"),
+                        && matches!(scope, b"eslint" | b"typescript" | b"oxc" | b"unicorn"),
                 ),
             ),
             (b"docs_url", text(&url)),

@@ -8,6 +8,9 @@
 //!
 //! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
 //! id, text, fix and the code after it) and the code after one pass of fixes is.
+//!
+//! `oxlint/` has the tests of the rules that are ports of oxlint's, with what the executable of oxlint reports. It does not print
+//! its fixes: there the code is compared after what `--fix` applies, then also `--fix-suggestions`, then also `--fix-dangerously`.
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +18,7 @@ mod compare;
 mod test_only_rules;
 
 pub use bun_format_conformance::{Bundle, read_file, write_line};
+use compare::problem_of_oxlint;
 pub use compare::{
     Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
 };
@@ -24,7 +28,7 @@ use bun_core::strings;
 use bun_format_conformance::output_line;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Linter, ResolvedConfig, RuleId};
+use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, RcFlavor, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
@@ -128,26 +132,39 @@ impl<'a> Flags<'a> {
 }
 
 /// The directories of the bundle that have those of `PLUGINS`, by name.
-const SUITES: [(&str, &str); 4] = [
+const SUITES: [(&str, &str); 5] = [
     ("upstream", ""),
+    ("oxlint", "oxlint/"),
     ("reviews", "more/reviews/"),
     ("oxlint-tsgolint", "more/oxlint-tsgolint/"),
     ("typescript-parser", "more/typescript-parser/"),
 ];
 
 /// The directories of a suite that have the tests of rules.
-const PLUGINS: [(&str, Plugin); 6] = [
+const PLUGINS: [(&str, Plugin); 17] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
     ("react-hooks", Plugin::ReactHooks),
     ("import", Plugin::Import),
     ("n", Plugin::Node),
     ("oxc", Plugin::Oxc),
+    ("node", Plugin::Node),
+    ("unicorn", Plugin::Unicorn),
+    ("react", Plugin::React),
+    ("react-perf", Plugin::ReactPerf),
+    ("jsx-a11y", Plugin::JsxA11y),
+    ("nextjs", Plugin::Nextjs),
+    ("promise", Plugin::Promise),
+    ("jest", Plugin::Jest),
+    ("vitest", Plugin::Vitest),
+    ("jsdoc", Plugin::Jsdoc),
+    ("vue", Plugin::Vue),
 ];
 
 /// The directories of the bundle that are written to the disk.
-const PROJECTS: [&[u8]; 4] = [
+const PROJECTS: [&[u8]; 5] = [
     b"import-project/",
+    b"oxlint-import-project/",
     b"n-project/",
     b"typescript-eslint-project/",
     b"node_modules/",
@@ -199,6 +216,66 @@ pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> Res
     config
 }
 
+/// The configuration that oxlint's `Tester` lints a case with: an `.oxlintrc.json` with only that rule, and with what the case
+/// has in `oxlintrc`. `directory`: of the rule in the bundle, which is what oxlint calls its plugin.
+fn oxlint_config_of(
+    linter: &Linter,
+    directory: &str,
+    entry: &'static RuleEntry,
+    case: &Json,
+    path: &[u8],
+) -> Option<ResolvedConfig> {
+    let text = |it: &str| Json::String(it.as_bytes().to_vec());
+    let mut rule = vec![text("error")];
+    rule.extend_from_slice(
+        case.get(b"options")
+            .and_then(Json::as_array)
+            .unwrap_or_default(),
+    );
+    let mut plugins = vec![text(directory)];
+    plugins.extend_from_slice(
+        case.get(b"plugins")
+            .and_then(Json::as_array)
+            .unwrap_or_default(),
+    );
+    let mut file: Vec<(Vec<u8>, Json)> = (case.get(b"oxlintrc"))
+        .and_then(Json::as_object)
+        .unwrap_or_default()
+        .to_vec();
+    file.retain(|it| !matches!(&it.0[..], b"plugins" | b"categories" | b"rules"));
+    if let Some(settings) = case.get(b"settings").filter(|it| it.as_object().is_some())
+        && !file.iter().any(|it| it.0 == b"settings")
+    {
+        file.push((b"settings".to_vec(), settings.clone()));
+    }
+    file.extend([
+        (b"plugins".to_vec(), Json::Array(plugins)),
+        (
+            b"categories".to_vec(),
+            Json::Object(vec![(b"correctness".to_vec(), text("off"))]),
+        ),
+        (
+            b"rules".to_vec(),
+            Json::Object(vec![(
+                format!("{directory}/{}", entry.meta.name).into_bytes(),
+                Json::Array(rule),
+            )]),
+        ),
+    ]);
+    let config = Config::from_rc_json(
+        linter.registry(),
+        b"/",
+        &Json::Object(file),
+        RcFlavor::Oxlint,
+        &mut |_, _| None,
+    );
+    let absolute = [b"/", path.strip_prefix(b"/").unwrap_or(path)].concat();
+    match config.ok()?.get(linter.registry(), &absolute) {
+        FileConfig::Matched(config) => Some((*config).clone()),
+        _ => None,
+    }
+}
+
 /// How a case is run.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
@@ -217,7 +294,8 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
         // `@typescript-eslint/parser` without its services.
         None | Some(b"parser: custom") if is_type_aware => Kind::Typed,
         None | Some(b"parser: custom")
-            if entry.meta.needs_modules || entry.meta.plugin == Plugin::Node =>
+            if entry.meta.needs_modules
+                || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint) =>
         {
             Kind::InProject
         }
@@ -231,13 +309,19 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
 fn run_case(
     host: &dyn Host,
     flags: &Flags,
-    entry: &'static RuleEntry,
+    fixture: &Fixture,
     case: &Json,
     kind: Kind,
 ) -> Result<Option<Problem>, ()> {
+    let entry = fixture.entry;
     let code = string_of(case, b"code").unwrap_or_default();
     let filename = string_of(case, b"filename").unwrap_or(b"file.js");
-    let config = config_of(host.linter(), entry, case);
+    let config = match fixture.plugin_of_oxlint() {
+        Some(directory) => {
+            oxlint_config_of(host.linter(), directory, entry, case, filename).ok_or(())?
+        }
+        None => config_of(host.linter(), entry, case),
+    };
     let in_directory = |directory: &[u8]| match filename.first() {
         Some(b'<' | b'/') => Some(filename.to_vec()),
         _ => Some([flags.projects?, b"/", directory, b"/", filename].concat()),
@@ -253,6 +337,11 @@ fn run_case(
     };
     let messages = match kind {
         Kind::Skipped => return Err(()),
+        // Some rules of oxlint go by the directories that the file is in.
+        Kind::Plain if fixture.plugin_of_oxlint().is_some() => {
+            let absolute = [b"/", filename.strip_prefix(b"/").unwrap_or(filename)].concat();
+            lint(&absolute, Place::Nowhere, None).ok_or(())?
+        }
         Kind::Plain => lint(filename, Place::Nowhere, None).ok_or(())?,
         Kind::WithTestOnlyRules => {
             let rules = test_only_rules::Enabled::in_code(code);
@@ -261,7 +350,9 @@ fn run_case(
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory: &[u8] = if entry.meta.plugin == Plugin::Node {
+            let directory: &[u8] = if entry.meta.follows_oxlint {
+                b"oxlint-import-project"
+            } else if entry.meta.plugin == Plugin::Node {
                 b"n-project"
             } else {
                 b"import-project"
@@ -290,6 +381,9 @@ fn run_case(
             ));
         }
     };
+    if fixture.plugin_of_oxlint().is_some() {
+        return Ok(problem_of_oxlint(entry, code, &messages, case));
+    }
     Ok(problem_of(Some(Outcome::new(entry, code, &messages)), case))
 }
 
@@ -343,6 +437,12 @@ impl Fixture {
     fn cases(&self) -> &[Json] {
         cases_of(&self.json)
     }
+
+    /// The directory of the plugin, if oxlint is the judge.
+    fn plugin_of_oxlint(&self) -> Option<&str> {
+        let rest = self.id.strip_prefix("oxlint/")?;
+        rest.get(..rest.len().checked_sub(self.entry.meta.name.len() + 1)?)
+    }
 }
 
 /// A case that is run.
@@ -376,7 +476,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     }
     let (mut fixtures, mut missing) = (Vec::new(), 0);
     let suites = SUITES.iter().filter(|(name, prefix)| match flags.suite {
-        Some(b"more") => !prefix.is_empty(),
+        Some(b"more") => prefix.starts_with("more/"),
         Some(only) => only == name.as_bytes(),
         None => true,
     });
@@ -454,7 +554,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         let _ = results[at].set(run_case(
             host,
             flags,
-            fixture.entry,
+            fixture,
             &fixture.cases()[it.index],
             it.kind,
         ));

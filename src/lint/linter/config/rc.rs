@@ -9,7 +9,7 @@ use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::{Registry, oxlint_rule_key};
+use crate::linter::registry::{Registry, oxlint_rule_key, plugin_of_oxlint};
 use crate::linter::resolved::find_js_rule;
 use crate::linter::space::trim_end;
 use crate::options::Json;
@@ -37,7 +37,7 @@ pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
     let has = |lists: &[(&str, &str)]| {
         (lists
             .iter()
-            .filter(|it| Plugin::of_prefix(it.0.as_bytes()) == Some(plugin)))
+            .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(plugin.in_oxlint())))
         .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == name.as_bytes()))
     };
     categories::CATEGORIES
@@ -55,11 +55,11 @@ pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
     };
     // oxlint has most of the rules that typescript-eslint extends under the names of ESLint.
     let is_of = |plugin: Plugin| {
-        plugin == meta.plugin
+        plugin == meta.plugin.in_oxlint()
             || (plugin == Plugin::Eslint && meta.extends_base_rule == Some(meta.name))
     };
     !(lists.iter())
-        .filter(|it| Plugin::of_prefix(it.0.as_bytes()).is_some_and(is_of))
+        .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()).is_some_and(is_of))
         .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
 }
 
@@ -486,7 +486,9 @@ impl Rc<'_, '_> {
     /// Whether the rules of `plugin` run.
     fn has_plugin(&self, plugin: Plugin) -> bool {
         plugin == Plugin::Eslint
-            || (self.plugins.iter()).any(|it| Plugin::of_prefix(it) == Some(plugin))
+            || (self.plugins.iter()).any(|it| {
+                Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint())
+            })
     }
 
     /// Adds a setting for each of the rules in `lists` that exist here: the plugins as oxlint calls them, each with the names of
@@ -499,7 +501,7 @@ impl Rc<'_, '_> {
     ) {
         for (plugin, names) in lists {
             let Some(plugin) =
-                Plugin::of_prefix(plugin.as_bytes()).filter(|it| self.has_plugin(*it))
+                Plugin::of_oxlint_prefix(plugin.as_bytes()).filter(|it| self.has_plugin(*it))
             else {
                 continue;
             };

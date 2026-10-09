@@ -2,7 +2,7 @@
 //! reported now.
 
 use bstr::BString;
-use bun_lint::fix::Fix;
+use bun_lint::fix::{Fix, SuggestionKind};
 use bun_lint::linter::{LintMessage, RuleId, Utf16Offsets};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
@@ -189,6 +189,62 @@ fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
 pub struct Problem {
     pub summary: &'static str,
     pub details: String,
+}
+
+/// What is wrong with `messages`, which are about `code`, where oxlint is the judge: the messages without their fixes, and the code
+/// after the fixes that each further flag of oxlint applies.
+pub(crate) fn problem_of_oxlint(
+    entry: &'static RuleEntry,
+    code: &[u8],
+    messages: &[LintMessage],
+    case: &Json,
+) -> Option<Problem> {
+    let mut outcome = Outcome::new(entry, code, messages);
+    for message in &mut outcome.messages {
+        (message.fix, message.suggestions) = (None, Vec::new());
+    }
+    // `output` is compared below.
+    outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
+    if let Some(problem) = problem_of(Some(outcome), case) {
+        return Some(problem);
+    }
+    let steps: [(&[u8], &[SuggestionKind]); 3] = [
+        (b"output", &[]),
+        (b"outputWithSuggestions", &[SuggestionKind::Suggestion]),
+        (
+            b"outputDangerously",
+            &[
+                SuggestionKind::Suggestion,
+                SuggestionKind::DangerousFix,
+                SuggestionKind::DangerousSuggestion,
+            ],
+        ),
+    ];
+    let mut before = code.to_vec();
+    for (key, kinds) in steps {
+        // oxlint applies the first of several.
+        let mut fixes: Vec<&Fix> = (messages.iter())
+            .filter_map(|it| {
+                let suggested = it.suggestions.first().filter(|it| kinds.contains(&it.kind));
+                it.fix.as_ref().or(suggested.map(|it| &it.fix))
+            })
+            .collect();
+        let actual = bun_lint::fix::apply_fixes(code, &mut fixes).unwrap_or_else(|| code.to_vec());
+        let expected = string_of(case, key).unwrap_or(&before).to_vec();
+        if actual != expected {
+            return Some(Problem {
+                summary: "output differs",
+                details: format!(
+                    "  {}\n  expected: {:?}\n  actual: {:?}",
+                    bstr::BStr::new(key),
+                    bstr::BStr::new(&expected),
+                    bstr::BStr::new(&actual)
+                ),
+            });
+        }
+        before = expected;
+    }
+    None
 }
 
 /// What is wrong with `outcome`, which is `None` if the code was not linted at all.

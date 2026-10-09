@@ -192,13 +192,22 @@ fn write_constructor_keyword<'a>(keyword: Ident<'a>, node: AstNodes<'a>, f: &mut
     }
 }
 
+/// `static { ; }` is `static {}` for Prettier. oxfmt breaks the line between the braces.
+fn block_of_empty_statements_is_empty(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// `static { .. }`
 fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     write!(f, ["static", space(), "{"]);
+    let is_empty = |body: &List<'a, Stmt<'a>>| match block_of_empty_statements_is_empty(f) {
+        true => body.iter().all(|it| it.tag() == StmtTag::Empty),
+        false => body.is_empty(),
+    };
     match member
         .func()
         .and_then(Func::body_statements)
-        .filter(|body| !body.is_empty())
+        .filter(|body| !is_empty(body))
     {
         Some(body) => write!(f, block_indent(&FormatStatements(body))),
         None => write!(

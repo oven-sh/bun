@@ -2723,6 +2723,8 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
     timeout,
   );
 
+  // Nine stack overflows, about half a second each on a release build.
+  const timeoutOfCycles = 60_000;
   test(
     "what holds itself in a way that pretty-format does not notice either is a RangeError, and soon",
     async () => {
@@ -2770,12 +2772,12 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--timeout", String(timeout)],
+        cmd: [bunExe(), "test", "--timeout", String(timeoutOfCycles)],
         env: { ...bunEnv, CI: "true" },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
-        timeout: timeout / 2,
+        timeout: timeoutOfCycles / 2,
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const log = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
@@ -2804,7 +2806,7 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
         exitCode: 0,
       });
     },
-    timeout,
+    timeoutOfCycles,
   );
 
   test.each([{}, { REALLOCATE: "1" }])(

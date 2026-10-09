@@ -194,7 +194,7 @@ describe.concurrent("a file that imports from a test module", () => {
       const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--preload=./preload.ts", flag]);
       expect({
         stdout: stdout.split("\n").filter(line => line.startsWith("own")),
-        results: stderr.match(/^\((pass|fail)\) [a-z >]+/gm),
+        results: stderr.match(/^\((pass|fail)\) [a-z >]+[a-z]/gm),
         exitCode,
       }).toEqual({
         stdout: [
@@ -213,7 +213,7 @@ describe.concurrent("a file that imports from a test module", () => {
           "(pass) test",
           "(pass) the other globals",
           "(pass) builtin > test",
-        ].map(line => line + " "),
+        ],
         exitCode: 0,
       });
     },

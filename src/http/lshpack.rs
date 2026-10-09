@@ -110,7 +110,7 @@ impl HeaderBlock {
         self.bytes.capacity() + self.fields.capacity() * core::mem::size_of::<u32>()
     }
 
-    /// Upper bound of the encoded size, as `nghttp2_hd_deflate_bound` computes it.
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
     pub fn deflate_bound(&self) -> usize {
         12 + 12 * self.len() + self.bytes.len()
     }
@@ -118,19 +118,6 @@ impl HeaderBlock {
     /// Output space [`HPACK::encode_block`] asks for.
     pub fn encode_bound(&self) -> usize {
         self.bytes.len() + 32 * self.len()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
-        let mut offset = 0usize;
-        let (fields, _) = self.fields.as_chunks::<2>();
-        fields.iter().map(move |&[name_len, value_len]| {
-            let name_end = offset + (name_len & !Self::NEVER_INDEX) as usize;
-            let value_end = name_end + value_len as usize;
-            let name = &self.bytes[offset..name_end];
-            let value = &self.bytes[name_end..value_end];
-            offset = value_end;
-            (name, value, name_len & Self::NEVER_INDEX != 0)
-        })
     }
 }
 

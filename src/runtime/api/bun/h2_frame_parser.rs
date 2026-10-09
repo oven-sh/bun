@@ -1982,13 +1982,6 @@ impl<'a> HeaderScratch<'a> {
                 .take_h2_header_scratch(),
         }
     }
-
-    /// A 1xx `:status`: the final response still follows on the same stream.
-    fn is_informational(&self) -> bool {
-        self.block
-            .iter()
-            .any(|(name, value, _)| name == b":status" && value.len() == 3 && value[0] == b'1')
-    }
 }
 
 impl Drop for HeaderScratch<'_> {
@@ -2027,10 +2020,6 @@ impl H2FrameParser {
             .encoded
             .try_reserve(scratch.block.encode_bound() + 256)
             .map_err(|_| bun_alloc::AllocError)?;
-        // Cork first: the hand-over can run transport JS, and none may run from encode to write.
-        if ENABLE_AUTO_CORK {
-            self.cork();
-        }
         bun_output::scoped_log!(
             H2FrameParser,
             "encode header block: {} fields",
@@ -2515,8 +2504,7 @@ impl H2FrameParser {
     }
 
     fn cork(&self) {
-        // Loop: a forced uncork runs transport JS, which can cork again. Keep those frames.
-        while let Some(corked) = Self::corked() {
+        if let Some(corked) = Self::corked() {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
                 return;
@@ -3213,7 +3201,7 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
-        if self.transport_write_runs_js() {
+        if matches!(self.native_socket.get(), BunSocket::None) {
             return self.write_to_js_transport(bytes);
         }
         let mut ok = true;
@@ -3249,8 +3237,8 @@ impl H2FrameParser {
         }
     }
 
-    /// `write()` for a session whose transport write runs user JS (`transport_write_runs_js`:
-    /// the `onWrite` handler, or a socket layered on a JS Duplex). That call runs the transport's
+    /// `write()` for a session with no native socket, whose bytes reach the wire through the
+    /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
     /// handed over where another frame may legally follow: at a frame boundary outside a header
@@ -6458,7 +6446,8 @@ impl H2FrameParser {
             headers_arg,
             sensitive_arg,
             options_arg,
-        ] = callframe.arguments_as_array::<5>();
+            informational_arg,
+        ] = callframe.arguments_as_array::<6>();
         if callframe.arguments_count() < 4 {
             return Err(global_object.throw(format_args!(
                 "Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments"
@@ -7004,8 +6993,7 @@ impl H2FrameParser {
             0
         };
 
-        // Checked against the pre-compression bound like nghttp2 (which always counts the
-        // priority fields for HEADERS), before the encoder is touched.
+        // nghttp2's bound, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
         if this.max_send_header_block_length.get() != 0
             && scratch.block.deflate_bound() + StreamPriority::BYTE_SIZE
                 > this.max_send_header_block_length.get() as usize
@@ -7019,8 +7007,8 @@ impl H2FrameParser {
                     JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                     JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                 );
-                // Reset like node. After a refused 1xx block the final response still follows.
-                if !scratch.is_informational() {
+                // DATA cannot follow a refused response. node also closes the session: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L661-L681
+                if !(informational_arg.is_boolean() && informational_arg.as_boolean()) {
                     this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
                 }
                 return Ok(JSValue::js_number(stream_id as f64));
@@ -7044,7 +7032,7 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        // Nothing from here to the block's last write may return, throw or run JS.
+        // Once encoded, the block is in the table: nothing returns or throws before its last write.
         if let Err(err) = this.encode_header_list(&mut scratch) {
             if matches!(err, crate::Error::Alloc(_)) {
                 return Err(global_object.throw(format_args!("Failed to allocate header buffer")));

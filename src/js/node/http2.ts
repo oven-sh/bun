@@ -3533,7 +3533,8 @@ class ServerHttp2Stream extends Http2Stream {
       ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
 
-    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
+    // The last argument marks the block as informational: a refusal leaves the stream open for respond().
+    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, undefined, true);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
     if (this.destroyed || this.session === undefined) {

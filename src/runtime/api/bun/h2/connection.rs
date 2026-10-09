@@ -347,8 +347,6 @@ pub(crate) struct Connection {
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
 
-    /// The fields of the outbound header block being built (`begin_header_block`/`add_header`).
-    enc_block: HeaderBlock,
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
     /// Reusable scratch for end-of-batch window replenishment (stream id, increment).
@@ -392,7 +390,6 @@ impl Connection {
             ),
             sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
             reset_flood: false,
-            enc_block: HeaderBlock::default(),
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -1911,21 +1908,11 @@ impl Connection {
 
     // ---- Outbound stream API (called by the embedder) ------------------
 
-    /// Begin a new outbound header block.
-    pub(crate) fn begin_header_block(&mut self) {
-        self.enc_block.clear();
-    }
-
-    /// Add one header field to the current block. Returns false when it cannot be stored.
-    pub(crate) fn add_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
-        self.enc_block.push(name, value, never_index).is_ok()
-    }
-
-    /// HPACK-encode the current block, every field or none.
-    fn encode_header_block(&mut self) -> Result<Vec<u8>, HpackError> {
+    /// HPACK-encode `headers`, every field or none.
+    fn encode_header_block(&mut self, headers: &HeaderBlock) -> Result<Vec<u8>, HpackError> {
         let mut block = std::mem::take(&mut self.enc_buf);
         block.clear();
-        match self.hpack.encode_block(&self.enc_block, &mut block) {
+        match self.hpack.encode_block(headers, &mut block) {
             Ok(()) => Ok(block),
             Err(err) => {
                 self.enc_buf = block;
@@ -1934,15 +1921,16 @@ impl Connection {
         }
     }
 
-    /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
-    /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
+    /// Emit `headers` as a HEADERS frame, splitting into CONTINUATION frames when the block
+    /// exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
     pub(crate) fn send_header_block(
         &mut self,
         sink: &impl Sink,
         stream_id: u32,
         end_stream: bool,
+        headers: &HeaderBlock,
     ) -> Result<(), HpackError> {
-        let block = self.encode_header_block()?;
+        let block = self.encode_header_block(headers)?;
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -2072,14 +2060,15 @@ impl Connection {
     }
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
-    /// promised request headers staged via begin_header_block/add_header (RFC 9113 §6.6).
+    /// promised request `headers` (RFC 9113 §6.6).
     pub(crate) fn send_push_promise(
         &mut self,
         sink: &impl Sink,
         parent_id: u32,
         promised_id: u32,
+        headers: &HeaderBlock,
     ) -> Result<(), HpackError> {
-        let block = self.encode_header_block()?;
+        let block = self.encode_header_block(headers)?;
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.
@@ -2363,12 +2352,12 @@ mod tests {
         // Client engine encodes + emits a HEADERS frame...
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
-        client.begin_header_block();
-        assert!(client.add_header(b":method", b"GET", false));
-        assert!(client.add_header(b":scheme", b"http", false));
-        assert!(client.add_header(b":path", b"/x", false));
-        assert!(client.add_header(b":authority", b"localhost", false));
-        client.send_header_block(&csink, 1, true).unwrap();
+        let mut headers = HeaderBlock::default();
+        headers.push(b":method", b"GET", false).unwrap();
+        headers.push(b":scheme", b"http", false).unwrap();
+        headers.push(b":path", b"/x", false).unwrap();
+        headers.push(b":authority", b"localhost", false).unwrap();
+        client.send_header_block(&csink, 1, true, &headers).unwrap();
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
             client.streams.get(&1).map(|s| s.state),
@@ -2404,12 +2393,12 @@ mod tests {
         // Server stages the promised request headers and emits PUSH_PROMISE on parent stream 1.
         let ssink = CaptureSink::default();
         let mut server = Connection::new(true, Settings::default());
-        server.begin_header_block();
-        assert!(server.add_header(b":method", b"GET", false));
-        assert!(server.add_header(b":scheme", b"http", false));
-        assert!(server.add_header(b":path", b"/pushed", false));
-        assert!(server.add_header(b":authority", b"localhost", false));
-        server.send_push_promise(&ssink, 1, 2).unwrap();
+        let mut headers = HeaderBlock::default();
+        headers.push(b":method", b"GET", false).unwrap();
+        headers.push(b":scheme", b"http", false).unwrap();
+        headers.push(b":path", b"/pushed", false).unwrap();
+        headers.push(b":authority", b"localhost", false).unwrap();
+        server.send_push_promise(&ssink, 1, 2, &headers).unwrap();
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
             server.streams.get(&2).map(|s| s.state),
@@ -2459,9 +2448,9 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(false, Settings::default());
         // Open a stream (send side) with a tiny peer window.
-        c.begin_header_block();
-        assert!(c.add_header(b":method", b"POST", false));
-        c.send_header_block(&sink, 1, false).unwrap();
+        let mut headers = HeaderBlock::default();
+        headers.push(b":method", b"POST", false).unwrap();
+        c.send_header_block(&sink, 1, false, &headers).unwrap();
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {
             s.send_window = SendWindow::new(4);

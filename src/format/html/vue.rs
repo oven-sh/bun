@@ -17,15 +17,20 @@ struct VFor<'v> {
 /// `parseVueVForDirective`
 fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     // `/(.*?)\s+(in|of)\s+(.*)/s`
-    let (alias, operator, right) = (0..value.len()).find_map(|at| {
-        let rest = &value[at..];
-        let after_space = text::trim_start(rest);
-        let operator = after_space
-            .get(..2)
-            .filter(|it| after_space.len() < rest.len() && matches!(*it, b"in" | b"of"))?;
-        let right = &after_space[2..];
-        text::starts_with_white_space(right).then(|| (&value[..at], operator, text::trim(right)))
-    })?;
+    let mut at = 0;
+    let (alias, operator, right) = loop {
+        let rest = value.get(at..).filter(|rest| !rest.is_empty())?;
+        let blank_len = text::leading_white_space_len(rest);
+        if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[blank_len..]
+            && blank_len > 0
+            && text::starts_with_white_space(right)
+        {
+            let operator = &rest[blank_len..blank_len + 2];
+            break (&value[..at], operator, text::trim(right));
+        }
+        // From anywhere else in the white space, the same follows it.
+        at += blank_len.max(1);
+    };
     if right.is_empty() {
         return None;
     }

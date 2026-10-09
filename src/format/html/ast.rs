@@ -55,6 +55,8 @@ bitflags::bitflags! {
         const HAS_HTM_COMPONENT_CLOSING_TAG = 1 << 13;
         /// Of an element: a conditional comment has been merged into its start tag.
         const HAS_CONDITION = 1 << 14;
+        /// `shouldPreserveContent`
+        const PRESERVES_CONTENT = 1 << 15;
     }
 }
 

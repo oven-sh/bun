@@ -210,7 +210,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         // Where a line break that is part of a text leads is not the same for all that Markdown prints: to the first
         // column in code, to where the lines start in HTML. Which it is, the text does not say.
-        if is_markdown && self.out.indent_level() != Some(0) && strings::contains(&printed, b"\r\n") {
+        if is_markdown && self.out.indent_level() != Some(0) && strings::contains(&printed, b"\r\n")
+        {
             return false;
         }
         let end = printed

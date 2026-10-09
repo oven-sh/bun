@@ -284,7 +284,7 @@ impl<'a> Tree<'a> {
         self.is_vue_sfc_block(id, options) && &self[id].name[..] == b"script"
     }
 
-    /// `shouldPreserveContent`
+    /// `shouldPreserveContent`, once nothing in `id` changes any more. It looks at all children.
     pub(crate) fn should_preserve_content(&self, id: Id, options: &Options<'_>) -> bool {
         let node = &self[id];
         if node.kind == Kind::IeConditionalComment {

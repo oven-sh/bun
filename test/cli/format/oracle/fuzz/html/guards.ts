@@ -105,6 +105,18 @@ const shapes: Record<string, [string, (n: number) => string]> = {
   "interpolations": ["a.vue", n => "<template><p>" + times("{{ a }} ", n) + "</p></template>"],
   "interpolations that do not end": ["a.vue", n => "<template><p>" + times("{{ a ", n) + "</p></template>"],
   "interpolations in Angular": ["a.component.html", n => times("{{ a | b }}", n)],
+  "interpolations in pre": ["a.vue", n => "<template><pre>" + times("{{a}}", n) + "</pre></template>"],
+  "interpolations in a textarea": ["a.component.html", n => "<textarea>" + times("{{a}}", n) + "</textarea>"],
+  "blanks in v-for": ["a.vue", n => `<template><a v-for="a${times(" ", n)}b"></a></template>`],
+  "end tags in a string of TypeScript": ["a.vue", n => `<script lang="ts">\na = "${times("</ ", n)}";\n</script>`],
+  "lines before an end tag in a string of TypeScript": [
+    "a.html",
+    n => `<script lang="ts">\n${times("a;\n", n)}b = "</";\n</script>`,
+  ],
+  "names of attributes that are ignored": [
+    "a.html",
+    n => `<!-- prettier-ignore-attribute${times(" a", n)} -->\n<div${times(" b", n)}></div>`,
+  ],
   "braces": ["a.component.html", n => times("{", n)],
   "at signs": ["a.component.html", n => times("@", n)],
   "declarations": ["a.component.html", n => times("@let a = 1;\n", n)],

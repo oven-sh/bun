@@ -41,8 +41,8 @@ enum BetweenLine {
 enum IgnoredAttributes<'c> {
     None,
     All,
-    /// The names, with white space between them.
-    Named(&'c [u8]),
+    /// The names, sorted.
+    Named(Vec<&'c [u8]>),
 }
 
 impl<'c> IgnoredAttributes<'c> {
@@ -54,37 +54,32 @@ impl<'c> IgnoredAttributes<'c> {
         match rest {
             b"" => IgnoredAttributes::All,
             _ if text::starts_with_white_space(rest) => {
-                IgnoredAttributes::Named(text::trim_start(rest))
+                let (mut rest, mut names) = (text::trim_start(rest), Vec::new());
+                while !rest.is_empty() {
+                    let len = (0..rest.len())
+                        .find(|&at| text::starts_with_white_space(&rest[at..]))
+                        .unwrap_or(rest.len());
+                    names.push(&rest[..len]);
+                    rest = text::trim_start(&rest[len..]);
+                }
+                names.sort_unstable();
+                IgnoredAttributes::Named(names)
             }
             _ => IgnoredAttributes::None,
         }
     }
 
     fn has(&self, attr: &Attribute<'_>) -> bool {
-        match *self {
+        match self {
             IgnoredAttributes::None => false,
             IgnoredAttributes::All => true,
-            IgnoredAttributes::Named(mut names) => {
+            IgnoredAttributes::Named(names) => {
                 let (namespace, name) = attr.raw_name();
-                while !names.is_empty() {
-                    let len = (0..names.len())
-                        .find(|&at| text::starts_with_white_space(&names[at..]))
-                        .unwrap_or(names.len());
-                    let is_same = match namespace {
-                        b"" => &names[..len] == name,
-                        _ => {
-                            names[..len]
-                                .strip_prefix(namespace)
-                                .and_then(|rest| rest.strip_prefix(b":"))
-                                == Some(name)
-                        }
-                    };
-                    if is_same {
-                        return true;
-                    }
-                    names = text::trim_start(&names[len..]);
-                }
-                false
+                let colon: &[u8] = if namespace.is_empty() { b"" } else { b":" };
+                let raw_name = || namespace.iter().chain(colon).chain(name);
+                names
+                    .binary_search_by(|it| it.iter().cmp(raw_name()))
+                    .is_ok()
             }
         }
     }
@@ -520,7 +515,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
     fn print_element(&mut self, id: Id) {
         let (tags, tree, options) = (self.tags(), self.tree, self.options);
         let node = &tree[id];
-        if tree.should_preserve_content(id, options) {
+        if node.has(Flags::PRESERVES_CONTENT) {
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
             self.out.start_group();
             self.print_opening_tag(id);

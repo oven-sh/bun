@@ -89,6 +89,11 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             self.tree[first].flags.insert(Flags::HAS_LEADING_SPACES);
             self.tree[last].flags.insert(Flags::HAS_TRAILING_SPACES);
         }
+        // Every child without an end tag asks when it is printed.
+        let preserves_content = self.tree.should_preserve_content(id, self.options);
+        self.tree[id]
+            .flags
+            .set(Flags::PRESERVES_CONTENT, preserves_content);
     }
 
     fn is_svg_foreign_object(&self, id: Id) -> bool {

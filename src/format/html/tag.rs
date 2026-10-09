@@ -120,8 +120,8 @@ impl<'o> Tags<'_, '_, 'o> {
             && (self.tree.has_prettier_ignore(id)
                 || self
                     .tree
-                    .parent(id)
-                    .is_some_and(|parent| self.tree.should_preserve_content(parent, self.options)))
+                    .parent_of(id)
+                    .is_some_and(|parent| parent.has(Flags::PRESERVES_CONTENT)))
     }
 
     /// ```html

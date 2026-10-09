@@ -40,14 +40,20 @@ const EXPRESSION_TS: &[u8] = b"\0.ts";
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 fn is_probably_jsx(text: &[u8]) -> bool {
     // `</` with the start of a line before it and no quote in between.
-    let mut from = 0;
-    while let Some(at) = strings::index_of(&text[from..], b"</").map(|at| from + at) {
-        let before = &text[..at];
-        match strings::last_index_of_any(before, b"\"'`") {
-            None => return true,
-            Some(quote) if strings::contains_char(&before[quote..], b'\n') => return true,
-            Some(_) => from = at + 2,
+    let mut rest = if strings::contains(text, b"</") {
+        text
+    } else {
+        b""
+    };
+    let mut is_behind_quote = false;
+    while let Some(at) = strings::index_of_any(rest, b"\"'`\n<") {
+        match rest[at] {
+            b'\n' => is_behind_quote = false,
+            b'<' if is_behind_quote || rest.get(at + 1) != Some(&b'/') => {}
+            b'<' => return true,
+            _ => is_behind_quote = true,
         }
+        rest = &rest[at + 1..];
     }
     strings::split(text, b"\n").any(|line| {
         line.len() >= 4
@@ -193,7 +199,10 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
         .body()
         .iter()
         .all(|it| matches!(it.kind(), StmtKind::Empty));
-    write_hashbang(is_all_empty && f.comments().unprinted_comments().is_empty(), f);
+    write_hashbang(
+        is_all_empty && f.comments().unprinted_comments().is_empty(),
+        f,
+    );
     if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
         let comments = f.comments().unprinted_comments();
         let indent = DanglingIndentMode::None;

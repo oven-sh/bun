@@ -1492,9 +1492,8 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
       fds.push(fd);
       return () => new Response(Bun.file(fd).slice(begin, end), init);
     };
-    // Only the framing of these is asserted: a path slice as long as the file
-    // from past byte 0, and a shorter slice with an explicit status.
-    const framingOnly: Record<string, () => Response | Promise<Response>> = {
+    const windows: Record<string, () => Response | Promise<Response>> = {
+      // A path slice as long as the file, from past byte 0.
       "path slice(5, 21)": () => new Response(file().slice(5, 21)),
       "path slice(5, 21) from an async handler": async () => new Response(file().slice(5, 21)),
       "path slice(5, 21).stream()": () => new Response(file().slice(5, 21).stream()),
@@ -1508,8 +1507,6 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
         new Response(file().slice(5, 21), { status: 416, headers: { "Content-Range": "bytes */16" } }),
       "path slice(16, 32)": () => new Response(file().slice(16, 32)),
       "path slice(5, 20) with status 404": () => new Response(file().slice(5, 20), { status: 404 }),
-    };
-    const others: Record<string, () => Response | Promise<Response>> = {
       "path slice(5, 20)": () => new Response(file().slice(5, 20)),
       "path slice(5, 22)": () => new Response(file().slice(5, 22)),
       "path slice(0, 16)": () => new Response(file().slice(0, 16)),
@@ -1522,7 +1519,6 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
         headers: { "Content-Range": "bytes 5-9/16" },
       }),
     };
-    const windows = { ...framingOnly, ...others };
     const names = Object.keys(windows);
     const handler = (req: Request) => {
       const { pathname } = new URL(req.url);
@@ -1542,7 +1538,7 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
         body: get.body,
         head: { contentLength: head.contentLength, body: head.body },
       };
-      if (name in others) answers[name] = { status: get.status, contentRange: get.contentRange };
+      answers[name] = { status: get.status, contentRange: get.contentRange };
     }
 
     // HEAD declares what GET sends, and sends nothing.
@@ -1572,6 +1568,19 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
       "fd slice(5, 10) with status 206 and its own Content-Range": exactly("56789"),
     });
     expect(answers).toEqual({
+      "path slice(5, 21)": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(5, 21) from an async handler": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(5, 21).stream()": { status: 206, contentRange: "bytes 5-15/*" },
+      // Headers without a Content-Range keep the handler's status.
+      "path slice(5, 21) with headers": { status: 200, contentRange: null },
+      "path slice(5, 21) with its own Content-Range": { status: 206, contentRange: "bytes 5-15/16" },
+      // An explicit status is replaced, as for the shorter slice below.
+      "path slice(5, 21) with status 404": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(5, 21) with status 404 and headers": { status: 404, contentRange: null },
+      "path slice(5, 21) with status 416 and its own Content-Range": { status: 206, contentRange: "bytes */16" },
+      // The Content-Range text of an empty window is not pinned here.
+      "path slice(16, 32)": { status: 206, contentRange: expect.any(String) },
+      "path slice(5, 20) with status 404": { status: 206, contentRange: "bytes 5-15/*" },
       "path slice(5, 20)": { status: 206, contentRange: "bytes 5-15/*" },
       "path slice(5, 22)": { status: 206, contentRange: "bytes 5-15/*" },
       "path slice(0, 16)": { status: 200, contentRange: null },
@@ -1583,15 +1592,17 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
     });
 
     // GET only: HEAD takes its length from the size the Blob cached before the file shrank.
-    const afterShrink = await wireResponse(server.port!, "GET", "/slice-before-shrink");
-    expect({ contentLength: afterShrink.contentLength, body: afterShrink.body }).toEqual({
+    expect(await wireResponse(server.port!, "GET", "/slice-before-shrink")).toEqual({
+      status: 206,
+      contentRange: "bytes 5-10/*",
       contentLength: "6",
       body: "56789A",
     });
 
     // Over TLS, where a file body never takes sendfile(2).
-    const overTls = await wireResponse(secureServer.port!, "GET", `/${names.indexOf("path slice(5, 21)")}`, true);
-    expect({ contentLength: overTls.contentLength, body: overTls.body }).toEqual({
+    expect(await wireResponse(secureServer.port!, "GET", `/${names.indexOf("path slice(5, 21)")}`, true)).toEqual({
+      status: 206,
+      contentRange: "bytes 5-15/*",
       contentLength: "11",
       body: "56789ABCDEF",
     });
@@ -1653,12 +1664,17 @@ test("a Range as long as the file, past byte 0, leaves the next response on the 
     const raw = await promise;
     const headEnd = raw.indexOf("\r\n\r\n");
     // Cut the first response where its Content-Length says it ends, as a client does.
-    const declared = Number(/^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1]);
+    const head = raw.slice(0, headEnd);
+    const declared = Number(/^content-length:\s*(\d+)/im.exec(head)?.[1]);
     const next = raw.slice(headEnd + 4 + declared);
     expect({
+      status: head.split("\r\n")[0],
+      contentRange: /^content-range:\s*(.*)$/im.exec(head)?.[1] ?? null,
       body: raw.slice(headEnd + 4, headEnd + 4 + declared),
       next: { status: next.split("\r\n")[0], body: next.slice(next.indexOf("\r\n\r\n") + 4) },
     }).toEqual({
+      status: "HTTP/1.1 206 Partial Content",
+      contentRange: "bytes 5-15/*",
       body: "56789ABCDEF",
       next: { status: "HTTP/1.1 206 Partial Content", body: "012" },
     });
@@ -2151,16 +2167,22 @@ test.skipIf(!isLinux)("a fetch handler frames a Bun.file() slice that goes throu
 
     const results: Record<string, unknown> = {};
     for (const [i, name] of names.entries()) {
-      const { contentLength, body } = await wireResponse(server.port!, "GET", `/${i}`);
+      const { status, contentRange, contentLength, body } = await wireResponse(server.port!, "GET", `/${i}`);
       const expected = bytes.subarray(windows[name].begin).toString("latin1");
-      results[name] = { contentLength, received: body.length, intact: body === expected };
+      results[name] = { status, contentRange, contentLength, received: body.length, intact: body === expected };
     }
-    const exactly = (length: number) => ({ contentLength: String(length), received: length, intact: true });
+    const exactly = (status: number, contentRange: string | null, length: number) => ({
+      status,
+      contentRange,
+      contentLength: String(length),
+      received: length,
+      intact: true,
+    });
     expect(results).toEqual({
-      "path slice(K, K + size)": exactly(MiB),
-      "path slice(K, K + size - 1)": exactly(MiB),
-      "fd slice(K)": exactly(MiB),
-      "fd slice(K + 1)": exactly(MiB - 1),
+      "path slice(K, K + size)": exactly(206, `bytes ${K}-${size - 1}/*`, MiB),
+      "path slice(K, K + size - 1)": exactly(206, `bytes ${K}-${size - 1}/*`, MiB),
+      "fd slice(K)": exactly(200, null, MiB),
+      "fd slice(K + 1)": exactly(200, null, MiB - 1),
     });
   } finally {
     fds.forEach(fd => closeSync(fd));

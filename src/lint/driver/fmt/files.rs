@@ -409,6 +409,22 @@ fn search(
     }
 }
 
+/// To `micromatch`, `(a|b)` is what `@(a|b)` is. `pattern` with the latter for the former.
+fn with_marked_groups(pattern: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pattern.len() + 2);
+    for (at, &byte) in pattern.iter().enumerate() {
+        let is_marked = |before: &u8| matches!(before, b'@' | b'?' | b'!' | b'+' | b'*' | b'\\');
+        if byte == b'('
+            && !out.last().is_some_and(is_marked)
+            && strings::contains_char(&pattern[at..], b')')
+        {
+            out.push(b'@');
+        }
+        out.push(byte);
+    }
+    out
+}
+
 enum Entry {
     File(Vec<u8>, u64),
     Directory(Vec<u8>),
@@ -491,7 +507,7 @@ pub(crate) fn expand(
             }
             Entry::Pattern => {
                 // `removeLeadingDotSegment` of `fast-glob`
-                let pattern = input.strip_prefix(b"./").unwrap_or(&input);
+                let pattern = &with_marked_groups(input.strip_prefix(b"./").unwrap_or(&input));
                 let glob = Glob::new(pattern);
                 let parent = paths::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);

@@ -473,6 +473,11 @@ describe.concurrent("bun format", () => {
     ]);
   });
 
+  test("(a|b) in a pattern is a or b, as for Prettier", async () => {
+    const files = { "src/a.ts": ugly, "test/x/b.ts": ugly, "lib/c.ts": ugly };
+    expect(await different(files, ["(src|test)/**/*.ts"])).toEqual(["src/a.ts", "test/x/b.ts"]);
+  });
+
   describe("a parser that Prettier does not have", () => {
     const files = {
       "a.svelte": '<p   class="a">hi</p>\n',

@@ -13,25 +13,33 @@ const UNEXPECTED: Message = Message::new(
 struct Collector<'s> {
     source: &'s [u8],
     control_chars: Vec<u8>,
+    /// Where the first of them is in `source`.
+    first: Option<Span>,
+    /// Whether a control character that is written as it is counts.
+    counts_as_it_is: bool,
 }
 
 impl Handler for Collector<'_> {
     fn on_pattern_enter(&mut self, _: u32) {
         self.control_chars.clear();
+        self.first = None;
     }
 
-    fn on_character(&mut self, start: u32, _: u32, value: u32) {
+    fn on_character(&mut self, start: u32, end: u32, value: u32) {
         let written = self.source.get(start as usize..).unwrap_or_default();
         if value <= 0x1F
-            && (written.first() == Some(&(value as u8))
+            && (self.counts_as_it_is && written.first() == Some(&(value as u8))
                 || written.starts_with(b"\\x")
                 || written.starts_with(b"\\u"))
         {
             self.control_chars.push(value as u8);
+            self.first.get_or_insert(Span::new(start, end));
         }
     }
 }
 
+/// oxlint reads the pattern as it is written in the file: what counts is `\x1b` and `\u001b`, in a string too, and not
+/// a tab or `"\t"`. In a regular expression it points at the first of the characters.
 fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoControlRegex>) {
     if !pattern.iter().any(|b| *b <= 0x1F)
         && !strings::contains(pattern, b"\\x")
@@ -39,9 +47,14 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
     {
         return;
     }
+    let is_oxlint = cx.language().is_oxlint;
+    let is_literal = node.tag() == ExprTag::Regex;
     let mut collector = Collector {
         source: pattern,
         control_chars: Vec::new(),
+        first: None,
+        counts_as_it_is: !is_oxlint
+            || !is_literal && (strings::contains(node.text(), b"\\x") || strings::contains(node.text(), b"\\u")),
     };
     // What precedes a syntax error counts.
     _ = regex::validate_pattern(pattern, Mode::of_flags(flags), regex::Options::default(), &mut collector);
@@ -55,7 +68,14 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
         }
         control_chars.push_str(&format!("\\x{c:02x}"));
     }
-    cx.report(node, UNEXPECTED).data("controlChars", control_chars);
+    let place = match collector.first {
+        Some(first) if is_oxlint && is_literal => {
+            let pattern_start = node.span().start + 1;
+            Span::new(pattern_start + first.start, pattern_start + first.end)
+        }
+        _ => node.span(),
+    };
+    cx.report(place, UNEXPECTED).data("controlChars", control_chars);
 }
 
 impl Rule for NoControlRegex {

@@ -520,12 +520,14 @@ pub fn format_with(
             out.truncate(out.len() - if has_bom { BOM.len() } else { 0 });
             return Err(FormatError::SyntaxError);
         }
-        let from = out.len();
+        let from = out.len() - if has_bom { BOM.len() } else { 0 };
         write_with_line_ending(&text, options.line_ending.resolve(original).as_bytes(), out);
-        return Ok(
-            crate::cursor::cursor_in_formatted_text(&text, options, &out[from..])
-                .map(|cursor| cursor + u32::from(has_bom)),
-        );
+        // `options.cursor_offset` counts in `original`.
+        return Ok(crate::cursor::cursor_in_formatted_text(
+            original,
+            options,
+            &out[from..],
+        ));
     }
     let sorts_text = (options.sort_imports.as_deref())
         .filter(|how| parser == Parser::Vue && !how.is_applied_by_format())

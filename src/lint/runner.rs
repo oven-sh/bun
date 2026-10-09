@@ -512,18 +512,21 @@ impl<R: Rule> AnyRule for R {
         if on.entries.is_empty() {
             return None;
         }
-        run_started(self, on, state, start)
+        // Here, which is code of the rule anyway: a `Box<dyn ..>` is made with a table that each rule has its own of.
+        let run = run_started(self, on, state, start)?;
+        Some(Box::new(run))
     }
 }
 
 /// Not inlined: it is the same code for all rules whose states are as large, of which the linker then keeps one copy.
+/// `None`: nothing is left to call.
 #[inline(never)]
 fn run_started<'r, 'a: 'r, R: Rule>(
     rule: &'r R,
     on: Listeners<'a, R>,
     state: R::State<'a>,
     start: Start<'a>,
-) -> Option<Box<dyn Running<'a> + 'r>> {
+) -> Option<Run<'r, 'a, R>> {
     let mut run = Run {
         rule,
         entries: on.entries,
@@ -540,10 +543,7 @@ fn run_started<'r, 'a: 'r, R: Rule>(
         },
     };
     run_unordered(rule, &run.entries, start.file, &mut run.cx);
-    match on.has_later {
-        true => Some(Box::new(run)),
-        false => None,
-    }
+    on.has_later.then_some(run)
 }
 
 /// How a rule is found by its name and made from its options.

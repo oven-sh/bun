@@ -151,6 +151,8 @@ function sorted(value: unknown): unknown {
 /** `eslint -f json` of both. */
 export function compareEslint(theirs: EslintResult[], ours: EslintResult[], root: string): LintComparison {
   let suppressed = [0, 0];
+  // ESLint before 8.8 does not list what comments suppress: then nobody's suppressed messages are compared.
+  const lists = theirs.length === 0 || theirs.some(it => it.suppressedMessages !== undefined);
   const entries = (results: EslintResult[], side: number) => {
     const byFile = new Map<string, Entry[]>();
     for (const result of results) {
@@ -169,7 +171,7 @@ export function compareEslint(theirs: EslintResult[], ours: EslintResult[], root
       };
       byFile.set(relative(root, result.filePath), [
         ...result.messages.map(it => entry(it, false)),
-        ...(result.suppressedMessages ?? []).map(it => entry(it, true)),
+        ...(lists ? (result.suppressedMessages ?? []) : []).map(it => entry(it, true)),
       ]);
     }
     return byFile;

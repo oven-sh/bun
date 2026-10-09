@@ -25,6 +25,7 @@ use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
+use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::hir::Diagnostic;
@@ -69,8 +70,8 @@ fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
 /// a script. A module, then a script, as the parsers of Prettier do.
 fn kinds(path: &[u8]) -> &'static [bool] {
     match path {
-        _ if path.ends_with(b".mjs") || path.ends_with(b".mts") => &[false],
-        _ if path.ends_with(b".cjs") || path.ends_with(b".cts") => &[true],
+        _ if ends_in(path, b".mjs") || ends_in(path, b".mts") => &[false],
+        _ if ends_in(path, b".cjs") || ends_in(path, b".cts") => &[true],
         _ => &[false, true],
     }
 }
@@ -96,7 +97,7 @@ impl How<'_> {
         let path = self.path;
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
-            .any(|it| path.ends_with(it));
+            .any(|it| ends_in(path, it));
         let language = LanguageOptions {
             parser: if is_typescript {
                 Parser::TypeScript
@@ -286,9 +287,10 @@ struct Scratches {
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
-    let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| {
-        rest.strip_suffix(b"\r").unwrap_or(rest).len()
-    });
+    let end = match &out[..] {
+        [rest @ .., b'\r', b'\n'] | [rest @ .., b'\n' | b'\r'] => rest.len(),
+        _ => out.len(),
+    };
     out.truncate(end);
 }
 
@@ -580,7 +582,9 @@ fn format(
         Some(b"flow" | b"babel-flow") => true,
         // oxfmt does not read Flow.
         Some(b"babel") | None => {
-            !options.flavor.is_oxfmt() && bun_lint::linter::goes_to_flow(&text, name)
+            !options.flavor.is_oxfmt()
+                && (bun_lint::linter::goes_to_flow(&text, name)
+                    || (options.parser.is_none() && ends_in(name, b".js.flow")))
         }
         Some(_) => false,
     };

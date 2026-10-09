@@ -1,7 +1,9 @@
 //! Code and types in comments, which are formatted as what they are.
 
 use super::text::{trim, trim_end, trim_end_matches, trim_start};
-use crate::options::{EmbeddedLanguageFormatting, FormatOptions, LineWidth, TrailingCommas};
+use crate::options::{
+    EmbeddedLanguageFormatting, FormatOptions, LineEnding, LineWidth, TrailingCommas,
+};
 use bun_core::strings;
 
 /// The widest line that oxfmt knows.
@@ -14,6 +16,8 @@ pub(super) fn embedded_options(options: &FormatOptions, print_width: usize) -> F
         .clamp(1, MAX_LINE_WIDTH);
     FormatOptions {
         line_width: LineWidth(width as u16),
+        // The lines are written to the document of the file, one by one.
+        line_ending: LineEnding::Lf,
         jsdoc: None,
         sort_imports: None,
         filepath: None,

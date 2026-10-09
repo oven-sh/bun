@@ -187,6 +187,9 @@ fn check_and_lint_in(
                 if file.is_too_large_for_flow_analysis() {
                     result.messages.insert(0, too_large_for_flow_analysis());
                 }
+                if config.language.is_oxlint {
+                    crate::lint::unused_directives_as_oxlint(&mut result, false);
+                }
                 context.promote_suggestions(&mut result);
                 // What the type checker reports is known when all files are checked.
                 let is_reported = !result.messages.is_empty()
@@ -423,6 +426,9 @@ pub(crate) fn lint(
             state.passes += 1;
             if state.passes == 1 {
                 state.original_len = text.len();
+            }
+            if file.config.language.is_oxlint {
+                crate::lint::order_fixes_as_oxlint(&mut result.messages);
             }
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
                 context.should_fix(message)

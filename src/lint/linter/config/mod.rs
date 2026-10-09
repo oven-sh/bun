@@ -894,8 +894,15 @@ impl Config {
                 }
             };
             let options: Arc<[Json]> = setting.options.into();
-            if !self.is_legacy {
+            // Many configurations have the same options for a rule. One that has an error, or the rule off, validates nothing.
+            let is_validated =
+                !options.is_empty() && config.error.is_none() && setting.severity != Severity::Off;
+            let index = is_validated.then(|| registry.index_of(entry)).flatten();
+            if !self.is_legacy && !index.is_some_and(|it| self.cache.is_valid(it, &options)) {
                 config.validate(entry, setting.severity, &options);
+                if let Some(index) = index.filter(|_| config.error.is_none()) {
+                    self.cache.set_valid(index, &options);
+                }
             }
             let instance = (setting.severity != Severity::Off).then(|| {
                 self.cache.rule(registry, entry, &options, || {

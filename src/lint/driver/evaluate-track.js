@@ -3,8 +3,8 @@
 // the environment variables that are read. The second part calls `finish` with the result.
 const { fileURLToPath, pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
-// It arrives with `/`. As the system writes it, it is the same text as what `resolve` returns.
-const path = resolve(process.argv.at(-1));
+// A file arrives absolute, with `/`. As the system writes it, it is the same text as what `resolve` returns. What is no file is a name.
+const path = (given => (require("node:path").isAbsolute(given) ? resolve(given) : given))(process.argv.at(-1));
 const marker = process.argv.at(-2);
 
 // Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.

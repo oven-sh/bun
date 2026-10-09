@@ -8,7 +8,8 @@
 use bun_core::strings;
 
 pub(crate) use bun_lint::utils::text::{
-    is_blank, to_lower_case, trim, trim_end, trim_start, utf16_len, white_space_len,
+    ends_with_ignore_ascii_case, is_blank, to_lower_case, trim, trim_end, trim_start, utf16_len,
+    white_space_len,
 };
 
 pub(crate) const BOM: &[u8] = &strings::BOM::UTF8_BYTES;

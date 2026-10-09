@@ -61,6 +61,12 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
   version: a repository on Prettier 2 differs for reasons that are in Prettier's changelog. For oxlint and oxfmt it is the
   version in their lock file, next to the latest releases, oxlint 1.87.0 and oxfmt 0.72.0, which always run too: "the same as
   the latest release" is a number of its own.
+- **The latest release is asked in every stage**: `--fix` of oxlint and ESLint, and which files oxfmt reads: both have changed
+  from release to release, so a difference from their old version alone is drift.
+- **Both configurations side by side**: where `bun lint` asks which one the run is for, the run is repeated with
+  `--flavor=<their tool>`, as who switches would, and marked (`needsFlavor`).
+- **A run of ours that did not end is never a difference**: killed at the time limit or by the memory limit, in any stage, it is
+  "cannot run: ours".
 - **What cannot be done yet**: a configuration that names rules which are not built in, or wants files linted that cannot be
   read, ends `bun lint` with exit code 2 after the report. The comparison is made with `--allow-unsupported`; the lines are
   kept with each run (`unsupported`), and say what stops that project from switching.

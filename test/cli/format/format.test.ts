@@ -14,6 +14,7 @@ import {
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
+import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 
 afterAll(endChildren);
 
@@ -2800,6 +2801,363 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
         "a.html": '<p title="\xE9">caf\xE9</p>\n',
       },
     });
+  });
+});
+
+describe.concurrent("line breaks, byte order marks and encodings", () => {
+  type Files = Record<string, string | Buffer>;
+
+  /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
+  async function bytesAfter(files: Files, args: string[] = []) {
+    using dir = tempDir("bun-format-bytes", files);
+    await using proc = Bun.spawn({
+      cmd: [...command, "--no-config", "--no-editorconfig", ...args, "."],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      // Not the lines of a code frame: `[error] > 2 | ..`, `[error]     |     ^`.
+      errors: stderr.split(/\r?\n/).filter(line => /^\[error\] [^ >|]/.test(line)),
+      exitCode,
+      files: Object.fromEntries(
+        Object.keys(files).map(name => [name, readFileSync(join(String(dir), name)).toString("latin1")]),
+      ),
+    };
+  }
+  const mapped = (files: Record<string, string>, change: (text: string) => string) =>
+    Object.fromEntries(Object.entries(files).map(([name, text]) => [name, change(text)]));
+  const BOM = "\xEF\xBB\xBF";
+
+  // What all the others are compared with.
+  const withLineFeeds = bytesAfter(lineEndingInputs);
+
+  test("every input can be formatted, and no \\r comes from nowhere", async () => {
+    const result = await withLineFeeds;
+    expect(result.errors).toEqual([]);
+    expect(Object.keys(result.files).filter(name => result.files[name].includes("\r"))).toEqual([]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each([
+    ["\\r\\n", "\r\n"],
+    ["\\r", "\r"],
+  ])("lines that end in %s are formatted like lines that end in \\n", async (_, lineBreak) => {
+    const expected = await withLineFeeds;
+    const result = await bytesAfter(mapped(lineEndingInputs, text => text.replaceAll("\n", lineBreak)));
+    expect(result.errors).toEqual([]);
+    expect(result.files).toEqual(expected.files);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("lines that end in \\r\\n and in \\n in one file", async () => {
+    const expected = await withLineFeeds;
+    let count = 0;
+    const result = await bytesAfter(
+      mapped(lineEndingInputs, text => text.replaceAll("\n", () => (count++ % 2 ? "\n" : "\r\n"))),
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.files).toEqual(expected.files);
+  });
+
+  test("a byte order mark stays, and changes nothing else", async () => {
+    const expected = await withLineFeeds;
+    const result = await bytesAfter(mapped(lineEndingInputs, text => "\uFEFF" + text));
+    expect(result.errors).toEqual([]);
+    expect(result.files).toEqual(mapped(expected.files, text => BOM + text));
+  });
+
+  test.each([
+    ["crlf", "\n", "\r\n"],
+    ["cr", "\n", "\r"],
+    ["auto", "\r\n", "\r\n"],
+    ["auto", "\r", "\r"],
+  ])("--end-of-line %s: every line break that is written is that one, once", async (option, before, after) => {
+    const expected = await withLineFeeds;
+    const result = await bytesAfter(
+      mapped(lineEndingInputs, text => text.replaceAll("\n", before)),
+      ["--end-of-line", option],
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.files).toEqual(mapped(expected.files, text => text.replaceAll("\n", after)));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a template over several lines that is a name", async () => {
+    const files = {
+      "a.js": "const o = { [`a\r\nb`]: 1, c: 2 };\r\nclass A { [`a\r\nb`] = 1 }\r\n",
+      "b.ts": "type D = { [`a\r\nb`]: 1 };\r\n",
+    };
+    const printed = {
+      "a.js": "const o = {\n  [`a\nb`]: 1,\n  c: 2,\n};\nclass A {\n  [`a\nb`] = 1;\n}\n",
+      "b.ts": "type D = {\n  [`a\nb`]: 1;\n};\n",
+    };
+    expect(await bytesAfter(files)).toEqual({ errors: [], exitCode: 0, files: printed });
+    expect(await bytesAfter(files, ["--end-of-line", "auto"])).toEqual({
+      errors: [],
+      exitCode: 0,
+      files: mapped(printed, text => text.replaceAll("\n", "\r\n")),
+    });
+  });
+
+  test("a cell over several lines in the table of it.each", async () => {
+    const files = { "a.js": "it.each`\n  a | b\n  ${function(){a;b}} | ${`x\ny`}\n`('t', () => {});\n" };
+    const printed = 'it.each`\n  a | b\n  ${function () {\n    a;\n    b;\n  }} | ${`x\ny`}\n`("t", () => {});\n';
+    expect(await bytesAfter(files)).toEqual({ errors: [], exitCode: 0, files: { "a.js": printed } });
+    expect(await bytesAfter(files, ["--end-of-line", "crlf"])).toEqual({
+      errors: [],
+      exitCode: 0,
+      files: { "a.js": printed.replaceAll("\n", "\r\n") },
+    });
+    // In Markdown the formatter marks line breaks with a `\r` of its own.
+    const block = (code: string) => "```js\n" + code + "```\n";
+    expect(await bytesAfter({ "a.md": block(files["a.js"]) })).toEqual({
+      errors: [],
+      exitCode: 0,
+      files: { "a.md": block(printed) },
+    });
+  });
+
+  test("a string of JSON5 that goes on in the next line and gets other quotes", async () => {
+    const result = await bytesAfter({ "a.json5": "{a:'x\\\ny','b\\\nc':1}\n" }, ["--end-of-line", "crlf"]);
+    expect(result.files).toEqual({ "a.json5": '{\r\n  a: "x\\\r\ny",\r\n  "b\\\r\nc": 1,\r\n}\r\n' });
+  });
+
+  describe("--range-start, --range-end and --cursor-offset count UTF-16 code units of the text as it is", () => {
+    const onStdin = async (name: string, text: string, args: string[]) => {
+      using dir = tempDir("bun-format-stdin", {});
+      await using proc = Bun.spawn({
+        cmd: [...command, "--no-config", "--stdin-filepath", name, ...args],
+        env,
+        cwd: String(dir),
+        stdin: Buffer.from(text),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // `text()` would leave out a byte order mark.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      return { printed: Buffer.from(stdout).toString("utf8"), cursor: stderr.trim(), exitCode };
+    };
+
+    // Nothing in a style sheet or in YAML is formatted on its own: a range that is not all of the text formats nothing.
+    test.each([
+      ["a.css", "a{b:c}\r\nd{e:f}\r\n", "a {\n  b: c;\n}\nd {\n  e: f;\n}\n"],
+      ["a.yaml", "a:   1\r\nb:   2\r\n", "a: 1\nb: 2\n"],
+    ])("%s with \\r\\n", async (name, text, whole) => {
+      const asItIs = text.replaceAll("\r\n", "\n");
+      // Before the last `\r\n`: not all of it.
+      expect((await onStdin(name, text, ["--range-end", "14"])).printed).toBe(asItIs);
+      // In the last `\r\n`, and behind it: all of it.
+      expect((await onStdin(name, text, ["--range-end", "15"])).printed).toBe(whole);
+      expect((await onStdin(name, text, ["--range-end", "16"])).printed).toBe(whole);
+      // An empty range: not even the line breaks change.
+      expect((await onStdin(name, text, ["--range-start", "15"])).printed).toBe(text);
+    });
+
+    test.each([
+      ["a.css", "a{b:'é'}\n", 'a {\n  b: "é";\n}\n'],
+      ["a.yaml", "a:   é\n", "a: é\n"],
+    ])("%s with a character of two bytes", async (name, text, whole) => {
+      expect((await onStdin(name, text, ["--range-end", String(text.length)])).printed).toBe(whole);
+      expect((await onStdin(name, text, ["--range-end", String(text.length - 1)])).printed).toBe(text);
+    });
+
+    test.each([
+      ["a.css", "\uFEFFa{b:c}\n", "\uFEFFa {\n  b: c;\n}\n"],
+      ["a.yaml", "\uFEFFa:   1\n", "\uFEFFa: 1\n"],
+    ])("%s with a byte order mark", async (name, text, whole) => {
+      expect((await onStdin(name, text, ["--range-end", "8"])).printed).toBe(whole);
+      expect((await onStdin(name, text, ["--range-end", "7"])).printed).toBe(text);
+    });
+
+    test("--insert-pragma inserts nothing if a part of a style sheet is formatted", async () => {
+      const result = await onStdin("a.css", "a{b:c}\r\nd{e:f}\r\n", ["--range-end", "14", "--insert-pragma"]);
+      expect(result.printed).toBe("a{b:c}\nd{e:f}\n");
+    });
+
+    test("the cursor in HTML of which a part is formatted", async () => {
+      const range = ["--range-start", "12", "--range-end", "16"];
+      expect(await onStdin("a.html", "<p>a</p>\r\n<p   b>c</p>\r\n", [...range, "--cursor-offset", "10"])).toEqual({
+        printed: "<p>a</p>\n<p   b>c</p>\n",
+        cursor: "9",
+        exitCode: 0,
+      });
+      expect(
+        await onStdin("a.html", "\uFEFF<p>a</p>\r\n<p   b>c</p>\r\n", [...range, "--cursor-offset", "11"]),
+      ).toEqual({
+        printed: "\uFEFF<p>a</p>\n<p   b>c</p>\n",
+        cursor: "10",
+        exitCode: 0,
+      });
+    });
+
+    test("the cursor behind a character of several bytes, with a range", async () => {
+      const range = ["--range-start", "3", "--range-end", "5", "--cursor-offset", "1"];
+      expect(await onStdin("a.js", "\uFEFFa  =  1;\nb  =  2;\n", range)).toEqual({
+        printed: "\uFEFFa = 1;\nb  =  2;\n",
+        cursor: "1",
+        exitCode: 0,
+      });
+      expect(await onStdin("a.js", "é  =  1;\nb  =  2;\n", range)).toEqual({
+        printed: "é = 1;\nb  =  2;\n",
+        cursor: "1",
+        exitCode: 0,
+      });
+    });
+
+    test("a range that ends behind the byte order mark is empty", async () => {
+      const text = "\uFEFFa  =  1;\nb  =  2;\n";
+      expect((await onStdin("a.js", text, ["--range-end", "1"])).printed).toBe(text);
+    });
+
+    test.each(["a.js", "a.json", "a.css"])(
+      "there is no cursor in %s if it is a byte order mark and blanks",
+      async name => {
+        expect(await onStdin(name, "\uFEFF\r\n", ["--cursor-offset", "1"])).toEqual({
+          printed: "\uFEFF",
+          cursor: "",
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test("--insert-pragma in a file whose first \\r stands alone", async () => {
+    const result = await bytesAfter({ "a.js": "/*\r * x\n */\nfoo;\n" }, ["--insert-pragma"]);
+    expect(result.files).toEqual({ "a.js": "/**\n * x\n *\n * @format\n */\n\nfoo;\n" });
+  });
+
+  test("insertFinalNewline: false with endOfLine: cr", async () => {
+    const config = JSON.stringify({ endOfLine: "cr", insertFinalNewline: false });
+    const result = await format(
+      { ".oxfmtrc.json": config, "a.js": "a  =  1\nb\n", "a.css": "a{b:c}\n" },
+      ["a.js", "a.css"],
+      {
+        reads: ["a.js", "a.css"],
+      },
+    );
+    expect(result.files).toEqual({ "a.js": "a = 1;\rb;", "a.css": "a {\r  b: c;\r}" });
+  });
+
+  test("U+2028 behind the { of an object is no line break to Prettier, and is one to oxfmt", async () => {
+    const files = { "a.ts": "const o = {\u2028a: 1 };\ntype A = {\u2028a: 1 };\n" };
+    const asPrettier = await format(files, ["--no-config", "a.ts"], { reads: ["a.ts"] });
+    expect(asPrettier.files).toEqual({ "a.ts": "const o = { a: 1 };\ntype A = { a: 1 };\n" });
+    const asOxfmt = await format({ ...files, ".oxfmtrc.json": "{}\n" }, ["a.ts"], { reads: ["a.ts"] });
+    expect(asOxfmt.files).toEqual({ "a.ts": "const o = {\n  a: 1,\n};\ntype A = {\n  a: 1;\n};\n" });
+  });
+
+  // ONLY WITH FIX G. oxfmt 0.72 writes `\r\r\n` here. See the finding: whether to follow it is to be decided.
+  test("a type over several lines in a JSDoc comment, with endOfLine: crlf", async () => {
+    const config = JSON.stringify({ endOfLine: "crlf", jsdoc: true, printWidth: 40 });
+    const result = await format(
+      {
+        ".oxfmtrc.json": config,
+        "a.js": "/**\n * @returns {{ aaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbb: number }} x\n */\nfunction f() {}\n",
+      },
+      ["a.js"],
+      { reads: ["a.js"] },
+    );
+    expect(result.files["a.js"]).not.toContain("\r\r");
+    expect(result.files["a.js"]?.replaceAll("\r\n", "")).not.toMatch(/[\r\n]/);
+  });
+});
+
+describe.concurrent("upper and lower case in the name of a file", () => {
+  const files = {
+    "A.JS": "a  =  1\n",
+    "sub/B.TS": "let a:number  =  1\n",
+    "C.YML": "a:    1\n",
+    "D.GQL": "query   { a }\n",
+    "E.Yaml": "a:    1\n",
+    "F.TSX": "const a  = <b   />\n",
+    "G.MJS": "import   a from 'a'\n",
+    "H.CTS": "import a = require('a')\nexport = a\n",
+    "I.JS.FLOW": "type A  = {| a: 1 |}\n",
+    "citation.CFF": "a:    1\n",
+    "jakefile": "a  =  1\n",
+    "K.GraphQL": "query   { a }\n",
+    // `shouldForceTrailingComma` asks `/\.ts$/` of the name as it is.
+    "Q.TS": "const f = <T,>() => {}\n",
+    // These were taken for what they are before.
+    "L.CSS": "a{b:c}\n",
+    "README.MD": "*  a\n",
+    "M.JSON": '{"a":\n1}\n',
+    "N.HTML": "<a   b></a>\n",
+    "O.VUE": "<template><a   b /></template>\n",
+    "P.HBS": "<a   b></a>\n",
+  };
+  // What Prettier 3.9.9 prints: its `getLanguageByFileName` compares the name in lower case.
+  const printed = {
+    "A.JS": "a = 1;\n",
+    "sub/B.TS": "let a: number = 1;\n",
+    "C.YML": "a: 1\n",
+    "D.GQL": "query {\n  a\n}\n",
+    "E.Yaml": "a: 1\n",
+    "F.TSX": "const a = <b />;\n",
+    "G.MJS": 'import a from "a";\n',
+    "H.CTS": 'import a = require("a");\nexport = a;\n',
+    "I.JS.FLOW": "type A = {| a: 1 |};\n",
+    "citation.CFF": "a: 1\n",
+    "jakefile": "a = 1;\n",
+    "K.GraphQL": "query {\n  a\n}\n",
+    "Q.TS": "const f = <T,>() => {};\n",
+    "L.CSS": "a {\n  b: c;\n}\n",
+    "README.MD": "- a\n",
+    "M.JSON": '{ "a": 1 }\n',
+    "N.HTML": "<a b></a>\n",
+    "O.VUE": "<template><a b /></template>\n",
+    "P.HBS": "<a b></a>",
+  };
+
+  test("in a directory", async () => {
+    const result = await format(files, ["--no-config", "."], { reads: Object.keys(files) });
+    expect(result.files).toEqual(printed);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("as arguments", async () => {
+    const result = await format(files, ["--no-config", ...Object.keys(files)], { reads: Object.keys(files) });
+    expect(result.files).toEqual(printed);
+    expect(result.stderr).not.toContain("No parser could be inferred");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each(Object.keys(files))("--stdin-filepath %s", async name => {
+    const result = await format({}, ["--no-config", "--stdin-filepath", name], {
+      stdin: files[name as keyof typeof files],
+    });
+    expect(result.raw).toBe(printed[name as keyof typeof printed]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  // oxfmt tells upper case from lower case: `classify_file_kind`.
+  test("not with the configuration of oxfmt", async () => {
+    const result = await format({ ".oxfmtrc.json": "{}\n", "A.JS": "a  =  1\n", "b.js": "a  =  1\n" }, ["."], {
+      reads: ["A.JS", "b.js"],
+    });
+    expect(result.files).toEqual({ "A.JS": "a  =  1\n", "b.js": "a = 1;\n" });
+  });
+
+  // Real coverage on Windows and macOS, whose file systems find `a.ts` under the name `A.TS`.
+  test("a name that is typed in another case than the file has", async () => {
+    using dir = tempDir("bun-format-case", { "a.ts": "let a:number  =  1\n" });
+    if (!existsSync(join(String(dir), "A.TS"))) return;
+    await using proc = Bun.spawn({
+      cmd: [...command, "--no-config", "A.TS"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("[error]");
+    expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe("let a: number = 1;\n");
+    // The file that takes its place has its name, not the one that was typed.
+    expect(readdirSync(String(dir))).toEqual(["a.ts"]);
+    expect(exitCode).toBe(0);
   });
 });
 

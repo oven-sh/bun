@@ -1932,7 +1932,7 @@ pub(crate) fn format_with<'a>(
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<Option<u32>, FormatError> {
     let source = file.text();
-    let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty());
+    let offset = offset_in(source, options).filter(|_| !crate::text::trim(source).is_empty());
     let items = offset.map(|offset| locate_items(file, offset.bytes));
     let cursor = offset
         .zip(items)
@@ -2032,7 +2032,7 @@ pub fn cursor_in_formatted_text(
     options: &FormatOptions,
     formatted: &[u8],
 ) -> Option<u32> {
-    let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty())?;
+    let offset = offset_in(source, options).filter(|_| !crate::text::trim(source).is_empty())?;
     let everything = Region::Between {
         before: None,
         after: None,

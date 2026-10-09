@@ -93,7 +93,7 @@ impl VM {
         JSC__VM__runGC(self, sync)
     }
 
-    pub(crate) fn heap_size(&self) -> usize {
+    pub fn heap_size(&self) -> usize {
         JSC__VM__heapSize(self)
     }
 

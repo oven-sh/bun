@@ -21,9 +21,10 @@ use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for GraphQL.
 pub fn is_graphql_path(path: &[u8]) -> bool {
+    // Prettier's `getLanguageByFileName` compares the name in lower case.
     [&b".graphql"[..], b".gql", b".graphqls"]
         .iter()
-        .any(|extension| path.ends_with(extension))
+        .any(|extension| crate::text::ends_with_ignore_ascii_case(path, extension))
 }
 
 /// Everything that is allocated to format a text. It is reused for the next one.

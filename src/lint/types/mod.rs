@@ -281,6 +281,7 @@ queries! {
     fn is_const_context(node: NodeRef) -> bool;
     fn flow_type_of_reference(node: NodeRef, declared: TypeId) -> TypeId;
     fn context_free_type_of_expression(node: NodeRef) -> TypeId;
+    fn context_free_type_of_call_resolved_afresh(node: NodeRef) -> TypeId;
     fn type_with_default(ty: TypeId, default: NodeRef) -> TypeId;
     fn symbol_of_local(symbol: bun_sema::bind::SymbolId) -> Option<SymbolRef>;
 

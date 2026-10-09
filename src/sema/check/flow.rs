@@ -6319,6 +6319,28 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// What `getContextFreeTypeOfExpression` answers for the call `e` where nothing has resolved the call before. A tool
+    /// that asks before it checks the file gets that; here the file is checked first, so the signature that is stored was
+    /// inferred with what is expected of the call. Nothing is kept of it.
+    pub(super) fn context_free_type_of_call_resolved_afresh(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> TypeId {
+        let reported = self.reported.len();
+        let level = self.inference_contexts.len() + 1;
+        let outer = std::mem::replace(&mut self.context_free_level, level);
+        self.call_to_resolve_afresh = Some((file, e));
+        let (ty, _) = self.run_memoizable(|c| {
+            let mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
+            c.check_expression_with_contextual_type(file, e, TypeId::ANY, None, mode)
+        });
+        self.call_to_resolve_afresh = None;
+        self.context_free_level = outer;
+        self.reported.truncate(reported);
+        ty
+    }
+
     /// `getContextFreeTypeOfExpression`. tsgo keeps the first result, also one that depends on the
     /// incomplete type of a loop in progress: `FlowMemo::context_free_types_in_loops`.
     pub(super) fn context_free_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {

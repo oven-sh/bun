@@ -1888,6 +1888,7 @@ impl Walk<'_, '_> {
                 .unwrap_or_default();
             let content = bun_core::strings::replace_owned(content, b"&apos;", b"'");
             let content = bun_core::strings::replace_owned(&content, b"\r\n", b"\n");
+            let content = bun_core::strings::replace_owned(&content, b"\r", b"\n");
             bun_core::strings::replace_owned(&content, b"&quot;", b"\"")
         };
         let (x, y) = (value(x), value(y));

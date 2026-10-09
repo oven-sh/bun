@@ -1647,7 +1647,9 @@ impl<'a> Format<'a> for FormatRecordProperty<'a> {
 /// `flow`, which somebody has to ask for, by name or with `.js.flow`.
 pub fn goes_to_babel(options: &FormatOptions, path: &[u8]) -> bool {
     let name = options.filepath.as_deref().filter(|it| !it.is_empty());
-    options.parser.as_deref() != Some(b"flow") && !name.unwrap_or(path).ends_with(b".js.flow")
+    let is_flow_by_name =
+        crate::text::ends_with_ignore_ascii_case(name.unwrap_or(path), b".js.flow");
+    options.parser.as_deref() != Some(b"flow") && !is_flow_by_name
 }
 
 /// Whether `text` has something that looks like a comment for which [`uncommented`] is there.

@@ -421,6 +421,20 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
     }
 }
 
+// Only for the VMs in which `bun lint` and `bun format` run plugins: never in the runtime. A heap doubles between two collections
+// while it is under a quarter of the RAM, then grows by less: several VMs share what one is sized by.
+// After JSCInitialize and before the first VM, as above.
+extern "C" void JSC__useRAMSize(size_t bytes, const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::forceRAMSize() = bytes;
+    // BUN_JSC_forceRAMSize wins, as in JSCInitialize.
+    for (size_t i = 0; i < envc; i++) {
+        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_forceRAMSize="_s))
+            JSC::Options::setOption(envp[i] + 8, false);
+    }
+}
+
 extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);

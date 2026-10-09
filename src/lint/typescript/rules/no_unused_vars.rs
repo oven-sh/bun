@@ -81,7 +81,6 @@ fn oxlint_reports_the_declaration(file: &File) -> bool {
 fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bool) -> bool {
     let is_variable = variable.defs().any(|it| matches!(it, Declaration::Var(_) | Declaration::Param(_)));
     let is_function_or_class = variable.defs().any(|it| matches!(it, Declaration::Fn(_) | Declaration::Class(_)));
-    let is_const = variable.defs().any(|it| matches!(it.node(), Some(Node::VarDecl(it)) if it.var_kind() == VarKind::Const));
     let is_callable = (is_variable || is_function_or_class) && !variable.defs().any(Declaration::is_catch_parameter);
     // A value and a type of one name are one symbol: `const A = 0; export type A = typeof A;`
     if matches!(variable.scope().kind(), ScopeKind::Global | ScopeKind::Module)
@@ -99,7 +98,8 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
         }
         it.is_read()
             && !(is_variable && oxlint_is_self_reassignment(variable, it, &mut walks))
-            && !(is_variable && !is_const && !is_function_or_class && oxlint_is_discarded_read(variable, it, &mut walks))
+            // `is_definitely_reassignable_variable` holds for a `const` too: it asks for a `const` that is a function.
+            && !(is_variable && oxlint_is_discarded_read(variable, it, &mut walks))
             && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class, &mut walks))
     })
 }
@@ -1050,8 +1050,9 @@ fn oxlint_rename<'a>(fixer: Fixer<'a>, variable: Variable<'a>) -> Option<Vec<Fix
         number += 1;
     }
     let mut places = vec![variable.defs().next()?.name_span()?];
-    // What a declaration initializes is no reference for oxc.
-    places.extend(variable.references().filter(|it| !it.is_init()).map(Reference::span));
+    // What a declaration initializes is no reference for oxc, nor is the `a` of `a is T`.
+    let is_in_predicate = |it: &Reference<'a>| matches!(it.node(), Node::Type(it) if it.tag() == TypeTag::Predicate);
+    places.extend(variable.references().filter(|it| !it.is_init() && !is_in_predicate(it)).map(Reference::span));
     places.dedup();
     Some(places.into_iter().map(|it| fixer.replace(it, name.as_slice())).collect())
 }
@@ -1205,21 +1206,23 @@ impl NoUnusedVars {
             };
             return if can_rename { oxlint_rename(fixer, variable) } else { None };
         }
-        // What it is in a pattern, whether that is `...a`, an array, and it the last in it, and how much the pattern has.
+        // Whether the pattern is an array, how much it has, the last of that, and whether that is a `...a`.
+        let (is_in_array, count, last, has_rest) = match declarator.pat().kind() {
+            PatKind::Object(all) => (false, all.len(), all.last()?.span(), all.last()?.is_rest()),
+            PatKind::Array(all) => (true, all.len(), all.last()?.span(), all.last()?.is_rest()),
+            _ if declarators.len() > 1 => return Some(vec![oxlint_remove_declarator(fixer, declarator)?]),
+            _ => return Some(vec![fixer.remove(statement)]),
+        };
+        // What goes: all of a `...a` that it is anywhere in, or else the part of the pattern that it is.
+        let is_rest = has_rest && last.contains(own.span());
         let is_in_whole = |parent: Node<'a>| parent == Node::Pat(declarator.pat());
-        let (part, is_rest, is_in_array, is_last, count) = match (own.parent(), declarator.pat().kind()) {
-            (Node::VarDecl(_), _) if declarators.len() > 1 => {
-                return Some(vec![oxlint_remove_declarator(fixer, declarator)?]);
-            }
-            (Node::VarDecl(_), _) => return Some(vec![fixer.remove(statement)]),
-            (Node::PatProp(it), PatKind::Object(all)) if is_in_whole(it.parent()) => {
-                (it.span(), it.is_rest(), false, true, all.len())
-            }
-            (Node::PatElem(it), PatKind::Array(all)) if is_in_whole(it.parent()) => {
-                (it.span(), it.is_rest(), true, all.last() == Some(it), all.len())
-            }
+        let part = match own.parent() {
+            _ if is_rest => last,
+            Node::PatProp(it) if is_in_whole(it.parent()) => it.span(),
+            Node::PatElem(it) if is_in_whole(it.parent()) => it.span(),
             _ => return None,
         };
+        let is_last = !is_in_array || part == last;
         match (is_rest, count) {
             (false, 1) => return (declarators.len() == 1).then(|| vec![fixer.remove(statement)]),
             (true, 3..) => return None,
@@ -1277,7 +1280,10 @@ impl NoUnusedVars {
         message: Message,
         (action, additional): (&'static str, String),
     ) {
-        reported.insert(unused_var.symbol());
+        // For oxlint's fixes it is what is unused.
+        if message.id != USED_IGNORED_VAR.id || !cx.language().is_oxlint {
+            reported.insert(unused_var.symbol());
+        }
         let reported = &*reported;
 
         // The last assignment in the function that declares the variable, or the first declaration.
@@ -1309,7 +1315,7 @@ impl NoUnusedVars {
             .data("additional", additional);
         if is_oxlint {
             report = report.data("text", self.oxlint_text(unused_var, message));
-            let Some(def) = unused_var.defs().next() else {
+            let Some(def) = unused_var.defs().next().filter(|_| message.id != USED_IGNORED_VAR.id) else {
                 return;
             };
             let is_import = def.kind() == Some(DeclarationKind::ImportBinding);

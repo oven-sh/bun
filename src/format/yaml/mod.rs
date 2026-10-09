@@ -9,6 +9,7 @@ mod printer;
 
 use crate::css::doc::{self, Doc, Elements};
 use crate::options::{QuoteStyle, TrailingCommas};
+use crate::range::Offsets;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
@@ -47,7 +48,10 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
         b".stylelintrc",
         b".lintstagedrc",
     ];
-    NAMES.contains(&name) || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
+    // Prettier's `getLanguageByFileName` compares the name in lower case.
+    let name = name.to_ascii_lowercase();
+    NAMES.iter().any(|it| it.eq_ignore_ascii_case(&name))
+        || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
 }
 
 /// The document for `text`, whose line breaks are `\n`, as a tree.
@@ -113,18 +117,19 @@ pub fn format(
         None => (false, text),
     };
     let in_original = |error: FormatError| error.before_normalizing_end_of_line(text);
+    // Prettier's `normalizeInputAndOptions`: the offsets count UTF-16 code units of `original`.
+    let first = original.len() - text.len();
+    let range = Offsets::new(original, first, options);
     let mut text: Cow<'_, [u8]> = crate::css::normalize_end_of_line(text);
-    if (options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]))
+    if (range.start >= range.end && !text.is_empty())
+        || (options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]))
         || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))
     {
         out.extend_from_slice(original);
         return Ok(());
     }
     // Nothing in YAML is something that Prettier formats on its own.
-    let is_range = options.range_start.is_some_and(|start| start > 0)
-        || options
-            .range_end
-            .is_some_and(|end| (end as usize) < text.len());
+    let is_range = range.start > first || range.end < original.len();
     if options.insert_pragma
         && !options.require_pragma
         && !is_range

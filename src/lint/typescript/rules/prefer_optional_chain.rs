@@ -1038,8 +1038,8 @@ fn tsgolint_leaves_chain_before(operator: BinOp, first: NullishComparisonType, o
         return false;
     }
     match (operator, operand.comparison_type) {
-        (BinOp::And, T::EqualNullOrUndefined | T::StrictEqualUndefined) => true,
-        (BinOp::Or, T::NotEqualNullOrUndefined | T::NotStrictEqualUndefined) => true,
+        (BinOp::And, T::EqualNullOrUndefined | T::StrictEqualUndefined | T::NotStrictEqualNull) => true,
+        (BinOp::Or, T::NotEqualNullOrUndefined | T::NotStrictEqualUndefined | T::StrictEqualNull) => true,
         (BinOp::Or, T::Boolean) => first == T::NotBoolean,
         _ => false,
     }
@@ -1465,12 +1465,9 @@ impl PreferOptionalChain {
 
         let is_oxlint = cx.language().is_oxlint;
         let first = chain.first().map_or(T::Other, |it| it.comparison_type);
-        // `a && a.b !== null`, `!a || a.b === null`: tsgolint leaves them alone.
+        // `!a || a.b === null`: tsgolint leaves it alone.
         if is_oxlint
-            && matches!(
-                (operator, first, last_operand.comparison_type),
-                (BinOp::And, T::Boolean, T::NotStrictEqualNull) | (BinOp::Or, T::NotBoolean, T::StrictEqualNull)
-            )
+            && matches!((operator, first, last_operand.comparison_type), (BinOp::Or, T::NotBoolean, T::StrictEqualNull))
         {
             return;
         }
@@ -1560,7 +1557,15 @@ impl PreferOptionalChain {
                 if goes_on && cx.language().is_oxlint && tsgolint_leaves_chain_before(operator, first, operand) {
                     sub_chain = SubChain::default();
                 } else if goes_on
-                    && matches!(operand.comparison_type, T::StrictEqualUndefined | T::NotStrictEqualUndefined)
+                    && match (operator, operand.comparison_type) {
+                        // `a && a.b && typeof a.b.c === "undefined"`: for tsgolint the chain ends before it.
+                        (BinOp::And, T::StrictEqualUndefined) | (BinOp::Or, T::NotStrictEqualUndefined) => {
+                            !cx.language().is_oxlint
+                        }
+                        (_, comparison_type) => {
+                            matches!(comparison_type, T::StrictEqualUndefined | T::NotStrictEqualUndefined)
+                        }
+                    }
                 {
                     // `foo == null || foo.bar === undefined`: not an operand of a chain, but its end.
                     sub_chain.last_chain = Some(operand);

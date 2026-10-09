@@ -11,6 +11,7 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
+use bun_core::strings;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
     virtual_machine::VirtualMachine,
@@ -265,8 +266,60 @@ const FEW_VMS: usize = 4;
 /// So many files do not take more than a few VMs.
 const FEW_FILES: usize = 128;
 
-/// What a VM with a few plugins takes.
-const MEMORY_OF_A_VM: usize = 384 << 20;
+/// What a line of `/proc/self/cgroup` names: a directory, under which other one it is, and the file in it and in those above it
+/// that has a limit. `0::/a/b` with one hierarchy, `9:memory:/a/b` with one for each controller.
+#[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
+fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
+    let (_, rest) = strings::split_once_char(line, b':')?;
+    let (controllers, group) = strings::split_once_char(rest, b':')?;
+    if controllers.is_empty() {
+        return Some((group, b"/sys/fs/cgroup", b"memory.max"));
+    }
+    (strings::split(controllers, b",").any(|it| it == b"memory")).then_some((
+        group,
+        b"/sys/fs/cgroup/memory",
+        b"memory.limit_in_bytes",
+    ))
+}
+
+/// What such a file says. `max`: there is no limit.
+#[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
+fn limit_in(text: &[u8]) -> Option<usize> {
+    core::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()
+}
+
+/// The least that the control groups of this process allow it: a container's limit.
+#[cfg(target_os = "linux")]
+fn limit_of_the_groups() -> Option<usize> {
+    use bun_sys::{Fd, File};
+    let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
+    let limits = strings::split(&groups, b"\n")
+        .filter_map(group_in)
+        .flat_map(|(group, root, file)| {
+            let above = core::iter::successors(Some(group), |it| {
+                Some(&it[..strings::last_index_of_char(it, b'/')?])
+            });
+            above.filter_map(move |it| {
+                limit_in(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
+            })
+        });
+    limits.min()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn limit_of_the_groups() -> Option<usize> {
+    None
+}
+
+/// What all engines together may take: a quarter of the memory.
+fn memory_for_engines() -> usize {
+    let machine = bun_core::get_total_memory_size();
+    limit_of_the_groups().map_or(machine, |it| it.min(machine)) / 4
+}
+
+/// A heap that is under a quarter of what JavaScriptCore takes for the RAM doubles between two collections. With this much that is a
+/// heap under 1 GB: every engine but one with a giant file, which then grows by a half and by a quarter instead.
+const MOST_RAM_FOR_A_HEAP: usize = 4 << 30;
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. With
 /// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
@@ -314,6 +367,8 @@ enum Turn {
 struct Desk {
     turn: Guarded<Turn>,
     is_said: Condition,
+    /// How large the heap of the engine was after its last call.
+    heap: core::sync::atomic::AtomicUsize,
 }
 
 impl Desk {
@@ -338,9 +393,15 @@ struct Start {
     initialize: std::sync::Once,
     /// Whether there can be more than a few engines. Nobody knows if an engine is needed to find out.
     is_for_few: core::sync::atomic::AtomicBool,
+    memory: std::sync::OnceLock<usize>,
 }
 
 impl Start {
+    /// [`memory_for_engines`]
+    fn memory(&self) -> usize {
+        *self.memory.get_or_init(memory_for_engines)
+    }
+
     /// Makes a VM for this thread.
     fn start_vm(&self) -> Result<(), Vec<u8>> {
         let mut first = None;
@@ -350,6 +411,7 @@ impl Start {
             if !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
+            jsc::expect_ram_size(self.memory().min(MOST_RAM_FOR_A_HEAP));
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {
@@ -390,11 +452,12 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
                 *answer = answered;
             }
         };
-        desk.say(Turn::Returned(
-            started
-                .clone()
-                .and_then(|()| ThreadVm.call(kind, &content, &mut ask)),
-        ));
+        let returned = (started.clone()).and_then(|()| ThreadVm.call(kind, &content, &mut ask));
+        if started.is_ok() {
+            let heap = VirtualMachine::get().jsc_vm().heap_size();
+            desk.heap.store(heap, core::sync::atomic::Ordering::Relaxed);
+        }
+        desk.say(Turn::Returned(returned));
     }
 }
 
@@ -437,10 +500,13 @@ impl Vm for Borrowed<'_> {
 
 impl Drop for Borrowed<'_> {
     fn drop(&mut self) {
+        let mut state = self.engines.state.lock();
+        let heap = self.desk.heap.load(core::sync::atomic::Ordering::Relaxed);
+        let largest = &mut state.all[self.at].2;
+        *largest = heap.max(*largest);
         if self.is_borrowed_further_up {
             return;
         }
-        let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
         state.idle.push(self.at);
         drop(state);
@@ -452,8 +518,8 @@ impl Drop for Borrowed<'_> {
 
 #[derive(Default)]
 struct State {
-    /// With who has borrowed it last.
-    all: Vec<(Arc<Desk>, ThreadId)>,
+    /// With who has borrowed it last, and the largest that its heap was when it was given back.
+    all: Vec<(Arc<Desk>, ThreadId, usize)>,
     /// Which of them nobody has borrowed. The last one was given back last.
     idle: Vec<usize>,
     /// Who has borrowed which.
@@ -474,10 +540,21 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        for (desk, _) in core::mem::take(&mut self.state.lock().all) {
+        for (desk, ..) in core::mem::take(&mut self.state.lock().all) {
             desk.say(Turn::End);
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
         }
+    }
+
+    /// Whether one more engine fits in the memory that is for them, if it gets as large as the largest of those after the first, which
+    /// has the heavy files. Nobody knows before one of these has been given back: so long there are two.
+    fn has_room_for_another(&self, state: &State) -> bool {
+        let [first, others @ ..] = &state.all[..] else {
+            return true;
+        };
+        let largest = others.iter().map(|it| it.2).max().unwrap_or(0);
+        others.is_empty()
+            || (largest > 0 && first.2 + (others.len() + 1) * largest <= self.start.memory())
     }
 
     /// Waits for an engine.
@@ -509,7 +586,8 @@ impl Engines {
                 state.all[at].1 = me;
                 break at;
             }
-            let can_start = !is_heavy || state.all.is_empty();
+            let can_start =
+                (!is_heavy || state.all.is_empty()) && self.has_room_for_another(&state);
             if can_start && (self.demand).is_worth_another(state.all.len() - state.kept) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
@@ -519,7 +597,7 @@ impl Engines {
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                state.all.push((desk, me));
+                state.all.push((desk, me, 0));
                 break at;
             }
             self.is_idle.wait_guarded(&mut state);
@@ -556,9 +634,35 @@ impl Engine for Engines {
         (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
         self.demand.expect(size, most);
     }
+}
 
-    /// Half of the memory is for them.
-    fn most_realms(&self) -> usize {
-        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
+#[cfg(test)]
+mod tests {
+    use super::{group_in, limit_in};
+
+    #[test]
+    fn reads_the_groups() {
+        let unified = (
+            &b"/a/b.scope"[..],
+            &b"/sys/fs/cgroup"[..],
+            &b"memory.max"[..],
+        );
+        assert_eq!(group_in(b"0::/a/b.scope"), Some(unified));
+        let own = (
+            &b"/docker/1"[..],
+            &b"/sys/fs/cgroup/memory"[..],
+            &b"memory.limit_in_bytes"[..],
+        );
+        assert_eq!(group_in(b"9:memory:/docker/1"), Some(own));
+        assert_eq!(group_in(b"4:cpu,memory:/docker/1"), Some(own));
+        assert_eq!(group_in(b"1:name=systemd:/"), None);
+        assert_eq!(group_in(b""), None);
+    }
+
+    #[test]
+    fn reads_a_limit() {
+        assert_eq!(limit_in(b"629145600\n"), Some(629_145_600));
+        assert_eq!(limit_in(b"max\n"), None);
+        assert_eq!(limit_in(b""), None);
     }
 }

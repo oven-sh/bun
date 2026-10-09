@@ -14,6 +14,7 @@ use crate::js_plugin;
 use crate::linter::message::{RuleId, write_json};
 use crate::options::Json;
 use crate::rule::Meta;
+use bun_core::strings;
 use validate::Validator;
 
 /// The strings of an entry of [`data::NAMES`].
@@ -31,26 +32,39 @@ fn names(mut list: &[u8]) -> Json {
     Json::Array(all)
 }
 
-/// Puts what `{"$":n}` and `{"$names":n}` stand for in their places.
-fn expand(json: &mut Json) {
-    let meant = match &*json {
+/// Writes `text` with what each `{"$":n}` stands for in its place. As text: to parse is dear however short the text is.
+fn write_with_shared(out: &mut Vec<u8>, mut text: &[u8]) {
+    const REFERENCE: &[u8] = b"{\"$\":";
+    while let Some(at) = strings::index_of(text, REFERENCE) {
+        let (before, reference) = text.split_at(at);
+        out.extend_from_slice(before);
+        let digits = &reference[REFERENCE.len()..];
+        let end = strings::index_of_char_usize(digits, b'}').unwrap_or(digits.len());
+        let shared = bun_core::fmt::parse_decimal::<usize>(&digits[..end]);
+        if let Some(shared) = shared.and_then(|it| data::SHARED.get(it)) {
+            write_with_shared(out, shared.as_bytes());
+        }
+        text = digits.get(end + 1..).unwrap_or_default();
+    }
+    out.extend_from_slice(text);
+}
+
+/// Puts what each `{"$names":n}` stands for in its place.
+fn put_names(json: &mut Json) {
+    let list = match &*json {
         Json::Object(entries) => match &entries[..] {
-            [(key, Json::Number(index))] if key == b"$" => {
-                (data::SHARED.get(*index as usize)).and_then(|it| crate::json::parse(it.as_bytes()))
-            }
-            [(key, Json::Number(index))] if key == b"$names" => {
-                data::NAMES.get(*index as usize).map(|it| names(it))
-            }
+            [(key, Json::Number(index))] if key == b"$names" => data::NAMES.get(*index as usize),
             _ => None,
         },
         _ => None,
     };
-    if let Some(meant) = meant {
-        *json = meant;
+    if let Some(list) = list {
+        *json = names(list);
+        return;
     }
     match json {
-        Json::Object(entries) => entries.iter_mut().for_each(|it| expand(&mut it.1)),
-        Json::Array(items) => items.iter_mut().for_each(expand),
+        Json::Object(entries) => entries.iter_mut().for_each(|it| put_names(&mut it.1)),
+        Json::Array(items) => items.iter_mut().for_each(put_names),
         _ => {}
     }
 }
@@ -60,8 +74,12 @@ fn find(id: &[u8]) -> Option<Json> {
     let at = data::SCHEMAS
         .binary_search_by(|it| it.0.as_bytes().cmp(id))
         .ok()?;
-    let mut found = crate::json::parse(data::SCHEMAS[at].1.as_bytes())?;
-    expand(&mut found);
+    let mut text = Vec::new();
+    write_with_shared(&mut text, data::SCHEMAS[at].1.as_bytes());
+    let mut found = crate::json::parse(&text)?;
+    if strings::contains(&text, b"{\"$names\":") {
+        put_names(&mut found);
+    }
     Some(found)
 }
 

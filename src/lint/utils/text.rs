@@ -256,6 +256,13 @@ fn map_case<'t>(
     Cow::Owned(out)
 }
 
+/// Whether `text` ends with `ending`, whatever the case of the ASCII letters.
+pub fn ends_with_ignore_ascii_case(text: &[u8], ending: &[u8]) -> bool {
+    (text.len().checked_sub(ending.len()))
+        .and_then(|at| text.get(at..))
+        .is_some_and(|end| end.eq_ignore_ascii_case(ending))
+}
+
 /// `text.toLowerCase()`
 pub fn to_lower_case(text: &[u8]) -> Cow<'_, [u8]> {
     map_case(

@@ -23,15 +23,19 @@ pub enum BeforeParsing<'t> {
 
 /// What the pragmas in `text`, which is JavaScript or TypeScript, and the options about them say.
 pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforeParsing<'t> {
-    before_parsing_css(text, 0, options)
+    let is_whole_file = options.range_start.unwrap_or(0) == 0
+        && options.range_end.is_none_or(|end| end >= utf16_len(text));
+    before_parsing_css(text, 0, is_whole_file, options)
 }
 
 /// The same for CSS, SCSS and Less, where the comment can follow front matter: Prettier's
 /// `language-css/pragma.js`. `front_matter_len`: the length of the front matter that `text` starts
-/// with, up to and including its last `---`.
+/// with, up to and including its last `---`. `is_whole_file`: `rangeStart` and `rangeEnd`, which count in the text before its
+/// line breaks were made `\n`, leave nothing out.
 pub fn before_parsing_css<'t>(
     text: &'t [u8],
     front_matter_len: usize,
+    is_whole_file: bool,
     options: &FormatOptions,
 ) -> BeforeParsing<'t> {
     let (front_matter, content) = text.split_at(front_matter_len.min(text.len()));
@@ -41,8 +45,6 @@ pub fn before_parsing_css<'t>(
         return BeforeParsing::LeaveAsItIs;
     }
     // Not if only a part of the file is formatted.
-    let is_whole_file = options.range_start.unwrap_or(0) == 0
-        && options.range_end.is_none_or(|end| end >= utf16_len(text));
     if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {
         let mut out = Vec::with_capacity(text.len() + 32);
         if !front_matter.is_empty() {
@@ -155,9 +157,11 @@ pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
         }
         out.extend_from_slice(line);
     }
-    out.extend_from_slice(line_break);
-    if !matches!(parts.rest, [b'\n' | b'\r', ..]) {
-        out.extend_from_slice(line_break);
+    match (line_break, parts.rest) {
+        // `\r` and the `\n` that follows would be one line break.
+        (b"\r", [b'\n', ..]) => out.push(b'\n'),
+        (_, [b'\n' | b'\r', ..]) => out.extend_from_slice(line_break),
+        _ => out.extend([line_break, line_break].concat()),
     }
     out.extend_from_slice(parts.rest);
 }

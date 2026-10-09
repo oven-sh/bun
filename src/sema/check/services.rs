@@ -994,6 +994,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
+    /// `context_free_type_of_expression` as a tool gets it that asks before anything has resolved the call `node`: the
+    /// call is resolved again, with nothing expected of it. For what is no call, `context_free_type_of_expression`.
+    pub fn context_free_type_of_call_resolved_afresh(&mut self, node: NodeRef) -> TypeId {
+        let Some(e) = self.expr_of(node) else {
+            return TypeId::ERROR;
+        };
+        match self.c.hir(node.file)[e].kind {
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => {
+                (self.c).context_free_type_of_call_resolved_afresh(node.file, e)
+            }
+            _ => self.c.context_free_type_of_expression(node.file, e),
+        }
+    }
+
     pub fn type_with_default(&mut self, ty: TypeId, default: NodeRef) -> TypeId {
         match self.expr_of(default) {
             Some(e) => self.c.get_type_with_default(default.file, ty, e),

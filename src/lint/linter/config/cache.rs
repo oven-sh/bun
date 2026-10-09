@@ -19,6 +19,8 @@ pub(super) struct Cache {
     rules: RwLock<Vec<Instances>>,
     /// The same for the rules of JavaScript plugins, by the options as they are written.
     js_rules: RwLock<JsInstances>,
+    /// For each rule, by its index in the registry: the options that its schema allows.
+    valid: RwLock<Vec<Vec<Arc<[Json]>>>>,
 }
 
 impl Default for Cache {
@@ -27,6 +29,7 @@ impl Default for Cache {
             resolved: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             js_rules: RwLock::new(Vec::new()),
+            valid: RwLock::new(Vec::new()),
         }
     }
 }
@@ -54,6 +57,20 @@ impl Cache {
                 made
             }
         }
+    }
+
+    /// Whether `options` are [known](Cache::set_valid) to be what the schema of the rule at `index` of the registry allows.
+    pub(super) fn is_valid(&self, index: usize, options: &Arc<[Json]>) -> bool {
+        let valid = self.valid.read();
+        (valid.get(index)).is_some_and(|all| all.iter().any(|it| it == options))
+    }
+
+    pub(super) fn set_valid(&self, index: usize, options: &Arc<[Json]>) {
+        let mut valid = self.valid.write();
+        if valid.len() <= index {
+            valid.resize_with(index + 1, Vec::new);
+        }
+        valid[index].push(Arc::clone(options));
     }
 
     pub(super) fn js_rule(

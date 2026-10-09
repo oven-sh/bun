@@ -17,7 +17,7 @@ use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
     apply_fixes, grows_too_much, is_parse_error, max_fixed_len,
 };
-use bun_lint::rule::Kind;
+use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
 use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
@@ -86,6 +86,48 @@ fn only_errors(_: &RuleId, severity: Severity) -> bool {
 
 fn no_rule(_: &RuleId, _: Severity) -> bool {
     false
+}
+
+/// What oxlint makes of the removal of a comment that disables nothing. From a script in a `.vue`, `.astro` or `.svelte` file it
+/// is removed with `--fix` as well as with the two other flags. From any other file it is never removed.
+pub(crate) fn unused_directives_as_oxlint(result: &mut LintResult, is_script: bool) {
+    for message in result.messages.iter_mut().filter(|it| it.rule_id.is_none()) {
+        match is_script {
+            true => message.fix = message.suggestions.first().map(|it| it.fix.clone()),
+            false => message.suggestions.clear(),
+        }
+    }
+}
+
+/// Puts the messages that have fixes in the order in which the rules of oxlint report at one node: by the plugin, then by the name.
+/// Of two fixes with the same range the first is applied.
+pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
+    const PLUGINS: [Plugin; 15] = [
+        Plugin::Import,
+        Plugin::Eslint,
+        Plugin::TypeScript,
+        Plugin::Jest,
+        Plugin::React,
+        Plugin::ReactPerf,
+        Plugin::Unicorn,
+        Plugin::JsxA11y,
+        Plugin::Oxc,
+        Plugin::Nextjs,
+        Plugin::Jsdoc,
+        Plugin::Promise,
+        Plugin::Vitest,
+        Plugin::Node,
+        Plugin::Vue,
+    ];
+    bun_lint::utils::sort::sort_by_key(messages, |it| match (&it.fix, &it.rule_id) {
+        (None, _) => (0, ""),
+        (Some(_), Some(RuleId::Known(meta))) => {
+            let plugin = meta.plugin.in_oxlint();
+            let rank = PLUGINS.iter().position(|it| *it == plugin);
+            (rank.unwrap_or(PLUGINS.len()), meta.name)
+        }
+        (Some(_), _) => (PLUGINS.len(), ""),
+    });
 }
 
 impl Context<'_, '_> {
@@ -367,6 +409,9 @@ impl Context<'_, '_> {
                     ..options
                 };
                 let mut result = self.linter.lint(&file, config, &options);
+                if config.language.is_oxlint {
+                    unused_directives_as_oxlint(&mut result, as_what.script.is_some());
+                }
                 self.promote_suggestions(&mut result);
                 self.timing.add(&self.timing.rules, parsed);
                 result
@@ -407,7 +452,8 @@ impl Context<'_, '_> {
             false => (verify(&text), text, false),
             true if config.language.is_oxlint => {
                 let mut result = verify(&text);
-                let messages = std::mem::take(&mut result.messages);
+                let mut messages = std::mem::take(&mut result.messages);
+                order_fixes_as_oxlint(&mut messages);
                 let fixed = apply_fixes(&text, messages, &|message| self.should_fix(message));
                 if fixed.output.len() > max_fixed_len(text.len()) {
                     let mut result = verify(&text);

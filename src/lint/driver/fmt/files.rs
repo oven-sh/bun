@@ -121,7 +121,15 @@ impl Kind {
         if let Some(parser) = parser {
             return Kind::of_parser(parser);
         }
-        let name = paths::basename(path);
+        // Prettier's `getLanguageByFileName` compares the name in lower case.
+        let lowered;
+        let name = match paths::basename(path) {
+            name if name.iter().any(u8::is_ascii_uppercase) => {
+                lowered = name.to_ascii_lowercase();
+                &lowered[..]
+            }
+            name => name,
+        };
         let extension =
             strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
         if matches!(
@@ -130,6 +138,7 @@ impl Kind {
         ) || name.ends_with(b".js.flow")
             || extension == b"wxs"
             || is_javascript_by_another_name(name, extension)
+            || name == b"jakefile"
         {
             return Some(Kind::Script);
         }

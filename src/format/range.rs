@@ -176,7 +176,8 @@ fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
     }
     let mut units = ascii;
     for (offset, &byte) in text.iter().enumerate().skip(ascii) {
-        if units >= index {
+        // Not in a character.
+        if units >= index && !matches!(byte, 0x80..=0xBF) {
             return Some(offset);
         }
         units += match byte {

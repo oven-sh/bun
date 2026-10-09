@@ -23,6 +23,7 @@ use self::memo::Memo;
 use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
+use crate::range::Offsets;
 use crate::text::{self, BOM};
 use crate::{FormatError, FormatOptions, front_matter};
 use std::borrow::Cow;
@@ -404,10 +405,20 @@ pub fn format(
         None => (false, text),
     };
     let in_original = |error: FormatError| error.before_normalizing_end_of_line(text);
+    // Prettier's `normalizeInputAndOptions`: the offsets count UTF-16 code units of `original`.
+    let first = original.len() - text.len();
+    let Offsets { start, end, .. } = Offsets::new(original, first, options);
+    if start >= end && !text.is_empty() {
+        out.extend_from_slice(original);
+        return Ok(());
+    }
+    // Nothing in a style sheet is something that Prettier formats on its own.
+    let is_range = start > first || end < original.len();
     let text = normalize_end_of_line(text);
     let text = match crate::pragma::before_parsing_css(
         &text,
         front_matter::parse(&text).map_or(0, |it| it.end),
+        !is_range,
         options,
     ) {
         BeforeParsing::LeaveAsItIs => {
@@ -423,11 +434,6 @@ pub fn format(
         }
         return Ok(());
     }
-    // Nothing in a style sheet is something that Prettier formats on its own.
-    let is_range = options.range_start.is_some_and(|start| start > 0)
-        || options
-            .range_end
-            .is_some_and(|end| (end as usize) < text.len());
     let start = out.len();
     if has_bom {
         out.extend_from_slice(BOM);

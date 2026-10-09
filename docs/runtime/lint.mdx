@@ -578,7 +578,7 @@ These differences are intentional:
 - **In a file with a byte order mark, what needs types is reported where it is.** oxlint places it 3 bytes too far to the left.
 - **`checkstyle`, `junit`, and `github` escape the names of files and rules.** oxlint prints them as they are, so a name with `"` or `<` breaks its report.
 - **`--init` leaves an `.oxlintrc.json` that exists as it is.** oxlint writes over it.
-- **`--ignore-path ./file` works.** oxlint ignores the flag if the path starts with `./`.
+- **`--ignore-path ./file` works.** Without an argument, or with `.`, oxlint reads the file only if it is named without a directory.
 - **More is accepted:** an argument with `..` in it, `--max-warnings -1`, and a configuration file that starts with a byte order mark. oxlint refuses them.
 - **A pattern in the options of a rule is a JavaScript regular expression.** oxlint compiles it with Rust's `regex`, where `(?x)`, `\z`, and `[[:alpha:]]` mean something else.
 - **`--fix` does not write a file that no longer parses.** `bun lint` leaves the file as it is, reports the problems as not fixed, and names the rules in a warning. oxlint writes the file: `foo(...[,])` becomes `foo(,)`.

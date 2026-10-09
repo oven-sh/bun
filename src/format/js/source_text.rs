@@ -146,6 +146,11 @@ impl<'a> SourceText<'a> {
         has_line_terminator(self.text_for(&span))
     }
 
+    /// Prettier's `hasNewlineInRange`, which does not know U+2028 and U+2029.
+    pub(crate) fn has_newline_in_range(self, span: Span) -> bool {
+        bun_core::strings::index_of_any(self.text_for(&span), b"\n\r").is_some()
+    }
+
     /// The number of line breaks between `end` and the next thing that is not whitespace. 0 if
     /// there is nothing more.
     pub(crate) fn lines_after(self, end: u32) -> usize {

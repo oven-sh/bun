@@ -3,7 +3,7 @@
 use super::number::format_trimmed_number;
 use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
-    is_name_without_quotes, is_simple_number,
+    is_name_without_quotes, is_simple_number, push_with_normalized_newlines,
 };
 use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
@@ -78,6 +78,16 @@ fn quoted<'a>(text: &[u8], f: &Formatter<'a>) -> Cow<'a, [u8]> {
     Cow::Owned(quoted)
 }
 
+/// `text` with `\n` for `\r\n` and for `\r`: what Prettier is given.
+fn with_normalized_newlines(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
+    if !bun_core::strings::contains_char(&text, b'\r') {
+        return text;
+    }
+    let mut normalized = Vec::with_capacity(text.len());
+    push_with_normalized_newlines(&mut normalized, &text);
+    Cow::Owned(normalized)
+}
+
 /// What is written for `key`, which is at `span` and is not an expression in brackets.
 fn printed_key<'a>(
     key: Key<'a>,
@@ -106,7 +116,7 @@ fn printed_key<'a>(
         )
     {
         let sorted = sorted_template_text(text, (true, true), context, tailwind);
-        return Cow::Owned([&b"`"[..], &sorted, b"`"].concat());
+        return with_normalized_newlines(Cow::Owned([&b"`"[..], &sorted, b"`"].concat()));
     }
     match key.kind() {
         KeyKind::Ident(name) if should_quote_keys(parent, f) => quoted(name.bytes(), f),
@@ -115,7 +125,9 @@ fn printed_key<'a>(
             Some(content) if should_unquote_keys(parent, f) => Cow::Borrowed(content),
             _ => string_literal(),
         },
-        KeyKind::ComputedString(_) if source.starts_with(b"`") => Cow::Borrowed(source),
+        KeyKind::ComputedString(_) if source.starts_with(b"`") => {
+            with_normalized_newlines(Cow::Borrowed(source))
+        }
         KeyKind::ComputedString(_) => string_literal(),
         KeyKind::Number(_) | KeyKind::ComputedNumber(_) if source.ends_with(b"n") => {
             match source.iter().any(u8::is_ascii_uppercase) {

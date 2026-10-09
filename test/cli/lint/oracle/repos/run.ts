@@ -388,6 +388,7 @@ const allows = (command: "lint" | "format") =>
     .includes("--allow-unsupported")
     ? ["--allow-unsupported"]
     : [];
+const asksForFlavor = (stderr: string) => stderr.includes("Say which one this run is for: --flavor=");
 const allowUnsupported = allows("lint");
 const allowUnsupportedFormat = allows("format");
 
@@ -431,13 +432,21 @@ async function lint(entry: Entry, run: Run) {
     env: run.env,
     perf: true,
   });
-  const ours = await inCopy(entry, "ours", {
-    cmd: commandOf(run, [bun, "lint"], [...json, "--timing", ...allowUnsupported, ...(run.ourArgs ?? [])]),
-    cwd: run.cwd,
-    env: { ...run.env, ...asScript("lint") },
-    perf: true,
-    seconds: patience(theirs),
-  });
+  const oursWith = (more: string[]) =>
+    inCopy(entry, "ours", {
+      cmd: commandOf(run, [bun, "lint"], [...json, "--timing", ...allowUnsupported, ...more, ...(run.ourArgs ?? [])]),
+      cwd: run.cwd,
+      env: { ...run.env, ...asScript("lint") },
+      perf: true,
+      seconds: patience(theirs),
+    });
+  // Configuration files of ESLint and of oxlint side by side: `bun lint` asks which one the run is for. Who switches adds the flag.
+  let ours = await oursWith([]);
+  const needsFlavor = asksForFlavor(read(ours.stderr));
+  if (needsFlavor) {
+    if (!flags.has("keep")) removeRuns(ours.out);
+    ours = await oursWith([`--flavor=${run.tool}`]);
+  }
   const compare = (a: any, b: any) =>
     run.tool === "eslint"
       ? compareEslint(a, b, cloneOf(entry.repo))
@@ -487,6 +496,7 @@ async function lint(entry: Entry, run: Run) {
     ours: summary(ours),
     warnings: warnings(read(ours.stderr)),
     unsupported: unsupported(read(ours.stderr)),
+    needsFlavor,
     plugins: run.tool === "eslint" && a ? await pluginsOf(entry, run, their.path, a) : undefined,
     // What `--timing` prints, above all how much JavaScript the plugins are.
     timing: read(ours.stderr)
@@ -554,20 +564,54 @@ async function fix(entry: Entry, run: Run) {
     cwd: run.cwd,
     env: run.env,
   });
-  const ours = await inCopy(entry, "ours-fix", {
-    cmd: commandOf(run, [bun, "lint"], ["--fix", ...allowUnsupported, ...(run.ourArgs ?? [])]),
-    cwd: run.cwd,
-    env: { ...run.env, ...asScript("lint") },
-    seconds: patience(theirs),
-  });
+  const oursWith = (more: string[]) =>
+    inCopy(entry, "ours-fix", {
+      cmd: commandOf(run, [bun, "lint"], ["--fix", ...allowUnsupported, ...more, ...(run.ourArgs ?? [])]),
+      cwd: run.cwd,
+      env: { ...run.env, ...asScript("lint") },
+      seconds: patience(theirs),
+    });
+  let ours = await oursWith([]);
+  if (asksForFlavor(read(ours.stderr))) {
+    if (!flags.has("keep")) removeRuns(ours.out);
+    ours = await oursWith([`--flavor=${run.tool}`]);
+  }
   const [a, b] = [changedFiles(entry, theirs.upper), changedFiles(entry, ours.upper)];
   const tree = compareTrees(a, b);
+  // Which fixes `--fix` applies changes from release to release: the latest one is asked too.
+  const version = await versionOf(entry, run, their.path);
+  const latest =
+    (run.tool === "oxlint" || run.tool === "eslint") && version !== JUDGES[run.tool]
+      ? await inCopy(entry, "judge-fix", {
+          cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], ["--fix", ...(run.theirArgs ?? [])]),
+          cwd: run.cwd,
+          env: run.env,
+        })
+      : null;
+  const c = latest && changedFiles(entry, latest.upper);
+  const judgeTree = c && compareTrees(c, b);
   const result = {
     tool: run.tool,
     cwd: run.cwd,
     theirs: summary(theirs),
     ours: summary(ours),
     tree: treeResult(tree, a, b, entry),
+    judge:
+      latest && c && judgeTree
+        ? {
+            version: JUDGES[run.tool as "oxlint"],
+            ...summary(latest),
+            tree: treeResult(judgeTree, c, b, entry),
+            verdict:
+              latest.code >= 2
+                ? "cannot run: theirs"
+                : ours.code >= 2
+                  ? "cannot run: ours"
+                  : judgeTree.different.length + judgeTree.onlyTheirs.length + judgeTree.onlyOurs.length === 0
+                    ? "identical"
+                    : "differs",
+          }
+        : null,
     // 2: it could not lint.
     verdict:
       theirs.code >= 2
@@ -578,7 +622,7 @@ async function fix(entry: Entry, run: Run) {
             ? "identical"
             : "differs",
   };
-  if (!flags.has("keep")) for (const it of [theirs, ours]) removeRuns(it.out);
+  if (!flags.has("keep")) for (const it of [theirs, ours, ...(latest ? [latest] : [])]) removeRuns(it.out);
   return result;
 }
 
@@ -647,7 +691,8 @@ async function format(entry: Entry, run: Run) {
   const theirFiles =
     run.tool === "oxfmt"
       ? await inCopy(entry, "theirs-files", {
-          cmd: commandOf(run, [their.path], ["--list-different", ...theirArgs]),
+          // The latest release: which files oxfmt reads has grown from release to release.
+          cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], ["--list-different", ...theirArgs]),
           cwd: run.cwd,
           env: run.env,
           upper: perturbed.upper,
@@ -696,11 +741,14 @@ async function format(entry: Entry, run: Run) {
       // Prettier that cannot load a plugin or a configuration file reads no file.
       theirWrite.code > 2 || theirWrite.code < 0 || (judgeWrite.code !== 0 && read_.theirs.length === 0)
         ? "cannot run: theirs"
-        : !clean(againstJudge) || judgeWrite.code !== ourWrite.code
-          ? "differs"
-          : theirSet.size === ourSet.size && [...theirSet].every(it => ourSet.has(it))
-            ? "identical"
-            : "same bytes, other files",
+        : // A run that did not end is never a difference.
+          [ourCheck, ourWrite, ourFiles].some(it => it.code > 2 || it.code < 0)
+          ? "cannot run: ours"
+          : !clean(againstJudge) || judgeWrite.code !== ourWrite.code
+            ? "differs"
+            : theirSet.size === ourSet.size && [...theirSet].every(it => ourSet.has(it))
+              ? "identical"
+              : "same bytes, other files",
     verdictAgainstTheirs: clean(againstTheirs) && theirWrite.code === ourWrite.code ? "identical" : "differs",
   };
   if (!flags.has("keep")) {

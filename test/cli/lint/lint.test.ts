@@ -683,6 +683,17 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. It was looked for in the finished
+      // tree, which cost every file more than it may: whoever has the names in hand while the parameters are read is to say it.
+      test.todo.each([
+        ["a.ts", "export class A {\n  foo(a, a) {}\n}", "a.ts:2:7"],
+        ["a.ts", "export {};\nfunction f(b, b) {}", "a.ts:2:12"],
+      ])("what OXC refuses is a parsing error: a name that two parameters bind: %s: %j", async (name, code, place) => {
+        const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
+        expect(stdout).toContain(`${place}: Parsing error: Identifier`);
+        expect(exitCode).toBe(1);
+      });
+
       test.each([
         // Only declared.
         ["a.ts", "declare const a: string;"],
@@ -796,6 +807,63 @@ describe.concurrent("bun lint", () => {
         expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
         expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
         expect(await after("--fix-dangerously")).toBe("done; done;\n");
+      });
+
+      // What oxlint 1.87 writes.
+      describe("a comment that disables nothing is removed from the scripts of a .vue file only, there by every flag", () => {
+        const rules = { "no-debugger": "error", "no-console": "error", "no-var": "error", "no-alert": "error" };
+        const options = { reportUnusedDisableDirectives: "error" };
+        const files = {
+          ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, options, rules }),
+          "a.js":
+            "// oxlint-disable-next-line no-console\nfoo();\n/* oxlint-disable no-alert */\nvar x = 1; x;\n// oxlint-disable-next-line no-console, no-debugger\ndebugger;\n",
+          "a.vue":
+            "<script>\n// oxlint-disable-next-line no-console\nfoo();\n/* oxlint-disable no-alert */\nvar x = 1; x;\n// oxlint-disable-next-line no-console, no-debugger\ndebugger;\n</script>\n",
+        };
+        test.each([
+          [
+            "a.js",
+            "--fix",
+            "// oxlint-disable-next-line no-console\nfoo();\n/* oxlint-disable no-alert */\nconst x = 1; x;\n// oxlint-disable-next-line no-console, no-debugger\ndebugger;\n",
+          ],
+          [
+            "a.js",
+            "--fix-suggestions",
+            "// oxlint-disable-next-line no-console\nfoo();\n/* oxlint-disable no-alert */\nvar x = 1; x;\n// oxlint-disable-next-line no-console, no-debugger\ndebugger;\n",
+          ],
+          [
+            "a.js",
+            "--fix-dangerously",
+            "// oxlint-disable-next-line no-console\nfoo();\n/* oxlint-disable no-alert */\nconst x = 1; x;\n// oxlint-disable-next-line no-console, no-debugger\ndebugger;\n",
+          ],
+          [
+            "a.vue",
+            "--fix",
+            "<script>\nfoo();\nvar x = 1; x;\n// oxlint-disable-next-line no-debugger\ndebugger;\n</script>\n",
+          ],
+          [
+            "a.vue",
+            "--fix-suggestions",
+            "<script>\nfoo();\nvar x = 1; x;\n// oxlint-disable-next-line no-debugger\ndebugger;\n</script>\n",
+          ],
+          [
+            "a.vue",
+            "--fix-dangerously",
+            "<script>\nfoo();\nvar x = 1; x;\n// oxlint-disable-next-line no-debugger\ndebugger;\n</script>\n",
+          ],
+        ])("%s %s", async (name, flag, expected) => {
+          expect((await lint(files, [flag, name], { reads: [name] })).files).toEqual({ [name]: expected });
+        });
+      });
+
+      // What oxlint 1.87 writes, in whichever order the file has the rules.
+      test("of two fixes with the same range, that of the rule that oxlint has first", async () => {
+        const rules = { "unicorn/numeric-separators-style": "error", "unicorn/number-literal-case": "error" };
+        const oxlintrc = JSON.stringify({ plugins: ["unicorn"], categories: { correctness: "off" }, rules });
+        const files = { ".oxlintrc.json": oxlintrc, "a.js": "a = 0xabcdef12;\n" };
+        expect((await lint(files, ["--fix", "a.js"], { reads: ["a.js"] })).files).toEqual({
+          "a.js": "a = 0xABCDEF12;\n",
+        });
       });
 
       // oxlint 1.87 with tsgolint 7.0 changes nothing.
@@ -1529,6 +1597,34 @@ describe.concurrent("bun lint", () => {
             { a: [], b: reported, shared: [] },
             { a: reported, b: [], shared: [] },
           ]);
+        });
+
+        // Two copies of one version of a package are one file to a program, and a private name is of one class. Both projects
+        // have both copies.
+        test("the files of a package", async () => {
+          const pkg = {
+            "package.json": `{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }`,
+            "index.d.ts": `export declare class C {\n  #secret;\n  later(): Promise<void>;\n}\n`,
+          };
+          const use = `import { make } from "dep";\nimport { C } from "pkg";\nexport const c: C = make();\nc.later();\n`;
+          const { raw } = await lint(
+            {
+              ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+              ...Object.fromEntries(Object.entries(pkg).map(([name, text]) => [`node_modules/pkg/${name}`, text])),
+              ...Object.fromEntries(
+                Object.entries(pkg).map(([name, text]) => [`node_modules/dep/node_modules/pkg/${name}`, text]),
+              ),
+              "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "types": "index.d.ts" }`,
+              "node_modules/dep/index.d.ts": `import { C } from "pkg";\nexport declare function make(): C;\n`,
+              "a/tsconfig.json": project({}, ["*.ts"]),
+              "a/use.ts": use,
+              "b/tsconfig.json": project({}, ["*.ts"]),
+              "b/use.ts": use,
+            },
+            ["-f", "json", "--type-aware", "--type-check"],
+          );
+          const reported = ["use.ts:4:1 typescript(no-floating-promises)"];
+          expect(found(raw, ["a", "b"])).toEqual({ a: reported, b: reported });
         });
 
         // Each project imports the file of the other, which has the same text, before or after that project reads it itself.

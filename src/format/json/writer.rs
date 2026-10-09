@@ -302,6 +302,7 @@ impl Writer<'_, '_> {
                     Some(b'"') => QuoteStyle::Single,
                     _ => QuoteStyle::Double,
                 };
+                let start = self.out.len();
                 make_string(
                     source
                         .get(1..source.len().saturating_sub(1))
@@ -309,6 +310,17 @@ impl Writer<'_, '_> {
                     quote.as_byte(),
                     self.out,
                 );
+                // The line break behind a `\` is written like every other.
+                let has_line_break = (self.out.get(start..))
+                    .is_some_and(|written| bun_core::strings::contains_char(written, b'\n'));
+                if has_line_break && self.config.line_ending != b"\n" {
+                    let written = self.out.split_off(start);
+                    crate::range::write_with_line_ending(
+                        &written,
+                        self.config.line_ending,
+                        self.out,
+                    );
+                }
             }
             Kind::Number if node.has(REWRITTEN) => {
                 self.out.extend_from_slice(&format_trimmed_number(source))

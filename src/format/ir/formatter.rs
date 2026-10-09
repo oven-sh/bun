@@ -1070,7 +1070,13 @@ impl<'a> Formatter<'a> {
         use super::printer::{PrinterBuffers, PrinterOptions, print};
         let source = self.source;
         let mut out = Vec::new();
-        let options = PrinterOptions::new(self.options(), source);
+        // It is written to the document again, where a line break is `\n` whatever the file gets, and where the printer
+        // marks the line breaks of texts for Markdown. Prettier: `printDocToString(.., { endOfLine: "lf" })`.
+        let options = PrinterOptions {
+            line_ending: crate::options::LineEnding::Lf,
+            marks_line_breaks_in_texts: false,
+            ..PrinterOptions::new(self.options(), source)
+        };
         if print(
             document,
             &self.storage,

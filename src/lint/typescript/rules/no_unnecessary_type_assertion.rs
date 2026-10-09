@@ -817,7 +817,9 @@ fn should_skip_contextual_type_fallback<'a>(
                 ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
             )
         );
-        return is_in_logical_expression || is_in_generic_context(node);
+        return is_in_logical_expression
+            || is_in_generic_context(node)
+            || node.file().language().is_oxlint && is_property_in_problematic_context(assertion);
     }
     // A template with expressions can be widened to `string` where the contextual type still
     // accepts it.
@@ -851,6 +853,19 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
             return expression.file().type_checker().get_void_type();
         }
         return return_type;
+    }
+    // tsgolint 7.0: what is asserted is not what the type arguments of a call are inferred from.
+    if expression.file().language().is_oxlint {
+        let (mut call, mut awaits) = (expression, 0);
+        while let ExprKind::Await(argument) = call.kind() {
+            (call, awaits) = (argument, awaits + 1);
+        }
+        if let ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it) = call.kind()
+            && it.type_args().is_empty()
+        {
+            let ty = call.context_free_type_of_call_resolved_afresh();
+            return (0..awaits).fold(ty, |ty, _| ty.get_awaited_type().unwrap_or(ty));
+        }
     }
     expression.ty()
 }

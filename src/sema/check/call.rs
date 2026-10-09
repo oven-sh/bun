@@ -300,6 +300,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             return self.any_signature_while_arguments_are_checked();
         }
+        if self.call_to_resolve_afresh == Some((file, call)) {
+            return self.resolve_signature_afresh(file, call);
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
@@ -404,6 +407,30 @@ impl<'p, 's> Checker<'p, 's> {
             // reported from the temporary types stays.
             self.reported.extend(reported);
         }
+        resolved
+    }
+
+    /// `resolved_signature` of `call_to_resolve_afresh`. What is stored for the call, and what was reported for it, stays
+    /// as it is; whatever asks for the call meanwhile gets what is stored.
+    #[cold]
+    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
+        self.call_to_resolve_afresh = None;
+        let resolution_start = self.resolution_start;
+        if !self.enter(Query::Call(file, call)) {
+            return ResolvedCall {
+                sig: None,
+                ret: TypeId::UNRESOLVED,
+            };
+        }
+        self.resolution_start = self.stack.len();
+        let around = self.call_resolution_errors.take();
+        let resolved = self.resolve_signature(file, call);
+        self.call_resolution_errors = around;
+        self.resolution_start = resolution_start;
+        self.resolved_meanwhile.push((file, call, resolved));
+        let resolved = self.with_return_type(resolved);
+        self.resolved_meanwhile.pop();
+        let _ = self.leave(Query::Call(file, call));
         resolved
     }
 

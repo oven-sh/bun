@@ -61,7 +61,8 @@ export default [
       // toBase64() with the `data:{mime};base64,` prefix.
       dataurl: { fn: "doDataUrl", length: 0, async: true },
       // ThumbHash-rendered ≤32px PNG data: URL — ~400-700B, ready for
-      // <img src> / blurDataURL.
+      // <img src> / blurDataURL. `placeholder("hash")` resolves the raw
+      // ThumbHash bytes (≤25) instead.
       placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
 

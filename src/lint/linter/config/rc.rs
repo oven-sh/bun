@@ -827,8 +827,9 @@ impl Rc<'_, '_> {
                 (at != categories_at || it.severity != Severity::Off)
                     && it.written_for.is_none_or(|it| self.has_plugin(it))
             };
-            let is_native =
-                |it: &&RuleSetting| find_js_rule(&self.reader.js_plugins, &it.id).is_none();
+            let is_native = |it: &&RuleSetting| {
+                it.written_for.is_some() || find_js_rule(&self.reader.js_plugins, &it.id).is_none()
+            };
             for setting in object.rules.iter().filter(is_told).filter(is_native) {
                 let key = oxlint_rule_key(&setting.id);
                 match places.get(&key) {

@@ -803,6 +803,23 @@ pub fn is_callee(e: Expr<'_>) -> bool {
     matches!(e.parent().as_expr().map(Expr::kind), Some(ExprKind::Call(call)) if call.callee() == e)
 }
 
+/// `CallExpression > MemberExpression.callee[object.name="process"][property.name="exit"]`: what
+/// `no-process-exit` reports, in ESLint and in eslint-plugin-n.
+pub fn is_process_exit_call(e: Expr<'_>) -> bool {
+    let ExprKind::Call(call) = e.kind() else {
+        return false;
+    };
+    let callee = call.callee();
+    // `[property.name = 'exit']` also holds for `process[exit]` and `process.#exit`.
+    let obj = match callee.kind() {
+        ExprKind::Dot { obj, name, .. } if name.name().is_any(&["exit", "#exit"]) => obj,
+        ExprKind::Index { obj, index, .. } if index.is_ident("exit") => obj,
+        _ => return false,
+    };
+    // In `(process?.exit)()` a `ChainExpression` is the callee.
+    obj.is_ident("process") && !callee.is_chain_root()
+}
+
 /// ESLint's `isEmptyBlock`. The body of a function is not a `Stmt`: see [`is_empty_function`].
 #[inline]
 pub fn is_empty_block(statement: Stmt<'_>) -> bool {

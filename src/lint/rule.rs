@@ -81,8 +81,9 @@ enum UnderEslint {
     /// The rules here. There is no package that could.
     Here,
     /// The rules here, in place of those of the package of that name, which is loaded for the rules that do not exist
-    /// here. Without a name: whatever the plugin of the configuration says it is called.
-    InPlaceOf(Option<&'static str>),
+    /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
+    /// the rules here do the same as.
+    InPlaceOf(Option<&'static str>, &'static str),
     /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
     /// for a configuration of oxlint.
     Package,
@@ -125,13 +126,13 @@ plugins! {
     /// `no-debugger`
     Eslint: ["", "eslint"], Here;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None);
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1");
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"));
+    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1");
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"));
+    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0");
     /// `n/no-unsupported-features/es-syntax`
-    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"));
+    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1");
     /// `oxc/no-accumulating-spread`
     Oxc: ["oxc"], Here;
     /// `unicorn/no-null`
@@ -196,13 +197,21 @@ impl Plugin {
     /// is called, if it says so.
     pub(crate) fn answers_in_place_of(prefix: &[u8], package: Option<&[u8]>) -> bool {
         Plugin::ALL.iter().any(|it| match it.names().under_eslint {
-            UnderEslint::InPlaceOf(usual) => {
+            UnderEslint::InPlaceOf(usual, _) => {
                 it.prefix().as_bytes() == prefix
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
             }
             UnderEslint::Here | UnderEslint::Package => false,
         })
+    }
+
+    /// The version of the package that the rules here do the same as, if they answer in place of one.
+    pub fn follows(self) -> Option<&'static str> {
+        match self.names().under_eslint {
+            UnderEslint::InPlaceOf(_, version) => Some(version),
+            UnderEslint::Here | UnderEslint::Package => None,
+        }
     }
 
     /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
@@ -212,6 +221,13 @@ impl Plugin {
             plugin => plugin,
         }
     }
+}
+
+/// The major and the minor version in `version`.
+pub fn minor_of(version: &[u8]) -> Option<(u32, u32)> {
+    let mut parts = version.split(|it| *it == b'.');
+    let mut number = || std::str::from_utf8(parts.next()?).ok()?.parse().ok();
+    Some((number()?, number()?))
 }
 
 /// ESLint's `meta.type`.

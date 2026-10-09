@@ -162,7 +162,7 @@ impl VM {
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
-    pub fn block_bytes_allocated(&self) -> usize {
+    pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
     }
 }

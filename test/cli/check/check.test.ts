@@ -1069,6 +1069,31 @@ describe.concurrent("bun check", () => {
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
+    // TypeScript 7.0.2 finds nothing in them. `Pick` and `Omit` ask the union for the properties that they keep, by name, and a
+    // property of a union is created with the types of those that it combines: that of `shape` is what is being resolved.
+    test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(
+      "%s of a union does not ask for the types of the other properties",
+      async picked => {
+        using dir = project({
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { strict: true, noEmit: true, types: [], lib: ["es2022"] },
+          }),
+          "a.ts": [
+            `interface A { id: string; shape?: "c" }`,
+            `interface B { id: string; shape?: ShapeID }`,
+            `type N = A | B;`,
+            `declare const k: ${picked};`,
+            `const shapes = { k } satisfies { k: { id: string } };`,
+            `type ShapeID = keyof typeof shapes;`,
+            `export const id: ShapeID = "k";`,
+            ``,
+          ].join("\n"),
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      },
+    );
+
     test("files that two projects read alike are parsed once", async () => {
       const config = JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [], lib: ["es2022"] } });
       using dir = project({

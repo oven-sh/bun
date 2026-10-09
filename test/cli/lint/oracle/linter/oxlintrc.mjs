@@ -116,6 +116,66 @@ try {
     cases.push({ basePath, flavor: "oxlint", config, extended, sources });
     expected.push(byFile);
   }
+  // The `plugins` of overrides. `categories` turn on the rules of the plugins that they add only if one of the overrides that apply
+  // to the file names other plugins than all that are on for it. A file that extends or is extended and has no `plugins` adds
+  // typescript, unicorn and oxc. A line for a rule of `correctness` of each plugin.
+  const ofPlugins = 'debugger;\nit("a", () => { if (x) { expect(1).toBe(1); } });\nnew Array(1);\nx!!.y;\nfunction f() { new Error("a"); }\n';
+  const [t, u, o, j, v] = ["typescript", "unicorn", "oxc", "jest", "vitest"];
+  const override = (plugins, more = {}) => ({ files: ["__tests__/**"], ...(plugins ? { plugins } : {}), rules: { "no-empty": "off" }, ...more });
+  const correctness = { categories: { correctness: "error" } };
+  const projects = [];
+  for (const layout of ["one file", "extends all", "extends the overrides", "extends the rest"]) {
+    for (const ofFile of [undefined, [], [t], [t, u, o], [j], [u]]) {
+      for (const first of [undefined, [], [j], [t, j], [t, u, o, j], [t, j, v], [u, j]]) {
+        const isWide = (ofFile === undefined || ofFile.length === 1) && !layout.endsWith("l") && !layout.endsWith("t");
+        for (const second of isWide ? [null, undefined, [v], [t, v], [t, j, v]] : [null]) {
+          const rest = { ...correctness, ...(ofFile ? { plugins: ofFile } : {}) };
+          const overrides = [override(first), ...(second === null ? [] : [override(second)])];
+          projects.push(
+            layout === "one file" ? { ".oxlintrc.json": { ...rest, overrides } }
+            : layout === "extends all" ? { ".oxlintrc.json": { extends: ["./all.json"] }, "all.json": { ...rest, overrides } }
+            : layout === "extends the overrides" ? { ".oxlintrc.json": { ...rest, extends: ["./overrides.json"] }, "overrides.json": { overrides } }
+            : { ".oxlintrc.json": { extends: ["./rest.json"], overrides }, "rest.json": rest },
+          );
+        }
+      }
+    }
+  }
+  const off = { rules: { "jest/no-conditional-expect": "off" } }, warn = { rules: { "jest/no-conditional-expect": "warn" } };
+  for (const config of [
+    // One that does not apply does not count.
+    { ...correctness, plugins: [t], overrides: [override([t, j]), override([t, v], { files: ["src/**"] })] },
+    { ...correctness, plugins: [t, u], overrides: [override([t, u, j]), override([v], { files: ["src/**"] })] },
+    { ...correctness, plugins: [t], overrides: [override([t, j]), override([t, v], { excludeFiles: ["**/*.spec.ts"] })] },
+    { ...correctness, plugins: [t], overrides: [override([t, j]), override([t, j]), override([j, t])] },
+    { ...correctness, plugins: [t], overrides: [override([t, j]), override([t, j]), override([])] },
+    { ...correctness, plugins: [], overrides: [override([j]), override([v])] },
+    { ...correctness, plugins: [], overrides: [override([j, v])] },
+    // `eslint` is no plugin, and a plugin has several names.
+    { ...correctness, plugins: ["eslint", t], overrides: [override([t, j])] },
+    { ...correctness, plugins: [t], overrides: [override(["eslint", t, j])] },
+    { ...correctness, plugins: ["@typescript-eslint"], overrides: [override(["typescript-eslint", j])] },
+    { ...correctness, plugins: ["react"], overrides: [override(["react-hooks", j])] },
+    // What `rules` say.
+    { ...correctness, plugins: [t], overrides: [override([t, j], warn)] },
+    { ...correctness, plugins: [t], ...warn, overrides: [override([t, j])] },
+    { ...correctness, plugins: [t], overrides: [override([j], off)] },
+    { ...correctness, plugins: [t], ...off, overrides: [override([j])] },
+    { ...correctness, plugins: [t], overrides: [override(undefined, off), override([j])] },
+    { ...correctness, plugins: [t], overrides: [override([t, j], off), override([v])] },
+    { plugins: [t], overrides: [override([t, j])] },
+    { plugins: [t], overrides: [override([j])] },
+    { categories: { correctness: "off", suspicious: "error" }, plugins: [t], overrides: [override([j])] },
+  ]) projects.push({ ".oxlintrc.json": config });
+  projects.forEach((files, i) => {
+    const project = join(root, `plugins-${i}`);
+    mkdirSync(join(project, "__tests__"), { recursive: true });
+    writeFileSync(join(project, "__tests__", "a.spec.ts"), ofPlugins);
+    for (const [name, config] of Object.entries(files)) writeFileSync(join(project, name), JSON.stringify(config));
+    const args = ["--format", "json", "--threads", "1", "."];
+    const { stdout } = spawnSync(oxlint, args, { cwd: project, maxBuffer: 1 << 26 });
+    strict.add(JSON.stringify(files), reportsOfOxlint(stdout.toString()), reportsOfOxlint(bunLintPrints(["--allow-unsupported", ...args], project)));
+  });
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

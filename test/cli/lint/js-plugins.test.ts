@@ -484,6 +484,79 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
+    "a plugin that is called n beside the node that is built in: --print-config has what is built in, as oxlint's",
+    async () => {
+      const rules = { "n/no-path-concat": "error", "node/no-path-concat": "warn" };
+      const { raw } = await lint({ ...calledN, ".oxlintrc.json": besideNode({ rules }) }, ["--print-config"]);
+      expect(JSON.parse(raw).rules).toEqual({ "node/no-path-concat": "warn" });
+    },
+    timeout,
+  );
+
+  describe("a note says which rules ran in JavaScript that are built in", () => {
+    const rules = { "n/no-path-concat": "error" };
+    const packaged = (version: string) => ({
+      "a.js": calledN["a.js"],
+      "node_modules/eslint-plugin-n/package.json": JSON.stringify({
+        name: "eslint-plugin-n",
+        version,
+        type: "module",
+        main: "n.js",
+      }),
+      "node_modules/eslint-plugin-n/n.js": calledN["n.js"],
+    });
+    const notes = async (files: Record<string, string>, more: object, ...flags: string[]) =>
+      (await lint({ ...files, ".oxlintrc.json": besideNode(more) }, [...flags, "a.js"])).stderr
+        .split("\n")
+        .filter(it => it.startsWith("note: "));
+    const advice = `remove it from "jsPlugins" and add "node" to "plugins".`;
+
+    test(
+      "a package, with its version",
+      async () => {
+        const jsPlugins = ["eslint-plugin-n"];
+        expect(await notes(packaged("17.16.2"), { jsPlugins, rules })).toEqual([
+          `note: 1 rule of "n" ran in JavaScript (eslint-plugin-n 17.16.2, from "jsPlugins"). bun lint has it built in, as of 18.4.1: ${advice} Reports may differ.`,
+        ]);
+        expect(await notes(packaged("18.4.9"), { jsPlugins, rules }, "-f", "stylish")).toEqual([
+          `note: 1 rule of "n" ran in JavaScript (eslint-plugin-n 18.4.9, from "jsPlugins"). bun lint has it built in, as of 18.4.1: ${advice}`,
+        ]);
+      },
+      timeout,
+    );
+
+    test(
+      "a file, and rules that are not built in",
+      async () => {
+        const more = { "n/no-new-require": "warn", "n/only-there": "error", "n/no-sync": "off" };
+        const plugin = calledN["n.js"].replace(
+          `"only-there"`,
+          `"no-new-require": rule("new"), "no-sync": rule("sync"), "only-there"`,
+        );
+        expect(await notes({ ...calledN, "n.js": plugin }, { rules: { ...rules, ...more } })).toEqual([
+          `note: 2 rules of "n" ran in JavaScript (./n.js, from "jsPlugins"). bun lint has them built in, as of 18.4.1: write them "node/.." and add "node" to "plugins". Keep it for the other 1. Reports may differ.`,
+        ]);
+      },
+      timeout,
+    );
+
+    test(
+      "nothing where nobody reads it, and nothing where there is nothing to say",
+      async () => {
+        for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"], ["-f", "github"]]) {
+          expect([flags, await notes(calledN, { rules }, ...flags)]).toEqual([flags, []]);
+        }
+        expect(await notes(calledN, { rules: { "n/only-there": "error" } })).toEqual([]);
+        expect(await notes(calledN, { rules: { "n/no-path-concat": "off", "node/no-path-concat": "error" } })).toEqual(
+          [],
+        );
+        expect(await notes(calledN, { jsPlugins: [], rules })).toEqual([]);
+      },
+      timeout,
+    );
+  });
+
+  test(
     "a plugin that is called n beside the node that is built in: each has its name in oxlint-suppressions.json",
     async () => {
       const rules = { "n/no-path-concat": "error", "node/no-path-concat": "error" };
@@ -1664,7 +1737,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
 
   // The first regular expression of a configuration starts JavaScriptCore, before anybody knows how many VMs there are going to be.
   test.skipIf(!isLinux || availableParallelism() < 2)(
-    "threads that mark beside a VM: with a few VMs, not with many, and as BUN_JSC_numberOfGCMarkers says",
+    "threads that compile beside a VM: with a few VMs, not with many, and as BUN_JSC_useConcurrentJIT says",
     async () => {
       const files = (count: number) => ({
         "eslint.config.mjs": `
@@ -1679,20 +1752,24 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             return "";
           }
         };
-        // They start when there is something to mark.
-        const kept = Array.from({ length: 300000 }, (_, i) => ({ i }));
+        // They start when there is something to compile.
+        const twice = i => i * 2 + (i % 3);
         let counted;
         const helpers = () => {
           if (counted === undefined) {
-            Bun.gc(true);
-            counted = readdirSync("/proc/self/task").filter(id => nameOf(id) === "HeapHelper").length * Math.sign(kept.length);
+            let sum = 0;
+            for (let i = 0; i < 5e6; i++) sum += twice(i);
+            counted = Math.sign(readdirSync("/proc/self/task").filter(id => nameOf(id) === "JITWorker").length * sum);
           }
           return counted;
         };
         export default {
           rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
         };`,
-        ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`f${i}.js`, "1;\n"])),
+        // 200 of them are 16 MB, which five engines are for.
+        ...Object.fromEntries(
+          Array.from({ length: count }, (_, i) => [`f${i}.js`, `1;\n/*${Buffer.alloc(80_000, "x")}*/\n`]),
+        ),
       });
       const helpers = async (count: number, variables?: Record<string, string>) => {
         const { raw } = await lint(files(count), ["--threads", "8", "-f", "json"], [], variables);
@@ -1703,11 +1780,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       const [few, many, asked] = await Promise.all([
         helpers(2),
         helpers(200),
-        helpers(200, { BUN_JSC_numberOfGCMarkers: "3" }),
+        helpers(200, { BUN_JSC_useConcurrentJIT: "1" }),
       ]);
-      expect(few).toEqual([expect.stringMatching(/^[1-9]/)]);
-      expect(many).toEqual(["0"]);
-      expect(asked).toEqual(["2"]);
+      expect([few, many, asked]).toEqual([["1"], ["0"], ["1"]]);
     },
     timeout,
   );
@@ -1776,7 +1851,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             const grows = {
               create: context => ({
                 Program(node) {
-                  for (let i = 0; i < 200_000 && kept.length < 1_000_000; i++) kept.push({ a: i, b: [i] });
+                  if (kept.length < 10) kept.push(new Uint8Array(32 << 20).fill(1));
                   context.report({ node, message: "seen" });
                 },
               }),
@@ -1785,7 +1860,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         };
         const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
-        const variables = { BUN_JSC_forceRAMSize: String(64 << 20) };
+        // Two thirds of it are for the engines, of which each grows to 320 MB.
+        const variables = { BUN_LINT_MEMORY: String(768 << 20) };
         const { raw, stderr, exitCode } = await lint(
           files,
           ["-f", "unix", "--timing", "--threads", threads, "src"],
@@ -1796,10 +1872,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         const seen = raw.split(":1:1: seen [Error/own/grows]").length - 1;
         return { seen, freed: Number(/, freed to stay in the memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
       };
-      const more = Math.max(16, availableParallelism() + 1);
-      const [one, some, many] = await Promise.all([run(1, "8"), run(16, "8"), run(more, "0")]);
+      const more = Math.max(40, availableParallelism() + 1);
+      const [one, some, many] = await Promise.all([run(1, "8"), run(40, "8"), run(more, "0")]);
       expect(one).toEqual({ seen: 1, freed: 0 });
-      expect([some.seen, many.seen]).toEqual([16, more]);
+      expect([some.seen, many.seen]).toEqual([40, more]);
       expect(some.freed).toBeGreaterThan(0);
       expect(many.freed).toBeGreaterThan(0);
     },

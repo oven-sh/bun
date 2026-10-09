@@ -253,21 +253,7 @@ impl Timing {
     }
 }
 
-/// `a.filePath < b.filePath` in JavaScript, which compares UTF-16 code units: what is outside of
-/// the BMP comes before U+E000.
-fn compare_paths(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    let rank = |byte: u8| match byte {
-        0xEE | 0xEF => u16::from(byte) + 0x10,
-        0xF0.. => 0xEE,
-        _ => u16::from(byte),
-    };
-    match a.iter().zip(b).find(|(a, b)| a != b) {
-        Some((a, b)) => rank(*a).cmp(&rank(*b)),
-        None => a.len().cmp(&b.len()),
-    }
-}
-
-/// Whether [`compare_paths`] is the order of the bytes for `path`.
+/// Whether `a.filePath < b.filePath` in JavaScript ([`bun_lint::utils::text::compare`]) is the order of the bytes for `path`.
 fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
@@ -1114,9 +1100,9 @@ impl Run<'_> {
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
         match results.iter().all(|it| is_ordered_by_bytes(&it.path)) {
             true => bun_lint::utils::sort::sort_by(&mut results, |a, b| a.path.cmp(&b.path)),
-            false => {
-                bun_lint::utils::sort::sort_by(&mut results, |a, b| compare_paths(&a.path, &b.path))
-            }
+            false => bun_lint::utils::sort::sort_by(&mut results, |a, b| {
+                bun_lint::utils::text::compare(&a.path, &b.path)
+            }),
         }
         results.extend(about_suppressions);
         // oxlint's formats print what they print when there is no problem.
@@ -1200,6 +1186,16 @@ impl Run<'_> {
                 fixed,
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
+        }
+        if format.is_for_people() && !options.quiet && !options.silent {
+            for line in std::mem::take(&mut *loader.advice.lock()) {
+                pretty!(
+                    &mut self.out.stderr,
+                    environment.stderr.colors,
+                    "<blue>note<r><d>:<r> {}\n",
+                    BStr::new(&line)
+                );
+            }
         }
         if options.timing {
             self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
@@ -1330,9 +1326,9 @@ impl Run<'_> {
                 loading.linted_by_eslint
             );
         }
-        if let (largest @ 1.., freed) = loading.sizes {
-            let largest = largest as f64 / 1e6;
-            let _ = write!(self.out.stderr, "; the largest took {largest:.0} MB");
+        if let (most @ 1.., freed) = loading.sizes {
+            let most = most as f64 / 1e6;
+            let _ = write!(self.out.stderr, "; they took {most:.0} MB");
             if freed > 0 {
                 let _ = write!(self.out.stderr, ", freed to stay in the memory: {freed}");
             }

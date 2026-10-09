@@ -19,13 +19,32 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::linter::{
-    Config, LegacyFile, LegacyOptions, Linter, ResolvedConfig, oxlint_category_of_key,
-    oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
+    Config, InJavaScript, LegacyFile, LegacyOptions, Linter, ResolvedConfig,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
+use bun_lint::rule::minor_of;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
+
+/// The version of the package that `specifier` names, as it is installed for the files in `directory`. `None` for a path.
+fn installed_version(directory: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+    if specifier.starts_with(b".") || paths::is_absolute(specifier) {
+        return None;
+    }
+    let names = if specifier.starts_with(b"@") { 2 } else { 1 };
+    let package: Vec<&[u8]> = strings::split(specifier, b"/").take(names).collect();
+    let file = [
+        b"node_modules/",
+        &package.join(&b"/"[..])[..],
+        b"/package.json",
+    ]
+    .concat();
+    let json = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, &file)).ok())?;
+    let version = bun_lint::json::parse(&json)?;
+    Some(version.get(b"version")?.as_str()?.to_vec())
+}
 
 /// Whose rules of the game apply: what is ignored without being asked for, what a pattern means.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -206,6 +225,8 @@ pub(crate) struct Loader<'l> {
     /// What a configuration asks for and cannot be done, a line for each: rules that do not exist here, files in a language that
     /// is not read here. To do less than the tool that is replaced, and find no problems, is worse than to fail.
     pub(crate) unsupported: Guarded<Vec<Vec<u8>>>,
+    /// What the user could change to his advantage, a line for each. Nothing is wrong.
+    pub(crate) advice: Guarded<Vec<Vec<u8>>>,
     /// [`eslintrc::uses_flat_config`]
     flat_config: Option<bool>,
     /// [`Loader::is_command_line_of_eslint_8`]
@@ -398,6 +419,7 @@ impl<'l> Loader<'l> {
             by_file: Guarded::new(FxHashMap::default()),
             warnings: Guarded::new(Vec::new()),
             unsupported: Guarded::new(Vec::new()),
+            advice: Guarded::new(Vec::new()),
             flat_config: eslintrc::uses_flat_config(),
             is_legacy: OnceLock::new(),
             rulesdir: OnceLock::new(),
@@ -413,6 +435,80 @@ impl<'l> Loader<'l> {
         let mut warnings = self.warnings.lock();
         if !warnings.contains(&warning) {
             warnings.push(warning);
+        }
+    }
+
+    /// Adds to [`Loader::advice`].
+    fn advise(&self, line: Vec<u8>) {
+        let mut advice = self.advice.lock();
+        if !advice.contains(&line) {
+            advice.push(line);
+        }
+    }
+
+    /// Says which rules ran in JavaScript that are built in. `sources`: the prefix of each plugin in `jsPlugins`, the directory of
+    /// the file that names it, and how.
+    fn advise_about_js_plugins(&self, config: &Config, sources: &[(Box<[u8]>, Vec<u8>, Vec<u8>)]) {
+        for InJavaScript {
+            prefix,
+            plugin,
+            built_in,
+            others,
+        } in config.in_javascript(self.linter.registry())
+        {
+            let Some((_, directory, specifier)) = sources.iter().find(|it| *it.0 == *prefix) else {
+                continue;
+            };
+            let installed = installed_version(directory, specifier);
+            let ours = plugin.follows();
+            let (rules, them): (&[u8], &[u8]) = match built_in {
+                1 => (b" rule", b"it"),
+                _ => (b" rules", b"them"),
+            };
+            let native = crate::format::oxlint::plugin(prefix);
+            let mut line = [
+                built_in.to_string().as_bytes(),
+                rules,
+                b" of \"",
+                prefix,
+                b"\" ran in JavaScript (",
+                &specifier[..],
+            ]
+            .concat();
+            if let Some(installed) = &installed {
+                line.extend_from_slice(&[b" ", &installed[..]].concat());
+            }
+            line.extend_from_slice(
+                &[b", from \"jsPlugins\"). bun lint has ", them, b" built in"].concat(),
+            );
+            if let Some(ours) = ours {
+                line.extend_from_slice(&[b", as of ", ours.as_bytes()].concat());
+            }
+            line.extend_from_slice(&match others {
+                0 => [
+                    b": remove it from \"jsPlugins\" and add \"",
+                    native,
+                    b"\" to \"plugins\".",
+                ]
+                .concat(),
+                _ => [
+                    b": write ",
+                    them,
+                    b" \"",
+                    native,
+                    b"/..\" and add \"",
+                    native,
+                    b"\" to \"plugins\". Keep it for the other ",
+                    others.to_string().as_bytes(),
+                    b".",
+                ]
+                .concat(),
+            });
+            if installed.as_deref().and_then(minor_of) != ours.map(str::as_bytes).and_then(minor_of)
+            {
+                line.extend_from_slice(b" Reports may differ.");
+            }
+            self.advise(line);
         }
     }
 
@@ -658,11 +754,16 @@ impl<'l> Loader<'l> {
             }
             bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
         };
+        let mut sources = Vec::new();
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
-            self.js_plugins.load(directory, specifier, alias)
+            let loaded = self.js_plugins.load(directory, specifier, alias);
+            if let Ok(loaded) = &loaded {
+                sources.push((loaded.name.clone(), directory.to_vec(), specifier.to_vec()));
+            }
+            loaded
         };
         // The patterns are from the directory of the file.
-        Config::from_rc_json_with_plugins(
+        let config = Config::from_rc_json_with_plugins(
             self.linter.registry(),
             paths::dirname(path),
             &json,
@@ -679,7 +780,9 @@ impl<'l> Loader<'l> {
                 ]
                 .concat(),
             )
-        })
+        })?;
+        self.advise_about_js_plugins(&config, &sources);
+        Ok(config)
     }
 
     fn built_in(&self) -> Found {

@@ -238,6 +238,11 @@ impl ResolvedConfig {
 
     /// The rule that the configuration, or a comment of a file that it is for, calls `id`. Not one of a JavaScript plugin.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
+        // A plugin that is not the one which is implemented here under that name hides it.
+        let prefix = parse_rule_id(id).0;
+        if self.foreign_plugins.iter().any(|it| **it == *prefix) {
+            return None;
+        }
         let found = registry.find_preferring(id, self.prefers_typescript_rules);
         if let Some(plugins) = &self.plugins {
             let has = |plugin: Plugin| plugin == Plugin::Eslint || plugins.contains(&plugin);

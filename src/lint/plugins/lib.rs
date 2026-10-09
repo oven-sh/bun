@@ -68,6 +68,7 @@ bun_lint::rules! {
     jsdoc_require_yields::RequireYields,
     jsdoc_require_yields_description::RequireYieldsDescription,
     jsdoc_require_yields_type::RequireYieldsType,
+    n_no_process_exit::NoProcessExit,
     n_no_unsupported_features_es_builtins::EsBuiltins,
     n_no_unsupported_features_es_syntax::EsSyntax,
     n_no_unsupported_features_node_builtins::NodeBuiltins,

@@ -1,9 +1,16 @@
 //! How many rules a configuration of oxlint has on.
 
 use super::Config;
+use super::merge::RuleSetting;
 use crate::context::Severity;
 use crate::linter::registry::Registry;
 use rustc_hash::FxHashSet;
+
+/// What is the same for two settings of one rule. A rule of a plugin in JavaScript can have the name of one that is built in: see
+/// `merge_rules`.
+fn key(it: &RuleSetting) -> (&[u8], bool) {
+    (&it.id[..], it.written_for.is_some())
+}
 
 impl Config {
     /// oxlint's `ConfigStore::number_of_rules`, of an `.oxlintrc.json`: the rules that warn or are errors where no override
@@ -18,17 +25,17 @@ impl Config {
                 .filter(move |it| it.files.is_some() == are_of_overrides)
                 .flat_map(|it| &it.rules)
         };
-        let mut on: FxHashSet<&[u8]> = FxHashSet::default();
+        let mut on: FxHashSet<(&[u8], bool)> = FxHashSet::default();
         for setting in settings(false) {
             match setting.severity {
-                Severity::Off => on.remove(&setting.id[..]),
-                _ => on.insert(&setting.id[..]),
+                Severity::Off => on.remove(&key(setting)),
+                _ => on.insert(key(setting)),
             };
         }
         on.extend(
             settings(true)
                 .filter(|it| it.severity != Severity::Off)
-                .map(|it| &it.id[..]),
+                .map(key),
         );
         let needs_types = |id: &[u8]| {
             registry
@@ -36,7 +43,7 @@ impl Config {
                 .is_some_and(|it| it.meta.requires_types)
         };
         on.iter()
-            .filter(|id| with_types || !needs_types(id))
+            .filter(|(id, is_built_in)| with_types || !(*is_built_in && needs_types(id)))
             .count()
     }
 }

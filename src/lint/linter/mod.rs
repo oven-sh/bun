@@ -43,8 +43,8 @@ mod space;
 mod syntax;
 
 pub use config::{
-    Config, ConfigError, FileConfig, Glob, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions,
-    LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
+    Config, ConfigError, FileConfig, Glob, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
+    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, is_parse_error,

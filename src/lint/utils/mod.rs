@@ -94,6 +94,7 @@ pub mod fix_tracker;
 pub mod ignore;
 pub mod keywords;
 pub mod naming;
+pub mod node;
 pub mod oxlint;
 pub mod regular_expressions;
 pub mod sort;

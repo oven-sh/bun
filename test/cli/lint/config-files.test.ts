@@ -217,6 +217,63 @@ describe.concurrent("an eslint.config.js", () => {
     expect(exitCode).toBe(1);
   });
 
+  // What ESLint 10.12 reports.
+  test("the name that another package has in the configuration is not an alias of the plugin that is built in", async () => {
+    const { problems, exitCode } = await lint({
+      "eslint.config.mjs": `const on = (name, rule, selector) => ({
+          meta: { name, version: "1.0.0" },
+          rules: {
+            [rule]: {
+              meta: { schema: false },
+              create: context => ({ [selector]: node => context.report({ node, message: "from JavaScript" }) }),
+            },
+          },
+        });
+        const old = [2, { version: "13.5.0" }];
+        export default [
+          {
+            plugins: {
+              n: on("eslint-plugin-n", "no-unsupported-features/es-syntax", "AwaitExpression"),
+              node: on("eslint-plugin-node", "no-unsupported-features/es-syntax", "DebuggerStatement"),
+              import: on("eslint-plugin-import", "no-mutable-exports", "ExportNamedDeclaration > VariableDeclaration"),
+              "import-x": on("eslint-plugin-import-x", "no-mutable-exports", "DebuggerStatement"),
+            },
+          },
+          { files: ["rules.js"], rules: { "node/no-unsupported-features/es-syntax": old, "import-x/no-mutable-exports": 2 } },
+          {
+            files: ["disabled.js"],
+            rules: {
+              "n/no-unsupported-features/es-syntax": old,
+              "node/no-unsupported-features/es-syntax": old,
+              "import/no-mutable-exports": 2,
+              "import-x/no-mutable-exports": 2,
+            },
+          },
+        ];`,
+      "rules.js": "debugger;\nexport let a = 1;\nawait a;\n",
+      "comment.js": "/* eslint node/no-unsupported-features/es-syntax: [2, { version: \"13.5.0\" }], import-x/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n",
+      "own.js": "/* eslint n/no-unsupported-features/es-syntax: [2, { version: \"13.5.0\" }], import/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n",
+      "disabled.js": "debugger; // eslint-disable-line node/no-unsupported-features/es-syntax\ndebugger; // eslint-disable-line import-x/no-mutable-exports\ndebugger; // eslint-disable-line n/no-unsupported-features/es-syntax, import/no-mutable-exports\nexport let a = 1; // eslint-disable-line import-x/no-mutable-exports\nexport let b = 1; // eslint-disable-line import/no-mutable-exports\nawait a; // eslint-disable-line node/no-unsupported-features/es-syntax\nawait b; // eslint-disable-line n/no-unsupported-features/es-syntax\n",
+    });
+    expect(problems).toEqual([
+      "comment.js:2:1 import-x/no-mutable-exports",
+      "comment.js:2:1 node/no-unsupported-features/es-syntax",
+      "disabled.js:1:1 import-x/no-mutable-exports",
+      "disabled.js:2:1 node/no-unsupported-features/es-syntax",
+      "disabled.js:3:1 import-x/no-mutable-exports",
+      "disabled.js:3:1 node/no-unsupported-features/es-syntax",
+      "disabled.js:3:11 -",
+      "disabled.js:4:19 -",
+      "disabled.js:4:8 import/no-mutable-exports",
+      "disabled.js:6:1 n/no-unsupported-features/es-syntax",
+      "disabled.js:6:10 -",
+      "own.js:3:8 import/no-mutable-exports",
+      "own.js:4:1 n/no-unsupported-features/es-syntax",
+      "rules.js:1:1 import-x/no-mutable-exports",
+      "rules.js:1:1 node/no-unsupported-features/es-syntax",
+    ]);
+    expect(exitCode).toBe(1);
+  });
   // What ESLint 10.12 prints.
   test("usedDeprecatedRules has the rules of a plugin in JavaScript, in the order of the configuration", async () => {
     const info = {
@@ -1002,7 +1059,7 @@ describe.concurrent("an .oxlintrc.json", () => {
         ofVitest({ plugins: [], overrides: [{ ...tests, rules: noHooks }] }),
         ofVitest({ plugins: [], rules: noHooks, overrides: [tests] }),
         ofVitest({ plugins: [], overrides: [tests, { ...specs, rules: noHooks }] }),
-        // The categories turn their rules on where it applies, unless the file has no plugin at all.
+        // The categories turn their rules on where it applies, unless it names all the plugins that are on there.
         ofVitest({ plugins: ["unicorn"], ...restriction, overrides: [tests] }),
         ofVitest({ ...restriction, overrides: [tests] }),
         ofVitest({ plugins: [], ...restriction, overrides: [tests] }),
@@ -1019,6 +1076,42 @@ describe.concurrent("an .oxlintrc.json", () => {
     const oxlintrc = JSON.stringify({ plugins: ["unicorn"], categories: { correctness: "off" }, overrides: [tests] });
     const { problems } = await lint({ ...files, ".oxlintrc.json": oxlintrc }, [".", "-W", "restriction"]);
     expect(problems.filter(it => it.includes(" vitest/"))).toEqual([]);
+  });
+
+  // What oxlint 1.87 does with each.
+  test("`categories` say nothing about the plugins of overrides that each name all the plugins of the file", async () => {
+    const code = 'it("a", () => {\n  if (x) expect(1).toBe(1);\n});\n';
+    const reported = async (config: object, extended: Record<string, object> = {}) => {
+      const files = Object.entries({ ".oxlintrc.json": config, ...extended }).map(([name, it]) => [name, JSON.stringify(it)]);
+      const { problems } = await lint({ "__tests__/a.spec.ts": code, ...Object.fromEntries(files) });
+      const rules = problems.map(it => it.split(" ")[1].split("/"));
+      return rules.filter(it => it[1] === "no-conditional-expect").map(it => it[0]);
+    };
+    const correctness = { categories: { correctness: "error" } };
+    const typescript = { ...correctness, plugins: ["typescript"] };
+    const tests = (plugins: string[], files = "__tests__/**") => ({ files: [files], plugins, rules: {} });
+    const named = { "jest/no-conditional-expect": "warn" };
+    expect(
+      await Promise.all([
+        reported({ ...typescript, overrides: [tests(["typescript", "jest", "vitest"])] }),
+        reported({ ...typescript, overrides: [tests(["jest", "vitest"])] }),
+        // All that apply count, and only those.
+        reported({ ...typescript, overrides: [tests(["typescript", "jest"]), tests(["typescript", "vitest"])] }),
+        reported({ ...typescript, overrides: [tests(["typescript", "jest"]), tests(["typescript", "vitest"], "src/**")] }),
+        reported({ ...correctness, plugins: [], overrides: [tests(["jest"]), tests(["vitest"])] }),
+        // What it names itself is on.
+        reported({ ...typescript, overrides: [{ ...tests(["typescript", "jest"]), rules: named }] }),
+        // A file without `plugins` that is extended adds typescript, unicorn and oxc.
+        reported(
+          { ...typescript, extends: ["./overrides.json"] },
+          { "overrides.json": { overrides: [tests(["typescript", "jest", "vitest"])] } },
+        ),
+        reported(
+          { ...typescript, extends: ["./overrides.json"] },
+          { "overrides.json": { overrides: [tests(["typescript", "unicorn", "oxc", "jest", "vitest"])] } },
+        ),
+      ]),
+    ).toEqual([[], ["jest", "vitest"], ["jest", "vitest"], [], ["jest", "vitest"], ["jest"], ["jest", "vitest"], []]);
   });
 
   test("`options.respectEslintDisableDirectives: false`: only comments of oxlint count", async () => {

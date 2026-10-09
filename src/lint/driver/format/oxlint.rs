@@ -318,7 +318,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
 }
 
 /// The plugin of oxlint that has the rules with the prefix `prefix`.
-pub(super) fn plugin(prefix: &[u8]) -> &[u8] {
+pub(crate) fn plugin(prefix: &[u8]) -> &[u8] {
     match prefix {
         b"react-hooks" => b"react",
         b"react-perf" => b"react_perf",

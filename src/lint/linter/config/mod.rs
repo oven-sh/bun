@@ -439,6 +439,18 @@ fn path_matches<'o>(
     }) && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
 }
 
+/// [`Config::in_javascript`]
+pub struct InJavaScript<'c> {
+    /// What the rules of the plugin in JavaScript start with.
+    pub prefix: &'c [u8],
+    /// The plugin here that is called the same.
+    pub plugin: Plugin,
+    /// How many of its rules that are on somewhere are built in.
+    pub built_in: usize,
+    /// How many are not.
+    pub others: usize,
+}
+
 impl Config {
     /// What could not be taken over from the configuration, for the user to read.
     pub fn notes(&self) -> &[Vec<u8>] {
@@ -454,6 +466,47 @@ impl Config {
     pub fn option_of_oxlint(&self, name: &[u8]) -> Option<&Json> {
         let mut options = self.options_of_oxlint.iter();
         Some(&options.find(|it| it.0 == name)?.1)
+    }
+
+    /// The plugins in `jsPlugins` of a configuration of oxlint that have the name of a plugin here, and of which a rule is on that
+    /// is built in. What is written with that name runs in JavaScript, as with oxlint.
+    pub fn in_javascript(&self, registry: &Registry) -> Vec<InJavaScript<'_>> {
+        let mut found: Vec<InJavaScript> = Vec::new();
+        let mut seen: Vec<&[u8]> = Vec::new();
+        let settings = self.objects.iter().flat_map(|it| &it.rules);
+        for setting in
+            settings.filter(|_| self.prefers_typescript_rules && !self.js_plugins.is_empty())
+        {
+            let id = &setting.id[..];
+            let is_on = setting.severity != Severity::Off && setting.written_for.is_none();
+            if !is_on
+                || seen.contains(&id)
+                || find_js_rule(&self.js_plugins, id).flatten().is_none()
+            {
+                continue;
+            }
+            seen.push(id);
+            let prefix = super::registry::parse_rule_id(id).0;
+            let Some(plugin) = Plugin::of_oxlint_prefix(prefix) else {
+                continue;
+            };
+            let at = found.iter().position(|it| it.prefix == prefix);
+            let at = at.unwrap_or_else(|| {
+                found.push(InJavaScript {
+                    prefix,
+                    plugin,
+                    built_in: 0,
+                    others: 0,
+                });
+                found.len() - 1
+            });
+            match registry.find_preferring(id, true) {
+                Some(_) => found[at].built_in += 1,
+                None => found[at].others += 1,
+            }
+        }
+        found.retain(|it| it.built_in > 0);
+        found
     }
 
     /// The rules that are configured, other than as `"off"`, and do not exist here. They are
@@ -864,9 +917,7 @@ impl Config {
             }
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             let js = find_js_rule(&self.js_plugins, &setting.id);
-            // So does a plugin that is not the one which is implemented here under that name.
             let prefix = super::registry::parse_rule_id(&setting.id).0;
-            let is_foreign = config.foreign_plugins.iter().any(|it| **it == *prefix);
             // Not what is written with a name that oxlint has for the plugin here, `node/..`, or comes from a category.
             let is_native_for_oxlint =
                 self.prefers_typescript_rules && setting.written_for.is_some();
@@ -874,7 +925,7 @@ impl Config {
                 && self.accepts_all_plugins
                 && !is_native_for_oxlint
                 && !config.prefers_native_rules_of(prefix);
-            let native = match is_foreign || is_hidden {
+            let native = match is_hidden {
                 true => None,
                 false => config.find_rule(registry, &setting.id),
             };

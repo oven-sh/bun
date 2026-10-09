@@ -31,9 +31,9 @@ const inputs: string[] = [];
     const path = join(directory, name);
     if (statSync(path).isDirectory()) walk(path);
     if (!name.endsWith(".snap")) continue;
-    const snapshots: Record<string, string> = {};
-    new Function("exports", readFileSync(path, "utf8"))(snapshots);
-    for (const snapshot of Object.values(snapshots)) {
+    // ``exports[`name`] = `text`;``, with a `\` before `` ` ``, `\` and `${`.
+    const snapshots = readFileSync(path, "utf8").matchAll(/^exports\[`(?:[^`\\]|\\.)*`\] = `((?:[^`\\]|\\[^])*)`;$/gm);
+    for (const snapshot of Array.from(snapshots, it => it[1].replace(/\\([^])/g, "$1"))) {
       const input = /=+input=+\n([\s\S]*?)\n=+output=+\n/.exec(snapshot)?.[1];
       if (input !== undefined && input.length < 1200) inputs.push(input + "\n");
     }
@@ -142,7 +142,11 @@ const file = join(
     parser
   ]!,
 );
-const flags = [`--parser=${parser}`, "--embeddedHtml=true", ...Object.entries(options).map(([key, value]) => `--${key}=${value}`)];
+const flags = [
+  `--parser=${parser}`,
+  "--embeddedHtml=true",
+  ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
+];
 function serve() {
   const server = Bun.spawn({
     cmd: [bin, "format", "serve", ...flags],

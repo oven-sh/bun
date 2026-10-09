@@ -26,9 +26,9 @@ const inputs: string[] = [];
     const path = join(directory, name);
     if (statSync(path).isDirectory()) walk(path);
     if (!name.endsWith(".snap")) continue;
-    const snapshots: Record<string, string> = {};
-    new Function("exports", readFileSync(path, "utf8"))(snapshots);
-    for (const snapshot of Object.values(snapshots)) {
+    // ``exports[`name`] = `text`;``, with a `\` before `` ` ``, `\` and `${`.
+    const snapshots = readFileSync(path, "utf8").matchAll(/^exports\[`(?:[^`\\]|\\.)*`\] = `((?:[^`\\]|\\[^])*)`;$/gm);
+    for (const snapshot of Array.from(snapshots, it => it[1].replace(/\\([^])/g, "$1"))) {
       const input = /=+input=+\n([\s\S]*?)\n=+output=+\n/.exec(snapshot)?.[1];
       if (input !== undefined && input.length < 600) inputs.push(input + "\n");
     }

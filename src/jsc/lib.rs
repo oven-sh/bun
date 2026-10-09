@@ -520,14 +520,6 @@ pub fn expect_vm_per_thread() {
     unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
 }
 
-/// `bun lint` and `bun format` with plugins in JavaScript: what a heap takes for the RAM, by which it decides how much it grows between two
-/// collections. After [`initialize`], and before the first VM.
-pub fn expect_ram_size(bytes: usize) {
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useRAMSize(bytes, env.as_ptr(), env.len()) };
-}
-
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
 /// `bun -p <code>` / `bun --print <code>` — i.e. an inline-eval one-shot that
 /// runs a trivial script and exits without entering a long-running event loop.
@@ -1580,7 +1572,6 @@ unsafe extern "C" {
         short_lived_globals: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
-    fn JSC__useRAMSize(bytes: usize, env: *const *const c_char, count: usize);
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

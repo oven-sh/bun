@@ -29,7 +29,7 @@ pub trait Engine: Sync {
     /// Nobody says so if a realm is needed to find out.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}
 
-    /// For `--timing`: the largest that a realm has been, in bytes, and how many were freed because all together took too much.
+    /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
     fn sizes(&self) -> (usize, usize) {
         (0, 0)
     }

@@ -95,6 +95,14 @@ impl Format {
         )
     }
 
+    /// Whether a person reads it, and nothing takes it apart.
+    pub(crate) fn is_for_people(self) -> bool {
+        matches!(
+            self,
+            Format::Pretty | Format::Stylish | Format::OxlintDefault | Format::OxlintStylish
+        )
+    }
+
     /// Whether it reads [`FileResult::text`]. Those of oxlint count bytes, which the messages do not.
     pub(crate) fn reads_text(self) -> bool {
         self.is_of_oxlint()

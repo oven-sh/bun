@@ -401,36 +401,16 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     // NOLINTEND
 }
 
-// As many VMs as cores, each busy on its own thread: there is no core left for threads that compile or mark
-// beside them, and what each heap may grow by between two collections is multiplied by their number.
-// After JSCInitialize and before the first VM: nothing reads the three before it, and its constructor freezes the options.
+// As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
+// 16 cores these took 10 % more time and 2.3 times the memory.
+// After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
 extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
 {
     RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
     JSC::Options::useConcurrentJIT() = false;
-    JSC::Options::numberOfGCMarkers() = 1;
-    JSC::Options::heapGrowthMaxIncrease() = 1.3;
-    // BUN_JSC_<option> wins, as in JSCInitialize.
+    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
     for (size_t i = 0; i < envc; i++) {
-        auto variable = WTF::StringView::fromLatin1(envp[i]);
-        if (!variable.startsWith("BUN_JSC_"_s))
-            continue;
-        auto option = variable.substring(8);
-        if (option.startsWithIgnoringASCIICase("useConcurrentJIT="_s) || option.startsWithIgnoringASCIICase("numberOfGCMarkers="_s) || option.startsWithIgnoringASCIICase("heapGrowthMaxIncrease="_s))
-            JSC::Options::setOption(envp[i] + 8, false);
-    }
-}
-
-// Only for the VMs in which `bun lint` and `bun format` run plugins: never in the runtime. How much a heap grows between two
-// collections goes by the RAM: several VMs share what one is sized by.
-// After JSCInitialize and before the first VM, as above.
-extern "C" void JSC__useRAMSize(size_t bytes, const char* envp[], size_t envc)
-{
-    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
-    JSC::Options::forceRAMSize() = bytes;
-    // BUN_JSC_forceRAMSize wins, as in JSCInitialize.
-    for (size_t i = 0; i < envc; i++) {
-        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_forceRAMSize="_s))
+        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
             JSC::Options::setOption(envp[i] + 8, false);
     }
 }

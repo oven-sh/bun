@@ -14,6 +14,8 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint-plugin-n           | 18.4.1  | 3     | 1524  |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
+The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
+
 The commits of eslint and typescript-eslint are `main`, a few commits after the release. The rules and their tests come
 from the same commit. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
 of oxlint's port of the rule: see `extract-plugins.ts`.

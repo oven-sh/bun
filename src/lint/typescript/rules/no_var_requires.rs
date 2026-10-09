@@ -19,6 +19,11 @@ impl NoVarRequires {
             return;
         }
         let is_used = match e.parent() {
+            // For oxlint it is used wherever it is not a statement, if it has one argument.
+            parent if cx.language().is_oxlint => {
+                let is_statement = matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Expr);
+                call.args().len() == 1 && (!is_statement || e.is_parenthesized())
+            }
             Node::VarDecl(_) => true,
             Node::Expr(parent) => matches!(
                 parent.kind(),

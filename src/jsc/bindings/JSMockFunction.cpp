@@ -446,6 +446,18 @@ public:
         return uncheckedDowncast<Zig::GlobalObject>(globalObject())->mockModule;
     }
 
+    void copyLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* fn = dynamicDowncast<JSFunction>(value);
+        if (!fn)
+            return;
+        JSValue length = fn->get(global, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, );
+        if (length.isNumber())
+            this->putDirect(vm, vm.propertyNames->length, length, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    }
+
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1325,6 +1337,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     mock.defaultName.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString>::Initializer& init) {
             init.set(JSC::jsNontrivialString(init.vm, "mockConstructor"_s));
+        });
+    mock.vitestName.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString>::Initializer& init) {
+            init.set(JSC::jsNontrivialString(init.vm, "Mock"_s));
         });
     mock.withImplementationCleanupFunction.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
@@ -2805,13 +2821,20 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
-static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function)
+// With `name` for a name, if given, instead of that of `function`.
+static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, JSString* name = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    mock->copyNameAndLength(vm, globalObject, function);
-    RETURN_IF_EXCEPTION(scope, );
+    if (name) {
+        mock->copyLength(vm, globalObject, function);
+        RETURN_IF_EXCEPTION(scope, );
+        mock->setName(name);
+    } else {
+        mock->copyNameAndLength(vm, globalObject, function);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     mock->copyStaticProperties(globalObject, asObject(function));
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
@@ -3112,19 +3135,21 @@ static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         return JSValue::encode(callframe->argument(0));
 
     JSMockFunction* thisObject = createMockFunction(vm, globalObject, isVitest);
+    // What vi.fn() makes has one name, whatever it is given.
+    auto& name = isVitest ? globalObject->mockModule.vitestName : globalObject->mockModule.defaultName;
 
     if (callframe->argumentCount() > 0) {
         JSValue value = callframe->argument(0);
         if (value.isCallable()) {
-            wrapFunction(globalObject, thisObject, value);
+            wrapFunction(globalObject, thisObject, value, isVitest ? name.getInitializedOnMainThread(globalObject) : nullptr);
         } else {
             // jest doesn't support doing `jest.fn(10)`, but we support it.
             thisObject->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);
-            thisObject->setName(globalObject->mockModule.defaultName.getInitializedOnMainThread(globalObject));
+            thisObject->setName(name.getInitializedOnMainThread(globalObject));
         }
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        thisObject->setName(globalObject->mockModule.defaultName.getInitializedOnMainThread(globalObject));
+        thisObject->setName(name.getInitializedOnMainThread(globalObject));
     }
 
     return JSValue::encode(thisObject);

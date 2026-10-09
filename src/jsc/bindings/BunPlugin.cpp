@@ -14,6 +14,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
@@ -918,7 +919,7 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
 }
 
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
-static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, bool mayLoadMock);
+static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, bool mayLoadMock, const String& from);
 static String keyOfModuleThatDoesNotWait(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& key, const String& mocked);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -927,7 +928,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto [mock, original] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, false);
+    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, false, String());
     if (scope.exception()) [[unlikely]]
         original->rejectWithCaughtException(vm, scope);
     else
@@ -935,7 +936,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlob
     return JSValue::encode(jsUndefined());
 }
 
-static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadMock = true)
+// `from`: the file that asks with vi.importActual(). It may be the factory of another mock.
+static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadMock = true, const String& from = String())
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -957,8 +959,11 @@ static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSM
     RETURN_IF_EXCEPTION(scope, nullptr);
     String key = originalModuleKey(specifier);
 
+    auto* running = findRunningModuleMock(globalObject, mock);
+    bool mayBeAnotherFactory = !running && !from.isNull() && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
+
     // Entered through the original, an import cycle evaluates the module that imports the original before the original.
-    if (mayLoadMock && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
+    if (mayLoadMock && !mayBeAnotherFactory && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
         String dependency = dependencyKeyOfModuleMock(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (dependency == key) {
@@ -971,10 +976,11 @@ static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSM
         }
     }
 
-    if (auto* running = findRunningModuleMock(globalObject, mock)) {
+    if (running) {
         key = keyOfModuleThatDoesNotWait(globalObject, *running, key, specifier);
         addToImportChain(*running, key);
-    }
+    } else if (mayBeAnotherFactory)
+        key = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, from, true);
     RELEASE_AND_RETURN(scope, importModuleKey(globalObject, key));
 }
 
@@ -1377,39 +1383,184 @@ JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchron
     return nullptr;
 }
 
-// The context has the promise that Bun::runModuleMock() returned.
+// Whether the module is being fetched, and not as a mock: its fetch settles without a factory.
+static bool isBeingFetchedAsItself(Zig::GlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+{
+    if (entry->record() || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching)
+        return false;
+    String key = entry->key().string();
+    return !registeredModuleMock(globalObject, key) && !globalObject->onLoadPlugins.moduleMocksBeingLoaded.contains(key);
+}
+
+static void appendImportsOf(JSC::AbstractModuleRecord* record, Vector<UniquedStringImpl*>& imports)
+{
+    for (auto& resolved : record->resolvedRequests().values())
+        imports.append(resolved.get());
+    for (auto& loaded : record->loadedModules().values())
+        imports.append(loaded.m_module->moduleKey().impl());
+}
+
+// What jsFunctionRunModuleMockLater keeps between its calls, so that each module is gone through once: an array of registry entries.
+// [0] is the set of those it has come by; the others are those of them whose fetch it has yet to wait for.
+// Returns whether it comes by `entry` for the first time.
+static bool comesBy(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* entry, bool remembers = true)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* comeBy = uncheckedDowncast<JSC::JSSet>(fetches->getIndexQuickly(0).asCell());
+    bool has = comeBy->has(globalObject, entry);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (has)
+        return false;
+    if (remembers) {
+        comeBy->add(globalObject, entry);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
+// Comes by `start` and all that it imports, directly or not. (A module that has loaded has nothing being fetched for it.)
+static void followImports(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* start)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = globalObject->moduleLoader();
+    Vector<JSC::ModuleRegistryEntry*> work { start };
+    Vector<UniquedStringImpl*> imports;
+    while (!work.isEmpty()) {
+        auto* entry = work.takeLast();
+        if (!entry->record()) {
+            if (isBeingFetchedAsItself(globalObject, entry)) {
+                fetches->push(globalObject, entry);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            continue;
+        }
+        if (entry->isLoaded())
+            continue;
+        imports.shrink(0);
+        appendImportsOf(entry->record(), imports);
+        for (auto* key : imports) {
+            auto* imported = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
+            bool isNew = imported && comesBy(globalObject, fetches, imported);
+            RETURN_IF_EXCEPTION(scope, );
+            if (isNew)
+                work.append(imported);
+        }
+    }
+}
+
+// Comes by the modules that import `mocked`, directly or not, and all that they import.
+static void followImporters(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, const String& mocked)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = globalObject->moduleLoader();
+
+    // (What imports a module that is being fetched has not loaded.)
+    UncheckedKeyHashMap<UniquedStringImpl*, Vector<JSC::ModuleRegistryEntry*>> importersOf;
+    Vector<UniquedStringImpl*> imports;
+    for (auto& entry : loader->moduleMap().values()) {
+        if (!entry->record() || entry->isLoaded())
+            continue;
+        imports.shrink(0);
+        appendImportsOf(entry->record(), imports);
+        for (auto* key : imports)
+            importersOf.add(key, Vector<JSC::ModuleRegistryEntry*>()).iterator->value.append(entry.get());
+    }
+
+    UncheckedKeyHashSet<UniquedStringImpl*> seen;
+    Vector<UniquedStringImpl*> work { JSC::Identifier::fromString(vm, mocked).impl() };
+    while (!work.isEmpty()) {
+        auto importers = importersOf.find(work.takeLast());
+        if (importers == importersOf.end())
+            continue;
+        for (auto* importer : importers->value) {
+            if (!seen.add(importer->key().impl()).isNewEntry)
+                continue;
+            work.append(importer->key().impl());
+            bool isNew = comesBy(globalObject, fetches, importer);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!isNew)
+                continue;
+            followImports(globalObject, fetches, importer);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+}
+
+// Whether something is being fetched (as itself) that `fetches`, if there is one, has not come by.
+static bool isFetchingAnythingElse(Zig::GlobalObject* globalObject, JSC::JSArray* fetches)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    for (auto& entry : globalObject->moduleLoader()->moduleMap().values()) {
+        if (!isBeingFetchedAsItself(globalObject, entry.get()))
+            continue;
+        bool isNew = !fetches || comesBy(globalObject, fetches, entry.get(), false);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isNew)
+            return true;
+    }
+    return false;
+}
+
+// The context has what Bun::runModuleMock() made: the promise it returned, and the fetches this waits for (none yet).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunModuleMockLater, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue context = callframe->argument(1);
-    auto [mock, settled] = toModuleMockWith<JSC::JSPromise>(globalObject, scope, context);
+    auto [mock, waiting] = toModuleMockWith<JSC::InternalFieldTuple>(globalObject, scope, context);
     RETURN_IF_EXCEPTION(scope, {});
+    auto* settled = uncheckedDowncast<JSC::JSPromise>(waiting->getInternalField(0));
 
     bool isInUse = Bun::isModuleMockInUse(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Before a factory is called, all that is being fetched has to have been: then it is known which modules wait for the mock
-    // (isWaitingForModule). Only fetches that settle without a factory are waited for, so none that is fetched as a mock, and only by a mock
-    // whose factory is about to be called: one that was removed lets go of its module at once.
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Before a factory is called, what is being fetched for the modules that import the mock has to have been: then it is known which of the
+    // modules they share with the factory wait for the mock (isWaitingForModule), and stay linked to it. Only fetches that settle without a
+    // factory are waited for, so none that is fetched as a mock, and only by a mock whose factory is about to be called: one that was removed
+    // lets go of its module at once. What another load fetches is not waited for: that load may never end.
     bool callsFactory = isInUse && mock->state == JSModuleMock::State::NotCalled;
     auto& moduleMocksBeingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded;
-    for (auto& entry : globalObject->moduleLoader()->moduleMap().values()) {
-        String key = entry->key().string();
-        if (!callsFactory || entry->record() || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching || registeredModuleMock(globalObject, key) || moduleMocksBeingLoaded.contains(key))
-            continue;
-        JSC::JSPromise* fetching = entry->ensureModulePromise(globalObject);
-        if (fetching->status() != JSC::JSPromise::Status::Pending)
-            continue;
-        JSValue later = callframe->jsCallee();
-        fetching->performPromiseThenWithContext(vm, globalObject, later, later, jsUndefined(), context);
-        return JSValue::encode(jsUndefined());
+    auto* fetches = dynamicDowncast<JSC::JSArray>(waiting->getInternalField(1));
+    while (callsFactory) {
+        while (fetches && fetches->length() > 1) {
+            auto* entry = uncheckedDowncast<JSC::ModuleRegistryEntry>(fetches->pop(globalObject));
+            RETURN_IF_EXCEPTION(scope, {});
+            JSC::JSPromise* fetching = isBeingFetchedAsItself(globalObject, entry) ? entry->ensureModulePromise(globalObject) : nullptr;
+            if (fetching && fetching->status() == JSC::JSPromise::Status::Pending) {
+                fetches->push(globalObject, entry);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue later = callframe->jsCallee();
+                fetching->performPromiseThenWithContext(vm, globalObject, later, later, jsUndefined(), context);
+                return JSValue::encode(jsUndefined());
+            }
+            followImports(globalObject, fetches, entry);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        // Another load may have turned out to import the mock.
+        bool isFetching = isFetchingAnythingElse(globalObject, fetches);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isFetching)
+            break;
+        if (!fetches) {
+            fetches = JSC::constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            fetches->push(globalObject, JSC::JSSet::create(vm, globalObject->setStructure()));
+            RETURN_IF_EXCEPTION(scope, {});
+            waiting->putInternalField(vm, 1, fetches);
+        }
+        followImporters(globalObject, fetches, specifier);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (fetches->length() == 1)
+            break;
     }
 
     // (Bun::runModuleMock() put it there. One that was called and then removed stays: keepModuleMockOfLoadInFlight.)
-    String specifier = mock->specifier->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     if (auto waiting = moduleMocksBeingLoaded.find(specifier); waiting != moduleMocksBeingLoaded.end() && waiting->value.get() == mock && (!isInUse || registeredModuleMock(globalObject, specifier) == mock))
         moduleMocksBeingLoaded.remove(waiting);
 
@@ -1699,6 +1850,8 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
             auto* registered = loader->registryEntry(imported->moduleKey());
             if (registered && registered->record() == imported)
                 addImporter(importersOf, key, imported->moduleKey().string());
+            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key))
+                keys.append(key); // `delete require.cache[mocked]`: it is linked to a mock that nothing finds any more.
         }
     }
 
@@ -2355,7 +2508,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     RETURN_IF_EXCEPTION(scope, {});
 
     if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key))
-        RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(globalObject, mock)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(globalObject, mock, true, callerPath(vm, callframe))));
     RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), specifier.key)));
 }
 
@@ -2897,6 +3050,11 @@ static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoa
             auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
             if (!cyclic || cyclic->isSCCEvaluated())
                 return;
+        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedAsItself(globalObject, entry)) {
+            // Another load is fetching it. Whether it imports the mock is not known yet: if it did, and joined the chain, that load would get the original.
+            running.waitingModules.add(key);
+            waiting.append(key);
+            return;
         }
         unfinished.append(key);
     };
@@ -3359,7 +3517,8 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* mo
         fulfilled->fulfill(vm, jsUndefined());
         JSC::JSPromise* settled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         JSC::JSFunction* later = JSC::JSFunction::create(vm, globalObject, 2, String(), Zig::jsFunctionRunModuleMockLater, ImplementationVisibility::Private);
-        fulfilled->performPromiseThenWithContext(vm, globalObject, later, jsUndefined(), jsUndefined(), Zig::moduleMockWith(globalObject, mock, settled));
+        auto* waiting = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), settled, jsUndefined());
+        fulfilled->performPromiseThenWithContext(vm, globalObject, later, jsUndefined(), jsUndefined(), Zig::moduleMockWith(globalObject, mock, waiting));
         return settled;
     }
 
@@ -3492,6 +3651,11 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const Str
     for (auto* mock : replaced)
         mock->giveUp(globalObject);
 
+    // A module that is still being loaded runs no script: it is the module of this very key that imports, not a copy of it that a factory has.
+    auto* importerEntry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));
+    auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
+    bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
+
     // Each factory that is running has its say, until all agree: what one is given must not wait for the mock of another that imports it either.
     String given = key;
     String asked;
@@ -3501,7 +3665,7 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const Str
             String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
             // (Once another mock has taken its place, what the file imports is not the factory's doing.)
             bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
-            if (!isInChain && !isFactory && !running.importChainWithoutQuery.contains(importer))
+            if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;
             String instead = given == mocked ? Zig::originalModuleKey(given) : given;
             String copy = Zig::keyOfModuleThatDoesNotWait(globalObject, running, instead, mocked);

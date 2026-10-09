@@ -30,6 +30,7 @@ pub(crate) fn print_in_message(
             host: &mut *formatter,
             out: Vec::new(),
             min: true,
+            is_inline: false,
             keeps_carriage_returns: true,
             shadow_roots: false,
             max_depth,
@@ -73,18 +74,20 @@ pub(crate) fn print_in_snapshot(
         return Ok(false);
     }
     let indent = formatter.indent;
+    let depth = formatter.depth;
     let mut printer = Printer {
         global: formatter.global_this,
-        host: formatter,
         out: Vec::new(),
-        min: false,
+        min: formatter.is_inline,
+        is_inline: formatter.is_inline,
         keeps_carriage_returns: format.is_pretty_format(),
         shadow_roots: format == super::snapshot::Format::Vitest,
-        max_depth: u32::MAX,
-        max_width: u32::MAX,
+        max_depth: formatter.max_depth,
+        max_width: formatter.max_width,
         give_up_at: usize::MAX,
+        host: formatter,
     };
-    if !printer.print_dom(value, indent, 0)? {
+    if !printer.print_dom(value, indent, depth)? {
         return Ok(false);
     }
     let out = printer.out;
@@ -102,7 +105,7 @@ pub(crate) fn print_in_snapshot(
 
 /// The formatter that met the DOM value. It prints what is not DOM.
 trait Host {
-    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32) -> JsResult<()>;
+    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, depth: u32) -> JsResult<()>;
     /// With `printed` bytes in a buffer, `copied` of which are about to be moved to another.
     fn check_length(&mut self, _printed: usize, _copied: usize) -> JsResult<()> {
         Ok(())
@@ -110,7 +113,7 @@ trait Host {
 }
 
 impl Host for console_object::Formatter<'_> {
-    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, _indent: u32) -> JsResult<()> {
+    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, _indent: u32, _depth: u32) -> JsResult<()> {
         let global = self.global_this;
         let tag = console_object::Tag::get(value, global)?;
         let prev_single_line = core::mem::replace(&mut self.single_line, true);
@@ -121,12 +124,12 @@ impl Host for console_object::Formatter<'_> {
 }
 
 impl Host for pretty_format::Formatter<'_> {
-    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32) -> JsResult<()> {
+    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, depth: u32) -> JsResult<()> {
         let global = self.global_this;
         if self.snapshot_format.is_pretty_format() {
-            let prev_indent = core::mem::replace(&mut self.indent, indent);
+            let outer = (core::mem::replace(&mut self.indent, indent), core::mem::replace(&mut self.depth, depth));
             let result = self.print_like_pretty_format(out, value, false);
-            self.indent = prev_indent;
+            (self.indent, self.depth) = outer;
             return result;
         }
         let tag = pretty_format::Tag::get(value, global)?;
@@ -321,12 +324,18 @@ enum Printed {
 
 type Entries = Vec<(String, Printed)>;
 
+fn sort_entries(entries: &mut Entries) {
+    bun_collections::index_sort::sort_slice_by(entries, |a, b| compare_code_units(&a.0, &b.0));
+}
+
 struct Printer<'a> {
     global: &'a JSGlobalObject,
     host: &'a mut dyn Host,
     out: Vec<u8>,
     /// pretty-format's `min` option: everything on one line.
     min: bool,
+    /// See `pretty_format::Formatter::is_inline`.
+    is_inline: bool,
     /// A message has them; of a snapshot in the format of Jest or Vitest, the line breaks are normalized as a whole.
     keeps_carriage_returns: bool,
     /// Vitest's `printShadowRoot` option.
@@ -369,20 +378,22 @@ impl Printer<'_> {
                 self.print_element(value, b"DocumentFragment", false, indent, depth)?
             }
             Dom::List { name } => {
-                if self.open_collection(&name, b'[', depth) {
+                if self.open_collection(&name, b'[', depth, false) {
                     self.print_items(value, indent, depth + 1)?;
                     self.out.push(b']');
                 }
             }
             Dom::NamedNodeMap { name } => {
-                if self.open_collection(&name, b'{', depth) {
-                    let attributes = self.read_attributes(value, indent + 1, depth + 1)?;
+                if self.open_collection(&name, b'{', depth, false) {
+                    let attributes = self.read_attributes(value, indent + 1, depth + 1, !self.is_inline)?;
                     self.print_entries(&attributes, indent);
                     self.out.push(b'}');
                 }
             }
             Dom::Record { name } => {
-                if self.open_collection(&name, b'{', depth) {
+                // Vitest's `min` leaves out the names that the plugin prints, and no others.
+                let keeps_name = self.is_inline && name.eq_ascii(b"DOMTokenList");
+                if self.open_collection(&name, b'{', depth, keeps_name) {
                     let properties = self.read_properties(value, indent + 1, depth + 1)?;
                     self.print_entries(&properties, indent);
                     self.out.push(b'}');
@@ -396,7 +407,7 @@ impl Printer<'_> {
         if value.is_string() {
             self.write_quoted(&value.to_bun_string(self.global)?);
         } else if !self.print_dom(value, indent, depth)? {
-            self.host.print(&mut self.out, value, indent)?;
+            self.host.print(&mut self.out, value, indent, depth)?;
         }
         Ok(())
     }
@@ -422,7 +433,7 @@ impl Printer<'_> {
         } else {
             None
         } {
-            Some(attributes) => self.read_attributes(attributes, indent + 2, depth)?,
+            Some(attributes) => self.read_attributes(attributes, indent + 2, depth, true)?,
             None => Entries::new(),
         };
         for same_name in attributes.chunk_by(|a, b| a.0.eql(&b.0)) {
@@ -514,7 +525,7 @@ impl Printer<'_> {
     }
 
     /// False when the collection is too deep to list.
-    fn open_collection(&mut self, name: &String, bracket: u8, depth: u32) -> bool {
+    fn open_collection(&mut self, name: &String, bracket: u8, depth: u32, keeps_name: bool) -> bool {
         let name = name.to_utf8();
         if depth >= self.max_depth {
             self.out.push(b'[');
@@ -522,7 +533,7 @@ impl Printer<'_> {
             self.out.push(b']');
             return false;
         }
-        if !self.min {
+        if !self.min || keeps_name {
             self.out.extend_from_slice(name.slice());
             self.out.push(b' ');
         }
@@ -544,16 +555,34 @@ impl Printer<'_> {
             count = count.saturating_add(1);
             Ok(())
         })?;
+        if self.is_inline && count > self.max_width {
+            self.write_count(count - self.max_width);
+        }
         if count > 0 {
             self.close(indent);
         }
         Ok(())
     }
 
+    fn write_count(&mut self, count: u32) {
+        use std::io::Write as _;
+        let _ = write!(self.out, "({count})");
+    }
+
     fn print_entries(&mut self, entries: &Entries, indent: u32) {
         for (i, same_key) in entries.chunk_by(|a, b| a.0.eql(&b.0)).enumerate() {
             self.separate(i == 0, indent + 1);
-            self.write_quoted(&same_key[0].0);
+            if self.is_inline && i == self.max_width as usize {
+                self.out.extend_from_slice("\u{2026}".as_bytes());
+                self.write_count((entries.chunk_by(|a, b| a.0.eql(&b.0)).count() - i) as u32);
+                break;
+            }
+            let key = same_key[0].0.to_utf8();
+            if self.is_inline && pretty_format::is_unquotable_key(key.slice()) {
+                self.out.extend_from_slice(key.slice());
+            } else {
+                self.write_quoted(&same_key[0].0);
+            }
             self.out.extend_from_slice(b": ");
             match &same_key[same_key.len() - 1].1 {
                 Printed::String(value) => self.write_quoted(value),
@@ -565,12 +594,13 @@ impl Printer<'_> {
         }
     }
 
-    /// The `name` and `value` of each `Attr`, sorted by name.
+    /// The `name` and `value` of each `Attr`.
     fn read_attributes(
         &mut self,
         attributes: JSValue,
         indent: u32,
         depth: u32,
+        is_sorted: bool,
     ) -> JsResult<Entries> {
         let mut entries = Entries::new();
         let global = self.global;
@@ -585,11 +615,13 @@ impl Printer<'_> {
             }
             Ok(())
         })?;
-        entries.sort_by(|a, b| compare_code_units(&a.0, &b.0));
+        if is_sorted {
+            sort_entries(&mut entries);
+        }
         Ok(entries)
     }
 
-    /// Own enumerable string-keyed properties, sorted by key.
+    /// Own enumerable string-keyed properties, sorted by key unless `compareKeys` is null.
     fn read_properties(&mut self, object: JSValue, indent: u32, depth: u32) -> JsResult<Entries> {
         let mut entries = Entries::new();
         let Some(cell) = object.get_object() else {
@@ -606,7 +638,9 @@ impl Printer<'_> {
         while let Some((key, value)) = properties.next()? {
             entries.push((String::clone(&key), self.capture(value, indent, depth)?));
         }
-        entries.sort_by(|a, b| compare_code_units(&a.0, &b.0));
+        if !self.is_inline {
+            sort_entries(&mut entries);
+        }
         Ok(entries)
     }
 
@@ -622,7 +656,9 @@ impl Printer<'_> {
 
     /// `spacingOuter + indentation`
     fn line(&mut self, indent: u32) {
-        if !self.min {
+        if self.is_inline {
+            self.out.push(b' ');
+        } else if !self.min {
             self.out.push(b'\n');
             self.out.resize(self.out.len() + indent as usize * 2, b' ');
         }
@@ -659,6 +695,12 @@ impl Printer<'_> {
 
     /// `escapeString` is on in a message and off in a snapshot.
     fn write_quoted(&mut self, text: &String) {
+        if self.is_inline {
+            self.out.push(b'\'');
+            self.out.extend_from_slice(text.to_utf8().slice());
+            self.out.push(b'\'');
+            return;
+        }
         self.out.push(b'"');
         self.write_replacing(text, if self.min { b"\"\\" } else if self.keeps_carriage_returns { b"" } else { b"\r" });
         self.out.push(b'"');

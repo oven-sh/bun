@@ -338,6 +338,19 @@ pub(crate) struct Formatter<'a> {
     serializers: Option<JSValue>,
     /// What they are given as pretty-format's `config`, once one has been called.
     config: Option<JSValue>,
+    /// As Vitest's `inspect()` has pretty-format print: on one line, strings between single quotes, keys in their own
+    /// order and without quotes, functions with their names, and with the plugins of pretty-format only.
+    pub(crate) is_inline: bool,
+    /// pretty-format's `depth`
+    pub(crate) depth: u32,
+    /// Its `maxDepth`, `maxWidth` and `callToJSON`.
+    pub(crate) max_depth: u32,
+    pub(crate) max_width: u32,
+    call_to_json: bool,
+    /// How many items of the collection that is being printed have been started.
+    items: u32,
+    /// Vitest's `_outputLengthPerDepth`, which `is_inline` counts.
+    output_at_depth: [usize; 12],
 }
 
 impl<'a> Formatter<'a> {
@@ -360,6 +373,13 @@ impl<'a> Formatter<'a> {
             print_basic_prototype: false,
             serializers: None,
             config: None,
+            is_inline: false,
+            depth: 0,
+            max_depth: u32::MAX,
+            max_width: u32::MAX,
+            call_to_json: true,
+            items: 0,
+            output_at_depth: [0; 12],
         }
     }
 
@@ -3047,12 +3067,26 @@ fn for_each_sorted_property(
     format: SnapshotFormat,
     each: &mut dyn FnMut(JSValue, JSValue) -> JsResult<()>,
 ) -> JsResult<()> {
+    for_each_property(global, object, format, true, u32::MAX, each)
+}
+
+/// After `max_width` properties, `each` is given an empty key and how many are left.
+fn for_each_property(
+    global: &JSGlobalObject,
+    object: JSValue,
+    format: SnapshotFormat,
+    is_sorted: bool,
+    max_width: u32,
+    each: &mut dyn FnMut(JSValue, JSValue) -> JsResult<()>,
+) -> JsResult<()> {
     type Each<'a> = &'a mut dyn FnMut(JSValue, JSValue) -> JsResult<()>;
     unsafe extern "C" {
         safe fn SnapshotFormat__forEachProperty(
             global: &JSGlobalObject,
             object: JSValue,
             is_for_vitest: bool,
+            is_sorted: bool,
+            max_width: u32,
             each: *mut c_void,
             call: extern "C" fn(*mut c_void, JSValue, JSValue) -> bool,
         );
@@ -3064,7 +3098,7 @@ fn for_each_sorted_property(
     let mut each: Each<'_> = each;
     jsc::host_fn::from_js_host_call_generic(global, || {
         let is_for_vitest = format == SnapshotFormat::Vitest;
-        SnapshotFormat__forEachProperty(global, object, is_for_vitest, (&raw mut each).cast::<c_void>(), call)
+        SnapshotFormat__forEachProperty(global, object, is_for_vitest, is_sorted, max_width, (&raw mut each).cast::<c_void>(), call)
     })
 }
 
@@ -3084,12 +3118,12 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__lengthOf(global, value))
 }
 
-/// `value > 0`
-fn is_greater_than_zero(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+/// `Number(value)`
+pub(crate) fn to_number(global: &JSGlobalObject, value: JSValue) -> JsResult<f64> {
     unsafe extern "C" {
-        safe fn SnapshotFormat__isGreaterThanZero(global: &JSGlobalObject, value: JSValue) -> bool;
+        safe fn SnapshotFormat__toNumber(global: &JSGlobalObject, value: JSValue) -> f64;
     }
-    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isGreaterThanZero(global, value))
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__toNumber(global, value))
 }
 
 /// `Array.isArray(value)`
@@ -3101,7 +3135,7 @@ fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 }
 
 /// `value[name]`, of any value.
-fn member(global: &JSGlobalObject, value: JSValue, name: &'static str) -> JsResult<JSValue> {
+pub(crate) fn member(global: &JSGlobalObject, value: JSValue, name: &'static str) -> JsResult<JSValue> {
     unsafe extern "C" {
         fn SnapshotFormat__get(global: &JSGlobalObject, value: JSValue, name: *const u8, length: usize) -> JSValue;
     }
@@ -3118,7 +3152,7 @@ fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue
 }
 
 /// `value[key]`, of any value.
-fn member_by_value(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<JSValue> {
+pub(crate) fn member_by_value(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<JSValue> {
     unsafe extern "C" {
         safe fn SnapshotFormat__getByValue(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JSValue;
     }
@@ -3150,7 +3184,7 @@ fn to_reg_exp(global: &JSGlobalObject, pattern: JSValue) -> JsResult<JSValue> {
 }
 
 /// `value != null && typeof value === "object" && !Array.isArray(value)`
-fn is_object_but_no_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+pub(crate) fn is_object_but_no_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     Ok(value.is_object() && !value.is_callable() && !is_array(global, value)?)
 }
 
@@ -3235,6 +3269,54 @@ fn members_of_matcher(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     })
 }
 
+/// A matcher of `expect` as the object that it is in Jest and Vitest, without what `JSON.stringify()` leaves out.
+pub(crate) fn matcher_as_object(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSValue>> {
+    let Some((sample, inverse, precision)) = members_of_matcher(global, value)? else { return Ok(None) };
+    let object = JSValue::create_empty_object(global, 3);
+    object.put(global, b"sample", sample);
+    object.put(global, b"inverse", JSValue::from(inverse));
+    if let Some(precision) = precision {
+        object.put(global, b"precision", precision);
+    }
+    Ok(Some(object))
+}
+
+/// What its `toString()` returns there. False when `value` is no matcher of `expect`.
+pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out: &mut Vec<u8>) -> JsResult<bool> {
+    if value.js_type() != JSType::DOMWrapper {
+        return Ok(false);
+    }
+    let name = |flags: expect::Flags, is: &'static str, is_not: &'static str| if flags.not() { is_not } else { is };
+    out.extend_from_slice(
+        if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
+            name(matcher.flags.get(), "ArrayContaining", "ArrayNotContaining")
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
+            name(matcher.flags.get(), "ObjectContaining", "ObjectNotContaining")
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
+            name(matcher.flags.get(), "StringContaining", "StringNotContaining")
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
+            name(matcher.flags.get(), "StringMatching", "StringNotMatching")
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
+            name(matcher.flags.get(), "NumberCloseTo", "NumberNotCloseTo")
+        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+            "Any"
+        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+            "Anything"
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
+            let Some(matcher_fn) = expect_js::custom::matcher_fn_get_cached(value) else { return Ok(false) };
+            if matcher.flags.not() {
+                out.extend_from_slice(b"not.");
+            }
+            out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+        .as_bytes(),
+    );
+    Ok(true)
+}
+
 fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
     let is_vitest = format == SnapshotFormat::Vitest;
     let merged = JSValue::create_empty_array(global, 0)?;
@@ -3304,11 +3386,12 @@ fn first_truthy(global: &JSGlobalObject, object: JSValue, names: &[&'static str]
 }
 
 /// The entries of a `Map` or the values of a `Set`. False, with nothing done, unless `method` is the `entries` or
-/// `values` it is born with.
+/// `values` it is born with. After `max_width` of them, `each` is given an empty value, once.
 fn for_each_of_collection(
     global: &JSGlobalObject,
     collection: JSValue,
     method: JSValue,
+    max_width: u32,
     each: &mut dyn FnMut(JSValue, JSValue) -> JsResult<()>,
 ) -> JsResult<bool> {
     type Each<'a> = &'a mut dyn FnMut(JSValue, JSValue) -> JsResult<()>;
@@ -3317,6 +3400,7 @@ fn for_each_of_collection(
             global: &JSGlobalObject,
             collection: JSValue,
             method: JSValue,
+            max_width: u32,
             each: *mut c_void,
             call: extern "C" fn(*mut c_void, JSValue, JSValue) -> bool,
         ) -> bool;
@@ -3327,13 +3411,62 @@ fn for_each_of_collection(
     }
     let mut each: Each<'_> = each;
     jsc::host_fn::from_js_host_call_generic(global, || {
-        SnapshotFormat__forEachOfCollection(global, collection, method, (&raw mut each).cast::<c_void>(), call)
+        SnapshotFormat__forEachOfCollection(global, collection, method, max_width, (&raw mut each).cast::<c_void>(), call)
     })
 }
 
 fn write_string(global: &JSGlobalObject, out: &mut Vec<u8>, value: JSValue) -> JsResult<()> {
     out.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
     Ok(())
+}
+
+/// `String(number)`
+pub(crate) fn write_number(out: &mut Vec<u8>, number: f64) {
+    if number.is_finite() {
+        let mut buf = [0u8; 124];
+        out.extend_from_slice(bun_fmt::FormatDouble::dtoa(&mut buf, number));
+    } else {
+        out.extend_from_slice(if number.is_nan() {
+            b"NaN"
+        } else if number > 0.0 {
+            b"Infinity"
+        } else {
+            b"-Infinity"
+        });
+    }
+}
+
+/// What stands for the items beyond `maxWidth`, with how many they are where pretty-format knows.
+fn write_rest(out: &mut Vec<u8>, rest: Option<f64>) {
+    out.extend_from_slice("\u{2026}".as_bytes());
+    if let Some(rest) = rest {
+        out.push(b'(');
+        write_number(out, rest);
+        out.push(b')');
+    }
+}
+
+/// `isUnquotableKey`
+pub(crate) fn is_unquotable_key(key: &[u8]) -> bool {
+    key != b"__proto__"
+        && key.first().is_some_and(|first| !first.is_ascii_digit())
+        && key.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+}
+
+/// `value.startsWith("__vitest_") && /__vitest_\d+__/.test(value)`
+fn is_hidden_by_vitest(text: &[u8]) -> bool {
+    if !text.starts_with(b"__vitest_") {
+        return false;
+    }
+    let mut rest = text;
+    while let Some(i) = strings::index_of(rest, b"__vitest_") {
+        rest = &rest[i + b"__vitest_".len()..];
+        let digits = rest.iter().take_while(|byte| byte.is_ascii_digit()).count();
+        if digits > 0 && rest[digits..].starts_with(b"__") {
+            return true;
+        }
+    }
+    false
 }
 
 /// What a plugin returns is a string, or pretty-format's `TypeError`.
@@ -3467,6 +3600,95 @@ impl JestPrettyFormat {
     }
 }
 
+/// How Vitest prints the values in the title of a row of `test.each()`.
+impl JestPrettyFormat {
+    /// `taskTitleValueFormatTruncate`
+    pub(crate) const TRUNCATE: usize = 40;
+
+    /// `inspect(value, { truncate })`
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn inspect(global: &JSGlobalObject, value: JSValue, out: &mut Vec<u8>) -> JsResult<()> {
+        unsafe extern "C" {
+            safe fn SnapshotFormat__isShortenedByWidth(global: &JSGlobalObject, value: JSValue) -> bool;
+        }
+        const MAX_LENGTH: usize = 10_000;
+        let fits = |printed: &[u8]| strings::element_length_utf8_into_utf16(printed) <= Self::TRUNCATE;
+
+        let mut printed = Vec::new();
+        Self::stringify(global, value, &mut printed, None, u32::MAX, Self::TRUNCATE)?;
+        if fits(&printed) {
+            out.extend_from_slice(&printed);
+            return Ok(());
+        }
+        if value.is_string_literal() {
+            let string = value.to_bun_string(global)?;
+            let mut end = Self::TRUNCATE - 2;
+            if (0xD800..=0xDBFF).contains(&string.char_at(end - 1)) {
+                end -= 1;
+            }
+            out.push(b'\'');
+            out.extend_from_slice(string.substring_with_len(0, end).to_utf8().slice());
+            out.extend_from_slice("\u{2026}'".as_bytes());
+            return Ok(());
+        }
+        // A matcher of `expect` is a plain object there.
+        if members_of_matcher(global, value)?.is_some()
+            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isShortenedByWidth(global, value))?
+        {
+            let (mut fitting, mut too_wide) = (0, Self::TRUNCATE as u32);
+            while fitting + 1 < too_wide {
+                let width = (fitting + too_wide) / 2;
+                Self::stringify(global, value, &mut printed, Some(1), width, MAX_LENGTH)?;
+                if fits(&printed) {
+                    fitting = width;
+                } else {
+                    too_wide = width;
+                }
+            }
+            Self::stringify(global, value, &mut printed, Some(1), fitting, MAX_LENGTH)?;
+        } else {
+            Self::stringify(global, value, &mut printed, Some(0), u32::MAX, MAX_LENGTH)?;
+        }
+        out.extend_from_slice(&printed);
+        Ok(())
+    }
+
+    /// `stringify(value, 10, { maxLength, maxWidth, maxDepth })`: the depth is halved while what is printed is too long,
+    /// which changes nothing when the option `maxDepth` is there to replace it.
+    fn stringify(
+        global: &JSGlobalObject,
+        value: JSValue,
+        printed: &mut Vec<u8>,
+        max_depth_option: Option<u32>,
+        max_width: u32,
+        max_length: usize,
+    ) -> JsResult<()> {
+        let mut max_depth = 10;
+        loop {
+            let mut print = |call_to_json: bool| {
+                printed.clear();
+                let mut formatter = Formatter::new(global);
+                formatter.snapshot_format = SnapshotFormat::Vitest;
+                formatter.is_inline = true;
+                formatter.max_depth = max_depth_option.unwrap_or(max_depth);
+                formatter.max_width = max_width;
+                formatter.call_to_json = call_to_json;
+                formatter.print_like_pretty_format(printed, value, false)
+            };
+            match print(true) {
+                // Whatever is thrown, it tries once more.
+                Err(JsError::Thrown) if global.clear_exception_except_termination() => print(false)?,
+                result => result?,
+            }
+            if max_depth <= 1 || strings::element_length_utf8_into_utf16(printed) < max_length {
+                return Ok(());
+            }
+            max_depth /= 2;
+        }
+    }
+}
+
 /// Where Jest and Vitest run, the stack of pretty-format ends before 2,400 levels. What is printed on the way to the
 /// end of Bun's grows with the square of the depth, for the indentation.
 pub(crate) const MAX_INDENT: u32 = 4096;
@@ -3475,20 +3697,53 @@ pub(crate) const MAX_INDENT: u32 = 4096;
 impl Formatter<'_> {
     /// `spacingOuter + indentation`
     fn new_line(&self, out: &mut Vec<u8>) {
+        if self.is_inline {
+            out.push(b' ');
+            return;
+        }
         out.push(b'\n');
         out.resize(out.len() + self.indent as usize * 2, b' ');
     }
 
-    /// What is between the brackets of a collection: `print_items` gives each item a `new_line()` and ends it with a comma.
+    /// With `min`, the last item of a collection has no comma.
+    fn start_item(&mut self, out: &mut Vec<u8>) {
+        if self.is_inline && self.items > 0 {
+            out.push(b',');
+        }
+        self.items += 1;
+        self.new_line(out);
+    }
+
+    fn end_item(&self, out: &mut Vec<u8>) {
+        if !self.is_inline {
+            out.push(b',');
+        }
+    }
+
+    /// `++depth > config.maxDepth`
+    fn is_at_max_depth(&self) -> bool {
+        self.depth >= self.max_depth
+    }
+
+    fn deeper<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {
+        self.depth += 1;
+        let result = print(self);
+        self.depth -= 1;
+        result
+    }
+
+    /// What is between the brackets of a collection: `print_items` has a `start_item()` and an `end_item()` for each.
     fn print_indented(
         &mut self,
         out: &mut Vec<u8>,
         print_items: &mut dyn FnMut(&mut Self, &mut Vec<u8>) -> JsResult<()>,
     ) -> JsResult<()> {
         let empty = out.len();
+        let items_of_outer = core::mem::take(&mut self.items);
         self.indent += 1;
         let result = print_items(self, out);
         self.indent -= 1;
+        self.items = items_of_outer;
         if out.len() != empty {
             self.new_line(out);
         }
@@ -3553,28 +3808,22 @@ impl Formatter<'_> {
             return Ok(());
         }
 
+        let start = out.len();
         if value.is_empty_or_undefined_or_null() {
             out.extend_from_slice(if value.is_null() { b"null" } else { b"undefined" });
         } else if value.is_boolean() {
             out.extend_from_slice(if value.to_boolean() { b"true" } else { b"false" });
         } else if value.is_number() {
             let number = value.as_number();
-            if number.is_finite() {
-                let mut buf = [0u8; 124];
-                out.extend_from_slice(bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, number));
-            } else {
-                out.extend_from_slice(if number.is_nan() {
-                    b"NaN"
-                } else if number > 0.0 {
-                    b"Infinity"
-                } else {
-                    b"-Infinity"
-                });
+            if number == 0.0 && number.is_sign_negative() {
+                out.push(b'-');
             }
+            write_number(out, number);
         } else if value.is_string_literal() {
-            out.push(b'"');
+            let quote = if self.is_inline { b'\'' } else { b'"' };
+            out.push(quote);
             write_string(global, out, value)?;
-            out.push(b'"');
+            out.push(quote);
         } else if value.is_big_int() {
             write_string(global, out, value)?;
             out.push(b'n');
@@ -3585,7 +3834,16 @@ impl Formatter<'_> {
         } else if !value.is_object() {
             out.extend_from_slice(b"[native code]");
         } else {
-            return self.print_object_like_pretty_format(out, value, has_called_to_json);
+            self.print_object_like_pretty_format(out, value, has_called_to_json)?;
+        }
+        if self.is_inline
+            && let Some(output) = self.output_at_depth.get_mut(self.depth as usize)
+        {
+            // Vitest's `maxOutputLength`
+            *output += strings::element_length_utf8_into_utf16(&out[start..]);
+            if *output > 1_000_000 {
+                self.max_depth = 0;
+            }
         }
         Ok(())
     }
@@ -3611,10 +3869,25 @@ impl Formatter<'_> {
         if is(b"jest.asymmetricMatcher") {
             return self.print_foreign_asymmetric_matcher(out, value).map(|()| true);
         }
-        if member(global, value, "_isMockFunction")?.to_boolean() {
+        if !self.is_inline && member(global, value, "_isMockFunction")?.to_boolean() {
             return self.print_mock_function(out, value).map(|()| true);
         }
         Ok(false)
+    }
+
+    /// `printFunction`
+    fn print_function(&self, out: &mut Vec<u8>, function: JSValue) -> JsResult<()> {
+        if !self.is_inline {
+            out.extend_from_slice(b"[Function]");
+            return Ok(());
+        }
+        out.extend_from_slice(b"[Function ");
+        match first_truthy(self.global_this, function, &["name"])? {
+            Some(name) => write_string(self.global_this, out, name)?,
+            None => out.extend_from_slice(b"anonymous"),
+        }
+        out.push(b']');
+        Ok(())
     }
 
     fn print_object_like_pretty_format(
@@ -3628,15 +3901,14 @@ impl Formatter<'_> {
             return Ok(());
         }
         if value.is_callable() {
-            out.extend_from_slice(b"[Function]");
-            return Ok(());
+            return self.print_function(out, value);
         }
 
         let kind = Kind::of(global, value)?;
         match kind {
             Kind::WeakMap => out.extend_from_slice(b"WeakMap {}"),
             Kind::WeakSet => out.extend_from_slice(b"WeakSet {}"),
-            Kind::Function => out.extend_from_slice(b"[Function]"),
+            Kind::Function => self.print_function(out, value)?,
             Kind::Promise if self.snapshot_format == SnapshotFormat::Jest => out.extend_from_slice(b"Promise {}"),
             Kind::Symbol => {
                 // `String(value).replace(/^Symbol\((.*)\)(.*)$/, "Symbol($1)")`
@@ -3684,7 +3956,10 @@ impl Formatter<'_> {
                 text.push(b'/');
                 write_string(global, &mut text, member(global, value, "flags")?)?;
                 let mut rest = text.as_slice();
-                while let Some(i) = strings::index_of_any(rest, b"$()*+.?[\\]^{|}") {
+                // `escapeRegex`
+                while !self.is_inline
+                    && let Some(i) = strings::index_of_any(rest, b"$()*+.?[\\]^{|}")
+                {
                     out.extend_from_slice(&rest[..i]);
                     out.extend_from_slice(&[b'\\', rest[i]]);
                     rest = &rest[i + 1..];
@@ -3697,7 +3972,7 @@ impl Formatter<'_> {
                     return Ok(());
                 }
                 self.ancestors.push(global, value)?;
-                let result = self.print_complex_value(out, value, kind, has_called_to_json);
+                let result = self.deeper(|this| this.print_complex_value(out, value, kind, has_called_to_json));
                 self.ancestors.pop();
                 return result;
             }
@@ -3714,9 +3989,10 @@ impl Formatter<'_> {
         has_called_to_json: bool,
     ) -> JsResult<()> {
         let global = self.global_this;
+        let hit_max_depth = self.depth > self.max_depth;
         // These have no `toJSON()` where Jest and Vitest run.
         let is_bun_extension = matches!(value.get_class_info_name(), Some(b"Headers" | b"FormData" | b"URLSearchParams"));
-        if !has_called_to_json && !is_bun_extension {
+        if self.call_to_json && !hit_max_depth && !has_called_to_json && !is_bun_extension {
             let to_json = member(global, value, "toJSON")?;
             if to_json.is_callable() {
                 let json = to_json.call(global, value, &[])?;
@@ -3725,13 +4001,20 @@ impl Formatter<'_> {
         }
 
         match kind {
+            Kind::Arguments if hit_max_depth => out.extend_from_slice(b"[Arguments]"),
             Kind::Arguments => {
-                out.extend_from_slice(b"Arguments [");
+                out.extend_from_slice(if self.is_inline { b"[" } else { b"Arguments [" });
                 self.print_list_items(out, value)?;
                 out.push(b']');
             }
             Kind::List => {
                 let name = member(global, member(global, value, "constructor")?, "name")?;
+                if hit_max_depth {
+                    out.push(b'[');
+                    write_string(global, out, name)?;
+                    out.push(b']');
+                    return Ok(());
+                }
                 if self.print_basic_prototype || !is_text(global, name, b"Array")? {
                     write_string(global, out, name)?;
                     out.push(b' ');
@@ -3740,17 +4023,19 @@ impl Formatter<'_> {
                 self.print_list_items(out, value)?;
                 out.push(b']');
             }
+            Kind::Map if hit_max_depth => out.extend_from_slice(b"[Map]"),
             Kind::Map => {
                 out.extend_from_slice(b"Map {");
-                self.print_iterated(out, value, "entries", Some(b" => "))?;
+                self.print_iterated(out, value, "entries", Some(b" => "), true)?;
                 out.push(b'}');
             }
+            Kind::Set if hit_max_depth => out.extend_from_slice(b"[Set]"),
             Kind::Set => {
                 out.extend_from_slice(b"Set {");
-                self.print_iterated(out, value, "values", None)?;
+                self.print_iterated(out, value, "values", None, true)?;
                 out.push(b'}');
             }
-            _ if matches!(value.js_type(), JSType::GlobalProxy | JSType::GlobalObject) => {
+            _ if hit_max_depth || matches!(value.js_type(), JSType::GlobalProxy | JSType::GlobalObject) => {
                 out.push(b'[');
                 self.write_constructor_name(out, value, b"")?;
                 out.truncate(out.len() - 1);
@@ -3790,44 +4075,67 @@ impl Formatter<'_> {
         self.print_indented(out, &mut |this, out| {
             if matches!(list.js_type(), JSType::ArrayBuffer | JSType::DataView) {
                 let Some(buffer) = list.as_array_buffer(global) else { return Ok(()) };
-                for byte in buffer.byte_slice() {
-                    this.new_line(out);
-                    let _ = write!(out, "{},", *byte as i8);
+                let bytes = buffer.byte_slice();
+                for (i, byte) in bytes.iter().enumerate() {
+                    this.start_item(out);
+                    if i == this.max_width as usize {
+                        write_rest(out, Some((bytes.len() - i) as f64));
+                        break;
+                    }
+                    let _ = write!(out, "{}", *byte as i8);
+                    this.end_item(out);
                 }
                 return Ok(());
             }
-            for i in 0..length_of(global, list)? {
+            let length = length_of(global, list)?;
+            for i in 0..length {
                 this.check_length(out.len())?;
-                this.new_line(out);
+                this.start_item(out);
+                if i == this.max_width {
+                    write_rest(out, Some(f64::from(length - i)));
+                    break;
+                }
                 let value = if list.is_object() { item(global, list, i)? } else { JSValue::UNDEFINED };
                 if !value.is_undefined() || has_index(global, list, i)? {
                     this.print_child(out, value)?;
                 }
-                out.push(b',');
+                this.end_item(out);
             }
             Ok(())
         })
     }
 
     /// `printIteratorEntries` with a `separator`, `printIteratorValues` without, of `collection[method]()`.
+    /// `has_size`: Vitest hands them `collection.size`.
     fn print_iterated(
         &mut self,
         out: &mut Vec<u8>,
         collection: JSValue,
         method: &'static str,
         separator: Option<&[u8]>,
+        has_size: bool,
     ) -> JsResult<()> {
         let global = self.global_this;
         let function = member(global, collection, method)?;
+        let max_width = self.max_width;
+        let rest = if has_size && self.snapshot_format == SnapshotFormat::Vitest {
+            Some(member(global, collection, "size")?).filter(|size| size.is_number()).map(|size| size.as_number() - f64::from(max_width))
+        } else {
+            None
+        };
         self.print_indented(out, &mut |this, out| {
-            let is_done = for_each_of_collection(global, collection, function, &mut |first, second| {
-                this.new_line(out);
+            let is_done = for_each_of_collection(global, collection, function, max_width, &mut |first, second| {
+                this.start_item(out);
+                if first.is_empty() {
+                    write_rest(out, rest);
+                    return Ok(());
+                }
                 this.print_child(out, first)?;
                 if let Some(separator) = separator {
                     out.extend_from_slice(separator);
                     this.print_child(out, second)?;
                 }
-                out.push(b',');
+                this.end_item(out);
                 Ok(())
             })?;
             if is_done {
@@ -3840,7 +4148,11 @@ impl Formatter<'_> {
                     return Ok(());
                 }
                 this.check_length(out.len())?;
-                this.new_line(out);
+                this.start_item(out);
+                if this.items - 1 == max_width {
+                    write_rest(out, rest);
+                    return Ok(());
+                }
                 let value = member(global, current, "value")?;
                 match separator {
                     Some(separator) => {
@@ -3850,7 +4162,7 @@ impl Formatter<'_> {
                     }
                     None => this.print_child(out, value)?,
                 }
-                out.push(b',');
+                this.end_item(out);
             }
         })
     }
@@ -3859,12 +4171,21 @@ impl Formatter<'_> {
     fn print_object_properties(&mut self, out: &mut Vec<u8>, object: JSValue) -> JsResult<()> {
         let global = self.global_this;
         self.print_indented(out, &mut |this, out| {
-            for_each_sorted_property(global, object, this.snapshot_format, &mut |key, value| {
-                this.new_line(out);
-                this.print_child(out, key)?;
+            // `compareKeys: null`, `quoteKeys: false`
+            for_each_property(global, object, this.snapshot_format, !this.is_inline, this.max_width, &mut |key, value| {
+                this.start_item(out);
+                if key.is_empty() {
+                    write_rest(out, Some(value.as_number()));
+                    return Ok(());
+                }
+                if this.is_inline && key.is_string() && is_unquotable_key(key.to_bun_string(global)?.to_utf8().slice()) {
+                    write_string(global, out, key)?;
+                } else {
+                    this.print_child(out, key)?;
+                }
                 out.extend_from_slice(b": ");
                 this.print_child(out, value)?;
-                out.push(b',');
+                this.end_item(out);
                 Ok(())
             })
         })
@@ -3885,7 +4206,8 @@ impl Formatter<'_> {
         let calls = member(global, member(global, mock_function, "mock")?, "calls")?;
         let length = member(global, calls, "length")?;
         // Vitest: `length !== 0`. Jest: `length > 0`.
-        if if is_vitest { length.is_number() && length.as_number() == 0.0 } else { !is_greater_than_zero(global, length)? } {
+        let has_calls = if is_vitest { !length.is_number() || length.as_number() != 0.0 } else { to_number(global, length)? > 0.0 };
+        if !has_calls {
             return Ok(());
         }
         out.extend_from_slice(b" {");
@@ -3913,13 +4235,21 @@ impl Formatter<'_> {
         };
         if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
             let Some(sample) = expect_js::array_containing::array_value_get_cached(value) else { return Ok(false) };
+            if self.is_at_max_depth() {
+                out.extend_from_slice(name(matcher.flags.get(), "[ArrayContaining]", "[ArrayNotContaining]"));
+                return Ok(true);
+            }
             out.extend_from_slice(name(matcher.flags.get(), "ArrayContaining [", "ArrayNotContaining ["));
-            self.print_list_items(out, sample)?;
+            self.deeper(|this| this.print_list_items(out, sample))?;
             out.push(b']');
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(sample) = expect_js::object_containing::object_value_get_cached(value) else { return Ok(false) };
+            if self.is_at_max_depth() {
+                out.extend_from_slice(name(matcher.flags.get(), "[ObjectContaining]", "[ObjectNotContaining]"));
+                return Ok(true);
+            }
             out.extend_from_slice(name(matcher.flags.get(), "ObjectContaining {", "ObjectNotContaining {"));
-            self.print_object_properties(out, sample)?;
+            self.deeper(|this| this.print_object_properties(out, sample))?;
             out.push(b'}');
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(sample) = expect_js::string_containing::string_value_get_cached(value) else { return Ok(false) };
@@ -3956,9 +4286,15 @@ impl Formatter<'_> {
                     out.extend_from_slice(b", ");
                 }
                 if self.snapshot_format == SnapshotFormat::Vitest {
-                    let outer = (core::mem::take(&mut self.indent), core::mem::replace(&mut self.print_basic_prototype, true));
+                    let outer = (
+                        core::mem::take(&mut self.indent),
+                        core::mem::replace(&mut self.print_basic_prototype, true),
+                        core::mem::take(&mut self.is_inline),
+                        core::mem::replace(&mut self.max_depth, u32::MAX),
+                        core::mem::replace(&mut self.max_width, u32::MAX),
+                    );
                     let result = self.print_child(out, argument);
-                    (self.indent, self.print_basic_prototype) = outer;
+                    (self.indent, self.print_basic_prototype, self.is_inline, self.max_depth, self.max_width) = outer;
                     result?;
                 } else {
                     out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
@@ -3993,15 +4329,22 @@ impl Formatter<'_> {
             }
             Ok(false)
         };
-        if is_one_of(&["ArrayContaining", "ArrayNotContaining"])? {
+        let is_list = is_one_of(&["ArrayContaining", "ArrayNotContaining"])?;
+        if (is_list || is_one_of(&["ObjectContaining", "ObjectNotContaining"])?) && self.is_at_max_depth() {
+            out.push(b'[');
+            write_string(global, out, name)?;
+            out.push(b']');
+        } else if is_list {
             write_string(global, out, name)?;
             out.extend_from_slice(b" [");
-            self.print_list_items(out, member(global, matcher, "sample")?)?;
+            let sample = member(global, matcher, "sample")?;
+            self.deeper(|this| this.print_list_items(out, sample))?;
             out.push(b']');
         } else if is_one_of(&["ObjectContaining", "ObjectNotContaining"])? {
             write_string(global, out, name)?;
             out.extend_from_slice(b" {");
-            self.print_object_properties(out, member(global, matcher, "sample")?)?;
+            let sample = member(global, matcher, "sample")?;
+            self.deeper(|this| this.print_object_properties(out, sample))?;
             out.push(b'}');
         } else if is_one_of(&["StringMatching", "StringNotMatching", "StringContaining", "StringNotContaining"])? {
             write_string(global, out, name)?;
@@ -4044,15 +4387,21 @@ impl Formatter<'_> {
             (b"Seq", false, has(&["_iter", "_array", "_collection", "_iterable"])?)
         };
 
+        if self.is_at_max_depth() {
+            out.extend_from_slice(b"[Immutable.");
+            out.extend_from_slice(name);
+            out.push(b']');
+            return Ok(true);
+        }
         out.extend_from_slice(b"Immutable.");
         out.extend_from_slice(name);
         out.extend_from_slice(if keyed { b" {" } else { b" [" });
         if !listed {
             out.extend_from_slice("\u{2026}".as_bytes());
         } else if keyed {
-            self.print_iterated(out, value, "entries", Some(b": "))?;
+            self.deeper(|this| this.print_iterated(out, value, "entries", Some(b": "), false))?;
         } else {
-            self.print_iterated(out, value, "values", None)?;
+            self.deeper(|this| this.print_iterated(out, value, "values", None, false))?;
         }
         out.push(if keyed { b'}' } else { b']' });
         Ok(true)
@@ -4060,13 +4409,19 @@ impl Formatter<'_> {
 
     fn print_immutable_record(&mut self, out: &mut Vec<u8>, record: JSValue) -> JsResult<()> {
         let global = self.global_this;
-        out.extend_from_slice(b"Immutable.");
+        let is_leaf = self.is_at_max_depth();
+        out.extend_from_slice(if is_leaf { b"[Immutable." } else { b"Immutable." });
         match first_truthy(global, record, &["_name"])? {
             Some(name) => write_string(global, out, name)?,
             None => out.extend_from_slice(b"Record"),
         }
+        if is_leaf {
+            out.push(b']');
+            return Ok(());
+        }
         out.extend_from_slice(b" {");
-        self.print_indented(out, &mut |this, out| {
+        self.depth += 1;
+        let result = self.print_indented(out, &mut |this, out| {
             let mut i = 0;
             // `_keys` and its length are read again for each key.
             while i < length_of(global, member(global, record, "_keys")?)? {
@@ -4074,14 +4429,20 @@ impl Formatter<'_> {
                 i += 1;
                 let value = call_method(global, record, "get", &[key])?;
                 this.check_length(out.len())?;
-                this.new_line(out);
+                this.start_item(out);
+                if i - 1 == this.max_width {
+                    write_rest(out, None);
+                    break;
+                }
                 this.print_child(out, key)?;
                 out.extend_from_slice(b": ");
                 this.print_child(out, value)?;
-                out.push(b',');
+                this.end_item(out);
             }
             Ok(())
-        })?;
+        });
+        self.depth -= 1;
+        result?;
         out.push(b'}');
         Ok(())
     }
@@ -4108,6 +4469,12 @@ impl Formatter<'_> {
                 }
                 let key = key.to_bun_string(global)?;
                 if skip_children_prop && key.eq_ascii(b"children") {
+                    return Ok(());
+                }
+                if self.snapshot_format == SnapshotFormat::Vitest
+                    && value.is_string_literal()
+                    && is_hidden_by_vitest(value.to_bun_string(global)?.to_utf8().slice())
+                {
                     return Ok(());
                 }
                 self.new_line(out);
@@ -4158,7 +4525,7 @@ impl Formatter<'_> {
         }
         if out.len() == end_of_open_tag + 1 {
             out.truncate(end_of_open_tag);
-            out.extend_from_slice(if has_props { b"/>" } else { b" />" });
+            out.extend_from_slice(if has_props && !self.is_inline { b"/>" } else { b" />" });
             return Ok(());
         }
         self.new_line(out);
@@ -4223,18 +4590,33 @@ impl Formatter<'_> {
     fn print_react_test_json(&mut self, out: &mut Vec<u8>, object: JSValue) -> JsResult<()> {
         let global = self.global_this;
         let tag = member(global, object, "type")?.to_bun_string(global)?;
+        if self.is_at_max_depth() {
+            Self::print_markup_as_leaf(out, tag.to_utf8().slice());
+            return Ok(());
+        }
         let props = Some(member(global, object, "props")?).filter(|props| props.to_boolean());
         let children = Some(member(global, object, "children")?).filter(|children| children.to_boolean());
-        self.print_markup(out, tag.to_utf8().slice(), props, false, children)
+        self.deeper(|this| this.print_markup(out, tag.to_utf8().slice(), props, false, children))
     }
 
     /// The `ReactElement` plugin. `legacy`: an element of React 18 or older.
     fn print_react_element(&mut self, out: &mut Vec<u8>, element: JSValue, legacy: bool) -> JsResult<()> {
         let global = self.global_this;
         let tag = Self::react_type_name(global, member(global, element, "type")?, legacy)?;
+        if self.is_at_max_depth() {
+            Self::print_markup_as_leaf(out, &tag);
+            return Ok(());
+        }
         let props = member(global, element, "props")?;
         let children = if props.is_undefined_or_null() { None } else { Some(member(global, props, "children")?) };
-        self.print_markup(out, &tag, Some(props), true, children)
+        self.deeper(|this| this.print_markup(out, &tag, Some(props), true, children))
+    }
+
+    /// `printElementAsLeaf`
+    fn print_markup_as_leaf(out: &mut Vec<u8>, tag: &[u8]) {
+        out.push(b'<');
+        out.extend_from_slice(tag);
+        out.extend_from_slice(" \u{2026} />".as_bytes());
     }
 
     /// `getType`

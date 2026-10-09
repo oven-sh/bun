@@ -495,7 +495,7 @@ Under `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest
 | --------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
 | Parameter of a test or hook callback                      | a `done` callback, which is waited for | the [test context](#test-context)                            |
 | Extra parameter of a `test.each` callback                 | a `done` callback                      | `undefined`                                                  |
-| `$name` in a `test.each` title, for a long string         | the whole string                       | cut to 40 characters, ending in `…`                          |
+| A value in a `test.each` title                            | `{ a: "x" }`, whole                    | as Vitest prints it: `{ a: 'x' }`, `[ 0, 1, …(118) ]`        |
 | `beforeAll`, `afterAll` callback                          | `(done)`                               | `({}, suite)`                                                |
 | `afterEach`, `afterAll` of one scope                      | run in the order they were registered  | run last registered first                                    |
 | A function returned by `beforeEach`, `beforeAll`          | ignored                                | runs after the matching `afterEach` / `afterAll` hooks       |

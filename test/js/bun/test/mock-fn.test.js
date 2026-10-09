@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import util from "node:util";
 import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
@@ -3839,13 +3840,144 @@ if (isBun) {
         }
       });
 
-      test.each([
-        ["vi", vi.fn, false],
-        ["jest", jest.fn, false],
-        ["bun:test", mock, true],
-      ])("%s: whether mockName() renames the function", (_, fn, renames) => {
-        const mocked = fn(function implementation() {}).mockName("given");
-        expect(mocked.name).toBe(renames ? "given" : "implementation");
+      describe("`name`", () => {
+        function implementation() {}
+        function other() {}
+        const reset = mocked => (mocked.mockReset(), mocked);
+        const names = (fn, spyOn) => ({
+          "fn()": fn().name,
+          "fn(function)": fn(implementation).name,
+          "fn(anonymous function)": fn(function () {}).name,
+          "fn(arrow)": fn(() => {}).name,
+          "fn(class)": fn(class K {}).name,
+          "fn(async function)": fn(async function asynchronous() {}).name,
+          "fn(5)": fn(5).name,
+          "spyOn(method)": spyOn(target(), "method").name,
+          "spyOn(getter)": spyOn(target(), "accessor", "get").name,
+          "spyOn(symbol)": spyOn(target(), symbol).name,
+          "fn().mockName()": fn().mockName("given").name,
+          "fn(function).mockName()": fn(implementation).mockName("given").name,
+          "fn().mockImplementation()": fn().mockImplementation(implementation).name,
+          "fn(function).mockImplementation()": fn(implementation).mockImplementation(other).name,
+          "fn().mockImplementationOnce()": fn().mockImplementationOnce(implementation).name,
+          "fn().mockReturnValue()": fn().mockReturnValue(1).name,
+          "fn(function).mockReset()": reset(fn(implementation)).name,
+          "fn().mockName().mockReset()": reset(fn().mockName("given")).name,
+        });
+        const ofSpies = { "spyOn(method)": "method", "spyOn(getter)": "get accessor", "spyOn(symbol)": "[sym]" };
+        const ofImplementation = {
+          "fn()": "mockConstructor",
+          "fn(function)": "implementation",
+          "fn(anonymous function)": "",
+          "fn(arrow)": "",
+          "fn(class)": "K",
+          "fn(async function)": "asynchronous",
+          "fn(5)": "mockConstructor",
+          ...ofSpies,
+          "fn().mockName()": "mockConstructor",
+          "fn(function).mockName()": "implementation",
+          "fn().mockImplementation()": "mockConstructor",
+          "fn(function).mockImplementation()": "implementation",
+          "fn().mockImplementationOnce()": "mockConstructor",
+          "fn().mockReturnValue()": "mockConstructor",
+          "fn(function).mockReset()": "implementation",
+          "fn().mockName().mockReset()": "mockConstructor",
+        };
+
+        test("vi: 'Mock' whatever vi.fn() is given, and the name of the property for a spy", () => {
+          const expected = Object.fromEntries(Object.keys(ofImplementation).map(key => [key, "Mock"]));
+          expect(names(vi.fn, vi.spyOn)).toEqual({ ...expected, ...ofSpies });
+        });
+
+        test("jest: that of the first implementation", () => {
+          expect(names(jest.fn, jest.spyOn)).toEqual(ofImplementation);
+        });
+
+        test("bun:test: that of the first implementation, until mockName() gives it another", () => {
+          expect(names(mock, spyOn)).toEqual({
+            ...ofImplementation,
+            "fn().mockName()": "given",
+            "fn(function).mockName()": "given",
+            "fn().mockName().mockReset()": "given",
+          });
+        });
+
+        test.each(flavors)("%s: is the property that a function has", (_, isVitest, fn) => {
+          for (const mocked of [fn(), fn(implementation)]) {
+            expect(Object.getOwnPropertyDescriptor(mocked, "name")).toEqual({
+              value: mocked.name,
+              writable: false,
+              enumerable: false,
+              configurable: true,
+            });
+          }
+          expect(fn((a, b) => {}).length).toBe(2);
+        });
+
+        test("vi: an automock has the name of what it stands for", () => {
+          class K {
+            static fixed() {}
+            method() {}
+          }
+          const Mocked = vi.mockObject(K);
+          const object = vi.mockObject({ method() {}, arrow: () => {}, implementation });
+          expect({
+            class: Mocked.name,
+            static: Mocked.fixed.name,
+            "method of the prototype": Mocked.prototype.method.name,
+            // "Mock" in Vitest, unless the class is spied on
+            "method of an instance": new Mocked().method.name,
+            "method of an instance of a spy": new (vi.mockObject(K, { spy: true }))().method.name,
+            method: object.method.name,
+            arrow: object.arrow.name,
+            function: object.implementation.name,
+            "function itself": vi.mockObject(implementation).name,
+            spy: vi.mockObject({ method() {} }, { spy: true }).method.name,
+          }).toEqual({
+            class: "K",
+            static: "fixed",
+            "method of the prototype": "method",
+            "method of an instance": "method",
+            "method of an instance of a spy": "method",
+            method: "method",
+            arrow: "arrow",
+            function: "implementation",
+            "function itself": "implementation",
+            spy: "method",
+          });
+        });
+
+        test.each([
+          ["vi", vi.fn, "Mock", "Mock"],
+          ["jest", jest.fn, "mockConstructor", "K"],
+          ["bun:test", mock, "mockConstructor", "K"],
+        ])("%s: where it is printed", (_, fn, ofNothing, ofClass) => {
+          const printed = mocked => ({
+            inspect: Bun.inspect(mocked),
+            "util.inspect": util.inspect(mocked),
+            string: String(mocked).replace(/\s+/g, " "),
+            instance: Bun.inspect(new mocked()),
+            "constructor of an instance": new mocked().constructor.name,
+          });
+          const expected = name => ({
+            inspect: `[class ${name}]`,
+            "util.inspect": `[Function: ${name}] [Mock]`,
+            string: `function ${name}() { [native code] }`,
+            instance: `${name} {}`,
+            "constructor of an instance": name,
+          });
+          expect(printed(fn())).toEqual(expected(ofNothing));
+          expect(printed(fn(class K {}))).toEqual(expected(ofClass));
+        });
+
+        test.each([[vi.fn(implementation), jest.fn(implementation), mock(implementation)]])(
+          "in a title: %p, %p, %p",
+          () => {
+            expect(expect.getState().currentTestName).toEndWith(
+              "in a title: [class Mock], [class implementation], [class implementation]",
+            );
+          },
+        );
       });
 
       test("the mocks that an automocked class gives its instances", () => {

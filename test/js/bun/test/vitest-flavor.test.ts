@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 // A run that never ends is killed, and what it printed is compared: a test that times out leaves it running.
 // An ASAN build looks for leaks as it exits, and CI gives it minutes for a test.
@@ -771,6 +772,146 @@ describe.concurrent("each and for", () => {
     ]);
   });
 
+  // The titles of "vitest" are those that Vitest 5.0.3 gives this file. More of them, as the keys of snapshots that
+  // Vitest wrote: snapshot-tests/formats/vitest/titles.fixture.ts
+  test("titles: values are printed as Vitest prints them, and as before by the other modules", async () => {
+    const file = (module: string) => `
+      import { test, expect } from "${module}";
+      const digits = count => Buffer.alloc(count, "0123456789").toString();
+      const numbers = length => Array.from({ length }, (_, i) => i);
+      const title = (title, ...rows) => test.each(rows)(title, () => console.log(expect.getState().currentTestName));
+      class Point { x = 1; }
+      title("%o", ["str"], [[{ a: 1 }, "s"]], [{ s: "it's \\"q\\"" }], [() => {}], [function named() {}], [class Klass {}]);
+      title("%o", [new Map([["k", 1]])], [new Set([1])], [{ "a-b": 1, z: 2, a: 3 }], [new Point()], [/a.b/g], [[1, , 3]]);
+      title("%o", [digits(38)], [digits(39)], [{ long: digits(90) }], [numbers(13)], [numbers(14)], [numbers(120)]);
+      title("%o", [{ a: { b: { c: digits(30) } }, d: 1 }], [Object.assign(new Point(), { long: digits(60) })], [new Error(digits(60))]);
+      title("%o", [expect.any(Number)], [expect.objectContaining({ z: 1, a: "s" })], [expect.arrayContaining(numbers(40))]);
+      title("%O|%s|%j", [{ a: "x" }, { a: "x" }, { a: "x" }], [["y"], ["y"], ["y"]]);
+      title("%s|%d|%i|%f", [-0, -0, -0, -0], [10n, 10n, 10n, 10n], [Symbol("s"), Symbol("s"), Symbol("s"), Symbol("s")], ["1.5px", "1.5px", "1.5px", "1.5px"]);
+      title("100%% of %s", ["a", "b"]);
+      title("%# %$ %%# <%c> %p", ["a"], ["b"]);
+      title("$a. $a, $b.c $b.d $0 $$ $", { a: 1, b: { c: ["x"] } });
+      title("$0 $1 $2 $a", ["x", { y: "z" }]);
+    `;
+    const [vitest, bun, jest] = await Promise.all(
+      ["vitest", "bun:test", "@jest/globals"].map(module => runTests({ "a.test.js": file(module) })),
+    );
+    const digits = (count: number) => Buffer.alloc(count, "0123456789").toString();
+    const numbers = (length: number) => Array.from({ length }, (_, i) => i).join(", ");
+    expect(vitest.log).toEqual([
+      "'str'",
+      "[ { a: 1 }, 's' ]",
+      `{ s: 'it's "q"' }`,
+      "[Function anonymous]",
+      "[Function named]",
+      "[Function Klass]",
+      "Map { 'k' => 1 }",
+      "Set { 1 }",
+      "{ 'a-b': 1, z: 2, a: 3 }",
+      "Point { x: 1 }",
+      "/a.b/g",
+      "[ 1, , 3 ]",
+      `'${digits(38)}'`,
+      `'${digits(38)}…'`,
+      "{ …(1) }",
+      `[ ${numbers(10)}, …(3) ]`,
+      `[ ${numbers(10)}, …(4) ]`,
+      `[ ${numbers(10)}, …(110) ]`,
+      "{ a: { b: [Object] }, d: 1 }",
+      "Point { x: 1, …(1) }",
+      `[Error: ${digits(60)}]`,
+      "Any<Number>",
+      "ObjectContaining { z: 1, a: 's' }",
+      `ArrayContaining [ ${numbers(5)}, …(35) ]`,
+      `{ a: 'x' }|{ a: 'x' }|{"a":"x"}`,
+      `[ 'y' ]|y|["y"]`,
+      "-0|0|0|-0",
+      "10n|10n|10n|10",
+      "Symbol(s)|NaN|NaN|NaN",
+      "1.5px|NaN|1|1.5",
+      // A "%%" takes a value too, which is then left over.
+      "100% a of b",
+      "0 1 % a# <> %p",
+      "1 2 % b# <> %p",
+      // The dot is of the path.
+      "undefined 1, [ 'x' ] undefined { a: 1, b: { c: [ 'x' ] } } undefined $",
+      "x { y: 'z' } undefined $a",
+    ]);
+    expect(bun.log).toEqual([
+      `"str"`,
+      `[ { a: 1 }, "s" ]`,
+      `{ s: "it's \\"q\\"" }`,
+      "[Function]",
+      "[Function: named]",
+      "[class Klass]",
+      `Map(1) { "k": 1 }`,
+      "Set(1) { 1 }",
+      `{ "a-b": 1, z: 2, a: 3 }`,
+      "Point { x: 1 }",
+      "/a.b/g",
+      "[ 1, empty item, 3 ]",
+      `"${digits(38)}"`,
+      `"${digits(39)}"`,
+      `{ long: "${digits(90)}" }`,
+      `[ ${numbers(13)} ]`,
+      `[ ${numbers(14)} ]`,
+      `[ ${numbers(100)}, ... 20 more items ]`,
+      `{ a: { b: { c: "${digits(30)}" } }, d: 1 }`,
+      `Point { x: 1, long: "${digits(60)}" }`,
+      `[Error: ${digits(60)}]`,
+      "Any<Number>",
+      `ObjectContaining { z: 1, a: "s" }`,
+      "ExpectArrayContaining {}",
+      `{ a: "x" }|{ a: "x" }|{"a":"x"}`,
+      `[ "y" ]|[ "y" ]|["y"]`,
+      "-0|-0|0|0",
+      "10n|10n|10n|10",
+      "Symbol(s)|NaN|NaN|NaN",
+      "1.5px|NaN|1|1.5",
+      "100% of a",
+      "0 1 %# <> %p",
+      "1 2 %# <> %p",
+      `1. 1, [ "x" ] $b.d $0 $$ $`,
+      "$0 $1 $2 $a",
+    ]);
+    expect(jest.log).toEqual(bun.log);
+    expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
+  });
+
+  test("titles: -t finds them, and every reporter prints them", async () => {
+    const files = {
+      "a.test.js": `
+        import { test, expect } from "vitest";
+        test.each([[{ a: "x" }], [{ a: "y" }], [new Map([["k", 1]])]])("row %o", row => { expect(row.a).not.toBe("y"); });
+      `,
+    };
+    using dir = tempDir("vitest-flavor-junit", files);
+    await using junit = Bun.spawn({
+      cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const [all, filtered, dots] = await Promise.all([
+      runTests(files),
+      runTests(files, ["-t", "^row { a: 'x' }$"]),
+      runTests(files, ["--reporter=dots"]),
+      junit.exited,
+    ]);
+    expect(all.results).toEqual(["(pass) row { a: 'x' }", "(fail) row { a: 'y' }", "(pass) row Map { 'k' => 1 }"]);
+    expect({ results: filtered.results, exitCode: filtered.exitCode }).toEqual({
+      results: ["(pass) row { a: 'x' }"],
+      exitCode: 0,
+    });
+    expect(dots.results).toEqual(["(fail) row { a: 'y' }"]);
+    expect((await Bun.file(join(String(dir), "junit.xml")).text()).match(/<testcase name="[^"]*"/g)).toEqual([
+      `<testcase name="row { a: &apos;x&apos; }"`,
+      `<testcase name="row { a: &apos;y&apos; }"`,
+      `<testcase name="row Map { &apos;k&apos; =&gt; 1 }"`,
+    ]);
+  });
+
   test("each: a parameter beyond the values of the row is undefined", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -962,19 +1103,32 @@ describe.concurrent("each and for", () => {
     });
   });
 
-  test.each(["vitest", "bun:test"])("%%s of a Proxy whose traps lead nowhere: %s", async module => {
-    const { results, exitCode } = await runTests({
+  test.each(["vitest", "bun:test", "@jest/globals"])("%%s of a Proxy whose traps lead nowhere: %s", async module => {
+    const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test } from ${JSON.stringify(module)};
         const endless = new Proxy({}, { getPrototypeOf: () => endless, getOwnPropertyDescriptor: () => undefined });
         class Named { toString() { return "named"; } }
-        test.each([[endless], [Object.create(endless)], [new Proxy(new Named(), {})], [new Proxy({}, { get() { throw new Error("trap"); } })]])("%s", () => {});
+        for (const row of [endless, Object.create(endless), new Proxy(new Named(), {}), new Proxy({}, { get() { throw new Error("trap"); } })]) {
+          try {
+            test.each([[row]])("%s", () => {});
+          } catch (error) {
+            console.log(error.name + ": " + error.message);
+          }
+        }
       `,
     });
-    expect({ results, exitCode }).toEqual({
-      results: ["(pass) {}", "(pass) {}", "(pass) named", "(pass) {}"],
-      exitCode: 0,
-    });
+    // As in Vitest, where test.each()() throws these.
+    const thrown = [
+      "RangeError: Maximum call stack size exceeded.",
+      "RangeError: Maximum call stack size exceeded.",
+      "Error: trap",
+    ];
+    expect({ log, results, exitCode }).toEqual(
+      module === "vitest"
+        ? { log: thrown, results: ["(pass) named"], exitCode: 0 }
+        : { log: [], results: ["(pass) {}", "(pass) {}", "(pass) named", "(pass) {}"], exitCode: 0 },
+    );
   });
 });
 

@@ -279,11 +279,10 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
     let Some((&strings, values)) = arguments.split_first() else {
         return Ok(None);
     };
-    if !strings.get_own(global, &BunString::static_("raw"))?.is_some_and(JSValue::is_array) {
-        return Ok(None);
+    if flavor == Flavor::Vitest {
+        return vitest_template_rows(global, strings, values);
     }
-    // vitest takes a template without values for an array, and leaves out a last row that is not complete.
-    if values.is_empty() && flavor == Flavor::Vitest {
+    if !strings.get_own(global, &BunString::static_("raw"))?.is_some_and(JSValue::is_array) {
         return Ok(None);
     }
     let before_first_value = strings.get_index(global, 0)?.to_utf8(global)?;
@@ -291,7 +290,7 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
         .next()
         .unwrap_or_default();
     let headings: Vec<&[u8]> = bun_core::strings::split(first_line, b"|").map(<[u8]>::trim_ascii).collect();
-    if flavor == Flavor::Jest && (values.is_empty() || values.len() % headings.len() != 0) {
+    if values.is_empty() || values.len() % headings.len() != 0 {
         return Err(global.throw(format_args!(
             "Expected a value for each of the {} headings \"{}\" in every row of the table, received {} values",
             headings.len(),
@@ -299,6 +298,10 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
             values.len(),
         )));
     }
+    table_rows(global, &headings, values).map(Some)
+}
+
+fn table_rows(global: &JSGlobalObject, headings: &[&[u8]], values: &[JSValue]) -> JsResult<JSValue> {
     let rows = JSValue::create_empty_array(global, 0)?;
     for row_values in values.chunks_exact(headings.len()) {
         let row = JSValue::create_empty_object(global, headings.len());
@@ -307,7 +310,28 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
         }
         rows.push(global, row)?;
     }
-    Ok(Some(rows))
+    Ok(rows)
+}
+
+/// Vitest's `formatTemplateString(cases, args)`, which any array with arguments after it is given. A last row that is
+/// not complete is left out.
+fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSValue]) -> JsResult<Option<JSValue>> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    // `cases.join("").trim().replace(/ /g, "").split("\n")[0].split("|")`
+    let mut joined = Vec::new();
+    let mut iter = strings.array_iterator(global)?;
+    while let Some(string) = iter.next()? {
+        if !string.is_undefined_or_null() {
+            joined.extend_from_slice(string.to_utf8(global)?.slice());
+        }
+    }
+    let trimmed = jest::trim_js_whitespace(&joined);
+    let first_line = &trimmed[..bun_core::strings::index_of_char_usize(trimmed, b'\n').unwrap_or(trimmed.len())];
+    let first_line: Vec<u8> = first_line.iter().copied().filter(|byte| *byte != b' ').collect();
+    let headings: Vec<&[u8]> = bun_core::strings::split(&first_line, b"|").collect();
+    table_rows(global, &headings, values).map(Some)
 }
 
 #[bun_jsc::host_fn]
@@ -404,10 +428,14 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     args_list.push(item);
                 }
 
-                let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx, is_vitest)?.into_vec())
-                } else {
-                    None
+                let formatted_label: Option<Vec<u8>> = match args.description.as_deref() {
+                    // `toArray(item)` makes no items of these.
+                    Some(desc) if is_vitest && this.rows == Rows::For && item.is_undefined_or_null() => {
+                        Some(jest::format_vitest_title(global, desc, &[], test_idx)?)
+                    }
+                    Some(desc) if is_vitest => Some(jest::format_vitest_title(global, desc, args_list.as_slice(), test_idx)?),
+                    Some(desc) => Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec()),
+                    None => None,
                 };
 
                 let callback_args = if spread_rows { args_list.as_slice() } else { core::slice::from_ref(&item) };
@@ -954,6 +982,7 @@ pub(crate) fn parse_arguments(
         Len::Zero => DescriptionCallbackOptions::default(),
     };
     let (description, callback, options) = (items.description, items.callback, items.options);
+    let is_first_the_name = matches!(len, Len::Three) || (matches!(len, Len::Two) && (!a1.is_function() || a2.is_function()));
 
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
@@ -1037,7 +1066,12 @@ pub(crate) fn parse_arguments(
         )));
     }
 
-    result.description = if description.is_undefined_or_null() {
+    result.description = if is_vitest
+        && cfg.kind == FunctionKind::TestOrDescribe
+        && (is_first_the_name || !description.is_undefined_or_null())
+    {
+        Some(jest::format_vitest_name(global, description)?)
+    } else if description.is_undefined_or_null() {
         None
     } else {
         Some(get_description(global, description, signature)?)

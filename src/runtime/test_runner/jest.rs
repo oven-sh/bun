@@ -15,6 +15,7 @@ use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
+use super::pretty_format::{self, JestPrettyFormat};
 use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
@@ -715,7 +716,7 @@ fn write_inspected(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>)
 
 /// vitest's `truncateString(value, taskTitleValueFormatTruncate)`
 fn write_truncated(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
-    const MAX_UTF16_LENGTH: usize = 40;
+    const MAX_UTF16_LENGTH: usize = JestPrettyFormat::TRUNCATE;
     let string = value.to_bun_string(global)?;
     if string.length() <= MAX_UTF16_LENGTH {
         title.extend_from_slice(string.to_utf8().slice());
@@ -729,8 +730,7 @@ fn write_truncated(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>)
 }
 
 /// Node's `hasBuiltInToString`: `util.format("%s")` inspects such an object instead of calling its `toString`.
-/// vitest only inspects for `Object.prototype.toString`.
-fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue, is_vitest: bool) -> JsResult<bool> {
+fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<bool> {
     const BUILTINS: [&[u8]; 9] = [
         b"Object", b"Array", b"Date", b"RegExp", b"Boolean", b"Number", b"String", b"Symbol", b"BigInt",
     ];
@@ -763,8 +763,7 @@ fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue, is_vitest: bo
         return Ok(false);
     };
     let name = constructor.get_name(global)?;
-    let builtins = if is_vitest { &BUILTINS[..1] } else { &BUILTINS[..] };
-    Ok(builtins.iter().any(|builtin| name.eq_ascii(builtin)))
+    Ok(BUILTINS.iter().any(|builtin| name.eq_ascii(builtin)))
 }
 
 fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
@@ -802,6 +801,20 @@ fn trim_start_js_whitespace(text: &[u8]) -> &[u8] {
     &text[end..]
 }
 
+/// `text.trim()`
+pub(crate) fn trim_js_whitespace(text: &[u8]) -> &[u8] {
+    let text = trim_start_js_whitespace(text);
+    let (mut at, mut end) = (0, 0);
+    while at < text.len() {
+        let (c, size) = bun_core::lexer::char_and_size(text, at);
+        at += size.max(1);
+        if !(bun_core::lexer::is_whitespace(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)) {
+            end = at;
+        }
+    }
+    &text[..end]
+}
+
 fn split_sign(text: &[u8]) -> (f64, &[u8]) {
     match text.split_first() {
         Some((b'-', rest)) => (-1.0, rest),
@@ -836,13 +849,12 @@ fn write_placeholder(
     specifier: u8,
     value: JSValue,
     title: &mut Vec<u8>,
-    is_vitest: bool,
 ) -> JsResult<()> {
     let number = match specifier {
         b's' if value.is_string()
             || value.is_function()
             || value.is_any_error()
-            || (value.is_object() && !has_builtin_to_string(global, value, is_vitest)?) =>
+            || (value.is_object() && !has_builtin_to_string(global, value)?) =>
         {
             return write_to_string(global, value, title);
         }
@@ -898,7 +910,6 @@ pub(crate) fn format_label(
     label: &[u8],
     function_args: &[JSValue],
     test_idx: usize,
-    is_vitest: bool,
 ) -> JsResult<Box<[u8]>> {
     let object_row = function_args.first().copied().filter(|row| row.is_object());
     let mut args = function_args.iter();
@@ -911,24 +922,20 @@ pub(crate) fn format_label(
             (b'%', Some(b'%'), _) => title.push(b'%'),
             (b'%', Some(b'#'), _) | (b'$', Some(b'#'), Some(_)) => write!(&mut title, "{}", test_idx).unwrap(),
             (b'%', Some(b'$'), _) => write!(&mut title, "{}", test_idx + 1).unwrap(),
-            (b'%', Some(specifier @ (b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p' | b'c')), _)
-                if !(is_vitest && specifier == b'p') =>
-            {
-                let Some(&arg) = args.next().or_else(|| is_vitest.then_some(&JSValue::UNDEFINED)) else {
+            (b'%', Some(specifier @ (b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p' | b'c')), _) => {
+                let Some(&arg) = args.next() else {
                     title.push(b'%');
                     continue;
                 };
-                write_placeholder(global_this, specifier, arg, &mut title, is_vitest)?;
+                write_placeholder(global_this, specifier, arg, &mut title)?;
             }
             (b'$', Some(_), Some(row)) => {
                 let (path, after_path) = after.split_at(property_path_len(after));
                 rest = after_path;
                 match get_property_path(global_this, row, path)? {
-                    Some(value) if value.is_string() && is_vitest => write_truncated(global_this, value, &mut title)?,
                     // https://github.com/jestjs/jest/issues/7689
                     Some(value) if value.is_string() => write_to_string(global_this, value, &mut title)?,
                     Some(value) => write_inspected(global_this, value, &mut title)?,
-                    None if is_vitest => title.extend_from_slice(b"undefined"),
                     None => {
                         title.push(b'$');
                         title.extend_from_slice(path);
@@ -945,6 +952,222 @@ pub(crate) fn format_label(
     }
 
     Ok(title.into_boxed_slice())
+}
+
+/// `String(value)`
+fn write_as_string(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    if !value.is_symbol() {
+        return write_to_string(global, value, title);
+    }
+    title.extend_from_slice(b"Symbol(");
+    title.extend_from_slice(value.get_description(global).to_utf8().slice());
+    title.push(b')');
+    Ok(())
+}
+
+/// Vitest's `format([placeholder, value], { truncate })`
+fn write_vitest_placeholder(global: &JSGlobalObject, specifier: u8, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    let is_object = value.is_object() && !value.is_callable();
+    let as_string = |value: JSValue| -> JsResult<Vec<u8>> {
+        let mut text = Vec::new();
+        write_as_string(global, value, &mut text)?;
+        Ok(text)
+    };
+    let number = match specifier {
+        // It takes a value too, which is then left over.
+        b'%' => {
+            title.extend_from_slice(b"% ");
+            return if is_object { JestPrettyFormat::inspect(global, value, title) } else { write_as_string(global, value, title) };
+        }
+        b'c' => return Ok(()),
+        b'o' | b'O' => return JestPrettyFormat::inspect(global, value, title),
+        b's' | b'd' | b'i' if value.is_big_int() => {
+            write_to_string(global, value, title)?;
+            title.push(b'n');
+            return Ok(());
+        }
+        b's' if value.is_number() && value.as_number() == 0.0 && value.as_number().is_sign_negative() => {
+            title.extend_from_slice(b"-0");
+            return Ok(());
+        }
+        b's' if is_object => {
+            if pretty_format::write_name_of_matcher(global, value, title)? {
+                return Ok(());
+            }
+            let to_string = pretty_format::member(global, value, "toString")?;
+            let of_object = pretty_format::member(global, JSValue::create_empty_object(global, 0).get_prototype(global)?, "toString")?;
+            if !to_string.is_callable() || to_string == of_object {
+                return JestPrettyFormat::inspect(global, value, title);
+            }
+            return write_to_string(global, to_string.call(global, value, &[])?, title);
+        }
+        b's' => return write_as_string(global, value, title),
+        b'j' => {
+            let value = pretty_format::matcher_as_object(global, value)?.unwrap_or(value);
+            let thrown = match value.json_stringify_fast(global) {
+                Ok(json) if json.is_empty() => {
+                    title.extend_from_slice(b"undefined");
+                    return Ok(());
+                }
+                Ok(json) => {
+                    title.extend_from_slice(json.to_utf8().slice());
+                    return Ok(());
+                }
+                Err(jsc::JsError::Thrown) => global.take_exception(jsc::JsError::Thrown),
+                Err(err) => return Err(err),
+            };
+            if let Some(error) = thrown.to_error()
+                && let Some(message) = error.get(global, "message")?
+                && bun_core::strings::contains(message.to_utf8(global)?.slice(), b"cyclic structures")
+            {
+                title.extend_from_slice(b"[Circular]");
+                return Ok(());
+            }
+            return Err(global.throw_value(thrown));
+        }
+        b'd' if value.is_symbol() => f64::NAN,
+        b'd' => pretty_format::to_number(global, value)?,
+        b'i' => parse_int(&as_string(value)?),
+        _ => parse_float(&as_string(value)?),
+    };
+    pretty_format::write_number(title, number);
+    Ok(())
+}
+
+/// Vitest's `objectAttr(source, path, default_value)`
+fn get_vitest_attribute(global: &JSGlobalObject, source: JSValue, path: &[u8], default_value: JSValue) -> JsResult<JSValue> {
+    let mut result = source;
+    let mut rest = Some(path);
+    while let Some(path) = rest {
+        let (key, after) = match bun_core::strings::index_of_char_usize(path, b'.') {
+            Some(dot) => (&path[..dot], Some(&path[dot + 1..])),
+            None => (path, None),
+        };
+        rest = after;
+        // `new Object(result)[key]`
+        let holder = if result.is_null() { JSValue::create_empty_object(global, 0) } else { result };
+        result = pretty_format::member_by_value(global, holder, bun_string_jsc::create_utf8_for_js(global, key)?)?;
+        if result.is_undefined() {
+            return Ok(default_value);
+        }
+    }
+    Ok(result)
+}
+
+/// Vitest's `formatAttribute(text)`: `$a.b` reads the first item, `$1` the items.
+fn write_vitest_attributes(
+    global: &JSGlobalObject,
+    text: &[u8],
+    items: &[JSValue],
+    is_object_item: bool,
+    title: &mut Vec<u8>,
+) -> JsResult<()> {
+    // `[$\p{ID_Continue}.]`
+    let is_of_key = |c: i32| c == i32::from(b'.') || bun_js_parser::js_lexer::is_identifier_continue(c);
+    let mut rest = text;
+    while let Some(dollar) = bun_core::strings::index_of_char_usize(rest, b'$') {
+        let end = bun_core::lexer::end_of_run(rest, dollar + 1, is_of_key);
+        let key = &rest[dollar + 1..end];
+        let is_array_key = key.iter().all(u8::is_ascii_digit);
+        if key.is_empty() || (!is_object_item && !is_array_key) {
+            title.extend_from_slice(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+        title.extend_from_slice(&rest[..dollar]);
+        rest = &rest[end..];
+
+        // `items["01"]` is no item.
+        let is_index = is_array_key && (key.len() == 1 || key[0] != b'0');
+        let array_element = match bun_core::fmt::parse_decimal::<usize>(key) {
+            Some(index) if is_index => items.get(index).copied().unwrap_or(JSValue::UNDEFINED),
+            _ => JSValue::UNDEFINED,
+        };
+        let value = if is_object_item { get_vitest_attribute(global, items[0], key, array_element)? } else { array_element };
+        if value.is_string_literal() {
+            write_truncated(global, value, title)?;
+        } else {
+            JestPrettyFormat::inspect(global, value, title)?;
+        }
+    }
+    title.extend_from_slice(rest);
+    Ok(())
+}
+
+/// Vitest's `formatName(name)`
+pub(crate) fn format_vitest_name(global: &JSGlobalObject, name: JSValue) -> JsResult<Vec<u8>> {
+    let mut text = Vec::new();
+    if !name.is_callable() {
+        write_as_string(global, name, &mut text)?;
+        return Ok(text);
+    }
+    match pretty_format::member(global, name, "name")? {
+        name if name.to_boolean() => write_to_string(global, name, &mut text)?,
+        _ => text.extend_from_slice(b"<anonymous>"),
+    }
+    Ok(text)
+}
+
+/// Vitest's `formatTitle(template, items, index)`
+#[cold]
+#[inline(never)]
+pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], items: &[JSValue], index: usize) -> JsResult<Vec<u8>> {
+    use bun_core::strings;
+    let mut template = std::borrow::Cow::Borrowed(template);
+    if strings::contains(&template, b"%#") || strings::contains(&template, b"%$") {
+        const ESCAPED: &[u8] = b"__vitest_escaped_%__";
+        let text = strings::replace_owned(&template, b"%%", ESCAPED);
+        let text = strings::replace_owned(&text, b"%#", index.to_string().as_bytes());
+        let text = strings::replace_owned(&text, b"%$", (index + 1).to_string().as_bytes());
+        template = strings::replace_owned(&text, ESCAPED, b"%%").into();
+    }
+    let count = strings::count_char(&template, b'%');
+
+    // The sign of the n-th `%f` is that of the n-th item, whichever placeholder takes that one.
+    let is_negative_zero = |item: &JSValue| item.is_number() && item.as_number() == 0.0 && item.as_number().is_sign_negative();
+    if items.iter().any(is_negative_zero) && strings::contains(&template, b"%f") {
+        let mut signed = Vec::with_capacity(template.len() + items.len());
+        let mut rest = &template[..];
+        let mut occurrence = 0;
+        while let Some(i) = strings::index_of(rest, b"%f") {
+            signed.extend_from_slice(&rest[..i]);
+            if items.get(occurrence).is_some_and(is_negative_zero) {
+                signed.push(b'-');
+            }
+            signed.extend_from_slice(b"%f");
+            occurrence += 1;
+            rest = &rest[i + 2..];
+        }
+        signed.extend_from_slice(rest);
+        template = signed.into();
+    }
+
+    let is_object_item = match items.first() {
+        Some(&item) => pretty_format::is_object_but_no_array(global, item)?,
+        None => false,
+    };
+    let mut title = Vec::with_capacity(template.len());
+    let mut taken = 0;
+    let mut rest = &template[..];
+    let mut searched = 0;
+    while let Some(percent) = strings::index_of_char_usize(&rest[searched..], b'%').map(|i| i + searched) {
+        let Some(&specifier @ (b's' | b'd' | b'j' | b'i' | b'f' | b'o' | b'O' | b'c' | b'%')) = rest.get(percent + 1) else {
+            searched = percent + 1;
+            continue;
+        };
+        write_vitest_attributes(global, &rest[..percent], items, is_object_item, &mut title)?;
+        if taken < count {
+            let item = items.get(taken).copied().unwrap_or(JSValue::UNDEFINED);
+            taken += 1;
+            write_vitest_placeholder(global, specifier, item, &mut title)?;
+        } else {
+            title.extend_from_slice(&rest[percent..percent + 2]);
+        }
+        rest = &rest[percent + 2..];
+        searched = 0;
+    }
+    write_vitest_attributes(global, rest, items, is_object_item, &mut title)?;
+    Ok(title)
 }
 
 pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {

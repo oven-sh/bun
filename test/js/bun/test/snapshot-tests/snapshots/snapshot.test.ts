@@ -1260,7 +1260,7 @@ const headers = {
 // snapshots in the fixtures. To add a case, let that runner write it. Never update them with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
   const timeout = isDebug ? 120_000 : 20_000;
-  const tests = { vitest: 622, jest: 601 };
+  const tests = { vitest: 969, jest: 601 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -2837,6 +2837,54 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
 
   // Nine stack overflows, about half a second each on a release build.
   const timeoutOfCycles = 60_000;
+  test(
+    "a Proxy that answers that it is its own prototype is a RangeError as in Jest and Vitest, and like any object to Bun",
+    async () => {
+      const file = (module: string) => `
+        import { test, expect } from "${module}";
+        const endless = new Proxy({}, { getPrototypeOf: () => endless });
+        let far = new Error("far");
+        for (let i = 0; i < 2000; i++) far = Object.create(far);
+        let behindProxies = new Error("behind proxies");
+        for (let i = 0; i < 500; i++) behindProxies = new Proxy(Object.create(behindProxies), {});
+        test("t", () => {
+          for (const value of [endless, Object.create(endless), [endless]]) {
+            try {
+              expect(value).toMatchInlineSnapshot(\`other\`);
+            } catch (error) {
+              console.log(error.name + ": " + error.message.split("\\n")[0]);
+            }
+          }
+          if (${module === "vitest"}) {
+            expect(far).toMatchInlineSnapshot(\`[Error: far]\`);
+            expect(behindProxies).toMatchInlineSnapshot(\`[Error: behind proxies]\`);
+          }
+        });
+      `;
+      using dir = tempDir("snapshot-endless-prototypes", {
+        "vitest.test.js": file("vitest"),
+        "bun.test.js": file("bun:test"),
+      });
+      const logOf = async (name: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "--timeout", String(timeoutOfCycles), "./" + name],
+          env: { ...bunEnv, CI: "true" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: timeoutOfCycles / 2,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
+      };
+      expect(await Promise.all([logOf("vitest.test.js"), logOf("bun.test.js")])).toEqual([
+        { log: Array(3).fill("RangeError: Maximum call stack size exceeded."), exitCode: 0 },
+        { log: Array(3).fill("Error: expect(received).toMatchInlineSnapshot(expected)"), exitCode: 0 },
+      ]);
+    },
+    timeoutOfCycles,
+  );
+
   test(
     "what holds itself in a way that pretty-format does not notice either is a RangeError, and soon",
     async () => {

@@ -631,7 +631,7 @@ impl Snapshots {
         except: &[*const ExecutionEntry],
     ) {
         let mut except = except.to_vec();
-        except.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut except, |a, b| a.cmp(b));
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
         let mut scopes = vec![root];
         while let Some(scope) = scopes.pop() {

@@ -4420,3 +4420,177 @@ test.concurrent(
     );
   },
 );
+
+test.concurrent(
+  "a mock that script has deleted from require.cache does not reach the next file through what imported it",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const x = "real";`,
+        "user.js": `export * from "./dep.js";`,
+        "a.test.js": `
+        import { expect, test, vi } from "bun:test";
+        import * as user from "./user.js";
+        vi.mock("./dep.js", () => ({ x: "mock" }));
+        test("stays linked to the mock in this file", () => {
+          for (const key of Object.keys(require.cache)) if (key.endsWith("dep.js")) delete require.cache[key];
+          expect(user.x).toBe("mock");
+        });
+      `,
+        "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("is loaded again", async () => {
+          expect([(await import("./user.js")).x, require("./user.js").x, (await import("./dep.js")).x]).toEqual(["real", "real", "real"]);
+        });
+      `,
+      },
+      2,
+    );
+  },
+);
+
+describe.concurrent(
+  "a factory waits for what is being fetched for the importers of its mock, and for nothing else",
+  () => {
+    const files = {
+      "k.js": `export const x = "real";`,
+      "user.js": `import { x } from "./k.js"; export const seen = x;`,
+      "unrelated.js": `export { s } from "./slow.js";`,
+      "slow.js": `export const s = 1;`,
+    };
+
+    test("it is called while another load is fetching", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "another.test.js": `
+          import { expect, test, vi } from "bun:test";
+          const started = Promise.withResolvers(), gate = Promise.withResolvers();
+          Bun.plugin({
+            name: "slow",
+            setup(build) {
+              build.onLoad({ filter: /[\\/]slow\.js$/ }, async () => (started.resolve(), await gate.promise, { contents: "export const s = 2;", loader: "js" }));
+            },
+          });
+          test("the gate is closed", async () => {
+            const unrelated = import("./unrelated.js");
+            await started.promise;
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            expect((await import("./user.js")).seen).toBe("mock");
+            gate.resolve();
+            expect((await unrelated).s).toBe(2);
+          });
+        `,
+        },
+        1,
+      );
+    });
+
+    test("a fetch that a test file leaves behind for ever does not keep the mocks of the next file from loading", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "a.test.js": `
+          import { test } from "bun:test";
+          test("leaves a fetch that never settles", async () => {
+            const started = Promise.withResolvers();
+            Bun.plugin({
+              name: "never",
+              setup(build) {
+                build.onLoad({ filter: /[\\/]slow\.js$/ }, () => (started.resolve(), new Promise(() => {})));
+              },
+            });
+            void import("./unrelated.js");
+            await started.promise;
+          });
+        `,
+          "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("its mock is loaded all the same", async () => {
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            expect((await import("./user.js")).seen).toBe("mock");
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    test("a module that the factory shares with the importers of the mock stays linked to the mock", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "root.js": `import { x } from "./k.js"; import { seen } from "./user.js"; export const both = [x, seen];`,
+          "shared.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the factory has a copy", async () => {
+            vi.doMock("./k.js", async () => ({ x: "mock, made with " + (await import("./user.js")).seen }));
+            expect((await import("./root.js")).both).toEqual(["mock, made with real", "mock, made with real"]);
+          });
+        `,
+        },
+        1,
+      );
+    });
+
+    test("a factory that imports what another load is fetching gets a copy of it", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "other.js": `export { seen } from "./user.js";`,
+          "race.test.js": `
+          import { expect, test, vi } from "bun:test";
+          const started = Promise.withResolvers(), gate = Promise.withResolvers();
+          let fetches = 0;
+          Bun.plugin({
+            name: "held",
+            setup(build) {
+              build.onLoad({ filter: /[\\/]user\.js/ }, async () => (fetches++, started.resolve(), await gate.promise, undefined));
+            },
+          });
+          test("and the other load gets the mock", async () => {
+            const other = import("./other.js");
+            await started.promise;
+            vi.doMock("./k.js", async () => {
+              const user = import("./user.js");
+              gate.resolve();
+              return { x: "mock, made with " + (await user).seen };
+            });
+            expect((await import("./k.js")).x).toBe("mock, made with real");
+            expect([(await other).seen, fetches]).toEqual(["mock, made with real", 2]);
+          });
+        `,
+        },
+        1,
+      );
+    });
+  },
+);
+
+test.concurrent(
+  "a factory that asks vi.importActual() for another mocked module, which imports the one it mocks",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "four.js": `import "./one.cjs"; export const four = 4;`,
+        "one.cjs": `exports.a = 1;`,
+        "actual.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test.each([
+          ["spied on", { spy: true }],
+          ["mocked without a factory", undefined],
+        ])("that is %s", async (_, options) => {
+          vi.resetModules();
+          vi.doMock("./four.js", options);
+          vi.doMock("./one.cjs", async () => ({ a: "mock, made with " + (await vi.importActual("./four.js")).four }));
+          expect((await import("./four.js")).four).toBe(4);
+          expect((await import("./one.cjs")).a).toBe("mock, made with 4");
+          vi.doUnmock("./four.js");
+          vi.doUnmock("./one.cjs");
+        });
+      `,
+      },
+      2,
+    );
+  },
+);

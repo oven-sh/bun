@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -151,5 +152,82 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     }
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
+  });
+
+  // The listen socket is bound by then, so the injected errno is the only
+  // failure there is. Bun.serve must throw that one: its code, and in `errno`
+  // the negative libuv number that util.getSystemErrorName() takes.
+  test("poll_start → Bun.serve throws the error of the failed registration", async () => {
+    using dir = tempDir("serve-listen-fault", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const { errno } = require("os").constants;
+          const { getSystemErrorName } = require("util");
+          const tcp = { hostname: "127.0.0.1", port: 0 };
+          const unix = { unix: process.env.SOCKET_PATH };
+          const out = {};
+          for (const [label, name, address] of [
+            ["tcp EACCES", "EACCES", tcp],
+            ["tcp EADDRINUSE", "EADDRINUSE", tcp],
+            ["tcp ENOBUFS", "ENOBUFS", tcp],
+            ["unix ENOBUFS", "ENOBUFS", unix],
+          ]) {
+            fault.set({ syscall: "poll_start", action: "errno", errno: errno[name], repeat: 1 });
+            try {
+              Bun.serve({ ...address, fetch: () => new Response() }).stop(true);
+              out[label] = "listening";
+            } catch (e) {
+              out[label] = {
+                code: e.code,
+                syscall: e.syscall,
+                errno: e.errno < 0 ? getSystemErrorName(e.errno) : e.errno,
+                message: e.message.replace(process.env.SOCKET_PATH, "<path>"),
+              };
+            } finally {
+              fault.clear();
+            }
+          }
+          console.log(JSON.stringify(out));
+        `,
+      ],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", SOCKET_PATH: join(String(dir), "fault.sock") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: {
+        "tcp EACCES": {
+          code: "EACCES",
+          syscall: "listen",
+          errno: "EACCES",
+          message: "permission denied 127.0.0.1:0",
+        },
+        "tcp EADDRINUSE": {
+          code: "EADDRINUSE",
+          syscall: "listen",
+          errno: "EADDRINUSE",
+          message: "Failed to start server. Is port 0 in use?",
+        },
+        "tcp ENOBUFS": {
+          code: "ENOBUFS",
+          syscall: "listen",
+          errno: "ENOBUFS",
+          message: "ENOBUFS: no buffer space available, listen",
+        },
+        "unix ENOBUFS": {
+          code: "ENOBUFS",
+          syscall: "listen",
+          errno: "ENOBUFS",
+          message: "ENOBUFS: no buffer space available, listen '<path>'",
+        },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

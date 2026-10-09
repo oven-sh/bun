@@ -149,6 +149,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
+        dns_err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
@@ -161,6 +162,7 @@ impl SocketGroup {
                 options,
                 socket_ext_size,
                 err,
+                dns_err,
             )
         }
     }
@@ -211,6 +213,21 @@ impl SocketGroup {
                 socket_ext_size,
                 err,
             )
+        }
+    }
+
+    /// Decodes the `err` of a failed `listen*`: an errno, or a Windows error code.
+    pub fn listen_errno(err: c_int) -> Option<bun_errno::SystemErrno> {
+        if err == 0 {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            bun_errno::SystemErrno::init(err.unsigned_abs())
+        }
+        #[cfg(not(windows))]
+        {
+            bun_errno::SystemErrno::init(i64::from(err))
         }
     }
 
@@ -322,6 +339,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
+        dns_err: *mut c_int,
     ) -> *mut ListenSocket;
     fn us_socket_group_listen_unix(
         group: *mut SocketGroup,

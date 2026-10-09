@@ -373,8 +373,8 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
 
 struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        const char *host, int port, int options, int socket_ext_size, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error);
+        const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error) {
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error, dns_error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -382,14 +382,10 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
-         * Report via both the out-param and thread-local errno: Bun.listen
-         * reads *error, Bun.serve reads errno. */
-        int saved_errno = errno;
+        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches). */
+        *error = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);
-        *error = saved_errno;
-        errno = saved_errno;
         return 0;
     }
 
@@ -448,11 +444,9 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        int saved_errno = errno;
+        *error = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);
-        *error = saved_errno;
-        errno = saved_errno;
         return 0;
     }
 

@@ -1,7 +1,9 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { getSystemErrorName } from "node:util";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -310,5 +312,107 @@ it("should not leak memory", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// `errno` of a failed Bun.listen is the negative libuv number, as in node.
+function listenErrors(stdout: string) {
+  return Object.fromEntries(
+    Object.entries(JSON.parse(stdout || "{}")).map(([name, error]: [string, any]) => [
+      name,
+      typeof error === "string"
+        ? error
+        : { ...error, errno: error.errno < 0 ? getSystemErrorName(error.errno) : error.errno },
+    ]),
+  );
+}
+
+// At the descriptor limit socket() fails before there is anything to bind.
+// The unix path is relative: an absolute temporary path can be longer than
+// sun_path, and the long path code opens the directory first.
+it.skipIf(isWindows)("Bun.listen at the file descriptor limit throws EMFILE", async () => {
+  using dir = tempDir("listen-emfile", {});
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const addresses = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: "emfile.sock" } };
+    if (process.env.HAS_IPV6) addresses.tcp6 = { hostname: "::1", port: 0 };
+    // glibc needs a descriptor to look a name up, and reports that through errno.
+    if (process.platform === "linux") addresses.localhost = { hostname: "localhost", port: 0 };
+    const held = [];
+    for (;;) {
+      try {
+        held.push(fs.openSync("/dev/null", "r"));
+      } catch {
+        break;
+      }
+    }
+    const errors = {};
+    for (const [name, address] of Object.entries(addresses)) {
+      try {
+        Bun.listen({ ...address, socket: { data() {} } }).stop(true);
+        errors[name] = "listening";
+      } catch (e) {
+        errors[name] = { code: e.code, syscall: e.syscall, errno: e.errno };
+      }
+    }
+    for (const fd of held) fs.closeSync(fd);
+    console.log(JSON.stringify(errors));
+  `;
+  const hasIPv6 = Object.values(networkInterfaces())
+    .flat()
+    .some(network => network?.family === "IPv6");
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: { ...bunEnv, HAS_IPV6: hasIPv6 ? "1" : "" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const emfile = { code: "EMFILE", syscall: "listen", errno: "EMFILE" };
+  expect({ errors: listenErrors(stdout), stderr }).toEqual({
+    errors: {
+      tcp: emfile,
+      unix: emfile,
+      ...(hasIPv6 ? { tcp6: emfile } : {}),
+      ...(isLinux ? { localhost: emfile } : {}),
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Relative paths, so the length of the temporary directory does not decide
+// which error the path gets.
+it("Bun.listen reports why a unix path cannot be bound", async () => {
+  using dir = tempDir("listen-unix-errors", {});
+  const fixture = /* js */ `
+    const paths = { missingDirectory: "missing/listen.sock", tooLong: Buffer.alloc(300, "a").toString() };
+    const errors = {};
+    for (const [name, unix] of Object.entries(paths)) {
+      try {
+        Bun.listen({ unix, socket: { data() {} } }).stop(true);
+        errors[name] = "listening";
+      } catch (e) {
+        errors[name] = { code: e.code, syscall: e.syscall, errno: e.errno };
+      }
+    }
+    console.log(JSON.stringify(errors));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ errors: listenErrors(stdout), stderr }).toEqual({
+    errors: {
+      missingDirectory: { code: "ENOENT", syscall: "listen", errno: "ENOENT" },
+      tooLong: { code: "EINVAL", syscall: "listen", errno: "EINVAL" },
+    },
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });

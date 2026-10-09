@@ -295,44 +295,49 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn listen_with_config(
         &mut self,
-        handler: c::uws_listen_handler,
-        user_data: *mut c_void,
         config: c::uws_app_listen_config_t,
-    ) {
-        // Callers supply the C-ABI shim directly.
+    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+        let mut failure = ListenError::default();
         // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
-        unsafe {
+        let socket = unsafe {
             c::uws_app_listen_with_config(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 config.host,
                 u16::try_from(config.port).expect("int cast"),
                 config.options,
-                handler,
-                user_data,
+                &raw mut failure.error,
+                &raw mut failure.dns_error,
             )
+        };
+        if socket.is_null() {
+            Err(failure)
+        } else {
+            Ok(socket.cast::<ListenSocket<SSL>>())
         }
     }
 
     pub fn listen_on_unix_socket(
         &mut self,
-        handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
-        user_data: *mut c_void,
         domain_name: &ZStr,
         flags: i32,
-    ) {
-        // Callers supply the C-ABI shim directly.
+    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+        let mut failure = ListenError::default();
         // SAFETY: self is a valid app; domain_name is NUL-terminated.
-        unsafe {
+        let socket = unsafe {
             c::uws_app_listen_domain_with_options(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 domain_name.as_ptr().cast(),
                 domain_name.len(),
                 flags,
-                handler,
-                user_data,
+                &raw mut failure.error,
             )
+        };
+        if socket.is_null() {
+            Err(failure)
+        } else {
+            Ok(socket.cast::<ListenSocket<SSL>>())
         }
     }
 
@@ -446,6 +451,13 @@ impl<const SSL: bool> App<SSL> {
     // directly.
 }
 
+/// The two out-params of `us_socket_group_listen` after it returned null.
+#[derive(Clone, Copy, Default)]
+pub struct ListenError {
+    pub error: c_int,
+    pub dns_error: c_int,
+}
+
 /// Opaque listen socket handle, parameterized by SSL to match `App<SSL>`.
 #[repr(C)]
 pub struct ListenSocket<const SSL: bool> {
@@ -489,7 +501,6 @@ pub(crate) type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
     pub(crate) type uws_method_handler =
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     // The C++ shim hands the filter the uws_res_t*, which for HTTP server
@@ -620,9 +631,9 @@ pub mod c {
             host: *const c_char,
             port: u16,
             options: i32,
-            handler: uws_listen_handler,
-            user_data: *mut c_void,
-        );
+            error: *mut c_int,
+            dns_error: *mut c_int,
+        ) -> *mut UwsListenSocket;
         pub(crate) fn uws_num_subscribers(
             ssl: i32,
             app: *mut uws_app_t,
@@ -659,9 +670,8 @@ pub mod c {
             domain: *const c_char,
             pathlen: usize,
             flags: i32,
-            handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
-            user_data: *mut c_void,
-        );
+            error: *mut c_int,
+        ) -> *mut UwsListenSocket;
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
     }

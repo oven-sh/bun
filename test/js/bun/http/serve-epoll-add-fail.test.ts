@@ -1,33 +1,40 @@
 // An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
+// The shim also fails two calls that come before it in a listen: getaddrinfo()
+// for two fixed names, and one setsockopt().
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { getSystemErrorName } from "node:util";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
 // FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
-// Non-socket fds (timerfd, eventfd) always pass through.
+// FAIL_EPOLL_ADD=none: no socket. Non-socket fds (timerfd, eventfd) always pass through.
+// FAIL_SETSOCKOPT=v6only or reuseport: that option fails with EPERM.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
 static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
-static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp
+static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp, 3 = none
 
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     if (!real_epoll_ctl) {
         real_epoll_ctl = (int (*)(int, int, int, struct epoll_event *)) dlsym(RTLD_NEXT, "epoll_ctl");
         const char *m = getenv("FAIL_EPOLL_ADD");
-        mode = (m && strcmp(m, "udp") == 0) ? 2 : (m && strcmp(m, "accepted") == 0) ? 1 : 0;
+        mode = (m && strcmp(m, "none") == 0) ? 3 : (m && strcmp(m, "udp") == 0) ? 2 : (m && strcmp(m, "accepted") == 0) ? 1 : 0;
     }
     if (op == EPOLL_CTL_ADD) {
         int acceptconn = 0, type = 0;
@@ -46,6 +53,72 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     }
     return real_epoll_ctl(epfd, op, fd, event);
 }
+
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+    if (!real) real = (int (*)(const char *, const char *, const struct addrinfo *, struct addrinfo **)) dlsym(RTLD_NEXT, "getaddrinfo");
+    if (node && strcmp(node, "eai-noname.test") == 0) return EAI_NONAME;
+    if (node && strcmp(node, "eai-again.test") == 0) return EAI_AGAIN;
+    return real(node, service, hints, res);
+}
+
+int setsockopt(int fd, int level, int name, const void *value, socklen_t len) {
+    static int (*real)(int, int, int, const void *, socklen_t);
+    if (!real) real = (int (*)(int, int, int, const void *, socklen_t)) dlsym(RTLD_NEXT, "setsockopt");
+    const char *fail = getenv("FAIL_SETSOCKOPT");
+    if (fail && ((strcmp(fail, "v6only") == 0 && level == IPPROTO_IPV6 && name == IPV6_V6ONLY) ||
+                 (strcmp(fail, "reuseport") == 0 && level == SOL_SOCKET && name == SO_REUSEPORT))) {
+        errno = EPERM;
+        return -1;
+    }
+    return real(fd, level, name, value, len);
+}
+`;
+
+// Every way to listen on a TCP hostname, for the two names that the shim refuses.
+const DNS_FIXTURE = /* js */ `
+const shape = ({ code, syscall, hostname, message }) => ({ code, syscall, hostname, message });
+const out = {};
+for (const hostname of ["eai-noname.test", "eai-again.test"]) {
+  try {
+    Bun.serve({ hostname, port: 0, fetch: () => new Response() }).stop(true);
+    out["Bun.serve " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.serve " + hostname] = shape(e);
+  }
+  try {
+    Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    out["Bun.listen " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.listen " + hostname] = shape(e);
+  }
+  for (const name of ["http", "net"]) {
+    out[name + " " + hostname] = await new Promise(resolve => {
+      const server = require("node:" + name).createServer();
+      server.on("error", e => resolve(shape(e)));
+      server.listen(0, hostname, () => server.close(() => resolve("listening")));
+    });
+  }
+}
+console.log(JSON.stringify(out));
+`;
+
+const SETSOCKOPT_FIXTURE = /* js */ `
+const address = JSON.parse(process.env.ADDRESS);
+const out = {};
+try {
+  Bun.serve({ ...address, fetch: () => new Response() }).stop(true);
+  out.serve = "listening";
+} catch (e) {
+  out.serve = { code: e.code, syscall: e.syscall, errno: e.errno };
+}
+try {
+  Bun.listen({ ...address, socket: { data() {} } }).stop(true);
+  out.listen = "listening";
+} catch (e) {
+  out.listen = { code: e.code, syscall: e.syscall, errno: e.errno };
+}
+console.log(JSON.stringify(out));
 `;
 
 const SERVE_FIXTURE = /* js */ `
@@ -147,6 +220,8 @@ beforeAll(async () => {
     "fetch.js": FETCH_FIXTURE,
     "connect.js": CONNECT_FIXTURE,
     "udp.js": UDP_FIXTURE,
+    "dns.js": DNS_FIXTURE,
+    "setsockopt.js": SETSOCKOPT_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -165,16 +240,18 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-function shimEnv(mode: "listener" | "accepted" | "udp") {
+type ShimMode = "listener" | "accepted" | "udp" | "none";
+
+function shimEnv(mode: ShimMode) {
   const existing = bunEnv.LD_PRELOAD;
   return { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, FAIL_EPOLL_ADD: mode };
 }
 
-async function runWithShim(script: string, mode: "listener" | "accepted" | "udp" = "listener") {
+async function runWithShim(script: string, mode: ShimMode = "listener", env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), script],
     cwd: String(dir),
-    env: shimEnv(mode),
+    env: { ...shimEnv(mode), ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -208,7 +285,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
     const result = JSON.parse(line);
     expect(result).toEqual({
       ok: false,
-      errno: 28, // ENOSPC
+      errno: -28, // ENOSPC
       code: "ENOSPC",
       syscall: "listen",
       message: expect.any(String),
@@ -332,3 +409,59 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "a listen on a hostname that getaddrinfo() refuses throws the getaddrinfo error",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("dns.js", "none");
+    const notFound = {
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: "eai-noname.test",
+      message: "getaddrinfo ENOTFOUND eai-noname.test",
+    };
+    const again = {
+      code: "EAI_AGAIN",
+      syscall: "getaddrinfo",
+      hostname: "eai-again.test",
+      message: "getaddrinfo EAI_AGAIN eai-again.test",
+    };
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: {
+        "Bun.serve eai-noname.test": notFound,
+        "Bun.listen eai-noname.test": notFound,
+        "http eai-noname.test": notFound,
+        "net eai-noname.test": notFound,
+        "Bun.serve eai-again.test": again,
+        "Bun.listen eai-again.test": again,
+        "http eai-again.test": again,
+        "net eai-again.test": again,
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+const hasIPv6 = Object.values(networkInterfaces())
+  .flat()
+  .some(network => network?.family === "IPv6");
+
+test.concurrent.skipIf(!isLinux || !cc).each([
+  ["IPV6_V6ONLY", "v6only", { hostname: "::1", port: 0 }, hasIPv6],
+  ["SO_REUSEPORT", "reuseport", { hostname: "127.0.0.1", port: 0, reusePort: true }, true],
+] as const)("a listen whose setsockopt(%s) fails throws that error", async (_, option, address, possible) => {
+  // Without IPv6 the socket() call for ::1 fails first.
+  if (!possible) return;
+  const { stdout, stderr, exitCode } = await runWithShim("setsockopt.js", "none", {
+    FAIL_SETSOCKOPT: option,
+    ADDRESS: JSON.stringify(address),
+  });
+  const out = JSON.parse(stdout || "{}");
+  for (const error of Object.values<any>(out)) {
+    if (error.errno < 0) error.errno = getSystemErrorName(error.errno);
+  }
+  const refused = { code: "EPERM", syscall: "listen", errno: "EPERM" };
+  expect({ out, stderr }).toEqual({ out: { serve: refused, listen: refused }, stderr: "" });
+  expect(exitCode).toBe(0);
+});

@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
-import { inspect } from "node:util";
+import { getSystemErrorName, inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -211,6 +211,52 @@ describe("node:http", () => {
         listening: false,
       });
     });
+
+    // err.errno is the negative libuv number of the call that failed, the one
+    // util.getSystemErrorName() takes.
+    it("a listen() error carries the errno of the failed bind", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      server.listen(port);
+      const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+      occupant.close();
+      await once(occupant, "close");
+      const { code, syscall, errno } = err;
+      expect({
+        code,
+        syscall,
+        errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+      }).toEqual({
+        code: "EADDRINUSE",
+        syscall: "listen",
+        errno: "EADDRINUSE",
+      });
+    });
+
+    // An IPv6 literal is bound as it is, with no lookup. What a zone that names
+    // no interface does is only known for Linux: the bind is an invalid argument.
+    it.skipIf(process.platform !== "linux")(
+      "listen() on an IPv6 literal with an unknown zone emits EINVAL",
+      async () => {
+        const server = createServer();
+        server.listen(0, "fe80::1%nope0");
+        const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+        const { code, syscall, errno } = err;
+        expect({
+          code,
+          syscall,
+          errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+        }).toEqual({
+          code: "EINVAL",
+          syscall: "listen",
+          errno: "EINVAL",
+        });
+      },
+    );
 
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
     // server, not to that attempt, so the retry from the 'error' handler calls it.

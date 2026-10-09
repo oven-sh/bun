@@ -1283,15 +1283,13 @@ public:
     }
 
     /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
-    us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options) {
-        int error = 0;
-        return unrefListenSocket(us_socket_group_listen(&group, socketKind(), sslCtx, host, port, tcpListenOptions(options), socketExtSize(), &error));
+    us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options, int *error, int *dnsError) {
+        return unrefListenSocket(us_socket_group_listen(&group, socketKind(), sslCtx, host, port, tcpListenOptions(options), socketExtSize(), error, dnsError));
     }
 
     /* Listen to unix domain socket using this HttpContext */
-    us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
-        int error = 0;
-        return unrefListenSocket(us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error));
+    us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options, int *error) {
+        return unrefListenSocket(us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), error));
     }
 };
 

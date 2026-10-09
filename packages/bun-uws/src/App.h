@@ -727,31 +727,13 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
-    /* Host, port, options, callback */
-    TemplatedApp &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        if (host.empty()) {
-            return listen(port, options, std::move(handler));
-        }
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host.c_str(), port, options)) : nullptr);
-        return std::move(*this);
+    /* host is nullptr for every address. The out-params are those of us_socket_group_listen. */
+    us_listen_socket_t *listen(const char *host, int port, int options, int *error, int *dnsError) {
+        return httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host, port, options, error, dnsError)) : nullptr;
     }
 
-    /* Port, callback */
-    TemplatedApp &&listen(int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, 0)) : nullptr);
-        return std::move(*this);
-    }
-
-    /* Port, options, callback */
-    TemplatedApp &&listen(int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, options)) : nullptr);
-        return std::move(*this);
-    }
-
-    /* options, callback, path to unix domain socket */
-    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
-        handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
-        return std::move(*this);
+    us_listen_socket_t *listen_unix(std::string_view path, int options, int *error) {
+        return httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options, error)) : nullptr;
     }
 
     void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {

@@ -2,7 +2,7 @@
 //! Implemented as a flat `Vec` of borrowed-or-owned slices plus a running
 //! length, so the join-time output buffer can be sized exactly once.
 
-use crate::string::strings;
+use crate::strings;
 use bun_alloc::AllocError;
 
 // Node and duplicated-string allocations use the global allocator (mimalloc);

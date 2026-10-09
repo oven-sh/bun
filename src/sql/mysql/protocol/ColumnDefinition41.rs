@@ -1,5 +1,6 @@
 use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
+use crate::mysql::protocol::encode_int::decode_length_int;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
@@ -8,18 +9,18 @@ use bstr::BStr;
 bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
-    pub catalog: Data,
-    pub schema: Data,
-    pub table: Data,
-    pub org_table: Data,
-    pub name: Data,
-    pub org_name: Data,
-    pub fixed_length_fields_length: u64,
+    pub(crate) catalog: Data,
+    pub(crate) schema: Data,
+    pub(crate) table: Data,
+    pub(crate) org_table: Data,
+    pub(crate) name: Data,
+    pub(crate) org_name: Data,
+    pub(crate) fixed_length_fields_length: u64,
     pub character_set: u16,
     pub column_length: u32,
     pub column_type: FieldType,
     pub flags: ColumnFlags,
-    pub decimals: u8,
+    pub(crate) decimals: u8,
     pub name_or_index: ColumnIdentifier,
 }
 
@@ -65,20 +66,42 @@ bitflags::bitflags! {
 
 impl ColumnFlags {
     #[inline]
-    pub fn to_int(self) -> u16 {
-        self.bits()
-    }
-
-    #[inline]
-    pub fn from_int(flags: u16) -> ColumnFlags {
+    pub(crate) fn from_int(flags: u16) -> ColumnFlags {
         ColumnFlags::from_bits_retain(flags)
     }
 }
 
+/// Chunk kind in MariaDB's extended column metadata: 0 carries a type name
+/// ("uuid", "inet4", ...), 1 carries a storage format name ("json").
+const EXTENDED_METADATA_FORMAT: u8 = 1;
+
+/// Walks a MariaDB extended-metadata blob ((int<1> kind, string<lenenc> value)
+/// pairs) and reports whether it marks the column as format=json. Other kinds
+/// and values ("uuid", "inet4", ...) keep their string decoding; skip them.
+fn extended_metadata_is_json(mut bytes: &[u8]) -> Result<bool, AnyMySQLError> {
+    let mut is_json = false;
+    while let Some((&kind, rest)) = bytes.split_first() {
+        let decoded = decode_length_int(rest).ok_or(AnyMySQLError::InvalidEncodedInteger)?;
+        let len =
+            usize::try_from(decoded.value).map_err(|_| AnyMySQLError::InvalidEncodedLength)?;
+        let value_end = decoded
+            .bytes_read
+            .checked_add(len)
+            .filter(|end| *end <= rest.len())
+            .ok_or(AnyMySQLError::InvalidEncodedLength)?;
+        if kind == EXTENDED_METADATA_FORMAT && rest[decoded.bytes_read..value_end] == *b"json" {
+            is_json = true;
+        }
+        bytes = &rest[value_end..];
+    }
+    Ok(is_json)
+}
+
 impl ColumnDefinition41 {
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
+        extended_type_info: bool,
     ) -> Result<bool, AnyMySQLError> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
@@ -119,6 +142,15 @@ impl ColumnDefinition41 {
             BStr::new(self.org_name.slice())
         );
 
+        // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, a lenenc blob of
+        // extended metadata sits between org_name and the fixed-length
+        // fields: https://mariadb.com/kb/en/result-set-packets/
+        let mut json_format = false;
+        if extended_type_info {
+            let extended = reader.encode_len_string()?;
+            json_format = extended_metadata_is_json(extended.slice())?;
+        }
+
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
@@ -129,6 +161,25 @@ impl ColumnDefinition41 {
         let type_byte = reader.int::<u8>()?;
         self.column_type =
             FieldType::from_raw(type_byte).ok_or(AnyMySQLError::UnsupportedColumnType)?;
+        // MariaDB has no MYSQL_TYPE_JSON: JSON columns and JSON function
+        // results arrive as TEXT/BLOB marked format=json, so remap them onto
+        // the MySQL JSON decode path. Only types whose wire values are
+        // length-encoded strings (the shape MYSQL_TYPE_JSON decodes) remap,
+        // keeping the row reader aligned.
+        if json_format
+            && matches!(
+                self.column_type,
+                FieldType::MYSQL_TYPE_BLOB
+                    | FieldType::MYSQL_TYPE_TINY_BLOB
+                    | FieldType::MYSQL_TYPE_MEDIUM_BLOB
+                    | FieldType::MYSQL_TYPE_LONG_BLOB
+                    | FieldType::MYSQL_TYPE_STRING
+                    | FieldType::MYSQL_TYPE_VAR_STRING
+                    | FieldType::MYSQL_TYPE_VARCHAR
+            )
+        {
+            self.column_type = FieldType::MYSQL_TYPE_JSON;
+        }
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
@@ -166,7 +217,8 @@ impl ColumnDefinition41 {
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
+        extended_type_info: bool,
     ) -> Result<bool, AnyMySQLError> {
-        self.decode_internal(reader)
+        self.decode_internal(reader, extended_type_info)
     }
 }

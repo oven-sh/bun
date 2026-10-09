@@ -60,7 +60,7 @@ bun_core::comptime_string_map! {
 }
 
 #[inline]
-pub(crate) fn lookup(name: &[u8]) -> Option<KnownGlobal> {
+fn lookup(name: &[u8]) -> Option<KnownGlobal> {
     KNOWN_GLOBALS.get(name).copied()
 }
 
@@ -194,7 +194,7 @@ impl KnownGlobal {
                             }
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
-                                    js_ast::ExprData::ENumber(num) => num.value,
+                                    js_ast::ExprData::ENumber(num) => num.value(),
                                     _ => return Some(Self::call_from_new(e, loc)),
                                 };
                                 if
@@ -243,7 +243,15 @@ impl KnownGlobal {
                     // > 1
                     _ => {
                         // new Array(1, 2, 3) -> [1, 2, 3]
-                        // But NOT new Array(3) which creates an array with 3 empty slots
+                        // But NOT new Array(3) which creates an array with 3 empty slots,
+                        // and `new Array(5, ...rest)` is `new Array(5)` when `rest` is empty.
+                        if e.args
+                            .slice()
+                            .iter()
+                            .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
+                        {
+                            return Some(Self::call_from_new(e, loc));
+                        }
                         Some(js_ast::Expr::init(
                             E::Array {
                                 items: bun_alloc::AstAlloc::take(&mut e.args),

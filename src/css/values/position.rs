@@ -9,9 +9,9 @@ use crate::values::protocol;
 #[derive(Clone, PartialEq)]
 pub struct Position {
     /// The x-position.
-    pub x: HorizontalPosition,
+    pub(crate) x: HorizontalPosition,
     /// The y-position.
-    pub y: VerticalPosition,
+    pub(crate) y: VerticalPosition,
 }
 
 impl Position {
@@ -294,9 +294,9 @@ impl Default for Position {
 #[derive(Clone, PartialEq)]
 pub struct PositionComponentSide<S> {
     /// A side keyword.
-    pub side: S,
+    pub(crate) side: S,
     /// Offset from the side.
-    pub offset: Option<LengthPercentage>,
+    pub(crate) offset: Option<LengthPercentage>,
 }
 
 /// A component of a CSS `<position>` value (horizontal or vertical).
@@ -310,10 +310,8 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-// `S` is bounded on the values-local `protocol::{Parse,ToCss}` shapes until
-// `generics::Parse` un-gates.
 impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
-    pub(crate) fn is_zero(&self) -> bool {
+    fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
             if l.is_zero() {
                 return true;
@@ -363,7 +361,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         }
     }
 
-    pub(crate) fn is_center(&self) -> bool {
+    fn is_center(&self) -> bool {
         match self {
             PositionComponent::Center => return true,
             PositionComponent::Length(l) => {

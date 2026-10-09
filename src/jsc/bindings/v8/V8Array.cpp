@@ -94,7 +94,9 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
 
-    Local<Array> result = handleScope.createLocal<Array>(vm, array);
+    // Note: createLocal must not be called on an EscapableHandleScope -- it does not own a
+    // buffer (its constructor does not push a Bun handle scope; see V8EscapableHandleScopeBase).
+    Local<Array> result = isolate->currentHandleScope()->createLocal<Array>(vm, array);
     return handleScope.Escape(result);
 }
 

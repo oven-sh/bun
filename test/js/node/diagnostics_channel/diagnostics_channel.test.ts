@@ -208,7 +208,7 @@ describe("Channel", () => {
     let store1bound = true;
 
     // Bind a store with transformation of published data
-    const store2 = new AsyncLocalStorage();
+    const store2 = new AsyncLocalStorage<{ data: any }>();
     dc.bindStore(
       store2,
       mustCall(data => {
@@ -223,7 +223,7 @@ describe("Channel", () => {
         if (store1bound) {
           expect(data).toStrictEqual(store1.getStore());
         }
-        expect({ data }).toStrictEqual(store2.getStore());
+        expect({ data }).toStrictEqual(store2.getStore()!);
         expect(data).toStrictEqual(inputs[n]);
       }, 4),
     );
@@ -322,20 +322,35 @@ describe("Channel", () => {
   });
 
   // test-diagnostics-channel-memory-leak.js
+  //
+  // Node's version compares process.memoryUsage().heapUsed before the loop with
+  // the value after a collection. In Bun, heapUsed is the size measured by the
+  // most recent collection, so the first read dates from some earlier point in
+  // this file and the two numbers are not comparable. The entries the module
+  // keeps per channel also go away in FinalizationRegistry callbacks, after the
+  // collection. So check what the node test is after directly: once
+  // unsubscribed, nothing holds the channels.
   test("references are not leaked", () => {
     function noop() {}
 
-    const heapUsedBefore = process.memoryUsage().heapUsed;
+    const refs: WeakRef<Channel>[] = [];
     for (let i = 0; i < 1000; i++) {
       const name = `channel7-${i}`;
+      const dc = channel(name);
       subscribe(name, noop);
       unsubscribe(name, noop);
+      refs.push(new WeakRef(dc));
     }
 
+    // Bun.gc() clears the WeakRef targets this job kept alive before it collects.
     gc(true);
-    const heapUsedAfter = process.memoryUsage().heapUsed;
 
-    expect(heapUsedBefore).toBeGreaterThanOrEqual(heapUsedAfter);
+    // Conservative stack scanning can keep the last few channels the loop
+    // touched alive, so this checks that the channels are collectable rather
+    // than that every one of them was collected. A retained reference keeps
+    // all 1000 alive.
+    const alive = refs.filter(ref => ref.deref() !== undefined).length;
+    expect(alive).toBeLessThan(refs.length / 10);
   });
 });
 

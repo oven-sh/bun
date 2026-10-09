@@ -7,22 +7,22 @@ mod _impl {
 
     use crate::node::Encoding;
     use crate::webcore::encoding::{self as encoder, dispatch_encoding};
-    use bun_core::ZigString;
+    use bun_core::EncodedSlice;
 
     impl BufferVectorized {
         /// # Safety
-        /// `str` must point to a valid `ZigString` and `buf_ptr` must point to a writable
+        /// `str` must point to a valid `EncodedSlice` and `buf_ptr` must point to a writable
         /// buffer of at least `fill_length` bytes.
         #[unsafe(export_name = "Bun__Buffer_fill")]
         pub(crate) unsafe extern "C" fn fill(
-            str: *const ZigString,
+            str: *const EncodedSlice,
             buf_ptr: *mut u8,
             fill_length: usize,
             encoding: Encoding,
         ) -> bool {
-            // SAFETY: caller (C++) passes a valid ZigString pointer.
+            // SAFETY: caller (C++) passes a valid EncodedSlice pointer.
             let str = unsafe { &*str };
-            if str.len == 0 {
+            if str.is_empty() {
                 return true;
             }
 
@@ -42,10 +42,13 @@ mod _impl {
             // encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
             // expands the runtime `encoding` into nine monomorphized arms.
+            // `ALLOW_PARTIAL_WRITE = true`: Node's `Fill` (node_buffer.cc) copies
+            // `min(encodedLength, fillLength)` raw bytes of the encoding, so the
+            // repeat loop below always doubles a seed equal to the full encoding.
             // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
             // pointers and lengths passed to the encoder are exactly those slice bounds.
-            let result = if str.is_16_bit() {
-                let s = str.utf16_slice_aligned();
+            let result = if str.is_16bit() {
+                let s = str.utf16_slice();
                 dispatch_encoding!(encoding, {
                     // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
                     Encoding::Ucs2 => unsafe { encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
@@ -56,18 +59,14 @@ mod _impl {
             } else {
                 let s = str.slice();
                 dispatch_encoding!(encoding, {
-                    // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                    Encoding::Ucs2 => unsafe { encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
-                        s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
-                    ) },
-                // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                }, |E| unsafe { encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
+                    Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(s, buf),
+                }, |E| encoder::write_u8::<E, true>(s, buf))
             };
             let Ok(written) = result else {
                 return false;
             };
 
-            if written == 0 && str.len > 0 {
+            if written == 0 && !str.is_empty() {
                 return false;
             }
 

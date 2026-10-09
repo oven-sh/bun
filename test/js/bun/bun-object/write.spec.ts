@@ -52,7 +52,7 @@ describe("Bun.write() on file paths", () => {
 
   afterAll(async () => {
     console.log("%%BUNWRITE ON FILE PATHS%% AFTER ALL");
-    await fs.rmdir(dir, { recursive: true });
+    await fs.rm(dir, { recursive: true, force: true });
   });
 
   describe("Given a path to a file in an existing directory", () => {
@@ -117,7 +117,7 @@ describe("Bun.write() on file paths", () => {
       filepath = path.join(rootdir, "bar/baz", "test-file.txt");
     });
     afterEach(async () => {
-      await fs.rmdir(rootdir, { recursive: true }).catch(() => {});
+      await fs.rm(rootdir, { recursive: true, force: true }).catch(() => {});
     });
 
     describe("When no options are provided", () => {
@@ -168,7 +168,7 @@ describe("Bun.write() on BunFiles", () => {
   });
 
   afterAll(async () => {
-    await fs.rmdir(dir, { recursive: true });
+    await fs.rm(dir, { recursive: true, force: true });
   });
 
   describe("Given a text file that exists", () => {

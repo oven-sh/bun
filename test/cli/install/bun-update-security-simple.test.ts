@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("security scanner blocks bun update with fatal advisory", async () => {
-  const dir = tempDirWithFiles("bun-update-security", {
+  await using dir = tempDir("bun-update-security", {
     "package.json": JSON.stringify({
       name: "test-app",
       version: "1.0.0",
@@ -65,7 +65,7 @@ test("security scanner blocks bun update with fatal advisory", async () => {
 });
 
 test("security scanner does not run on bun update when not configured", async () => {
-  const dir = tempDirWithFiles("bun-update-no-security", {
+  await using dir = tempDir("bun-update-no-security", {
     "package.json": JSON.stringify({
       name: "test-app",
       version: "1.0.0",

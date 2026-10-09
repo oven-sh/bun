@@ -46,7 +46,7 @@ async function validateReadFileProc() {
   if (!common.isLinux)
     return;
 
-  const fileHandle = await open('/proc/sys/kernel/hostname', 'r');
+  await using fileHandle = await open('/proc/sys/kernel/hostname', 'r');
   const hostname = await fileHandle.readFile();
   assert.ok(hostname.length > 0);
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { webcrypto } from "node:crypto";
 
 // Test vectors from RFC 7748 / Node.js test suite
 const x25519Vector = {
@@ -7,7 +8,7 @@ const x25519Vector = {
   result: "2768409dfab99ec23b8c89b93ff5880295f76176088f89e43dfebe7ea1950008",
 };
 
-async function importX25519Keys(usages: KeyUsage[] = ["deriveBits"]) {
+async function importX25519Keys(usages: webcrypto.KeyUsage[] = ["deriveBits"]) {
   const [privateKey, publicKey] = await Promise.all([
     crypto.subtle.importKey("pkcs8", Buffer.from(x25519Vector.pkcs8, "hex"), { name: "X25519" }, true, usages),
     crypto.subtle.importKey("spki", Buffer.from(x25519Vector.spki, "hex"), { name: "X25519" }, true, []),
@@ -27,7 +28,6 @@ test("X25519 deriveBits with known test vector", async () => {
 test("X25519 deriveBits with null length returns full output", async () => {
   const { privateKey, publicKey } = await importX25519Keys();
 
-  // @ts-expect-error types not updated to reflect WebCryptoAPI spec change
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, null);
 
   expect(bits).toBeInstanceOf(ArrayBuffer);
@@ -35,14 +35,25 @@ test("X25519 deriveBits with null length returns full output", async () => {
   expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
 });
 
-test("X25519 deriveBits with zero length returns full output", async () => {
+test("X25519 deriveBits with omitted length returns full output", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey);
+
+  expect(bits).toBeInstanceOf(ArrayBuffer);
+  expect(bits.byteLength).toBe(32);
+  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+});
+
+// A zero length is distinct from a null length: it requests zero bits, not all of them.
+// https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits
+test("X25519 deriveBits with zero length returns zero bits", async () => {
   const { privateKey, publicKey } = await importX25519Keys();
 
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 0);
 
   expect(bits).toBeInstanceOf(ArrayBuffer);
-  expect(bits.byteLength).toBe(32);
-  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+  expect(bits.byteLength).toBe(0);
 });
 
 test("X25519 deriveBits with shorter length", async () => {
@@ -55,9 +66,24 @@ test("X25519 deriveBits with shorter length", async () => {
   expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result.slice(0, 32));
 });
 
+// A non-multiple-of-8 length returns the first `length` bits: the unused trailing bits of
+// the final byte must be zeroed. 0x27 & 0b11100000 == 0x20; 0x08 & 0b11100000 == 0x00.
+test("X25519 deriveBits zeroes the unused trailing bits of the last byte", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const alg = { name: "X25519", public: publicKey };
+  const [bits3, bits251] = await Promise.all([
+    crypto.subtle.deriveBits(alg, privateKey, 3),
+    crypto.subtle.deriveBits(alg, privateKey, 251),
+  ]);
+
+  expect(Buffer.from(bits3).toString("hex")).toBe("20");
+  expect(Buffer.from(bits251).toString("hex")).toBe(x25519Vector.result.slice(0, 62) + "00");
+});
+
 test("X25519 deriveBits with generated keys", async () => {
-  const aliceKeys = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
-  const bobKeys = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const aliceKeys: any = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const bobKeys: any = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
 
   const [aliceShared, bobShared] = await Promise.all([
     crypto.subtle.deriveBits({ name: "X25519", public: bobKeys.publicKey }, aliceKeys.privateKey, 256),
@@ -87,7 +113,7 @@ test("X25519 deriveBits rejects when base key lacks deriveBits usage", async () 
   const { privateKey, publicKey } = await importX25519Keys(["deriveKey"]);
 
   await expect(crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 256)).rejects.toThrow(
-    "CryptoKey doesn't support bits derivation",
+    "baseKey does not have deriveBits usage",
   );
 });
 

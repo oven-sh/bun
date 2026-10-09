@@ -15,6 +15,7 @@
 // `using tempDir(...)` so cleanup is guaranteed even if this process is
 // killed by signal.
 
+const rss = process.memoryUsage.rss;
 const iterations = parseInt(process.env.ITERATIONS || "100", 10);
 const warmup = parseInt(process.env.WARMUP || "10", 10);
 const realPath = process.env.REAL_PATH;
@@ -28,10 +29,10 @@ function iterate() {
   const fd = new FormData();
   // Entry 1: real file — its contents are read into a heap buffer and
   // pushed to the joiner before the failing entry.
-  fd.append("good", Bun.file(realPath));
+  fd.append("good", Bun.file(realPath!));
   // Entry 2: missing file — readFile fails, context.failed = true, and the
   // pre-fix code leaked entry 1's buffer on the early return.
-  fd.append("bad", Bun.file(missingPath));
+  fd.append("bad", Bun.file(missingPath!));
   try {
     new Response(fd);
     throw new Error("expected Response constructor to throw");
@@ -44,11 +45,11 @@ function iterate() {
 
 for (let i = 0; i < warmup; i++) iterate();
 Bun.gc(true);
-const baselineRss = process.memoryUsage.rss();
+const baselineRss = rss();
 
 for (let i = 0; i < iterations; i++) iterate();
 Bun.gc(true);
-const finalRss = process.memoryUsage.rss();
+const finalRss = rss();
 
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
 

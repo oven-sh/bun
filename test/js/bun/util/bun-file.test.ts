@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
-  const dir = tempDirWithFiles("delete-stat-unicode-path", {
+  await using dir = tempDir("delete-stat-unicode-path", {
     "another-file.txt": "HEY",
   });
   const filename = join(dir, "🌟.txt");
@@ -15,11 +15,7 @@ test("delete() and stat() should work with unicode paths", async () => {
 
   expect(async () => {
     await Bun.file(filename).stat();
-  }).toThrow(
-    process.platform === "linux"
-      ? `ENOENT: no such file or directory, statx '${filename}'`
-      : `ENOENT: no such file or directory, stat '${filename}'`,
-  );
+  }).toThrow(`ENOENT: no such file or directory, stat '${filename}'`);
 
   await Bun.write(filename, "HI");
 
@@ -30,7 +26,7 @@ test("delete() and stat() should work with unicode paths", async () => {
 });
 
 test("writer.end() should not close the fd if it does not own the fd", async () => {
-  const dir = tempDirWithFiles("writer-end-fd", {
+  await using dir = tempDir("writer-end-fd", {
     "tmp.txt": "HI",
   });
   const filename = join(dir, "tmp.txt");
@@ -40,8 +36,7 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
     const fd = fileHandle.fd;
 
     await Bun.file(fd).writer().end();
-    // @ts-ignore
-    await fsPromises.close(fd);
+    await fileHandle.close();
     expect(await Bun.file(filename).text()).toBe("");
   }
 });
@@ -71,7 +66,7 @@ test("Bun.write() errors include async stack frames", async () => {
   // Use a file-as-directory-component path so it fails on both POSIX and
   // Windows. Bun.write recursively creates directories, so a plain
   // /nonexistent-path/ would succeed on Windows where / is the drive root.
-  const dir = tempDirWithFiles("bun-write-async-stack", { "blocker.txt": "x" });
+  await using dir = tempDir("bun-write-async-stack", { "blocker.txt": "x" });
   const badPath = join(dir, "blocker.txt", "cannot-write.txt");
   // Bun.write uses a sync fast path for inputs under 256KB on POSIX — use
   // 512KB to force the async (threadpool) path so we're actually testing the
@@ -122,7 +117,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   // In debug builds this surfaces as "mimalloc: error: mi_free: invalid
   // (unaligned) pointer" on stderr; in release it silently corrupts the heap.
   const bom = Buffer.from([0xef, 0xbb, 0xbf]);
-  const dir = tempDirWithFiles("bun-file-json-bom", {
+  await using dir = tempDir("bun-file-json-bom", {
     // pure-ASCII body: exercises the direct ZigString path
     "ascii.json": Buffer.concat([bom, Buffer.from(JSON.stringify({ a: 1, b: "two" }))]),
     // non-ASCII body: exercises the toUTF16Alloc path

@@ -8,7 +8,7 @@ const data = `<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err, hostname, port) => {
+    server.listen({ port: 0 }, (err?: any, hostname?: string, port?: number) => {
       clearTimeout(timeout);
 
       if (err) {
@@ -20,7 +20,8 @@ function listen(server: Server, protocol: string = "http"): Promise<URL> {
   });
 }
 
-const baseline = process.memoryUsage.rss();
+const rss = process.memoryUsage.rss;
+const baseline = rss();
 let count = 0;
 
 var server = createServer(async (req, res) => {
@@ -44,15 +45,15 @@ var server = createServer(async (req, res) => {
   count += 1;
   if (count % 1000 === 0) {
     Bun.gc(true);
-    console.log("count", count, process.memoryUsage.rss());
+    console.log("count", count, rss());
   }
   if (count == 10_000) {
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log("heapStats", jsc.heapStats());
-    process.send({ baseline, after });
+    process.send!({ baseline, after });
   }
 });
 const url = await listen(server);
 console.log("server", "listening on", url.port);
-process.send(url.port);
+process.send!(url.port);

@@ -5,12 +5,7 @@
 // `properties_generated.rs` carries the 249-variant `Property` /
 // `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
 // `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
-// re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
-// real type replaces the stub transparently (same path, same name).
-//
-// `prefixes::Feature` and the entire `values/` lattice are real, so
-// `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
-// `Property` payloads that name `css_values::*` resolve directly.
+// re-exposed below via `pub mod $name`.
 
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`.
@@ -22,8 +17,8 @@
 // margin_padding).
 //
 // `define_rect_shorthand!` is the full mixin: it emits the struct
-// `{top,right,bottom,left}`, `PROPERTY_FIELD_MAP`, `deep_clone`/`eql`, the
-// `RectShorthand` marker impl, *and* calls `impl_rect_shorthand!`. Used by
+// `{top,right,bottom,left}`, `deep_clone`/`eql`, *and* calls
+// `impl_rect_shorthand!`. Used by
 // the 8 rect-shorthand value types in border.rs / margin_padding.rs so the
 // boilerplate isn't hand-copied per type.
 //
@@ -78,19 +73,6 @@ macro_rules! define_rect_shorthand {
             pub left: $inner,
         }
 
-        impl $name {
-            // `PROPERTY_FIELD_MAP` records the shorthand field→property map.
-
-            pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
-                ("top", $crate::properties::PropertyIdTag::$top_id),
-                ("right", $crate::properties::PropertyIdTag::$right_id),
-                ("bottom", $crate::properties::PropertyIdTag::$bottom_id),
-                ("left", $crate::properties::PropertyIdTag::$left_id),
-            ];
-        }
-        impl $crate::properties::margin_padding::RectShorthand for $name {
-            type Value = $inner;
-        }
         // parse/to_css via `Rect<V>`.
         impl_rect_shorthand!($name, $inner);
     };
@@ -125,67 +107,30 @@ macro_rules! impl_size_shorthand {
 // ─── Submodule declarations ────────────────────────────────────────────────
 //
 pub mod align;
-// `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
-// AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /
-// Scroller / ScrollAxis / ViewTimeline / AnimationRangeStart / AnimationRangeEnd /
-// AnimationRange / TimelineRangeName / AnimationComposition / AnimationHandler
-// live in `animation.rs`.
 pub mod animation;
 pub mod background;
 pub mod border;
-// `border_image`: un-gated — real BorderImage / BorderImageSlice /
-// BorderImageSideWidth / BorderImageRepeat / BorderImageHandler live in
-// `border_image.rs`. parse/to_css for BorderImageSideWidth remain internally
-// gated on the DeriveParse/DeriveToCss proc-macros.
 pub mod border_image;
-// `border_radius`: un-gated — real BorderRadius + BorderRadiusHandler
-// (handle_property/finalize bodies) live in `border_radius.rs`.
 pub mod border_radius;
-// `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
-// `box_shadow.rs`.
 pub mod box_shadow;
 pub mod display;
-pub mod effects;
 pub mod flex;
-// `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
-// FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
-// live in `font.rs`. parse/to_css/handle_property bodies remain internally
-// ``-gated there until DeriveParse/DeriveToCss proc-macros +
-// EnumProperty derive land.
 pub mod font;
-pub mod grid;
-// `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
-// live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
-// ListStyle / MarkerSide are uninhabited.
-pub mod list;
 pub mod margin_padding;
 pub mod masking;
 pub mod outline;
 pub mod overflow;
 pub mod position;
-// `prefix_handler`: un-gated — real FallbackHandler (handle_property/finalize
-// bodies) lives in `prefix_handler.rs`.
 pub mod prefix_handler;
 pub mod shape;
 pub mod size;
-pub mod svg;
 pub mod text;
 pub mod transform;
 pub mod transition;
 pub mod ui;
 
-// `css_modules`: un-gated — real `Composes` payload (names/from/loc/
-// cssparser_loc) + `Specifier` enum (Global/ImportRecordIndex) live in
-// `css_modules.rs`. `Composes::to_css` stays internally ``-gated
-// on `CustomIdent::to_css` (Printer::write_ident).
 pub mod css_modules;
 
-// `custom`: un-gated — real data types (TokenList / TokenOrValue /
-// CustomProperty / CustomPropertyName / UnparsedProperty / EnvironmentVariable
-// / Variable / Function / UnresolvedColor / UAEnvironmentVariable) live in
-// `custom.rs`. parse/to_css/deep_clone/eql/hash bodies remain internally
-// ``-gated there until their leaf deps (ident/url/color/
-// generics) un-gate.
 pub mod custom;
 
 pub mod properties_generated;
@@ -241,6 +186,7 @@ mod generic_registrations {
         css_values::position::HorizontalPosition,
         css_values::position::VerticalPosition,
         css_values::percentage::NumberOrPercentage,
+        css_values::ident::NoneOrCustomIdentList,
     );
 
     // Length derives `css::ToCss` only (custom Calc-unwrapping `parse` is
@@ -249,15 +195,6 @@ mod generic_registrations {
     impl crate::generics::Parse for css_values::length::Length {
         #[inline]
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
-            css_values::length::Length::parse(input)
-        }
-    }
-    impl crate::generics::ParseWithOptions for css_values::length::Length {
-        #[inline]
-        fn parse_with_options(
-            input: &mut crate::css_parser::Parser,
-            _o: &crate::css_parser::ParserOptions,
-        ) -> crate::css_parser::CssResult<Self> {
             css_values::length::Length::parse(input)
         }
     }
@@ -340,6 +277,9 @@ mod generic_registrations {
         transform::Translate,
         // transition
         transition::Transition,
+        // animation
+        animation::Animation,
+        animation::AnimationName,
         // ui
         ui::ColorScheme,
         // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
@@ -348,15 +288,6 @@ mod generic_registrations {
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.
-    impl<S, const P: u8> crate::generics::Parse for GenericBorder<S, P>
-    where
-        GenericBorder<S, P>: GenericBorderImpl,
-    {
-        #[inline]
-        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
-            <Self as GenericBorderImpl>::parse(input)
-        }
-    }
     impl<S, const P: u8> crate::generics::ParseWithOptions for GenericBorder<S, P>
     where
         GenericBorder<S, P>: GenericBorderImpl,

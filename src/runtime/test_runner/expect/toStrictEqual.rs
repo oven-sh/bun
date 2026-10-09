@@ -1,11 +1,12 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_strict_equal(
+    pub(crate) fn to_strict_equal(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -13,8 +14,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toStrictEqual", "<green>expected<r>")?;
 
-        let _arguments = frame.arguments_old::<1>();
-        let arguments: &[JSValue] = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(
@@ -33,21 +33,14 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter {
-            received: Some(value),
-            expected: Some(expected),
-            received_string: None,
-            expected_string: None,
-            global_this: Some(global),
-            not,
-        };
+        let diff_formatter = DiffFormatter::new(global, value, expected, not)?;
 
         if not {
             let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", true);
-            return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
+            return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
         }
 
         let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", false);
-        this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
+        throw!(this, global, signature, "\n\n{}\n", diff_formatter)
     }
 }

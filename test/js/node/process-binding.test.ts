@@ -16,15 +16,21 @@ describe("process.binding", () => {
 
     expect(uv).toHaveProperty("errname");
     expect(uv).toHaveProperty("UV_EACCES");
-    expect(uv.errname(-4)).toBe("EINTR");
+    // UV_EINTR is -4 on POSIX and a libuv-synthetic code on Windows.
+    expect(uv.errname(uv.UV_EINTR)).toBe("EINTR");
     // force the number to be represented as a double
-    expect(uv.errname(Number("-5.9") + 1.9)).toBe("EINTR");
-    expect(uv.errname(-4)).toBe("EINTR");
+    expect(uv.errname(uv.UV_EINTR - 1.9 + Number("1.9"))).toBe("EINTR");
+    expect(uv.errname(uv.UV_EINTR)).toBe("EINTR");
 
-    expect(uv.errname(5)).toBe("Unknown system error: 5");
+    expect(uv.errname(5)).toBe("Unknown system error 5");
 
     const map = uv.getErrorMap();
     expect(map).toBeDefined();
     expect(map.get(uv.UV_EISCONN)).toEqual(["EISCONN", "socket is already connected"]);
+
+    // The binding object must be spreadable like a plain {} (nonzero inline
+    // capacity so JSC's spread fast path does not trip hasInlineStorage()).
+    expect({ ...uv }.UV_EACCES).toBe(uv.UV_EACCES);
+    expect(Object.assign({}, uv).UV_EACCES).toBe(uv.UV_EACCES);
   });
 });

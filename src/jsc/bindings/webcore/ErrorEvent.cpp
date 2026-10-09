@@ -76,25 +76,8 @@ JSValue ErrorEvent::error(JSGlobalObject& globalObject)
         return jsNull();
 
     JSValue error = m_error.getValue();
-    // if (!isWorldCompatible(globalObject, error)) {
-    //     // We need to make sure ErrorEvents do not leak their error property across isolated DOM worlds.
-    //     // Ideally, we would check that the worlds have different privileges but that's not possible yet.
-    //     auto serializedError = trySerializeError(globalObject);
-    //     if (!serializedError)
-    //         return jsNull();
-    //     return serializedError->deserialize(globalObject, &globalObject);
-    // }
 
     return error;
 }
-
-// RefPtr<SerializedScriptValue> ErrorEvent::trySerializeError(JSGlobalObject& exec)
-// {
-//     // if (!m_serializedError && !m_triedToSerialize) {
-//     //     m_serializedError = SerializedScriptValue::create(exec, m_error.getValue(), SerializationErrorMode::NonThrowing);
-//     //     m_triedToSerialize = true;
-//     // }
-//     return 0;
-// }
 
 } // namespace WebCore

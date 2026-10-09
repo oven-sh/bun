@@ -2,8 +2,15 @@ import assert from "assert";
 import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
+// @ts-expect-error installed by the test
 import type { ConsoleMessage, Page } from "puppeteer";
+// @ts-expect-error installed by the test
 import { launch } from "puppeteer";
+
+// Used inside callbacks that run in the browser. There is no lib.dom here.
+declare const document: any, getComputedStyle: any;
+type HTMLElement = any;
+
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -13,7 +20,13 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
-const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
+const browserPath =
+  which("chromium-browser") ||
+  which("chromium") ||
+  which("chrome") ||
+  which("google-chrome-stable") ||
+  which("google-chrome") ||
+  undefined;
 if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }
@@ -22,16 +35,19 @@ if (!browserPath) {
 // macOS quarantines downloaded binaries. Remove the quarantine attribute
 // from all binaries, and also ensure they are executable.
 if (process.platform === "darwin") {
-  try {
-    const { execSync } = require("child_process");
-    const cachePath = join(process.env.HOME || "~", ".cache", "puppeteer");
-    // Remove quarantine from the entire puppeteer cache
-    execSync(`xattr -rd com.apple.quarantine "${cachePath}" 2>/dev/null || true`, { stdio: "ignore" });
-    // Also ensure all chrome/chromium binaries in the cache are executable
-    execSync(`find "${cachePath}" -type f -name "Google Chrome for Testing" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
-    execSync(`find "${cachePath}" -type f -name "chrome-headless-shell" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
-    execSync(`find "${cachePath}" -type f -name "chrome" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
-  } catch {}
+  const cachePath = process.env.PUPPETEER_CACHE_DIR || join(process.env.HOME || "~", ".cache", "puppeteer");
+  const { execFileSync } = require("child_process");
+  const run = (file: string, args: string[]) => {
+    try {
+      execFileSync(file, args, { stdio: "ignore" });
+    } catch {}
+  };
+  // Remove quarantine from the entire puppeteer cache
+  run("xattr", ["-rd", "com.apple.quarantine", cachePath]);
+  // Also ensure all chrome/chromium binaries in the cache are executable
+  for (const name of ["Google Chrome for Testing", "chrome-headless-shell", "chrome"]) {
+    run("find", [cachePath, "-type", "f", "-name", name, "-exec", "chmod", "+x", "{}", "+"]);
+  }
 }
 
 const isMacOS = process.platform === "darwin";

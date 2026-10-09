@@ -160,9 +160,6 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     if (!ktyValue.isUndefined()) {
         result.kty = convert<IDLDOMString>(lexicalGlobalObject, ktyValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "kty"_s, "JsonWebKey"_s, "DOMString"_s);
-        return {};
     }
     JSValue nValue;
     if (isNullOrUndefined)
@@ -195,6 +192,28 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     }
     if (!pValue.isUndefined()) {
         result.p = convert<IDLDOMString>(lexicalGlobalObject, pValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue privValue;
+    if (isNullOrUndefined)
+        privValue = jsUndefined();
+    else {
+        privValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "priv"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (!privValue.isUndefined()) {
+        result.priv = convert<IDLDOMString>(lexicalGlobalObject, privValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue pubValue;
+    if (isNullOrUndefined)
+        pubValue = jsUndefined();
+    else {
+        pubValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "pub"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (!pubValue.isUndefined()) {
+        result.pub = convert<IDLDOMString>(lexicalGlobalObject, pubValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue qValue;
@@ -255,7 +274,7 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     return result;
 }
 
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const JsonWebKey& dictionary, bool ignoreExtAndKeyOps)
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const JsonWebKey& dictionary)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -265,90 +284,102 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     if (!IDLDOMString::isNullValue(dictionary.alg)) {
         auto algValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.alg));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "alg"_s), algValue);
+        Bun::putDirectNamed(vm, result, "alg"_s, algValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.crv)) {
         auto crvValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.crv));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "crv"_s), crvValue);
+        Bun::putDirectNamed(vm, result, "crv"_s, crvValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.d)) {
         auto dValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.d));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "d"_s), dValue);
+        Bun::putDirectNamed(vm, result, "d"_s, dValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.dp)) {
         auto dpValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.dp));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "dp"_s), dpValue);
+        Bun::putDirectNamed(vm, result, "dp"_s, dpValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.dq)) {
         auto dqValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.dq));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "dq"_s), dqValue);
+        Bun::putDirectNamed(vm, result, "dq"_s, dqValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.e)) {
         auto eValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.e));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "e"_s), eValue);
+        Bun::putDirectNamed(vm, result, "e"_s, eValue);
     }
-    if (!ignoreExtAndKeyOps && !IDLBoolean::isNullValue(dictionary.ext)) {
+    if (!IDLBoolean::isNullValue(dictionary.ext)) {
         auto extValue = toJS<IDLBoolean>(lexicalGlobalObject, throwScope, IDLBoolean::extractValueFromNullable(dictionary.ext));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "ext"_s), extValue);
+        Bun::putDirectNamed(vm, result, "ext"_s, extValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.k)) {
         auto kValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.k));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "k"_s), kValue);
+        Bun::putDirectNamed(vm, result, "k"_s, kValue);
     }
-    if (!ignoreExtAndKeyOps && !IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
+    if (!IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
         auto key_opsValue = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLEnumeration<CryptoKeyUsage>>::extractValueFromNullable(dictionary.key_ops));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "key_ops"_s), key_opsValue);
+        Bun::putDirectNamed(vm, result, "key_ops"_s, key_opsValue);
     }
-    auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.kty);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "kty"_s), ktyValue);
+    if (!IDLDOMString::isNullValue(dictionary.kty)) {
+        auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.kty));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::putDirectNamed(vm, result, "kty"_s, ktyValue);
+    }
     if (!IDLDOMString::isNullValue(dictionary.n)) {
         auto nValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.n));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "n"_s), nValue);
+        Bun::putDirectNamed(vm, result, "n"_s, nValue);
     }
     if (!IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>::isNullValue(dictionary.oth)) {
         auto othValue = toJS<IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>::extractValueFromNullable(dictionary.oth));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "oth"_s), othValue);
+        Bun::putDirectNamed(vm, result, "oth"_s, othValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.p)) {
         auto pValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.p));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "p"_s), pValue);
+        Bun::putDirectNamed(vm, result, "p"_s, pValue);
+    }
+    if (!IDLDOMString::isNullValue(dictionary.priv)) {
+        auto privValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.priv));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::putDirectNamed(vm, result, "priv"_s, privValue);
+    }
+    if (!IDLDOMString::isNullValue(dictionary.pub)) {
+        auto pubValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.pub));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::putDirectNamed(vm, result, "pub"_s, pubValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.q)) {
         auto qValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.q));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "q"_s), qValue);
+        Bun::putDirectNamed(vm, result, "q"_s, qValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.qi)) {
         auto qiValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.qi));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "qi"_s), qiValue);
+        Bun::putDirectNamed(vm, result, "qi"_s, qiValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.use)) {
         auto useValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.use));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "use"_s), useValue);
+        Bun::putDirectNamed(vm, result, "use"_s, useValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.x)) {
         auto xValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.x));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "x"_s), xValue);
+        Bun::putDirectNamed(vm, result, "x"_s, xValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.y)) {
         auto yValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.y));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "y"_s), yValue);
+        Bun::putDirectNamed(vm, result, "y"_s, yValue);
     }
     return result;
 }

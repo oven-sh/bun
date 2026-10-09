@@ -1,5 +1,8 @@
+const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+
 function urlToHttpOptions(url) {
   const options = {
+    __proto__: null,
     ...url,
     protocol: url.protocol,
     hostname:
@@ -10,15 +13,21 @@ function urlToHttpOptions(url) {
     path: `${url.pathname || ""}${url.search || ""}`,
     href: url.href,
   };
-  if (url.port !== "") {
-    options.port = Number(url.port);
+  const port = url.port;
+  if (port !== "") {
+    options.port = Number(port);
   }
-  if (url.username || url.password) {
-    options.auth = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+  const username = url.username;
+  let password;
+  if (username || (password = url.password)) {
+    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password ?? url.password)}`;
   }
   return options;
 }
 
 export default {
+  domainToASCII,
+  domainToUnicode,
+  idnaToASCII,
   urlToHttpOptions,
 };

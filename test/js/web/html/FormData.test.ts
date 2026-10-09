@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -196,7 +196,7 @@ describe("FormData", () => {
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
 
-        const request = await new Response(formData).formData();
+        const request = await new Response(formData as FormData).formData();
         expect(request instanceof FormData).toBe(true);
 
         const aKeys = Array.from(formData.keys());
@@ -233,7 +233,7 @@ describe("FormData", () => {
               expect(b instanceof Blob).toBe(true);
               expect(await c.text()).toBe(await (b as Blob).text());
             } else {
-              expect(c).toBe(b);
+              expect(c).toBe(b as string);
             }
           }
         }
@@ -296,6 +296,45 @@ describe("FormData", () => {
 
       it(`${C.name}: unrelated content-type still rejects`, async () => {
         await expect(make(body, "text/plain").formData()).rejects.toThrow();
+      });
+    }
+  });
+
+  // RFC 2183 §2: the disposition type is a case-insensitive token.
+  // RFC 9112 §5.6.3: OWS = *( SP / HTAB ), so HTAB is valid after the colon.
+  describe("Content-Disposition: form-data token + OWS", () => {
+    const boundary = "BX7";
+    const mk = (hdr: string) => `--${boundary}\r\n${hdr}\r\n\r\nv\r\n--${boundary}--\r\n`;
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: string) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it.each([
+        ["lowercase", `Content-Disposition: form-data; name="k"`],
+        ["Form-Data", `Content-Disposition: Form-Data; name="k"`],
+        ["FORM-DATA", `Content-Disposition: FORM-DATA; name="k"`],
+        ["mixed case header + token", `CONTENT-DISPOSITION: Form-Data; NAME="k"`],
+        ["HTAB after colon", `Content-Disposition:\tform-data; name="k"`],
+        ["SP + HTAB after colon", `Content-Disposition: \t form-data; name="k"`],
+        ["HTAB after semicolon", `Content-Disposition: form-data;\tname="k"`],
+      ])(`${C.name}: %s`, async (_label, hdr) => {
+        const fd = await make(mk(hdr)).formData();
+        expect([...fd.entries()]).toEqual([["k", "v"]]);
+      });
+
+      it(`${C.name}: file part with Form-Data + HTAB OWS`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition:\tForm-Data; name="f"; filename="a.txt"\r\n` +
+          `Content-Type: text/plain\r\n\r\n` +
+          `hello\r\n--${boundary}--\r\n`;
+        const fd = await make(body).formData();
+        const file = fd.get("f") as File;
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("hello");
       });
     }
   });
@@ -378,7 +417,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -397,11 +436,11 @@ describe("FormData", () => {
       development: false,
       async fetch(req) {
         const formData = await req.formData();
-        return new Response(formData);
+        return new Response(formData as FormData);
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -442,7 +481,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -473,7 +512,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -508,7 +547,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -705,18 +744,21 @@ describe("FormData", () => {
       let formData = new FormData();
       formData.append("foo", file);
       formData.get("foo");
-      formData.get("foo")!.name;
-      formData.get("foo")!.type;
+      (formData.get("foo") as File).name;
+      (formData.get("foo") as File).type;
       return formData;
     }
-    for (let i = 0; i < 100000; i++) {
+    // Release needs 100k iterations so the freed name string's memory is actually
+    // reused; ASAN/debug detect the use-after-free deterministically, so far fewer
+    // iterations (with the same 20 forced GC cycles) are enough there.
+    const iterations = isASAN || isDebug ? 2000 : 100000;
+    const gcEvery = iterations / 20;
+    for (let i = 0; i < iterations; i++) {
       test();
-      if (i % 5000 === 0) {
+      if (i % gcEvery === 0) {
         Bun.gc();
       }
     }
-    // 100k iterations of allocate-and-GC is fast on release but slow under a
-    // debug/ASAN build, where it runs well past the default 5s test timeout.
   }, 180000);
 });
 
@@ -756,7 +798,7 @@ describe("Content-Type header propagation", () => {
           return new Response("Missing multipart/form-data content-type", { status: 400 });
         }
         const body = await req.formData();
-        expect(body.get("foo")!.size).toBe(3);
+        expect((body.get("foo") as File).size).toBe(3);
         return new Response("Success", { status: 200 });
       },
     });
@@ -765,7 +807,7 @@ describe("Content-Type header propagation", () => {
   // Custom Request subclass for testing inheritance
   class CustomRequest extends Request {
     constructor(input: string | URL | Request, init?: RequestInit) {
-      super(input, init);
+      super(input as any, init);
     }
   }
 
@@ -914,4 +956,51 @@ test("FormData.toJSON merges duplicate numeric field names into an array", async
 
   expect(stdout.trim().split("\n")).toEqual(['{"0":["a","b","c"],"tag":["x","y"]}', '{"0":["first","second"]}']);
   expect(exitCode).toBe(0);
+});
+
+describe("USVString conversion of lone surrogates", () => {
+  const loneHigh = "a\uD800b";
+  const loneLow = "a\uDC00b";
+  const replaced = "a\uFFFDb";
+
+  it("get/getAll/has find an entry appended under a lone surrogate name", () => {
+    const formData = new FormData();
+    formData.append(loneHigh, "1");
+    formData.append(loneHigh, "2");
+
+    expect([...formData.keys()]).toEqual([replaced, replaced]);
+    expect(formData.has(loneHigh)).toBe(true);
+    expect(formData.get(loneHigh)).toBe("1");
+    expect(formData.getAll(loneHigh)).toEqual(["1", "2"]);
+
+    // the converted spelling names the same entry
+    expect(formData.get(replaced)).toBe("1");
+    expect(formData.getAll(replaced)).toEqual(["1", "2"]);
+  });
+
+  it("lone high and lone low surrogates both convert to U+FFFD", () => {
+    const formData = new FormData();
+    formData.append(loneLow, "low");
+    expect(formData.get(loneLow)).toBe("low");
+    expect(formData.get(loneHigh)).toBe("low");
+  });
+
+  it("finds a Blob entry appended under a lone surrogate name", async () => {
+    const formData = new FormData();
+    formData.append(loneHigh, new Blob(["bar"]), "mynameis.txt");
+
+    const entry = formData.get(loneHigh) as File;
+    expect(entry).toBeInstanceOf(Blob);
+    expect(entry.name).toBe("mynameis.txt");
+    expect(await entry.text()).toBe("bar");
+    expect(formData.getAll(loneHigh)).toHaveLength(1);
+  });
+
+  it("leaves valid surrogate pairs alone", () => {
+    const formData = new FormData();
+    formData.append("\u{1F600}", "emoji");
+    expect(formData.get("\u{1F600}")).toBe("emoji");
+    expect(formData.getAll("\u{1F600}")).toEqual(["emoji"]);
+    expect(formData.get("\uFFFD")).toBeNull();
+  });
 });

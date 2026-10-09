@@ -5,8 +5,6 @@
 #include "JavaScriptCore/AbstractModuleRecord.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
-#include "../vm/SigintReceiver.h"
-
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -16,18 +14,13 @@ public:
     NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes = {});
 
     JSArray* toJS(JSGlobalObject* globalObject) const;
-    void addImportAttribute(WTF::String key, WTF::String value);
-
-    const WTF::String& specifier() const { return m_specifier; }
-    void specifier(WTF::String value) { m_specifier = value; }
-    const WTF::HashMap<WTF::String, WTF::String>& importAttributes() const { return m_importAttributes; }
 
 private:
     WTF::String m_specifier;
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;
 };
 
-class NodeVMModule : public JSC::JSDestructibleObject, public SigintReceiver {
+class NodeVMModule : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
@@ -40,14 +33,12 @@ public:
         Errored
     };
 
-    enum class Type : uint8_t {
-        SourceText,
-        Synthetic,
-    };
-
     static NodeVMModule* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args);
 
     const WTF::String& identifier() const { return m_identifier; }
+    // The context's own module loader (its global object's), or `globalObject`'s without a context: the
+    // loader this module's record is created against.
+    JSC::JSModuleLoader* moduleLoader(JSC::JSGlobalObject*);
 
     Status status() const { return m_status; }
     void status(Status value) { m_status = value; }
@@ -66,6 +57,16 @@ public:
 
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
+    // For top-level-await modules JSC finishes evaluation asynchronously
+    // (record status EvaluatingAsync -> Evaluated); pull the final state into
+    // m_status/m_evaluationException once the record has settled.
+    void reconcileEvaluationState(JSC::VM& vm);
+
+    bool hasAsyncGraph() const;
+    void propagateLinked();
+
+    JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
@@ -75,6 +76,7 @@ protected:
     WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    WriteBarrier<JSC::Exception> m_evaluationException;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 

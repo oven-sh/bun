@@ -194,9 +194,16 @@ describe("Server", () => {
               { deadline: deadline },
               (callError2, result) => {
                 assert(callError2);
-                // DEADLINE_EXCEEDED means that the server is unreachable
+                // DEADLINE_EXCEEDED means the server was unreachable;
+                // UNAVAILABLE means the connection dropped before the call.
+                // CANCELLED happens when the call wins the race onto the
+                // draining session before the GOAWAY/socket-close is
+                // processed and is then torn down with NGHTTP2_CANCEL — the
+                // same in-flight teardown path Node takes at socket close.
                 assert(
-                  callError2.code === grpc.status.DEADLINE_EXCEEDED || callError2.code === grpc.status.UNAVAILABLE,
+                  callError2.code === grpc.status.DEADLINE_EXCEEDED ||
+                    callError2.code === grpc.status.UNAVAILABLE ||
+                    callError2.code === grpc.status.CANCELLED,
                 );
                 done();
               },

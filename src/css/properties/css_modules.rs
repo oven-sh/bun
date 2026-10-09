@@ -18,7 +18,7 @@ pub struct Composes {
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
-    pub cssparser_loc: Location,
+    pub(crate) cssparser_loc: Location,
 }
 
 impl Composes {
@@ -78,7 +78,7 @@ impl Composes {
         Ok(name)
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
@@ -126,8 +126,7 @@ pub enum Specifier {
 
 // `generics::CssEql` so the `Option<Specifier>` blanket (used by
 // `DashedIdentReference::eql` in values/ident.rs) resolves. Forwards to the
-// inherent `eql` below — same shape the old data-only stub in `values/mod.rs`
-// carried before this leaf un-gated.
+// inherent `eql` below.
 impl crate::generics::CssEql for Specifier {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -175,12 +174,12 @@ impl Specifier {
         }
     }
 
-    pub fn deep_clone(self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &Arena) -> Self {
         // Variants are `Copy`; the deep clone is the value itself.
         self
     }
 
-    pub fn hash(self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(self, hasher: &mut Wyhash) {
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
             Specifier::ImportRecordIndex(i) => {

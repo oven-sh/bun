@@ -1,4 +1,4 @@
-import { serve } from "bun";
+import { serve, type ServerWebSocket } from "bun";
 import { expect, test } from "bun:test";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
@@ -247,6 +247,231 @@ test("WebSocket client handles context takeover options", async () => {
 test.skip("WebSocket client rejects compressed control frames", async () => {
   // This test would require a custom server that sends invalid compressed control frames
   // Skip for now as it requires low-level WebSocket frame manipulation
+});
+
+// Every WebSocket client on a thread inflates through one shared libdeflate
+// handle and one shared output buffer. Interleaving compressed messages across
+// clients must not let one client's payload leak into another's.
+test("clients on one thread share the inflater without mixing up their messages", async () => {
+  const clientCount = 6;
+  const messagesPerClient = 5;
+  const bodyFor = (client: number, index: number) =>
+    `client ${client} message ${index}: ` + Buffer.alloc(900 + 37 * index, String.fromCharCode(65 + client)).toString();
+
+  const serverSockets: ServerWebSocket<{ id: number }>[] = [];
+  const allOpen = Promise.withResolvers<void>();
+  using server = serve<{ id: number }>({
+    port: 0,
+    fetch(req, server) {
+      const id = Number(new URL(req.url).searchParams.get("id"));
+      if (server.upgrade(req, { data: { id } })) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      open(ws) {
+        serverSockets[ws.data.id] = ws;
+        if (serverSockets.filter(Boolean).length === clientCount) allOpen.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const received: string[][] = Array.from({ length: clientCount }, () => []);
+  const allReceived = Promise.withResolvers<void>();
+  let remaining = clientCount * messagesPerClient;
+  const clients = Array.from({ length: clientCount }, (_, id) => {
+    const client = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+    client.onmessage = event => {
+      received[id].push(event.data);
+      if (--remaining === 0) allReceived.resolve();
+    };
+    client.onclose = event =>
+      allReceived.reject(new Error(`client ${id} closed: code=${event.code} reason=${event.reason}`));
+    return client;
+  });
+  await Promise.all(
+    clients.map(
+      client =>
+        new Promise<void>((resolve, reject) => {
+          client.onopen = () => resolve();
+          client.onerror = () => reject(new Error("client errored"));
+        }),
+    ),
+  );
+  await allOpen.promise;
+  for (const client of clients) expect(client.extensions).toContain("permessage-deflate");
+
+  // Round-robin so consecutive inflates on the client side alternate between connections.
+  for (let index = 0; index < messagesPerClient; index++) {
+    for (let id = 0; id < clientCount; id++) {
+      serverSockets[id].send(bodyFor(id, index), true);
+    }
+  }
+  await allReceived.promise;
+
+  expect(received).toEqual(
+    Array.from({ length: clientCount }, (_, id) =>
+      Array.from({ length: messagesPerClient }, (_, index) => bodyFor(id, index)),
+    ),
+  );
+
+  for (const client of clients) {
+    client.onclose = null;
+    client.close();
+  }
+});
+
+// A payload too large for the one-shot libdeflate path is inflated by the
+// connection's zlib stream into the same shared buffer, growing it. Messages
+// after it, on this and on another connection, must still arrive intact.
+test("a message that outgrows the libdeflate buffer does not disturb later messages", async () => {
+  const large = Buffer.alloc(200 * 1024, "0123456789abcdef").toString();
+  const small = (tag: string) => `${tag}: ${Buffer.alloc(1000, tag).toString()}`;
+  const expected = {
+    first: [small("a"), large, small("b"), small("c")],
+    second: [small("x"), small("y")],
+  };
+
+  const serverSockets: Record<string, ServerWebSocket<{ name: string }>> = {};
+  const allOpen = Promise.withResolvers<void>();
+  using server = serve<{ name: string }>({
+    port: 0,
+    fetch(req, server) {
+      const name = new URL(req.url).searchParams.get("name")!;
+      if (server.upgrade(req, { data: { name } })) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      open(ws) {
+        serverSockets[ws.data.name] = ws;
+        if (Object.keys(serverSockets).length === 2) allOpen.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const received: Record<string, string[]> = { first: [], second: [] };
+  const allReceived = Promise.withResolvers<void>();
+  let remaining = expected.first.length + expected.second.length;
+  const clients = Object.fromEntries(
+    ["first", "second"].map(name => {
+      const client = new WebSocket(`ws://localhost:${server.port}/?name=${name}`);
+      client.onmessage = event => {
+        received[name].push(event.data);
+        if (--remaining === 0) allReceived.resolve();
+      };
+      client.onclose = event =>
+        allReceived.reject(new Error(`client ${name} closed: code=${event.code} reason=${event.reason}`));
+      return [name, client];
+    }),
+  );
+  await Promise.all(
+    Object.values(clients).map(
+      client =>
+        new Promise<void>((resolve, reject) => {
+          client.onopen = () => resolve();
+          client.onerror = () => reject(new Error("client errored"));
+        }),
+    ),
+  );
+  await allOpen.promise;
+
+  serverSockets.first.send(expected.first[0], true);
+  serverSockets.first.send(expected.first[1], true);
+  serverSockets.second.send(expected.second[0], true);
+  serverSockets.first.send(expected.first[2], true);
+  serverSockets.second.send(expected.second[1], true);
+  serverSockets.first.send(expected.first[3], true);
+  await allReceived.promise;
+
+  expect(received).toEqual(expected);
+
+  for (const client of Object.values(clients)) {
+    client.onclose = null;
+    client.close();
+  }
+});
+
+// The "dedicated" decompressor is the only server mode whose handshake response
+// omits client_no_context_takeover, so a compliant client may let message N's
+// deflate stream back-reference message N-1's sliding window (RFC 7692 7.2.1).
+// Such a stream must go through the server's stateful inflater; the stateless
+// 4096-byte libdeflate fast path can neither resolve those back-references nor
+// keep the zlib stream's window in sync for later messages.
+const takeoverBody = Buffer.alloc(1040, "abcdefghijklmnopqrstuvwxyz").toString();
+const takeoverLargeBody = Buffer.alloc(8320, "abcdefghijklmnopqrstuvwxyz").toString();
+test.each([
+  // Message 1's back-references are unresolvable without message 0's window.
+  ["every message fits the fast-path buffer", [0, 1, 2, 3].map(i => `message ${i}: ${takeoverBody}`)],
+  // Message 0 fits the fast path (bypassing the zlib stream); message 1
+  // overflows it and falls back to a zlib stream missing message 0's window.
+  [
+    "message 1 overflows the fast-path buffer",
+    [takeoverBody, takeoverLargeBody, takeoverBody, takeoverBody].map((body, i) => `message ${i}: ${body}`),
+  ],
+])("server with decompress: 'dedicated' inflates a client context-takeover stream (%s)", async (_name, messages) => {
+  const serverReceived: string[] = [];
+  let serverClose: { code: number; reason: string } | null = null;
+
+  using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: { decompress: "dedicated" },
+      message(ws, message) {
+        serverReceived.push(String(message));
+        ws.send(String(message));
+      },
+      close(ws, code, reason) {
+        serverClose = { code, reason };
+      },
+    },
+  });
+
+  const client = new WebSocket(`ws://localhost:${server.port}`);
+  await new Promise((resolve, reject) => {
+    client.onopen = resolve;
+    client.onerror = reject;
+  });
+
+  // The server must grant the client context takeover, otherwise the client
+  // resets its deflater per message and this test exercises nothing.
+  expect(client.extensions).toContain("permessage-deflate");
+  expect(client.extensions).not.toContain("client_no_context_takeover");
+
+  const echoed: string[] = [];
+  const { promise: done, resolve: finish, reject: fail } = Promise.withResolvers<void>();
+  // An inflation error makes the server force-close the connection.
+  client.onclose = event => fail(new Error(`client closed: code=${event.code} reason=${event.reason}`));
+  client.onerror = () => fail(new Error("client errored"));
+  client.onmessage = event => {
+    echoed.push(event.data);
+    if (echoed.length === messages.length) finish();
+  };
+
+  // Every message is over Bun's 860-byte compression threshold and shares its
+  // body with the previous one, so the client's deflater emits back-references
+  // that cross the message boundary.
+  for (const message of messages) client.send(message);
+  await done;
+
+  expect(serverReceived).toEqual(messages);
+  expect(echoed).toEqual(messages);
+  expect(serverClose).toBeNull();
+
+  client.onclose = null;
+  client.close();
 });
 
 test("server enforces maxPayloadLength on compressed messages inflated through the fast path", async () => {

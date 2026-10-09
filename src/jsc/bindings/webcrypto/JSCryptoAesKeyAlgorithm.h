@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-template<> CryptoAesKeyAlgorithm convertDictionary<CryptoAesKeyAlgorithm>(JSC::JSGlobalObject&, JSC::JSValue);
-
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoAesKeyAlgorithm&);
 
 } // namespace WebCore

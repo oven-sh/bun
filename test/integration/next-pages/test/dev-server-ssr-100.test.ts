@@ -35,7 +35,7 @@ async function getDevServerURL() {
     },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  dev_server.stdout?.unref?.();
+  (dev_server.stdout as any)?.unref?.();
   var hasLoaded = false;
   dev_server_pid = dev_server.pid;
 
@@ -82,7 +82,7 @@ async function getDevServerURL() {
   readStream()
     .catch(e => reject(e))
     .finally(() => {
-      dev_server.unref?.();
+      dev_server!.unref?.();
     });
   await promise;
   return baseUrl;
@@ -91,9 +91,12 @@ async function getDevServerURL() {
 async function startDevServer() {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
+  // This test never launches a browser (only dev-server.test.ts does), so skip
+  // puppeteer's ~255 MB Chrome download in the postinstall. It hits live CfT
+  // hosts and has flaked on macOS CI, failing the install for nothing.
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall"), PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

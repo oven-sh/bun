@@ -1,11 +1,11 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
     name: "Transpiler",
     rustPath: "crate::api::js_transpiler::JSTranspiler",
     construct: true,
-    finalize: true,
+    refCounted: true,
     hasPendingActivity: false,
     configurable: false,
     klass: {},
@@ -37,6 +37,9 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
+    // Per-class cached-stream slot. `Blob::get_stream` reads/writes the
+    // receiver's slot; it must never reach through JSBlob's layout here.
+    values: ["stream"],
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

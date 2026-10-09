@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import http from "node:http";
+import net from "node:net";
 
 // Regression test for https://github.com/oven-sh/bun/issues/27061
 // When http.ClientRequest.write() is called more than once (streaming data in chunks),
@@ -277,27 +278,23 @@ describe("node:http ClientRequest preserves explicit Content-Length", () => {
     }
   });
 
-  test("explicit Transfer-Encoding takes precedence over Content-Length", async () => {
-    const { promise, resolve } = Promise.withResolvers<{
-      contentLength: string | undefined;
-      transferEncoding: string | undefined;
-      bodyLength: number;
-    }>();
+  test("sends both headers like Node.js when Transfer-Encoding is also set", async () => {
+    // Node.js does not drop an explicitly-set Content-Length when an explicit
+    // Transfer-Encoding header is also present: both headers are written and
+    // the body is sent with chunked framing. Assert against a raw socket so
+    // this only depends on the client's wire output.
+    const { promise, resolve } = Promise.withResolvers<string>();
 
-    const server = http.createServer((req, res) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      req.on("end", () => {
-        resolve({
-          contentLength: req.headers["content-length"],
-          transferEncoding: req.headers["transfer-encoding"],
-          bodyLength: Buffer.concat(chunks).length,
-        });
-        res.writeHead(200);
-        res.end("ok");
+    const server = net.createServer(socket => {
+      let raw = "";
+      socket.on("data", chunk => {
+        raw += chunk.toString("latin1");
+        if (raw.endsWith("0\r\n\r\n")) {
+          resolve(raw);
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
       });
     });
-
     await new Promise<void>(res => server.listen(0, "127.0.0.1", res));
     const port = (server.address() as any).port;
 
@@ -315,20 +312,26 @@ describe("node:http ClientRequest preserves explicit Content-Length", () => {
         },
       });
 
-      await new Promise<void>((res, rej) => {
+      const done = new Promise<void>((res, rej) => {
         req.on("error", rej);
-        req.on("response", () => res());
-        req.write(chunk1);
-        req.write(chunk2);
-        req.end();
+        req.on("response", response => {
+          response.resume();
+          response.on("end", () => res());
+        });
       });
+      req.write(chunk1);
+      req.write(chunk2);
+      req.end();
 
-      const result = await promise;
-      // When user explicitly sets Transfer-Encoding, it should be used
-      // and Content-Length should not be added
-      expect(result.transferEncoding).toBe("chunked");
-      expect(result.contentLength).toBeUndefined();
-      expect(result.bodyLength).toBe(200);
+      const raw = await promise;
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      const head = raw.slice(0, headerEnd);
+      const body = raw.slice(headerEnd + 4);
+      expect(head).toContain("Content-Length: 200");
+      expect(head).toContain("Transfer-Encoding: chunked");
+      // The body is chunked-framed: two 100-byte chunks plus the terminator.
+      expect(body).toBe(`64\r\n${"a".repeat(100)}\r\n64\r\n${"b".repeat(100)}\r\n0\r\n\r\n`);
+      await done;
     } finally {
       server.close();
     }

@@ -88,7 +88,7 @@ describe("X509Certificate", () => {
     const legacy = cert.toLegacyObject();
     expect(legacy.serialNumber).toBe("147D36C1C2F74206DE9FAB5F2226D78ADB00A426");
     expect(legacy.modulus).toMatch(/^[0-9A-F]+$/);
-    expect(legacy.modulus.startsWith("D456320AFB20D3827093DC2C4284ED04DFBABD56")).toBe(true);
+    expect(legacy.modulus!.startsWith("D456320AFB20D3827093DC2C4284ED04DFBABD56")).toBe(true);
   });
 });
 

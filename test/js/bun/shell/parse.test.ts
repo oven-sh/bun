@@ -106,7 +106,7 @@ describe("parse shell", () => {
                 name_and_args: [
                   {
                     compound: {
-                      atoms: [{ Text: "FOO " }, { Var: "NICE" }, { Text: "!" }],
+                      atoms: [{ Text: "FOO " }, { QuotedVar: "NICE" }, { Text: "!" }],
                       brace_expansion_hint: false,
                       glob_hint: false,
                     },
@@ -124,6 +124,18 @@ describe("parse shell", () => {
     const result = JSON.parse(parse`"FOO $NICE!"`);
     console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
+  });
+
+  test("a variable in double quotes is a quoted atom", () => {
+    const result = JSON.parse(parse`echo "$A" $A "$1" $1 x"$A"`);
+    expect(result.stmts[0].exprs[0].cmd.name_and_args).toEqual([
+      { simple: { Text: "echo" } },
+      { simple: { QuotedVar: "A" } },
+      { simple: { Var: "A" } },
+      { simple: { QuotedVarArgv: 1 } },
+      { simple: { VarArgv: 1 } },
+      { compound: { atoms: [{ Text: "x" }, { QuotedVar: "A" }], brace_expansion_hint: false, glob_hint: false } },
+    ]);
   });
 
   test("pipelines", () => {

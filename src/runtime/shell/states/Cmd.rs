@@ -387,7 +387,12 @@ impl Cmd {
                         // expansion that did *not* see a `""` literal pushes
                         // no arg at all — `$unset` vanishes, only `""` yields
                         // an empty argv word.
-                        if !out.buf.is_empty() || out.has_quoted_empty {
+                        if !out.buf.is_empty()
+                            || out.has_quoted_empty
+                            // `"$unset"` and `"$(true)"` keep the word, as `""` does.
+                            || me.ast_node().name_and_args[new_idx as usize - 1]
+                                .has_quoted_expansion()
+                        {
                             me.args.push(out.buf);
                         }
                     } else {

@@ -141,7 +141,9 @@ impl BanTsComment {
             let Some(MatchedTsDirective { directive, description }) = find_directive_in_comment(comment) else {
                 continue;
             };
+            // oxlint does not ask where the comment is.
             if directive == "nocheck"
+                && !file.language().is_oxlint
                 && let Some(first_statement) = file.body().first()
             {
                 let start = first_statement.export_span().unwrap_or_else(|| first_statement.span()).start;
@@ -155,10 +157,15 @@ impl BanTsComment {
                 "ignore" => &self.ts_ignore,
                 _ => &self.ts_nocheck,
             };
+            // oxlint points at what is in the comment.
+            let place = match cx.language().is_oxlint {
+                true => Span::new(comment.start() + 2, comment.span().end),
+                false => comment.span(),
+            };
             match option {
                 DirectiveConfig::Allowed => {}
                 DirectiveConfig::Banned if directive == "ignore" => {
-                    cx.report(comment, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest(
+                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest(
                         REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR,
                         |fixer| {
                             let value = comment.comment_value();
@@ -175,11 +182,11 @@ impl BanTsComment {
                     );
                 }
                 DirectiveConfig::Banned => {
-                    cx.report(comment, TS_DIRECTIVE_COMMENT).data("directive", directive);
+                    cx.report(place, TS_DIRECTIVE_COMMENT).data("directive", directive);
                 }
                 DirectiveConfig::AllowedWithDescription(format) => {
                     if (get_string_length(trim(description)) as f64) < self.minimum_description_length {
-                        cx.report(comment, TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION)
+                        cx.report(place, TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION)
                             .data("directive", directive)
                             .data(
                                 "minimumDescriptionLength",
@@ -188,7 +195,7 @@ impl BanTsComment {
                     } else if let Some(format) = format
                         && !format.test(description)
                     {
-                        cx.report(comment, TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN)
+                        cx.report(place, TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN)
                             .data("directive", directive)
                             .data("format", escaped_source(format));
                     }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The default export of a plain .css import is an empty object (esbuild
@@ -727,61 +727,89 @@ describe.concurrent("css module exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each file is seen half written before it is seen complete.
+  // Each file is seen half written before it is seen complete. Each text is longer than the one it replaces:
+  // writeFileSync() writes, then cuts off what is left of the old text, and kqueue does not report the cut.
   const rewrites = {
     "the module": [
-      ["a.module.css", `.c { color: red } .`, `{"c":"c_BLNoTg"}`],
-      ["a.module.css", `.c { color: red } .z { color: red }`, `{"c":"c_BLNoTg","z":"z_BLNoTg"}`],
+      ["a.module.css", `.c { color: red; background: blue; margin: 0 } .`, `{"c":"c_BLNoTg"}`],
+      [
+        "a.module.css",
+        `.c { color: red; background: blue; margin: 0 } .z { color: red }`,
+        `{"c":"c_BLNoTg","z":"z_BLNoTg"}`,
+      ],
     ],
     "a file it composes from": [
-      ["b.module.css", "", `{"a":"a_BLNoTg"}`],
-      ["b.module.css", `.x { color: red }`, `{"a":"x_Kd7Gww a_BLNoTg"}`],
+      ["b.module.css", `.w { color: red; background: blue; margin: 0 } .`, `{"a":"a_BLNoTg"}`],
+      ["b.module.css", `.w { color: red; background: blue; margin: 0 } .x { color: red }`, `{"a":"x_Kd7Gww a_BLNoTg"}`],
     ],
   };
+  const reloadTimeout = 30_000;
   test.each([
     ["--hot", "the module"],
     ["--hot", "a file it composes from"],
     ["--watch", "the module"],
     ["--watch", "a file it composes from"],
-  ] as const)("%s reloads when %s changes", async (flag, which) => {
-    using dir = tempDir("css-module-reload", {
-      "a.module.css": `.a { composes: x from "./b.module.css" }`,
-      "b.module.css": `.x { composes: y } .y { color: red }`,
-      "e.ts": `
-        // Until the other end of stdin is closed: a test that times out never gets to kill this process.
-        globalThis.keepAlive ??= Bun.stdin.text().then(() => process.exit());
-        const { default: styles } = await import("./a.module.css");
-        console.log(JSON.stringify(styles));
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), flag, "e.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    // One write can cause several reloads, and the first of them can find the
-    // file still empty: what is printed before the line does not matter.
-    async function line(expected: string) {
-      while (!output.split("\n").slice(0, -1).includes(expected)) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        output += decoder.decode(value, { stream: true });
-      }
-      expect(output.split("\n")).toContain(expected);
-    }
+  ] as const)(
+    "%s reloads when %s changes",
+    async (flag, which) => {
+      using dir = tempDir("css-module-reload", {
+        "a.module.css": `.a { composes: x from "./b.module.css" }`,
+        "b.module.css": `.x { composes: y } .y { color: red }`,
+        "e.ts": `
+          // Until the other end of stdin is closed: a test that times out never gets to kill this process.
+          globalThis.keepAlive ??= Bun.stdin.text().then(() => process.exit());
+          const { default: styles } = await import("./a.module.css");
+          console.log(JSON.stringify(styles));
+        `,
+      });
+      // Not in the directory that is watched: every line written to it would be an event.
+      using traceDir = tempDir("css-module-reload-trace", {});
+      const trace = join(String(traceDir), "events.jsonl");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "e.ts"],
+        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+        cwd: String(dir),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      let waitingFor = "";
 
-    await line(`{"a":"y_Kd7Gww x_Kd7Gww a_BLNoTg"}`);
-    for (const [file, contents, expected] of rewrites[which]) {
-      writeFileSync(join(String(dir), file), contents);
-      await line(expected);
-    }
-  });
+      // The runner's timeout does not say what was seen. This one, a little earlier, does.
+      const stuck = Promise.withResolvers<never>();
+      const watchdog = setTimeout(() => {
+        stuck.reject(
+          new Error(
+            `${flag} did not print ${waitingFor}\n` +
+              `stdout: ${JSON.stringify(output)}\n` +
+              `watcher events: ${existsSync(trace) ? readFileSync(trace, "utf8") : "none"}`,
+          ),
+        );
+      }, reloadTimeout - 5_000);
+      using _ = { [Symbol.dispose]: () => clearTimeout(watchdog) };
+
+      // One write can cause several reloads: what is printed before the line does not matter.
+      async function line(expected: string, after: string) {
+        waitingFor = `${expected} after ${after}`;
+        while (!output.split("\n").slice(0, -1).includes(expected)) {
+          const { value, done } = await Promise.race([reader.read(), stuck.promise]);
+          if (done) break;
+          output += decoder.decode(value, { stream: true });
+        }
+        expect(output.split("\n")).toContain(expected);
+      }
+
+      await line(`{"a":"y_Kd7Gww x_Kd7Gww a_BLNoTg"}`, "it was started");
+      for (const [file, contents, expected] of rewrites[which]) {
+        writeFileSync(join(String(dir), file), contents);
+        await line(expected, `${file} became ${JSON.stringify(contents)}`);
+      }
+    },
+    reloadTimeout,
+  );
 });
 
 // Not concurrent with the tests above: nearly all of its time is spent parsing.

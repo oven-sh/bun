@@ -337,6 +337,12 @@ impl<'a> Context<'a, '_> {
             .get_mut(start as usize..end as usize)
             .unwrap_or_default()
         {
+            // What Prettier takes for `:namespace:name` can be a name that starts with a colon: `::a` is `:a` without a prefix.
+            if attr.namespace.is_empty()
+                && let Cow::Borrowed([b':', rest @ ..]) = attr.name
+            {
+                attr.namespace = strings::split(rest, b":").next().unwrap_or_default();
+            }
             let (name, has_explicit_namespace) = restored(attr.namespace, attr.name_span);
             attr.name = Cow::Borrowed(name);
             attr.has_explicit_namespace = has_explicit_namespace;

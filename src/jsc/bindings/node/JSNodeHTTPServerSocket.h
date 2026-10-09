@@ -63,6 +63,8 @@ public:
     unsigned heldWriteAwaitsDrain : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
+    /* socket.end() came while TLS held bytes of the tunnel: halfClose() to the onDrain() that sends the FIN. */
+    unsigned tunnelEndAwaitsDrain : 1 = 0;
     int closeReadError = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
@@ -146,7 +148,9 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Tells uWS whether this tunnel is idle: its reads do not hold the event loop (readStop() or read EOF) and it has nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    void refreshTunnelIdle();
+    /* The same for a caller that did not change what the reads hold: a write, a drain, the end of the stream. */
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;

@@ -71,6 +71,11 @@ const shellLex = $newRustFunction("shell.rs", "TestingAPIs.shellLex", 2);
 const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
+export const sslCtxBuildWithProtocolVersions: (min: number, max: number) => void = $newRustFunction(
+  "SecureContext.rs",
+  "jsBuildWithProtocolVersions",
+  2,
+);
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 

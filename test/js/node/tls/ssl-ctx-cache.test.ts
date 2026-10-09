@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import { once } from "node:events";
 import tls from "node:tls";
 // debug-only export
-import { sslCtxLiveCount } from "bun:internal-for-testing";
+import { sslCtxBuildWithProtocolVersions, sslCtxLiveCount } from "bun:internal-for-testing";
 import { tempDir, tls as tlsCerts } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -121,6 +121,52 @@ test("SSL_CTX is freed once no owners remain (weak cache, not strong)", async ()
     if (sslCtxLiveCount() <= before) break;
   }
   expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
+});
+
+// The SSL_CTX build fails for a protocol bound that BoringSSL does not accept.
+// No `TLSOptions` value reaches the build with such a bound, so the raw ints
+// go in through a testing hook.
+test("an SSL_CTX build fails for a protocol version bound BoringSSL does not accept", async () => {
+  Bun.gc(true);
+  await new Promise<void>(r => setImmediate(r));
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  const build = (min: number, max: number) => {
+    try {
+      sslCtxBuildWithProtocolVersions(min, max);
+      return "built";
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+
+  expect({
+    unset: build(0, 0),
+    tls1: build(0x0301, 0x0301),
+    tls1_1: build(0x0302, 0x0302),
+    tls1_2: build(0x0303, 0x0303),
+    tls1_3: build(0x0304, 0x0304),
+  }).toEqual({ unset: "built", tls1: "built", tls1_1: "built", tls1_2: "built", tls1_3: "built" });
+
+  // Not a version BoringSSL knows.
+  for (const bound of [1, 0x0300, 0x0305]) {
+    expect({ bound, min: build(bound, 0), max: build(0, bound) }).toEqual({
+      bound,
+      min: "ERR_SSL_UNKNOWN_SSL_VERSION",
+      max: "ERR_SSL_UNKNOWN_SSL_VERSION",
+    });
+  }
+  // Outside uint16_t. A cast would turn these into 0xffff, TLS 1.2 and 0 (unset).
+  for (const bound of [-1, 0x10303, 65536]) {
+    expect({ bound, min: build(bound, 0), max: build(0, bound) }).toEqual({
+      bound,
+      min: "ERR_SSL_UNKNOWN_SSL_VERSION",
+      max: "ERR_SSL_UNKNOWN_SSL_VERSION",
+    });
+  }
+
+  expect(sslCtxLiveCount()).toBe(before);
 });
 
 // Same-CA inline configs across repeated `Bun.connect` calls resolve to one

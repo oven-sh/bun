@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -344,6 +344,42 @@ describe.concurrent("one console call is one write", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(digest(stdout)).toEqual(digest(largeLines));
+    expect(exitCode).toBe(0);
+  });
+
+  // The process keeps a 64 MiB string and the buffer the string came from, so its memory is at its peak. A copy
+  // of the string for the write would raise the peak by another 64 MiB, as the copy at the end does. Windows has
+  // no gather write, so there the string is copied.
+  it.skipIf(isWindows)("a large string is written from its own memory", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const buffer = Buffer.alloc(64 << 20, "x");
+         const big = buffer.toString();
+         const peak = () => process.resourceUsage().maxRSS;
+         console.log("the first call allocates the buffer that console calls format into");
+         let before = peak();
+         console.log(big);
+         console.log(big, 1);
+         console.log("head", big, "tail");
+         console.log("%s", big);
+         const fourLogs = peak() - before;
+         before = peak();
+         const copy = Buffer.from(big);
+         const oneCopy = peak() - before;
+         console.error(JSON.stringify({ fourLogs, oneCopy, alive: buffer.length + big.length + copy.length }));`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const { fourLogs, oneCopy, alive } = JSON.parse(stderr);
+    const MiB = 1024; // maxRSS is in kilobytes
+    expect(alive).toBe(3 * (64 << 20));
+    expect(oneCopy).toBeGreaterThan(48 * MiB);
+    expect(fourLogs).toBeLessThan((isASAN || isDebug ? 32 : 16) * MiB);
     expect(exitCode).toBe(0);
   });
 

@@ -132,6 +132,15 @@ impl File {
     pub fn write(self, bytes: &[u8]) -> crate::CrateResult<usize> {
         self.write_all(bytes).map(|_| bytes.len())
     }
+    /// [`write`](Self::write) for a message that is in several parts. On
+    /// POSIX the parts go to one `writev(2)`, so the kernel gets the message
+    /// as one write. Windows has no gather write for a `HANDLE`: there the
+    /// parts leave one after the other.
+    #[inline]
+    pub fn write_vectored(self, parts: &[&[u8]]) {
+        let mut qw = self.quiet_writer();
+        let _ = output_sink().quiet_writer_write_all_vectored(&mut qw, parts);
+    }
     pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
         struct Adapter(File);
         impl core::fmt::Write for Adapter {

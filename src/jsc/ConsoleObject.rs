@@ -12,7 +12,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
 use bun_core::output::Destination;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{BoundedArray, EncodedSlice, String as BunString, Utf8Bytes, strings};
 use bun_core::{Output, StackCheck};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
@@ -242,11 +242,21 @@ static STDOUT_MUTEX: Mutex = Mutex::new();
 /// The most capacity a scratch buffer keeps between console calls.
 const SCRATCH_RETAIN_MAX: usize = 64 * 1024;
 
+/// A string of at least this many bytes is not copied into the message. The
+/// sink keeps the string, and its bytes leave in the same write.
+const SHARE_MIN: usize = 16 * 1024;
+
+/// The most strings that one message keeps. The next ones are copied.
+const SHARE_MAX: usize = 4;
+
 /// The message of one console call. It reaches the fd in one write, so that
 /// another process or thread that writes to the same file or pipe cannot
 /// land inside it.
 struct ConsoleSink {
     buf: Vec<u8>,
+    /// The strings that the message keeps, each with the length of `buf` at
+    /// the place where its bytes belong.
+    shared: BoundedArray<(usize, Utf8Bytes<'static>), SHARE_MAX>,
     destination: Destination,
     file: Output::StreamType,
 }
@@ -260,6 +270,7 @@ impl ConsoleSink {
         unsafe {
             ConsoleSink {
                 buf: core::mem::take(&mut (*console).scratch),
+                shared: BoundedArray::default(),
                 destination,
                 file: match destination {
                     Destination::Stdout => (*console).stdout,
@@ -309,12 +320,11 @@ impl ConsoleSink {
 
     /// Hands the message to the fd.
     fn deliver(&mut self) {
-        if self.buf.is_empty() {
+        if self.buf.is_empty() && self.shared.is_empty() {
             return;
         }
         let _lock = self.lock();
-        let _ = self.file.write(&self.buf);
-        self.buf.clear();
+        self.write_held();
     }
 
     /// There is no memory to hold the rest of this message. Hand over what is
@@ -322,8 +332,29 @@ impl ConsoleSink {
     #[cold]
     fn write_through(&mut self, bytes: &[u8]) {
         let _lock = self.lock();
-        let _ = self.file.write(&self.buf);
+        self.write_held();
         let _ = self.file.write(bytes);
+    }
+
+    /// One write for all that the sink holds: `buf`, with each kept string at
+    /// its place.
+    fn write_held(&mut self) {
+        if self.shared.is_empty() {
+            let _ = self.file.write(&self.buf);
+        } else {
+            let mut parts: [&[u8]; 2 * SHARE_MAX + 1] = [&[]; 2 * SHARE_MAX + 1];
+            let mut count = 0;
+            let mut start = 0;
+            for (end, string) in self.shared.iter() {
+                parts[count] = &self.buf[start..*end];
+                parts[count + 1] = string.slice();
+                count += 2;
+                start = *end;
+            }
+            parts[count] = &self.buf[start..];
+            self.file.write_vectored(&parts[..=count]);
+            self.shared.clear();
+        }
         self.buf.clear();
     }
 
@@ -354,6 +385,16 @@ impl bun_io::Write for ConsoleSink {
         }
         self.buf.extend_from_slice(bytes);
         Ok(())
+    }
+
+    fn keep_utf8(&mut self, bytes: Utf8Bytes<'static>) -> Option<Utf8Bytes<'static>> {
+        // Only POSIX has a write that takes the string at its place in the
+        // message.
+        if cfg!(unix) && bytes.len() >= SHARE_MIN && self.shared.len() < SHARE_MAX {
+            self.shared.append_assume_capacity((self.buf.len(), bytes));
+            return None;
+        }
+        Some(bytes)
     }
 }
 
@@ -3519,9 +3560,15 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             let str = value.to_utf8(self.global_this)?;
-            let slice = str.slice();
-            self.add_for_new_line(slice.len());
-            self.write_with_formatting::<C>(writer_, slice, self.global_this)
+            self.add_for_new_line(str.len());
+            if str.len() >= SHARE_MIN && !strings::contains_char(&str, b'%') {
+                // Nothing to format: the writer gets the string itself, as in `print_string`.
+                if let Some(str) = writer_.keep_utf8(str) {
+                    let _ = writer_.write_all(&str);
+                }
+                return Ok(());
+            }
+            self.write_with_formatting::<C>(writer_, &str, self.global_this)
         }
 
         #[inline(never)]
@@ -3619,6 +3666,12 @@ pub mod formatter {
             if str.is_utf16() {
                 // streaming print
                 writer.print(format_args!("{str}"));
+            } else if str.length() >= SHARE_MIN {
+                // The writer gets the string itself: a writer that holds the
+                // message until later can keep it and not copy the bytes.
+                if let Some(bytes) = writer.ctx.keep_utf8(str.into_utf8()) {
+                    writer.write_all(&bytes);
+                }
             } else if let Some(slice) = str.as_utf8() {
                 // fast path
                 writer.write_all(slice);

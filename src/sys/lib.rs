@@ -9161,6 +9161,75 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     true
 }
 
+/// [`fd_write_all_quiet`] for a message that is in several parts. The parts
+/// go to one `writev(2)`, so the kernel gets the message as one write. After
+/// a short count, everything that is left is offered again, from the first
+/// byte that was not taken.
+#[cfg(unix)]
+fn fd_writev_all_quiet(fd: Fd, parts: &[&[u8]]) -> bool {
+    const MAX_VECS: usize = 16;
+    // `parts[part][skip..]` starts with the first byte that is not written.
+    let (mut part, mut skip) = (0usize, 0usize);
+    loop {
+        let mut vecs = [PlatformIoVec {
+            iov_base: core::ptr::null_mut(),
+            iov_len: 0,
+        }; MAX_VECS];
+        let mut count = 0;
+        // write(2) clamps one call to `MAX_COUNT` by itself. writev(2) on
+        // Darwin fails with EINVAL when the lengths add up to more.
+        let mut room = MAX_COUNT;
+        let mut from = skip;
+        for bytes in &parts[part..] {
+            if count == MAX_VECS || room == 0 {
+                break;
+            }
+            let left = &bytes[from..];
+            from = 0;
+            if left.is_empty() {
+                continue;
+            }
+            let len = left.len().min(room);
+            vecs[count] = PlatformIoVec {
+                iov_base: left.as_ptr().cast_mut().cast(),
+                iov_len: len,
+            };
+            count += 1;
+            room -= len;
+        }
+        if count == 0 {
+            return true;
+        }
+        match writev(fd, &vecs[..count]) {
+            Ok(0) => return false, // short write → give up
+            Ok(mut written) => {
+                while written > 0 {
+                    let left = parts[part].len() - skip;
+                    if written < left {
+                        skip += written;
+                        break;
+                    }
+                    written -= left;
+                    part += 1;
+                    skip = 0;
+                }
+            }
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // See `fd_write_all_quiet`.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
 /// (`[u8; 64]`). First field MUST be `io::Writer` so `new_interface()`'s
 /// pointer-cast is sound. Layout asserted below.
@@ -9309,6 +9378,17 @@ bun_core::link_impl_OutputSink! {
             out
         },
         quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
+        quiet_writer_write_all_vectored(qw, parts) => {
+            #[cfg(unix)]
+            {
+                fd_writev_all_quiet(qw_fd(qw), parts)
+            }
+            // No gather write for a HANDLE: the parts leave one after the other.
+            #[cfg(not(unix))]
+            {
+                parts.iter().all(|part| fd_write_all_quiet(qw_fd(qw), part))
+            }
+        },
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),

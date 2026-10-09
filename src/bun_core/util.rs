@@ -1705,6 +1705,20 @@ pub mod io {
             self.write_all(s.as_bytes())
         }
 
+        /// Offers the sink the UTF-8 bytes of a string as its next output.
+        ///
+        /// A sink that holds its output until later can keep `bytes` (an owned
+        /// buffer, or a view that keeps its string alive) and not copy them.
+        /// It then returns `None`. Any other sink returns `bytes`, and the
+        /// caller writes them with [`write_all`](Write::write_all).
+        #[inline]
+        fn keep_utf8(
+            &mut self,
+            bytes: crate::Utf8Bytes<'static>,
+        ) -> Option<crate::Utf8Bytes<'static>> {
+            Some(bytes)
+        }
+
         /// Write `n` copies of `byte`.
         fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             let chunk = [byte; 256];
@@ -1778,6 +1792,13 @@ pub mod io {
             (**self).write_byte(byte)
         }
         #[inline]
+        fn keep_utf8(
+            &mut self,
+            bytes: crate::Utf8Bytes<'static>,
+        ) -> Option<crate::Utf8Bytes<'static>> {
+            (**self).keep_utf8(bytes)
+        }
+        #[inline]
         fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             (**self).splat_byte_all(byte, n)
         }
@@ -1799,6 +1820,13 @@ pub mod io {
         #[inline]
         fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
+        }
+        #[inline]
+        fn keep_utf8(
+            &mut self,
+            bytes: crate::Utf8Bytes<'static>,
+        ) -> Option<crate::Utf8Bytes<'static>> {
+            (**self).keep_utf8(bytes)
         }
         #[inline]
         fn written_len(&self) -> usize {

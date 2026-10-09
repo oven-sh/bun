@@ -3,8 +3,9 @@ use bun_lint_eslint::rules::init_declarations::{Config, declared_namespace_aroun
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
-    /// `None` without options: upstream hands its context to ESLint's rule, which then reads no mode and reports nothing.
-    config: Option<Config>,
+    config: Config,
+    /// Without options, upstream hands its context to ESLint's rule, which then reads no mode and reports nothing.
+    has_mode: bool,
 }
 
 impl Rule for InitDeclarations {
@@ -14,18 +15,18 @@ impl Rule for InitDeclarations {
 
     fn new(options: &Options) -> Self {
         InitDeclarations {
-            config: options.str(0).map(|_| Config::new(options)),
+            config: Config::new(options),
+            has_mode: options.str(0).is_some(),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.config.is_none() {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        // In oxlint it is ESLint's rule, whose mode is `always` then.
+        if !self.has_mode && !file.language().is_oxlint {
             return;
         }
         on.var_decls(|rule, decl, cx| {
-            let Some(config) = &rule.config else {
-                return;
-            };
+            let config = &rule.config;
             let Some(found) = config.check(decl) else {
                 return;
             };

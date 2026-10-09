@@ -2,8 +2,9 @@
 //
 //   ESLINT_PLUGIN_N_DIR=<checkout of eslint-plugin-n with node_modules> node generate-data.mjs
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -26,7 +27,11 @@ const literal = source.slice(
   source.indexOf("const traceMap = {") + "const traceMap = ".length,
   source.indexOf("/** @type {import('../rule-module.js').RuleModule} */"),
 );
-const esBuiltins = new Function("READ", `return (${literal})`)(READ);
+// As a module of its own.
+const pieces = mkdtempSync(join(tmpdir(), "generate-data-"));
+writeFileSync(join(pieces, "trace-map.mjs"), `export default READ => (${literal});\n`);
+const esBuiltins = (await import(pathToFileURL(join(pieces, "trace-map.mjs")).href)).default(READ);
+rmSync(pieces, { recursive: true });
 
 /** `versionsToString` */
 const text = ([latest, ...backported]) =>

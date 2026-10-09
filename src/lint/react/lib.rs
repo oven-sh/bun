@@ -5,6 +5,8 @@
 //!   https://github.com/cvazac/eslint-plugin-react-perf (Copyright Charles Vazac, MIT License),
 //!   https://github.com/jsx-eslint/eslint-plugin-jsx-a11y (Copyright Ethan Cohen, MIT License) and
 //!   https://github.com/vercel/next.js/tree/canary/packages/eslint-plugin-next (Copyright Vercel, Inc., MIT License)
+//!
+//! oxlint does not have `react/jsx-no-leaked-render`: it is a port of the rule of eslint-plugin-react.
 
 #![forbid(unsafe_code)]
 
@@ -127,6 +129,7 @@ bun_lint::rules! {
     react_jsx_no_comment_textnodes::JsxNoCommentTextnodes,
     react_jsx_no_constructed_context_values::JsxNoConstructedContextValues,
     react_jsx_no_duplicate_props::JsxNoDuplicateProps,
+    react_jsx_no_leaked_render::JsxNoLeakedRender,
     react_jsx_no_literals::JsxNoLiterals,
     react_jsx_no_script_url::JsxNoScriptUrl,
     react_jsx_no_target_blank::JsxNoTargetBlank,

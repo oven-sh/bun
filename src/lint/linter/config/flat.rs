@@ -1,13 +1,16 @@
 //! Reads ESLint's flat configuration from JSON.
 
+use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
+use super::rc::strings_of;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::linter::registry::{Registry, parse_rule_id};
 use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
-use crate::rule::Plugin;
+use crate::rule::{Plugin, minor_of};
+use crate::runner::RuleEntry;
 use std::sync::Arc;
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
@@ -44,6 +47,8 @@ pub(super) struct Reader<'r> {
     pub(super) prefers_typescript_rules: bool,
     pub(super) objects: Vec<ConfigObject>,
     pub(super) notes: Vec<Vec<u8>>,
+    /// [`Config::advice`]
+    pub(super) advice: Vec<Vec<u8>>,
     pub(super) unknown_rules: Vec<Box<[u8]>>,
     /// The JavaScript plugins that are loaded.
     pub(super) js_plugins: Vec<Arc<js_plugin::Plugin>>,
@@ -150,7 +155,8 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$jsPlugins" | b"$parser" | b"$processor" | b"$source" => None,
+            b"$changesLinter" | b"$ignorePatterns" | b"$jsPlugins" | b"$parser" | b"$processor"
+            | b"$source" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
                 .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
@@ -184,6 +190,34 @@ impl Reader<'_> {
         }
     }
 
+    /// Says so if the rules here, which answer for the plugin with the prefix `prefix`, are those of a later version than the one
+    /// that is installed. `name`: what the plugin says it is: `<package>@<version>`.
+    pub(super) fn advise_about_version(&mut self, prefix: &[u8], name: &[u8]) {
+        let Some(at) = bun_core::strings::last_index_of_char(name, b'@').filter(|at| *at > 0)
+        else {
+            return;
+        };
+        let (package, installed) = (&name[..at], &name[at + 1..]);
+        let Some(ours) = Plugin::of_prefix(prefix).and_then(Plugin::follows) else {
+            return;
+        };
+        if minor_of(installed).is_none_or(|it| Some(it) >= minor_of(ours.as_bytes())) {
+            return;
+        }
+        let line = [
+            package,
+            b" ",
+            installed,
+            b" is installed; bun lint follows ",
+            ours.as_bytes(),
+            b".",
+        ]
+        .concat();
+        if !self.advice.contains(&line) {
+            self.advice.push(line);
+        }
+    }
+
     /// The patterns in `items`, which are validated already. `json`: the object that has them.
     fn patterns(
         &self,
@@ -207,6 +241,16 @@ impl Reader<'_> {
             }
         });
         patterns.collect()
+    }
+
+    /// The rule here that answers for `id`. Without one, the plugin is loaded that the configuration has for it.
+    pub(super) fn native_rule(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        let prefix = parse_rule_id(id).0;
+        let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
+        (self
+            .registry
+            .find_preferring(id, self.prefers_typescript_rules))
+        .filter(|_| !is_foreign)
     }
 
     /// The rules of an object.
@@ -249,8 +293,7 @@ impl Reader<'_> {
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
             }
-            let found = (self.registry).find_preferring(id, self.prefers_typescript_rules);
-            match found.filter(|_| !is_foreign) {
+            match self.native_rule(id) {
                 Some(entry) => {
                     setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into()
                 }
@@ -344,6 +387,10 @@ impl Reader<'_> {
                 .count()
                 == 1;
         }
+        if let Some(lines) = json.get(b"$ignorePatterns") {
+            object.ignore_lines = Some(IgnoreLines::of_eslint_8(&strings_of(Some(lines))));
+            object.is_global_ignores = true;
+        }
         if let Some(message) = validate_object(entries) {
             object.error = Some([&config_name(json)[..], &message].concat());
             return Ok(object);
@@ -354,7 +401,12 @@ impl Reader<'_> {
             .unwrap_or_default()
         {
             match is_built_in(prefix, name.as_str()) {
-                true => object.plugins.push(prefix[..].into()),
+                true => {
+                    object.plugins.push(prefix[..].into());
+                    if let Some(name) = name.as_str() {
+                        self.advise_about_version(prefix, name);
+                    }
+                }
                 false => object.foreign_plugins.push(prefix[..].into()),
             }
             if prefix != b"@" {
@@ -561,6 +613,7 @@ impl Config {
             prefers_typescript_rules: false,
             objects: Vec::new(),
             notes: Vec::new(),
+            advice: Vec::new(),
             unknown_rules: Vec::new(),
             js_plugins: Vec::new(),
             js_locations: Vec::new(),
@@ -632,6 +685,7 @@ impl Reader<'_> {
             options_of_oxlint: Vec::new(),
             printed_for_oxlint: Vec::new(),
             notes: self.notes,
+            advice: self.advice,
             unknown_rules: self.unknown_rules,
             js_plugins: self.js_plugins,
             js_locations: self.js_locations,

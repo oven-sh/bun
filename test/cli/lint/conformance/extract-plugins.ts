@@ -4,6 +4,7 @@
 //   export ESLINT_DIR=<eslint> TYPESCRIPT_ESLINT_DIR=<typescript-eslint, built> OXC_DIR=<oxc> OXLINT_BIN=<oxlint>
 //   export REACT_DIR=<facebook/react> ESLINT_PLUGIN_IMPORT_DIR=<import-js/eslint-plugin-import, installed>
 //   export ESLINT_PLUGIN_IMPORT_X_DIR=<un-ts/eslint-plugin-import-x> ESLINT_PLUGIN_N_DIR=<eslint-community/eslint-plugin-n, installed>
+//   export ESLINT_PLUGIN_REACT_DIR=<jsx-eslint/eslint-plugin-react, installed>
 //   node extract-plugins.ts [--out <fixtures>] [<plugin>/<rule>..]
 //   node extract-plugins.ts --cases <cases.json> --out <dir> <plugin>/<rule>     # your own inputs, see `extra-cases.ts`
 //
@@ -66,6 +67,8 @@ const ALL = [
   "n/no-unsupported-features/es-builtins",
   "n/no-unsupported-features/es-syntax",
   "n/no-unsupported-features/node-builtins",
+  "n/no-process-exit",
+  "react/jsx-no-leaked-render",
 ];
 
 let out = join(import.meta.dirname, "fixtures");
@@ -377,6 +380,55 @@ function nodePlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string
 }
 
 // ---------------------------------------------------------------------------
+// react
+// ---------------------------------------------------------------------------
+
+/** `minEcmaVersion` of `tests/helpers/parsers.js` */
+const REACT_FEATURES: Record<string, number> = { "class fields": 2022, "optional chaining": 2020, "nullish coalescing": 2020 };
+
+function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
+  const root = realpathSync(requiredEnv("ESLINT_PLUGIN_REACT_DIR"));
+  const module: RuleModule = createRequire(join(root, "package.json"))(`./lib/rules/${rule}`);
+  if (casesFile) return { rule: module, cases: [] };
+  runs.length = 0;
+  requireWithStubs(join(root, `tests/lib/rules/${rule}.js`), {
+    "../../helpers/ruleTester": RecordingRuleTester,
+    // `all` makes a case for each parser that has the `features` of the case: that is done below.
+    "../../helpers/parsers": { all: (tests: unknown[]) => tests },
+    "eslint/package.json": { version: requireFromEslint("./package.json").version },
+  });
+  const cases: Raw[] = [];
+  for (const run of runs) {
+    for (const valid of [true, false]) {
+      for (const given of valid ? run.valid : run.invalid) {
+        const item = typeof given === "string" ? { code: given } : given;
+        if (item.parser) throw new Error("a case with a parser of its own");
+        const features: string[] = [item.features ?? []].flat();
+        const { ecmaVersion, sourceType, ...parserOptions } = { ...run.config.parserOptions, ...item.parserOptions };
+        const versions = [ecmaVersion, ...features.map(it => REACT_FEATURES[it])].filter(it => it !== undefined);
+        const base = {
+          valid,
+          code: item.code,
+          options: item.options,
+          settings: item.settings,
+          upstream: item,
+          foreignParser: features.some(it => /^(flow|bind operator|do expressions)$/.test(it)) ? "babel-eslint" : undefined,
+        };
+        const languageOptions = { ecmaVersion: versions.length > 0 ? Math.max(...versions) : undefined, sourceType, parserOptions };
+        if (!features.some(it => /^(no-default|decorators|ts|types)$/.test(it))) {
+          cases.push({ ...base, name: item.name ?? null, languageOptions: { ...languageOptions, parser: "espree" } });
+        }
+        if (!features.some(it => /^(no-ts|no-ts-new|jsx namespace)$/.test(it))) {
+          const name = "with the parser of typescript-eslint";
+          cases.push({ ...base, name, languageOptions: { ...languageOptions, parser: "typescript" } });
+        }
+      }
+    }
+  }
+  return { rule: module, cases };
+}
+
+// ---------------------------------------------------------------------------
 // The tests of oxlint
 // ---------------------------------------------------------------------------
 
@@ -615,6 +667,8 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
       if (!casesFile) loaded.cases.push(...importCasesOfOxlint(name));
     } else if (plugin === "n") {
       loaded = nodePlugin(name);
+    } else if (plugin === "react") {
+      loaded = reactPlugin(name);
     } else {
       throw new Error(`unknown: ${id}`);
     }

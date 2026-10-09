@@ -544,7 +544,7 @@ When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `ag
 These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
-- **The rules are those of ESLint 10 and typescript-eslint 8**, whichever versions you have installed.
+- **The rules are those of ESLint 10.12, typescript-eslint 8.71, eslint-plugin-react-hooks 7.1, eslint-plugin-import 2.32, and eslint-plugin-n 18.4**, whichever versions you have installed. If a plugin is installed in an older version, a note after the report says so.
 - **Custom formatters do not load.** The rules, the processors, the parsers and the [languages](#other-languages) of plugins run.
 - **`--inspect-config` and `--mcp` are errors:** `bun lint does not support --inspect-config.`
 - **`--init` is oxlint's.** It writes an `.oxlintrc.json`. In a project with a configuration file of ESLint it is an error.

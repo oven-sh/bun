@@ -95,10 +95,19 @@ struct Names {
     /// usual with ESLint. The others are what oxlint calls the plugin.
     prefixes: &'static [&'static str],
     under_eslint: UnderEslint,
+    has: Has,
+}
+
+/// How many of the rules of a plugin exist here. With a part of them, a rule that does not is one of the package, and
+/// no mistake.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Has {
+    Whole,
+    Part,
 }
 
 macro_rules! plugins {
-    ($($(#[$example:meta])* $plugin:ident: $prefixes:expr, $under_eslint:expr;)*) => {
+    ($($(#[$example:meta])* $plugin:ident: $prefixes:expr, $under_eslint:expr, $has:ident;)*) => {
         /// Where a rule is from. It decides the prefix of its name in a configuration.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         pub enum Plugin {
@@ -111,7 +120,11 @@ macro_rules! plugins {
             const fn names(self) -> Names {
                 use UnderEslint::{Here, InPlaceOf, Package};
                 match self {
-                    $(Plugin::$plugin => Names { prefixes: &$prefixes, under_eslint: $under_eslint },)*
+                    $(Plugin::$plugin => Names {
+                        prefixes: &$prefixes,
+                        under_eslint: $under_eslint,
+                        has: Has::$has,
+                    },)*
                 }
             }
         }
@@ -124,37 +137,37 @@ macro_rules! plugins {
 // prefix (`PLUGINS_OF_OXLINT`), and that in which its rules report at one node (`order_fixes_as_oxlint`).
 plugins! {
     /// `no-debugger`
-    Eslint: ["", "eslint"], Here;
+    Eslint: ["", "eslint"], Here, Whole;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1");
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1");
+    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0");
+    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
-    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1");
+    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1"), Part;
     /// `oxc/no-accumulating-spread`
-    Oxc: ["oxc"], Here;
+    Oxc: ["oxc"], Here, Part;
     /// `unicorn/no-null`
-    Unicorn: ["unicorn"], Package;
+    Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], Package;
+    React: ["react", "react-hooks", "react_hooks"], Package, Part;
     /// `react-perf/jsx-no-new-object-as-prop`
-    ReactPerf: ["react-perf", "react_perf"], Package;
+    ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`
-    JsxA11y: ["jsx-a11y", "jsx_a11y"], Package;
+    JsxA11y: ["jsx-a11y", "jsx_a11y"], Package, Part;
     /// `@next/next/no-img-element`
-    Nextjs: ["@next/next", "nextjs"], Package;
+    Nextjs: ["@next/next", "nextjs"], Package, Part;
     /// `promise/param-names`
-    Promise: ["promise"], Package;
+    Promise: ["promise"], Package, Part;
     /// `jest/no-focused-tests`
-    Jest: ["jest"], Package;
+    Jest: ["jest"], Package, Part;
     /// `vitest/no-focused-tests`
-    Vitest: ["vitest"], Package;
+    Vitest: ["vitest"], Package, Part;
     /// `jsdoc/require-param`
-    Jsdoc: ["jsdoc"], Package;
+    Jsdoc: ["jsdoc"], Package, Part;
     /// `vue/no-dupe-keys`
-    Vue: ["vue"], Package;
+    Vue: ["vue"], Package, Part;
 }
 
 impl Plugin {
@@ -171,6 +184,10 @@ impl Plugin {
             .prefixes
             .iter()
             .any(|it| it.as_bytes() == prefix)
+    }
+
+    pub(crate) fn is_whole(self) -> bool {
+        self.names().has == Has::Whole
     }
 
     fn is_only_of_oxlint(self) -> bool {
@@ -225,7 +242,7 @@ impl Plugin {
 
 /// The major and the minor version in `version`.
 pub fn minor_of(version: &[u8]) -> Option<(u32, u32)> {
-    let mut parts = version.split(|it| *it == b'.');
+    let mut parts = bun_core::strings::split(version, b".");
     let mut number = || std::str::from_utf8(parts.next()?).ok()?.parse().ok();
     Some((number()?, number()?))
 }

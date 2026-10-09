@@ -520,25 +520,21 @@ fn give_back_scratch(scratch: Box<bun_sema_parser::Scratch>) {
 }
 
 /// What `bun_sema_parser` is asked for, until it is the only parser of the type checker.
-#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum DirectMode {
+enum DirectMode {
     /// [`summarize`] does not ask it. [`summarize_as`] does, and hands what it refuses to Bun's parser.
     Never,
     /// [`summarize`] asks it first too.
     First,
-    /// And what it refuses it parses again, with recovery. What it refuses then has one error, where it has given up, and no
-    /// statements. Bun's parser gets JSON only.
+    /// And what it refuses it parses again, with recovery. What it refuses then has one error, the first, and no statements.
+    /// Bun's parser gets nothing.
     Alone,
 }
 
-/// [`DirectMode`], as a number. Only a harness sets it.
-pub static DIRECT_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
 fn direct_mode() -> DirectMode {
-    match DIRECT_MODE.load(core::sync::atomic::Ordering::Relaxed) {
-        0 => DirectMode::Never,
-        1 => DirectMode::First,
+    match bun_core::env_var::BUN_SEMA_DIRECT::get() {
+        Some(0) => DirectMode::Never,
+        Some(1) => DirectMode::First,
         _ => DirectMode::Alone,
     }
 }
@@ -892,7 +888,26 @@ pub fn with_summary_in_place<'s, R>(
         JsDoc::Ignored,
     );
     let Some(mut file) = directly else {
+        // JSON is validated where it ends up.
+        let in_arena = match direct_mode() {
+            DirectMode::Alone => summarize_directly(
+                &mut scratch,
+                dialect,
+                (arena, session),
+                path,
+                script_kind,
+                text,
+                Some(atoms),
+                experimental_decorators,
+                every_file_is_a_module,
+                JsDoc::Ignored,
+            ),
+            _ => None,
+        };
         give_back_scratch(scratch);
+        if let Some(file) = in_arena {
+            return then(Summary::InArena(Box::new(file)), atoms);
+        }
         let (file, _) = summarize_with_recovery(
             dialect,
             false,

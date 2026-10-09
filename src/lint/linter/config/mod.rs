@@ -35,6 +35,8 @@
 //!     "$source": { "config": "/app/eslint.config.js", "index": 3 },
 //!     // With `languageOptions.parser`: see `describeParser` in `evaluate-eslint.js`.
 //!     "$parser": { "module": "/app/node_modules/@typescript-eslint/parser/dist/index.js", "export": [], "functions": ["parse", "parseForESLint"], "values": { "version": "8.0.0" } },
+//!     // Alone with `basePath`: the lines that the function is made of that `FlatCompat` puts into `ignores`.
+//!     "$ignorePatterns": [".*", "!.eslintrc.*", "/dist"],
 //!     // Where it is: see `js_plugin::Processor::new`.
 //!     "$processor": { "plugin": { "module": "/app/node_modules/@eslint/markdown/dist/index.js", "export": ["default"] }, "prefix": "markdown", "name": "markdown" },
 //!     "rules": { "eqeqeq": ["error", "smart"] },
@@ -47,16 +49,13 @@
 //! `ignores` such a matcher is an error: which files it is for cannot be told. ESLint's own default
 //! objects are not part of the array.
 
-mod brace_expansion;
 mod cache;
 pub(crate) mod eslint8;
 mod eslintrc;
-mod fast_glob;
 mod flat;
 mod for_eslint;
-mod glob_part;
+mod ignore_lines;
 mod merge;
-mod minimatch;
 mod number_of_rules;
 mod path;
 mod presets;
@@ -75,28 +74,27 @@ use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
-use bun_core::strings;
+use bun_glob::{Candidate, How};
 use cache::Cache;
 pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
-pub use fast_glob::FastGlob;
-use fast_glob::Matcher;
 pub use flat::{ConfigError, LoadLocatedPlugin};
+use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
-use minimatch::{How, Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
 pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
 use rustc_hash::FxHashMap;
+pub use shape::glob_refusal;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
 #[doc(hidden)]
 pub mod testing {
-    use super::minimatch::{How, Minimatch};
+    use bun_glob::{How, Options, Pattern};
 
     /// `new Minimatch(pattern, { dot: true, flipNegate }).match(path, partial)`
     pub fn minimatch(pattern: &[u8], path: &[u8], flip_negate: bool, partial: bool) -> bool {
-        Minimatch::new(pattern).matches_path(
+        Pattern::new(pattern, Options::MINIMATCH_DOT).matches_with(
             path,
             How {
                 flip_negate,
@@ -106,35 +104,9 @@ pub mod testing {
     }
 }
 
-/// `new Minimatch(pattern, { dot: true })`: a pattern as ESLint matches it, for the patterns on the
-/// command line.
-pub struct Glob(Minimatch);
-
-impl Glob {
-    pub fn new(pattern: &[u8]) -> Glob {
-        Glob(Minimatch::new(pattern))
-    }
-
-    /// `match(path)`. `path` is separated by `/`.
-    pub fn matches(&self, path: &[u8]) -> bool {
-        self.0.matches_path(path, How::default())
-    }
-
-    /// `match(path, true)`: whether something in the directory `path` can match.
-    pub fn matches_partially(&self, path: &[u8]) -> bool {
-        self.0.matches_path(
-            path,
-            How {
-                partial: true,
-                ..How::default()
-            },
-        )
-    }
-}
-
 /// A pattern in `files` or `ignores`.
 struct Pattern {
-    matcher: Matcher,
+    matcher: bun_glob::Pattern,
     /// It starts with `!`.
     is_negated: bool,
     /// `*`, `!..`, `../*`, `../**`: it does not make ESLint lint a file that nothing else matches.
@@ -150,7 +122,7 @@ impl Pattern {
             written => written.to_vec(),
         };
         Pattern {
-            matcher: Matcher::Minimatch(Minimatch::new(&normalized)),
+            matcher: bun_glob::Pattern::new(&normalized, bun_glob::Options::MINIMATCH_DOT),
             is_negated: normalized.starts_with(b"!"),
             is_universal: normalized == b"*"
                 || normalized.starts_with(b"!")
@@ -163,10 +135,19 @@ impl Pattern {
     /// match without, and takes nothing back. oxlint lints a file for what it is called, not because an override is for it.
     fn of_oxlint(written: &[u8]) -> Pattern {
         Pattern {
-            matcher: Matcher::FastGlob(FastGlob::new(written)),
+            matcher: bun_glob::Pattern::of_oxc_glob_set(written),
             is_negated: false,
             is_universal: true,
         }
+    }
+
+    /// `flip_negate`: a `!` at the start of the pattern is left out of the answer. Only ESLint asks for that.
+    fn matches(&self, path: &Candidate, flip_negate: bool) -> bool {
+        let how = How {
+            flip_negate,
+            partial: false,
+        };
+        self.matcher.matches_candidate(path, how)
     }
 }
 
@@ -177,6 +158,8 @@ struct ConfigObject {
     /// One of these must match: all patterns of it.
     files: Option<Vec<Vec<Pattern>>>,
     ignores: Option<Vec<Pattern>>,
+    /// `ignorePatterns` of oxlint or of ESLint 8, which it has in place of `ignores`.
+    ignore_lines: Option<IgnoreLines>,
     /// It has `ignores` and nothing else: what it ignores is ignored altogether.
     is_global_ignores: bool,
     /// `ignorePatterns` of oxlint, which say nothing about what is outside of the base path.
@@ -215,6 +198,7 @@ impl Default for ConfigObject {
             base_path: None,
             files: None,
             ignores: None,
+            ignore_lines: None,
             is_global_ignores: false,
             ignores_inside_only: false,
             language_options: Json::Null,
@@ -364,6 +348,7 @@ pub struct Config {
     /// [`Config::printed_for_oxlint`]
     printed_for_oxlint: Vec<(Vec<u8>, Json)>,
     notes: Vec<Vec<u8>>,
+    advice: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
     /// `$jsPlugins`: where the plugin with a prefix is.
@@ -373,70 +358,27 @@ pub struct Config {
 }
 
 /// `shouldIgnorePath` for the `ignores` of one object.
-fn is_ignored_by(ignores: &[Pattern], path: &SplitPath, mut is_ignored: bool) -> bool {
+fn is_ignored_by(ignores: &[Pattern], path: &Candidate, mut is_ignored: bool) -> bool {
     for pattern in ignores {
         match (is_ignored, pattern.is_negated) {
-            (false, false) => is_ignored = pattern.matcher.matches(path, false),
-            (true, true) => is_ignored = !pattern.matcher.matches(path, true),
+            (false, false) => is_ignored = pattern.matches(path, false),
+            (true, true) => is_ignored = !pattern.matches(path, true),
             _ => {}
         }
     }
     is_ignored
 }
 
-/// What the `ignorePatterns` of an `.oxlintrc.json` say about `path`: the last of them that matches it counts. `None`: none does.
-fn last_match(ignores: &[Pattern], path: &[u8]) -> Option<bool> {
-    let parts = SplitPath::new(path);
-    let mut patterns = ignores.iter().rev();
-    Some(
-        !patterns
-            .find(|it| it.matcher.matches(&parts, true))?
-            .is_negated,
-    )
-}
-
-/// `Gitignore::matched_path_or_any_parents` of the crate `ignore`, which oxlint asks: what is said about `path`, or else about the
-/// nearest directory that it is in about which anything is said. So a `!` takes a file out of a directory that is ignored, which it
-/// cannot in a `.gitignore`.
-fn last_match_or_of_parents(ignores: &[Pattern], mut path: &[u8]) -> Option<bool> {
-    loop {
-        if let Some(found) = last_match(ignores, path) {
-            return Some(found);
-        }
-        let inner = path.strip_suffix(b"/").unwrap_or(path);
-        path = inner.get(..=strings::last_index_of_char(inner, b'/')?)?;
-    }
-}
-
-/// [`is_ignored_by`] for `ignorePatterns` with a `!`. A directory in which a `!` can match is not ignored: it has to be read.
-fn is_ignored_by_oxlint(ignores: &[Pattern], path: &[u8], is_ignored: bool) -> bool {
-    let can_hold_exceptions = |directory: &[u8]| {
-        let how = How {
-            flip_negate: true,
-            partial: true,
-        };
-        let mut exceptions = ignores.iter().filter(|it| it.is_negated);
-        exceptions.any(|it| it.matcher.matches_path(directory, how))
-    };
-    match (
-        last_match_or_of_parents(ignores, path),
-        path.strip_suffix(b"/"),
-    ) {
-        (Some(true), Some(directory)) => !can_hold_exceptions(directory),
-        (found, _) => found.unwrap_or(is_ignored),
-    }
-}
-
 /// `pathMatches`
 fn path_matches<'o>(
     files: impl IntoIterator<Item = &'o Vec<Pattern>>,
     ignores: Option<&[Pattern]>,
-    path: &SplitPath,
+    path: &Candidate,
 ) -> bool {
-    files.into_iter().any(|all| {
-        all.iter()
-            .all(|pattern| pattern.matcher.matches(path, false))
-    }) && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
+    files
+        .into_iter()
+        .any(|all| all.iter().all(|pattern| pattern.matches(path, false)))
+        && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
 }
 
 /// [`Config::in_javascript`]
@@ -455,6 +397,11 @@ impl Config {
     /// What could not be taken over from the configuration, for the user to read.
     pub fn notes(&self) -> &[Vec<u8>] {
         &self.notes
+    }
+
+    /// What the user may want to know, and nothing is wrong: a line for each.
+    pub fn advice(&self) -> &[Vec<u8>] {
+        &self.advice
     }
 
     /// What oxlint's `--print-config` prints, if it is made of an `.oxlintrc.json`.
@@ -518,7 +465,7 @@ impl Config {
     /// `shouldIgnorePath(this.ignores, ..)`. `relative` is relative to the base path, and ends with
     /// a slash if it is a directory.
     fn is_ignored_globally(&self, relative: &[u8], dotfiles: Dotfiles) -> bool {
-        let parts = SplitPath::new(relative);
+        let parts = Candidate::new(relative);
         let mut is_ignored = false;
         // See `Config::relative`.
         let is_outside = relative.starts_with(b"/");
@@ -529,12 +476,10 @@ impl Config {
                 continue;
             }
             let ignores = object.ignores.as_deref().unwrap_or_default();
-            let has_exceptions =
-                object.ignores_inside_only && ignores.iter().any(|it| it.is_negated);
             let Some(base_path) = &object.base_path else {
-                is_ignored = match has_exceptions {
-                    true => is_ignored_by_oxlint(ignores, relative, is_ignored),
-                    false => is_ignored_by(ignores, &parts, is_ignored),
+                is_ignored = match &object.ignore_lines {
+                    Some(lines) => lines.is_ignored(relative, is_ignored),
+                    None => is_ignored_by(ignores, &parts, is_ignored),
                 };
                 continue;
             };
@@ -545,9 +490,9 @@ impl Config {
             if relative.ends_with(b"/") {
                 own.push(b'/');
             }
-            is_ignored = match has_exceptions {
-                true => is_ignored_by_oxlint(ignores, &own, is_ignored),
-                false => is_ignored_by(ignores, &SplitPath::new(&own), is_ignored),
+            is_ignored = match &object.ignore_lines {
+                Some(lines) => lines.is_ignored(&own, is_ignored),
+                None => is_ignored_by(ignores, &Candidate::new(&own), is_ignored),
             };
         }
         is_ignored
@@ -632,7 +577,7 @@ impl Config {
     /// `must_match`: a file that no `files` is for has no configuration.
     fn get_if(&self, registry: &Registry, file: &[u8], must_match: bool) -> FileConfig {
         let relative = self.relative(file);
-        let parts = SplitPath::new(&relative);
+        let parts = Candidate::new(&relative);
         let mut matching: Vec<u32> = Vec::new();
         let mut is_matched = false;
         let listed = self.heads.of(&relative);
@@ -649,7 +594,7 @@ impl Config {
             }
             let ignores = object.ignores.as_deref();
             // Whether the object applies, and whether that makes ESLint lint the file.
-            let status = |parts: &SplitPath| -> (bool, bool) {
+            let status = |parts: &Candidate| -> (bool, bool) {
                 let Some(files) = &object.files else {
                     let is_ignored = ignores.is_some_and(|it| is_ignored_by(it, parts, false));
                     return (!object.is_global_ignores && !is_ignored, false);
@@ -673,7 +618,7 @@ impl Config {
                 }
             };
             let (applies, is_linted) = match &own {
-                Some(own) => status(&SplitPath::new(own)),
+                Some(own) => status(&Candidate::new(own)),
                 None => status(&parts),
             };
             if applies {

@@ -1,11 +1,11 @@
+use super::no_restricted_imports::{IgnoreRules, IgnoreSyntax, ignore_rules};
 use bun_lint::prelude::*;
-use bun_lint::utils::ignore::{Ignore, IgnoreVersion};
 
 /// Disallow specified modules when loaded by `require`.
 pub struct NoRestrictedModules {
     /// Each with its custom message. Of two with the same name, the last counts.
     paths: Vec<(Vec<u8>, Option<Vec<u8>>)>,
-    patterns: Option<Ignore>,
+    patterns: Option<IgnoreRules>,
 }
 
 const DEFAULT_MESSAGE: Message =
@@ -70,7 +70,7 @@ impl Rule for NoRestrictedModules {
         });
         NoRestrictedModules {
             paths: paths.collect(),
-            patterns: (!patterns.is_empty()).then(|| Ignore::new(&patterns, true, IgnoreVersion::V5)),
+            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true, IgnoreSyntax::Npm5)),
         }
     }
 

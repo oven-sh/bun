@@ -58,7 +58,7 @@ for (const [name, rule] of requireFromEslint("./lib/rules")) add(name, rule);
 for (const [name, rule] of Object.entries(requireFromPlugin("./dist/rules/index.js")))
   add(`@typescript-eslint/${name}`, rule);
 const fixtures = join(import.meta.dirname, "../../../../test/cli/lint/conformance/fixtures");
-for (const plugin of ["react-hooks", "import", "n", "oxc"]) {
+for (const plugin of ["react-hooks", "import", "n", "oxc", "react"]) {
   if (!existsSync(join(fixtures, plugin))) continue;
   for (const file of readdirSync(join(fixtures, plugin), { recursive: true }).filter(it => it.endsWith(".json"))) {
     const { rule, meta } = JSON.parse(readFileSync(join(fixtures, plugin, file), "utf8"));

@@ -82,7 +82,6 @@
   "texts: a rule's options: ~/.eslintrc.json": "exit",
   "ignores: .eslintignore is a directory": "exit",
   "ignores: package.json#eslintIgnore: the file is broken": "exit",
-  "ignores: --ignore-pattern: ./ at the start matches nothing": "messages",
   "files: no arguments at all": "exit",
   "files: a directory without files to lint": "text",
   "files: links to a file and to a directory": "messages",

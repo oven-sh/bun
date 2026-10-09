@@ -11,7 +11,7 @@ commits, and `licenses/` has the license of each (all MIT).
 | typescript-eslint         | 8.71.1  | 136   | 29823 |
 | eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
 | eslint-plugin-import      | 2.32.0  | 2     | 255   |
-| eslint-plugin-n           | 18.4.1  | 3     | 1524  |
+| eslint-plugin-n           | 18.4.1  | 4     | 1530  |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
@@ -24,7 +24,7 @@ of oxlint's port of the rule: see `extract-plugins.ts`.
 
 | directory                | cases | what                                                                                             |
 | ------------------------ | ----- | ------------------------------------------------------------------------------------------------ |
-| `more/reviews`           | 68102 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
+| `more/reviews`           | 68128 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
 | `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used |
 | `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
 

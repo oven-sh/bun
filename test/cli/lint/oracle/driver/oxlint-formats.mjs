@@ -17,6 +17,9 @@
 // - oxlint has neither the message nor the severity of a problem without a place in `unix`, `github`, `gitlab`, `junit` and
 //   `checkstyle`. `bun lint` prints them. Both are taken out of such a problem.
 //
+// - `bun lint` ends a run for people with notes on standard error (`note: ..`): which rules ran in JavaScript that are built in.
+//   oxlint has none. They are taken out.
+//
 // `--record` writes each project, and what oxlint prints for it, below a directory, and compares nothing.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -580,10 +583,11 @@ const normal = {
 function comparable(result, format, test) {
   const name = test.as ?? format;
   const whether = text => (text === "" ? "nothing" : "something");
-  if (test.loose || !normal[name]) return { "exit code": result.status, stdout: whether(result.stdout), stderr: whether(result.stderr) };
+  const stderr = result.stderr.replace(/^note: .*\n/gm, "");
+  if (test.loose || !normal[name]) return { "exit code": result.status, stdout: whether(result.stdout), stderr: whether(stderr) };
   const known = withoutTheLost[name]?.(result.stdout) ?? result.stdout;
   const stdout = test.exact || everythingIsExact ? known : masked[name](known);
-  return { "exit code": result.status, stdout: normal[name](stdout), stderr: result.stderr };
+  return { "exit code": result.status, stdout: normal[name](stdout), stderr };
 }
 
 /** The first lines that are not the same. */

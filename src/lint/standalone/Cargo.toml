@@ -22,6 +22,7 @@ bun_lint_react_compiler.workspace = true
 bun_react_compiler = { path = "../../react_compiler", features = ["fixtures"] }
 bun_format.workspace = true
 bun_format_conformance.workspace = true
+bun_glob.workspace = true
 bun_lint_driver.workspace = true
 bun_lint_conformance.workspace = true
 bun_sema_driver.workspace = true

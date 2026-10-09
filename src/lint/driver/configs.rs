@@ -309,10 +309,11 @@ fn without_global_ignores(json: Json, depth: usize) -> Json {
         ),
         Json::Object(mut entries) => {
             let is_meta = |key: &[u8]| matches!(key, b"name" | b"basePath");
-            if entries.iter().any(|it| it.0 == b"ignores")
+            let is_ignores = |key: &[u8]| matches!(key, b"ignores" | b"$ignorePatterns");
+            if entries.iter().any(|it| is_ignores(&it.0))
                 && entries.iter().filter(|it| !is_meta(&it.0)).count() == 1
             {
-                entries.retain(|it| it.0 != b"ignores");
+                entries.retain(|it| !is_ignores(&it.0));
             }
             Json::Object(entries)
         }
@@ -443,6 +444,19 @@ impl<'l> Loader<'l> {
         let mut advice = self.advice.lock();
         if !advice.contains(&line) {
             advice.push(line);
+        }
+    }
+
+    /// Says so if the `typescript` of the project is older than the one as which types are checked. It reads one file.
+    pub(crate) fn advise_about_typescript(&self) {
+        let installed = installed_version(self.cwd(), b"typescript");
+        if let Some(installed) = installed.filter(|it| minor_of(it).is_some_and(|it| it < (7, 0))) {
+            let line = [
+                b"typescript ",
+                &installed[..],
+                b" is installed; bun lint checks types as TypeScript 7.",
+            ];
+            self.advise(line.concat());
         }
     }
 
@@ -923,6 +937,9 @@ impl<'l> Loader<'l> {
         for note in config.notes() {
             self.warn(&[note]);
         }
+        for line in config.advice() {
+            self.advise(line.clone());
+        }
         self.warn_about_unknown_rules(&config);
         let option = |name: &[u8]| config.option_of_oxlint(name);
         let is_on = |name: &[u8]| option(name).and_then(Json::as_bool) == Some(true);
@@ -1295,6 +1312,9 @@ impl<'l> Loader<'l> {
         for note in config.notes() {
             self.warn(&[note]);
         }
+        for line in config.advice() {
+            self.advise(line.clone());
+        }
         self.warn_about_unknown_rules(&config);
         Ok(Arc::new(Loaded {
             config,
@@ -1506,7 +1526,7 @@ impl<'l> Loader<'l> {
         // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
         let patterns = &self.options.ignore_pattern;
         if loaded.flavor == Flavor::Oxlint && self.options.ignore && !patterns.is_empty() {
-            chain = gitignore::with_text(chain, self.cwd(), &patterns.join(&b'\n'), true);
+            chain = gitignore::with_lines(chain, self.cwd(), patterns.iter().map(|it| &it[..]));
         }
         match self
             .options

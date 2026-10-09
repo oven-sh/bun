@@ -10,9 +10,10 @@ use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_core::strings;
+use bun_glob::{Options, Pattern};
 use bun_lint::js_plugin::Route;
 use bun_lint::linter::config::Dotfiles;
-use bun_lint::linter::{FileConfig, Glob, ResolvedConfig};
+use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_threading::Guarded;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,14 +66,15 @@ impl Target {
 enum Matcher {
     /// `**`
     Everything,
-    Pattern(Glob),
+    /// `new Minimatch(pattern, { dot: true })`
+    Pattern(Pattern),
 }
 
 impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Glob::new(relative)),
+            relative => Matcher::Pattern(Pattern::new(relative, Options::MINIMATCH_DOT)),
         }
     }
 
@@ -80,7 +82,7 @@ impl Matcher {
     fn matches_partially(&self, relative: &[u8]) -> bool {
         match self {
             Matcher::Everything => true,
-            Matcher::Pattern(pattern) => pattern.matches_partially(relative),
+            Matcher::Pattern(pattern) => pattern.may_match_inside(relative),
         }
     }
 

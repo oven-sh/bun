@@ -4704,5 +4704,50 @@
   "a.ts:10:7+2 typescript(strict-boolean-expressions)",
   "a.ts:8:7+1 typescript(strict-boolean-expressions)",
   "a.ts:9:7+2 typescript(strict-boolean-expressions)"
+ ],
+ "prefer-optional-chain/a-comparison-of-what-is-tested-last": [
+  "a.ts:10:19+45 typescript(prefer-optional-chain)",
+  "a.ts:11:19+52 typescript(prefer-optional-chain)",
+  "a.ts:14:19+60 typescript(prefer-optional-chain)",
+  "a.ts:16:19+47 typescript(prefer-optional-chain)",
+  "a.ts:18:19+56 typescript(prefer-optional-chain)",
+  "a.ts:20:19+29 typescript(prefer-optional-chain)",
+  "a.ts:22:19+45 typescript(prefer-optional-chain)",
+  "a.ts:23:19+47 typescript(prefer-optional-chain)",
+  "a.ts:28:19+63 typescript(prefer-optional-chain)",
+  "a.ts:4:19+56 typescript(prefer-optional-chain)",
+  "a.ts:6:19+55 typescript(prefer-optional-chain)",
+  "a.ts:7:19+30 typescript(prefer-optional-chain)",
+  "a.ts:8:19+30 typescript(prefer-optional-chain)"
+ ],
+ "prefer-optional-chain/after-a-call-of-a-name": [
+  "a.ts:13:19+18 typescript(prefer-optional-chain)",
+  "a.ts:15:19+16 typescript(prefer-optional-chain)",
+  "a.ts:17:19+14 typescript(prefer-optional-chain)",
+  "a.ts:18:19+40 typescript(prefer-optional-chain)",
+  "a.ts:20:19+22 typescript(prefer-optional-chain)",
+  "a.ts:4:19+16 typescript(prefer-optional-chain)",
+  "a.ts:5:19+36 typescript(prefer-optional-chain)",
+  "a.ts:6:19+27 typescript(prefer-optional-chain)",
+  "a.ts:7:19+12 typescript(prefer-optional-chain)",
+  "a.ts:8:19+17 typescript(prefer-optional-chain)"
+ ],
+ "prefer-optional-chain/one-test-and-a-comparison": [
+  "a.ts:10:19+36 typescript(prefer-optional-chain)",
+  "a.ts:11:19+42 typescript(prefer-optional-chain)",
+  "a.ts:12:19+29 typescript(prefer-optional-chain)",
+  "a.ts:13:19+56 typescript(prefer-optional-chain)",
+  "a.ts:14:19+62 typescript(prefer-optional-chain)",
+  "a.ts:15:19+29 typescript(prefer-optional-chain)",
+  "b.ts:10:19+58 typescript(prefer-optional-chain)",
+  "b.ts:11:19+65 typescript(prefer-optional-chain)",
+  "b.ts:4:19+51 typescript(prefer-optional-chain)",
+  "b.ts:5:19+58 typescript(prefer-optional-chain)",
+  "b.ts:8:19+77 typescript(prefer-optional-chain)"
+ ],
+ "types/pick-and-omit-of-a-union-do-not-ask-for-what-they-leave-out": [
+  "a.ts:22:17+3 typescript(no-redundant-type-constituents)",
+  "a.ts:25:19+13 typescript(no-unnecessary-type-assertion)",
+  "b.ts:7:17+7 typescript(no-redundant-type-constituents)"
  ]
 }

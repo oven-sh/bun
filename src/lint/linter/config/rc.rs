@@ -11,6 +11,7 @@
 mod categories;
 
 use super::flat::{ConfigError, Reader, Semantics};
+use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets, shape};
 use crate::context::Severity;
@@ -18,7 +19,6 @@ use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
 use crate::linter::resolved::find_js_rule;
-use crate::linter::space::trim_end;
 use crate::options::Json;
 use crate::rule::{Meta, Plugin};
 use bun_core::strings;
@@ -39,6 +39,18 @@ fn has_word(list: &str, word: &[u8]) -> bool {
         from = start + 1;
     }
     false
+}
+
+/// What `--print-config` of oxlint writes for the rule that [`oxlint_rule_key`] writes `key`.
+fn printed_key(key: &[u8]) -> Vec<u8> {
+    let (prefix, name) = parse_rule_id(key);
+    let plugin: &[u8] = match prefix {
+        b"n" => b"node",
+        b"jsx-a11y" => b"jsx_a11y",
+        b"react-perf" => b"react_perf",
+        _ => return key.to_vec(),
+    };
+    [plugin, b"/", name].concat()
 }
 
 /// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
@@ -185,51 +197,6 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
 
 /// The files that are linted if nothing else says so. Of the last three the scripts.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
-
-/// `convertIgnorePatternToMinimatch` of `@eslint/compat`: a pattern of a `.gitignore` as a pattern
-/// for `ignores`. `mean_nothing`: `{` and `(`, which mean nothing in a `.gitignore`. For oxlint `{a,b}` is one of the two.
-pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], mean_nothing: &[u8]) -> Vec<u8> {
-    let (negation, pattern): (&[u8], _) = match pattern.strip_prefix(b"!") {
-        Some(rest) => (b"!", rest),
-        None => (b"", pattern),
-    };
-    let pattern = trim_end(pattern);
-    if matches!(pattern, b"" | b"**" | b"/**" | b"**/") {
-        return [negation, pattern].concat();
-    }
-    let first_slash = strings::index_of_char_usize(pattern, b'/');
-    let everywhere: &[u8] = if first_slash.is_none_or(|at| at == pattern.len() - 1) {
-        b"**/"
-    } else {
-        b""
-    };
-    let without_slash = if first_slash == Some(0) {
-        &pattern[1..]
-    } else {
-        pattern
-    };
-    let mut escaped = Vec::with_capacity(without_slash.len());
-    let mut at = 0;
-    while at < without_slash.len() {
-        match without_slash[at] {
-            b'\\' if at + 1 < without_slash.len() => {
-                escaped.extend_from_slice(&without_slash[at..at + 2]);
-                at += 2;
-                continue;
-            }
-            byte if strings::contains_char(mean_nothing, byte) => escaped.push(b'\\'),
-            _ => {}
-        }
-        escaped.push(without_slash[at]);
-        at += 1;
-    }
-    let inside: &[u8] = if pattern.ends_with(b"/**") {
-        b"/*"
-    } else {
-        b""
-    };
-    [negation, everywhere, &escaped, inside].concat()
-}
 
 pub(super) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
     match json {
@@ -614,12 +581,7 @@ impl Rc<'_, '_> {
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
         if !ignore_patterns.is_empty() && passes_everything_on {
             self.reader.objects.push(ConfigObject {
-                ignores: Some(
-                    ignore_patterns
-                        .iter()
-                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it, b"(")))
-                        .collect(),
-                ),
+                ignore_lines: Some(IgnoreLines::of_oxlint(&ignore_patterns)),
                 is_global_ignores: true,
                 ignores_inside_only: true,
                 ..ConfigObject::default()
@@ -836,7 +798,7 @@ impl Rc<'_, '_> {
                     Some(&place) => rules[place].1 = setting,
                     None => {
                         places.insert(key.clone(), rules.len());
-                        rules.push((key, setting));
+                        rules.push((printed_key(&key), setting));
                     }
                 }
             }
@@ -999,6 +961,7 @@ impl Config {
                 prefers_typescript_rules: true,
                 objects: Vec::new(),
                 notes: Vec::new(),
+                advice: Vec::new(),
                 unknown_rules: Vec::new(),
                 js_plugins: Vec::new(),
                 js_locations: Vec::new(),

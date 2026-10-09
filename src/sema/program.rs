@@ -2380,10 +2380,20 @@ pub(crate) fn jsx_runtime_of(options: &Options, hir: &File, atoms: &Interner) ->
 }
 
 fn lib_file(options: &Options, lib: &[u8]) -> Vec<u8> {
+    lib_file_in(&options.lib_dir, lib)
+}
+
+fn lib_file_in(directory: &[u8], lib: &[u8]) -> Vec<u8> {
     if lib.is_empty() {
-        return [&options.lib_dir[..], b"/lib.d.ts"].concat();
+        return [directory, b"/lib.d.ts"].concat();
     }
-    [&options.lib_dir[..], b"/lib.", lib, b".d.ts"].concat()
+    [directory, b"/lib.", lib, b".d.ts"].concat()
+}
+
+/// Whether `directory` has every file of `Options::libs`. What these refer to is beside them.
+pub fn has_libraries(host: &dyn Host, options: &Options, directory: &[u8]) -> bool {
+    let mut files = (options.libs.iter()).map(|lib| lib_file_in(directory, lib_file_stem(lib)));
+    files.all(|file| host.is_file(&file))
 }
 
 /// `GetLibFileName`: the `N` of the `lib.N.d.ts` that contains the library `lib`, a result of

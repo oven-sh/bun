@@ -270,10 +270,9 @@ impl ResolvedConfig {
     /// plugin that is configured, and that is not implemented here or only in part.
     pub fn is_foreign(&self, id: &[u8]) -> bool {
         let prefix = parse_rule_id(id).0;
-        let is_implemented_in_part = match Plugin::of_prefix(prefix) {
-            None | Some(Plugin::Eslint | Plugin::TypeScript) => false,
-            Some(plugin) => (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin)),
-        };
+        let is_implemented_in_part = Plugin::of_prefix(prefix).is_some_and(|plugin| {
+            !plugin.is_whole() && (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin))
+        });
         self.skips_unknown_rules
             || is_implemented_in_part
             || self.foreign_plugins.iter().any(|it| **it == *prefix)
@@ -381,14 +380,18 @@ impl ResolvedConfig {
             let Some(severity) = value.first().and_then(severity_of) else {
                 continue;
             };
-            let options: Arc<[Json]> = value[1..].into();
-            config.validate(entry, severity, &options);
-            let instance = (severity != Severity::Off)
-                .then(|| Arc::from((entry.build)(&Options::new(&options))));
-            config
-                .rules
-                .push(ConfiguredRule::new(entry, severity, options, instance));
+            config.configure(entry, severity, &value[1..]);
         }
         config
+    }
+
+    /// What an entry of `rules` does. `options`: what follows the severity.
+    pub fn configure(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
+        let options: Arc<[Json]> = options.into();
+        self.validate(entry, severity, &options);
+        let instance =
+            (severity != Severity::Off).then(|| Arc::from((entry.build)(&Options::new(&options))));
+        self.rules
+            .push(ConfiguredRule::new(entry, severity, options, instance));
     }
 }

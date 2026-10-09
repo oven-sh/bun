@@ -1,10 +1,10 @@
 //! What oxlint refuses in a configuration file before it looks at what the file says: a key that it does not know, and a value of
 //! another kind than it expects. The words are those of its reader.
 
-use super::fast_glob::FastGlob;
 use super::flat::ConfigError;
 use crate::options::Json;
 use bun_core::strings as bytes;
+use bun_glob::pattern::{Unclosed, UnclosedKind, unclosed};
 
 const KEYS: &[&str] = &[
     "$schema",
@@ -115,6 +115,25 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
     ]))
 }
 
+/// What oxlint and oxfmt refuse the pattern `written` with. `None`: they take it.
+pub fn glob_refusal(written: &[u8]) -> Option<Vec<u8>> {
+    let Unclosed { kind, at } = unclosed(written)?;
+    let (what, open, close) = match kind {
+        UnclosedKind::Class => ("character class", '[', ']'),
+        UnclosedKind::Braces => ("brace expansion", '{', '}'),
+        UnclosedKind::Escape => {
+            let why = format!(
+                "`: trailing backslash at byte {at} has no character to escape (to match a literal '\\', use '\\\\')"
+            );
+            return Some([b"Invalid glob pattern `", written, why.as_bytes()].concat());
+        }
+    };
+    let why = format!(
+        "`: unclosed {what} at byte {at}; missing '{close}' (to match a literal '{open}', escape it as '\\{open}' or '[{open}]')"
+    );
+    Some([b"Invalid glob pattern `", written, why.as_bytes()].concat())
+}
+
 /// A value that a file and an override can have.
 fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
     match key {
@@ -122,10 +141,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
         b"files" | b"excludeFiles" => {
             strings(json)?;
             let patterns = json.as_array().unwrap_or_default().iter();
-            match patterns
-                .filter_map(Json::as_str)
-                .find_map(FastGlob::refusal)
-            {
+            match patterns.filter_map(Json::as_str).find_map(glob_refusal) {
                 Some(why) => Err(refusal(&[&bytes::replace_owned(&why, b"\\", b"\\\\")])),
                 None => Ok(()),
             }

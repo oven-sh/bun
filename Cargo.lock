@@ -1156,6 +1156,7 @@ dependencies = [
  "bun_core",
  "bun_format",
  "bun_format_conformance",
+ "bun_glob",
  "bun_js_parser",
  "bun_lint",
  "bun_lint_conformance",

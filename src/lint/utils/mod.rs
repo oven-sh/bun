@@ -19,7 +19,7 @@
 //! | `./utils/string-utils`, `../shared/string-utils` | [`string_utils`] | `upper_case_first`, `get_grapheme_count`, `graphemes`, `LETTER_PATTERN`: `find_letter`, `contains_letter`, `is_letter` |
 //! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | `normalize_package_name`, `get_shorthand_name`, `get_namespace_from_term`, `directivesPattern`: `match_directives_pattern(text)` |
 //! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `text::escape_string_regexp(s)` |
-//! | `require("ignore")` | [`ignore`] | `Ignore::new(&patterns, ignores_case, IgnoreVersion::V5).ignores(path)` |
+//! | `require("ignore")` | `bun_glob::ignore` | `IgnoreRules::from_lines(patterns, IgnoreOptions { syntax: IgnoreSyntax::Npm5, ignores_case }).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
@@ -91,7 +91,6 @@ pub mod eslint_utils;
 pub mod estree_compat;
 mod estree_type_at;
 pub mod fix_tracker;
-pub mod ignore;
 pub mod keywords;
 pub mod naming;
 pub mod node;

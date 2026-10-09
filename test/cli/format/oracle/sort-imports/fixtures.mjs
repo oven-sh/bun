@@ -6,7 +6,9 @@
 // - `src/**/__tests__/*.ts`: every template literal with an import in it, with a few sets of options.
 // What is expected is what the released plugin and Prettier make of them, not the snapshots.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { SETS, flags, load } from "./oracle.mjs";
 
 const { named } = flags(process.argv.slice(2));
@@ -15,6 +17,7 @@ const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts"
 const PARSERS = { oxc: "babel", "oxc-ts": "typescript" };
 
 
+const modules = fs.mkdtempSync(path.join(os.tmpdir(), "sort-imports-fixtures-"));
 const cases = [];
 async function add(plugin, name, filename, input, options) {
   const result = await expected(plugin, input, options, filename);
@@ -29,7 +32,10 @@ for (const plugin of ["trivago", "ianvs"]) {
     if (!spec) continue;
     const calls = [];
     const code = fs.readFileSync(path.join(full, spec), "utf8").replace(/^import .*$/gm, "");
-    new Function("run_spec", "expectError", "__dirname", "plugin", code)(
+    // As a module of its own, which is given what the file takes from the tests' globals and from its imports.
+    const module = path.join(modules, `${plugin}-${directory}.mjs`);
+    fs.writeFileSync(module, `export default (run_spec, expectError, __dirname, plugin) => {\n${code}\n};\n`);
+    (await import(pathToFileURL(module).href)).default(
       (_, parsers, options) => calls.push({ parsers, options }),
       () => {},
       full,
@@ -64,6 +70,7 @@ for (const plugin of ["trivago", "ianvs"]) {
       await add(plugin, `snippets/${count}/${index}`, `/snippets/${count}.ts`, input, { ...options, parser: "typescript" });
   }
 }
+fs.rmSync(modules, { recursive: true });
 fs.writeFileSync(named.out, JSON.stringify(cases, null, 1));
 const failed = cases.filter(it => it.error).length;
 console.log(`${cases.length} cases, of which ${failed} are errors`);

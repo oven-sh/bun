@@ -24,7 +24,7 @@ use bun_lint::linter::{
 use bun_sema::program::FileId;
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::FxHashMap;
-use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
+use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
 use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
@@ -49,11 +49,9 @@ fn check_and_lint(
     indices: &[usize],
     already_read: AlreadyRead,
 ) -> Vec<Option<Linted>> {
-    let (like_oxlint, others): (Vec<usize>, Vec<usize>) = (0..indices.len())
-        // `-p` is the project of all files.
-        .partition(|&at| {
-            files[indices[at]].config.language.is_oxlint && context.options.project.is_none()
-        });
+    // `--tsconfig` of oxlint is the project of the files that it includes, not of all files as `-p` is.
+    let (like_oxlint, others): (Vec<usize>, Vec<usize>) =
+        (0..indices.len()).partition(|&at| files[indices[at]].config.language.is_oxlint);
     if like_oxlint.is_empty() {
         return check_and_lint_in(
             context,
@@ -158,12 +156,12 @@ fn check_and_lint_in(
     let options = context.lint_options();
     // The text of a file of TypeScript's library, which the checker does not keep.
     let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| match environment.libs {
-        Libs::Bundled(libs) => {
+        Libs::Bundled(libs) if is_bundled(path) => {
             if let Some(text) = (libs.read)(crate::paths::basename(path)) {
                 then(&text);
             }
         }
-        Libs::Directory(_) => {
+        Libs::Bundled(_) | Libs::Directory(_) => {
             if let Ok(text) = crate::fs::read(to_native(path)) {
                 then(&text);
             }
@@ -242,10 +240,9 @@ fn check_and_lint_in(
             current_directory_is_of_the_project: true,
             reports_nothing_about_files: !context.checks_types,
             only_in_a_project_that_includes: matches!(project, Project::Including),
-            // Also for the project that `--tsconfig` of oxlint names. Nothing is asked about the program of the files that no
-            // project includes (`CreateInferredProjectProgram`).
-            refuses_broken_configurations: !matches!(project, Project::This(_))
-                && (indices.iter()).all(|&index| files[index].config.language.is_oxlint),
+            refuses_broken_configurations: matches!(project, Project::Including),
+            // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
+            prefers_the_library_of_the_project: matches!(project, Project::Nearest),
             ..Default::default()
         },
         retains_everything: false,

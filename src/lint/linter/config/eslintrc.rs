@@ -10,8 +10,9 @@
 //! 4. [`resolve`]: for the elements that are for a file, what `Linter` of ESLint 8 makes of `env` and `parserOptions`.
 
 use super::flat::{ConfigError, LoadLocatedPlugin, Reader, Semantics};
+use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
-use super::rc::{ignore_pattern_to_minimatch, strings_of};
+use super::rc::strings_of;
 use super::{Config, ConfigObject, eslint8, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
@@ -84,8 +85,8 @@ pub struct LegacyOptions<'o> {
     pub cascade: usize,
 }
 
-/// `DotPatterns` of `IgnorePattern`. For ESLint these are patterns of a `.gitignore`.
-const DOT_PATTERNS: [&[u8]; 2] = [b".*", b"!.eslintrc.*"];
+/// `DotPatterns` of `IgnorePattern`. For ESLint these are lines of a `.gitignore`.
+const DOT_PATTERNS: [&[u8]; 3] = [b".*", b"!.eslintrc.*", b"!../"];
 /// `DefaultPatterns`
 const DEFAULT_PATTERNS: [&[u8]; 1] = [b"/**/node_modules/*"];
 
@@ -801,6 +802,55 @@ struct LoadedPlugin {
     answer: Result<Json, LegacyFailure>,
 }
 
+/// `IgnorePattern` of `@eslint/eslintrc`: lines of a `.gitignore` in `base_path`, which is absolute.
+struct IgnorePattern {
+    lines: Vec<Vec<u8>>,
+    base_path: Vec<u8>,
+}
+
+impl IgnorePattern {
+    /// `getPatternsRelativeTo`
+    fn add_lines_relative_to(&self, base_path: &[u8], out: &mut Vec<Vec<u8>>) {
+        if base_path == &self.base_path[..] {
+            out.extend(self.lines.iter().cloned());
+            return;
+        }
+        let prefix = path::relative(base_path, &self.base_path);
+        for line in &self.lines {
+            let (head, body): (&[u8], &[u8]) = match line.strip_prefix(b"!") {
+                Some(body) => (b"!", body),
+                None => (b"", &line[..]),
+            };
+            let everywhere: &[u8] = match body.starts_with(b"/") || body.starts_with(b"../") {
+                true => b"",
+                false => b"/**/",
+            };
+            out.push([head, b"/", &prefix, everywhere, body].concat());
+        }
+    }
+}
+
+/// `getCommonAncestorPath`
+fn common_ancestor(patterns: &[IgnorePattern]) -> &[u8] {
+    let mut paths = patterns.iter().map(|it| &it.base_path[..]);
+    let mut result = paths.next().unwrap_or_default();
+    for b in paths {
+        let a = result;
+        result = if a.len() < b.len() { a } else { b };
+        let mut last_separator = 0;
+        for (at, (in_a, in_b)) in a.iter().zip(b).enumerate() {
+            if in_a != in_b {
+                result = &a[..last_separator];
+                break;
+            }
+            if *in_a == b'/' {
+                last_separator = at;
+            }
+        }
+    }
+    if result.is_empty() { b"/" } else { result }
+}
+
 /// `DependentPlugin`
 struct PluginUse {
     /// The short name, which the rules have as a prefix.
@@ -884,6 +934,8 @@ struct Legacy<'r, 'l, 'c> {
     /// [`DEFAULTS_OF_ESLINT_8`], and of [`DEFAULTS_OF_TYPESCRIPT_ESLINT`] what is for the version that is installed. The keys are the
     /// ids of the rules.
     defaults: Json,
+    /// `ignorePatterns` of the elements, in their order.
+    ignored: Vec<IgnorePattern>,
     /// The major version of typescript-eslint that is installed, if it is before 8.
     typescript_eslint: Option<u32>,
     /// How often something has been extended.
@@ -1318,6 +1370,15 @@ impl<'c> Legacy<'_, '_, 'c> {
             locations.push((Box::default(), location.clone()));
         }
         for &NamedPlugin { ref id, at } in &named.0 {
+            let said = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
+            if let Some(name) = said(b"name").filter(|_| is_implemented_here(id)) {
+                // That of typescript-eslint, which is not loaded.
+                let name = match said(b"version") {
+                    Some(version) => [name, b"@", version].concat(),
+                    None => name.to_vec(),
+                };
+                self.reader.advise_about_version(id, &name);
+            }
             let Some(location) = self.answer(at).and_then(|it| it.get(b"location")) else {
                 continue;
             };
@@ -1339,7 +1400,7 @@ impl<'c> Legacy<'_, '_, 'c> {
                 value => severity_of(value),
             };
             let is_on = severity.is_some_and(|it| it != Severity::Off);
-            if is_on && self.reader.registry.find_preferring(id, false).is_none() {
+            if is_on && self.reader.native_rule(id).is_none() {
                 self.reader.unknown_rules.push(id[..].into());
             }
         }
@@ -1459,19 +1520,31 @@ impl<'c> Legacy<'_, '_, 'c> {
         Ok(read)
     }
 
-    /// Patterns of a `.gitignore` in `base_path`.
-    fn ignore_patterns(&mut self, patterns: &[&[u8]], base_path: &[u8]) -> Result<(), ConfigError> {
-        if patterns.is_empty() {
-            return Ok(());
+    /// Lines of a `.gitignore` in `base_path`.
+    fn ignore_patterns(&mut self, lines: &[&[u8]], base_path: &[u8]) {
+        if !lines.is_empty() {
+            self.ignored.push(IgnorePattern {
+                lines: lines.iter().map(|it| it.to_vec()).collect(),
+                base_path: path::resolve(&self.reader.base_path, base_path),
+            });
         }
-        let patterns = patterns.iter();
-        let patterns = patterns.map(|it| Json::String(ignore_pattern_to_minimatch(it, b"{(")));
-        let ignores = self.reader.object(&object(vec![
-            (b"basePath", text(base_path)),
-            (b"ignores", Json::Array(patterns.collect())),
-        ]))?;
-        self.reader.objects.push(ignores);
-        Ok(())
+    }
+
+    /// `IgnorePattern.createIgnore`: `DotPatterns`, which `Dotfiles::Linted` leaves out, and then all other lines. One list
+    /// behind the other says what the two in one list say: the last line that matches decides.
+    fn ignores(&self) -> [ConfigObject; 2] {
+        let base_path = common_ancestor(&self.ignored);
+        let mut lines = Vec::new();
+        for pattern in &self.ignored {
+            pattern.add_lines_relative_to(base_path, &mut lines);
+        }
+        let lines: Vec<&[u8]> = lines.iter().map(|it| &it[..]).collect();
+        [&DOT_PATTERNS[..], &lines[..]].map(|lines| ConfigObject {
+            base_path: Some(base_path.to_vec()),
+            ignore_lines: Some(IgnoreLines::of_eslint_8(lines)),
+            is_global_ignores: true,
+            ..ConfigObject::default()
+        })
     }
 
     /// `rules` of an element.
@@ -1506,7 +1579,7 @@ impl<'c> Legacy<'_, '_, 'c> {
     fn convert(&mut self, element: &Element, named: &Named) -> Result<(), ConfigError> {
         if self.options.ignore {
             let patterns: Vec<&[u8]> = element.ignore_patterns.iter().map(|it| &it[..]).collect();
-            self.ignore_patterns(&patterns, element.base_path)?;
+            self.ignore_patterns(&patterns, element.base_path);
         }
         let mut flat: Vec<(&[u8], Json)> = Vec::new();
         let mut language_options: Vec<(&[u8], Json)> = Vec::new();
@@ -2151,6 +2224,7 @@ impl Config {
                 prefers_typescript_rules: false,
                 objects: Vec::new(),
                 notes: Vec::new(),
+                advice: Vec::new(),
                 unknown_rules: Vec::new(),
                 js_plugins: Vec::new(),
                 js_locations: Vec::new(),
@@ -2162,6 +2236,7 @@ impl Config {
             plugins: Vec::new(),
             elements: Vec::new(),
             defaults,
+            ignored: Vec::new(),
             typescript_eslint: None,
             extended: 0,
         };
@@ -2182,9 +2257,7 @@ impl Config {
             let default = legacy.reader.object(&default)?;
             legacy.reader.objects.push(default);
         }
-        let dot_patterns = legacy.reader.objects.len();
-        legacy.ignore_patterns(&DOT_PATTERNS, options.cwd)?;
-        legacy.ignore_patterns(&DEFAULT_PATTERNS, options.cwd)?;
+        legacy.ignore_patterns(&DEFAULT_PATTERNS, options.cwd);
         legacy.reader.defaults = legacy.reader.objects.len();
         // `_loadConfigInAncestors`: from the innermost, up to one with `root`.
         let (cascade, others) = files.split_at(options.cascade.min(files.len()));
@@ -2210,6 +2283,9 @@ impl Config {
         for element in &elements {
             legacy.convert(element, &named)?;
         }
+        let dot_patterns = legacy.reader.objects.len();
+        let ignores = legacy.ignores();
+        legacy.reader.objects.extend(ignores);
         legacy.conflicts(&elements)?;
         legacy.summary(&named)?;
         Ok(Config {

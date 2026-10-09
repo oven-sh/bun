@@ -713,6 +713,9 @@ impl Run<'_> {
         let size: u64 = shared.map(|it| it.size).sum();
         (context.js_plugins).expect(with_engine.count(), size, most_engines);
         if !with_types.is_empty() {
+            if !is_oxlint {
+                loader.advise_about_typescript();
+            }
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.into_iter().zip(linted) {

@@ -105,17 +105,6 @@ function probe(matcher) {
   return seen;
 }
 
-// `convertIgnorePatternToMinimatch` of `@eslint/compat`.
-function ignorePatternToMinimatch(pattern) {
-  const negation = pattern.startsWith("!") ? "!" : "";
-  const tested = pattern.slice(negation.length).trimEnd();
-  if (["", "**", "/**", "**/"].includes(tested)) return negation + tested;
-  const slash = tested.indexOf("/");
-  const everywhere = slash < 0 || slash === tested.length - 1 ? "**/" : "";
-  const escaped = (slash === 0 ? tested.slice(1) : tested).replaceAll(/(?=((?:\\.|[^{(])*))\1([{(])/guy, "$1\\$2");
-  return negation + everywhere + escaped + (tested.endsWith("/**") ? "/*" : "");
-}
-
 // `config` without the functions of `FlatCompat` in `files` and `ignores`. Any other function stays.
 function withoutMatchers(config) {
   const isMatcher = it => typeof it === "function";
@@ -147,7 +136,7 @@ function withoutMatchers(config) {
     if (typeof predicate?.basePath !== "string" || !Array.isArray(predicate.patterns)) return config;
     // `DotPatterns`, which it ignores besides.
     const patterns = [".*", "!.eslintrc.*", ...predicate.patterns];
-    return { basePath: predicate.basePath, ignores: patterns.map(ignorePatternToMinimatch) };
+    return { basePath: predicate.basePath, $ignorePatterns: patterns };
   }
   return config;
 }

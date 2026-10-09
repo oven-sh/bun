@@ -251,9 +251,12 @@ describe.concurrent("an eslint.config.js", () => {
           },
         ];`,
       "rules.js": "debugger;\nexport let a = 1;\nawait a;\n",
-      "comment.js": "/* eslint node/no-unsupported-features/es-syntax: [2, { version: \"13.5.0\" }], import-x/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n",
-      "own.js": "/* eslint n/no-unsupported-features/es-syntax: [2, { version: \"13.5.0\" }], import/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n",
-      "disabled.js": "debugger; // eslint-disable-line node/no-unsupported-features/es-syntax\ndebugger; // eslint-disable-line import-x/no-mutable-exports\ndebugger; // eslint-disable-line n/no-unsupported-features/es-syntax, import/no-mutable-exports\nexport let a = 1; // eslint-disable-line import-x/no-mutable-exports\nexport let b = 1; // eslint-disable-line import/no-mutable-exports\nawait a; // eslint-disable-line node/no-unsupported-features/es-syntax\nawait b; // eslint-disable-line n/no-unsupported-features/es-syntax\n",
+      "comment.js":
+        '/* eslint node/no-unsupported-features/es-syntax: [2, { version: "13.5.0" }], import-x/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n',
+      "own.js":
+        '/* eslint n/no-unsupported-features/es-syntax: [2, { version: "13.5.0" }], import/no-mutable-exports: 2 */\ndebugger;\nexport let a = 1;\nawait a;\n',
+      "disabled.js":
+        "debugger; // eslint-disable-line node/no-unsupported-features/es-syntax\ndebugger; // eslint-disable-line import-x/no-mutable-exports\ndebugger; // eslint-disable-line n/no-unsupported-features/es-syntax, import/no-mutable-exports\nexport let a = 1; // eslint-disable-line import-x/no-mutable-exports\nexport let b = 1; // eslint-disable-line import/no-mutable-exports\nawait a; // eslint-disable-line node/no-unsupported-features/es-syntax\nawait b; // eslint-disable-line n/no-unsupported-features/es-syntax\n",
     });
     expect(problems).toEqual([
       "comment.js:2:1 import-x/no-mutable-exports",
@@ -489,6 +492,70 @@ describe.concurrent("an eslint.config.js", () => {
     expect(keys).toEqual([
       ["config", "described", "index"],
       ["config", "described", "index"],
+    ]);
+  });
+});
+
+describe.concurrent("a note says that a plugin that is built in is installed in an older version", () => {
+  const notes = async (files: Record<string, string>, ...flags: string[]) =>
+    (await lint({ "a.js": "export {};\n", ...files }, ["-f", "stylish", ...flags, "a.js"])).stderr
+      .split("\n")
+      .filter(it => it.startsWith("note: "));
+  const flat = (plugins: Record<string, { name?: string; version?: string }>) => ({
+    "eslint.config.mjs": `export default [{ plugins: ${JSON.stringify(
+      Object.fromEntries(Object.entries(plugins).map(([prefix, meta]) => [prefix, { meta, rules: {} }])),
+    )} }];`,
+  });
+  const typescript = (version?: string) =>
+    flat({ "@typescript-eslint": { name: "@typescript-eslint/eslint-plugin", version } });
+
+  test("by a minor version or more", async () => {
+    expect(await notes(typescript("8.43.0"))).toEqual([
+      "note: @typescript-eslint/eslint-plugin 8.43.0 is installed; bun lint follows 8.71.1.",
+    ]);
+    expect(await notes(typescript("7.18.0"))).toEqual([
+      "note: @typescript-eslint/eslint-plugin 7.18.0 is installed; bun lint follows 8.71.1.",
+    ]);
+    expect(
+      await notes(
+        flat({
+          n: { name: "eslint-plugin-n", version: "17.16.2" },
+          import: { name: "eslint-plugin-import", version: "2.31.0" },
+          "react-hooks": { name: "eslint-plugin-react-hooks", version: "5.2.0" },
+        }),
+      ),
+    ).toEqual([
+      "note: eslint-plugin-n 17.16.2 is installed; bun lint follows 18.4.1.",
+      "note: eslint-plugin-import 2.31.0 is installed; bun lint follows 2.32.0.",
+      "note: eslint-plugin-react-hooks 5.2.0 is installed; bun lint follows 7.1.1.",
+    ]);
+  });
+
+  test("not by less, not if it is later, not if it does not say, not for a plugin that runs in JavaScript", async () => {
+    for (const version of ["8.71.0", "8.71.9", "8.72.0", "9.0.0", undefined, "next"]) {
+      expect([version, await notes(typescript(version))]).toEqual([version, []]);
+    }
+    expect(await notes(flat({ ts: { name: "@typescript-eslint/eslint-plugin", version: "8.43.0" } }))).toEqual([]);
+    expect(await notes(flat({ n: { name: "eslint-plugin-node", version: "11.1.0" } }))).toEqual([]);
+  });
+
+  test("not where nobody reads it", async () => {
+    for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"]]) {
+      expect([flags, await notes(typescript("8.43.0"), ...flags)]).toEqual([flags, []]);
+    }
+  });
+
+  test("with an .eslintrc.json, from the package", async () => {
+    const files = {
+      ".eslintrc.json": rc({
+        plugins: ["@typescript-eslint"],
+        rules: { "@typescript-eslint/no-explicit-any": "error" },
+      }),
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": `{ "name": "@typescript-eslint/eslint-plugin", "version": "5.62.0", "main": "index.js" }`,
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": `module.exports = { rules: {} };`,
+    };
+    expect(await notes(files)).toEqual([
+      "note: @typescript-eslint/eslint-plugin 5.62.0 is installed; bun lint follows 8.71.1.",
     ]);
   });
 });
@@ -936,6 +1003,7 @@ describe.concurrent("an .oxlintrc.json", () => {
     [{ overrides: [{ files: ["a{b{c}"] }] }, "unclosed brace expansion at byte 1;"],
     [{ overrides: [{ files: ["*.js"], excludeFiles: ["{a,[}"] }] }, "unclosed character class at byte 3; missing ']'"],
     [{ overrides: [{ files: ["[!]"] }] }, "unclosed character class at byte 0;"],
+    [{ overrides: [{ files: ["x\\"] }] }, "trailing backslash at byte 1 has no character to escape"],
     [{ options: { nonsense: 1 } }, "unknown field `nonsense`, expected one of `typeAware`,"],
     [{ options: { maxWarnings: -1 } }, "invalid value: integer `-1`, expected usize"],
     [{ options: { typeAware: "yes" } }, ", expected a boolean"],
@@ -958,7 +1026,7 @@ describe.concurrent("an .oxlintrc.json", () => {
   });
 
   test("patterns of `overrides` that are closed, or do not open anything", async () => {
-    const files = ["[]a]", "[!]]", "{[}]}", "\\{a", "a}", "{]}", "[{]", "a{b{c}}", "x\\"];
+    const files = ["[]a]", "[!]]", "{[}]}", "\\{a", "a}", "{]}", "[{]", "a{b{c}}"];
     const config = { ...noVar, categories: { correctness: "off" }, overrides: [{ files, rules: {} }] };
     const { problems } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
     expect(problems).toEqual(["a.js:1:1 no-var"]);
@@ -1082,7 +1150,10 @@ describe.concurrent("an .oxlintrc.json", () => {
   test("`categories` say nothing about the plugins of overrides that each name all the plugins of the file", async () => {
     const code = 'it("a", () => {\n  if (x) expect(1).toBe(1);\n});\n';
     const reported = async (config: object, extended: Record<string, object> = {}) => {
-      const files = Object.entries({ ".oxlintrc.json": config, ...extended }).map(([name, it]) => [name, JSON.stringify(it)]);
+      const files = Object.entries({ ".oxlintrc.json": config, ...extended }).map(([name, it]) => [
+        name,
+        JSON.stringify(it),
+      ]);
       const { problems } = await lint({ "__tests__/a.spec.ts": code, ...Object.fromEntries(files) });
       const rules = problems.map(it => it.split(" ")[1].split("/"));
       return rules.filter(it => it[1] === "no-conditional-expect").map(it => it[0]);
@@ -1097,7 +1168,10 @@ describe.concurrent("an .oxlintrc.json", () => {
         reported({ ...typescript, overrides: [tests(["jest", "vitest"])] }),
         // All that apply count, and only those.
         reported({ ...typescript, overrides: [tests(["typescript", "jest"]), tests(["typescript", "vitest"])] }),
-        reported({ ...typescript, overrides: [tests(["typescript", "jest"]), tests(["typescript", "vitest"], "src/**")] }),
+        reported({
+          ...typescript,
+          overrides: [tests(["typescript", "jest"]), tests(["typescript", "vitest"], "src/**")],
+        }),
         reported({ ...correctness, plugins: [], overrides: [tests(["jest"]), tests(["vitest"])] }),
         // What it names itself is on.
         reported({ ...typescript, overrides: [{ ...tests(["typescript", "jest"]), rules: named }] }),
@@ -1160,6 +1234,36 @@ describe.concurrent("an .oxlintrc.json", () => {
     const without = await lint({ ".oxlintrc.json": JSON.stringify(off), "a.js": "export {};\n" });
     expect(named(without.stderr)).toEqual(lacking.slice(1));
   });
+});
+
+// What oxlint 1.87 prints.
+test("--print-config of oxlint: what each plugin is called in the name of a rule", async () => {
+  const names = [
+    "import/no-cycle",
+    "jest/no-focused-tests",
+    "jsdoc/require-param",
+    "jsx_a11y/alt-text",
+    "nextjs/no-img-element",
+    "no-debugger",
+    "node/no-path-concat",
+    "oxc/no-accumulating-spread",
+    "promise/param-names",
+    "react/jsx-key",
+    "react/rules-of-hooks",
+    "react_perf/jsx-no-new-object-as-prop",
+    "typescript/no-explicit-any",
+    "unicorn/no-null",
+    "vitest/no-import-node-test",
+    "vue/no-dupe-keys",
+  ];
+  const plugins = [...new Set(names.filter(it => it.includes("/")).map(it => it.split("/")[0]))];
+  const config = {
+    categories: { correctness: "off" },
+    plugins,
+    rules: Object.fromEntries(names.map(it => [it, "warn"])),
+  };
+  const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config) }, ["--print-config"]);
+  expect(Object.keys(JSON.parse(stdout).rules).sort()).toEqual(names);
 });
 
 describe.concurrent("the configuration files of ESLint 8", () => {

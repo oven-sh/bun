@@ -1,4 +1,4 @@
-// `minimatch`, as @eslint/config-array uses it, against `src/lint/linter/config/minimatch.rs`.
+// `minimatch`, as @eslint/config-array uses it, against `bun_glob::Pattern` with `Options::MINIMATCH_DOT`.
 
 import { createRequire } from "node:module";
 import { random, report, requireFromEslint, runBunLint } from "./shared.mjs";

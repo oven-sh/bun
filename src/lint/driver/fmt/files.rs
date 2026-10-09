@@ -8,8 +8,7 @@ use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_collections::index_sort;
 use bun_core::strings;
-use bun_lint::linter::Glob;
-use bun_lint::linter::config::FastGlob;
+use bun_lint::linter::config::glob_refusal;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::sync::Arc;
@@ -401,7 +400,7 @@ pub(crate) struct Ignored {
     /// `.git`, `node_modules`, ..
     directories: Vec<&'static [u8]>,
     /// The arguments that start with `!`, from the working directory.
-    negative: Vec<Glob>,
+    negative: Vec<bun_glob::Pattern>,
     /// `.gitignore`, `.prettierignore`: a file is ignored if one of them says so.
     files: Vec<Chain>,
     cwd: Vec<u8>,
@@ -623,22 +622,6 @@ fn search(
     }
 }
 
-/// To `micromatch`, `(a|b)` is what `@(a|b)` is. `pattern` with the latter for the former.
-fn with_marked_groups(pattern: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(pattern.len() + 2);
-    for (at, &byte) in pattern.iter().enumerate() {
-        let is_marked = |before: &u8| matches!(before, b'@' | b'?' | b'!' | b'+' | b'*' | b'\\');
-        if byte == b'('
-            && !out.last().is_some_and(is_marked)
-            && strings::contains_char(&pattern[at..], b')')
-        {
-            out.push(b'@');
-        }
-        out.push(byte);
-    }
-    out
-}
-
 enum Entry {
     File(Vec<u8>, u64),
     Directory(Vec<u8>),
@@ -683,9 +666,10 @@ pub(crate) fn expand(
                 entries.push((Entry::Directory(path), pattern, &written[..]))
             }
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored
-                    .negative
-                    .push(Glob::new(negative.strip_prefix(b"./").unwrap_or(negative))),
+                Some(negative) => ignored.negative.push(bun_glob::Pattern::new(
+                    negative.strip_prefix(b"./").unwrap_or(negative),
+                    bun_glob::Options::FAST_GLOB_DOT,
+                )),
                 None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
         }
@@ -731,8 +715,8 @@ pub(crate) fn expand(
             }
             Entry::Pattern => {
                 // `removeLeadingDotSegment` of `fast-glob`
-                let pattern = &with_marked_groups(input.strip_prefix(b"./").unwrap_or(&input));
-                let glob = Glob::new(pattern);
+                let pattern = input.strip_prefix(b"./").unwrap_or(&input);
+                let glob = bun_glob::Pattern::new(pattern, bun_glob::Options::FAST_GLOB_DOT);
                 let parent = paths::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {
@@ -759,8 +743,8 @@ pub(crate) fn expand(
                             false => glob.matches(relative),
                         },
                         &|relative| match is_absolute {
-                            true => glob.matches_partially(&absolute(relative)),
-                            false => glob.matches_partially(relative),
+                            true => glob.may_match_inside(&absolute(relative)),
+                            false => glob.may_match_inside(relative),
                         },
                         false,
                     )?,
@@ -823,7 +807,7 @@ pub(crate) fn expand_as_oxfmt(
         let path = paths::resolve(&cwd, normalized);
         // What is there is not a pattern, whatever it looks like.
         match strings::index_of_any(normalized, b"*?[{").is_some() && !bun_sys::exists(&path) {
-            true => match FastGlob::refusal(normalized) {
+            true => match glob_refusal(normalized) {
                 Some(refusal) => return Err(Fatal(refusal)),
                 None => globs.push(glob_of_oxc(normalized)),
             },
@@ -831,9 +815,10 @@ pub(crate) fn expand_as_oxfmt(
         }
     }
     // In the format of `.gitignore`, unlike Prettier's.
+    let excluded = excluded.iter().map(|it: &Vec<u8>| &it[..]);
     ignored
         .files
-        .extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n'), true).map(Some));
+        .extend(gitignore::with_lines(None, &cwd, excluded).map(Some));
     let ignored = &*ignored;
     if !globs.is_empty() || targets.is_empty() {
         targets.push(cwd);

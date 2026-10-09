@@ -483,6 +483,21 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As oxlint 1.87, three runs of three.
+  test(
+    "at one place, what is built in comes before what a plugin reports",
+    async () => {
+      const rules = { "n/no-path-concat": "error", "n/only-there": "warn", "node/no-path-concat": "warn" };
+      const { stdout } = await lint({ ...calledN, ".oxlintrc.json": besideNode({ rules }) }, ["-f", "unix", "a.js"]);
+      expect([...stdout.matchAll(/^a\.js:1:18: .* \[\w+\/(.*)\]$/gm)].map(it => it[1])).toEqual([
+        "node(no-path-concat)",
+        "n(no-path-concat)",
+        "n(only-there)",
+      ]);
+    },
+    timeout,
+  );
+
   test(
     "a plugin that is called n beside the node that is built in: --print-config has what is built in, as oxlint's",
     async () => {

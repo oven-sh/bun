@@ -295,6 +295,7 @@ fn run(args: &[String]) {
                 reports_nothing_about_files: defaults.reports_nothing_about_files,
                 only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
                 refuses_broken_configurations: defaults.refuses_broken_configurations,
+                prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,

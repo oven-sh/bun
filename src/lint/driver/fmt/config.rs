@@ -17,8 +17,8 @@ use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::config::FastGlob;
-use bun_lint::linter::{Glob, write_json};
+use bun_lint::linter::config::glob_refusal;
+use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -115,25 +115,11 @@ const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath
 /// that takes none has them, so that `"80"` is not 80.
 type Settings = Vec<(Vec<u8>, Vec<u8>)>;
 
-/// What a pattern of an override is matched with.
-enum PatternGlob {
-    /// `micromatch`, as far as `minimatch` is the same.
-    Prettier(Glob),
-    Oxfmt(FastGlob),
-}
-
-impl PatternGlob {
-    fn matches(&self, path: &[u8]) -> bool {
-        match self {
-            PatternGlob::Prettier(glob) => glob.matches(path),
-            PatternGlob::Oxfmt(glob) => glob.matches(path),
-        }
-    }
-}
-
+/// A pattern of an override.
 struct Pattern {
-    glob: PatternGlob,
+    glob: bun_glob::Pattern,
     /// As it is written.
+    text: Box<[u8]>,
     has_slash: bool,
 }
 
@@ -172,8 +158,8 @@ pub(crate) struct Scope {
 }
 
 /// An element of oxc's `GlobSet`.
-pub(crate) fn glob_of_oxc(pattern: &[u8]) -> FastGlob {
-    FastGlob::new(pattern)
+pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
+    bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
 /// A string, or the strings of an array.
@@ -189,10 +175,12 @@ fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
     let all = texts_of(json);
     let pattern = |text: &&[u8]| Pattern {
         glob: if is_oxfmt {
-            PatternGlob::Oxfmt(glob_of_oxc(text))
+            glob_of_oxc(text)
         } else {
-            PatternGlob::Prettier(Glob::new(text))
+            // `micromatch.isMatch(path, pattern, { dot: true })`
+            bun_glob::Pattern::new(text, bun_glob::Options::MICROMATCH_DOT)
         },
+        text: (*text).into(),
         has_slash: strings::contains_char(text, b'/'),
     };
     all.iter().map(pattern).collect()
@@ -402,8 +390,11 @@ impl Override {
         [false, true].into_iter().any(|with_slashes| {
             // With patterns without slashes, what is excluded is matched against the name too,
             // whatever it looks like: micromatch's `basename`.
-            let matches =
-                |it: &Pattern| it.glob.matches(if with_slashes { relative } else { name });
+            // What is the path, letter for letter, matches before `basename` is looked at.
+            let matches = |it: &Pattern| match with_slashes {
+                true => it.glob.matches(relative),
+                false => it.glob.matches(name) || *it.text == *relative,
+            };
             self.files
                 .iter()
                 .filter(|it| it.has_slash == with_slashes)
@@ -524,7 +515,7 @@ impl Config {
                 .flatten()
                 .copied()
                 .collect(),
-            ignores: gitignore::with_text(None, paths::dirname(path), &ignored.join(&b'\n'), true),
+            ignores: gitignore::with_lines(None, paths::dirname(path), ignored.iter().copied()),
         }
     }
 }
@@ -842,7 +833,7 @@ impl<'c> Configs<'c> {
                 .iter()
                 .flat_map(|it| [it.get(b"files"), it.get(b"excludeFiles")])
                 .flat_map(texts_of)
-                .find_map(FastGlob::refusal)
+                .find_map(glob_refusal)
         {
             return Err(Fatal(
                 [&b"Failed to parse configuration.\n"[..], &refusal[..]].concat(),
@@ -861,6 +852,18 @@ impl<'c> Configs<'c> {
                     b"Failed to parse configuration.\nInvalid pattern `",
                     pattern,
                     b"` in `ignorePatterns`: `..` is not supported, patterns are resolved within the config file's directory",
+                ]
+                .concat(),
+            ));
+        }
+        if is_oxfmt
+            && let Some(line) = gitignore::refused_line(ignored.iter().filter_map(Json::as_str))
+        {
+            return Err(Fatal(
+                [
+                    b"Failed to parse configuration.\nFailed to add ignore pattern `",
+                    &line[..],
+                    b"` from `ignorePatterns`",
                 ]
                 .concat(),
             ));

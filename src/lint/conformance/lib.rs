@@ -28,7 +28,7 @@ use bun_core::strings;
 use bun_format_conformance::output_line;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, ResolvedConfig, RuleId};
+use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
@@ -185,12 +185,6 @@ fn write_file(path: &[u8], contents: &[u8]) {
 /// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
 /// error.
 pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
-    let mut rule = vec![Json::Number(2.0)];
-    rule.extend_from_slice(
-        case.get(b"options")
-            .and_then(Json::as_array)
-            .unwrap_or_default(),
-    );
     let config = Json::Object(vec![
         (
             b"languageOptions".to_vec(),
@@ -200,15 +194,11 @@ pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> Res
             b"settings".to_vec(),
             case.get(b"settings").cloned().unwrap_or(Json::Null),
         ),
-        (
-            b"rules".to_vec(),
-            Json::Object(vec![(
-                RuleId::Known(entry.meta).to_vec(),
-                Json::Array(rule),
-            )]),
-        ),
     ]);
     let mut config = ResolvedConfig::from_json(linter.registry(), &config, &mut Vec::new());
+    // Not by its name: in a configuration that is the rule of the package, as long as the plugin is not whole here.
+    let options = case.get(b"options").and_then(Json::as_array);
+    config.configure(entry, Severity::Error, options.unwrap_or_default());
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
         Plugin::TypeScript => Severity::Warn,

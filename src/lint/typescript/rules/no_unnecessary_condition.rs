@@ -409,6 +409,11 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     if is_conditional_always_necessary(ty) {
         return;
     }
+    // tsgolint 7.0 says nothing of a conditional type that is not resolved: `Awaited<T>`.
+    let is_oxlint = cx.language().is_oxlint;
+    if is_oxlint && union_constituents(ty).iter().any(|part| part.has_flags(TypeFlags::CONDITIONAL)) {
+        return;
+    }
     let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
         NEVER
     } else if !is_possibly_truthy(ty) {
@@ -418,8 +423,12 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     } else {
         return;
     };
-    // oxlint points at what the type is of: the `a` of `!a`.
-    cx.report(if cx.language().is_oxlint { expression } else { node }, message).comments_apply_at(node);
+    // oxlint points at what the type is of: the `a` of `!a`. tsgolint does not say the type of a literal.
+    let is_literal = matches!(
+        expression.tag(),
+        ExprTag::True | ExprTag::False | ExprTag::Null | ExprTag::Number | ExprTag::BigInt | ExprTag::String
+    );
+    cx.report(if is_oxlint && !is_literal { expression } else { node }, message).comments_apply_at(node);
 }
 
 fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
@@ -657,6 +666,15 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if cx.language().is_oxlint && goes_by(node_to_check).is_some_and(is_nullable_type) {
         return;
     }
+    // `f()?.a`: tsgolint 7.0 goes by the first signature of `f`, whichever is called.
+    if cx.language().is_oxlint
+        && let ExprKind::Call(call) = node_to_check.kind()
+        && union_constituents(get_constrained_type_at_location(call.callee())).iter().any(|part| {
+            get_call_signatures_of_type(part).first().is_some_and(|it| is_possibly_nullish(it.get_return_type()))
+        })
+    {
+        return;
+    }
 
     let start = skip_trivia(cx.text(), node_to_check.outer_span().end);
     let question_dot_operator = Span::new(start, start + 2);
@@ -726,7 +744,9 @@ impl NoUnnecessaryCondition {
         let Some(callback) = node.as_call().and_then(|call| call.args().first()) else {
             return;
         };
-        if let ExprKind::Fn(function) = callback.kind() {
+        // tsgolint 7.0 goes by the type that the function returns, also where what it returns is written there.
+        let is_oxlint = cx.language().is_oxlint;
+        if !is_oxlint && let ExprKind::Fn(function) = callback.kind() {
             match function.body() {
                 // `() => something`
                 FnBody::Expr(body) => return check_node(body, cx),
@@ -767,9 +787,19 @@ impl NoUnnecessaryCondition {
                 return;
             }
         }
-        match has_falsy_return_types {
-            false => cx.report(callback, ALWAYS_TRUTHY_FUNC),
-            true => cx.report(callback, ALWAYS_FALSY_FUNC),
+        // And it points at the body of a function that is written there, as at a condition.
+        let body = match callback.kind() {
+            ExprKind::Fn(function) if is_oxlint => match function.body() {
+                FnBody::Expr(body) => Some(body.outer_span()),
+                _ => function.body_span(),
+            },
+            _ => None,
+        };
+        match (body, has_falsy_return_types) {
+            (Some(body), false) => cx.report(body, ALWAYS_TRUTHY),
+            (Some(body), true) => cx.report(body, ALWAYS_FALSY),
+            (None, false) => cx.report(callback, ALWAYS_TRUTHY_FUNC),
+            (None, true) => cx.report(callback, ALWAYS_FALSY_FUNC),
         };
     }
 }

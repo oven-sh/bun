@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::no_restricted_imports::{
-    Dialect, Ignore, IgnoreVersion, Restrictions, STATEMENTS, SideEffectImports, import_source,
-    is_type_only, restricted_paths, restricted_patterns,
+    Dialect, IgnoreRules, IgnoreSyntax, Restrictions, STATEMENTS, SideEffectImports, ignore_rules,
+    import_source, is_type_only, restricted_paths, restricted_patterns,
 };
 
 /// Disallow specified modules when loaded by `import`.
@@ -10,7 +10,7 @@ pub struct NoRestrictedImports {
     /// What `allowTypeImports` is set for. A type-only import of one of these is not checked at
     /// all, not even against the restrictions that do not set it.
     allowed_type_import_paths: Vec<Box<[u8]>>,
-    allowed_type_import_matchers: Vec<Ignore>,
+    allowed_type_import_matchers: Vec<IgnoreRules>,
     allowed_type_import_regexes: Vec<Regex>,
 }
 
@@ -50,7 +50,7 @@ impl Rule for NoRestrictedImports {
             let is_case_sensitive = pattern.bool_or("caseSensitive", false);
             if pattern.has("group") {
                 let group = pattern.strings("group");
-                let matcher = Ignore::new(&group, !is_case_sensitive, IgnoreVersion::V7);
+                let matcher = ignore_rules(&group, !is_case_sensitive, IgnoreSyntax::Npm7012);
                 rule.allowed_type_import_matchers.push(matcher);
             }
             if let Some(regex) = pattern.str("regex").filter(|it| !it.is_empty())

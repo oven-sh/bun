@@ -1685,6 +1685,33 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // What oxlint 1.87.0 with tsgolint 7.0.2003 does. Added to the project as root files, the two .mjs would be errors of the
+      // program (6504), and the tsconfig.json would be refused for them.
+      test("--tsconfig is the project of the files that it includes, the others are in no project", async () => {
+        const code = "async function f() { return 1; }\nf();\n";
+        const { stdout, exitCode } = await lint(
+          {
+            ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+            "tsconfig.json": JSON.stringify({
+              include: ["src"],
+              compilerOptions: { strict: true, lib: ["es2022"], types: [] },
+            }),
+            "src/a.ts": code,
+            "src/b.mjs": code,
+            "other/c.ts": code,
+            "other/d.mjs": code,
+          },
+          ["-f", "unix", "--type-aware", "--tsconfig", "./tsconfig.json", "src", "other"],
+        );
+        const places = stdout.split("\n").filter(it => it.includes("[Error/"));
+        expect(places.map(it => it.replace(/: .* \[/, " [")).sort()).toEqual(
+          ["other/c.ts", "other/d.mjs", "src/a.ts", "src/b.mjs"].map(
+            it => `${it}:2:1 [Error/typescript(no-floating-promises)]`,
+          ),
+        );
+        expect(exitCode).toBe(1);
+      });
+
       // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
       describe("a file of two projects is to each what the options of the project make of it", () => {
         const project = (more: object, include: string[]) =>
@@ -2517,6 +2544,60 @@ describe.concurrent("bun lint", () => {
       "a.ts": `import { later, text } from "./b";\nlater();\nexport const a = text as string;\n`,
       "b.ts": `export async function later() {}\nexport const text: string = "";\n`,
     };
+
+    test("a note says that the typescript of the project is older than the one as which types are checked", async () => {
+      const notes = async (version: string, more: Record<string, string> = {}, ...flags: string[]) => {
+        const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
+        const { stderr } = await lint({ ...files, ...installed, ...more }, ["-f", "stylish", ...flags]);
+        return stderr.split("\n").filter(it => it.startsWith("note: "));
+      };
+      expect(await notes("5.8.3")).toEqual([
+        "note: typescript 5.8.3 is installed; bun lint checks types as TypeScript 7.",
+      ]);
+      expect(await notes("7.0.2")).toEqual([]);
+      expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
+      // No rule needs types.
+      const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
+      expect(await notes("5.8.3", { "eslint.config.js": untyped })).toEqual([]);
+    });
+
+    // `textContent` of an `Element` is `string | null` up to TypeScript 5.8 and `string` since: a `!` that is removed for the
+    // library that is built in is an error to the compiler that the project has.
+    test("the library is that of the typescript that is installed for the project", async () => {
+      const names = ["Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction", "Number", "Object"];
+      const library = (marker: string) =>
+        [
+          "interface Array<T> { length: number; [n: number]: T }",
+          ...[...names, "RegExp", "String"].map(it => `interface ${it} {}`),
+          `declare const marker: ${marker};`,
+          "",
+        ].join("\n");
+      const config = (lib: string) =>
+        JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: [lib], types: [] } });
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.js": files["eslint.config.js"],
+          "a/tsconfig.json": config("es5"),
+          "a/node_modules/typescript/lib/lib.es5.d.ts": library("string | null"),
+          "a/a.ts": "export const a = marker!;\n",
+          "b/tsconfig.json": config("es5"),
+          "b/node_modules/typescript/lib/lib.es5.d.ts": library("string"),
+          "b/b.ts": "export const b = marker!;\n",
+          // It has no lib.es2022.d.ts, so the library is the one that is built in, which has no `marker`.
+          "c/tsconfig.json": config("es2022"),
+          "c/node_modules/typescript/lib/lib.es5.d.ts": library("string"),
+          "c/c.ts": "export const c = marker!;\n",
+        },
+        ["-f", "unix"],
+      );
+      expect(
+        stdout
+          .split("\n")
+          .filter(it => it.includes("[Error/"))
+          .map(it => it.split(": ")[0]),
+      ).toEqual(["<dir>/b/b.ts:1:18"]);
+      expect(exitCode).toBe(1);
+    });
 
     test("run with the types of the project", async () => {
       const { stdout, exitCode } = await lint(files, ["-f", "unix"]);

@@ -1,7 +1,7 @@
 // Collects the fixtures that the `extract-*.ts` scripts write, and what the cases with types need, in `bundle.zst`.
 //
 //   export ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. REACT_DIR=.. ESLINT_PLUGIN_IMPORT_DIR=.. ESLINT_PLUGIN_IMPORT_X_DIR=..
-//   export ESLINT_PLUGIN_N_DIR=.. OXC_DIR=..                  # the checkouts that the fixtures were recorded with
+//   export ESLINT_PLUGIN_N_DIR=.. ESLINT_PLUGIN_REACT_DIR=.. OXC_DIR=..   # the checkouts that the fixtures were recorded with
 //   bun test/cli/lint/conformance/sync.ts [<fixtures>]        # `fixtures` next to this file, unless named
 //   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # `more/<name>/` is what `<directory>/<plugin>/<rule>.json` are
 //   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # `oxlint/` is what `extract-oxlint.ts` wrote to `<directory>`
@@ -24,6 +24,7 @@ const SOURCES = [
   ["eslint-plugin-import", "ESLINT_PLUGIN_IMPORT_DIR", "."],
   ["eslint-plugin-import-x", "ESLINT_PLUGIN_IMPORT_X_DIR", "."],
   ["eslint-plugin-n", "ESLINT_PLUGIN_N_DIR", "."],
+  ["eslint-plugin-react", "ESLINT_PLUGIN_REACT_DIR", "."],
   ["oxc", "OXC_DIR", "npm/oxlint"],
   ["tsgolint", "TSGOLINT_DIR", "."],
 ] as const;
@@ -81,7 +82,7 @@ if (first === "--extract" && rest.length === 2) {
   const [name, directory] = rest;
   const files = kept(path => !path.startsWith(`more/${name}/`));
   const found = new Map<string, Uint8Array>();
-  for (const plugin of ["eslint", "typescript-eslint"]) {
+  for (const plugin of ["eslint", "typescript-eslint", "n", "react"]) {
     if (existsSync(join(directory, plugin))) collect(directory, plugin, found, file => !file.endsWith(".json"));
   }
   clean(found, [directory]);
@@ -108,7 +109,9 @@ if (first === "--extract" && rest.length === 2) {
 } else {
   const fixtures = first ?? join(here, "fixtures");
   const files = kept(path => path.startsWith("more/") || path.startsWith("oxlint"));
-  for (const directory of ["eslint", "typescript-eslint", "react-hooks", "import", "n", "oxc"]) collect(fixtures, directory, files, () => false);
+  for (const directory of ["eslint", "typescript-eslint", "react-hooks", "import", "n", "react", "oxc"]) {
+    collect(fixtures, directory, files, () => false);
+  }
   for (const directory of ["typescript-eslint-project", "import-project", "n-project"]) collect(fixtures, directory, files, () => false);
 
   const version: Record<string, { version?: string; commit?: string }> = {};

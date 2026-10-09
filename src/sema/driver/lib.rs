@@ -28,7 +28,7 @@ use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
     COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, Run, declaration_emit_output_file_path,
-    own_emit_output_file_path,
+    has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
@@ -262,6 +262,10 @@ pub struct PlanOptions {
     /// the program says about its options and its files (`GetProgramDiagnostics`). No file is checked in it: see
     /// `Report::refused`.
     pub refuses_broken_configurations: bool,
+    /// The `lib.*.d.ts` of a program are those of the `typescript` that is installed for it: of the first
+    /// `node_modules/typescript` from the directory of the configuration file upwards, if that has the files that `lib` and
+    /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
+    pub prefers_the_library_of_the_project: bool,
 }
 
 impl Default for PlanOptions {
@@ -286,6 +290,7 @@ impl Default for PlanOptions {
             reports_nothing_about_files: false,
             only_in_a_project_that_includes: false,
             refuses_broken_configurations: false,
+            prefers_the_library_of_the_project: false,
         }
     }
 }
@@ -1505,7 +1510,8 @@ impl Projects {
         // `getAncestorConfigFileName`
         let mut below = nearest.clone();
         loop {
-            if !has_to_include {
+            // `--project` is the only one that is asked.
+            if !has_to_include || request.project.is_some() {
                 break;
             }
             // Up to the root. What is above `/C:` is `/`, which is no directory of Windows.
@@ -2973,6 +2979,16 @@ fn check_named_files(
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(dir) => host::from_native(dir),
     };
+    if request.plan_options.prefers_the_library_of_the_project && !config_path.is_empty() {
+        let installed = ancestors(dirname::<Posix>(&config_path))
+            .map(|directory| inside(directory, b"node_modules/typescript"))
+            .find(|package| host.is_dir(package));
+        // By its real path: the packages of a workspace have links to one.
+        let own = installed.map(|package| inside(&host.realpath(&package), b"lib"));
+        if let Some(own) = own.filter(|own| has_libraries(host, &project.options, own)) {
+            project.options.lib_dir = own;
+        }
+    }
     report.has_bun_types_installed = project
         .options
         .effective_type_roots()

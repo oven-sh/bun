@@ -43,7 +43,7 @@ mod space;
 mod syntax;
 
 pub use config::{
-    Config, ConfigError, FileConfig, Glob, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
+    Config, ConfigError, FileConfig, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
     LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
@@ -453,6 +453,7 @@ impl Linter {
                 ..it.clone()
             }));
         }
+        let before_js = problems.len();
         // First, for the variables that they mark as used.
         if let (Some(host), Some(settings), None) =
             (options.js_plugins, &config.js_settings, options.again)
@@ -519,6 +520,7 @@ impl Linter {
                 severity: it.severity,
             })
             .collect();
+        let of_js = problems.len() - before_js;
         let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         problems.reserve(diagnostics.len());
         // What becomes of what the last rule and `messageId` change that change something.
@@ -548,6 +550,10 @@ impl Linter {
                 }
             }
             problems.push(message);
+        }
+        // oxlint runs its own rules first: at one place they are first.
+        if file.language().is_oxlint {
+            problems[before_js..].rotate_left(of_js);
         }
         LintMessage::sort(&mut problems);
 

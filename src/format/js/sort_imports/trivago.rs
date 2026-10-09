@@ -7,7 +7,6 @@ use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
 use crate::text::utf16_len;
-use bun_lint::linter::Glob;
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
 use std::cmp::Ordering;
@@ -40,7 +39,7 @@ pub(super) enum ByLength {
 }
 
 pub(super) struct Exclude {
-    pub(super) glob: Glob,
+    pub(super) glob: bun_glob::Pattern,
     pub(super) has_slash: bool,
 }
 

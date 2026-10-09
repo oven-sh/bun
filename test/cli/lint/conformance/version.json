@@ -23,6 +23,10 @@
     "version": "18.4.1",
     "commit": "f1d47aff402b9e009578f4b3155b84f7d8beef9b"
   },
+  "eslint-plugin-react": {
+    "version": "7.37.5",
+    "commit": "394c78a0791db707f0f4920880182d02a8414adb"
+  },
   "oxc": {
     "version": "1.70.0",
     "commit": "a4212152daf9908a93c9b1c433e68f8d79a19a1e"

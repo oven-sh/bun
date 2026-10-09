@@ -79,6 +79,9 @@ new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { defaul
 new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
+// `bun_js_parser::sema::DirectMode`, until the mode of Bun's parser that `bun check` was built on is
+// deleted: 0 brings it back.
+new!(pub BUN_SEMA_DIRECT: unsigned, "BUN_SEMA_DIRECT", {});
 // Testing hook for `bun build --compile`, debug builds only: lowers the 4 GiB
 // size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
 // so a test can reach it without a 4 GiB input.

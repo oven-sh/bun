@@ -3,11 +3,12 @@
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_lint::linter::Glob;
+use bun_glob::{Candidate, How, Options, Pattern};
 
 /// `[*.js]` and what follows it.
 struct Section {
-    glob: Glob,
+    /// For an absolute path.
+    glob: Pattern,
     /// In lower case.
     properties: Vec<(Vec<u8>, Vec<u8>)>,
 }
@@ -21,13 +22,26 @@ pub(crate) struct File {
     sections: Vec<Section>,
 }
 
-/// A pattern as one for a path from the directory of the file: `buildFullGlob`.
-fn full_glob(pattern: &[u8]) -> Vec<u8> {
-    match strings::index_of_char_usize(pattern, b'/') {
+/// `buildFullGlob`: the name of a section in the `.editorconfig` of `directory`, as a pattern for an absolute path.
+fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
+    let glob = match strings::index_of_char_usize(pattern, b'/') {
         None => [b"**/", pattern].concat(),
         Some(0) => pattern[1..].to_vec(),
         Some(_) => pattern.to_vec(),
+    };
+    let glob = strings::replace_owned(&glob, b"\\\\", b"\\\\\\\\");
+    let glob = strings::replace_owned(&glob, b"**", b"{*,**/**/**}");
+    let mut full = Vec::with_capacity(directory.len() + 1 + glob.len());
+    // `escape(directory, { windowsPathsNoEscape: true })` of minimatch
+    for &byte in directory {
+        match byte {
+            b'?' | b'*' | b'(' | b')' | b'[' | b']' => full.extend_from_slice(&[b'[', byte, b']']),
+            byte => full.push(byte),
+        }
     }
+    full.push(b'/');
+    full.extend_from_slice(&glob);
+    full
 }
 
 impl File {
@@ -42,7 +56,8 @@ impl File {
             match line {
                 [] | [b'#' | b';', ..] => {}
                 [b'[', pattern @ .., b']'] => file.sections.push(Section {
-                    glob: Glob::new(&full_glob(pattern)),
+                    // `new Minimatch(glob, { matchBase: true, dot: true })`. It has a slash, so `matchBase` says nothing.
+                    glob: Pattern::new(&full_glob(directory, pattern), Options::MINIMATCH_DOT),
                     properties: Vec::new(),
                 }),
                 line => {
@@ -77,11 +92,13 @@ pub(crate) fn options_for<'f>(
     path: &[u8],
 ) -> Vec<(&'static [u8], Vec<u8>)> {
     let mut properties: Vec<(&[u8], &[u8])> = Vec::new();
+    let candidate = Candidate::new(path);
     for file in files {
-        let Some(relative) = paths::inside(&file.directory, path) else {
+        if paths::inside(&file.directory, path).is_none() {
             continue;
-        };
-        for section in file.sections.iter().filter(|it| it.glob.matches(relative)) {
+        }
+        let is_for_it = |it: &&Section| it.glob.matches_candidate(&candidate, How::default());
+        for section in file.sections.iter().filter(is_for_it) {
             for (key, value) in &section.properties {
                 properties.retain(|it| it.0 != &key[..]);
                 properties.push((key, value));

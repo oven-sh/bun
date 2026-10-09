@@ -1,7 +1,7 @@
 use bun_core::strings;
+pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax};
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
-pub use bun_lint::utils::ignore::{Ignore, IgnoreVersion};
 use bun_lint::utils::text;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -231,6 +231,11 @@ impl Globs {
     }
 }
 
+/// `ignore({ allowRelativePaths: true, ignoreCase }).add(group)` of the version of the package that `syntax` names.
+pub fn ignore_rules(group: &[&str], ignores_case: bool, syntax: IgnoreSyntax) -> IgnoreRules {
+    IgnoreRules::from_lines(group.iter().map(|it| it.as_bytes()), IgnoreOptions { syntax, ignores_case })
+}
+
 /// Which modules a restriction is about.
 enum Matcher {
     /// An element of `paths`.
@@ -238,7 +243,7 @@ enum Matcher {
     /// `regex` of an element of `patterns`.
     Regex(Box<Regex>),
     /// `group` of an element of `patterns`.
-    Group(Ignore, Globs),
+    Group(Box<IgnoreRules>, Globs),
 }
 
 type Names = Vec<Box<[u8]>>;
@@ -663,7 +668,7 @@ impl Restrictions {
         if patterns.first().is_some_and(|it| it.as_str().is_some()) {
             let strings = patterns.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok());
             let group: Vec<&str> = strings.collect();
-            let ignore = Ignore::new(&group, true, IgnoreVersion::V5);
+            let ignore = Box::new(ignore_rules(&group, true, IgnoreSyntax::Npm5));
             let matcher = Matcher::Group(ignore, Globs::of_strings(&group));
             all.push(Restriction::new(matcher, Object::default()));
             return Restrictions { all };
@@ -677,7 +682,7 @@ impl Restrictions {
                 }
                 None => object.has("group").then(|| {
                     let group = object.strings("group");
-                    let ignore = Ignore::new(&group, !is_case_sensitive, IgnoreVersion::V5);
+                    let ignore = Box::new(ignore_rules(&group, !is_case_sensitive, IgnoreSyntax::Npm5));
                     Matcher::Group(ignore, Globs::of_group(&group, !is_case_sensitive))
                 }),
             };

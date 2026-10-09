@@ -2,16 +2,15 @@
 
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
+    # the filter patterns use extglob, which is off unless bash-completion turned it on
+    local reset=$(shopt -p globstar extglob)
+    shopt -s globstar extglob
 
-    if [[ -z "${cur_word}" ]]; then
-        COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
-    else
-        COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
-    fi
+    # matching files, plus directories so the user can descend into them
+    COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") $(compgen -d -- "${cur_word}") );
+    compopt -o filenames 2>/dev/null;
 
-    $reset
+    eval "${reset}"
 }
 
 _long_short_completion() {
@@ -45,7 +44,7 @@ _read_scripts_in_package_json() {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
+        scripts="${scripts//[\"\']/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
             [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
@@ -55,10 +54,7 @@ _read_scripts_in_package_json() {
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
-    ]] && {
+    [[ "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ]] && {
         local filtered_reply=();
         local reply_word script_name keep;
         for reply_word in "${COMPREPLY[@]}"; do

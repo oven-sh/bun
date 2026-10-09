@@ -169,6 +169,24 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     }
 }
 
+/// oxlint looks at a type literal that is a type annotation or the type of an alias, or a part of a union that is one
+/// of these, or of an intersection that is the type of an alias. Not in `a as { (): void }` or among type arguments.
+fn oxlint_looks_at(literal: TypeNode) -> bool {
+    let is_annotated = |node: Node| matches!(node, Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_));
+    let is_alias = |node: Node| matches!(node, Node::Stmt(it) if it.tag() == StmtTag::TypeAlias);
+    if literal.is_parenthesized() {
+        return false;
+    }
+    match literal.parent() {
+        Node::Type(outer) if !outer.is_parenthesized() => match outer.tag() {
+            TypeTag::Union => is_annotated(outer.parent()) || is_alias(outer.parent()),
+            TypeTag::Intersection => is_alias(outer.parent()),
+            _ => false,
+        },
+        parent => is_annotated(parent) || is_alias(parent),
+    }
+}
+
 impl Rule for PreferFunctionType {
     const META: Meta = Meta::typescript("prefer-function-type", Kind::Suggestion)
         .fixable(Fixable::Code)
@@ -198,6 +216,7 @@ impl Rule for PreferFunctionType {
             };
             if let Some(member) = members.first()
                 && members.len() == 1
+                && (!cx.language().is_oxlint || oxlint_looks_at(literal))
             {
                 check_member(member, Owner::TypeLiteral(literal), cx);
             }

@@ -567,6 +567,58 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test.each([
+    "x = {a?: 1}",
+    "x = {a!}",
+    "x = {async a}",
+    "x = {async a: 1}",
+    "x = {static a: 1}",
+    "x = {async get a() {}}",
+    "class A { async a }",
+    "class A { async a = 1 }",
+    "class A { async async a() {} }",
+    "class A { accessor a() {} }",
+    "class A { accessor static a }",
+    "class A { async static {} }",
+    "class A { static static {} }",
+    "class A { @a static {} }",
+    "class A extends B extends C {}",
+    "try {} catch (a = 1) {}",
+  ])("what only TypeScript's parser reads is a syntax error in JavaScript: %j", async code => {
+    const result = await format({ "a.js": code + "\n" }, ["a.js"], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": code + "\n" });
+    expect(result.stderr).toContain("[error] a.js: SyntaxError: ");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("the modifiers of JavaScript where they can be", async () => {
+    const code = `class A {
+  static async *a() {}
+  static accessor b = 1;
+  static get c() {}
+  static async constructor() {}
+  async static() {}
+  static static() {}
+  static async;
+  @d static e = 1;
+  static {}
+}
+x = {
+  async a() {},
+  async *b() {},
+  static: 1,
+  async,
+  static() {},
+  async get() {},
+};
+try {
+} catch ({ a = 1 }) {}
+`;
+    const result = await format({ "a.js": code }, ["--check", "a.js"]);
+    expect(result.stderr).not.toContain("a.js");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a block of JavaScript in Markdown in which a name is missing stays as it is", async () => {
     const files = { "a.md": "```js\nlet   x = 1;\nconst\n```\n" };
     const result = await format(files, [], { reads: ["a.md"] });

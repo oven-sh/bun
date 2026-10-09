@@ -157,17 +157,26 @@ describe("Bun.Cookie expires validation", () => {
       });
     });
 
-    test("throws for string with out-of-range year", () => {
-      expect(() => {
-        new Bun.Cookie("name", "value", { expires: "Wed, 01 Jan 300000000 00:00:00 GMT" });
-      }).toThrow("Invalid cookie expiration date");
-    });
+    describe("a date string outside the Date range", () => {
+      // WTF::parseDate returns NaN for a date outside ±8.64e15 ms, but it applies the UTC offset after that check.
+      // The last two dates are the largest and the smallest Date, and the offset moves each one hour out of range.
+      const outOfRange = [
+        "Wed, 01 Jan 300000000 00:00:00 GMT",
+        "Sat, 13 Sep 275760 00:00:00 -0100",
+        "Tue, 20 Apr -271821 00:00:00 +0100",
+      ];
 
-    test("Cookie.parse ignores Expires attribute with out-of-range year", () => {
-      const cookie = Bun.Cookie.parse("a=b; Expires=Wed, 01 Jan 300000000 00:00:00 GMT");
-      expect(cookie.name).toBe("a");
-      expect(cookie.value).toBe("b");
-      expect(cookie.expires).toBeUndefined();
+      test.each(outOfRange)("new Bun.Cookie throws for %s", expires => {
+        expect(() => {
+          new Bun.Cookie("name", "value", { expires });
+        }).toThrow("Invalid cookie expiration date");
+      });
+
+      test.each(outOfRange)("Cookie.parse ignores Expires=%s", expires => {
+        const cookie = Bun.Cookie.parse("a=b; Expires=" + expires);
+        expect(cookie.expires).toBeUndefined();
+        expect(cookie.toString()).toBe("a=b; Path=/; SameSite=Lax");
+      });
     });
 
     test("throws for arrays", () => {
@@ -235,12 +244,13 @@ describe("Bun.Cookie expires validation", () => {
     });
 
     test("getter returns a fresh Date when the cached one was mutated to NaN", () => {
-      const cookie = new Bun.Cookie("name", "value", { expires: 1000 });
+      // The epoch, because a cast of NaN to int64_t gives 0 on aarch64, and that made the stale Date look current.
+      const cookie = new Bun.Cookie("name", "value", { expires: 0 });
       const first = cookie.expires!;
-      expect(first.getTime()).toBe(1000 * 1000);
+      expect(first.getTime()).toBe(0);
       first.setTime(NaN);
       const second = cookie.expires!;
-      expect(second.getTime()).toBe(1000 * 1000);
+      expect(second.getTime()).toBe(0);
       expect(second).not.toBe(first);
     });
   });

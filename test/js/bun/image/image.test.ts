@@ -379,6 +379,88 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
+
+    // Same output dims as sharp 0.35.5 gives for these calls at 10× the size.
+    test.each([
+      { name: "landscape into a square", src: [60, 40], box: [30, 30], opts: {}, out: [30, 30] },
+      { name: "portrait into a square", src: [40, 60], box: [30, 30], opts: {}, out: [30, 30] },
+      { name: "upscales a smaller source", src: [30, 20], box: [40, 40], opts: {}, out: [40, 40] },
+      {
+        name: "withoutEnlargement, smaller than the box",
+        src: [30, 20],
+        box: [40, 40],
+        opts: { withoutEnlargement: true },
+        out: [30, 20],
+      },
+      {
+        name: "withoutEnlargement, smaller on one side",
+        src: [50, 20],
+        box: [40, 40],
+        opts: { withoutEnlargement: true },
+        out: [40, 20],
+      },
+      {
+        name: "withoutEnlargement, larger than the box",
+        src: [50, 20],
+        box: [40, 10],
+        opts: { withoutEnlargement: true },
+        out: [40, 10],
+      },
+    ])('fit: "cover" output size: $name', async ({ src, box, opts, out }) => {
+      const png = makePng(src[0], src[1], (x, y) => [x * 4, y * 4, 0, 255]);
+      const res = decodePngRaw(
+        await new Bun.Image(png)
+          .resize(box[0], box[1], { fit: "cover", ...opts })
+          .png()
+          .bytes(),
+      );
+      expect([res.w, res.h]).toEqual(out);
+    });
+
+    // 7×4 and 4×7 sources into a 4×4 box need no resampling (scale 1), so the
+    // first output pixel is exactly the source pixel at the crop offset. Three
+    // pixels overflow, and the centre offset rounds up to 2 like sharp's
+    // CalculateCrop.
+    test.each([
+      [undefined, 2, 2],
+      ["center", 2, 2],
+      ["centre", 2, 2],
+      ["top", 2, 0],
+      ["bottom", 2, 3],
+      ["left", 0, 2],
+      ["right", 3, 2],
+      ["left top", 0, 0],
+      ["right top", 3, 0],
+      ["left bottom", 0, 3],
+      ["right bottom", 3, 3],
+    ] as const)('fit: "cover" crops at position %p', async (position, x, y) => {
+      const crop = async (w: number, h: number) => {
+        const png = makePng(w, h, (px, py) => [px * 40, py * 40, 0, 255]);
+        const out = await new Bun.Image(png).resize(4, 4, { fit: "cover", position }).png().bytes();
+        const { w: ow, h: oh, data } = decodePngRaw(out);
+        return { w: ow, h: oh, topLeft: rgbaAt(data, ow, 0, 0) };
+      };
+      expect(await crop(7, 4)).toEqual({ w: 4, h: 4, topLeft: [x * 40, 0, 0, 255] });
+      expect(await crop(4, 7)).toEqual({ w: 4, h: 4, topLeft: [0, y * 40, 0, 255] });
+    });
+
+    test('fit: "cover" without a height keeps the aspect ratio and crops nothing', async () => {
+      const wide = makePng(60, 40, (x, y) => [x * 4, y * 4, 0, 255]);
+      const out = decodePngRaw(await new Bun.Image(wide).resize(30, undefined, { fit: "cover" }).png().bytes());
+      expect([out.w, out.h]).toEqual([30, 20]);
+    });
+
+    test('position is validated and requires fit: "cover"', () => {
+      const img = () => new Bun.Image(gradientPng);
+      expect(() => img().resize(8, 8, { position: "top" })).toThrow("position requires fit: 'cover'");
+      expect(() => img().resize(8, 8, { fit: "inside", position: "top" })).toThrow("position requires fit: 'cover'");
+      expect(() => img().resize(8, 8, { fit: "cover", position: "top left" as any })).toThrow(
+        "position must be one of 'center', 'centre', 'top', 'right top', 'right', 'right bottom', 'bottom', 'left bottom', 'left' or 'left top'",
+      );
+      expect(() => img().resize(8, 8, { fit: "contain" as any })).toThrow(
+        "fit must be one of 'fill', 'inside' or 'cover'",
+      );
+    });
   });
 
   test("path string input reads from disk", async () => {

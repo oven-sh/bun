@@ -9401,11 +9401,34 @@ declare module "bun" {
       filter?: Filter;
       /**
        * `"fill"` stretches to exactly width×height. `"inside"` preserves
-       * aspect ratio so the result fits *within* width×height.
+       * aspect ratio so the result fits *within* width×height. `"cover"`
+       * preserves aspect ratio, scales the image until it covers
+       * width×height, then crops the overflow (see `position`). Without a
+       * `height`, every fit keeps the aspect ratio and nothing is cropped.
        * @default "fill"
        */
-      fit?: "fill" | "inside";
-      /** Never upscale — if the source is already smaller, leave it. */
+      fit?: "fill" | "inside" | "cover";
+      /**
+       * Which part of the image `fit: "cover"` keeps when it crops. Passing it
+       * with any other `fit` throws.
+       * @default "center"
+       */
+      position?:
+        | "center"
+        | "centre"
+        | "top"
+        | "right top"
+        | "right"
+        | "right bottom"
+        | "bottom"
+        | "left bottom"
+        | "left"
+        | "left top";
+      /**
+       * Never upscale — if the source is already smaller, leave it. With
+       * `fit: "cover"` the image is then only cropped, so the result can be
+       * smaller than width×height.
+       */
       withoutEnlargement?: boolean;
     }
 

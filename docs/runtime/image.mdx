@@ -58,14 +58,21 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 img.resize(800); // width 800, keep aspect ratio
 img.resize(800, 600); // exactly 800×600 (stretch)
 img.resize(800, 600, { fit: "inside" }); // fit within 800×600
+img.resize(800, 600, { fit: "cover" }); // fill 800×600, crop the overflow
+img.resize(800, 600, { fit: "cover", position: "top" }); // crop, keeping the top
 img.resize(800, 600, { withoutEnlargement: true }); // never upscale
 img.resize(800, 600, { filter: "mitchell" });
 ```
 
-| `fit`              | Behavior                                            |
-| ------------------ | --------------------------------------------------- |
-| `"fill"` (default) | Stretch to exactly `width × height`                 |
-| `"inside"`         | Preserve aspect ratio; result fits _within_ the box |
+| `fit`              | Behavior                                                                  |
+| ------------------ | ------------------------------------------------------------------------- |
+| `"fill"` (default) | Stretch to exactly `width × height`                                       |
+| `"inside"`         | Preserve aspect ratio; result fits _within_ the box                       |
+| `"cover"`          | Preserve aspect ratio; scale until the image covers the box, then crop it |
+
+With `fit: "cover"`, `position` picks the part of the image to keep: `"center"` (the default), `"top"`, `"right top"`, `"right"`, `"right bottom"`, `"bottom"`, `"left bottom"`, `"left"` or `"left top"`. `resize()` throws if you pass `position` with any other `fit`.
+
+With `withoutEnlargement`, cover never scales the image up. If the image is at least as large as the box on both sides, cover scales it down only if needed and crops any overflow. If the image is smaller than the box on either side, the image keeps its size and cover only crops what overflows the box, so a 500×200 image resized to 400×400 becomes 400×200.
 
 `filter` selects the resampling kernel. The default `"lanczos3"` is the right choice for photographs.
 

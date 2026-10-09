@@ -99,3 +99,10 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+{
+  const image = new Bun.Image("./photo.jpg");
+  tsd.expectType(image.resize(1200, 630, { fit: "cover", position: "left top" })).is<Bun.Image>();
+  // @ts-expect-error - Sharp's corner order is "left top", not "top left"
+  image.resize(1200, 630, { fit: "cover", position: "top left" });
+}

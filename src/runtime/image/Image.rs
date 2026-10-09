@@ -145,17 +145,75 @@ unsafe extern "C" {
 pub enum Fit {
     Fill,
     Inside,
+    Cover,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
 bun_core::comptime_string_map! {
     static FIT_MAP: Fit = {
         b"fill" => Fit::Fill,
         b"inside" => Fit::Inside,
+        b"cover" => Fit::Cover,
     };
 }
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
+        v.to_enum_from_map(global, prop, &FIT_MAP, "'fill', 'inside' or 'cover'")
+    }
+}
+
+/// The part of the image `fit: "cover"` keeps — Sharp's `position`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Position {
+    Center,
+    Top,
+    Right,
+    Bottom,
+    Left,
+    RightTop,
+    RightBottom,
+    LeftBottom,
+    LeftTop,
+}
+bun_core::comptime_string_map! {
+    static POSITION_MAP: Position = {
+        b"center" => Position::Center,
+        b"centre" => Position::Center,
+        b"top" => Position::Top,
+        b"right" => Position::Right,
+        b"bottom" => Position::Bottom,
+        b"left" => Position::Left,
+        b"right top" => Position::RightTop,
+        b"right bottom" => Position::RightBottom,
+        b"left bottom" => Position::LeftBottom,
+        b"left top" => Position::LeftTop,
+    };
+}
+impl jsc::FromJsEnum for Position {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(
+            global,
+            prop,
+            &POSITION_MAP,
+            "'center', 'centre', 'top', 'right top', 'right', 'right bottom', 'bottom', 'left bottom', 'left' or 'left top'",
+        )
+    }
+}
+impl Position {
+    /// Top-left of the kept region when cover trims `dx`×`dy` pixels off the
+    /// resized image. Centring rounds up, as Sharp's `CalculateCrop` does.
+    fn offset(self, dx: u32, dy: u32) -> (u32, u32) {
+        let (cx, cy) = (dx.div_ceil(2), dy.div_ceil(2));
+        match self {
+            Position::Center => (cx, cy),
+            Position::Top => (cx, 0),
+            Position::Right => (dx, cy),
+            Position::Bottom => (cx, dy),
+            Position::Left => (0, cy),
+            Position::RightTop => (dx, 0),
+            Position::RightBottom => (dx, dy),
+            Position::LeftBottom => (0, dy),
+            Position::LeftTop => (0, 0),
+        }
     }
 }
 impl jsc::FromJsEnum for codecs::Filter {
@@ -175,6 +233,7 @@ pub(crate) struct Resize {
     pub(crate) h: u32,
     pub(crate) filter: codecs::Filter,
     pub(crate) fit: Fit,
+    pub(crate) position: Position,
     pub(crate) without_enlargement: bool,
 }
 
@@ -185,6 +244,7 @@ impl Default for Resize {
             h: 0,
             filter: codecs::Filter::Lanczos3,
             fit: Fit::Fill,
+            position: Position::Center,
             without_enlargement: false,
         }
     }
@@ -470,6 +530,13 @@ impl Image {
             }
             if let Some(v) = opt.get_optional_enum::<Fit>(global, "fit")? {
                 r.fit = v;
+            }
+            if let Some(v) = opt.get_optional_enum::<Position>(global, "position")? {
+                if r.fit != Fit::Cover {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("position requires fit: 'cover'")));
+                }
+                r.position = v;
             }
             if let Some(v) = opt.get(global, "withoutEnlargement")? {
                 r.without_enlargement = v.to_boolean();
@@ -1646,7 +1713,9 @@ impl PipelineTask {
         //  stays valid through them.)
         let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
-            // r.h==0 means "preserve aspect" — constrain on width only.
+            // r.h==0 means "preserve aspect" — constrain on width only. The box
+            // is also a safe floor for `fit: "cover"`: decoding at ≥ the box on
+            // both axes still leaves ≥ the pre-crop size, since scales are uniform.
             let mut th = if r.h != 0 { r.h } else { r.w };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
             let swap_exif = self.auto_orient && {
@@ -1961,7 +2030,15 @@ impl PipelineTask {
             d.rgba = next;
         }
         if let Some(r) = p.resize {
-            let t = resolve_resize(r, d.width, d.height);
+            let (t, crop) = match r.fit {
+                // Without a height there is no box to cover, so cover keeps
+                // the aspect ratio like the other fits.
+                Fit::Cover if r.h != 0 => {
+                    let (t, crop) = resolve_cover(r, d.width, d.height)?;
+                    (t, Some(crop))
+                }
+                _ => (resolve_resize(r, d.width, d.height), None),
+            };
             // Guard the output canvas AND the H-then-V intermediate (always
             // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a
@@ -1978,6 +2055,13 @@ impl PipelineTask {
                 d.rgba = next;
                 d.width = t.0;
                 d.height = t.1;
+            }
+            if let Some(c) = crop {
+                if c.w != d.width || c.h != d.height {
+                    d.rgba = codecs::crop(&d.rgba, d.width, d.height, c.x, c.y, c.w, c.h);
+                    d.width = c.w;
+                    d.height = c.h;
+                }
             }
         }
         if let Some(m) = p.modulate {
@@ -2053,6 +2137,38 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
         return (sw, sh);
     }
     (w, h)
+}
+
+/// The region of the resized image that `fit: "cover"` keeps.
+#[derive(Clone, Copy)]
+struct Crop {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+/// `fit: "cover"` (Sharp's semantics): scale so the image covers the
+/// `r.w`×`r.h` box, then keep the box-sized region at `r.position`. With
+/// `withoutEnlargement` the scale stops at 1, so an image smaller than the box
+/// on one side is only cropped on the other.
+fn resolve_cover(r: Resize, sw: u32, sh: u32) -> Result<((u32, u32), Crop), codecs::Error> {
+    let mut s = ((r.w as f64) / (sw as f64)).max((r.h as f64) / (sh as f64));
+    if r.without_enlargement {
+        s = s.min(1.0);
+    }
+    let w = ((sw as f64) * s).round().max(1.0);
+    let h = ((sh as f64) * s).round().max(1.0);
+    // The side that overflows the box isn't bounded by do_resize's per-side
+    // cap, and the resize kernel takes i32 dims. Reject rather than clamp,
+    // which would distort the aspect ratio.
+    if w > i32::MAX as f64 || h > i32::MAX as f64 {
+        return Err(codecs::Error::TooManyPixels);
+    }
+    let (w, h) = (w as u32, h as u32);
+    let (cw, ch) = (r.w.min(w), r.h.min(h));
+    let (x, y) = r.position.offset(w - cw, h - ch);
+    Ok(((w, h), Crop { x, y, w: cw, h: ch }))
 }
 
 fn apply_orientation(

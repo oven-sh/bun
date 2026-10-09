@@ -289,6 +289,38 @@ describe.concurrent("bun lint with processors", () => {
     },
     timeout,
   );
+
+  // As with `configs.recommended` and `configs.processor` of @eslint/markdown.
+  test(
+    "a file with a language and a processor goes to the processor",
+    async () => {
+      const files = {
+        "fenced.mjs": fenced(true),
+        "eslint.config.mjs": `
+          import fenced, { processor } from "./fenced.mjs";
+          const whole = { preprocess: text => [text], postprocess: lists => lists.flat() };
+          const plugin = { ...fenced, languages: { text: {} }, processors: { fenced: processor, whole } };
+          export default [
+            { files: ["**/*.md", "**/*.txt"], plugins: { fenced: plugin }, language: "fenced/text", languageOptions: { frontmatter: "yaml" } },
+            { files: ["**/*.md"], processor: "fenced/fenced" },
+            { files: ["**/*.txt"], processor: "fenced/whole" },
+            { files: ["**/*.md/*.js"], rules: { "no-var": "error" } },
+          ];`,
+        "a.md": "```js\nvar a;\n```\n",
+        "b.txt": "var b;\n",
+      };
+      const result = await lint(files, ["-f", "json", "a.md"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(
+        `"a.md: 2:1 no-var Unexpected var, use let or const instead. [fix 6,12 "let a;"]"`,
+      );
+      expect(result.exitCode).toBe(1);
+      // What the processor gives back without a name is for the language.
+      const whole = await lint(files, ["b.txt"]);
+      expect(whole.stderr).toContain(`b.txt returns text in the language "fenced/text".`);
+      expect(whole.exitCode).toBe(2);
+    },
+    timeout,
+  );
 });
 
 const oxlintrc = JSON.stringify({

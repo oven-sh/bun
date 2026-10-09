@@ -617,7 +617,7 @@ impl Config {
             }
         }
         // Another language validates its own.
-        if (config.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js")) {
+        if config.is_javascript() {
             config.validate_language_options(&language_options);
         }
         config.language = LanguageOptions::from_json(&language_options, &settings);

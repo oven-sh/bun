@@ -249,17 +249,19 @@ impl ResolvedConfig {
             || self.foreign_plugins.iter().any(|it| **it == *prefix)
     }
 
-    /// How the file at `path` is linted.
+    /// Whether `language` is that of ESLint itself.
+    pub fn is_javascript(&self) -> bool {
+        (self.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
+    }
+
+    /// How the file at `path` is linted. With a processor the language does not read the file itself.
     pub fn route(&self, path: &[u8]) -> Route {
-        let is_javascript = self
-            .language_name
-            .as_deref()
-            .is_none_or(|it| matches!(it, b"@/js" | b"js/js"));
         let is_read_here = self.language.parser != Parser::Other
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
         match &self.processor {
-            _ if !is_javascript || !is_read_here => Route::Unsupported,
+            _ if !is_read_here => Route::Unsupported,
             Some(_) => Route::Processor,
+            None if !self.is_javascript() => Route::Unsupported,
             None => Route::Native,
         }
     }

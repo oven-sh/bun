@@ -81,6 +81,18 @@ impl Context<'_, '_> {
         text: &[u8],
         config: &ResolvedConfig,
     ) -> LintResult {
+        if !config.is_javascript() {
+            return thrown(
+                [
+                    b"The processor of ",
+                    file.path,
+                    b" returns text in the language \"",
+                    config.language_name.as_deref().unwrap_or_default(),
+                    b"\". Only JavaScript and TypeScript can be linted.",
+                ]
+                .concat(),
+            );
+        }
         self.verify_block_natively(
             path,
             file.physical_path_len,

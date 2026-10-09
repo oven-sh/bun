@@ -114,15 +114,16 @@ impl Kind {
         {
             return Some(Kind::Script);
         }
-        let json = || bun_format::json::parser_for_path(path).map(Kind::Json);
-        let css = || bun_format::css::parser_for_path(path).map(Kind::Css);
-        let yaml = || bun_format::yaml::is_yaml_path(path).then_some(Kind::Yaml);
-        let markdown = || bun_format::markdown::is_markdown_path(path).then_some(Kind::Markdown);
-        let mdx = || bun_format::markdown::is_mdx_path(path).then_some(Kind::Mdx);
-        let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
+        // None of them looks at the directories.
+        let json = || bun_format::json::parser_for_path(name).map(Kind::Json);
+        let css = || bun_format::css::parser_for_path(name).map(Kind::Css);
+        let yaml = || bun_format::yaml::is_yaml_path(name).then_some(Kind::Yaml);
+        let markdown = || bun_format::markdown::is_markdown_path(name).then_some(Kind::Markdown);
+        let mdx = || bun_format::markdown::is_mdx_path(name).then_some(Kind::Mdx);
+        let graphql = || bun_format::graphql::is_graphql_path(name).then_some(Kind::GraphQl);
         let handlebars =
-            || bun_format::handlebars::is_handlebars_path(path).then_some(Kind::Handlebars);
-        let html = || bun_format::html::parser_for_path(path).map(Kind::Html);
+            || bun_format::handlebars::is_handlebars_path(name).then_some(Kind::Handlebars);
+        let html = || bun_format::html::parser_for_path(name).map(Kind::Html);
         json()
             .or_else(css)
             .or_else(yaml)

@@ -1,13 +1,14 @@
 // An https server whose 'upgrade' listener ends its socket with bytes, on a connection whose send
 // buffer is small: the kernel takes less than one TLS record at a time, so TLS still holds bytes
-// when the socket ends. The reads of the tunnel have stopped for a full buffer, and its peer stays
+// when the socket ends. The reads of the tunnel do not keep the process alive, and its peer stays
 // connected. The process prints what the tunnel saw when it exits, and it must exit by itself: it
 // has no timer and calls no process.exit().
 //
+//   KIND=unref|stopped   socket.unref(), or reads that stopped for a full buffer
 //   CERT, KEY, LIBC (the libc to dlopen)
 "use strict";
 const { dlopen, ptr } = require("bun:ffi");
-const { CERT, KEY, LIBC } = process.env;
+const { KIND, CERT, KEY, LIBC } = process.env;
 const libc = dlopen(LIBC, {
   getpeername: { args: ["i32", "ptr", "ptr"], returns: "i32" },
   setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
@@ -47,9 +48,14 @@ server.on("upgrade", (req, socket) => {
   }
   socket.write("HTTP/1.1 200 OK\r\n\r\n");
   server.close(() => result.events.push("server close"));
+  const end = () => socket.end(bytes, () => result.events.push("finish"));
+  if (KIND === "unref") {
+    socket.unref();
+    return end();
+  }
   (function untilReadsStop() {
     if (socket.readableLength < socket.readableHighWaterMark) return setImmediate(untilReadsStop);
-    socket.end(bytes, () => result.events.push("finish"));
+    end();
   })();
 });
 
@@ -68,7 +74,7 @@ server.listen(0, "127.0.0.1", () => {
     // The reply: the listener has run, so the socket gets the bytes behind it and not the `head` argument.
     client.once("data", () => {
       // Twice what the socket buffers before it stops its reads.
-      client.write(Buffer.alloc(2 * 65536, "x"));
+      if (KIND === "stopped") client.write(Buffer.alloc(2 * 65536, "x"));
       client.resume();
     });
   });

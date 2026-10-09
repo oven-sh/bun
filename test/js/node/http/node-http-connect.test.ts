@@ -2034,6 +2034,44 @@ describe.concurrent.each(["bun", "node"])("%s: what keeps the process alive afte
         );
       });
     });
+
+    // Like those of a libuv handle: unref() takes the reads of a tunnel out of what keeps the
+    // process alive, ref() puts them back, and bytes left to send keep it alive in both states.
+    test("socket.unref() and socket.ref() on a tunnel", async () => {
+      expect(await runTunnelFixture(exe!, "node-http-connect-unref-fixture.js", { PROTO: proto })).toEqual({
+        stdout: {
+          "upgrade, unref() in the listener": atRest,
+          "connect, unref() in the listener": atRest,
+          "upgrade with a body, unref() in the listener": atRest,
+          "upgrade behind a request, unref() in the listener": atRest,
+          ...(proto === "http" && { "upgrade on a re-emitted tunnel, unref() in the listener": atRest }),
+          "upgrade, unref() while it reads": atRest,
+          "connect, unref() while it reads": atRest,
+          "upgrade with a body, unref() while it reads": atRest,
+          "upgrade, unref() before the request": atRest,
+          "upgrade with a body, unref() before the request": atRest,
+          "upgrade behind a request, unref() before the request": atRest,
+          "upgrade, unref(), then a write": { events: ["write callback"], received: 0 },
+          "upgrade, a write, then unref()": { events: ["write callback"], received: 0 },
+          "upgrade, unref(), then end() with bytes": { events: ["finish"], received: 0 },
+          "upgrade, ref() after its reads stopped": atRest,
+          // Node.js closes a TLS socket when its peer ends it. Here it stays half-open, like a TCP socket.
+          "upgrade, ref() at the end of the stream": {
+            events: runtime === "node" && proto === "https" ? ["end", "close"] : ["end"],
+            received: 0,
+          },
+          // It gets what the socket had buffered, and the process does not wait for more.
+          "upgrade, unref(), then its reads stop, then a reader": { events: [], received: 65536 },
+          // The process waits for the rest.
+          "upgrade, unref(), then its reads stop, then ref() and a reader": {
+            events: ["end", "close"],
+            received: 2 * 65536,
+          },
+          "upgrade, a reader, then unref(), then ref()": { events: ["end", "close"], received: 65536 },
+        },
+        ...exitedByItself,
+      });
+    });
   });
 
   // pipe() pauses the client's socket while the upstream is slow, and it does not resume it when
@@ -2049,10 +2087,10 @@ describe.concurrent.each(["bun", "node"])("%s: what keeps the process alive afte
 
 // TLS still holds bytes when such a socket ends, and usockets sends the FIN behind them with no
 // writable event for the tunnel. Not on Windows: the fixture makes the send buffer small through libc.
-test.concurrent.skipIf(isWindows)(
-  "https: a read-stopped tunnel that ends with bytes behind a small send buffer does not keep the process alive",
-  async () => {
-    const env = { LIBC: libcPathForDlopen() };
+test.concurrent.skipIf(isWindows).each(["unref", "stopped"])(
+  "https: a tunnel that ends with bytes behind a small send buffer does not keep the process alive (%s)",
+  async kind => {
+    const env = { KIND: kind, LIBC: libcPathForDlopen() };
     expect(await runTunnelFixture(bunExe(), "node-http-connect-end-small-sndbuf-fixture.js", env)).toEqual({
       stdout: { events: ["finish"] },
       ...exitedByItself,

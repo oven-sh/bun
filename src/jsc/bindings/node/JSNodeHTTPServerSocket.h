@@ -65,6 +65,8 @@ public:
     unsigned peer_ended : 1 = 0;
     /* socket.end() came while TLS held bytes of the tunnel: halfClose() to the onDrain() that sends the FIN. */
     unsigned tunnelEndAwaitsDrain : 1 = 0;
+    /* socket.unref() to socket.ref(). The reads of an unref'd tunnel do not hold the event loop. */
+    unsigned tunnelUnrefed : 1 = 0;
     int closeReadError = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
@@ -148,10 +150,12 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: its reads do not hold the event loop (readStop() or read EOF) and it has nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Tells uWS whether this tunnel is idle: its reads do not hold the event loop (readStop(), read EOF, or socket.unref()) and it has nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void refreshTunnelIdle();
     /* The same for a caller that did not change what the reads hold: a write, a drain, the end of the stream. */
     void updateTunnelIdle();
+    /* socket.ref() and socket.unref(), like those of a libuv handle: they change whether the reads of a tunnel hold the event loop. Bytes left to send hold it in both states. Before the tunnel starts, the state is only kept for it. */
+    void setRef(bool ref);
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */

@@ -268,7 +268,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
-    /// The node:http tunnels in `active_connection_count` whose reads do not hold the loop (stopped or at EOF) and that have nothing left to send.
+    /// The node:http tunnels in `active_connection_count` whose reads do not hold the loop (stopped, at EOF, or unref'd) and that have nothing left to send.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -1625,7 +1625,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// An idle tunnel is open but, like a libuv handle that does not read and has no write pending, does not hold the loop.
+    /// An idle tunnel is open but, like a libuv handle that does not read or is unref'd, with no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
     }

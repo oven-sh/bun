@@ -3,6 +3,9 @@
 //! The configuration of a file is the nearest one: the first directory, from that of the file
 //! upwards, that has a file of one of [`NAMES`]. If a directory has several, the first of the list
 //! counts. Configurations are not merged.
+//!
+//! No tool reads the files of another. So the one that the configuration of the working directory is for decides whose files
+//! count further down: templates, fixtures and examples have all sorts.
 
 use crate::cli::Options;
 use crate::embedded::Framework;
@@ -113,6 +116,8 @@ pub(crate) struct Loader<'l> {
     by_file: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Found>>>>,
     /// For the user, in the order in which they came up.
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
+    /// [`Loader::tool`]
+    tool: OnceLock<Option<Flavor>>,
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
@@ -285,6 +290,7 @@ impl<'l> Loader<'l> {
             by_directory: Guarded::new(FxHashMap::default()),
             by_file: Guarded::new(FxHashMap::default()),
             warnings: Guarded::new(Vec::new()),
+            tool: OnceLock::new(),
         }
     }
 
@@ -719,15 +725,33 @@ impl<'l> Loader<'l> {
         .clone()
     }
 
+    /// Whose configuration the working directory has: that of the nearest file, from there upwards. `None`: it has none.
+    fn tool(&self) -> Option<Flavor> {
+        *self.tool.get_or_init(|| {
+            paths::ancestors(self.cwd()).find_map(|directory| {
+                let is_there =
+                    |it: &&(&[u8], Flavor, Syntax)| fs::is_file(&paths::join(directory, it.0));
+                NAMES.iter().find(is_there).map(|it| it.1)
+            })
+        })
+    }
+
+    /// Those of [`NAMES`] that count.
+    fn names(&self) -> impl Iterator<Item = &'static [u8]> {
+        let tool = self.tool();
+        let names = (NAMES.iter()).filter(move |it| tool.is_none_or(|tool| tool == it.1));
+        names.map(|it| it.0)
+    }
+
     /// The name of the configuration file among `names`, which are those of a directory.
-    fn pick<'n>(names: impl Iterator<Item = &'n [u8]>) -> Option<&'static [u8]> {
+    fn pick<'n>(&self, names: impl Iterator<Item = &'n [u8]>) -> Option<&'static [u8]> {
         let candidates = names.filter(|name| {
             name.starts_with(b"eslint.") || name.starts_with(b".") || name.starts_with(b"oxlint.")
         });
         let best = candidates
-            .filter_map(|name| NAMES.iter().position(|it| it.0 == name))
+            .filter_map(|name| self.names().position(|it| it == name))
             .min()?;
-        Some(NAMES[best].0)
+        self.names().nth(best)
     }
 
     /// The configuration of the files that are in `directory`: ESLint's `loadConfigArrayForFile`.
@@ -755,10 +779,7 @@ impl<'l> Loader<'l> {
                 break;
             }
             asked.push(ancestor);
-            let name = NAMES
-                .iter()
-                .map(|it| it.0)
-                .find(|name| fs::is_file(&paths::join(ancestor, name)));
+            let name = (self.names()).find(|name| fs::is_file(&paths::join(ancestor, name)));
             if let Some(name) = name {
                 found = Some(self.load(&paths::join(ancestor, name), ancestor));
                 break;
@@ -782,7 +803,7 @@ impl<'l> Loader<'l> {
         if self.has_one_configuration() || self.options.disable_nested_config {
             return Ok(Arc::clone(inherited));
         }
-        match Self::pick(names) {
+        match self.pick(names) {
             Some(name) => self.load(&paths::join(directory, name), directory),
             None => Ok(Arc::clone(inherited)),
         }

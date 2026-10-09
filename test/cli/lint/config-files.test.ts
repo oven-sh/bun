@@ -246,3 +246,69 @@ describe.concurrent("an .eslintrc.json", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("whose configuration files count", () => {
+  test("an eslint.config.js further down is not read", async () => {
+    const { problems, exitCode } = await lint({
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } }),
+      "a.js": code,
+      "sub/eslint.config.js": `import "a-package-that-is-not-installed";`,
+      "sub/b.js": code,
+      "sub/deeper/.oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { eqeqeq: "error" } }),
+      "sub/deeper/c.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:1 no-var", "sub/b.js:1:1 no-var", "sub/deeper/c.js:2:7 eqeqeq"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a file of ESLint 8 further down is not read", async () => {
+    const { problems, exitCode } = await lint({
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } }),
+      "a.js": code,
+      "sub/.eslintrc": "not: [valid",
+      "sub/b.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:1 no-var", "sub/b.js:1:1 no-var"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // What is left over from ESLint in examples, fixtures and templates.
+  test("below an .oxlintrc.json, also one above the working directory, no file of ESLint ends the run", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } }),
+      "docs/fiddles/.eslintrc.json": `{ "extends": "standard", "rules": { "import/order": "off" } }`,
+      "docs/fiddles/a.js": code,
+    };
+    for (const [args, cwd] of [
+      [["docs/fiddles"], "."],
+      [["docs/fiddles/a.js"], "."],
+      [["."], "docs"],
+    ] as const) {
+      const { problems, exitCode } = await lint(files, [...args], { cwd });
+      expect(problems).toEqual(["docs/fiddles/a.js:1:1 no-var"]);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("an .oxlintrc.json below an eslint.config.js is not read", async () => {
+    const { problems } = await lint({
+      "eslint.config.js": `module.exports = [{ rules: { "no-var": "error" } }];`,
+      "a.js": code,
+      "sub/.oxlintrc.json": "not JSON",
+      "sub/b.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:1 no-var", "sub/b.js:1:1 no-var"]);
+  });
+
+  test("where the working directory has no configuration, each directory tells", async () => {
+    const { problems } = await lint({
+      "one/eslint.config.js": `module.exports = [{ rules: { "no-var": "error" } }];`,
+      "one/a.js": code,
+      "two/.oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { eqeqeq: "error" } }),
+      "two/b.js": code,
+      "three/.eslintrc.json": rc({ rules: { "no-debugger": "error" } }),
+      "three/c.js": code,
+    });
+    expect(problems).toEqual(["one/a.js:1:1 no-var", "three/c.js:2:13 no-debugger", "two/b.js:2:7 eqeqeq"]);
+  });
+});

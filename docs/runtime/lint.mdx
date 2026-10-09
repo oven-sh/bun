@@ -142,6 +142,8 @@ For each file, `bun lint` uses the nearest configuration file: it looks in the d
 2. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
 3. `.eslintrc.json`, `.eslintrc`
 
+No tool reads the configuration files of another. So the file that counts for the working directory decides: if it is an `.oxlintrc.json`, the configuration files of ESLint in the directories further down are not read, and the other way round. In a directory that has a configuration file of ESLint of its own, inside a project with an `.oxlintrc.json`, run `bun lint` from the root of the project, or it takes the file of ESLint.
+
 Configuration files are not merged. Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
 
 ```bash terminal icon="terminal"

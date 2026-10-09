@@ -375,7 +375,8 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
   var gather = (module, ready) => {
     while (module.gathered < module.parents.length) {
       var parent = module.parents[module.gathered++];
-      if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
+      if (parent.ready != ready && !parent.root.error && !--parent.pending) {
+        parent.ready = ready;
         ready.push(parent);
         if (!parent.hasTLA) gather(parent, ready);
       }

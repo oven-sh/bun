@@ -94,7 +94,8 @@ describe("bundler", () => {
           var gather = (module, ready) => {
             while (module.gathered < module.parents.length) {
               var parent = module.parents[module.gathered++];
-              if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
+              if (parent.ready != ready && !parent.root.error && !--parent.pending) {
+                parent.ready = ready;
                 ready.push(parent);
                 if (!parent.hasTLA)
                   gather(parent, ready);
@@ -286,7 +287,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=39B97342E6261B4F64756E2164756E21
+        //# debugId=35CEA106E08B5BA164756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

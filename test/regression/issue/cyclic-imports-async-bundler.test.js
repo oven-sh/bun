@@ -110,7 +110,8 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       var gather = (module, ready) => {
         while (module.gathered < module.parents.length) {
           var parent = module.parents[module.gathered++];
-          if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
+          if (parent.ready != ready && !parent.root.error && !--parent.pending) {
+            parent.ready = ready;
             ready.push(parent);
             if (!parent.hasTLA)
               gather(parent, ready);
@@ -302,7 +303,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     await Promise.resolve();
     AsyncEntryPoint();
 
-    //# debugId=398E057A1DA3A34464756E2164756E21
+    //# debugId=43DD4734B76BF32A64756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

@@ -4,6 +4,8 @@ use bun_lint::prelude::*;
 pub struct DefaultCase {
     /// `None`: `/^no default$/iu`
     comment_pattern: Option<Regex>,
+    /// The same for oxlint, which ignores the case.
+    oxlint_comment_pattern: Option<Regex>,
 }
 
 const MISSING_DEFAULT_CASE: Message = Message::new("missingDefaultCase", "Expected a default case.");
@@ -21,7 +23,8 @@ impl DefaultCase {
         }
         let is_excused = cx.file().comments_after(last_case).next_back().is_some_and(|comment| {
             let value = text::trim(comment.comment_value());
-            match &self.comment_pattern {
+            let is_oxlint = cx.language().is_oxlint;
+            match if is_oxlint { &self.oxlint_comment_pattern } else { &self.comment_pattern } {
                 Some(pattern) => pattern.test(value),
                 None => value.eq_ignore_ascii_case(b"no default"),
             }
@@ -38,11 +41,13 @@ impl Rule for DefaultCase {
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
+        let pattern = |flags: &str| match options.str("commentPattern") {
+            None | Some("") => None,
+            Some(_) => options.regex("commentPattern", flags),
+        };
         DefaultCase {
-            comment_pattern: match options.str("commentPattern") {
-                None | Some("") => None,
-                Some(_) => options.regex("commentPattern", "u"),
-            },
+            comment_pattern: pattern("u"),
+            oxlint_comment_pattern: pattern("iu"),
         }
     }
 

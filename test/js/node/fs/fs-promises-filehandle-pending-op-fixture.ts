@@ -11,8 +11,17 @@ const [form, dir] = process.argv.slice(2);
 const pipe = path.join(dir, "pipe");
 const other = path.join(dir, "other");
 fs.writeFileSync(other, "THE CONTENT OF ANOTHER FILE");
-// Read and write: this open does not wait for a peer, and it gives the read below a writer.
-const feeder = fs.openSync(pipe, fs.constants.O_RDWR);
+
+// The writing end of the pipe. The read waits for as long as this is open and has sent nothing.
+let feeder!: number;
+
+// Opens the reading end as a FileHandle. An open of a named pipe waits for the other end, so
+// the writing end is opened while the thread pool waits in open(2) for the reading end.
+function openPipe() {
+  const opening = fsp.open(pipe, "r");
+  feeder = fs.openSync(pipe, fs.constants.O_WRONLY);
+  return opening;
+}
 
 // A FileHandle that is collected while it is open closes its descriptor and reports this.
 let collected = 0;
@@ -49,7 +58,7 @@ if (form === "readFile-dropped") {
   const { promise: started, resolve } = Promise.withResolvers<void>();
   read = outcome(
     (async () => {
-      const handle = await fsp.open(pipe, "r");
+      const handle = await openPipe();
       number = handle.fd;
       const pending = fsp.readFile(handle, "utf8");
       resolve();
@@ -63,7 +72,7 @@ if (form === "readFile-dropped") {
     await new Promise(resolve => setImmediate(resolve));
   }
 } else {
-  const handle = await fsp.open(pipe, "r");
+  const handle = await openPipe();
   number = handle.fd;
   if (form === "readFile-closed") {
     read = outcome(fsp.readFile(handle, "utf8"));

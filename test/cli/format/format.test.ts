@@ -859,7 +859,10 @@ try {
 
   test("an e after a dot or a digit is a letter like another, unless it is an exponent of zero", async () => {
     const result = await format(
-      { "a.html": "<script>e. e</script>\n", "b.vue": "<script>\nmodule  .  exports = a1.e + 1e0 + 1.e-00\n</script>\n" },
+      {
+        "a.html": "<script>e. e</script>\n",
+        "b.vue": "<script>\nmodule  .  exports = a1.e + 1e0 + 1.e-00\n</script>\n",
+      },
       [],
       { reads: ["a.html", "b.vue"] },
     );

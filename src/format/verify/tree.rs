@@ -693,10 +693,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// Allowed, if the formatter sorts imports: they, and the names in them, are in another order.
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
-            let mut all: Vec<_> = ids
-                .iter()
-                .map(|&id| import_as_text(program, id))
-                .collect();
+            let mut all: Vec<_> = ids.iter().map(|&id| import_as_text(program, id)).collect();
             all.sort_by(|x, y| x.0.cmp(&y.0));
             all
         };
@@ -2139,10 +2136,7 @@ fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool 
         Some(b'[') => skip_trivia(program.text, at + 1),
         _ => at,
     };
-    let (x, y) = (
-        a.0.from(inside(a.0, a.1)),
-        b.0.from(inside(b.0, b.1)),
-    );
+    let (x, y) = (a.0.from(inside(a.0, a.1)), b.0.from(inside(b.0, b.1)));
     // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
     let is_without_quotes = |string: &[u8], other: &[u8]| {
         let content = string.get(1..string.len() - 1).unwrap_or_default();

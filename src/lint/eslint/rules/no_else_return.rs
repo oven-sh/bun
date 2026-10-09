@@ -141,6 +141,14 @@ fn always_returns(statement: Stmt) -> bool {
     }
 }
 
+/// The statement for which [`always_returns`] holds.
+fn returning_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
+    match statement.kind() {
+        StmtKind::Block(body) => body.iter().find(|it| check_for_return_or_if(*it)),
+        _ => Some(statement),
+    }
+}
+
 impl Rule for NoElseReturn {
     const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion).fixable(Fixable::Code);
     type State<'a> = ();
@@ -170,7 +178,14 @@ impl Rule for NoElseReturn {
                     (consequent, else_node) = (yes, no);
                 }
             }
-            cx.report(else_node, UNEXPECTED).fix(|fixer| fix(fixer, else_node, consequent));
+            // oxlint prints where the statement is that returns. Comments go by what is between the branches.
+            let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
+                Some(returning) => cx
+                    .report(returning, UNEXPECTED)
+                    .comments_apply_at(Span::new(consequent.span().end, else_node.span().start)),
+                None => cx.report(else_node, UNEXPECTED),
+            };
+            report.fix(|fixer| fix(fixer, else_node, consequent));
         });
     }
 }

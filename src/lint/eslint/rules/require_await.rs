@@ -42,12 +42,37 @@ fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
     }
 }
 
+/// Where oxlint points: at the name of the function, or at the key of the property or the method that it is the value
+/// of if that is an identifier, and else at the function.
+fn oxlint_place<'a>(func: Func<'a>, file: &File<'a>) -> Span {
+    if func.is_arrow() {
+        return func.estree_span();
+    }
+    let key = match func.owner() {
+        Node::Member(member) => Some(member.key()),
+        Node::Expr(e) => match e.parent() {
+            Node::Prop(prop) if prop.value() == Some(e) => Some(prop.key()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let name = match key {
+        Some(key) => key.filter(|it| matches!(it.kind(), KeyKind::Ident(_))).map(|it| it.span(file)),
+        None => func.name().map(|it| it.span()),
+    };
+    name.unwrap_or_else(|| func.estree_span())
+}
+
 fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
     let mut name = ast_utils::get_function_name_with_kind(func);
     if let Some(first) = name.first_mut() {
         first.make_ascii_uppercase();
     }
-    cx.report(ast_utils::get_function_head_loc(func), MISSING_AWAIT)
+    let place = match cx.language().is_oxlint {
+        true => oxlint_place(func, cx.file()),
+        false => ast_utils::get_function_head_loc(func),
+    };
+    cx.report(place, MISSING_AWAIT)
         .data("name", name)
         .suggest(REMOVE_ASYNC, |fixer| {
             let file = fixer.file();
@@ -76,7 +101,7 @@ impl Rule for RequireAwait {
         RequireAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         on.funcs(|_, func, cx| {
             if func.is_async()
                 && !func.is_generator()
@@ -92,11 +117,14 @@ impl Rule for RequireAwait {
                 mark_function_around(statement.into(), cx);
             }
         });
-        on.var_decls(|_, declaration, cx| {
-            if declaration.var_kind() == VarKind::AwaitUsing {
-                mark_function_around(declaration.into(), cx);
-            }
-        });
+        // oxlint 1.80 does not see that `await using` awaits.
+        if !file.language().is_oxlint {
+            on.var_decls(|_, declaration, cx| {
+                if declaration.var_kind() == VarKind::AwaitUsing {
+                    mark_function_around(declaration.into(), cx);
+                }
+            });
+        }
         on.finish(|_, cx| {
             for func in std::mem::take(&mut cx.state.candidates) {
                 if !cx.state.with_await.contains(&func) {

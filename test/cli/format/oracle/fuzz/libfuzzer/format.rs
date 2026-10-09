@@ -769,9 +769,11 @@ fn run(data: &[u8]) {
     let wraps_prose = input.has(13) || input.has(14);
     if matches!(target.name, "json" | "yaml") && plain.is_none() && input.flags >> 30 < 2 && !wraps_prose {
         let values = run.guarded(|| (value_of(target.name, path, text), value_of(target.name, path, &once)));
+        // Most are Prettier's own: one of each shape, for triage.ts to ask it.
+        let key = format!("{variant}-{}", shape(&once));
         match values {
-            Some((Some(before), Some(after))) if before != after => run.report("value-changed", &variant, ""),
-            Some((Some(_), None)) => run.report("value-cannot-be-read", &variant, ""),
+            Some((Some(before), Some(after))) if before != after => run.report("value-changed", &key, ""),
+            Some((Some(_), None)) => run.report("value-cannot-be-read", &key, ""),
             _ => {}
         }
     }

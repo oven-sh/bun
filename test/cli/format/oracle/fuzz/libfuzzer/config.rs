@@ -55,7 +55,7 @@ const SOURCES: [(&str, &str); 8] = [
 struct NoEngine;
 
 impl Engine for NoEngine {
-    fn with_vm(&self, _then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+    fn with_vm(&self, _among: usize, _then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         Err(b"no JavaScript here".to_vec())
     }
 }

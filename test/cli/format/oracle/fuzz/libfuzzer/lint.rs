@@ -6,12 +6,13 @@
 use bun_fuzz::{Input, Run, show, shows};
 use bun_lint::ast::File;
 use bun_lint::language::{Parser, SourceType};
-use bun_lint::linter::{LintOptions, LintResult, Linter, Registry, ResolvedConfig, RuleId};
-use bun_lint::options::Json;
+use bun_lint::context::Severity;
+use bun_lint::linter::{ConfiguredRule, LintOptions, LintResult, Linter, Registry, ResolvedConfig};
+use bun_lint::options::{Json, Options};
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 const VARIANTS: [(&str, Parser, SourceType); 20] = [
     ("a.js", Parser::Espree, SourceType::Module),
@@ -54,21 +55,21 @@ fn setup() -> &'static Setup {
             bun_lint_react::RULES,
             bun_lint_jest::RULES,
         ];
-        let rules = (all.iter().flat_map(|it| it.iter()))
-            .filter(|it| !it.meta.requires_types && !it.meta.needs_modules)
-            .map(|it| (RuleId::Known(it.meta).to_vec(), Json::Number(2.0)))
-            .collect();
-        let json = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules))]);
         let linter = Linter::new(Registry::new(&all));
+        // Not by their names: what a name stands for depends on whose configuration it is in.
+        let rules: Vec<ConfiguredRule> = (all.iter().flat_map(|it| it.iter()))
+            .filter(|it| !it.meta.requires_types && !it.meta.needs_modules)
+            .map(|it| {
+                let instance = Arc::from((it.build)(&Options::new(&[])));
+                ConfiguredRule::new(it, Severity::Error, Arc::from(Vec::new()), Some(instance))
+            })
+            .collect();
         let configs = VARIANTS.map(|(path, parser, source_type)| {
             [false, true].map(|is_oxlint| {
-                let mut unknown = Vec::new();
-                let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut unknown);
-                // They never run. Said once.
-                if !unknown.is_empty() && path == VARIANTS[0].0 && !is_oxlint {
-                    let names: Vec<_> = unknown.iter().map(|it| String::from_utf8_lossy(it)).collect();
-                    eprintln!("{} RULES ARE NOT FOUND BY THEIR NAMES: {}", names.len(), names.join(" "));
-                }
+                let mut config = ResolvedConfig::from_json(linter.registry(), &Json::Null, &mut Vec::new());
+                config.rules = rules.clone();
+                // How the comments of a text name rules.
+                config.prefers_typescript_rules = is_oxlint;
                 config.language.parser = parser;
                 config.language.source_type = source_type;
                 config.language.jsx = path.ends_with('x');

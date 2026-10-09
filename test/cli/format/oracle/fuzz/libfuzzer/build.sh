@@ -30,7 +30,8 @@ if [ -n "$KERNELS" ]; then
   objects=
   for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
   for program in fuzz_format fuzz_lint fuzz_parser fuzz_config fuzz_regex fuzz_glob fuzz_readers; do
-    RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects -Clink-arg=-lstdc++
+    # One that does not compile does not keep the others from being built.
+    RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects -Clink-arg=-lstdc++ || failed="$failed $program"
   done
 else
   RUSTFLAGS="$flags" cargo build --profile $profile --target "$host"
@@ -39,4 +40,5 @@ out="$CARGO_TARGET_DIR/$host/$profile"
 for language in options imports embedded html handlebars css yaml markdown md graphql json js; do
   ln -sf fuzz_format "$out/fuzz_$language"
 done
+[ -z "$failed" ] || { echo "NOT BUILT:$failed"; exit 1; }
 echo "built: $out"

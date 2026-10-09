@@ -14,7 +14,7 @@ use bun_sema::session::Session;
 use bun_sema_parser::{Options, Scratch};
 use std::cell::RefCell;
 
-const PATHS: [&str; 9] = ["a.ts", "a.tsx", "a.js", "a.jsx", "a.d.ts", "a.mts", "a.cts", "a.mjs", "a.cjs"];
+const PATHS: [&str; 10] = ["a.ts", "a.tsx", "a.js", "a.jsx", "a.d.ts", "a.mts", "a.cts", "a.mjs", "a.cjs", "a.json"];
 
 fn dialect_of(which: u32, script: bool) -> (&'static str, Dialect) {
     match which % 6 {
@@ -30,12 +30,14 @@ fn dialect_of(which: u32, script: bool) -> (&'static str, Dialect) {
 /// As in src/sema/parser/standalone/main.rs.
 fn options_for(path: &[u8], dialect: Dialect) -> Options {
     let kind = ScriptKind::from_file_name(path);
-    let is_javascript = kind.is_some_and(ScriptKind::is_javascript);
+    let is_json = path.ends_with(b".json");
+    let is_javascript = kind.is_some_and(ScriptKind::is_javascript) || is_json;
     Options {
         is_declaration_file: bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_javascript || kind == Some(ScriptKind::Tsx),
         is_javascript,
-        await_is_a_name: is_javascript && dialect.ecmascript && dialect.script,
+        is_json,
+        await_is_a_name: is_json || is_javascript && dialect.ecmascript && dialect.script,
         dialect,
         ..Options::default()
     }
@@ -46,6 +48,7 @@ fn compare_one(
     path: &[u8],
     text: &[u8],
     decorators: bool,
+    recovers: bool,
     dialect: Dialect,
     scratch: &mut Scratch,
 ) -> Option<(&'static str, String)> {
@@ -75,6 +78,7 @@ fn compare_one(
         || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
         || reference.ran_out_of_stack;
     let mut options = options_for(path, dialect);
+    options.recovers = recovers;
     let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     if let Ok(first) = &parsed
         && first.has_top_level_await
@@ -88,7 +92,10 @@ fn compare_one(
         parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     }
     let parsed = parsed.ok()?;
-    let wrong = if is_refused_by_reference {
+    // How it goes on after an error is not compared yet: it has to end, and not to crash.
+    let wrong = if is_refused_by_reference && parsed.file.has_parse_diagnostics {
+        None
+    } else if is_refused_by_reference {
         let first = reference.diagnostics.first();
         Some(("accepted", format!("{:?}", first.map(|it| (it.kind, it.code)))))
     } else {
@@ -111,14 +118,16 @@ fn run(data: &[u8]) {
     let path = PATHS[input.variant as usize % PATHS.len()];
     let (name, dialect) = dialect_of(u32::from(input.width), input.has(0));
     let mut run = Run::new(data);
-    run.how = format!("{path} --dialect={name} script={} decorators={}", input.has(0), input.has(1));
+    // Only this dialect is ever parsed with recovery.
+    let recovers = input.has(2) && dialect == Dialect::default();
+    run.how = format!("{path} --dialect={name} script={} decorators={} recovers={recovers}", input.has(0), input.has(1));
     if shows() {
         show(&run.how, input.text);
     }
     let wrong = run.guarded(|| {
         // After a panic it is in no state to be used again.
         let mut scratch = SCRATCH.take();
-        let wrong = compare_one(path.as_bytes(), input.text, input.has(1), dialect, &mut scratch);
+        let wrong = compare_one(path.as_bytes(), input.text, input.has(1), recovers, dialect, &mut scratch);
         SCRATCH.set(scratch);
         wrong
     });

@@ -62,7 +62,13 @@ fn setup() -> &'static Setup {
         let linter = Linter::new(Registry::new(&all));
         let configs = VARIANTS.map(|(path, parser, source_type)| {
             [false, true].map(|is_oxlint| {
-                let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
+                let mut unknown = Vec::new();
+                let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut unknown);
+                // They never run. Said once.
+                if !unknown.is_empty() && path == VARIANTS[0].0 && !is_oxlint {
+                    let names: Vec<_> = unknown.iter().map(|it| String::from_utf8_lossy(it)).collect();
+                    eprintln!("{} RULES ARE NOT FOUND BY THEIR NAMES: {}", names.len(), names.join(" "));
+                }
                 config.language.parser = parser;
                 config.language.source_type = source_type;
                 config.language.jsx = path.ends_with('x');

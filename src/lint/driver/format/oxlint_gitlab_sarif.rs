@@ -50,9 +50,9 @@ fn hash(bytes: &[u8]) -> u64 {
         let bytes = bytes.iter().rev();
         bytes.fold(0u64, |word, byte| (word << 8) | u64::from(*byte))
     };
-    let words = bytes.chunks_exact(8);
-    let last = little_endian(words.remainder()) | ((bytes.len() as u64) << 56);
-    for word in words.map(little_endian).chain([last]) {
+    let (words, rest) = bytes.as_chunks::<8>();
+    let last = little_endian(rest) | ((bytes.len() as u64) << 56);
+    for word in words.iter().map(|word| u64::from_le_bytes(*word)).chain([last]) {
         v[3] ^= word;
         round(&mut v);
         v[0] ^= word;

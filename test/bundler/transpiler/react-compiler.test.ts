@@ -3311,7 +3311,7 @@ describe("react-compiler leaves a component alone that is nested too deeply for 
       return ${result};
     }
   `;
-  // Twice the first depth that crashed.
+  // Twice the first depth that crashed, where the rest of the build can take that.
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
     ["effects", small ? 60 : 500, n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
     ["called arrow functions", small ? 120 : 600, n => component(`const x = ${nest(n, () => "(() => ", "s", ")()")};`)],
@@ -3330,7 +3330,8 @@ describe("react-compiler leaves a component alone that is nested too deeply for 
     ],
     [
       "JSX",
-      small ? 200 : 1600,
+      // The printer of a debug build gives up at 130.
+      small ? 120 : 1600,
       n =>
         component(
           "",

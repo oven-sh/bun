@@ -1,7 +1,6 @@
 //! A JSON file as a source file: `parseJSONText`.
 
 use super::Parser;
-use super::stmt::Start;
 use crate::token::T;
 use bun_sema::hir::*;
 
@@ -59,7 +58,14 @@ impl Parser<'_> {
                 self.finish_expr(ExprKind::Array(elements), start)
             }
         };
-        let whole = Start { pos: 0, full: 0 };
-        self.add_stmt(StmtKind::ExportAssign(value), whole, Span::EMPTY)
+        // It is written nowhere.
+        let id = StmtId(self.f.stmts.len() as u32);
+        self.f.stmts.push(Stmt {
+            kind: StmtKind::ExportAssign(value),
+            start: 0,
+            loc: TextRange::default(),
+            modifiers: Span::EMPTY,
+        });
+        id
     }
 }

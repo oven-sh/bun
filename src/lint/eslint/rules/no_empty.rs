@@ -63,9 +63,15 @@ impl Rule for NoEmpty {
             let close_paren = skip_trivia(source, expr.outer_span().end);
             let open_brace = skip_trivia(source, close_paren + 1);
             let braces = Span::new(open_brace, stmt.span().end);
-            // oxlint points at the whole statement.
-            let place = if cx.language().is_oxlint { stmt.span() } else { braces };
-            Self::check(braces, place, "switch", cx);
+            if !cx.language().is_oxlint {
+                return Self::check(braces, braces, "switch", cx);
+            }
+            // oxlint points at the whole statement, which a comment does not fill.
+            if text::is_blank(cx.slice(braces.shrink(1, 1))) {
+                Self::check(braces, stmt.span(), "switch", cx);
+            } else {
+                cx.report(stmt, UNEXPECTED).data("type", "switch");
+            }
         });
     }
 }

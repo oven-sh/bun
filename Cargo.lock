@@ -1038,6 +1038,7 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_clap",
+ "bun_collections",
  "bun_core",
  "bun_format",
  "bun_glob",

@@ -10,8 +10,10 @@ use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
 use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
 use crate::prelude::*;
-use crate::{format_args, write};
+use crate::tailwind::{Ends, Tailwind};
+use crate::{format_args, text, write};
 use bun_core::strings;
+use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
 
 /// The parsers of Prettier for programs.
@@ -255,6 +257,122 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
         }
     }
     None
+}
+
+/// Finds the strings and the templates of a program, and sorts the classes in them.
+struct ClassSorter<'t> {
+    tailwind: &'t Tailwind,
+    /// The operands of each `+` around what is visited.
+    concatenations: Vec<(Span, Span)>,
+    /// What is written in the place of what, in the order of the text.
+    changes: Vec<(Span, Vec<u8>)>,
+}
+
+impl ClassSorter<'_> {
+    /// `text`, which is at `span`, is text of a template, or what is between the quotes of a string. `index`, `count`: which of
+    /// how many texts of the template.
+    fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize)) {
+        // What is added to has to stay apart.
+        let (is_left, is_right) = self.concatenations.last().map_or((false, false), |it| {
+            let is_in = |operand: Span| operand.start <= span.start && span.end <= operand.end;
+            (is_in(it.0), is_in(it.1))
+        });
+        let ends = Ends {
+            ignores_first: index > 0 && !text::starts_with_white_space(text),
+            ignores_last: index + 1 < count && text::trim_end(text).len() == text.len(),
+            collapses_start: !is_right && index == 0,
+            collapses_end: !is_left && index + 1 == count,
+        };
+        let sorted = self.tailwind.sorted_between(text, ends);
+        if *sorted != *text {
+            self.changes.push((span, sorted.into_owned()));
+        }
+    }
+
+    /// `span`: of a string with its quotes, or of a template without substitutions.
+    fn sort_literal(&mut self, file: &File<'_>, span: Span) {
+        if let [b'"' | b'\'' | b'`', content @ .., _] = file.slice(span) {
+            self.sort(content, Span::new(span.start + 1, span.end - 1), (0, 1));
+        }
+    }
+}
+
+impl<'a> Visitor<'a> for ClassSorter<'_> {
+    fn enter(&mut self, node: Node<'a>) {
+        match node {
+            Node::Expr(e) => match e.kind() {
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } => self.concatenations.push((left.span(), right.span())),
+                ExprKind::String(_) if !e.is_jsx_text() => self.sort_literal(e.file(), e.span()),
+                ExprKind::Template(template) => {
+                    let count = template.quasi_count();
+                    for index in 0..count {
+                        let span = template.quasi_span(index);
+                        let end = span.end - if index + 1 == count { 1 } else { 2 };
+                        let span = Span::new(span.start + 1, end);
+                        self.sort(template.raw(index), span, (index, count));
+                    }
+                }
+                _ => {}
+            },
+            Node::Prop(property) => {
+                if let Some(key) = property.key()
+                    && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
+                {
+                    let file = property.file();
+                    self.sort_literal(file, key.inner_span(file));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn exit(&mut self, node: Node<'a>) {
+        if matches!(node, Node::Expr(e) if matches!(e.kind(), ExprKind::Binary { op: BinOp::Add, .. }))
+        {
+            self.concatenations.pop();
+        }
+    }
+}
+
+/// What `prettier-plugin-tailwindcss` makes of `code`, an expression in an attribute of Vue: `transformDynamicJsAttribute`.
+/// `None`: it is the same, or cannot be parsed.
+pub(crate) fn with_sorted_classes(
+    parse: Parse<'_>,
+    code: &[u8],
+    tailwind: &Tailwind,
+) -> Option<Vec<u8>> {
+    const BEFORE: &[u8] = b"let __prettier_temp__ = ";
+    let source = [BEFORE, code].concat();
+    let mut changes = None;
+    for path in paths_of(Syntax::BabelTs, code) {
+        parse.call(path, &source, false, &mut |file| {
+            if !file.has_parse_errors() {
+                let mut sorter = ClassSorter {
+                    tailwind,
+                    concatenations: Vec::new(),
+                    changes: Vec::new(),
+                };
+                walk(file, &mut sorter);
+                changes = Some(sorter.changes);
+            }
+        });
+        if changes.is_some() {
+            break;
+        }
+    }
+    let changes = changes.filter(|it| !it.is_empty())?;
+    let (mut sorted, mut from) = (Vec::with_capacity(code.len()), BEFORE.len());
+    for (span, text) in changes {
+        sorted.extend_from_slice(source.get(from..span.start as usize)?);
+        sorted.extend_from_slice(&text);
+        from = span.end as usize;
+    }
+    sorted.extend_from_slice(source.get(from..)?);
+    Some(sorted)
 }
 
 fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {

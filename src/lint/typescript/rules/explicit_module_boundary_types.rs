@@ -85,6 +85,68 @@ impl ExplicitModuleBoundaryTypes {
     }
 }
 
+/// The key, if oxlint has a name for it.
+fn oxlint_named_key<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<Span> {
+    let key = key?;
+    matches!(key.kind(), KeyKind::Ident(_) | KeyKind::String(_) | KeyKind::ComputedString(_))
+        .then(|| key.inner_span(file))
+}
+
+/// What oxlint calls the target of a function: the nearest name around it. Whether it is the key of a property.
+fn oxlint_target(func: Func) -> Option<(Span, bool)> {
+    if let Some(name) = func.name() {
+        return Some((name.span(), false));
+    }
+    let file = func.file();
+    for node in Node::Func(func).ancestors() {
+        let name = match node {
+            Node::Member(member) => {
+                if let Some(key) = oxlint_named_key(member.key(), file) {
+                    return Some((key, true));
+                }
+                // The name of the class is forgotten after the first member that has a name.
+                let Node::Class(class) = member.parent() else {
+                    return None;
+                };
+                let mut before = class.members().iter().take_while(|&it| it != member);
+                if before.any(|it| oxlint_named_key(it.key(), file).is_some()) {
+                    return None;
+                }
+                class.name()
+            }
+            Node::Prop(prop) => match oxlint_named_key(prop.key(), file) {
+                Some(key) => return Some((key, true)),
+                None => continue,
+            },
+            Node::VarDecl(declarator) => {
+                let pat = declarator.pat();
+                return (pat.tag() == PatTag::Ident).then(|| (pat.span(), false));
+            }
+            Node::Func(around) => around.name(),
+            Node::Class(class) => class.name(),
+            _ => None,
+        };
+        if let Some(name) = name {
+            return Some((name.span(), false));
+        }
+    }
+    None
+}
+
+/// Where oxlint points for a function without a return type: at its target. But for an arrow function that is in no
+/// other function and is not the value of a property, at the `=>`. Without a target, at the parameters of an arrow
+/// function and at the start of another function.
+fn oxlint_place(func: Func) -> Span {
+    let start = func.estree_span().start;
+    match (oxlint_target(func), func.arrow_span()) {
+        (Some((key, true)), _) => key,
+        (_, Some(arrow)) if func.enclosing().is_none() => arrow,
+        (Some((name, _)), _) => name,
+        (None, Some(arrow)) => func.params_span().unwrap_or(arrow),
+        (None, None) => Span::new(start, start + "function".len() as u32),
+    }
+}
+
 struct Checker<'a, 'c> {
     rule: &'c ExplicitModuleBoundaryTypes,
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
@@ -248,7 +310,12 @@ impl<'a> Checker<'a, '_> {
     }
 
     fn check_empty_body_function_expression(&self, member: Member<'a>, func: Func<'a>) {
-        if !member.is_constructor() && member.kind() != MemberKind::Setter && func.return_type().is_none() {
+        // oxlint says nothing about the return type of what has no body.
+        if !member.is_constructor()
+            && member.kind() != MemberKind::Setter
+            && func.return_type().is_none()
+            && !self.cx.language().is_oxlint
+        {
             self.cx.report(func.estree_span(), MISSING_RETURN_TYPE);
         }
         self.check_parameters(func);
@@ -284,7 +351,7 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         check_function_expression_return_type(func, self.options_for(func), |loc| {
-            self.cx.report(loc, MISSING_RETURN_TYPE);
+            self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
         });
         self.check_parameters(func);
     }
@@ -302,15 +369,16 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         check_function_return_type(func, self.options_for(func), |loc| {
-            self.cx.report(loc, MISSING_RETURN_TYPE);
+            self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
         });
         self.check_parameters(func);
     }
 
     fn check_parameters(&self, func: Func<'a>) {
+        let is_oxlint = self.cx.language().is_oxlint;
         for param in func.params_with_this() {
-            // It has the type of its default value.
-            if param.default().is_some() {
+            // It has the type of its default value. oxlint does not look at `this`.
+            if param.default().is_some() || is_oxlint && func.this_param() == Some(param) {
                 continue;
             }
             let (named, unnamed) = match param.ty() {
@@ -323,7 +391,12 @@ impl<'a> Checker<'a, '_> {
                 }
                 Some(_) => continue,
             };
-            let at = param.span_without_modifiers();
+            // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
+            let at = match (is_oxlint, param.is_rest()) {
+                (false, _) => param.span_without_modifiers(),
+                (true, false) => param.span(),
+                (true, true) => func.params_span().unwrap_or_else(|| param.span()),
+            };
             let pattern = match (param.pat().kind(), param.is_rest()) {
                 (PatKind::Ident(name), _) => {
                     self.cx.report(at, named).data("name", name);

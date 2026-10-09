@@ -823,6 +823,23 @@ impl Parser<'_> {
         !is_empty && (!is_ordered || mark.container.start == 1)
     }
 
+    /// Where the colons at `off` end.
+    fn directive_run_end(&self, off: OFF) -> OFF {
+        let mut end = off;
+        while end < self.size && ch(self.text, end) == b':' {
+            end += 1;
+        }
+        end
+    }
+
+    /// Whether the line is, from `off` on, `fence_len` colons or more and nothing else.
+    pub(crate) fn ends_directive(&self, off: OFF, fence_len: u32) -> bool {
+        let run_end = self.directive_run_end(off);
+        let after = helpers::line_indentation(self.text, 0, run_end).off;
+        run_end - off >= fence_len
+            && (after >= self.size || helpers::is_newline(ch(self.text, after)))
+    }
+
     pub(crate) fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
         if off >= self.size {
             return ContainerMarkResult {
@@ -872,6 +889,32 @@ impl Parser<'_> {
                         ..Container::default()
                     },
                     off: mark_end,
+                };
+            }
+        }
+
+        // `:::name`, `::: name title`, `::: {.class}`: the whole line is the mark
+        if c == b':' && self.flags.directives {
+            let name = self.directive_run_end(off);
+            let fence_len = name - off;
+            let name = helpers::line_indentation(self.text, 0, name).off;
+            let starts_name = name < self.size
+                && (matches!(ch(self.text, name), b'_' | b'{' | b'[')
+                    || char::from_u32(helpers::decode_utf8(self.text, name as usize).codepoint)
+                        .is_some_and(char::is_alphanumeric));
+            if fence_len >= 3 && starts_name {
+                let rest = &self.text[name as usize..];
+                let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
+                return ContainerMarkResult {
+                    is_container: true,
+                    container: Container {
+                        ch: b':',
+                        start: fence_len,
+                        mark_indent: indent,
+                        contents_indent: indent,
+                        ..Container::default()
+                    },
+                    off: name + len as OFF,
                 };
             }
         }

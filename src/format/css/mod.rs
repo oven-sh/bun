@@ -151,6 +151,73 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
     comments
 }
 
+/// `each(@list, { .. })` of Less is a statement for oxfmt, which writes the `;` behind it if there is none. `postcss-less`
+/// goes on to the next `;`, wherever that is. So here the `;` is there before anything is parsed.
+fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
+    if !bun_core::strings::contains(text, b"each(") {
+        return Cow::Borrowed(text);
+    }
+    // For each `(` that is open, whether it is that of such a statement.
+    let mut open: Vec<bool> = Vec::new();
+    let mut missing: Vec<usize> = Vec::new();
+    // The last character that is neither white space nor in a comment.
+    let mut last = b';';
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        let rest = &text[at..];
+        let len = match byte {
+            b'"' | b'\'' => {
+                let mut end = 1;
+                while rest.get(end).is_some_and(|it| *it != byte) {
+                    end += 1 + usize::from(rest[end] == b'\\');
+                }
+                end + 1
+            }
+            b'/' if rest.starts_with(b"/*") => {
+                at +=
+                    bun_core::strings::index_of(&rest[2..], b"*/").map_or(rest.len(), |it| it + 4);
+                continue;
+            }
+            b'/' if rest.starts_with(b"//") && last != b':' => {
+                at += bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
+                continue;
+            }
+            b'e' if matches!(last, b';' | b'{' | b'}') && rest.starts_with(b"each(") => {
+                open.push(true);
+                5
+            }
+            b'(' => {
+                open.push(false);
+                1
+            }
+            b')' => {
+                let blanks = text::leading_white_space_len(&rest[1..]);
+                if open.pop() == Some(true) && rest.get(1 + blanks) != Some(&b';') {
+                    missing.push(at + 1);
+                }
+                1
+            }
+            _ => 1,
+        };
+        at += len;
+        if !byte.is_ascii_whitespace() {
+            last = text.get(at - 1).map_or(byte, |it| *it);
+        }
+    }
+    if missing.is_empty() {
+        return Cow::Borrowed(text);
+    }
+    let mut result = Vec::with_capacity(text.len() + missing.len());
+    let mut from = 0;
+    for at in missing {
+        result.extend_from_slice(&text[from..at]);
+        result.push(b';');
+        from = at;
+    }
+    result.extend_from_slice(&text[from..]);
+    Cow::Owned(result)
+}
+
 /// `normalizeEndOfLine`
 pub(crate) fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains_char(text, b'\r') {
@@ -176,6 +243,11 @@ fn parse_and_print<'o>(
     mut sink: Sink<'o>,
     memo: &'o mut Memo,
 ) -> Result<Sink<'o>, FormatError> {
+    let with_semicolons = match parser == Parser::Less && options.flavor.is_oxfmt() {
+        true => with_semicolons_behind_each(text),
+        false => Cow::Borrowed(text),
+    };
+    let text = &with_semicolons[..];
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let front_matter = front_matter::parse(text).map(|it| &text[..it.end]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {

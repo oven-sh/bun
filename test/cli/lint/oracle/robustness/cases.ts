@@ -100,7 +100,7 @@ export const cases: Case[] = [
     text: () => `const ${rep("[", 29_000)}a${rep("]", 29_000)} = b; a = 1;\n`,
     rules: { "no-const-assign": "error", "no-dupe-args": "error" },
     // How deep that is depends on the size of the stack frames of the build.
-    matches: /'a' is constant|nested too deeply/,
+    matches: /re-assignment of `const` variable a|nested too deeply/,
     exitCode: 1,
   },
   {

@@ -31,7 +31,8 @@ function run(command: string, before: string[], cwd: string): string[] {
   }
   // A file that oxlint cannot read says nothing about a rule.
   for (const it of diagnostics) {
-    if (!it.code && command === oxlint && !cwd.includes("syntax-error")) console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
+    // `TS(2391)` is an error of oxc's semantic analysis.
+    if (!/^[a-z]/.test(it.code ?? "") && command === oxlint && !cwd.includes("syntax-error")) console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
   }
   return diagnostics
     .filter((it: any) => it.code)

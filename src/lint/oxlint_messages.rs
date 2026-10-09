@@ -88,7 +88,6 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ]),
     ("eslint", "getter-return", &[
         m("expected", "Expected to always return a value in getter."),
-        m("expectedAlways", "Expected to always return a value in getter."),
     ]),
     ("eslint", "guard-for-in", &[
         m("wrap", "Require `for-in` loops to include an `if` statement"),
@@ -489,6 +488,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("interfaceOverType", "Use `interface` instead of `type`."),
         m("typeOverInterface", "Use `type` instead of `interface`."),
     ]),
+    ("typescript", "consistent-type-exports", &[
+        m("typeOverValue", "All exports in the declaration are only used as types."),
+    ]),
     ("typescript", "explicit-module-boundary-types", &[
         m("anyTypedArg", "Argument is explicitly typed as `any`"),
         m("anyTypedArgUnnamed", "Argument is explicitly typed as `any`"),
@@ -500,12 +502,17 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("errorMethod", "Use a property signature instead of a method signature."),
         m("errorProperty", "Use a method signature instead of a property signature."),
     ]),
+    ("typescript", "no-array-constructor", &[
+        m("useLiteral", "Avoid calls to the `Array` constructor"),
+    ]),
     ("typescript", "no-confusing-non-null-assertion", &[
         m("confusingAssign", "Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`."),
     ]),
     ("typescript", "no-confusing-void-expression", &[
         m("invalidVoidExpr", "Placing a void expression inside another expression is forbidden."),
         m("invalidVoidExprArrow", "Returning a void expression from an arrow function shorthand is forbidden."),
+        m("invalidVoidExprReturn", "Returning a void expression from a function is forbidden."),
+        m("invalidVoidExprReturnLast", "Returning a void expression from a function is forbidden."),
     ]),
     ("typescript", "no-duplicate-type-constituents", &[
         m("duplicate", "{{type}} type constituent is duplicated with  {{previous}}."),
@@ -535,6 +542,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ]),
     ("typescript", "no-for-in-array", &[
         m("forInViolation", "For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties."),
+    ]),
+    ("typescript", "no-implied-eval", &[
+        m("noImpliedEvalError", "Implied eval."),
     ]),
     ("typescript", "no-import-type-side-effects", &[
         m("useTopLevelQualifier", "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."),
@@ -571,6 +581,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("typescript", "no-unnecessary-condition", &[
         m("alwaysNullish", "Unnecessary conditional, value is always nullish."),
         m("comparisonBetweenLiteralTypes", "Unnecessary comparison between literal values."),
+        m("neverNullish", "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined."),
         m("typeGuardAlreadyIsType", "Type predicate is unnecessary as the parameter type already satisfies the predicate."),
     ]),
     ("typescript", "no-unnecessary-parameter-property-assignment", &[
@@ -594,11 +605,13 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unsafeArrayPattern", "Unsafe array destructuring of an any array value."),
         m("unsafeArrayPatternFromTuple", "Unsafe array destructuring of a tuple element with an any value."),
         m("unsafeArraySpread", "Unsafe spread of an any value in an array."),
+        m("unsafeAssignment", "Unsafe assignment between incompatible types."),
         m("unsafeObjectPattern", "Unsafe array destructuring of a tuple element with an any value."),
     ]),
     ("typescript", "no-unsafe-call", &[
         m("errorCall", "Unsafe call of a(n) `error` type typed value."),
         m("errorCallThis", "Unsafe call of a(n) `error` type typed value. `this` is typed as `error` type.\n"),
+        m("errorNew", "Unsafe construction of a(n) `error` type typed value."),
         m("errorTemplateTag", "Unsafe use of a(n) `error` type typed template tag."),
         m("unsafeCallThis", "Unsafe call of a(n) `any` typed value. `this` is typed as `any`.\n"),
     ]),
@@ -645,6 +658,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("typescript", "prefer-nullish-coalescing", &[
         m("preferNullishOverTernary", "Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read."),
     ]),
+    ("typescript", "prefer-readonly", &[
+        m("preferReadonly", "Member '{{name}}' is never reassigned."),
+    ]),
     ("typescript", "prefer-readonly-parameter-types", &[
         m("shouldBeReadonly", "Parameter should be a readonly type."),
     ]),
@@ -669,7 +685,12 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("invalidType", "Invalid type used in template literal expression."),
     ]),
     ("typescript", "strict-boolean-expressions", &[
-        m("conditionErrorNullableObject", "Unexpected nullable object value in conditional. Please handle the nullish case explicitly."),
+        m("conditionErrorAny", "Unexpected any value in conditional."),
+        m("conditionErrorNullableBoolean", "Unexpected nullable boolean value in conditional."),
+        m("conditionErrorNullableEnum", "Unexpected nullable enum value in conditional."),
+        m("conditionErrorNullableNumber", "Unexpected nullable number value in conditional."),
+        m("conditionErrorNullableObject", "Unexpected nullable object value in conditional."),
+        m("conditionErrorNullableString", "Unexpected nullable string value in conditional."),
         m("conditionErrorNullish", "Unexpected nullish value in conditional. The expression is always falsy."),
         m("conditionErrorNumber", "Unexpected number value in conditional. A number can be falsy (0, NaN) or truthy."),
         m("conditionErrorString", "Unexpected string value in conditional. A string can be falsy (empty string) or truthy."),

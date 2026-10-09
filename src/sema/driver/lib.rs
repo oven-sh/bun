@@ -253,6 +253,10 @@ pub struct PlanOptions {
     /// Nobody reads what is reported about the files that are checked, so no `Diagnostic` is made of it: each has a copy
     /// of the lines around it, which in a bundle on one line is a copy of the file.
     pub reports_nothing_about_files: bool,
+    /// A file of `Request::paths` is checked only in a project that includes it: that of the nearest configuration
+    /// file or one that it references, or else the same for the configuration files further up
+    /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that none includes is not checked.
+    pub only_in_a_project_that_includes: bool,
 }
 
 impl Default for PlanOptions {
@@ -275,6 +279,7 @@ impl Default for PlanOptions {
             reads_sources_of_references: false,
             current_directory_is_of_the_project: false,
             reports_nothing_about_files: false,
+            only_in_a_project_that_includes: false,
         }
     }
 }
@@ -1446,11 +1451,29 @@ impl Projects {
         nearest: Option<Vec<u8>>,
         path: &[u8],
     ) -> Result<Option<Vec<u8>>, Option<Vec<u8>>> {
+        let has_to_include = request.plan_options.only_in_a_project_that_includes;
         let Some(nearest) = nearest else {
-            return Ok(None);
+            return if has_to_include { Err(None) } else { Ok(None) };
         };
         if let Some(owner) = self.find_project_with(disk, request, &nearest, path) {
             return Ok(Some(owner));
+        }
+        // `getAncestorConfigFileName`
+        let mut below = nearest.clone();
+        loop {
+            if !has_to_include {
+                break;
+            }
+            let dir = dirname::<Posix>(&below);
+            let parent = dirname::<Posix>(dir);
+            let above = (parent.len() < dir.len()).then(|| config::find_config(disk, parent));
+            let Some(above) = above.flatten() else {
+                break;
+            };
+            if let Some(owner) = self.find_project_with(disk, request, &above, path) {
+                return Ok(Some(owner));
+            }
+            below = above;
         }
         let project = self.load(disk, request, &nearest);
         let is_solution =
@@ -1683,9 +1706,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     for path in &paths {
         if !disk.is_dir(path) {
             let nearest = config_in(dirname::<Posix>(path));
-            let owner = projects.owner_of(disk, request, nearest, path);
-            let owner = owner.unwrap_or_else(|nearest| nearest);
-            add(owner, Extent::Project, path.clone());
+            match projects.owner_of(disk, request, nearest, path) {
+                Err(_) if request.plan_options.only_in_a_project_that_includes => {}
+                Ok(owner) | Err(owner) => add(owner, Extent::Project, path.clone()),
+            }
             continue;
         }
         // The directory stands for the part of the project that is in it: of the project that is

@@ -123,6 +123,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
     // Where the line that is being analyzed starts.
     pub(crate) line_beg: OFF,
+    // That line is the `:::` that ends the outermost of the containers that it ends.
+    pub(crate) is_directive_end: bool,
     // The lines of the paragraph whose reference definitions are being read.
     pub(crate) def_lines: Vec<VerbatimLine>,
     pub(crate) extensions: Option<Extensions<'a>>,
@@ -347,6 +349,7 @@ impl<'a> Parser<'a> {
             track,
             container_sources: Vec::new(),
             line_beg: 0,
+            is_directive_end: false,
             def_lines: Vec::new(),
             extensions: None,
             inline_lines: Vec::new(),

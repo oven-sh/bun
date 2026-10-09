@@ -74,6 +74,13 @@ fn counts_space_before_commented_conditional(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `a => b => (c ? d : e)`: for oxfmt the conditional expression is on the next line, without the parentheses, if the
+/// chain does not fit on its line. For Prettier it is a group of its own behind a blank, which counts: a line that the
+/// `=>` fills to the last column is too long.
+fn conditional_body_breaks_with_the_chain(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// ```ts
 /// return (                   return (
 ///   a: A,                        a: A,
@@ -142,6 +149,11 @@ fn write_arrow<'a>(
             && expand_last_arg
             && counts_space_before_commented_conditional(f));
 
+    let breaks_with_chain = should_print_as_chain
+        && is_body_on_same_line
+        && add_parens_if_not_break
+        && conditional_body_breaks_with_the_chain(f);
+
     let format_body = FormatArrowBody {
         arrow: tail,
         options,
@@ -162,7 +174,20 @@ fn write_arrow<'a>(
                     if !f.comments().has_comment_in_range(e.span().end, container.span().end)
             );
         let trailing_line = should_add_soft_line.then_some(soft_line_break());
-        if is_body_on_same_line {
+        if breaks_with_chain {
+            write!(
+                f,
+                [
+                    soft_line_indent_or_space(&format_args!(
+                        if_group_fits_on_line(&"("),
+                        format_body,
+                        if_group_fits_on_line(&")")
+                    )),
+                    trailing_comma,
+                    trailing_line
+                ]
+            );
+        } else if is_body_on_same_line {
             write!(
                 f,
                 [
@@ -218,7 +243,7 @@ fn write_arrow<'a>(
         && !has_leading_comment(e, is_callee, f);
     let should_break_signatures = options.assignment_layout
         == Some(AssignmentLikeLayout::ChainTailArrowFunction)
-        || (is_callee && !is_body_on_same_line);
+        || (is_callee && (!is_body_on_same_line || breaks_with_chain));
     // As an argument or an operand, the first starts where the chain starts.
     let is_first_indented = !first_signature_starts_where_chain_starts(f)
         && !matches!(

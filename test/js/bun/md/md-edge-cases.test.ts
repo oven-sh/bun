@@ -1920,3 +1920,8 @@ test("a delimiter at the edge of the text of a link has the bracket next to it",
     '<p><a href="u"><em>a</em></a> <a href="u"><strong>b</strong></a></p>\n',
   );
 });
+
+test("white space is between the destination of a link and its title", () => {
+  expect(Markdown.html('[a](<b>"c")\n')).toBe("<p>[a](<b>&quot;c&quot;)</p>\n");
+  expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
+});

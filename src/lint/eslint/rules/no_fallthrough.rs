@@ -5,6 +5,7 @@ use bun_lint::utils::text;
 /// Disallow fallthrough of `case` statements.
 pub struct NoFallthrough {
     fallthrough_comment_pattern: Regex,
+    has_default_pattern: bool,
     allow_empty_case: bool,
     report_unused_fallthrough_comment: bool,
 }
@@ -16,11 +17,17 @@ const UNUSED_FALLTHROUGH_COMMENT: Message = Message::new(
 const CASE: Message = Message::new("case", "Expected a 'break' statement before 'case'.");
 const DEFAULT: Message = Message::new("default", "Expected a 'break' statement before 'default'.");
 
+/// Without `commentPattern`, a comment has to be one of these for oxlint, in capitals or not.
+const COMMENTS_OF_OXLINT: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];
+
 impl NoFallthrough {
     /// The comment, if it is a fallthrough comment and not a directive of ESLint.
-    fn fallthrough_comment<'a>(&self, comment: Option<Token<'a>>) -> Option<Token<'a>> {
+    fn fallthrough_comment<'a>(&self, comment: Option<Token<'a>>, is_oxlint: bool) -> Option<Token<'a>> {
         comment.filter(|comment| {
             let value = comment.comment_value();
+            if self.has_default_pattern && is_oxlint {
+                return COMMENTS_OF_OXLINT.iter().any(|it| text::trim(value).eq_ignore_ascii_case(it));
+            }
             self.fallthrough_comment_pattern.test(value)
                 && match_directives_pattern(text::trim(value)).is_none()
         })
@@ -33,6 +40,7 @@ impl NoFallthrough {
         subsequent_case: Case<'a>,
     ) -> Option<Token<'a>> {
         let file = subsequent_case.file();
+        let is_oxlint = file.language().is_oxlint;
         let consequent = case_which_falls_through.body();
         if consequent.len() == 1
             && let Some(block) = consequent.first()
@@ -41,11 +49,11 @@ impl NoFallthrough {
             let end = block.span().end;
             let trailing_close_brace = Span::new(end.saturating_sub(1), end);
             let in_block = file.comments_before(trailing_close_brace).next_back();
-            if let Some(comment) = self.fallthrough_comment(in_block) {
+            if let Some(comment) = self.fallthrough_comment(in_block, is_oxlint) {
                 return Some(comment);
             }
         }
-        self.fallthrough_comment(file.comments_before(subsequent_case).next_back())
+        self.fallthrough_comment(file.comments_before(subsequent_case).next_back(), is_oxlint)
     }
 
     /// Checks `previous`, which `case` follows.
@@ -108,11 +116,12 @@ impl Rule for NoFallthrough {
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
+        let pattern = (object.str("commentPattern"))
+            .filter(|pattern| !pattern.is_empty())
+            .and_then(|pattern| Regex::new(pattern, "u").ok());
         NoFallthrough {
-            fallthrough_comment_pattern: (object.str("commentPattern"))
-                .filter(|pattern| !pattern.is_empty())
-                .and_then(|pattern| Regex::new(pattern, "u").ok())
-                .unwrap_or_else(|| Regex::literal(r"/falls?\s?through/iu")),
+            has_default_pattern: pattern.is_none(),
+            fallthrough_comment_pattern: pattern.unwrap_or_else(|| Regex::literal(r"/falls?\s?through/iu")),
             allow_empty_case: object.bool_or("allowEmptyCase", false),
             report_unused_fallthrough_comment: object
                 .bool_or("reportUnusedFallthroughComment", false),

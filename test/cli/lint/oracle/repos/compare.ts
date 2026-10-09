@@ -20,6 +20,8 @@ export type LintComparison = {
   /** Of the messages that are the same: how many have another fix or other suggestions. */
   fixes: { compared: number; different: number };
   suppressed: { theirs: number; ours: number };
+  /** The messages that are the same, by rule: what a rule gets right counts as much as what it gets wrong. */
+  sameByRule: Record<string, number>;
   buckets: Bucket[];
 };
 
@@ -56,6 +58,7 @@ function compareEntries(byFile: [Map<string, Entry[]>, Map<string, Entry[]>], li
     messages: { theirs: 0, ours: 0, same: 0, onlyTheirs: 0, onlyOurs: 0 },
     fixes: { compared: 0, different: 0 },
     suppressed: { theirs: 0, ours: 0 },
+    sameByRule: {},
     buckets: [],
   };
   for (const file of new Set([...theirs.keys(), ...ours.keys()])) {
@@ -76,6 +79,7 @@ function compareEntries(byFile: [Map<string, Entry[]>, Map<string, Entry[]>], li
         continue;
       }
       result.messages.same++;
+      result.sameByRule[it.rule] = (result.sameByRule[it.rule] ?? 0) + 1;
       result.fixes.compared++;
       if (match.fix !== it.fix) {
         result.fixes.different++;

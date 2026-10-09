@@ -1,4 +1,6 @@
-use bun_lint_oxlint::ast_util::{as_object_expression, get_inner_expression, is_specific_id, static_property_name};
+use bun_lint_oxlint::ast_util::{
+    as_object_expression, get_inner_expression, is_specific_id, static_property_name, static_string,
+};
 use crate::oxlint::vue::{casing, find_property, is_vue_component_options_object, is_vue_setup};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -65,12 +67,7 @@ impl ComponentDefinitionNameCasing {
         let Some(inner) = expr.map(get_inner_expression) else {
             return;
         };
-        let value = match inner.kind() {
-            ExprKind::String(value) => Some(value),
-            ExprKind::Template(template) => template.as_static(),
-            _ => None,
-        };
-        let Some(value) = value.filter(|it| !self.check_case(it.bytes())) else {
+        let Some(value) = static_string(inner).filter(|it| !self.check_case(it.bytes())) else {
             return;
         };
         let case_type = if self.is_kebab_case { "kebab-case" } else { "PascalCase" };

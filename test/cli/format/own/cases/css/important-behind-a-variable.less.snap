@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+a {
+  color: @dark !important;
+  b: @a !important;
+  c: @d !important;
+  e: @@color !important;
+  f: lighten(@@color, 30%) !important;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a {
+  color: @dark !important;
+  b: @a !important;
+  c: @d !important;
+  e: @@color !important;
+  f: lighten(@@color, 30%) !important;
+}
+
+===================== End =====================

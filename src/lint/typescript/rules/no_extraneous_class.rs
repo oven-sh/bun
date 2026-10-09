@@ -14,11 +14,14 @@ const ONLY_STATIC: Message = Message::new("onlyStatic", "Unexpected class with o
 
 impl NoExtraneousClass {
     /// For oxlint a constructor, a static block and an index signature are not static, and a class has only a
-    /// constructor if that is its only member. It points at the name, of a class expression too, and at an empty class
-    /// from `class` on.
+    /// constructor if that is its only member. It points at the name, of a class expression too, and at an empty class,
+    /// after decorators from `class` on.
     fn check_as_oxlint<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let members = class.members();
-        let whole = Span::new(class.keyword_span().start, class.estree_span().end);
+        let whole = match class.decorators().next() {
+            Some(_) => Span::new(class.keyword_span().start, class.estree_span().end),
+            None => class.estree_span(),
+        };
         let name = class.name().map_or(whole, |it| it.span());
         let (place, message, is_allowed) = match members.first() {
             None => (whole, EMPTY, self.allow_empty),

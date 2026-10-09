@@ -283,15 +283,18 @@ fn join_ref_access_types_many(types: &[RefAccessType], keeps_place: bool) -> Ref
 struct Env {
     /// `EnvironmentConfig::joined_ref_values_keep_their_place`
     keeps_place: bool,
+    /// `EnvironmentConfig::captured_refs_are_known_in_functions`
+    looks_into_functions: bool,
     changed: bool,
     data: IdMap<IdentifierId, RefAccessType>,
     temporaries: IdMap<IdentifierId, Place>,
 }
 
 impl Env {
-    fn new(keeps_place: bool) -> Self {
+    fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
         Self {
             keeps_place,
+            looks_into_functions,
             changed: false,
             data: IdMap::default(),
             temporaries: IdMap::default(),
@@ -519,7 +522,10 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 // --- Main entry point ---
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
-    let mut ref_env = Env::new(env.config.joined_ref_values_keep_their_place);
+    let mut ref_env = Env::new(
+        env.config.joined_ref_values_keep_their_place,
+        env.config.captured_refs_are_known_in_functions,
+    );
     collect_temporaries_sidemap(
         func,
         &mut ref_env,
@@ -554,7 +560,9 @@ fn collect_temporaries_sidemap(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::ObjectMethod { lowered_func, .. }
-                | InstructionValue::FunctionExpression { lowered_func, .. } => {
+                | InstructionValue::FunctionExpression { lowered_func, .. }
+                    if env.looks_into_functions =>
+                {
                     let inner = &functions[lowered_func.func.0 as usize];
                     collect_temporaries_sidemap(inner, env, identifiers, types, functions);
                 }
@@ -619,7 +627,7 @@ fn validate_no_ref_access_in_render_impl(
     // recognized as Ref/RefValue inside the lambda body. Callbacks passed to
     // useState/useReducer (and IIFEs) execute during render, so a captured ref
     // read must be detected here for `read_ref_effect` to propagate.
-    if env.config.captured_refs_are_known_in_functions {
+    if ref_env.looks_into_functions {
         for place in &func.context {
             ref_env.set(
                 place.identifier,

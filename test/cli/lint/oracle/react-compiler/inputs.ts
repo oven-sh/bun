@@ -1,8 +1,6 @@
 // The inputs of ../../react-compiler.test.ts, which expected.ts gives to oxlint: directories of files, each linted in one run
-// without arguments but `-f json`.
+// without arguments but `-f json`. Those that are not written for this test are in expected.json.
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { RULE_NAMES } from "./shared.ts";
 
 /** An `.oxlintrc.json` with nothing on but `rules`. */
@@ -13,69 +11,7 @@ export const rc = (rules: readonly string[] = RULE_NAMES) =>
     rules: Object.fromEntries(rules.map(rule => [rule, "error"])),
   });
 
-/** The compiler's own fixtures, two to four for each rule that reports anything in them. */
-export const FIXTURES = [
-  "allow-global-reassignment-in-effect.js",
-  "context-variable-as-jsx-element-tag.js",
-  "effect-derived-computations/derived-state-from-prop-setter-call-outside-effect-no-error.js",
-  "effect-derived-computations/effect-with-global-function-call-no-error.js",
-  "error.assign-global-in-component-tag-function.js",
-  "error.bug-invariant-couldnt-find-binding-for-decl.js",
-  "error.bug-invariant-expected-consistent-destructuring.js",
-  "error.function-expression-references-variable-its-assigned-to.js",
-  "error.hoist-optional-member-expression-with-conditional.js",
-  "error.invalid-array-push-frozen.js",
-  "error.invalid-disallow-mutating-ref-in-render.js",
-  "error.invalid-eval-unsupported.js",
-  "error.invalid-impure-functions-in-render.js",
-  "error.invalid-optional-member-expression-as-memo-dep-non-optional-in-body.js",
-  "error.invalid-pass-hook-as-prop.js",
-  "error.invalid-props-mutation-in-effect-indirect.js",
-  "error.invalid-reassign-variable-in-usememo.js",
-  "error.invalid-ref-value-as-props.js",
-  "error.invalid-setState-in-useMemo.js",
-  "error.invalid-sketchy-code-use-forget.js",
-  "error.invalid-unconditional-set-state-in-render.js",
-  "error.mutate-global-increment-op-invalid-react.js",
-  "error.todo-invalid-jsx-in-try-with-finally.js",
-  "error.useMemo-non-literal-depslist.ts",
-  "exhaustive-deps/error.invalid-dep-on-ref-current-value.js",
-  "exhaustive-deps/error.invalid-exhaustive-effect-deps.js",
-  "fbt/error.todo-locally-require-fbt.js",
-  "invalid-jsx-in-catch-in-outer-try-with-catch.js",
-  "invalid-jsx-in-try-with-catch.js",
-  "invalid-set-state-in-effect-verbose-non-local-derived.js",
-  "invalid-unused-usememo.js",
-  "preserve-memo-validation/error.useMemo-property-call-dep.ts",
-  "rules-of-hooks/error.invalid-conditionally-call-prop-named-like-hook.js",
-  "rules-of-hooks/error.invalid-hook-as-prop.js",
-  "rules-of-hooks/error.invalid-hook-for.js",
-  "should-bailout-without-compilation-infer-mode.js",
-  "static-components/invalid-dynamically-constructed-component-method-call.js",
-  "timers.js",
-  "use-no-forget-with-eslint-suppression.js",
-  "useMemo-if-else-multiple-return.js",
-  "useMemo-named-function.ts",
-];
-
-export const fixturesDirectory = join(
-  import.meta.dir,
-  "..",
-  "..",
-  "..",
-  "..",
-  "bundler",
-  "transpiler",
-  "react-compiler-fixtures",
-);
-
 export type Files = Record<string, string>;
-
-export function fixtures(): Files {
-  const files: Files = { ".oxlintrc.json": rc() };
-  for (const path of FIXTURES) files[path] = readFileSync(join(fixturesDirectory, path), "utf8");
-  return files;
-}
 
 const readsRef = (comment: string) => `function Component() {
   const ref = useRef(null);

@@ -1,15 +1,19 @@
 //! `@param` tags are put in the order of the parameters of the function behind the comment.
 
-use super::parser::Tag;
 use super::text::trim_start;
+use bun_lint::ast::jsdoc::JSDocTag;
+use bun_lint::ast::{
+    Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, List, MemberKind, Modifier, Name,
+    Node, PropKind, StmtKind,
+};
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
-}
-
-/// `after`: the text behind the comment. Only if every `@param` has a type and a name, and the names are those
-/// of the parameters.
-pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after: &[u8]) {
+/// `comment_end`: where the comment ends in `file`. Only if every `@param` has a type and a name, and the names
+/// are those of the parameters.
+pub(super) fn reorder_param_tags<'a>(
+    effective_tags: &mut [(JSDocTag<'a>, &'a [u8])],
+    file: &'a File<'a>,
+    comment_end: u32,
+) {
     let Some(param_start) = effective_tags
         .iter()
         .position(|(_, kind)| *kind == b"param")
@@ -30,7 +34,7 @@ pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after
             _ => return,
         }
     }
-    let function_params = extract_function_params(after);
+    let function_params = function_behind(file, comment_end).map_or_else(Vec::new, parameter_names);
     if function_params.len() != names.len()
         || names == function_params
         || !names.iter().all(|name| function_params.contains(name))
@@ -49,212 +53,124 @@ pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after
     });
 }
 
-fn extract_function_params(after: &[u8]) -> Vec<&[u8]> {
-    let trimmed = trim_start(after);
-    let Some(paren_start) = find_function_params_start(trimmed) else {
-        return Vec::new();
-    };
-    match find_matching_paren(trimmed, paren_start) {
-        Some(paren_end) => parse_param_names(&trimmed[paren_start + 1..paren_end]),
-        None => Vec::new(),
-    }
-}
+/// How deep in the tree the function is looked for. A chain of calls can be as long as the file, with a comment
+/// in each call.
+const MAX_DEPTH: usize = 256;
 
-fn skip_whitespace(bytes: &[u8], i: &mut usize) {
-    while bytes.get(*i).is_some_and(u8::is_ascii_whitespace) {
-        *i += 1;
-    }
-}
-
-fn skip_identifier(bytes: &[u8], i: &mut usize) {
-    while bytes.get(*i).is_some_and(|&byte| is_identifier_byte(byte)) {
-        *i += 1;
-    }
-}
-
-/// Passes `<T>`.
-fn skip_generics(bytes: &[u8], i: &mut usize) {
-    if bytes.get(*i) == Some(&b'<')
-        && let Some(end) = find_matching_angle(bytes, *i)
-    {
-        *i = end + 1;
-    }
-}
-
-/// Whether the word `keyword` is at `i`, with something behind it.
-fn is_keyword_at(bytes: &[u8], i: usize, keyword: &[u8]) -> bool {
-    bytes[i..].starts_with(keyword)
-        && bytes
-            .get(i + keyword.len())
-            .is_some_and(|&next| !is_identifier_byte(next))
-}
-
-/// Where the `(` of the parameters is, if `text` starts with something like a function.
-fn find_function_params_start(text: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    loop {
-        skip_whitespace(text, &mut i);
-        match [&b"export"[..], b"async", b"default"]
-            .iter()
-            .find(|keyword| is_keyword_at(text, i, keyword))
+/// The function whose head starts with what follows the comment that ends at `comment_end`.
+fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
+    let after = file.text().get(comment_end as usize..)?;
+    let start = comment_end + (after.len() - trim_start(after).len()) as u32;
+    let mut node = Node::File(file);
+    for _ in 0..MAX_DEPTH {
+        let mut child_at_start = None;
+        node.for_each_child_near(start, |child| {
+            if child_at_start.is_none() && child.span().contains_offset(start) {
+                child_at_start = Some(child);
+            }
+        });
+        node = child_at_start?;
+        if node.span().start == start
+            && let Some(func) = function_with_known_head(node)
         {
-            Some(keyword) => i += keyword.len(),
-            None => break,
-        }
-    }
-    let is_paren = |i: usize| (text.get(i) == Some(&b'(')).then_some(i);
-    // `function name(`
-    if text[i..].starts_with(b"function") {
-        i += 8;
-        skip_whitespace(text, &mut i);
-        if text.get(i) == Some(&b'*') {
-            i += 1;
-        }
-        skip_whitespace(text, &mut i);
-        skip_identifier(text, &mut i);
-        skip_generics(text, &mut i);
-        skip_whitespace(text, &mut i);
-        return is_paren(i);
-    }
-    // `const name = (` or `name(`
-    if !text
-        .get(i)
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$')
-    {
-        return None;
-    }
-    if [&b"const "[..], b"let ", b"var "]
-        .iter()
-        .any(|keyword| text[i..].starts_with(keyword))
-    {
-        while text.get(i).is_some_and(|byte| !byte.is_ascii_whitespace()) {
-            i += 1;
-        }
-        skip_whitespace(text, &mut i);
-    }
-    let identifier_start = i;
-    skip_identifier(text, &mut i);
-    if i == identifier_start {
-        return None;
-    }
-    skip_whitespace(text, &mut i);
-    skip_generics(text, &mut i);
-    skip_whitespace(text, &mut i);
-    if text.get(i) == Some(&b'(') {
-        return Some(i);
-    }
-    if text.get(i) == Some(&b'=') && text.get(i + 1).is_some_and(|&next| next != b'=') {
-        i += 1;
-        skip_whitespace(text, &mut i);
-        if is_keyword_at(text, i, b"async") {
-            i += 5;
-            skip_whitespace(text, &mut i);
-        }
-        return is_paren(i);
-    }
-    None
-}
-
-/// Passes the string that starts at `i`, up to its closing quote.
-fn skip_string(bytes: &[u8], i: &mut usize) {
-    let quote = bytes[*i];
-    *i += 1;
-    while bytes.get(*i).is_some_and(|&byte| byte != quote) {
-        *i += if bytes[*i] == b'\\' { 2 } else { 1 };
-    }
-}
-
-/// Goes on to the next comma that is not in parentheses, angle brackets or a string.
-fn skip_to_comma(bytes: &[u8], i: &mut usize) {
-    while let Some(&byte) = bytes.get(*i).filter(|&&byte| byte != b',') {
-        match byte {
-            b'(' => *i = find_matching_paren(bytes, *i).unwrap_or(*i) + 1,
-            b'<' => *i = find_matching_angle(bytes, *i).unwrap_or(*i) + 1,
-            b'\'' | b'"' | b'`' => {
-                skip_string(bytes, i);
-                if *i < bytes.len() {
-                    *i += 1;
-                }
-            }
-            _ => *i += 1,
-        }
-    }
-}
-
-fn find_matching_angle(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    for (i, &byte) in bytes.iter().enumerate().skip(start) {
-        match byte {
-            b'<' => depth += 1,
-            b'>' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
+            return Some(func);
         }
     }
     None
 }
 
-fn find_matching_paren(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut i = start;
-    while let Some(&byte) = bytes.get(i) {
-        match byte {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
+/// The function that `node` is or declares. oxfmt looks for the `(` of the parameters in the text behind the
+/// comment, and finds it behind these heads only.
+fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
+    match node {
+        Node::Stmt(statement) if are_passed_over(statement.modifiers()) => match statement.kind() {
+            StmtKind::Fn(func) => Some(func),
+            // `const f = (a, b) => {}`
+            StmtKind::Var(declarations) => {
+                let first = declarations.first()?;
+                let has_plain_name = first.pat().as_ident().is_some_and(is_plain_name);
+                arrow_function(first.init()?).filter(|_| has_plain_name && first.ty().is_none())
             }
-            b'\'' | b'"' | b'`' => skip_string(bytes, &mut i),
-            _ => {}
+            // `return (a, b) => {}`
+            StmtKind::Return(value) => arrow_function(value?).filter(|it| !it.is_async()),
+            _ => None,
+        },
+        Node::Expr(e) => match e.kind() {
+            ExprKind::Fn(func) => (func.kind() == FnKind::Expr).then_some(func),
+            // `f = (a, b) => {}`
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => match target.kind() {
+                ExprKind::Ident(name) if is_plain_name(name) => arrow_function(value),
+                _ => None,
+            },
+            _ => None,
+        },
+        Node::Member(member)
+            if are_passed_over(member.modifiers()) && !member.flags().contains(Flags::OPTIONAL) =>
+        {
+            match member.kind() {
+                MemberKind::Constructor | MemberKind::ConstructSignature => member.func(),
+                MemberKind::Method if is_plain_key(member.key()) => {
+                    member.func().filter(|it| !it.is_generator())
+                }
+                // `f = (a, b) => {}`
+                MemberKind::Property if is_plain_key(member.key()) && member.ty().is_none() => {
+                    arrow_function(member.init()?)
+                }
+                _ => None,
+            }
         }
-        i += 1;
+        Node::Prop(prop) if prop.kind() == PropKind::Method && is_plain_key(prop.key()) => {
+            prop.func().filter(|it| !it.is_generator())
+        }
+        _ => None,
     }
-    None
 }
 
-/// The names of the parameters in `params`. A pattern has none.
-fn parse_param_names(params: &[u8]) -> Vec<&[u8]> {
-    let mut names = Vec::new();
-    let len = params.len();
-    let mut i = 0;
-    loop {
-        skip_whitespace(params, &mut i);
-        if i >= len {
-            return names;
-        }
-        if params[i] == b'{' || params[i] == b'[' {
-            let (open, close) = if params[i] == b'{' {
-                (b'{', b'}')
-            } else {
-                (b'[', b']')
-            };
-            let mut depth = 0i32;
-            while i < len {
-                depth += i32::from(params[i] == open) - i32::from(params[i] == close);
-                i += 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-        } else {
-            if params[i..].starts_with(b"...") {
-                i += 3;
-            }
-            let name_start = i;
-            skip_identifier(params, &mut i);
-            if i > name_start {
-                names.push(&params[name_start..i]);
-            }
-        }
-        skip_to_comma(params, &mut i);
-        if i < len {
-            i += 1;
-        }
-    }
+/// Whether there is nothing but `export`, `default` and `async`.
+fn are_passed_over<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
+    modifiers.iter().all(|it| {
+        it.flag()
+            .intersects(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)
+    })
+}
+
+/// `(a, b) => {}` that is not in parentheses and has no type parameters.
+fn arrow_function(e: Expr<'_>) -> Option<Func<'_>> {
+    e.as_fn()
+        .filter(|it| it.is_arrow() && it.type_params().is_empty() && !e.is_parenthesized())
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+/// It is in ASCII, and none of the words that are passed over.
+fn is_plain_name(name: Name<'_>) -> bool {
+    let name = name.bytes();
+    name.iter().all(|&byte| is_identifier_byte(byte))
+        && !matches!(name, b"export" | b"default" | b"async")
+}
+
+fn is_plain_key(key: Option<Key<'_>>) -> bool {
+    matches!(key.map(Key::kind), Some(KeyKind::Ident(name)) if is_plain_name(name))
+}
+
+/// What oxfmt takes for the names of the parameters: the word that each starts with, behind `...`. That is a
+/// modifier if it has one. A pattern has none.
+fn parameter_names(func: Func<'_>) -> Vec<&[u8]> {
+    func.params_with_this()
+        .filter_map(|param| {
+            let text = param.text();
+            let text = text.strip_prefix(b"...").unwrap_or(text);
+            let len = text
+                .iter()
+                .take_while(|&&byte| is_identifier_byte(byte))
+                .count();
+            (len > 0).then(|| &text[..len])
+        })
+        .collect()
 }

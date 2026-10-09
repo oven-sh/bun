@@ -132,6 +132,7 @@ slices! {
         deferred_import_calls: (hir::ExprId, u32),
         jsdoc_comments: (u32, u32),
         comments: (u32, u32),
+        keyword_identifier_positions: u32,
         mentioned: u64,
         diagnostics: hir::Diagnostic,
     }

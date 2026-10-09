@@ -9,10 +9,10 @@ use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
-    BLOCK_CLOSED, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE, BLOCK_HTML_UNTIL_TEXT,
-    BLOCK_SETEXT_HEADER, BlockType, Definition, ExtensionSpan, Extensions, JsResult, LeafStart,
-    OFF, Reference, Renderer, RendererImpl, SpanDetail, SpanStart, SpanType, TextType,
-    VerbatimLine,
+    BLOCK_CLOSED, BLOCK_DIRECTIVE, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE,
+    BLOCK_HTML_UNTIL_TEXT, BLOCK_SETEXT_HEADER, BlockType, Definition, ExtensionSpan, Extensions,
+    JsResult, LeafStart, OFF, Reference, Renderer, RendererImpl, SpanDetail, SpanStart, SpanType,
+    TextType, VerbatimLine,
 };
 use std::cell::Cell;
 
@@ -28,6 +28,8 @@ pub(crate) struct Segment {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Syntax {
     Markdown,
+    /// The same with oxfmt's `:::` containers.
+    WithDirectives,
     /// See [`parse_content`].
     Plain,
     /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
@@ -1128,11 +1130,25 @@ impl Builder<'_> {
     }
 
     fn leave_container(&mut self) {
-        let (ended_by, end, _) = self.source;
+        let (ended_by, end, is_ended_by_colons) = self.source;
         self.add_definitions_before(end);
         let Some(Open { node, .. }) = self.open.pop() else {
             return;
         };
+        if is_ended_by_colons != 0 && self.tree.kind(node) == Some(Kind::Directive) {
+            let line_end = self.line_end(ended_by);
+            let line = self
+                .text
+                .get(ended_by as usize..line_end as usize)
+                .unwrap_or_default();
+            let colons = bun_core::strings::index_of_char_usize(line, b':').unwrap_or(0) as u32;
+            if let Some(node) = self.tree.get_mut(node) {
+                node.second = Str::source(ended_by + colons, line_end);
+            }
+            self.note_child_end(line_end);
+            self.set_end(node, line_end);
+            return;
+        }
         self.note_child_end(end);
         let len = self.text.len() as u32;
         let ended_by = match ended_by {
@@ -1478,6 +1494,13 @@ impl RendererImpl for Builder<'_> {
                 };
                 if let Some(node) = self.tree.get_mut(node) {
                     (node.value, node.identifier) = (label, lowercase);
+                }
+            }
+            BlockType::Quote if flags & BLOCK_DIRECTIVE != 0 => {
+                self.before_container(marker, indent, marker_end, false);
+                let node = self.enter_container(Kind::Directive, marker, marker_end);
+                if let Some(node) = self.tree.get_mut(node) {
+                    (node.value, node.second) = (Str::source(marker, marker_end), Str::NO);
                 }
             }
             BlockType::Quote => {
@@ -1833,6 +1856,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     let mut options = Options::default();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
+    options.directives = syntax == Syntax::WithDirectives;
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
@@ -1848,7 +1872,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         leaf_bytes: match syntax {
             Syntax::Plain => b"",
             Syntax::Mdx => b"ie",
-            Syntax::Markdown => b"{",
+            Syntax::Markdown | Syntax::WithDirectives => b"{",
         },
         leaf: &leaf,
         span_bytes: if is_plain { b"[" } else { SPAN_BYTES },

@@ -451,6 +451,8 @@ fn with_document<R>(
     let text = blanked.as_deref().unwrap_or(text);
     let syntax = if mode.is_mdx {
         parse::Syntax::Mdx
+    } else if options.flavor.is_oxfmt() {
+        parse::Syntax::WithDirectives
     } else {
         parse::Syntax::Markdown
     };

@@ -1,3 +1,4 @@
+use bun_lint_oxlint::ast_util::static_string;
 use bun_lint_oxlint::import::{common_js_require, is_nodejs_builtin_module};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -39,11 +40,7 @@ impl Rule for NoNodejsModules {
             let ExprKind::ImportCall { args } = e.kind() else {
                 return;
             };
-            let module_name = args.first().filter(|it| !it.is_parenthesized()).and_then(|source| match source.kind() {
-                ExprKind::String(value) => Some(value),
-                ExprKind::Template(template) => template.as_static(),
-                _ => None,
-            });
+            let module_name = args.first().filter(|it| !it.is_parenthesized()).and_then(static_string);
             if let Some(module_name) = module_name {
                 rule.check(module_name, e.span(), cx);
             }

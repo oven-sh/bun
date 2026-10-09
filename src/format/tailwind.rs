@@ -32,6 +32,28 @@ pub struct Tailwind {
     pub has_missed: AtomicBool,
 }
 
+/// What is at the ends of a text with classes.
+#[derive(Clone, Copy, Debug)]
+pub struct Ends {
+    /// The first class touches what is before the text, so it stays where it is.
+    pub ignores_first: bool,
+    /// The last class touches what is behind the text.
+    pub ignores_last: bool,
+    /// The white space at the start can go. If not, a blank stays of it.
+    pub collapses_start: bool,
+    pub collapses_end: bool,
+}
+
+impl Ends {
+    /// Nothing that counts.
+    pub const FREE: Ends = Ends {
+        ignores_first: false,
+        ignores_last: false,
+        collapses_start: true,
+        collapses_end: true,
+    };
+}
+
 /// `/[\t\r\f\n ]/`
 #[inline]
 fn is_white_space(byte: u8) -> bool {
@@ -58,7 +80,7 @@ impl Tailwind {
         use crate::text::{trim, trim_end};
         let params = trim(params);
         // `~"a b"` of Less
-        let escaped = [b'"', b'\''].into_iter().find_map(|quote| {
+        let escaped = (*b"\"'").into_iter().find_map(|quote| {
             let inner = params.strip_prefix(&[b'~', quote])?;
             Some((quote, inner.strip_suffix(&[quote])?))
         });
@@ -96,6 +118,11 @@ impl Tailwind {
 
     /// `sortClasses(text, { env })`
     pub fn sorted<'t>(&self, text: &'t [u8]) -> Cow<'t, [u8]> {
+        self.sorted_between(text, Ends::FREE)
+    }
+
+    /// `sortClasses(text, { env, ignoreFirst, ignoreLast, collapseWhitespace })`
+    pub fn sorted_between<'t>(&self, text: &'t [u8], ends: Ends) -> Cow<'t, [u8]> {
         if text.is_empty() || strings::contains(text, b"{{") {
             return Cow::Borrowed(text);
         }
@@ -132,17 +159,39 @@ impl Tailwind {
         if classes.last().is_some_and(|class| class.is_empty()) {
             classes.pop();
         }
-        let Some(ranks) = self
-            .orders
-            .ranks_of(&classes.join(&b" "[..]))
-            .filter(|ranks| ranks.len() == classes.len())
-        else {
+        let (mut classes, mut white_space) = (&classes[..], &white_space[..]);
+        let (mut prefix, mut suffix) = (Vec::new(), Vec::new());
+        if ends.ignores_first {
+            if let [first, rest @ ..] = classes {
+                prefix.extend_from_slice(first);
+                classes = rest;
+            }
+            if let [first, rest @ ..] = white_space {
+                prefix.extend_from_slice(first);
+                white_space = rest;
+            }
+        }
+        if ends.ignores_last {
+            if let [rest @ .., last] = white_space {
+                suffix.extend_from_slice(last);
+                white_space = rest;
+            }
+            if let [rest @ .., last] = classes {
+                suffix.extend_from_slice(last);
+                classes = rest;
+            }
+        }
+        let ranks = match classes {
+            [] => Some(Vec::new()),
+            _ => self.orders.ranks_of(&classes.join(&b" "[..])),
+        };
+        let Some(ranks) = ranks.filter(|ranks| ranks.len() == classes.len()) else {
             self.has_missed.store(true, Ordering::Relaxed);
             return Cow::Borrowed(text);
         };
 
         // `sortClassList`
-        let mut ordered: Vec<(&[u8], Rank)> = classes.into_iter().zip(ranks).collect();
+        let mut ordered: Vec<(&[u8], Rank)> = classes.iter().copied().zip(ranks).collect();
         crate::sort::sort_by(&mut ordered[..], |a, z| {
             is_rest(a.0).cmp(&is_rest(z.0)).then(a.1.cmp(&z.1))
         });
@@ -159,7 +208,7 @@ impl Tailwind {
             })
             .collect();
         // The white space before it goes with it.
-        let mut white_space = (white_space.into_iter().enumerate())
+        let mut white_space = (white_space.iter().copied().enumerate())
             .filter(|(index, _)| is_removed.get(index + 1) != Some(&true))
             .map(|(_, blanks)| blanks);
         let mut result = Vec::with_capacity(text.len());
@@ -167,9 +216,26 @@ impl Tailwind {
             result.extend_from_slice(class);
             result.extend_from_slice(white_space.next().unwrap_or_default());
         }
-        match collapses_whitespace {
-            true => Cow::Owned(crate::text::trim(&result).to_vec()),
-            false => Cow::Owned(result),
+        if !collapses_whitespace {
+            return Cow::Owned([prefix, result, suffix].concat());
         }
+        // Of the white space at an end a blank stays, or nothing.
+        use crate::text::{trim, trim_end, trim_start};
+        let mut sorted = trim_end(&prefix).to_vec();
+        if sorted.len() < prefix.len() {
+            sorted.push(b' ');
+        }
+        if !ends.collapses_start && trim_start(&result).len() < result.len() {
+            sorted.push(b' ');
+        }
+        sorted.extend_from_slice(trim(&result));
+        if !ends.collapses_end && trim_end(&result).len() < result.len() {
+            sorted.push(b' ');
+        }
+        if trim_start(&suffix).len() < suffix.len() {
+            sorted.push(b' ');
+        }
+        sorted.extend_from_slice(trim_start(&suffix));
+        Cow::Owned(sorted)
     }
 }

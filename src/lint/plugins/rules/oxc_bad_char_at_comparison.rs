@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_member_expr, is_method_call};
+use bun_lint_oxlint::ast_util::{get_member_expr, is_method_call, static_string};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -34,12 +34,7 @@ fn is_bad_char_at_comparison(character_access: Expr, compared_string: Expr) -> b
 }
 
 fn is_invalid_comparison_string(e: Expr) -> bool {
-    let value = match e.kind() {
-        ExprKind::String(value) => Some(value),
-        ExprKind::Template(template) => template.as_static(),
-        _ => None,
-    };
-    value.is_some_and(|value| text::utf16_len(value.bytes()) > 1)
+    static_string(e).is_some_and(|value| text::utf16_len(value.bytes()) > 1)
 }
 
 fn is_single_character_access(e: Expr) -> bool {

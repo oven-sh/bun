@@ -72,7 +72,7 @@ fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) 
     }
     let rest = f.source_text().as_bytes().get(end as usize..);
     let blanks = (rest.unwrap_or_default().iter())
-        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .take_while(|b| b.is_ascii_whitespace())
         .count() as u32;
     match f.source_text().byte_at(end + blanks) {
         Some(b';') => end + blanks + 1,

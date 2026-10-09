@@ -31,10 +31,8 @@ pub(crate) struct Parser<'a, 's> {
     log: &'a mut Log,
     /// The start of the token that is looked at.
     at: usize,
-    /// Whether there is a `\n` or a `\r` between the token before and `at`.
-    is_after_newline: bool,
-    /// The end of the string that was read last.
-    string_end: usize,
+    /// Where the white space and the comments before `at` start.
+    gap_start: usize,
     /// The first comment that has been passed.
     pub(crate) first_comment: Option<Range>,
     /// What is wrong with a `/`. There are no tokens from there on.
@@ -103,6 +101,58 @@ fn is_rare(c: u8) -> bool {
     c >= 0x80 || c == 0x0B || c == 0x0C
 }
 
+const ONES: u64 = 0x0101_0101_0101_0101;
+const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+
+/// A bit in each byte that is zero, exact up to the first of them.
+#[inline(always)]
+fn zero_bytes(word: u64) -> u64 {
+    word.wrapping_sub(ONES) & !word & HIGH_BITS
+}
+
+/// A bit in each of `bytes` that is `quote`, a backslash or a control character, exact up to the first.
+#[inline(always)]
+fn special_bytes(bytes: &[u8; 8], quote: u8) -> u64 {
+    let word = u64::from_le_bytes(*bytes);
+    zero_bytes(word ^ (ONES * u64::from(quote)))
+        | zero_bytes(word ^ (ONES * u64::from(b'\\')))
+        | (word.wrapping_sub(ONES * 0x20) & !word & HIGH_BITS)
+}
+
+/// How many of the first 16 bytes of `text` are before the first `quote`, backslash or control
+/// character. `None`: all of them, or `text` is shorter.
+#[inline(always)]
+fn short_plain_len(text: &[u8], quote: u8) -> Option<usize> {
+    let (first, rest) = text.split_first_chunk::<8>()?;
+    let second = rest.first_chunk::<8>()?;
+    let found = special_bytes(first, quote);
+    if found != 0 {
+        return Some((found.trailing_zeros() / 8) as usize);
+    }
+    let found = special_bytes(second, quote);
+    (found != 0).then(|| 8 + (found.trailing_zeros() / 8) as usize)
+}
+
+/// How many bytes of `text` are before the first `quote`, backslash or control character. For text
+/// that is not ASCII, at which the kernel stops.
+fn plain_len_by_words(text: &[u8], quote: u8) -> Option<usize> {
+    let mut i = 0;
+    while let Some(bytes) = text.get(i..).and_then(|rest| rest.first_chunk::<8>()) {
+        let found = special_bytes(bytes, quote);
+        if found != 0 {
+            return Some(i + (found.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    while let Some(&b) = text.get(i) {
+        if b == quote || b == b'\\' || b < 0x20 {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 impl<'a, 's> Parser<'a, 's> {
     /// `source` has at most `i32::MAX` bytes.
     pub(crate) fn new(
@@ -130,8 +180,7 @@ impl<'a, 's> Parser<'a, 's> {
             source,
             log,
             at: 0,
-            is_after_newline: false,
-            string_end: 0,
+            gap_start: 0,
             first_comment: None,
             index_error: None,
             opts,
@@ -169,24 +218,42 @@ impl<'a, 's> Parser<'a, 's> {
     fn skip_from(&mut self, from: usize) {
         let contents = self.contents;
         let mut at = from;
-        let mut is_after_newline = false;
-        loop {
-            match contents.get(at) {
-                Some(b' ' | b'\t') => at += 1,
-                Some(b'\n' | b'\r') => {
-                    at += 1;
-                    is_after_newline = true;
-                }
-                Some(b'/') => {
-                    let start = at;
-                    at = self.comment_end(start);
-                    is_after_newline |= strings::contains_any(&contents[start..at], b"\n\r");
-                }
-                _ => break,
+        while let Some(&b) = contents.get(at) {
+            if matches!(b, b' ' | b'\n' | b'\t' | b'\r') {
+                at += 1;
+            } else if b == b'/' {
+                at = self.comment_end(at);
+            } else {
+                break;
             }
         }
+        self.gap_start = from;
         self.at = at;
-        self.is_after_newline = is_after_newline;
+    }
+
+    /// Whether there is a `\n` or a `\r` between the token before and `at`.
+    #[inline(always)]
+    fn is_after_newline(&self) -> bool {
+        self.gap_start != self.at && self.has_newline_in_gap()
+    }
+
+    #[inline(never)]
+    fn has_newline_in_gap(&self) -> bool {
+        let gap = self.contents.get(self.gap_start..self.at);
+        strings::contains_any(gap.unwrap_or_default(), b"\n\r")
+    }
+
+    /// [`Self::skip_from`] behind a run that ends at `end`. `false`, and nothing is done: a `/` that
+    /// starts no comment follows, or a comment without an end. All of it belongs to the run then.
+    #[inline(always)]
+    fn skip_behind_run(&mut self, end: usize) -> bool {
+        let start = self.at;
+        self.skip_from(end);
+        if self.index_error.is_some() {
+            self.at = start;
+            return false;
+        }
+        true
     }
 
     /// Past a token of one byte.
@@ -282,8 +349,7 @@ impl<'a, 's> Parser<'a, 's> {
     /// Past the run at `at`, to `next`, which is the token behind it.
     #[cold]
     fn pass_run(&mut self, next: usize) {
-        let gap = self.contents.get(self.at + 1..next).unwrap_or_default();
-        self.is_after_newline = strings::contains_any(gap, b"\n\r");
+        self.gap_start = self.at + 1;
         self.at = next;
     }
 
@@ -306,9 +372,15 @@ impl<'a, 's> Parser<'a, 's> {
         let contents = self.contents;
         let quote = contents[open];
         let mut is_dirty = false;
+        let mut is_ascii = true;
         let mut i = open + 1;
         loop {
-            let b = *contents.get(i)?;
+            let rest = contents.get(i..)?;
+            i += match is_ascii {
+                true => plain_len(rest, quote)?,
+                false => plain_len_by_words(rest, quote)?,
+            };
+            let b = contents[i];
             if b == quote {
                 return Some((i, is_dirty));
             }
@@ -318,10 +390,8 @@ impl<'a, 's> Parser<'a, 's> {
             } else if b < 0x20 {
                 is_dirty = true;
                 i += 1;
-            } else if b < 0x7F {
-                i += 1 + plain_len(contents.get(i + 1..)?, quote)?;
             } else {
-                i += 1;
+                is_ascii = false;
             }
         }
     }
@@ -459,7 +529,6 @@ impl<'a, 's> Parser<'a, 's> {
             }
         }
         let p = p.min(self.contents.len());
-        self.is_after_newline |= strings::contains_any(&self.contents[start..p], b"\n\r");
         self.pass_runs_up_to(p);
         (p < self.contents.len()).then_some(p)
     }
@@ -476,14 +545,18 @@ impl<'a, 's> Parser<'a, 's> {
         let Some(&b) = self.contents.get(p) else {
             return (0xFF, p);
         };
-        if is_rare(b) {
-            return self.peek_behind_rare_white_space();
+        // One comparison for all that a token usually starts with.
+        if !(0x0D..0x80).contains(&b) {
+            return self.peek_behind_rare_white_space(b);
         }
         (b, p)
     }
 
     #[cold]
-    fn peek_behind_rare_white_space(&mut self) -> (u8, usize) {
+    fn peek_behind_rare_white_space(&mut self, b: u8) -> (u8, usize) {
+        if !is_rare(b) {
+            return (b, self.at);
+        }
         let b = match self.skip_unicode_ws() {
             None => 0xFF,
             Some(np) => self.contents[np],
@@ -588,7 +661,6 @@ impl<'a, 's> Parser<'a, 's> {
             return Err(self.unexpected(start));
         }
         let loc = usize2loc(start);
-        self.token_start = start;
         match self.contents[start] {
             b'{' => {
                 let e = self.parse_object(loc)?;
@@ -630,26 +702,25 @@ impl<'a, 's> Parser<'a, 's> {
         let open = self.at;
         let quote = self.contents[open];
         let rest = &self.contents[open + 1..];
-        self.token_start = open;
-        if let Some(len) = plain_len(rest, quote)
+        if let Some(len) = short_plain_len(rest, quote)
             && rest[len] == quote
         {
-            self.string_end = open + len + 2;
             self.skip_from(open + len + 2);
             return Ok(E::Str::new(&rest[..len]));
         }
-        self.parse_rare_string(open)
+        self.parse_long_string(open)
     }
 
-    /// A string with more in it than printable ASCII.
+    /// A string of more than 16 bytes, at the end of the text, or with a backslash or a control
+    /// character in it.
     #[inline(never)]
-    fn parse_rare_string(&mut self, open: usize) -> PResult<E::Str> {
+    fn parse_long_string(&mut self, open: usize) -> PResult<E::Str> {
+        self.token_start = open;
         let Some((close, is_dirty)) = self.string_close(open) else {
             self.add_default_error(b"Unterminated string literal")?;
             unreachable!()
         };
         let body = &self.contents[open + 1..close];
-        self.string_end = close + 1;
         self.skip_from(close + 1);
         if is_dirty {
             return Ok(self.parse_string_slow(body)?.data);
@@ -704,13 +775,14 @@ impl<'a, 's> Parser<'a, 's> {
         decode_string_escapes(self, body, buf)
     }
 
-    /// Whether a run that is read up to `end` ends there, and no comment follows at once.
+    /// Whether the run at `at`, which is read up to `end`, ends there, with what usually follows. It is
+    /// passed then.
     #[inline(always)]
-    fn ends_at(&self, end: usize) -> bool {
+    fn ends_at(&mut self, end: usize) -> bool {
         matches!(
             self.contents.get(end),
             None | Some(b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}')
-        )
+        ) && self.skip_behind_run(end)
     }
 
     #[inline(always)]
@@ -719,15 +791,12 @@ impl<'a, 's> Parser<'a, 's> {
         let rest = &self.contents[start..];
         match rest[0] {
             b't' if rest.starts_with(b"true") && self.ends_at(start + 4) => {
-                self.skip_from(start + 4);
                 Ok(Expr::init(E::Boolean { value: true }, loc))
             }
             b'f' if rest.starts_with(b"false") && self.ends_at(start + 5) => {
-                self.skip_from(start + 5);
                 Ok(Expr::init(E::Boolean { value: false }, loc))
             }
             b'n' if rest.starts_with(b"null") && self.ends_at(start + 4) => {
-                self.skip_from(start + 4);
                 Ok(Expr::init(E::Null {}, loc))
             }
             b'0'..=b'9' | b'.' | b'-' => self.parse_number(loc),
@@ -738,6 +807,7 @@ impl<'a, 's> Parser<'a, 's> {
     /// A run that is no number, or not followed by what usually follows.
     #[cold]
     fn parse_rare_scalar(&mut self, loc: Loc) -> PResult<Expr> {
+        self.token_start = self.at;
         let run = self.run(self.at);
         let next = self.at + run.len();
         debug_assert!(!run.is_empty());
@@ -803,7 +873,7 @@ impl<'a, 's> Parser<'a, 's> {
         self.bump();
         let mark = self.scratch_json_items.len();
         self.peek();
-        let mut is_single_line = !self.is_after_newline;
+        let mut is_single_line = !self.is_after_newline();
         let mut close_loc = Loc::EMPTY;
         let result: PResult = loop {
             let (b, p) = self.peek();
@@ -813,7 +883,7 @@ impl<'a, 's> Parser<'a, 's> {
                 break Err(crate::Error::ParserError);
             }
             if b == b']' {
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 close_loc = usize2loc(p);
                 self.bump();
                 break Ok(());
@@ -827,10 +897,10 @@ impl<'a, 's> Parser<'a, 's> {
                     self.expected(p, "\",\"");
                     break Err(crate::Error::ParserError);
                 }
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 self.bump();
                 let (after_b, after) = self.peek();
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 if after_b == b']' {
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
@@ -880,7 +950,7 @@ impl<'a, 's> Parser<'a, 's> {
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
         self.peek();
-        let mut is_single_line = !self.is_after_newline;
+        let mut is_single_line = !self.is_after_newline();
         let mut close_loc = Loc::EMPTY;
         let warn_dup = self.opts.json_warn_duplicate_keys;
 
@@ -892,7 +962,7 @@ impl<'a, 's> Parser<'a, 's> {
                 break Err(crate::Error::ParserError);
             }
             if b == b'}' {
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 close_loc = usize2loc(p);
                 self.bump();
                 break Ok(());
@@ -906,10 +976,10 @@ impl<'a, 's> Parser<'a, 's> {
                     self.expected(p, "\",\"");
                     break Err(crate::Error::ParserError);
                 }
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 self.bump();
                 let (after_b, after) = self.peek();
-                is_single_line &= !self.is_after_newline;
+                is_single_line = is_single_line && !self.is_after_newline();
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
@@ -930,7 +1000,6 @@ impl<'a, 's> Parser<'a, 's> {
             }
 
             let key_start = p;
-            self.token_start = key_start;
             let key = if b == b'"' || b == b'\'' {
                 match self.parse_string_utf8() {
                     Ok(d) => d,
@@ -943,10 +1012,7 @@ impl<'a, 's> Parser<'a, 's> {
             let key_loc = usize2loc(key_start);
 
             if warn_dup && self.check_duplicate_key(mark, hmark, key.slice()) {
-                let key_range = Range {
-                    loc: key_loc,
-                    len: (self.string_end - key_start) as i32,
-                };
+                let key_range = self.token_range(key_start);
                 self.warn_duplicate_key(key.slice(), key_range);
             }
 
@@ -1050,9 +1116,7 @@ impl<'a, 's> Parser<'a, 's> {
         }
 
         let (value, used) = self.parse_number_text(rest, start)?;
-        if self.ends_at(start + used) {
-            self.skip_from(start + used);
-        } else {
+        if !self.ends_at(start + used) {
             let run = self.run(start);
             if !self.rest_is_ws_cold(&run[used..]) {
                 return Err(self.number_trailing_junk(start + used));

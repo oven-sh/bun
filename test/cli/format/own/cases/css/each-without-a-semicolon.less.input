@@ -1,0 +1,26 @@
+each(@colors, {
+    @color: "@{value}Color";
+
+    .@{value} {
+        color: @@color!important;
+    }
+})
+
+button,
+.button {
+    each(@colors, {
+        .a-@{value} { color: red; }
+    })
+    color: red;
+}
+
+each(@a, {
+    .x { color: url(http://a.b/c); } // each(
+})
+each(@b, {
+    .y { content: "each("; }
+});
+
+@property --angle {
+    syntax: "<angle>";
+}

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import expected from "./oracle/react-compiler/expected.json";
-import { byFile, type Files, fixtures, rc, small, twoLabels } from "./oracle/react-compiler/inputs";
+import { byFile, type Files, rc, small, twoLabels } from "./oracle/react-compiler/inputs";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -65,7 +65,7 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
   test(
     "for fixtures of the compiler",
     async () => {
-      const { diagnostics, files, exit } = await report(fixtures());
+      const { diagnostics, files, exit } = await report({ ".oxlintrc.json": rc(), ...expected.fixtures });
       expect(diagnostics).toEqual(expected.reports.fixtures.diagnostics);
       expect(rulesIn(diagnostics)).toEqual([
         "react(error-boundaries)",

@@ -830,7 +830,6 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
-    #[inline]
     fn stmt(&mut self, a: StmtId, b: StmtId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -1193,7 +1192,6 @@ impl Walk<'_, '_> {
     // ───────────────────────────── patterns ─────────────────────────────
 
     #[inline]
-    #[inline]
     fn pat(&mut self, a: PatId, b: PatId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -1438,7 +1436,6 @@ impl Walk<'_, '_> {
         self.expr_list(x.args, y.args)
     }
 
-    #[inline]
     #[inline]
     fn expr(&mut self, a: ExprId, b: ExprId) -> Same {
         match self.by_id {
@@ -1938,7 +1935,6 @@ impl Walk<'_, '_> {
             .try_for_each(|(&x, &y)| self.ty(TypeNodeId(x), TypeNodeId(y)))
     }
 
-    #[inline]
     #[inline]
     fn ty(&mut self, a: TypeNodeId, b: TypeNodeId) -> Same {
         match self.by_id {

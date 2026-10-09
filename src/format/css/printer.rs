@@ -1443,7 +1443,16 @@ impl<'a> Printer<'a, '_> {
             }
             ValueKind::AtWord => {
                 self.sink.token("@");
-                self.sink.text(value);
+                // For oxfmt `@a!important` is `@a !important`.
+                match value.len().checked_sub(b"!important".len()).filter(|&at| {
+                    self.is_oxfmt && at > 0 && value[at..].eq_ignore_ascii_case(b"!important")
+                }) {
+                    Some(at) => {
+                        self.sink.text(&value[..at]);
+                        self.sink.token(" !important");
+                    }
+                    None => self.sink.text(value),
+                }
             }
             ValueKind::Selector => self.print_selector(statement, node.selector, None, None),
         }

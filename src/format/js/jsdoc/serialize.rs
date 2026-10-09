@@ -5,10 +5,11 @@ use super::line_buffer::LineBuffer;
 use super::markdown::format_description;
 use super::normalize::normalize_tag_kind;
 use super::param_order::reorder_param_tags;
-use super::parser::{self, Tag};
 use super::text::{is_blank, split_lines, trim, trim_end, trim_end_matches};
 use crate::options::{CommentLineStrategy, FormatOptions, IndentStyle, JsdocOptions, QuoteStyle};
 use bun_core::strings;
+use bun_lint::ast::File;
+use bun_lint::ast::jsdoc::{JSDoc, JSDocTag};
 use std::borrow::Cow;
 
 pub(crate) enum FormattedJsdoc {
@@ -32,19 +33,19 @@ pub(super) struct JsdocFormatter<'o> {
 }
 
 impl JsdocFormatter<'_> {
-    /// `content`: the comment. `after`: the text behind it. `None`: the comment stays as it is.
-    fn format(mut self, content: &[u8], after: &[u8]) -> Option<FormattedJsdoc> {
-        let inner = content.get(3..content.len() - 2)?;
-        let (comment_part, tags) = parser::parse(inner);
-        let description = comment_part.parsed_preserving_whitespace();
-        if is_blank(&description) && tags.is_empty() {
+    /// `doc`: a comment of `file`. `None`: it stays as it is.
+    fn format<'a>(mut self, doc: JSDoc<'a>, file: &'a File<'a>) -> Option<FormattedJsdoc> {
+        let content = file.slice(doc.comment_span());
+        let description = doc.comment().parsed_preserving_whitespace();
+        if is_blank(&description) && doc.tags().next().is_none() {
             return Some(FormattedJsdoc::Empty);
         }
-        let sorted_tags = sort_tags_by_groups(&tags);
+        let sorted_tags = sort_tags_by_groups(doc.tags());
 
         // The description and the `@description` tags are one.
         let mut merged_description = trim(&description).to_vec();
-        let mut effective_tags: Vec<(&Tag<'_>, &[u8])> = Vec::with_capacity(sorted_tags.len());
+        let mut effective_tags: Vec<(JSDocTag<'a>, &'a [u8])> =
+            Vec::with_capacity(sorted_tags.len());
         for &(tag, normalized_kind) in &sorted_tags {
             if should_remove_empty_tag(normalized_kind) && is_blank(&tag.comment().parsed()) {
                 continue;
@@ -87,7 +88,7 @@ impl JsdocFormatter<'_> {
             out.extend_from_slice(&description);
         }
 
-        reorder_param_tags(&mut effective_tags, after);
+        reorder_param_tags(&mut effective_tags, file, doc.comment_span().end);
         let (import_lines, parsed_import_indices) =
             process_import_tags(&effective_tags, self.quote_style());
         let mut import_lines = Some(import_lines).filter(|lines| !lines.is_empty());
@@ -434,12 +435,14 @@ pub(super) fn is_named_generic_tag(kind: &[u8]) -> bool {
 
 /// The tags, each with the name that stands for its kind, sorted. `@typedef` and `@callback` start a group,
 /// and the groups stay in their order.
-fn sort_tags_by_groups<'t, 'a>(tags: &'t [Tag<'a>]) -> Vec<(&'t Tag<'a>, &'a [u8])> {
-    let mut sorted: Vec<(&Tag<'a>, &[u8])> = Vec::with_capacity(tags.len());
+fn sort_tags_by_groups<'a>(
+    tags: impl ExactSizeIterator<Item = JSDocTag<'a>>,
+) -> Vec<(JSDocTag<'a>, &'a [u8])> {
+    let mut sorted: Vec<(JSDocTag<'a>, &[u8])> = Vec::with_capacity(tags.len());
     let mut group_start = 0;
     let mut can_group_next_tags = false;
     for tag in tags {
-        let kind = normalize_tag_kind(tag.kind);
+        let kind = normalize_tag_kind(tag.kind.parsed());
         if is_tags_group_head(kind) && can_group_next_tags && sorted.len() > group_start {
             crate::sort::sort_by_key(&mut sorted[group_start..], |(_, kind)| {
                 tag_sort_priority(kind)
@@ -600,11 +603,11 @@ pub(super) fn strip_default_is_suffix(desc: &[u8]) -> &[u8] {
     desc
 }
 
-/// The comment `content`, formatted. `None`: it stays as it is. `after`: the text behind it. `available_width`:
-/// the width of a line without the indentation of the comment.
-pub(crate) fn format_jsdoc_comment(
-    content: &[u8],
-    after: &[u8],
+/// The comment `doc` of `file`, formatted. `None`: it stays as it is. `available_width`: the width of a line
+/// without the indentation of the comment.
+pub(crate) fn format_jsdoc_comment<'a>(
+    doc: JSDoc<'a>,
+    file: &'a File<'a>,
     options: &JsdocOptions,
     format_options: &FormatOptions,
     available_width: usize,
@@ -615,5 +618,5 @@ pub(crate) fn format_jsdoc_comment(
         wrap_width: available_width.saturating_sub(LINE_PREFIX_LEN),
         content_lines: LineBuffer::new(),
     }
-    .format(content, after)
+    .format(doc, file)
 }

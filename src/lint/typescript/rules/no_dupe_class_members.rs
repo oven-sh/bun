@@ -16,7 +16,8 @@ impl Rule for NoDupeClassMembers {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Seen<'a> {
         on.classes(|_, class, cx| {
             let mut seen = std::mem::take(&mut cx.state);
-            check(class, true, &mut seen, cx);
+            // oxlint, where this is ESLint's rule, looks at the names in brackets as ESLint does.
+            check(class, !cx.language().is_oxlint, &mut seen, cx);
             cx.state = seen;
         });
         Vec::new()

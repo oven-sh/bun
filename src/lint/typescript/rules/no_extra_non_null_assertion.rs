@@ -9,9 +9,12 @@ const NO_EXTRA_NON_NULL_ASSERTION: Message =
 impl NoExtraNonNullAssertion {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // All but the last `!` of `x!!!`.
+        // oxlint points at the `!`.
+        let is_oxlint = cx.language().is_oxlint;
         for inner in e.inner_non_null_spans() {
-            cx.report(inner, NO_EXTRA_NON_NULL_ASSERTION)
-                .fix(|fixer| fixer.remove(Span::new(inner.end - 1, inner.end)));
+            let assertion = Span::new(inner.end - 1, inner.end);
+            cx.report(if is_oxlint { assertion } else { inner }, NO_EXTRA_NON_NULL_ASSERTION)
+                .fix(|fixer| fixer.remove(assertion));
         }
         let Node::Expr(parent) = e.parent() else {
             return;
@@ -29,8 +32,9 @@ impl NoExtraNonNullAssertion {
             return;
         }
         let end = e.span().end;
-        cx.report(e, NO_EXTRA_NON_NULL_ASSERTION)
-            .fix(|fixer| fixer.remove(Span::new(end - 1, end)));
+        let assertion = Span::new(end - 1, end);
+        cx.report(if is_oxlint { assertion } else { e.span() }, NO_EXTRA_NON_NULL_ASSERTION)
+            .fix(|fixer| fixer.remove(assertion));
     }
 }
 

@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_name};
+use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_name, static_string};
 use crate::oxlint::vue::{
     NamedTypeBudget, casing, first_type_argument, for_each_define_props_type_signature, is_specific_static_name,
     is_vue_component_options_object, is_vue_file, is_vue_setup, key_name, key_span, object_of, object_properties,
@@ -73,12 +73,7 @@ impl NoReservedProps {
         match props.map(|it| get_inner_expression(it).kind()) {
             Some(ExprKind::Array(elements)) => {
                 for element in elements.iter().map(get_inner_expression) {
-                    let name = match element.kind() {
-                        ExprKind::String(value) => Some(value),
-                        ExprKind::Template(template) => template.as_static(),
-                        _ => None,
-                    };
-                    if let Some(name) = name {
+                    if let Some(name) = static_string(element) {
                         self.report(name, element.span(), cx);
                     }
                 }

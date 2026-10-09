@@ -6,6 +6,7 @@
 
 pub(crate) mod comments;
 pub(crate) mod exhaustive_deps;
+pub(crate) mod jsdoc;
 pub(crate) mod node;
 pub(crate) mod promise;
 pub(crate) mod rules_of_hooks;

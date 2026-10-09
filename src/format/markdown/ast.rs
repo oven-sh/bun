@@ -18,6 +18,8 @@ pub(crate) enum Kind {
     Code,
     Definition,
     FootnoteDefinition,
+    /// For oxfmt: what is between `:::name`, which is its `value`, and `:::`, which is `second`.
+    Directive,
     Table,
     TableRow,
     TableCell,
@@ -60,6 +62,7 @@ impl Kind {
             Kind::Code => "code",
             Kind::Definition => "definition",
             Kind::FootnoteDefinition => "footnoteDefinition",
+            Kind::Directive => "containerDirective",
             Kind::Table => "table",
             Kind::TableRow => "tableRow",
             Kind::TableCell => "tableCell",

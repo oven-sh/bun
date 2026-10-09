@@ -12,6 +12,7 @@ mod tailwind;
 use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, paths};
 use bstr::BStr;
+use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
 use bun_format::tailwind::Tailwind;
@@ -260,7 +261,8 @@ fn format_block(
         &resolved,
         (&Interner::new_in(&names), &names),
         &mut Scratches::default(),
-        verifies,
+        // Of JSX in MDX, which comes in a fragment, what is in the fragment is printed. That is no program.
+        verifies && !options.is_mdx_jsx,
     );
     formatted
         .map(|(formatted, _)| out.extend_from_slice(&formatted))
@@ -904,7 +906,7 @@ impl Run<'_> {
             return self.out;
         }
         // The largest first, so that no thread begins it when the others are nearly done.
-        work.sort_by_key(|it| std::cmp::Reverse(it.1.size));
+        sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
@@ -1122,7 +1124,9 @@ impl Run<'_> {
         }
         let mut unsorted = std::mem::take(unsorted.get_mut());
         if !unsorted.is_empty() {
-            unsorted.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
+            sort_slice_by(&mut unsorted[..], |a, b| {
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+            });
             let kinds: Vec<Vec<u8>> = unsorted
                 .iter()
                 .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
@@ -1157,7 +1161,9 @@ impl Run<'_> {
         }
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
-            others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
+            sort_slice_by(&mut others[..], |a, b| {
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+            });
             let count: usize = others.iter().map(|it| it.1).sum();
             let noun = if count == 1 { "file is" } else { "files are" };
             let kinds: Vec<Vec<u8>> = others

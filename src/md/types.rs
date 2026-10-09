@@ -100,7 +100,7 @@ pub trait RendererImpl {
     /// last line that belongs to it: one with something on it, or an empty one
     /// with the `>` of a block quote in or around it. `beg` is the start of
     /// the line that it does not go on with, `OFF::MAX` at the end of the
-    /// document.
+    /// document. `indent` is 1 if that line is the `:::` that ends it.
     fn container_source(&mut self, _beg: OFF, _end: OFF, _indent: u32) {}
     /// Before `enter_block` of a leaf block: its lines. A line with
     /// `beg > end` has been used up by reference definitions. Returns whether
@@ -299,6 +299,8 @@ pub const BLOCK_HTML_UNTIL_TEXT: u32 = 0x80;
 pub const BLOCK_EXTENSION: u32 = 0x100;
 /// Reported as `Quote`: the definition of a footnote, `[^label]:`.
 pub const BLOCK_FOOTNOTE: u32 = 0x200;
+/// Reported as `Quote`: what is between `:::name` and `:::`.
+pub const BLOCK_DIRECTIVE: u32 = 0x400;
 
 /// Parser flags controlling which extensions are enabled.
 #[derive(Copy, Clone)]
@@ -318,6 +320,7 @@ pub struct Flags {
     pub(crate) wiki_links: bool,
     pub(crate) footnotes: bool,
     pub(crate) math_blocks: bool,
+    pub(crate) directives: bool,
     pub(crate) no_single_tilde: bool,
     pub(crate) micromark: bool,
     pub(crate) mdx: bool,

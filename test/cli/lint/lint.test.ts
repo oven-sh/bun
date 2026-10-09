@@ -7,6 +7,7 @@ import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
 import { directoryOf, filesOf, cases as fixCases } from "./oracle/plugins/oxlint/fixes";
 import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
 import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
+import { filesOf as filesOfMessages, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
 import { projects } from "./oracle/plugins/oxlint/projects";
 
@@ -500,9 +501,9 @@ describe.concurrent("bun lint", () => {
         ["-f", "unix", "-D", "eqeqeq"],
       );
       expect(stdout).toMatchInlineSnapshot(`
-        "<dir>/a.test.ts:1:27: Unexpected any. Specify a different type. [Warning/@typescript-eslint/no-explicit-any]
-        <dir>/a.ts:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
-        <dir>/a.ts:1:17: Expected '===' and instead saw '=='. [Error/eqeqeq]
+        "<dir>/a.test.ts:1:27: Unexpected \`any\`. Specify a different type. [Warning/@typescript-eslint/no-explicit-any]
+        <dir>/a.ts:1:1: \`debugger\` statement is not allowed [Error/no-debugger]
+        <dir>/a.ts:1:17: Expected === and instead saw == [Error/eqeqeq]
 
         3 problems"
       `);
@@ -627,14 +628,14 @@ describe.concurrent("bun lint", () => {
         expect(report).toEqual({
           diagnostics: [
             {
-              message: "Unexpected 'debugger' statement.",
+              message: "`debugger` statement is not allowed",
               code: "eslint(no-debugger)",
               severity: "error",
               filename: "a.js",
               labels: [{ span: { offset: 0, length: 9, line: 1, column: 1 } }],
             },
             {
-              message: "Expected '===' and instead saw '=='.",
+              message: "Expected === and instead saw ==",
               code: "eslint(eqeqeq)",
               severity: "warning",
               filename: "a.js",
@@ -672,30 +673,30 @@ describe.concurrent("bun lint", () => {
           ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "a.js"])),
         );
         expect(checkstyle.stdout).toMatchInlineSnapshot(
-          `"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="Unexpected &apos;debugger&apos; statement." source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected &apos;===&apos; and instead saw &apos;==&apos;." source="eslint(eqeqeq)" /></file></checkstyle>"`,
+          `"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="\`debugger\` statement is not allowed" source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected === and instead saw ==" source="eslint(eqeqeq)" /></file></checkstyle>"`,
         );
         expect(junit.stdout).toMatchInlineSnapshot(`
           "<?xml version="1.0" encoding="UTF-8"?>
           <testsuites name="Oxlint" tests="2" failures="1" errors="1">
               <testsuite name="a.js" tests="2" disabled="0" errors="1" failures="1">
                   <testcase name="eslint(no-debugger)">
-                      <error message="Unexpected &apos;debugger&apos; statement.">line 1, column 1, Unexpected &apos;debugger&apos; statement.</error>
+                      <error message="\`debugger\` statement is not allowed">line 1, column 1, \`debugger\` statement is not allowed</error>
                   </testcase>
                   <testcase name="eslint(eqeqeq)">
-                      <failure message="Expected &apos;===&apos; and instead saw &apos;==&apos;.">line 2, column 7, Expected &apos;===&apos; and instead saw &apos;==&apos;.</failure>
+                      <failure message="Expected === and instead saw ==">line 2, column 7, Expected === and instead saw ==</failure>
                   </testcase>
               </testsuite>
           </testsuites>"
         `);
         expect(JSON.parse(gitlab.raw).map(({ fingerprint, ...it }: any) => it)).toEqual([
           {
-            description: "Unexpected 'debugger' statement.",
+            description: "`debugger` statement is not allowed",
             check_name: "eslint(no-debugger)",
             severity: "critical",
             location: { path: "a.js", lines: { begin: 1, end: 1 } },
           },
           {
-            description: "Expected '===' and instead saw '=='.",
+            description: "Expected === and instead saw ==",
             check_name: "eslint(eqeqeq)",
             severity: "major",
             location: { path: "a.js", lines: { begin: 2, end: 2 } },
@@ -759,7 +760,7 @@ describe.concurrent("bun lint", () => {
           ["-c", "configs/x.json", "-f", "unix"],
         );
         expect(stdout).toMatchInlineSnapshot(`
-          "<dir>/src/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
+          "<dir>/src/a.js:1:1: \`debugger\` statement is not allowed [Error/no-debugger]
 
           1 problem"
         `);
@@ -1017,6 +1018,15 @@ describe.concurrent("bun lint", () => {
         const names = some.map(it => it.name);
         const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
         expect(found(raw, names)).toEqual(expected(names));
+      });
+
+      // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
+      test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
+        const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
+        const said = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
+        // Of several the last is the one that is asked about.
+        const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
+        expect(said).toEqual(messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`));
       });
 
       // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
@@ -1564,7 +1574,8 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(0);
     });
 
-    // What typescript-eslint 8.71 says. `undefined`: nothing.
+    // What typescript-eslint 8.71 says. `undefined`: nothing. In two of them TypeScript 7, and so tsgolint, differs from
+    // TypeScript 6, on which typescript-eslint runs: they are as in 7.
     test("no-deprecated finds the tags of a comment where TypeScript does", async () => {
       const comments: [comment: string, reason: string | undefined][] = [
         ["/** @deprecated a\\@b c */", "a\\@b c"],
@@ -1572,9 +1583,11 @@ describe.concurrent("bun lint", () => {
         ["/** @deprecated x @ y */", "x @ y"],
         ["/** @deprecated x @y z */", "x"],
         ["/** @deprecated `x @y` z */", "`x @y` z"],
-        ["/** text `a @deprecated b` c */", "b` c"],
+        // 6: "b` c"
+        ["/** text `a @deprecated b` c */", undefined],
         ["/** @deprecated (@see y) */", "(@see y)"],
-        ["/** @deprecated a @*/", "a"],
+        // 6: "a"
+        ["/** @deprecated a @*/", "a @"],
         ["/** text@deprecated no */", undefined],
         ["/** text @deprecated yes */", "yes"],
         ["/** @foo bar@deprecated no */", undefined],

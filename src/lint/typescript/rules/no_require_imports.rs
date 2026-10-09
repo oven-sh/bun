@@ -45,7 +45,9 @@ impl NoRequireImports {
             && !self.is_import_path_allowed(path)
             && let Some(reference) = import.require_span()
         {
-            cx.report(reference, NO_REQUIRE_IMPORTS);
+            // oxlint points at the declaration.
+            let place = if cx.language().is_oxlint { statement.span_without_export() } else { reference };
+            cx.report(place, NO_REQUIRE_IMPORTS);
         }
     }
 }

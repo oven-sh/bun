@@ -385,6 +385,7 @@ impl Parser<'_> {
             };
 
             // Skip whitespace (including newlines)
+            let dest_end = pos;
             while pos < content.len()
                 && (helpers::is_blank(content[pos])
                     || content[pos] == b'\n'
@@ -393,9 +394,10 @@ impl Parser<'_> {
                 pos += 1;
             }
 
-            // Optional title
+            // Optional title, with whitespace before it
             let mut title: &[u8] = b"";
             if pos < content.len()
+                && pos > dest_end
                 && (content[pos] == b'"' || content[pos] == b'\'' || content[pos] == b'(')
             {
                 let close_char: u8 = if content[pos] == b'(' {
@@ -565,13 +567,15 @@ impl Parser<'_> {
                 None => content.len(),
             };
             // Skip whitespace
+            let dest_end = p;
             while p < content.len()
                 && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
             {
                 p += 1;
             }
-            // Optional title
+            // Optional title, with whitespace before it
             if p < content.len()
+                && p > dest_end
                 && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(')
             {
                 let close_ch: u8 = if content[p] == b'(' { b')' } else { content[p] };

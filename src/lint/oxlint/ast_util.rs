@@ -78,6 +78,15 @@ pub fn is_specific_id(e: Expr, name: &str) -> bool {
     get_inner_expression(e).is_ident(name)
 }
 
+/// The value of a string, or of a template without substitutions.
+pub fn static_string(e: Expr<'_>) -> Option<Name<'_>> {
+    match e.kind() {
+        ExprKind::String(value) => Some(value),
+        ExprKind::Template(template) => template.as_static(),
+        _ => None,
+    }
+}
+
 /// `Expression::get_member_expr`: the `Dot` or the `Index` that it is, optional or not.
 pub fn get_member_expr(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(get_inner_expression(e)).filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))

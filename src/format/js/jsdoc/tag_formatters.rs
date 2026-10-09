@@ -9,7 +9,6 @@ use super::normalize::{
     normalize_type_preserve_quotes, normalize_type_return, strip_jsdoc_stars_preserve_newlines,
     strip_optional_type_suffix,
 };
-use super::parser::Tag;
 use super::serialize::{
     JsdocFormatter, format_default_value, is_known_tag, is_named_generic_tag,
     should_preserve_description_verbatim, should_skip_description_formatting,
@@ -20,6 +19,7 @@ use super::text::{
     trim_start, trim_start_matches,
 };
 use bun_core::strings;
+use bun_lint::ast::jsdoc::JSDocTag;
 use std::borrow::Cow;
 
 type Bytes<'a> = Cow<'a, [u8]>;
@@ -74,7 +74,7 @@ fn push_default(out: &mut Vec<u8>, value: &[u8]) {
 }
 
 impl JsdocFormatter<'_> {
-    pub(super) fn format_example_tag(&mut self, normalized_kind: &[u8], tag: &Tag<'_>) {
+    pub(super) fn format_example_tag(&mut self, normalized_kind: &[u8], tag: JSDocTag<'_>) {
         let raw_text = tag.comment().parsed_preserving_whitespace();
         let mut code = trim(&raw_text);
         let out = self.content_lines.begin_line();
@@ -228,7 +228,7 @@ impl JsdocFormatter<'_> {
     pub(super) fn format_type_name_comment_tag(
         &mut self,
         normalized_kind: &[u8],
-        tag: &Tag<'_>,
+        tag: JSDocTag<'_>,
         should_capitalize: bool,
         has_no_space_before_type: bool,
     ) {
@@ -449,7 +449,7 @@ impl JsdocFormatter<'_> {
     pub(super) fn format_type_comment_tag(
         &mut self,
         normalized_kind: &[u8],
-        tag: &Tag<'_>,
+        tag: JSDocTag<'_>,
         should_capitalize: bool,
         has_no_space_before_type: bool,
     ) {
@@ -543,7 +543,7 @@ impl JsdocFormatter<'_> {
     pub(super) fn format_generic_tag(
         &mut self,
         normalized_kind: &[u8],
-        tag: &Tag<'_>,
+        tag: JSDocTag<'_>,
         should_capitalize: bool,
     ) {
         let tag_line = [b"@", normalized_kind].concat();

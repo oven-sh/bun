@@ -44,6 +44,9 @@ pub struct Options {
     pub footnotes: bool,
     /// `$$` is a fence, like three backticks.
     pub math_blocks: bool,
+    /// `:::name` starts a container that `:::` ends. Only for consumers that
+    /// look at `BLOCK_DIRECTIVE`.
+    pub directives: bool,
     /// Strikethrough takes two tildes.
     pub no_single_tilde: bool,
     /// See `compat.rs`.
@@ -75,6 +78,7 @@ impl Default for Options {
             autolink_headings: false,
             footnotes: false,
             math_blocks: false,
+            directives: false,
             no_single_tilde: false,
             micromark: false,
             mdx: false,
@@ -106,6 +110,7 @@ impl Options {
         autolink_headings: false,
         footnotes: false,
         math_blocks: false,
+        directives: false,
         no_single_tilde: false,
         micromark: false,
         mdx: false,
@@ -142,6 +147,7 @@ impl Options {
             no_html_spans: self.no_html_spans,
             footnotes: self.footnotes,
             math_blocks: self.math_blocks,
+            directives: self.directives,
             no_single_tilde: self.no_single_tilde,
             micromark: self.micromark,
             mdx: self.mdx,

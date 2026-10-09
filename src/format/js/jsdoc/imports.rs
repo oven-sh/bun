@@ -1,10 +1,10 @@
 //! `@import` tags: those for the same module become one, and they are sorted.
 
 use super::line_buffer::LineBuffer;
-use super::parser::Tag;
 use super::text::{join, lines, split_whitespace, trim, trim_end_matches};
 use crate::options::QuoteStyle;
 use bun_core::strings;
+use bun_lint::ast::jsdoc::JSDocTag;
 use std::cmp::Ordering;
 
 struct ImportInfo {
@@ -147,7 +147,7 @@ fn format_import_lines(import: &ImportInfo, quote: u8, content_lines: &mut LineB
 
 /// The lines for all `@import` tags of `tags` that can be parsed, and which of `tags` those are.
 pub(super) fn process_import_tags(
-    tags: &[(&Tag<'_>, &[u8])],
+    tags: &[(JSDocTag<'_>, &[u8])],
     quote_style: QuoteStyle,
 ) -> (LineBuffer, smallvec::SmallVec<[usize; 4]>) {
     let mut imports = Vec::new();

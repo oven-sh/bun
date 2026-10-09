@@ -77,6 +77,13 @@ impl Parser<'_> {
                     types::BLOCK_CONTAINER_OPENER | types::BLOCK_FOOTNOTE,
                     mark,
                 )?;
+            } else if ch == b':' {
+                self.push_container_bytes(
+                    BlockType::Quote,
+                    0,
+                    types::BLOCK_CONTAINER_OPENER | types::BLOCK_DIRECTIVE,
+                    mark,
+                )?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Save opener position for later loose-list patching
                 let align_mask_: usize = align_of::<BlockHeader>() - 1;
@@ -138,10 +145,15 @@ impl Parser<'_> {
             let start = self.containers[idx].start;
             let block_byte_off = self.containers[idx].block_byte_off;
             let loose_flag: u32 = if is_loose { types::BLOCK_LOOSE_LIST } else { 0 };
-            let end = (self.line_beg, self.containers[idx].end, 0);
+            let is_ended_by_colons = self.is_directive_end && self.n_containers == keep;
+            let end = (
+                self.line_beg,
+                self.containers[idx].end,
+                u32::from(is_ended_by_colons),
+            );
 
             // Emit container closer blocks
-            if ch == b'>' || ch == b'^' {
+            if ch == b'>' || ch == b'^' || ch == b':' {
                 self.push_container_bytes(BlockType::Quote, 0, types::BLOCK_CONTAINER_CLOSER, end)?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Retroactively patch the opener with loose flag
@@ -200,7 +212,7 @@ impl Parser<'_> {
         }
         // Same list marker type
         if existing.ch == new.ch {
-            return existing.ch != b'^';
+            return existing.ch != b'^' && existing.ch != b':';
         }
         // Bullet lists: different bullet chars are compatible
         if is_list_bullet(existing.ch) && is_list_bullet(new.ch) {

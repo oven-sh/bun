@@ -319,6 +319,13 @@ pub(crate) fn write_template<'a>(
     }
     let counter = f.options().html_template_depth;
     let text = text_with_placeholders(template, counter);
+    let text = match f.options().tailwind.as_deref() {
+        Some(how) => {
+            let parse = super::js::Parse::new(f.context().parse_javascript, f.options());
+            super::tailwind::with_sorted_classes(&text, parser, how, parse).unwrap_or(text)
+        }
+        None => text,
+    };
     let options = FormatOptions {
         html_template_depth: counter.saturating_add(1),
         parser: None,

@@ -130,14 +130,23 @@ pub(crate) fn only_where_supported(
     kind: Option<Kind>,
     text: &[u8],
 ) -> bool {
-    if options.tailwind.is_none() || matches!(kind, None | Some(Kind::Script | Kind::Css(_))) {
+    use bun_format::html::Parser;
+    if options.tailwind.is_none()
+        || matches!(
+            kind,
+            None | Some(
+                Kind::Script
+                    | Kind::Css(_)
+                    | Kind::Markdown
+                    | Kind::Html(Parser::Html | Parser::Vue)
+            )
+        )
+    {
         return false;
     }
     options.tailwind = None;
     match kind {
-        Some(Kind::Html(_) | Kind::Handlebars | Kind::Markdown) => {
-            strings::contains(text, b"class")
-        }
+        Some(Kind::Html(Parser::Angular) | Kind::Handlebars) => strings::contains(text, b"class"),
         _ => false,
     }
 }

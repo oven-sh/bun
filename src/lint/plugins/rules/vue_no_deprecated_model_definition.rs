@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::get_inner_expression;
+use bun_lint_oxlint::ast_util::{get_inner_expression, static_string};
 use crate::oxlint::vue::{
     as_inner_object_expression, find_property, is_specific_static_name, is_vue_component_options_object, is_vue_file, object_of,
 };
@@ -55,9 +55,5 @@ impl Rule for NoDeprecatedModelDefinition {
 }
 
 fn find_string_property_value<'a>(properties: List<'a, Prop<'a>>, key: &str) -> Option<Name<'a>> {
-    match get_inner_expression(find_property(properties, key)?.value()?).kind() {
-        ExprKind::String(value) => Some(value),
-        ExprKind::Template(template) => template.as_static(),
-        _ => None,
-    }
+    static_string(get_inner_expression(find_property(properties, key)?.value()?))
 }

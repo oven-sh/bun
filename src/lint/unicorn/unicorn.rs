@@ -277,15 +277,6 @@ pub(crate) fn is_number_0(e: Expr) -> bool {
     !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
 }
 
-/// The value of a string, or of a template without substitutions.
-pub(crate) fn static_string(e: Expr<'_>) -> Option<Name<'_>> {
-    match e.kind() {
-        ExprKind::String(value) => Some(value),
-        ExprKind::Template(template) => template.as_static(),
-        _ => None,
-    }
-}
-
 /// The statements that `statement` is one of.
 pub(crate) fn statements_around(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
     match statement.parent() {

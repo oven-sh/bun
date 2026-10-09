@@ -1,8 +1,8 @@
 //! oxfmt's `jsdoc` option: JSDoc comments are formatted the way
 //! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does it.
 //!
-//! This follows `oxc_formatter`'s `formatter/jsdoc` and the parser of `oxc_jsdoc`, which are under the MIT
-//! license. Descriptions are parsed by the parser for Markdown of this crate.
+//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. The comments are read by
+//! `File::jsdoc`, descriptions are parsed by the parser for Markdown of this crate.
 
 mod embedded;
 mod imports;
@@ -11,7 +11,6 @@ mod markdown;
 mod markers;
 mod normalize;
 mod param_order;
-mod parser;
 mod serialize;
 mod tag_formatters;
 mod text;
@@ -22,6 +21,7 @@ use super::comments::Comment;
 use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
+use bun_lint::ast::jsdoc::JSDoc;
 
 /// Writes `comment` formatted, if the `jsdoc` option is set and it is a JSDoc comment that formatting changes.
 /// Returns whether it has been written.
@@ -30,16 +30,17 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         return false;
     };
     let content = f.source_text().text_for(&comment.span);
-    let Some(inner) = content
-        .strip_prefix(b"/**")
-        .and_then(|rest| rest.strip_suffix(b"*/"))
+    if !content.starts_with(b"/**") {
+        return false;
+    }
+    let docs = f.file().jsdoc();
+    // `/*****/` is none.
+    let Some(first) = docs
+        .at(comment.span.start)
+        .filter(|doc| !doc.is_all_asterisks())
     else {
         return false;
     };
-    // `/*****/` is none.
-    if inner.iter().all(|&byte| byte == b'*') {
-        return false;
-    }
     let before = f.source_text().text_for(&Span::before(0, comment.span));
     let tab_width = f.options().indent_width.value() as usize;
     let indent: usize = before
@@ -61,9 +62,8 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         write!(f, [hard_line_break(), " */"]);
     };
     // An escape or a blank that is gone would end the comment early.
-    let format = |content: &[u8], end: usize, f: &Formatter<'a>| {
-        let after = f.file().text().get(end..).unwrap_or_default();
-        format_jsdoc_comment(content, after, &options, f.options(), available_width).filter(
+    let format = |doc: JSDoc<'a>, f: &Formatter<'a>| {
+        format_jsdoc_comment(doc, f.file(), &options, f.options(), available_width).filter(
             |formatted| match formatted {
                 FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text) => {
                     !strings::contains(text, b"*/")
@@ -75,17 +75,18 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
 
     // Comments that directly follow each other have been made one. Each is formatted by itself, and they go on
     // following each other directly if each has several lines.
-    if strings::contains(inner, b"*//**") {
+    if first.comment_span().end < comment.span.end {
         let mut formatted = Vec::new();
-        let mut start = 0;
-        while start < content.len() {
-            let end = strings::index_of(&content[start..], b"*//**")
-                .map_or(content.len(), |at| start + at + 2);
-            match format(&content[start..end], comment.span.start as usize + end, f) {
+        let mut start = comment.span.start;
+        while start < comment.span.end {
+            let Some(doc) = docs.at(start) else {
+                return false;
+            };
+            match format(doc, f) {
                 Some(FormattedJsdoc::MultiLine(lines)) => formatted.push(lines),
                 _ => return false,
             }
-            start = end;
+            start = doc.comment_span().end;
         }
         for lines in &formatted {
             write_lines(lines, f);
@@ -93,7 +94,7 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         return true;
     }
 
-    match format(content, comment.span.end as usize, f) {
+    match format(first, f) {
         None => return false,
         Some(FormattedJsdoc::Empty) => {}
         Some(FormattedJsdoc::SingleLine(line)) => {

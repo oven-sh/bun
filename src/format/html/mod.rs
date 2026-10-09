@@ -24,6 +24,7 @@ mod parser;
 mod preprocess;
 mod printer;
 mod tag;
+mod tailwind;
 mod utilities;
 mod verify;
 mod vue;
@@ -191,13 +192,15 @@ pub fn has_same_content(
     {
         return true;
     }
-    if options.sort_imports.is_none() && options.jsdoc.is_none() {
+    if options.sort_imports.is_none() && options.jsdoc.is_none() && options.tailwind.is_none() {
         return false;
     }
-    // Two imports of a module can become one, and words of a JSDoc comment others. The rest is compared without that.
+    // Two imports of a module can become one, words of a JSDoc comment others, and a class that is there twice is there
+    // once. The rest is compared without that.
     let plain = FormatOptions {
         sort_imports: None,
         jsdoc: None,
+        tailwind: None,
         ..options.clone()
     };
     let (mut scratch, mut formatted) = (Scratch::default(), Vec::new());
@@ -503,6 +506,13 @@ pub fn format_with(
         .filter(|how| how.applies_to_embedded_code());
     let text = match sorts_text.zip(js::Parse::new(parse_javascript, options)) {
         Some((how, parse)) => with_sorted_scripts(&text, how, parse).map_or(text, Cow::Owned),
+        None => text,
+    };
+    let text = match options.tailwind.as_deref() {
+        Some(how) => {
+            let parse = js::Parse::new(parse_javascript, options);
+            tailwind::with_sorted_classes(&text, parser, how, parse).map_or(text, Cow::Owned)
+        }
         None => text,
     };
     // In `text`, which has one byte for every line break and no byte order mark.

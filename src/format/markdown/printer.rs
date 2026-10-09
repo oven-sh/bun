@@ -373,6 +373,27 @@ impl<'a> Printer<'a, '_> {
         count
     }
 
+    /// Whether `list` has `*` or `)`: lists of the same kind that follow each other take turns.
+    fn uses_alternate_marker(&self, list: NodeId) -> bool {
+        let index = self.nth_list_sibling_index(list);
+        let mut is_first_alternate = false;
+        // oxfmt: a list that is left as it is written has the marker that it has.
+        if self.options.flavor.is_oxfmt() {
+            let mut first = list;
+            for _ in 0..index {
+                first = self.node(first).map_or(NONE, |it| it.previous);
+            }
+            if let Some(first) = self.node(first)
+                && self.prettier_ignore(first.previous) == Some(Ignore::Next)
+            {
+                let marker = self.source(first);
+                let digits = marker.iter().take_while(|it| it.is_ascii_digit()).count();
+                is_first_alternate = matches!(marker.get(digits), Some(b'*' | b')'));
+            }
+        }
+        is_first_alternate ^ !index.is_multiple_of(2)
+    }
+
     /// Prettier's `isLooseListItem`
     fn is_loose_list_item(&self, id: NodeId) -> bool {
         let Some(node) = self.node(id).filter(|node| node.kind == Kind::ListItem) else {
@@ -1284,7 +1305,14 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
             Kind::ThematicBreak => match self.find_ancestor(id, |it| it.kind == Kind::List) {
-                Some(list) if self.nth_list_sibling_index(list).is_multiple_of(2) => {
+                Some(list) if !self.uses_alternate_marker(list) => Doc::from("***"),
+                // oxfmt: at the start of a document `---` would start front matter.
+                None if self.options.flavor.is_oxfmt()
+                    && self.kind(node.parent) == Some(Kind::Root)
+                    && self
+                        .kind(node.previous)
+                        .is_none_or(|it| it == Kind::FrontMatter) =>
+                {
                     Doc::from("***")
                 }
                 _ => Doc::from("---"),
@@ -1341,6 +1369,29 @@ impl<'a> Printer<'a, '_> {
                 ])
             }
             Kind::FootnoteReference => docs!["[^", self.str(node.value), "]"],
+            // oxfmt's `Block::ContainerDirective`: the two lines are printed as they are written. An empty line behind
+            // the first and before the second stays.
+            Kind::Directive => {
+                let gap = |is_empty_line: bool| match is_empty_line {
+                    true => docs![hardline(), hardline()],
+                    false => hardline(),
+                };
+                let opening_line = self.start_line(node);
+                let mut parts = vec![Doc::from(self.str(node.value))];
+                let mut last_line = opening_line;
+                if let (Some(first), Some(last)) =
+                    (self.node(node.first_child), self.node(node.last_child))
+                {
+                    parts.push(gap(self.start_line(first) > opening_line + 1));
+                    last_line = self.end_line(last);
+                    parts.push(self.print_children(id));
+                }
+                if !node.second.is_null() {
+                    parts.push(gap(self.end_line(node) > last_line + 1));
+                    parts.push(Doc::from(self.str(node.second)));
+                }
+                Doc::Array(parts)
+            }
             Kind::FootnoteDefinition => {
                 let only_paragraph = self.node(node.first_child).filter(|child| {
                     child.kind == Kind::Paragraph && node.first_child == node.last_child
@@ -1682,7 +1733,7 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `printList`
     fn print_list(&mut self, id: NodeId, list: &'a Node) -> Doc<'a> {
-        let nth_sibling_index = self.nth_list_sibling_index(id);
+        let uses_alternate_marker = self.uses_alternate_marker(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
         // Before indented code, the content has to be indented deeper than that is.
         let min_indent = match self
@@ -1713,19 +1764,10 @@ impl<'a> Printer<'a, '_> {
                         _ => (u64::from(list.number) + index).min(999_999_999),
                     };
                     let mut prefix = number.to_string().into_bytes();
-                    prefix.extend_from_slice(if nth_sibling_index.is_multiple_of(2) {
-                        b". "
-                    } else {
-                        b") "
-                    });
+                    prefix.extend_from_slice(if uses_alternate_marker { b") " } else { b". " });
                     prefix
                 }
-                false => (if nth_sibling_index.is_multiple_of(2) {
-                    b"- "
-                } else {
-                    b"* "
-                })
-                .to_vec(),
+                false => (if uses_alternate_marker { b"* " } else { b"- " }).to_vec(),
             };
             index += 1;
             if (list.is_aligned || (printer.is_mdx && list.checked != 0)) && list.ordered {
@@ -1749,7 +1791,8 @@ impl<'a> Printer<'a, '_> {
                 printer.node(node.first_child),
                 printer.node(node.last_child),
             );
-            let is_html_out_of_line = matches!((first, second), (Some(first), Some(second))
+            let is_html_out_of_line = !printer.options.flavor.is_oxfmt()
+                && matches!((first, second), (Some(first), Some(second))
                 if first.next == node.last_child
                     && second.kind == Kind::Html
                     && printer.column(first.start) != printer.column(second.start));
@@ -1783,6 +1826,10 @@ impl<'a> Printer<'a, '_> {
         let tab_width = usize::from(self.options.indent_width.value());
         let children = self.print_children_with(id, |printer, child| {
             let kind = printer.kind(child)?;
+            // oxfmt: HTML is in the column of what is in the item, as indented code is.
+            if kind == Kind::Html && child != first && printer.options.flavor.is_oxfmt() {
+                return Some(printer.print(child));
+            }
             if (child == first && kind != Kind::List) || (kind == Kind::Html && !printer.is_mdx) {
                 let doc = printer.indented(prefix.len(), |printer| printer.print(child));
                 return Some(align_with_spaces(prefix.len() as u32, doc));

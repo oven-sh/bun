@@ -37,6 +37,11 @@ fn is_math_operator(node: ValueRef<'_>) -> bool {
         && matches!(node.node().first_byte, b'*' | b'/' | b'+' | b'-' | b'%')
 }
 
+/// Not `/`, which is between the parts of `rgb(from a r g b / 50%)` and of `font: 1px / 2 a`.
+fn is_operator_of_expression(node: ValueRef<'_>) -> bool {
+    is_math_operator(node) && !is_division(node)
+}
+
 fn word(node: ValueRef<'_>) -> Option<&[u8]> {
     node.value().filter(|_| node.kind() == ValueKind::Word)
 }
@@ -261,15 +266,24 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
 
-            let is_before_operator =
-                !is_math_operator(i_node) && next_node.is_some_and(is_math_operator);
-            if has_expressions
-                && !is_in_expression
+            // `a -1px` is two values.
+            let is_operator_at = |at: usize| {
+                node.group(at).is_some_and(|it| {
+                    is_operator_of_expression(it)
+                        && (has_empty_raw_before(it)
+                            || !node.group(at + 1).is_some_and(has_empty_raw_before))
+                })
+            };
+            let is_before_operator = has_expressions
+                && !is_math_operator(i_node)
+                && !is_comment(i_node)
+                && is_operator_at(i + 1);
+            if !is_in_expression
                 && is_before_operator
-                && prev_node.is_none_or(|it| !is_math_operator(it))
+                && prev_node.is_none_or(|it| !is_operator_of_expression(it))
             {
                 let mut last = i;
-                while node.group(last + 1).is_some_and(is_math_operator)
+                while is_operator_at(last + 1)
                     && node.group(last + 2).is_some_and(|it| !is_math_operator(it))
                 {
                     last += 2;
@@ -453,6 +467,16 @@ impl<'a> Printer<'a, '_> {
             if prev_node.is_none() && is_division(i_node) {
                 continue;
             }
+            // For oxfmt the blanks around every operator in `calc()` stay as they are, and the line can end behind one
+            // that has a blank behind it.
+            if self.is_oxfmt && inside_calc && (is_math || is_next_math) {
+                match (has_empty_raw_before(next_node), is_next_math) {
+                    (true, _) => {}
+                    (false, true) => self.sink.token(" "),
+                    (false, false) => self.sink.fill_separator(Separator::Line),
+                }
+                continue;
+            }
             // In `calc()`, the spaces around `+` and `-` stay as they are.
             if inside_calc
                 && (is_addition(i_node)
@@ -479,6 +503,27 @@ impl<'a> Printer<'a, '_> {
             }
 
             let next_next_node = node.group(i + 2);
+
+            // For oxfmt `50%/var(--a)` stays as it is.
+            let is_glued_division =
+                |operator: ValueRef<'_>,
+                 before: Option<ValueRef<'_>>,
+                 after: Option<ValueRef<'_>>| {
+                    is_division(operator)
+                        && has_empty_raw_before(operator)
+                        && after.is_none_or(has_empty_raw_before)
+                        && ![before, after]
+                            .into_iter()
+                            .flatten()
+                            .any(|it| it.kind() == ValueKind::AtWord)
+                };
+            if self.is_oxfmt
+                && self.syntax() != Syntax::Scss
+                && (is_glued_division(next_node, Some(i_node), next_next_node)
+                    || is_glued_division(i_node, prev_node, Some(next_node)))
+            {
+                continue;
+            }
 
             // `color(red l(+ 20%))`
             let is_color_adjuster = (is_addition(i_node) || is_subtraction(i_node))

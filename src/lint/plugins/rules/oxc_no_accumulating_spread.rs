@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::static_string;
 use rustc_hash::FxHashMap;
 
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
@@ -90,11 +91,7 @@ fn is_call_of_reduce(node: Node) -> bool {
     }
     let name = match call.callee().skip_type_wrappers().kind() {
         ExprKind::Dot { name, .. } => Some(name.name()),
-        ExprKind::Index { index, .. } => match index.kind() {
-            ExprKind::String(value) => Some(value),
-            ExprKind::Template(template) => template.as_static(),
-            _ => None,
-        },
+        ExprKind::Index { index, .. } => static_string(index),
         _ => None,
     };
     name.is_some_and(|name| name.is_any(&["reduce", "reduceRight"]))

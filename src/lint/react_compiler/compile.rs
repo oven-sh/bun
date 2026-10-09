@@ -131,6 +131,8 @@ fn refused(refusal: Refusal) -> Finding {
         Refusal::TooDeep => "What is in it is nested too deeply",
         Refusal::TooManyNodes | Refusal::Using => "It is too long",
         Refusal::TooManyBranches => "It has too many branches",
+        Refusal::TooManyCalls => "It has too many calls",
+        Refusal::TooManyDeclarations => "It declares too many variables",
         Refusal::TooManyFunctions => "It has too many functions in it",
         Refusal::TooManyArguments => "A call in it has too many arguments",
     };

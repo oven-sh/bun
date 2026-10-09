@@ -82,8 +82,20 @@ impl Parser<'_> {
         // container's contents_indent. This ensures nested containers compare
         // against the correct relative indentation rather than the absolute column.
         let mut remaining_indent = total_indent;
+        self.is_directive_end = false;
         while n_parents < self.n_containers {
             let c = &self.containers[n_parents as usize];
+            if c.ch == b':' {
+                // Its end comes before anything that is open in it sees the line
+                if remaining_indent < self.code_indent_offset && self.ends_directive(off, c.start) {
+                    self.is_directive_end = true;
+                    break;
+                }
+                remaining_indent -= remaining_indent.min(c.contents_indent);
+                line.indent = remaining_indent;
+                n_parents += 1;
+                continue;
+            }
             if c.ch == b'>' {
                 // Blockquote continuation
                 if off < self.size
@@ -141,8 +153,19 @@ impl Parser<'_> {
         // Track effective pivot type — brother/child containers reset this to .blank
         let mut effective_pivot_type = pivot_line.r#type;
 
+        let interrupts_for_micromark =
+            compat::what_interrupts_does_so_for_the_whole_line(&self.flags)
+                && n_parents == self.n_containers
+                && matches!(pivot_line.r#type, LineType::Text | LineType::Indentedcode);
+
         // Determine line type
         loop {
+            if self.is_directive_end {
+                line.r#type = LineType::Blank;
+                self.html_block_type = 0;
+                break;
+            }
+
             // Check for fenced code continuation/closing (BEFORE blank line check, like md4c)
             if effective_pivot_type == LineType::Fencedcode {
                 line.beg = off;
@@ -368,12 +391,15 @@ impl Parser<'_> {
                     container.mark_end = cont_result.off;
 
                     // List mark can't interrupt paragraph unless it's > or ordered starting at 1
-                    if effective_pivot_type == LineType::Text && n_parents == self.n_containers {
+                    if (effective_pivot_type == LineType::Text && n_parents == self.n_containers)
+                        || interrupts_for_micromark
+                    {
                         let after_mark =
                             helpers::line_indentation(self.text, 0, cont_result.off).off;
                         if (after_mark >= self.size || helpers::is_newline(self.ch(after_mark)))
                             && container.ch != b'>'
                             && container.ch != b'^'
+                            && container.ch != b':'
                         {
                             // Blank after list mark can't interrupt paragraph
                         } else if (container.ch == b'.' || container.ch == b')')
@@ -405,6 +431,9 @@ impl Parser<'_> {
                             if container.ch == b'^' {
                                 container.contents_indent = 4;
                                 line.indent = 0;
+                            }
+                            if container.ch == b':' {
+                                container.contents_indent = container.mark_indent;
                             }
 
                             if n_brothers + n_children == 0 {
@@ -445,6 +474,9 @@ impl Parser<'_> {
                         if container.ch == b'^' {
                             container.contents_indent = 4;
                             line.indent = 0;
+                        }
+                        if container.ch == b':' {
+                            container.contents_indent = container.mark_indent;
                         }
 
                         if n_brothers + n_children == 0 {
@@ -619,7 +651,9 @@ impl Parser<'_> {
                     let header_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     let header_cols =
                         self.count_table_row_columns(header_line.beg, header_line.end);
-                    if header_cols == tbl_result.col_count {
+                    let is_header_too_far_in = header_line.indent >= self.code_indent_offset
+                        && compat::indented_line_is_no_table_header(&self.flags);
+                    if header_cols == tbl_result.col_count && !is_header_too_far_in {
                         line.data = tbl_result.col_count;
                         line.r#type = LineType::Tableunderline;
                         break;
@@ -629,7 +663,12 @@ impl Parser<'_> {
 
             // Default: normal text line
             line.r#type = LineType::Text;
-            if effective_pivot_type == LineType::Text && n_brothers + n_children == 0 {
+            if effective_pivot_type == LineType::Text
+                && n_brothers + n_children == 0
+                && !self.containers[n_parents as usize..self.n_containers as usize]
+                    .iter()
+                    .any(|it| it.ch == b':')
+            {
                 // Lazy continuation
                 n_parents = self.n_containers;
             }
@@ -754,6 +793,7 @@ impl Parser<'_> {
         if n_children == 0 && n_parents + n_brothers < self.n_containers {
             self.leave_child_containers(n_parents + n_brothers)?;
         }
+        self.is_directive_end = false;
 
         // Enter brother containers
         if n_brothers > 0 {

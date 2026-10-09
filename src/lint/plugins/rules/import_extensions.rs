@@ -153,23 +153,22 @@ impl Extensions {
             return;
         };
         for module_name in call.args().iter().filter(|it| !it.is_parenthesized()).filter_map(Expr::as_string) {
-            self.process_import(module_name, e.span(), false, true, cx);
+            self.process_import(module_name, e.span(), true, cx);
         }
     }
 
     fn check_module_record<'a>(&self, cx: &mut Cx<'a, Self>) {
         for (module_name, modules) in requested_modules(cx.file()) {
             for module in modules {
-                self.process_import(module_name, module.statement_span, module.is_type, module.is_import, cx);
+                if self.check_type_imports || !module.is_type {
+                    self.process_import(module_name, module.statement_span, module.is_import, cx);
+                }
             }
         }
     }
 
-    fn process_import<'a>(&self, name: Name<'a>, span: Span, is_type_import: bool, is_import: bool, cx: &Cx<'a, Self>) {
+    fn process_import<'a>(&self, name: Name<'a>, span: Span, is_import: bool, cx: &Cx<'a, Self>) {
         let module_name = name.bytes();
-        if is_type_import && !self.check_type_imports {
-            return;
-        }
         let path_group_action = self.path_group_overrides.iter().find(|it| glob_match(&it.pattern, module_name));
         if path_group_action.is_some_and(|it| !it.enforces) || is_nodejs_builtin_module(module_name) || is_enabled_global(cx, module_name) {
             return;

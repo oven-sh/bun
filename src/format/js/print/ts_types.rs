@@ -280,6 +280,11 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
     }
 }
 
+/// `a: string; /* comment */` is `a: string /* comment */;` for oxfmt.
+fn separator_is_behind_comments(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// A member and the `;` after it.
 struct FormatTSSignature<'a> {
     signature: Member<'a>,
@@ -330,7 +335,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
                 span = f.comments().without_semicolon(span);
             }
             // The `,` of Flow's is behind the comments that trail the member.
-            if f.file().is_flow() && !self.is_interface {
+            if (f.file().is_flow() && !self.is_interface) || separator_is_behind_comments(f) {
                 write!(f, signature);
                 return self.write_separator(f);
             }

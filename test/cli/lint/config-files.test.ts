@@ -502,6 +502,24 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(byAlias.exitCode).toBe(1);
   });
 
+  test("oxlint.config.mts is read, and two files of oxlint in one directory are refused", async () => {
+    const program = `export default { categories: { correctness: "off" }, rules: { "no-var": "error" } };`;
+    expect((await lint({ "oxlint.config.mts": program, "a.js": code }, ["a.js"])).problems).toEqual([
+      "a.js:1:1 no-var",
+    ]);
+    const two = await lint({ ".oxlintrc.json": "{}", "oxlint.config.ts": program, "a.js": code }, ["a.js"]);
+    expect(two.stderr).toContain("Both '.oxlintrc.json' and 'oxlint.config.ts' found in <dir>.");
+    expect(two.exitCode).toBe(1);
+    const below = await lint({
+      ".oxlintrc.json": "{}",
+      "sub/.oxlintrc.jsonc": "{}",
+      "sub/oxlint.config.mts": program,
+      "sub/a.js": code,
+    });
+    expect(below.stderr).toContain("Both '.oxlintrc.jsonc' and 'oxlint.config.mts' found in <dir>/sub.");
+    expect(below.exitCode).toBe(1);
+  });
+
   test("an override for no files is not refused", async () => {
     const config = {
       ...noVar,
@@ -749,7 +767,7 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   test("--no-eslintrc, --env, --config", async () => {
     const files = {
       ".eslintrc.json": rc({ rules: { eqeqeq: "error", "no-undef": "error" } }),
-      "other.json": JSON.stringify(noVar),
+      "other.json": JSON.stringify({ parserOptions: {}, ...noVar }),
       "other.yml": "rules:\n  no-var: error\n",
       "a.js": "var x = 1;\nif (x == 2) describe();\n",
     };
@@ -942,10 +960,18 @@ describe.concurrent("whose configuration files count", () => {
       "a.js": code,
     };
     expect((await lint(files, ["-c", "mine.json", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
-    const byFlag = await lint(files, ["-c", "plain.json", "--disable-nested-config", "a.js"]);
-    expect(byFlag.problems).toEqual(["a.js:1:1 no-var", "a.js:2:13 no-debugger"]);
-    // What can be either is what the working directory has.
-    expect((await lint(files, ["-c", "plain.json", "a.js"])).stderr).toContain("not-installed");
+    // What can be either is one of oxlint.
+    const plain = ["a.js:1:1 no-var", "a.js:2:13 no-debugger"];
+    expect((await lint(files, ["-c", "plain.json", "a.js"])).problems).toEqual(plain);
+    expect((await lint(files, ["-c", "plain.json", "--disable-nested-config", "a.js"])).problems).toEqual(plain);
+    expect((await lint({ ...files, ".eslintrc.js": "throw 1;" }, ["-c", "plain.json", "."])).problems).toEqual(plain);
+    // One with what only ESLint 8 has adds to the files of ESLint 8.
+    const legacy = await lint({ ...files, "legacy.json": JSON.stringify({ parserOptions: {} }) }, [
+      "-c",
+      "legacy.json",
+      "a.js",
+    ]);
+    expect(legacy.stderr).toContain("not-installed");
   });
 
   test("Vite+: `lint` of the vite.config.ts", async () => {

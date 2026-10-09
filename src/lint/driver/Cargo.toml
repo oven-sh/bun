@@ -23,6 +23,7 @@ bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
 bun_ast.workspace = true
 bun_clap.workspace = true
+bun_collections.workspace = true
 bun_core.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true

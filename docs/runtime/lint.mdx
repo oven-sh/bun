@@ -157,7 +157,7 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 
 The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted).
 
-The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, and `vue`. These 522 rules do what oxlint 1.87 does, with its options, messages, and fixes. The rules of `jsdoc`, the 22 React Compiler rules of `react`, `promise/always-return`, and `promise/no-multiple-resolved` are not built in. With an `eslint.config.js` these names mean the plugins that the configuration imports.
+The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, `vue`, and `jsdoc`. These 569 rules do what oxlint 1.87 does, with its options, messages, and fixes. The 22 React Compiler rules of `react`, such as `react/refs` and `react/set-state-in-effect`, run the React Compiler that is built into Bun. With an `eslint.config.js` these names mean the plugins that the configuration imports.
 
 The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json`, most of them report at oxlint's places with oxlint's messages. Where the two disagree about what is a problem, `bun lint` does what ESLint does.
 
@@ -178,7 +178,7 @@ With `--allow-unsupported` these lines are warnings, and the exit code is that o
 
 No tool reads the configuration files of another. So `bun lint` first decides which tool it stands in for: it looks in the working directory, then in each parent directory, for the first of this list:
 
-1. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
+1. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`, `oxlint.config.mts`
 2. `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
 3. [The files of ESLint 8](#eslintrc)
 

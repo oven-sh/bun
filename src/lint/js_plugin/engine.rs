@@ -31,12 +31,15 @@ pub trait Engine: Sync {
 }
 
 /// How much of the time that a realm takes to start it has to save. With 1, 0.5 and 0.25 mermaid-js/mermaid, where a realm takes
-/// 6 s and all files 30 s, has 2, 3 and 4 realms (4 are the fastest, 16 as slow as 1, with 8 times the memory), and 26,701 files
-/// with plugins that take 1.8 s have 8, 11 and 15 (16 are the fastest).
+/// 6 s and all files 30 s, has 2, 3 and 3 realms (4 are the fastest, 16 as slow as 1, with 8 times the memory), and 26,701 files
+/// with plugins that take 1.8 s have 7, 10 and 14 (16 are the fastest).
 const SHARE_TO_SAVE: f64 = 0.5;
 
 /// After so many files it is known how long one takes.
-const FILES_TO_MEASURE: u32 = 3;
+const FILES_TO_MEASURE: u32 = 4;
+
+/// How many files are linted in the time that a realm takes to start, as long as that is not known.
+const FILES_IN_A_START: f64 = 100.0;
 
 #[derive(Default)]
 struct Measured {
@@ -78,21 +81,22 @@ impl Demand {
         }
     }
 
-    /// Whether to start another realm beside the `realms` that there are, all of which are in use. With it the files that
-    /// are left take 1 / (`realms` (`realms` + 1)) of their time less.
+    /// Whether to start another realm beside the `realms` that there are, all of which are in use.
     pub fn is_worth_another(&self, realms: usize) -> bool {
         let measured = self.0.lock();
-        if realms == 0 {
-            return true;
+        if realms == 0 || realms >= measured.most {
+            return realms == 0;
         }
-        let Some(start) = measured.start.filter(|_| realms < measured.most) else {
-            return false;
-        };
-        if measured.files < FILES_TO_MEASURE {
-            return false;
-        }
-        let left =
-            measured.time.as_secs_f64() / f64::from(measured.files) * measured.files_left as f64;
-        left / (realms * (realms + 1)) as f64 >= SHARE_TO_SAVE * start.as_secs_f64()
+        // How many times a realm could start while one lints the files that are left.
+        let starts = measured.files_left as f64
+            / match measured.start {
+                Some(start) if measured.files >= FILES_TO_MEASURE => {
+                    start.as_secs_f64() * f64::from(measured.files) / measured.time.as_secs_f64()
+                }
+                _ => FILES_IN_A_START,
+            };
+        // Until it has started the others go on. Then they are one more.
+        let realms = realms as f64;
+        (starts / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
     }
 }

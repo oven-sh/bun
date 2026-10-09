@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id};
+use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_string};
 use crate::oxlint::vue::{
     as_inner_object_expression, find_property, is_vue_component_options_object_excluding_instance, is_vue_file,
     is_vue_setup, key_name, object_properties,
@@ -79,12 +79,7 @@ fn check_and_report<'a>(expr: Expr<'a>, prop_name: Name<'a>, cx: Context<'_, 'a>
     };
     if is_forbidden_type {
         cx.report(expr, REQUIRE_PROP_TYPE_CONSTRUCTOR).data("prop_name", prop_name).fix(|fixer| {
-            let name = match expr.kind() {
-                ExprKind::String(value) => Some(value),
-                ExprKind::Template(template) => template.as_static(),
-                _ => None,
-            };
-            name.filter(|it| text::is_identifier_name(it.bytes())).map(|it| fixer.replace(expr, it))
+            static_string(expr).filter(|it| text::is_identifier_name(it.bytes())).map(|it| fixer.replace(expr, it))
         });
     }
 }

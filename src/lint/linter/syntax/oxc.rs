@@ -3,28 +3,124 @@
 //! file here, leaves all of that to the checker.
 //!
 //! The oracle: real files, ended after a token or with a token taken out, through both tools.
+//!
+//! All of this runs on every file, and nearly no file has such an error. So nothing here walks the expressions of a file in
+//! which no cheap sign says that there is something to find, or asks for them by kind.
 
-use super::{SyntaxError, espree, typescript_estree};
-use crate::ast::{Expr, File, Handle};
+use super::{SyntaxError, espree};
+use crate::ast::{Class, Expr, File, Handle, StmtTag};
 use crate::tokens::token_len;
 use bun_sema::atom::{Atom, known};
-use bun_sema::hir::{ExprKind, Flags, FnKind, ModifierKind, PatKind, StmtKind, VarKind};
+use bun_sema::bind::{ClassOwner, Parent};
+use bun_sema::hir::{
+    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, PatKind, StmtId, StmtKind,
+    VarKind,
+};
 
-/// What typescript-estree throws and OXC refuses too, by how the message starts. OXC lets most of the rest pass.
-const OF_TYPESCRIPT_ESTREE: [&str; 4] = [
-    "A class declaration without the 'default' modifier must have a name.",
-    "A variable declaration list must have at least one variable declarator.",
-    "JSDoc types can only be used inside documentation comments.",
-    "Only a single variable declaration is allowed in a 'for...",
-];
+fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
+    modifier.kind == ModifierKind::Keyword(flag)
+}
+
+/// The first of the errors that TypeScript's parser logs for the checker to report and that OXC has too. It has few of them.
+fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let of_grammar = file.hir.diagnostics.iter().filter(|it| {
+        it.kind == DiagnosticKind::Grammar
+            // "JSDoc types can only be used inside documentation comments."
+            && it.code == 8020
+            && !file.is_in_jsdoc(it.start)
+    });
+    let first = of_grammar.min_by_key(|it| it.start)?;
+    let mut message = Vec::new();
+    match bun_sema::messages::message(first.code) {
+        Some((_, text)) => bun_sema::messages::format(&mut message, text, &first.args),
+        None => message.extend_from_slice(b"Unexpected token"),
+    }
+    Some(SyntaxError {
+        at: first.start,
+        message,
+    })
+}
+
+/// The statement in whose head the list of declarations `statement` is: a `for`, a `for-in` or a `for-of`.
+fn loop_with_head<'a>(file: &'a File<'a>, statement: StmtId) -> Option<StmtKind> {
+    let Some(&Parent::Stmt(parent)) = file.bound.stmt_parent.get(statement.idx()) else {
+        return None;
+    };
+    let kind = file.hir.stmts.get(parent.idx())?.kind;
+    let head = match kind {
+        StmtKind::For { init, .. } => init,
+        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left,
+        _ => return None,
+    };
+    (head == statement).then_some(kind)
+}
+
+/// `const` and nothing behind it. `for (const a, b of c)`.
+fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let empty = file.stmts_of_kind(StmtTag::Var).filter_map(|it| {
+        let raw = it.try_raw()?;
+        let is_empty = matches!(raw.kind, StmtKind::Var(list) if list.is_empty())
+            && loop_with_head(file, it.id()).is_none();
+        is_empty.then(|| SyntaxError {
+            at: raw.start,
+            message: b"A variable declaration list must have at least one variable declarator."
+                .to_vec(),
+        })
+    });
+    let loops = [(StmtTag::ForIn, "in"), (StmtTag::ForOf, "of")];
+    let in_heads = loops.into_iter().flat_map(|(tag, word)| {
+        file.stmts_of_kind(tag).filter_map(move |it| {
+            let (StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) = it.try_raw()?.kind
+            else {
+                return None;
+            };
+            let left = file.hir.stmts.get(left.idx())?;
+            matches!(left.kind, StmtKind::Var(list) if list.len() != 1).then(|| SyntaxError {
+                at: left.start,
+                message: format!(
+                    "Only a single variable declaration is allowed in a 'for...{word}' statement."
+                )
+                .into_bytes(),
+            })
+        })
+    });
+    empty.chain(in_heads).min_by_key(|it| it.at)
+}
+
+/// `class {}` as a statement, if it is not `export default class {}`.
+fn class_without_name<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let (hir, bound) = (&file.hir, &file.bound);
+    let without_name = hir.classes.iter().enumerate().filter(|&(i, it)| {
+        let modifiers = hir.modifiers.get(it.modifiers.range()).unwrap_or_default();
+        it.name.is_none()
+            && bound
+                .class_scope
+                .get(i)
+                .is_some_and(|scope| scope.is_some())
+            && matches!(bound.class_owner.get(i), Some(ClassOwner::Stmt(_)))
+            && !(modifiers.iter().any(|it| is_keyword(it, Flags::EXPORT))
+                && modifiers.iter().any(|it| is_keyword(it, Flags::DEFAULT)))
+    });
+    let at = without_name
+        .map(|(i, _)| Class::from_raw(file, i as u32).span().start)
+        .min()?;
+    Some(SyntaxError {
+        at,
+        message: b"A class declaration without the 'default' modifier must have a name.".to_vec(),
+    })
+}
 
 /// A word that is reserved in strict code, where a name is read, declared or a label. For OXC a file is strict if it is a
 /// module, and nothing is reserved in what is only declared. Code that is strict for another reason is not looked at.
 fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    if file.is_declaration_file() || !espree::has_module_syntax(file) {
+    let hir = &file.hir;
+    // The parser notes each name that is such a word, `eval` or `arguments`. Few files have one.
+    if hir.keyword_identifier_positions.is_empty()
+        || file.is_declaration_file()
+        || !espree::has_module_syntax(file)
+    {
         return None;
     }
-    let hir = &file.hir;
     let is_reserved = |name: Atom| {
         name.is_keyword_identifier() && name != known::eval && name != known::arguments
     };
@@ -48,14 +144,12 @@ fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let labels = hir.stmts.iter().filter_map(|it| {
         matches!(it.kind, StmtKind::Labeled { label, .. } if is_reserved(label)).then_some(it.start)
     });
-    let is_declare =
-        |it: &bun_sema::hir::Modifier| it.kind == ModifierKind::Keyword(Flags::AMBIENT);
     let is_only_declared = |at: u32| {
         hir.stmts.iter().any(|it| {
+            let modifiers = hir.modifiers.get(it.modifiers.range()).unwrap_or_default();
             it.start <= at
                 && at < it.loc.end
-                && (hir.modifiers.get(it.modifiers.range()))
-                    .is_some_and(|modifiers| modifiers.iter().any(is_declare))
+                && modifiers.iter().any(|it| is_keyword(it, Flags::AMBIENT))
         })
     };
     let at = read
@@ -79,15 +173,11 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
         return None;
     }
     let (hir, bound) = (&file.hir, &file.bound);
-    let is_in_loop_head = |statement: bun_sema::hir::StmtId| {
-        use bun_sema::bind::Parent;
-        match bound.stmt_parent.get(statement.idx()) {
-            Some(&Parent::Stmt(parent)) => matches!(
-                hir.stmts.get(parent.idx()).map(|it| it.kind),
-                Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) if left == statement
-            ),
-            _ => false,
-        }
+    let is_in_loop_head = |statement: StmtId| {
+        matches!(
+            loop_with_head(file, statement),
+            Some(StmtKind::ForIn { .. } | StmtKind::ForOf { .. })
+        )
     };
     let lacking = hir.var_decls.iter().enumerate().find(|(i, it)| {
         it.init.is_none()
@@ -108,18 +198,18 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
 
 /// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    // acorn's checks have these for JavaScript.
     let of_typescript = match file.is_javascript() {
-        true => [None, None],
+        true => [None, None, None, None],
         false => [
             declaration_without_initializer(file),
-            typescript_estree::first_error(file, false).filter(|it| {
-                (OF_TYPESCRIPT_ESTREE.iter()).any(|start| it.message.starts_with(start.as_bytes()))
-            }),
+            declaration_list(file),
+            class_without_name(file),
+            error_of_grammar(file),
         ],
     };
-    let [a, b] = of_typescript;
-    [a, b, espree::first_error_of_oxc(file), reserved_word(file)]
-        .into_iter()
+    let early = [espree::first_error_of_oxc(file), reserved_word(file)];
+    (of_typescript.into_iter().chain(early))
         .flatten()
         .min_by_key(|it| it.at)
 }

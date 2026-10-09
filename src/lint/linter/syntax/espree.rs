@@ -341,6 +341,35 @@ impl Candidates {
         Candidates { found }
     }
 
+    /// All expressions of the kinds `tags`, none of which is part of an optional chain, and none of another kind. They are
+    /// looked for in the kinds that the binder has noted on its way, which costs next to nothing.
+    fn of_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
+        let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
+        // As `runner::Exprs::from_binder`.
+        if kinds.len() != file.hir.exprs.len()
+            || file.has_synthetic_nodes()
+            || !file.hir.import_attributes.is_empty()
+        {
+            return Candidates::of(file);
+        }
+        let mut found = Vec::new();
+        for &tag in tags {
+            let kind = 2 * tag as u8;
+            if counts.get(kind as usize).is_none_or(|&count| count == 0) {
+                continue;
+            }
+            let mut at = 0;
+            while let Some(next) =
+                (kinds.get(at..)).and_then(|rest| strings::index_of_char_usize(rest, kind))
+            {
+                found.push((kind, (at + next) as u32));
+                at += next + 1;
+            }
+        }
+        found.sort_unstable();
+        Candidates { found }
+    }
+
     fn of_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
         let start = self.found.partition_point(|it| it.0 < 2 * tag as u8);
         let len = self.found[start..].partition_point(|it| it.0 < 2 * tag as u8 + 2);
@@ -391,22 +420,28 @@ pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
 /// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let mut checks = checks_of_oxc(file);
+    // What `early_errors_of_oxc` asks for.
+    let tags: &[ExprTag] = match file.is_javascript() {
+        true => &[ExprTag::Assign, ExprTag::Regex, ExprTag::Unary],
+        false => &[ExprTag::Regex],
+    };
+    let candidates = Candidates::of_kinds(file, tags);
+    let mut checks = checks_of_oxc(file, Some(&candidates));
     checks.early_errors_of_oxc();
     checks.first.map(|it| it.1)
 }
 
 /// Those of them that OXC's parser makes itself. oxfmt runs nothing but the parser.
 pub(super) fn first_error_of_oxc_parser<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let mut checks = checks_of_oxc(file);
+    let mut checks = checks_of_oxc(file, None);
     checks.early_errors_of_oxc_parser();
     checks.first.map(|it| it.1)
 }
 
-fn checks_of_oxc<'a, 'c>(file: &'a File<'a>) -> Checks<'a, 'c> {
+fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
     Checks {
         file,
-        candidates: None,
+        candidates,
         tops: Tops::default(),
         first: None,
         noticed: 0,

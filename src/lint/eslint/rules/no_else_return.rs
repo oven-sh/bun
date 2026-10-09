@@ -112,6 +112,37 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
     )
 }
 
+/// The fix of oxlint 1.87. It replaces all that is after `consequent`, so what is around the `else` goes too. It looks
+/// for the names that the block declares only among those of the scope that the `if` is in, and where ESLint has no fix
+/// because two statements would become one, it adds a line break or a `;`.
+fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Option<Fix> {
+    let file = fixer.file();
+    let (kept, last) = match else_node.kind() {
+        StmtKind::Fn(_) => return None,
+        StmtKind::Block(body) => {
+            let (scope, else_scope) = (else_node.parent().scope(), Node::Stmt(else_node).scope());
+            if else_scope.node() == Node::Stmt(else_node)
+                && else_scope.symbols().any(|it| scope.get_name(it.name()).is_some())
+            {
+                return None;
+            }
+            (else_node.span().shrink(1, 1), body.last())
+        }
+        _ => (else_node.span(), Some(else_node)),
+    };
+    let (start, end) = (consequent.span().end, else_node.span().end);
+    let needs_newline =
+        matches!(consequent.kind(), StmtKind::Expr(_) | StmtKind::Return(_)) && !consequent.text().ends_with(b";");
+    let is_open = last.is_some_and(|it| !matches!(it.text().trim_ascii_end().last(), Some(b';' | b'}')));
+    let after = file.text().get(end as usize..).unwrap_or_default();
+    let next = after.iter().copied().find(|it| !matches!(it, b' ' | b'\t' | 0x0b | 0x0c));
+    let needs_semicolon = is_open && next.is_some_and(|it| !matches!(it, b'\n' | b'\r' | b'}' | b';'));
+    let newline: &[u8] = if needs_newline { b"\n" } else { b"" };
+    let semicolon: &[u8] = if needs_semicolon { b";" } else { b"" };
+    let text = [newline, file.slice(kept), semicolon];
+    Some(fixer.replace(Span::new(start, end), text.concat()))
+}
+
 fn is_return(statement: Stmt) -> bool {
     statement.tag() == StmtTag::Return
 }
@@ -186,7 +217,10 @@ impl Rule for NoElseReturn {
                 }
                 None => cx.report(else_node, UNEXPECTED),
             };
-            report.fix(|fixer| fix(fixer, else_node, consequent));
+            report.fix(|fixer| match fixer.file().language().is_oxlint {
+                true => fix_as_oxlint(fixer, else_node, consequent),
+                false => fix(fixer, else_node, consequent),
+            });
         });
     }
 }

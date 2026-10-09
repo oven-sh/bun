@@ -36,5 +36,49 @@
  "35-no-negated-condition": [
   "fix",
   "dangerously"
+ ],
+ "44-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "45-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "46-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "47-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "48-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "49-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "50-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "52-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "53-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "54-no-else-return": [
+  "fix",
+  "dangerously"
+ ],
+ "55-no-else-return": [
+  "fix",
+  "dangerously"
  ]
 }

@@ -48,7 +48,7 @@ enum Syntax {
 }
 
 /// The names of configuration files, by priority.
-const NAMES: [(&[u8], Flavor, Syntax); 9] = [
+const NAMES: [(&[u8], Flavor, Syntax); 10] = [
     (b"eslint.config.js", Flavor::Eslint, Syntax::Program),
     (b"eslint.config.mjs", Flavor::Eslint, Syntax::Program),
     (b"eslint.config.cjs", Flavor::Eslint, Syntax::Program),
@@ -58,6 +58,7 @@ const NAMES: [(&[u8], Flavor, Syntax); 9] = [
     (b".oxlintrc.json", Flavor::Oxlint, Syntax::Json),
     (b".oxlintrc.jsonc", Flavor::Oxlint, Syntax::Json),
     (b"oxlint.config.ts", Flavor::Oxlint, Syntax::Program),
+    (b"oxlint.config.mts", Flavor::Oxlint, Syntax::Program),
 ];
 
 /// What is linted, and how, if there is no configuration file.
@@ -986,12 +987,8 @@ impl<'l> Loader<'l> {
             let Some(path) = &options.config else {
                 return false;
             };
-            let path = paths::resolve(self.cwd(), &paths::from_native(path));
-            if eslintrc::is_one(&path) {
-                return true;
-            }
-            // A file that can be either is what the working directory has.
-            path.ends_with(b".json") && self.tool() == Some(Flavor::EslintRc)
+            // A file that can be either is one of oxlint, whatever the working directory has.
+            eslintrc::is_one(&paths::resolve(self.cwd(), &paths::from_native(path)))
         })
     }
 
@@ -1100,6 +1097,29 @@ impl<'l> Loader<'l> {
         }))
     }
 
+    /// The configuration in the file `name` of `directory`. oxlint refuses a directory that has two of its files.
+    fn load_the_only_one(&self, directory: &[u8], name: &[u8]) -> Found {
+        let mut of_oxlint = NAMES.iter().filter(|it| it.1 == Flavor::Oxlint);
+        if of_oxlint.clone().any(|it| it.0 == name)
+            && let Some(other) =
+                of_oxlint.find(|it| it.0 != name && fs::is_file(&paths::join(directory, it.0)))
+        {
+            return Err(Fatal(
+                [
+                    b"Both '",
+                    name,
+                    b"' and '",
+                    other.0,
+                    b"' found in ",
+                    directory,
+                    b".\nDelete one of the configuration files.",
+                ]
+                .concat(),
+            ));
+        }
+        self.load(&paths::join(directory, name), directory)
+    }
+
     /// The configuration of the files that are in `directory`: ESLint's `loadConfigArrayForFile`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
         if self.is_command_line_of_eslint_8() {
@@ -1132,7 +1152,7 @@ impl<'l> Loader<'l> {
             }
             asked.push(ancestor);
             let name = (self.names()).find(|name| fs::is_file(&paths::join(ancestor, name)));
-            let loaded = name.map(|name| self.load(&paths::join(ancestor, name), ancestor));
+            let loaded = name.map(|name| self.load_the_only_one(ancestor, name));
             if let Some(loaded) = loaded.filter(|it| !has_no_lint_field(it)) {
                 found = Some(loaded);
                 break;
@@ -1181,7 +1201,7 @@ impl<'l> Loader<'l> {
         let is_legacy = matches!(inherited.flavor, Flavor::EslintRc | Flavor::BuiltIn);
         match self.pick(names) {
             (Some(name), _) if !self.is_command_line_of_eslint_8() => {
-                let loaded = self.load(&paths::join(directory, name), directory);
+                let loaded = self.load_the_only_one(directory, name);
                 match has_no_lint_field(&loaded) {
                     true => Ok(Arc::clone(inherited)),
                     false => loaded,

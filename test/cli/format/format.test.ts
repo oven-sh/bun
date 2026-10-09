@@ -754,16 +754,16 @@ describe.concurrent("bun format", () => {
   });
 
   test("sortTailwindcss, where it has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
-    const html = '<p class="b c"></p>\n';
+    const html = '<p class="b c">{{d}}</p>\n';
     const files = {
       ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
       "a.js": ugly,
-      "b.html": html,
-      "c.html": "<p></p>\n",
+      "b.hbs": html,
+      "c.hbs": "<p></p>\n",
     };
     const result = await format(files, [], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
-    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .html";
+    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .hbs";
     expect(result.stderr).toContain(`[error] ${text}. With --allow-unsupported this is a warning.`);
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads: ["a.js"] });
@@ -1097,6 +1097,12 @@ try {
     expect(result.cpu).toBeLessThan(isDebug || isASAN ? 20 : 5);
     expect(result.exitCode).toBe(0);
   }, 60_000);
+
+  test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {
+    const result = await format({ "a.md": "```mdx\n<hi/>\n<hello\n/>\n```\n" }, [], { reads: ["a.md"] });
+    expect(result.files["a.md"]).toBe("```mdx\n<hi />\n<hello />\n```\n");
+    expect(result.exitCode).toBe(0);
+  });
 
   test("white space that is not ASCII at the end of a comment goes, and the file is written", async () => {
     const result = await format(

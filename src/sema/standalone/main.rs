@@ -293,6 +293,7 @@ fn run(args: &[String]) {
                 reads_sources_of_references: defaults.reads_sources_of_references,
                 current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
                 reports_nothing_about_files: defaults.reports_nothing_about_files,
+                only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,

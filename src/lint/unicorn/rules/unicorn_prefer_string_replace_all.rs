@@ -1,6 +1,5 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr};
+use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr, static_string};
 use bun_lint_oxlint::codegen::print_string;
-use crate::unicorn::static_string;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};

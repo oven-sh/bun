@@ -50,6 +50,35 @@ pub(crate) fn tab_before_the_blanks_is_no_hard_break(flags: &Flags) -> bool {
     flags.micromark
 }
 
+/// An empty list item and an ordered list that does not start with 1 cannot
+/// interrupt a paragraph. To micromark they cannot follow indented code
+/// either, with or without empty lines between, and on a line that interrupts
+/// one of the two no container in the first one can be such a list.
+///
+/// ```markdown
+///     a
+///
+/// 2. b
+///
+/// c
+/// - +
+/// ```
+pub(crate) fn what_interrupts_does_so_for_the_whole_line(flags: &Flags) -> bool {
+    flags.micromark
+}
+
+/// The last line of a paragraph is the header of a table if a delimiter row
+/// follows it. To micromark it is not if it is indented by four columns.
+///
+/// ```markdown
+/// a
+///     b | c
+/// - | -
+/// ```
+pub(crate) fn indented_line_is_no_table_header(flags: &Flags) -> bool {
+    flags.micromark
+}
+
 /// remark-parse 8 with the option `blocks` as Prettier sets it: a line that
 /// starts with any tag, whatever its name, with dots in it or without one,
 /// starts HTML, also in a paragraph.

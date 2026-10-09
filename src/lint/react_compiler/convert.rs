@@ -41,6 +41,10 @@ const MAX_NODES: usize = 1 << 17;
 const MAX_SQUARED_NODES: u64 = 1 << 27;
 /// One function with 512 branches.
 const MAX_SQUARED_BRANCHES: u64 = 1 << 18;
+/// One function with 1,024 calls.
+const MAX_SQUARED_CALLS: u64 = 1 << 20;
+/// One function that declares 512 variables.
+const MAX_SQUARED_DECLARATIONS: u64 = 1 << 18;
 const MAX_FUNCTIONS: u32 = 1024;
 const MAX_ARGUMENTS: usize = 64;
 
@@ -49,6 +53,17 @@ const MAX_ARGUMENTS: usize = 64;
 struct Counts {
     nodes: u64,
     branches: u64,
+    calls: u64,
+    declarations: u64,
+}
+
+/// One more `here`, where `squares` is the sum for the functions before.
+fn count(here: &mut u64, squares: u64, max: u64, refusal: Refusal) -> Converts<()> {
+    *here += 1;
+    match squares + *here * *here > max {
+        true => Err(refusal),
+        false => Ok(()),
+    }
 }
 
 /// Why there is no tree.
@@ -57,6 +72,8 @@ pub(crate) enum Refusal {
     TooDeep,
     TooManyNodes,
     TooManyBranches,
+    TooManyCalls,
+    TooManyDeclarations,
     TooManyFunctions,
     TooManyArguments,
     /// `using`, which oxlint's compiler leaves alone without a word.
@@ -175,9 +192,14 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── places ─────────────────────────────
 
     fn loc(&mut self, span: Span) -> Converts<Loc> {
-        self.here.nodes += 1;
-        let squared = self.squares.nodes + self.here.nodes * self.here.nodes;
-        if self.spans.len() >= MAX_NODES || squared > MAX_SQUARED_NODES {
+        let squares = self.squares.nodes;
+        count(
+            &mut self.here.nodes,
+            squares,
+            MAX_SQUARED_NODES,
+            Refusal::TooManyNodes,
+        )?;
+        if self.spans.len() >= MAX_NODES {
             return Err(Refusal::TooManyNodes);
         }
         let index = self.spans.len() as i32;
@@ -187,12 +209,13 @@ impl<'a> Converter<'a, '_> {
 
     /// Counts what makes blocks in the control flow graph.
     fn branch(&mut self) -> Converts<()> {
-        self.here.branches += 1;
-        let squared = self.squares.branches + self.here.branches * self.here.branches;
-        match squared > MAX_SQUARED_BRANCHES {
-            true => Err(Refusal::TooManyBranches),
-            false => Ok(()),
-        }
+        let (here, squares) = (&mut self.here.branches, self.squares.branches);
+        count(
+            here,
+            squares,
+            MAX_SQUARED_BRANCHES,
+            Refusal::TooManyBranches,
+        )
     }
 
     /// Calls `then` one level further down.
@@ -384,6 +407,8 @@ impl<'a> Converter<'a, '_> {
         let result = self.nested(then);
         self.squares.nodes += self.here.nodes * self.here.nodes;
         self.squares.branches += self.here.branches * self.here.branches;
+        self.squares.calls += self.here.calls * self.here.calls;
+        self.squares.declarations += self.here.declarations * self.here.declarations;
         self.here = outer;
         result
     }
@@ -470,6 +495,9 @@ impl<'a> Converter<'a, '_> {
                     data: B::B::BMissing(B::Missing {}),
                 },
                 PatKind::Ident(name) => {
+                    let (here, squares) = (&mut this.here.declarations, this.squares.declarations);
+                    let refusal = Refusal::TooManyDeclarations;
+                    count(here, squares, MAX_SQUARED_DECLARATIONS, refusal)?;
                     let r#ref = this.declared(pat.symbol(), name);
                     Binding::alloc(this.arena, B::Identifier { r#ref }, loc)
                 }
@@ -750,6 +778,8 @@ impl<'a> Converter<'a, '_> {
                 if call.args().len() > MAX_ARGUMENTS {
                     return Err(Refusal::TooManyArguments);
                 }
+                let (here, squares) = (&mut self.here.calls, self.squares.calls);
+                count(here, squares, MAX_SQUARED_CALLS, Refusal::TooManyCalls)?;
                 call.chain() == Chain::Start
             }
             _ => false,
@@ -978,10 +1008,15 @@ impl<'a> Converter<'a, '_> {
         ))
     }
 
-    /// A tagged template has its text as it is written.
+    /// A tagged template has its text as it is written, unless that has an escape. Bun's lowering
+    /// refuses the template then, by the `\`, and oxc's does not. The text, which is left out, plays
+    /// no part in the analysis.
     fn template(&mut self, template: Template<'a>, tag: Option<JsExpr>) -> Converts<E::Template> {
         let contents = |i: usize| match (tag.is_some(), template.cooked(i)) {
             (false, Some(cooked)) => E::TemplateContents::Cooked(E::EString::init(cooked.bytes())),
+            (true, _) if bun_core::strings::contains_char(template.raw(i), b'\\') => {
+                E::TemplateContents::Raw(StoreStr::new(b""))
+            }
             _ => E::TemplateContents::Raw(StoreStr::new(template.raw(i))),
         };
         let mut parts: AstVec<E::TemplatePart> =

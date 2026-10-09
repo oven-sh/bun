@@ -12,6 +12,7 @@ use super::{editorconfig, tailwind};
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
+use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
@@ -901,7 +902,7 @@ impl<'c> Configs<'c> {
         let mut config = above.and_then(|it| it.config.clone());
         if self.named.is_none() && self.options.config_lookup {
             // One after the other: a `package.json` need not have a configuration.
-            candidates.sort_unstable();
+            sort_slice_by(&mut candidates[..], |a, b| a.cmp(b));
             if let [first, second, ..] = candidates[..]
                 && second < NAMES_OF_OXFMT
             {

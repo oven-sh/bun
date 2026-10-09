@@ -48,38 +48,69 @@ fn check_and_lint(
     indices: &[usize],
     already_read: AlreadyRead,
 ) -> Vec<Option<Linted>> {
-    // oxlint lints JavaScript with types too, whatever `allowJs` says and whether or not a project includes it.
-    let is_script_for_oxlint = |index: usize| {
-        files[index].config.language.is_oxlint
-            && bun_sema::resolve::is_javascript(files[index].path)
-    };
-    let for_scripts =
-        (indices.iter().any(|&index| is_script_for_oxlint(index))).then(|| already_read.clone());
-    let mut linted = check_and_lint_as(context, environment, files, indices, already_read, false);
-    // In programs of their own: what the other files import from JavaScript is as their project says.
-    if let Some(already_read) = for_scripts {
-        let is_left = |at: &usize| linted[*at].is_none() && is_script_for_oxlint(indices[*at]);
-        let left: Vec<usize> = (0..indices.len()).filter(is_left).collect();
-        let scripts: Vec<usize> = left.iter().map(|&at| indices[at]).collect();
-        if !scripts.is_empty() {
-            let of_scripts =
-                check_and_lint_as(context, environment, files, &scripts, already_read, true);
-            for (at, of_script) in left.into_iter().zip(of_scripts) {
-                linted[at] = of_script;
+    let (like_oxlint, others): (Vec<usize>, Vec<usize>) = (0..indices.len())
+        // `-p` is the project of all files.
+        .partition(|&at| {
+            files[indices[at]].config.language.is_oxlint && context.options.project.is_none()
+        });
+    if like_oxlint.is_empty() {
+        return check_and_lint_in(
+            context,
+            environment,
+            files,
+            indices,
+            already_read,
+            Project::Nearest,
+        );
+    }
+    let mut linted: Vec<Option<Linted>> = indices.iter().map(|_| None).collect();
+    let mut check = |positions: &[usize], already_read: AlreadyRead, project: Project<'_>| {
+        let some: Vec<usize> = positions.iter().map(|&at| indices[at]).collect();
+        let of_some = check_and_lint_in(context, environment, files, &some, already_read, project);
+        let mut left = Vec::new();
+        for (&at, of_one) in positions.iter().zip(of_some) {
+            if of_one.is_none() {
+                left.push(at);
             }
+            linted[at] = of_one;
         }
+        left
+    };
+    if !others.is_empty() {
+        check(&others, already_read.clone(), Project::Nearest);
+    }
+    let left = check(&like_oxlint, already_read.clone(), Project::Including);
+    if !left.is_empty() {
+        let mut config = from_native(&environment.cwd);
+        config.extend_from_slice(b"/tsconfig.of-no-project.json");
+        let mut already_read = already_read;
+        already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.to_vec());
+        check(&left, already_read, Project::This(&config));
     }
     linted
 }
 
-/// `are_entry_points`: see [`bun_sema_driver::Request::are_entry_points`].
-fn check_and_lint_as(
+/// `CreateInferredProjectProgram` of tsgolint: one program for all files that no project includes, JavaScript too.
+const OPTIONS_OF_NO_PROJECT: &[u8] = br#"{"compilerOptions":{"allowJs":true,"module":"esnext","moduleResolution":"bundler","target":"es2022","jsx":"react-jsx","allowImportingTsExtensions":true,"strictNullChecks":true,"strictFunctionTypes":true,"esModuleInterop":true,"resolveJsonModule":true,"noEmit":true},"files":[]}"#;
+
+/// In which project a file is checked.
+#[derive(Clone, Copy)]
+enum Project<'a> {
+    /// As an editor chooses it, or `-p`. A file that no project includes is in that of the nearest configuration file.
+    Nearest,
+    /// As tsgolint chooses it: see `PlanOptions::only_in_a_project_that_includes`.
+    Including,
+    /// That of this configuration file.
+    This(&'a [u8]),
+}
+
+fn check_and_lint_in(
     context: &Context,
     environment: &Environment,
     files: &[Typed],
     indices: &[usize],
     already_read: AlreadyRead,
-    are_entry_points: bool,
+    project: Project<'_>,
 ) -> Vec<Option<Linted>> {
     let by_path: FxHashMap<Vec<u8>, usize> = indices
         .iter()
@@ -142,11 +173,14 @@ fn check_and_lint_as(
         .collect();
     let request = bun_sema_driver::Request {
         cwd: &environment.cwd,
-        project: context.options.project.as_deref(),
+        project: match project {
+            Project::This(config) => Some(config),
+            Project::Nearest | Project::Including => context.options.project.as_deref(),
+        },
         build: false,
         errors: &[],
         paths: &paths,
-        are_entry_points,
+        are_entry_points: false,
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],
@@ -165,6 +199,7 @@ fn check_and_lint_as(
             reads_sources_of_references: true,
             current_directory_is_of_the_project: true,
             reports_nothing_about_files: !context.checks_types,
+            only_in_a_project_that_includes: matches!(project, Project::Including),
             ..Default::default()
         },
         retains_everything: false,

@@ -37,10 +37,20 @@ impl Rule for NoNamespace {
             let StmtKind::Module(module) = stmt.kind() else {
                 return;
             };
-            if !matches!(module.name(), ModuleName::Ident(_)) || rule.allow_declarations && is_declaration(stmt) {
+            let ModuleName::Ident(name) = module.name() else {
+                return;
+            };
+            if rule.allow_declarations && is_declaration(stmt) {
                 return;
             }
-            cx.report(stmt.span_without_export(), MODULE_SYNTAX_IS_PREFERRED);
+            // oxlint points at the keyword, which is before the name.
+            let end = cx.file().end_of_token_before(name.span().start);
+            let keyword = if cx.slice(Span::new(0, end)).ends_with(b"namespace") { "namespace" } else { "module" };
+            let place = match cx.language().is_oxlint {
+                true => Span::new(end.saturating_sub(keyword.len() as u32), end),
+                false => stmt.span_without_export(),
+            };
+            cx.report(place, MODULE_SYNTAX_IS_PREFERRED);
         });
     }
 }

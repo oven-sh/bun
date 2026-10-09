@@ -1,5 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_declaration_of_variable, get_inner_expression, is_import_from_module};
-use crate::unicorn::static_string;
+use bun_lint_oxlint::ast_util::{get_declaration_of_variable, get_inner_expression, is_import_from_module, static_string};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 

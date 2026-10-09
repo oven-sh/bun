@@ -6,6 +6,7 @@ use super::config::{Configs, Flavor, Scope, glob_of_oxc};
 use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
+use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::linter::Glob;
 use bun_lint::linter::config::FastGlob;
@@ -718,7 +719,14 @@ pub(crate) fn expand(
             b"" => paths::relative(&written_base.1, &target.path),
             written => paths::join(written, &paths::relative(&written_base.1, &target.path)),
         };
-        found.sort_by_cached_key(|target| collation_key(&key(target)));
+        let keys: Vec<_> = (found.iter())
+            .map(|target| collation_key(&key(target)))
+            .collect();
+        let mut order = index_sort::identity(found.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            keys[a as usize].cmp(&keys[b as usize])
+        });
+        index_sort::apply_permutation_in_place(&mut found, &mut order);
         for target in found {
             if seen.insert(target.path.clone()) {
                 expanded.push(Expanded::File(target));
@@ -775,7 +783,7 @@ pub(crate) fn expand_as_oxfmt(
     if !globs.is_empty() || targets.is_empty() {
         targets.push(cwd);
     }
-    targets.sort_unstable();
+    index_sort::sort_slice_by(&mut targets[..], |a, b| a.cmp(b));
     targets.dedup();
 
     let mut found: Vec<Target> = Vec::new();
@@ -820,7 +828,7 @@ pub(crate) fn expand_as_oxfmt(
     found.retain(|it| {
         language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope)) != Language::Unknown
     });
-    found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    index_sort::sort_slice_by(&mut found[..], |a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
     if found.is_empty() && error_on_unmatched_pattern {
         let error = b"Expected at least one target file. All matched files may have been excluded by ignore rules.";

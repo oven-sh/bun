@@ -1,4 +1,6 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr, is_specific_id, static_property_name};
+use bun_lint_oxlint::ast_util::{
+    get_inner_expression, get_member_expr, is_specific_id, static_property_name, static_string,
+};
 use bun_lint_oxlint::text::contains_name;
 use crate::oxlint::vue::{
     VUE2_BUILTIN_COMPONENT_NAMES, VUE3_BUILTIN_COMPONENT_NAMES_EXTRA, VUE_RESERVED_DEPRECATED_HTML_ELEMENTS,
@@ -96,11 +98,7 @@ impl NoReservedComponentNames {
     }
 
     fn check_name_expression<'a>(&self, expr: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
-        let name = expr.and_then(|it| match it.kind() {
-            ExprKind::String(value) => Some(value),
-            ExprKind::Template(template) => template.as_static(),
-            _ => None,
-        });
+        let name = expr.and_then(static_string);
         if let (Some(expr), Some(name)) = (expr, name) {
             self.report_if_reserved(name, expr.span(), cx);
         }

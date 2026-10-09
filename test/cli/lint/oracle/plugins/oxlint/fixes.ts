@@ -69,6 +69,19 @@ export const cases: Case[] = [
   typed("consistent-type-exports", "type A = 1; export { A };"),
   typed("no-unnecessary-qualifier", "namespace A { export type B = 1; const c: A.B = 1; }"),
   typed("prefer-includes", `declare const a: string[]; a.indexOf("b") !== -1;`),
+  // The text that its fix leaves.
+  js("no-else-return", "export function f(a) {\n  if (a) {\n    return 1;\n  } else {\n    return 2;\n  }\n}"),
+  js("no-else-return", "export function g(a) {\n  if (a) return 1; else return 2;\n}"),
+  js("no-else-return", "export function h(a) {\n  if (a) return 1\n  else return 2\n}"),
+  js("no-else-return", "export function i(a) {\n  if (a) { return 1 } else { b() } c();\n}"),
+  js("no-else-return", "export function j(a) {\n  if (a) {\n    return 1;\n  } else if (b) {\n    return 2;\n  } else {\n    return 3;\n  }\n}"),
+  js("no-else-return", "export function k(a) {\n  if (a) {\n    return 1;\n  } else {\n    if (b) {\n      return 2;\n    } else {\n      return 3;\n    }\n  }\n}"),
+  js("no-else-return", "export function l(a) {\n  if (a) { return 1; } else { x(); }\n  if (a) { return 1; } else { y(); }\n}"),
+  js("no-else-return", "export function m(a) {\n  let n = 1;\n  if (a) { return n; } else { let n = 2; return n; }\n}"),
+  js("no-else-return", "export function o(a) {\n  if (a) { return 1; } else { let p = 2; return p; }\n  function q() { return p; }\n}"),
+  js("no-else-return", "export function r(a) {\n  if (a) { return 1; } /* s */ else /* t */ { return 2; }\n}"),
+  js("no-else-return", "export function w(a) {\n  if (a) return 1\n  else (b)\n}"),
+  js("no-else-return", "export function x(a) {\n  if (a) { return 1; } else { b }\n  [c]\n}"),
 ];
 
 /** The directory of a case, which has a configuration file of its own. */

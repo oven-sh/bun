@@ -161,7 +161,8 @@ if (process.argv[2] == "--child") {
         if (entry.name == "node_modules" || entry.name.startsWith(".")) continue;
         const path = join(directory, entry.name);
         if (entry.isDirectory()) walk(path);
-        else if (endingOf(entry.name) && statSync(path).size < 200_000) files.push(path);
+        // Not a link, which can lead nowhere.
+        else if (entry.isFile() && endingOf(entry.name) && statSync(path).size < 200_000) files.push(path);
       }
     };
     flags.get("files")!.forEach(walk);

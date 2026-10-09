@@ -25,6 +25,10 @@ pub struct RuntimeTranspilerCache {
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
+    /// The caller builds its `JSModuleRecord` from the entry's stored ESM
+    /// record (test isolation), so `get()` treats an ES-module entry that was
+    /// written without one as a miss.
+    pub require_esm_record: bool,
 
     /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
     /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
@@ -40,6 +44,7 @@ impl Default for RuntimeTranspilerCache {
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,
+            require_esm_record: false,
             r#impl: None,
         }
     }

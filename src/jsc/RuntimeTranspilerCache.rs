@@ -388,7 +388,14 @@ impl Entry {
         Ok(())
     }
 
-    pub(crate) fn load(&mut self, file: &sys::File, stat_size: u64) -> crate::CrateResult<()> {
+    /// `read_esm_record` is false for a reader that does not use the stored
+    /// ESM record: it then costs no read, allocation or hash.
+    pub(crate) fn load(
+        &mut self,
+        file: &sys::File,
+        stat_size: u64,
+        read_esm_record: bool,
+    ) -> crate::CrateResult<()> {
         let required = (Metadata::SIZE as u64)
             .saturating_add(self.metadata.output_byte_length)
             .saturating_add(self.metadata.sourcemap_byte_length)
@@ -518,7 +525,7 @@ impl Entry {
             self.sourcemap = sourcemap;
         }
 
-        if self.metadata.esm_record_byte_length > 0 {
+        if read_esm_record && self.metadata.esm_record_byte_length > 0 {
             let esm_record = pread_box(
                 file,
                 self.metadata.esm_record_byte_length as usize,
@@ -543,6 +550,8 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
+    /// See `bun_ast::RuntimeTranspilerCache::require_esm_record`.
+    pub(crate) require_esm_record: bool,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -722,6 +731,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        require_esm_record: bool,
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
@@ -733,6 +743,7 @@ impl RuntimeTranspilerCache {
             input_hash,
             feature_hash,
             input_stat_size,
+            require_esm_record,
         )
     }
 
@@ -741,6 +752,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        require_esm_record: bool,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
         // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
@@ -782,7 +794,19 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
-        entry.load(&file, stat_size)?;
+        // A writer that does not use ESM records stores none. This reader
+        // transpiles again and `put()` replaces the entry with one that has the
+        // record. The file is kept: it is valid for every other reader, and
+        // another process may have replaced it already.
+        if require_esm_record
+            && entry.metadata.module_type != ModuleType::Cjs
+            && entry.metadata.esm_record_byte_length == 0
+        {
+            let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+            return Err(crate::CrateError::MissingEsmRecord);
+        }
+
+        entry.load(&file, stat_size, require_esm_record)?;
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
@@ -892,6 +916,7 @@ impl RuntimeTranspilerCache {
             input_hash,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
+            self.require_esm_record,
         ) {
             Ok(e) => Some(e),
             Err(err) => {
@@ -960,6 +985,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
+                require_esm_record: this.require_esm_record,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);

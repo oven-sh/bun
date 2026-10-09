@@ -665,6 +665,13 @@ impl TranspilerJob {
         let loader = self.loader;
         let this_tag = self.resolved_source.tag;
 
+        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
+        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
+        // `&VirtualMachine`.
+        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false);
+
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
         // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
         // wired with the JSC vtable so the parser's `cache.get()` reaches the
@@ -672,6 +679,7 @@ impl TranspilerJob {
         // `*mut CacheEntry` which is unboxed below.
         let mut cache = RuntimeTranspilerCache {
             r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
+            require_esm_record: use_isolation_source_provider_cache,
             ..Default::default()
         };
 
@@ -942,13 +950,6 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
-        // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
-                .unwrap_or(false);
-
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
             // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
@@ -972,8 +973,9 @@ impl TranspilerJob {
 
             let module_info = if use_isolation_source_provider_cache
                 && entry.metadata.module_type != CacheModuleType::Cjs
-                && !entry.esm_record.is_empty()
             {
+                // `cache.get()` is a miss for an ES-module entry with no record.
+                debug_assert!(!entry.esm_record.is_empty());
                 analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
                     &entry.esm_record,
                 )

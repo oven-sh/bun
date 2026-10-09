@@ -112,6 +112,10 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         }
     };
 
+    // Of the comments next to each other on a line that the comment at hand is one of: where the first starts, and
+    // the index of the last and where it ends.
+    let mut start = 0;
+    let mut last = None;
     for (index, comment) in comments.iter().enumerate() {
         let Comment {
             enclosing,
@@ -120,29 +124,35 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
             ..
         } = *comment;
 
-        // The first and the last of the comments next to it on the line.
-        let mut start = comment.start;
-        if preceding != Owner::NONE {
-            for other in comments[..index].iter().rev() {
-                if other.preceding != preceding
-                    || !is_blank_without_line_break(slice(other.end, start))
-                {
-                    break;
-                }
-                start = other.start;
-            }
+        let follows_another = preceding != Owner::NONE
+            && index
+                .checked_sub(1)
+                .and_then(|previous| comments.get(previous))
+                .is_some_and(|other| {
+                    other.preceding == preceding
+                        && is_blank_without_line_break(slice(other.end, comment.start))
+                });
+        if !follows_another {
+            start = comment.start;
         }
-        let mut end = comment.end;
-        if following != Owner::NONE {
-            for other in &comments[index + 1..] {
-                if other.following != following
-                    || !is_blank_without_line_break(slice(end, other.start))
-                {
-                    break;
+        let end = match last {
+            Some((last, end)) if index <= last => end,
+            _ => {
+                let (mut last_index, mut end) = (index, comment.end);
+                if following != Owner::NONE {
+                    for other in &comments[index + 1..] {
+                        if other.following != following
+                            || !is_blank_without_line_break(slice(end, other.start))
+                        {
+                            break;
+                        }
+                        (last_index, end) = (last_index + 1, other.end);
+                    }
                 }
-                end = other.end;
+                last = Some((last_index, end));
+                end
             }
-        }
+        };
 
         let (first_choice, second_choice) = if has_newline_backwards(text, start as usize) {
             // On a line of its own

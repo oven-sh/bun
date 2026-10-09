@@ -562,6 +562,17 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("100,000 comments on a line of JSON do not take quadratic time", async () => {
+    const comments = Buffer.alloc(400_000, "/**/").toString();
+    const result = await format({ "a.json": `${comments}1\n`, "b.json": `[1${comments}, 2]\n` }, [], {
+      reads: ["a.json", "b.json"],
+    });
+    expect(result.files["a.json"]?.replaceAll("/**/", "").trim()).toBe("1");
+    expect(result.files["a.json"]?.split("/**/").length).toBe(100_001);
+    expect(result.files["b.json"]?.split("/**/").length).toBe(100_001);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("white space that is not ASCII at the end of a comment goes, and the file is written", async () => {
     const result = await format(
       { "a.js": "// a\u00a0\na;\n// b\u3000\nb;\n// c\u000b\nc;\n/**\n * d\u00a0\n */\nd;\n" },

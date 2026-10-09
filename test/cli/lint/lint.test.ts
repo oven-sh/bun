@@ -136,6 +136,20 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // What a file is like while it is being written. TypeScript's parser goes on and leaves these to its checker.
+  test.each([
+    ["eslint.config.js", config({})],
+    [".oxlintrc.json", "{}"],
+  ])("JavaScript in which a name is missing is a parsing error, with %s", async (name, text) => {
+    const codes = ["let x = 1;\nconst", "export var", "for (const of a);", "class extends A {}", "class A extends {}"];
+    const files = Object.fromEntries(codes.map((code, i) => [`a${i}.js`, code + "\n"]));
+    const { stdout, exitCode } = await lint({ [name]: text, ...files }, ["-f", "unix", ...Object.keys(files)]);
+    expect(stdout.split("\n").filter(line => / Parsing error: /.test(line)).map(line => line.match(/a\d\.js/)?.[0])).toEqual(
+      Object.keys(files),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   describe("which files", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),

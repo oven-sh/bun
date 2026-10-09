@@ -20,10 +20,10 @@ const tools = {
   oxfmt: (options: object) => [".oxfmtrc.json", options],
 } as const;
 
-async function format(files: Record<string, string>, names: string[]) {
+async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", "."],
+    cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -64,9 +64,23 @@ describe.concurrent("when imports are sorted", () => {
     expect(result.files).toEqual([unsorted]);
   });
 
-  test("with importOrder, without any plugin", async () => {
-    const result = await format({ ".prettierrc.json": `{ "importOrder": ["^[./]"] }`, "a.ts": unsorted }, ["a.ts"]);
+  test("not with the options of a plugin that is not named: Prettier does not know them", async () => {
+    const config = `{ "importOrder": ["^[./]"], "importOrderSeparation": true, "organizeImportsTypeOrder": "last" }`;
+    const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "b.ts": unsorted }, ["a.ts", "b.ts"]);
+    expect(result.files).toEqual([unsorted, unsorted]);
+    expect(result.stderr).toBe(
+      `[warn] Ignored unknown option { importOrder: ["^[./]"] }.\n` +
+        `[warn] Ignored unknown option { importOrderSeparation: true }.\n` +
+        `[warn] Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("with a plugin that --plugin names", async () => {
+    const files = { ".prettierrc.json": `{ "importOrder": ["^[./]"] }`, "a.ts": unsorted };
+    const result = await format(files, ["a.ts"], ["--plugin=@trivago/prettier-plugin-sort-imports"]);
     expect(result.files).toEqual([sorted]);
+    expect(result.stderr).toBe("");
   });
 
   test("with a plugin that is named, without any option", async () => {
@@ -77,7 +91,8 @@ describe.concurrent("when imports are sorted", () => {
   });
 
   test("in the files of an override only", async () => {
-    const config = `{ "overrides": [{ "files": "src/**", "options": { "importOrder": [] } }] }`;
+    const options = `{ "plugins": ["@trivago/prettier-plugin-sort-imports"], "importOrder": [] }`;
+    const config = `{ "overrides": [{ "files": "src/**", "options": ${options} }] }`;
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "src/a.ts": unsorted }, [
       "a.ts",
       "src/a.ts",
@@ -85,8 +100,35 @@ describe.concurrent("when imports are sorted", () => {
     expect(result.files).toEqual([unsorted, sorted]);
   });
 
+  test.each([
+    [
+      "@trivago/prettier-plugin-sort-imports",
+      ".prettierrc.json",
+      `{ "plugins": ["@trivago/prettier-plugin-sort-imports"], "importOrder": ["^[./]"] }`,
+      sorted,
+    ],
+    [
+      "@ianvs/prettier-plugin-sort-imports",
+      ".prettierrc.json",
+      `{ "plugins": ["@ianvs/prettier-plugin-sort-imports"] }`,
+      sorted,
+    ],
+    ["oxfmt", ".oxfmtrc.json", `{ "sortImports": {} }`, sorted],
+    // It asks TypeScript about the file, which is the Markdown. In a.ts it removes both: nothing uses them.
+    [
+      "prettier-plugin-organize-imports",
+      ".prettierrc.json",
+      `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+      unsorted,
+    ],
+  ])("in a block of code in Markdown: %s", async (_, name, config, expected) => {
+    const result = await format({ [name]: config, "a.md": "```ts\n" + unsorted + "```\n" }, ["a.md"]);
+    expect(result.files).toEqual(["```ts\n" + expected + "```\n"]);
+  });
+
   test("an invalid regular expression is an error", async () => {
-    const result = await format({ ".prettierrc.json": `{ "importOrder": ["("] }`, "a.ts": unsorted }, ["a.ts"]);
+    const config = `{ "plugins": ["@trivago/prettier-plugin-sort-imports"], "importOrder": ["("] }`;
+    const result = await format({ ".prettierrc.json": config, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([unsorted]);
     expect(result.stderr).toContain("importOrder");
     expect(result.exitCode).toBe(2);

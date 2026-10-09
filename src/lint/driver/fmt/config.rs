@@ -173,6 +173,45 @@ fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
     all.iter().map(pattern).collect()
 }
 
+/// What the plugins that sort imports do is built in.
+pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
+    name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports"
+}
+
+/// `value` as Prettier shows it in a warning: `["a", 1]`, `{ a: true }`.
+fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
+    let separate = |out: &mut Vec<u8>, index: usize| {
+        if index > 0 {
+            out.extend_from_slice(b", ");
+        }
+    };
+    match value {
+        Json::Array(items) => {
+            out.push(b'[');
+            for (index, item) in items.iter().enumerate() {
+                separate(out, index);
+                write_as_shown(out, item);
+            }
+            out.push(b']');
+        }
+        Json::Object(entries) if !entries.is_empty() => {
+            out.extend_from_slice(b"{ ");
+            for (index, (key, value)) in entries.iter().enumerate() {
+                separate(out, index);
+                let is_plain = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'$' | b'_');
+                match key.iter().all(is_plain) && !key.first().is_none_or(u8::is_ascii_digit) {
+                    true => out.extend_from_slice(key),
+                    false => write_json(out, &Json::String(key.clone())),
+                }
+                out.extend_from_slice(b": ");
+                write_as_shown(out, value);
+            }
+            out.extend_from_slice(b" }");
+        }
+        _ => write_json(out, value),
+    }
+}
+
 /// The object `before` with the keys of the object `after`, both as JSON. `after` if one is no object.
 fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
     let (Some(Json::Object(mut entries)), Some(Json::Object(added))) =
@@ -565,13 +604,7 @@ impl<'c> Configs<'c> {
         if matches!(json, Json::Null) {
             return Ok(None);
         }
-        // What the plugins that sort imports do is built in.
-        let is_built_in = |it: &Json| {
-            it.as_str().is_some_and(|name| {
-                name.ends_with(b"/prettier-plugin-sort-imports")
-                    || name == b"prettier-plugin-organize-imports"
-            })
-        };
+        let is_built_in = |it: &Json| it.as_str().is_some_and(is_built_in_plugin);
         if json
             .get(b"plugins")
             .and_then(Json::as_array)
@@ -816,20 +849,15 @@ impl<'c> Configs<'c> {
             // It sorts the keys of a `package.json` unless it is told not to.
             let _ = resolved.options.set(b"sortPackageJson", b"true");
         }
-        // `prettier-plugin-organize-imports` asks TypeScript, which asks the `tsconfig.json`.
-        let mut organizes_imports = false;
         let mut sort_imports: Option<Vec<u8>> = None;
         for (name, value) in all {
-            organizes_imports |= name.starts_with(b"organizeImports")
-                || (name == b"plugins"
-                    && strings::contains(value, b"prettier-plugin-organize-imports"));
             match name {
-                // An override of oxfmt changes the keys that it has.
+                // An override of oxfmt changes the keys that it has. `experimentalSortImports` is the old name.
                 name if self.flavor == Flavor::Oxfmt && name.ends_with(b"ortImports") => {
                     let merged = sort_imports
                         .as_deref()
                         .map_or_else(|| value.to_vec(), |before| merged_objects(before, value));
-                    sort.set(name, &merged);
+                    sort.set(b"sortImports", &merged);
                     sort_imports = Some(merged);
                 }
                 name if sort.set(name, value) => {}
@@ -867,7 +895,20 @@ impl<'c> Configs<'c> {
                 _ => {}
             }
         }
-        if organizes_imports {
+        for name in &self.options.plugins {
+            sort.add_plugin(name);
+        }
+        for (name, value) in sort.of_plugins_not_named() {
+            // A string and what else there is in JSON are told apart by their looks here.
+            let json = json::parse(value).filter(|it| !matches!(it, Json::String(_)));
+            let mut shown = Vec::new();
+            write_as_shown(
+                &mut shown,
+                &json.unwrap_or_else(|| Json::String(value.to_vec())),
+            );
+            self.warn(&[b"Ignored unknown option { ", name, b": ", &shown, b" }."]);
+        }
+        if sort.organizes_imports() {
             for (name, value) in self.tsconfig_of(paths::dirname(path)).iter() {
                 sort.set(name, value);
             }

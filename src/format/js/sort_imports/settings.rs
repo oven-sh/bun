@@ -43,6 +43,10 @@ const OF_IANVS: [&[u8]; 3] = [
     b"importOrderSafeSideEffects",
 ];
 
+/// How the names of `@trivago/prettier-plugin-sort-imports`, of `@ianvs/prettier-plugin-sort-imports` and of their forks end.
+const SORT_IMPORTS: &[u8] = b"/prettier-plugin-sort-imports";
+const ORGANIZE_IMPORTS: &[u8] = b"prettier-plugin-organize-imports";
+
 fn invalid(name: &[u8], value: &[u8]) -> Vec<u8> {
     [b"Invalid ", name, b" value: ", value, b"."].concat()
 }
@@ -72,6 +76,34 @@ impl Settings {
             self.entries.push((name.into(), value.into()));
         }
         is_known
+    }
+
+    /// Also counts `name` as one of the `plugins`: `--plugin`.
+    pub fn add_plugin(&mut self, name: &[u8]) {
+        let named = [self.get(b"plugins").unwrap_or_default(), b" ", name].concat();
+        self.set(b"plugins", &named);
+    }
+
+    /// Whether one of the `plugins` is `name`, or ends with it.
+    fn names_plugin(&self, name: &[u8]) -> bool {
+        strings::contains(self.get(b"plugins").unwrap_or_default(), name)
+    }
+
+    /// Whether `prettier-plugin-organize-imports` is named, which asks the `tsconfig.json`.
+    pub fn organizes_imports(&self) -> bool {
+        self.names_plugin(ORGANIZE_IMPORTS)
+    }
+
+    /// The options, with their values, of a plugin that is not named: Prettier does not know them.
+    pub fn of_plugins_not_named(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        let is_known = |name: &[u8]| match name {
+            name if name.starts_with(b"importOrder") => self.names_plugin(SORT_IMPORTS),
+            name if name.starts_with(b"organizeImports") => self.names_plugin(ORGANIZE_IMPORTS),
+            _ => true,
+        };
+        (self.entries.iter())
+            .filter(move |entry| !is_known(&entry.0))
+            .map(|entry| (&*entry.0, &*entry.1))
     }
 
     fn get(&self, name: &[u8]) -> Option<&[u8]> {
@@ -266,20 +298,9 @@ impl Settings {
                 })
             }));
         }
-        let plugins = self.get(b"plugins").unwrap_or_default();
-        let is_plugin_named = strings::contains(plugins, b"/prettier-plugin-sort-imports");
-        if !is_plugin_named
-            && !self
-                .entries
-                .iter()
-                .any(|entry| entry.0.starts_with(b"importOrder"))
-        {
-            let is_asked_for = strings::contains(plugins, b"prettier-plugin-organize-imports")
-                || self
-                    .entries
-                    .iter()
-                    .any(|entry| entry.0.starts_with(b"organizeImports"));
-            if !is_asked_for {
+        // Prettier does not know the options of a plugin that is not named.
+        if !self.names_plugin(SORT_IMPORTS) {
+            if !self.names_plugin(ORGANIZE_IMPORTS) {
                 return Ok(None);
             }
             let options = organize::Options {

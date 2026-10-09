@@ -72,6 +72,8 @@ If the nearest configuration file is one of these, `bun format` finds files and 
 
 `sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` is not supported yet.
 
+Where oxfmt prints something other than Prettier, `bun format` prints what oxfmt 0.72 prints. A project that pins an older version has a few files reformatted once, as when it upgrades oxfmt.
+
 ## Configuration
 
 For each file, `bun format` uses the nearest configuration file: it looks in the directory of the file, then in each parent directory. In a directory with several, the first of this list counts:
@@ -105,17 +107,18 @@ bun format --no-semi --print-width 100
 
 ## Sort imports
 
-`bun format` sorts imports itself. No plugin has to be installed. It does so if the configuration asks for it:
+`bun format` sorts imports itself. It does so if the configuration asks for it. A plugin that is named does not have to be installed:
 
-| In the configuration file                                                                        | Sorts like                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `importOrder`, or another option that starts with `importOrder`                                  | [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports)                                                                          |
-| `"plugins": ["@ianvs/prettier-plugin-sort-imports"]`, or an option or a special word only it has | [`@ianvs/prettier-plugin-sort-imports`](https://github.com/IanVS/prettier-plugin-sort-imports)                                                                              |
-| `"plugins": ["prettier-plugin-organize-imports"]`                                                | [`prettier-plugin-organize-imports`](https://github.com/simonhaenisch/prettier-plugin-organize-imports): TypeScript's "Organize Imports", which also removes unused imports |
-| `sortImports` in `.oxfmtrc.json`                                                                 | [oxfmt](https://oxc.rs/docs/guide/usage/formatter)                                                                                                                          |
+| In the configuration file                              | Sorts like                                                                                                                                                                  |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"plugins": ["@trivago/prettier-plugin-sort-imports"]` | [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports)                                                                          |
+| `"plugins": ["@ianvs/prettier-plugin-sort-imports"]`   | [`@ianvs/prettier-plugin-sort-imports`](https://github.com/IanVS/prettier-plugin-sort-imports)                                                                              |
+| `"plugins": ["prettier-plugin-organize-imports"]`      | [`prettier-plugin-organize-imports`](https://github.com/simonhaenisch/prettier-plugin-organize-imports): TypeScript's "Organize Imports", which also removes unused imports |
+| `sortImports` in `.oxfmtrc.json`                       | [oxfmt](https://oxc.rs/docs/guide/usage/formatter)                                                                                                                          |
 
 ```json .prettierrc icon="file-json"
 {
+  "plugins": ["@trivago/prettier-plugin-sort-imports"],
   "importOrder": ["<BUILTIN_MODULES>", "<THIRD_PARTY_MODULES>", "^@/(.*)$", "^[./]"],
   "importOrderSeparation": true,
   "importOrderSortSpecifiers": true
@@ -134,6 +137,8 @@ import { a, b } from "./util";
 
 Every option of the four works as it does there. Comments move with their imports the same way, and the comments that turn sorting off work too: `// sort-imports-ignore`, `// prettier-ignore` before an import, `// organize-imports-ignore`.
 
+- Without its plugin in `plugins` or `--plugin`, an option like `importOrder` is ignored with a warning, as in Prettier.
+- `prettier-plugin-organize-imports` leaves code blocks in Markdown alone. The other three sort them.
 - `importOrderParserPlugins` is accepted and not needed: `bun format` reads TypeScript, JSX, and decorators in every file.
 - `<BUILTIN_MODULES>` are the modules of Node.js 26, whatever runs `bun format`.
 

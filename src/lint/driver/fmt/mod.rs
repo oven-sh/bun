@@ -217,8 +217,12 @@ fn without_final_newline(out: &mut Vec<u8>) {
 /// For a block of code in Markdown: appends `code` formatted as the file at `path`. `false`: it cannot
 /// be, and stays as it is.
 fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+    let sort_imports = options.sort_imports.clone();
     let resolved = Resolved {
-        options: options.clone(),
+        options: FormatOptions {
+            sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
+            ..options.clone()
+        },
         omits_final_newline: false,
     };
     let names = Session::new();
@@ -970,7 +974,7 @@ impl Run<'_> {
             self.out.stdout = [environment.version, b"\n"].concat();
             return self.out;
         }
-        if !options.plugins.is_empty() {
+        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
             self.warn(b"Plugins are not supported: --plugin has no effect.");
         }
         if options.config.is_some() && !options.config_lookup {

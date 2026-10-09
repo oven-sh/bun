@@ -51,6 +51,12 @@ impl SortImports {
     pub fn needs_symbols(&self) -> bool {
         matches!(&self.how, How::Organize(options) if !options.skips_destructive_code_actions)
     }
+
+    /// Whether the imports of code in a file of another language are sorted. `prettier-plugin-organize-imports` asks
+    /// TypeScript about the file at `filepath`, which is not the code, and gets no changes.
+    pub fn applies_to_embedded_code(&self) -> bool {
+        !matches!(self.how, How::Organize(_))
+    }
 }
 
 /// The text of `file` with its imports sorted. It has to be parsed and formatted in place of

@@ -369,10 +369,19 @@ impl UnboundMethod {
                     identifier: Some(name.bytes()),
                     node: NameOf(node).ts_node(),
                 };
-                if !is_natively_bound(object.into(), property) {
-                    self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty());
+                if is_natively_bound(object.into(), property) {
+                    return;
                 }
+                // tsgolint 7.0 asks for the symbol of the member, which has no declaration if the parts of a union or
+                // of an intersection declare it in different places, as in `window.print`. It points at the name.
+                if cx.language().is_oxlint {
+                    self.check_if_method_and_report(cx, name.span(), node.ts_symbol());
+                    return;
+                }
+                self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty());
             }
+            // tsgolint 7.0 does not look at `a[b]`.
+            ExprKind::Index { .. } if cx.language().is_oxlint => {}
             ExprKind::Index { obj: object, index, .. } => {
                 let property = PropertyNode {
                     identifier: index.as_ident().map(Name::bytes),

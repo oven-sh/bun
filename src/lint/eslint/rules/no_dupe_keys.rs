@@ -65,16 +65,19 @@ impl NoDupeKeys {
             if prop.kind() == PropKind::Init && !key.is_computed() && &*name == b"__proto__" {
                 continue;
             }
-            let defined = cx.state.entry(name).or_insert(0);
+            let (here, is_oxlint) = (key.inner_span(cx.file()), cx.language().is_oxlint);
+            let (defined, previous) = cx.state.entry(name).or_insert((0, here));
             let is_duplicate = *defined & defines != 0;
             *defined |= defines;
+            // oxlint points at the key before this one.
+            let place = if is_oxlint { std::mem::replace(previous, here) } else { here };
             if !is_duplicate {
                 continue;
             }
             if *is_pattern.get_or_insert_with(|| is_assignment_target(object)) {
                 return;
             }
-            cx.report(key.inner_span(cx.file()), UNEXPECTED)
+            cx.report(place, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default());
         }
     }
@@ -82,8 +85,8 @@ impl NoDupeKeys {
 
 impl Rule for NoDupeKeys {
     const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended();
-    /// What the properties so far of the object that is being checked define.
-    type State<'a> = FxHashMap<Cow<'a, [u8]>, u8>;
+    /// What the properties so far of the object that is being checked define, and the last key of that name.
+    type State<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;
 
     fn new(_: &Options) -> Self {
         NoDupeKeys

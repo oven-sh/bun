@@ -1617,10 +1617,16 @@ impl Writer {
 
     pub(crate) fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
         self.connection.write_buffer.with_mut(|b| {
-            let index = b.head as usize + index;
-            b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
-        });
-        Ok(())
+            let start = b.head as usize + index;
+            // A conversion that runs JS can drain or free the buffer under an
+            // offset taken before it. The frame is torn then: fail the request.
+            let slot = start
+                .checked_add(data.len())
+                .and_then(|end| b.byte_list.slice_mut().get_mut(start..end))
+                .ok_or(AnyPostgresError::ConnectionClosed)?;
+            slot.copy_from_slice(data);
+            Ok(())
+        })
     }
 
     pub(crate) fn offset(self) -> usize {

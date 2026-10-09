@@ -3,7 +3,7 @@ use super::import_declaration::{
     FormatCommentsInSpecifier, FormatSpecifiers, format_import_and_export_source_with_clause,
     module_export_name, only_specifier_has_comments,
 };
-use super::semicolon::OptionalSemicolon;
+use super::semicolon::{OptionalSemicolon, start_of_comments_in_dropped_parentheses};
 use crate::cursor::{enter_node, extend_node};
 use crate::js::format::{FormatDeclaration, write_trailing_comments_of};
 use crate::prelude::*;
@@ -105,6 +105,12 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
     write_trailing_comments_of(node, f);
 }
 
+/// `export default a /* comment */;` is `export default a; /* comment */` for oxfmt, as after any other
+/// statement. Prettier leaves it.
+fn comments_before_semicolon_of_default_export_go_behind_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `export default e`
 pub(crate) fn write_export_default_expression<'a>(
     statement: Stmt<'a>,
@@ -113,7 +119,18 @@ pub(crate) fn write_export_default_expression<'a>(
 ) {
     let node = AstNodes::ExportDefaultDeclaration(statement);
     format_export_keyword_with_class_decorators(node, "export default", None, f);
-    write!(f, [expression, OptionalSemicolon]);
+    match comments_before_semicolon_of_default_export_go_behind_it(f) && !f.is_quiet() {
+        true => {
+            let hidden_from = start_of_comments_in_dropped_parentheses(expression, Some(false), f)
+                .unwrap_or_else(|| expression.outer_span().end);
+            let previous = f.comments_mut().hide_comments_from(hidden_from);
+            write!(f, [expression, OptionalSemicolon]);
+            f.comments_mut().restore_hidden_comments(previous);
+            let comments = f.comments().comments_before(statement.span().end);
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
+        false => write!(f, [expression, OptionalSemicolon]),
+    }
     extend_node(node.span(), f);
     write_trailing_comments_of(node, f);
 }

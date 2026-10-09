@@ -868,7 +868,14 @@ fn format_declaration_with_comments<'a>(
         return write_trailing_comments_in(span, parent, f);
     }
     format_node_in_list(span, is_before_another, parent, f, |f| {
-        write_declaration(statement, f)
+        let Some(hidden_from) = print::semicolon::start_of_comments_behind_semicolon(statement, f)
+        else {
+            return write_declaration(statement, f);
+        };
+        let previous = f.comments_mut().hide_comments_from(hidden_from);
+        write_declaration(statement, f);
+        f.comments_mut().restore_hidden_comments(previous);
+        FormatTrailingComments::Comments(f.comments().comments_before(span.end)).fmt(f);
     });
 }
 

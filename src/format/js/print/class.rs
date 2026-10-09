@@ -5,7 +5,7 @@ use super::function::{
 use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
-use super::semicolon::OptionalSemicolon;
+use super::semicolon::{OptionalSemicolon, start_of_comments_in_dropped_parentheses};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::format::{
     FormatMemberBeforeAnother, FormatTypeAnnotation, format_node, format_node_without_comments,
@@ -847,7 +847,10 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
                 span,
             );
             let limit = match all_comments_before_semicolon_go_behind_it(f) {
-                true => limit.min(f.comments().without_semicolon(span).end),
+                true => (self.element.init())
+                    .and_then(|it| start_of_comments_in_dropped_parentheses(it, None, f))
+                    .unwrap_or_else(|| f.comments().without_semicolon(span).end)
+                    .min(limit),
                 false => limit,
             };
             let previous_limit = f.comments_mut().limit_comments_up_to(limit);

@@ -202,7 +202,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
                 AstNodes::ExportNamedDeclaration(_)
             ));
     let view_limit = is_exported.then(|| {
-        let end = f.comments().without_semicolon(statement.span()).end;
+        let end = match comments_before_semicolon_of_type_alias_go_behind_it(f) {
+            // Without the parentheses around the type, which are not written.
+            true => ty.span().end,
+            false => f.comments().without_semicolon(statement.span()).end,
+        };
         f.comments_mut().limit_comments_up_to(end)
     });
 

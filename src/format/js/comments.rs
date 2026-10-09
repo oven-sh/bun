@@ -799,6 +799,8 @@ pub(crate) struct Comments<'a> {
     has_suppression_comments: bool,
     /// See [`Comments::mark_suppressed_after_operator`].
     suppressed_after_operator: u32,
+    /// See [`Comments::hide_comments_from`].
+    hidden_from: usize,
 }
 
 /// How many of `comments`, from the first one on, end before `pos`.
@@ -831,6 +833,7 @@ impl<'a> Comments<'a> {
             has_type_cast_comments: flags & TYPE_CAST != 0,
             has_suppression_comments: flags & SUPPRESSION != 0,
             suppressed_after_operator: u32::MAX,
+            hidden_from: usize::MAX,
         }
     }
 
@@ -919,7 +922,10 @@ impl<'a> Comments<'a> {
 
     #[inline]
     pub(crate) fn unprinted_comments(&self) -> &'a [Comment] {
-        let end = self.view_limit.unwrap_or(self.inner.len());
+        let end = self
+            .view_limit
+            .unwrap_or(self.inner.len())
+            .min(self.hidden_from);
         self.inner.get(self.printed_count..end).unwrap_or_default()
     }
 
@@ -1360,6 +1366,21 @@ impl<'a> Comments<'a> {
         let rest = self.inner.get(self.printed_count..).unwrap_or_default();
         let limit = self.printed_count + rest.partition_point(|c| c.start() < end_pos);
         self.view_limit.replace(limit)
+    }
+
+    /// Hides the comments that start at or after `position`, whatever is shown or hidden with the other
+    /// functions in the meantime. Returns what to pass to [`Comments::restore_hidden_comments`].
+    pub(crate) fn hide_comments_from(&mut self, position: u32) -> usize {
+        let first = self
+            .inner
+            .partition_point(|comment| comment.start() < position);
+        let previous = self.hidden_from;
+        self.hidden_from = first.min(previous);
+        previous
+    }
+
+    pub(crate) fn restore_hidden_comments(&mut self, hidden_from: usize) {
+        self.hidden_from = hidden_from;
     }
 
     /// Hides the comments that start at or after `end_pos`. Returns what to pass to

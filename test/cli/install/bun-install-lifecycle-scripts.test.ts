@@ -2969,36 +2969,80 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await lockfile()).toBe(lockfileWithoutList);
     });
 
-    test("an empty trustedDependencies list in a workspace package turns the default list off on every install", async () => {
+    test.each([
+      ["[]", []],
+      ['["not-in-the-tree"]', ["not-in-the-tree"]],
+    ] as const)(
+      "a trustedDependencies list with no installed name in a workspace package turns the default list off on every install (%s)",
+      async (_list, trustedDependencies) => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        const electronPreinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+        const memberPackageJson = join(packageDir, "pkgs", "a", "package.json");
+
+        await writeFile(packageJson, JSON.stringify({ name: "root", workspaces: ["pkgs/*"] }));
+        await mkdir(join(packageDir, "pkgs", "a"), { recursive: true });
+        await writeFile(memberPackageJson, JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" } }));
+
+        await runBunInstall(testEnv, packageDir);
+        expect(await exists(electronPreinstall)).toBeTrue();
+
+        await writeFile(
+          memberPackageJson,
+          JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" }, trustedDependencies }),
+        );
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        let { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false });
+        expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+        expect(await exists(electronPreinstall)).toBeFalse();
+        expect(err).toContain("Saved lockfile");
+        expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+        expect(await exists(electronPreinstall)).toBeFalse();
+        expect(err).not.toContain("Saved lockfile");
+      },
+    );
+
+    // all-lifecycle-scripts is not on the default list. Its postinstall writes "postinstall!" to
+    // postinstall.txt, and "postinstall exists!" when it runs a second time.
+    test("a name added to the trustedDependencies list of a workspace package runs its scripts once and is recorded in bun.lock", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-      const electronPreinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+      const postinstall = join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt");
       const memberPackageJson = join(packageDir, "pkgs", "a", "package.json");
+      const member = { name: "a", dependencies: { "all-lifecycle-scripts": "1.0.0" } };
+      const lockfile = () => file(join(packageDir, "bun.lock")).text();
 
       await writeFile(packageJson, JSON.stringify({ name: "root", workspaces: ["pkgs/*"] }));
       await mkdir(join(packageDir, "pkgs", "a"), { recursive: true });
-      await writeFile(memberPackageJson, JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" } }));
+      await writeFile(memberPackageJson, JSON.stringify(member));
 
       await runBunInstall(testEnv, packageDir);
-      expect(await exists(electronPreinstall)).toBeTrue();
+      expect(await exists(postinstall)).toBeFalse();
+      expect(await lockfile()).not.toContain("trustedDependencies");
 
-      await writeFile(
-        memberPackageJson,
-        JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" }, trustedDependencies: [] }),
-      );
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      // node_modules stays, so the package is already installed when its name is added.
+      await writeFile(memberPackageJson, JSON.stringify({ ...member, trustedDependencies: ["all-lifecycle-scripts"] }));
       let { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false });
-      expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-      expect(await exists(electronPreinstall)).toBeFalse();
+      expect(await exists(postinstall)).toBeTrue();
+      expect(await file(postinstall).text()).toBe("postinstall!");
       expect(err).toContain("Saved lockfile");
-      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+      expect(await lockfile()).toContain(`"trustedDependencies": [\n    "all-lifecycle-scripts",\n  ],`);
 
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
-      expect(await exists(electronPreinstall)).toBeFalse();
+      expect(await file(postinstall).text()).toBe("postinstall!");
       expect(err).not.toContain("Saved lockfile");
+
+      await writeFile(memberPackageJson, JSON.stringify(member));
+      ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+      expect(err).toContain("Saved lockfile");
+      expect(await lockfile()).not.toContain("trustedDependencies");
     });
 
     test("default trusted dependencies should only apply to npm packages, not file: dependencies", async () => {

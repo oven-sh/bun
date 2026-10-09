@@ -32,7 +32,7 @@ const CLOSERS: [RegExp, (m: RegExpExecArray) => string][] = [
 function repeated(unit: Buffer, size: number) {
   return Buffer.alloc(Math.max(unit.length, size - (size % unit.length)), unit);
 }
-type Shape = { name: string; make: (size: number) => Buffer; variant?: number; second?: number };
+type Shape = { name: string; make: (size: number) => Buffer; variant?: number; second?: number; ending?: string };
 const shapes: Shape[] = [];
 for (const word of words) {
   const name = JSON.stringify(word.toString("latin1"));
@@ -76,6 +76,7 @@ for (const [ending, before, open, middle, close, after] of JSON.parse(readFileSy
       make: size => Buffer.from(before + open.repeat(Math.floor(size / (open.length + close.length))) + middle + close.repeat(Math.floor(size / (open.length + close.length))) + after + "\n"),
       variant,
       second,
+      ending,
     });
   }
 }
@@ -112,8 +113,11 @@ function run(variant: number, shape: Shape, size: number, slot: number) {
 const wanted = shapes.filter(shape => shape.name.includes(ONLY));
 const all = [
   ...variants.split(",").flatMap(variant => wanted.filter(shape => shape.variant === undefined).map(shape => ({ variant: Number(variant), shape }))),
-  // With COMMAND the variants are those of NAMES.
-  ...wanted.filter(shape => shape.variant !== undefined && !COMMAND).map(shape => ({ variant: shape.variant!, shape })),
+  // With COMMAND a variant is one of NAMES.
+  ...wanted
+    .filter(shape => shape.variant !== undefined && !(COMMAND && shape.second))
+    .map(shape => ({ variant: COMMAND ? NAMES.split(",").findIndex(name => name == shape.ending || name.endsWith("." + shape.ending)) : shape.variant!, shape }))
+    .filter(it => it.variant >= 0),
 ];
 let next = 0;
 const found = { died: 0, slow: 0 };

@@ -6,6 +6,7 @@
 //   accepted   Prettier refuses the text
 //   refused    `bun format` refuses it by now, or says that it would damage it
 // A panic needs no second opinion: what Prettier does with the input is printed next to it.
+// KINDS=letter,loss: only the kinds of findings whose name has one of these in it.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -29,6 +30,7 @@ for (const target of readdirSync(findings).sort()) {
   if (only.length && !only.includes(target)) continue;
   if (["lint", "parser", "md"].includes(target)) continue;
   for (const kind of readdirSync(join(findings, target)).sort()) {
+    if (process.env.KINDS && !process.env.KINDS.split(",").some(part => kind.includes(part))) continue;
     const counts = new Map<string, number>();
     for (const name of readdirSync(join(findings, target, kind)).sort()) {
       if (name.endsWith(".info") || name.endsWith(".tmp")) continue;

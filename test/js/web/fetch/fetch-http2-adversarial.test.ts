@@ -50,7 +50,7 @@ async function withAdversarialServer(
     const connIndex = state.connections++;
     let buf = Buffer.alloc(0);
     let prefaceSeen = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
         if (buf.length < 24) return;
@@ -734,7 +734,7 @@ async function withRawOrigin(
       },
     },
   );
-  origin = `https://127.0.0.1:${endpoint.address.port}`;
+  origin = `https://127.0.0.1:${endpoint.address!.port}`;
   try {
     await fn(origin, { protocol, ...insecure });
   } finally {

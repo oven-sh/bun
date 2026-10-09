@@ -8,8 +8,8 @@ class Point {
 }
 
 class Line {
-  private _start: Point;
-  private _end: Point;
+  private _start!: Point;
+  private _end!: Point;
 
   @validate
   set start(value: Point) {
@@ -62,9 +62,10 @@ class HasBothGetterAndSetter {
 
   @validate
   get start(): Point {
-    return this._start;
+    return this._start!;
   }
 
+  // @ts-expect-error
   @validate
   set start(value: Point) {
     this._start = value;

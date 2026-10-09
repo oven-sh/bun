@@ -57,6 +57,8 @@ test/js/node/test/common linguist-vendored
 
 test/js/bun/css/files linguist-vendored
 
+test/cli/check/typescript-go/bundle.zst binary linguist-vendored linguist-generated
+
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 

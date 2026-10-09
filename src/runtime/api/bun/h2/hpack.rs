@@ -64,7 +64,7 @@ impl Coder {
 
     /// Decode one header. Result aliases a shared buffer; copy before the next call.
     #[inline]
-    pub(crate) fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
+    pub(crate) fn decode<'a>(&'a mut self, src: &[u8]) -> Result<DecodeResult<'a>, HpackError> {
         self.hpack.decode(src)
     }
 }

@@ -174,6 +174,25 @@ A `Worker` inherits `process.execArgv`, so the same check works inside one. When
 - With `=strict`, Bun adds the flag to the list the `Worker` sees.
 - With the flag and no value, the `Worker` sees the list you gave it, as in Node.js. The `Worker` still refuses `eval()` and `new Function()`.
 
+## A build of Bun that always has `=strict`
+
+When you build Bun from source, turning the `codeGenerationFromStrings` build option off makes `=strict` a compile-time constant:
+
+```bash icon="terminal" terminal
+bun scripts/build.ts --profile=release --codeGenerationFromStrings=off
+```
+
+That binary refuses what `--disallow-code-generation-from-strings=strict` refuses, with no flag:
+
+- It reads no flag or environment variable to get the level, so `BUN_BE_BUN=1` and a missing `--compile-exec-argv` do not change it.
+- The flag itself is still accepted, with or without `=strict`, and changes nothing.
+- `process.execArgv` lists only the flags you gave, as in any build. To check for this build, see that `new vm.Script("")` throws an `EvalError` when you gave no flag.
+- Bun's own code that compiles a string, such as `node:vm`'s and `module._compile()`'s, sits after a refusal that always happens, so an optimized build can leave it out.
+
+JavaScriptCore's own `eval()` and `Function` code is still in the binary. It is switched off for every global object, and Bun has no code left that switches it on.
+
+The option is on in the builds of Bun that we publish.
+
 ## What the flag does not cover
 
 - **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.

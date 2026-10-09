@@ -686,7 +686,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/entry.js`],
       outdir: `${dir}/dist`,
-      metafile: "output-meta.json",
+      metafile: "output-meta.json" as any,
     });
 
     expect(result.success).toBe(true);
@@ -717,7 +717,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/main.js`],
       outdir: `${dir}/dist`,
-      metafile: { json: "custom-meta.json" },
+      metafile: { json: "custom-meta.json" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -741,7 +741,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "analysis.md" },
+      metafile: { markdown: "analysis.md" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -773,7 +773,7 @@ describe("Bun.build metafile option variants", () => {
       metafile: {
         json: "meta.json",
         markdown: "meta.md",
-      },
+      } as any,
     });
 
     expect(result.success).toBe(true);
@@ -849,7 +849,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/test.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "meta.md" },
+      metafile: { markdown: "meta.md" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -1469,7 +1469,7 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
 
   /** `bytes` of every metafile output, next to the size of the file the build produced for it. */
   function outputSizes(result: Bun.BuildOutput, outdir: string | undefined) {
-    const reported: Record<string, number> = {};
+    const reported: Record<string, number | undefined> = {};
     const actual: Record<string, number | undefined> = {};
     for (const [key, output] of Object.entries((result.metafile as Metafile).outputs)) {
       reported[key] = output.bytes;

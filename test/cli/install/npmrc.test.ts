@@ -177,7 +177,7 @@ registry = http://localhost:${registry.port}/
     // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
     // is removed here and each case passes back exactly the value it is testing.
     async function publishDryRun(dir: string, envOverride: Record<string, string>) {
-      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
+      const spawnEnv: typeof env = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
 
       await using proc = Bun.spawn({

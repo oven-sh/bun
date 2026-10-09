@@ -281,6 +281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
+        crate::cli::check_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
         for part in passthrough {
@@ -774,6 +775,44 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
+    /// `--check`: whether the main module at `path` and what it imports have no type errors.
+    /// `loader`: that of `boot`. `arguments`: those of the program.
+    fn check_main(
+        ctx: &ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        arguments: &[Box<[u8]>],
+        before_read: Option<bun_sema_driver::host::BeforeRead>,
+    ) -> bool {
+        use crate::cli::check_command::{EntryPoint, check_before};
+        let main = EntryPoint {
+            path,
+            loader: Some(Self::loader_of_main(ctx, path, loader)),
+            // `[eval]`, `[stdin]`
+            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+        };
+        // src/js/internal/html.ts serves every argument that is a page.
+        let is_page = |path: &&[u8]| path.ends_with(b".html");
+        let more = arguments.iter().map(|it| &it[..]).filter(is_page);
+        let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
+        let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
+        check_before(&entry_points, before_read)
+    }
+
+    /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
+    fn loader_of_main(ctx: &ContextData, path: &[u8], loader: Option<Loader>) -> Loader {
+        use bun_bundler::options::loaders_from_transform_options;
+        let by_name = || {
+            let loaders = ctx.args.loaders.as_ref();
+            let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
+            crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
+        };
+        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
+        // `[eval]`, `[stdin]`, and a name that says nothing.
+        named.unwrap_or(Loader::Tsx)
+    }
+
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
@@ -937,8 +976,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
+            // It has no entry point to start from, like a script of a package.json.
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+                Global::exit(1);
+            }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
             Global::exit(exit_code as u32);
+        }
+
+        // The code of the REPL is not the user's.
+        let is_checked =
+            ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
+        // `Run::start` does it then, once there is a file watcher.
+        let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
+        if is_checked
+            && !watches
+            && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
+        {
+            Global::exit(1);
         }
 
         // `bun_jsc::initialize`
@@ -1101,6 +1156,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            unchecked: (is_checked && watches).then_some(loader),
         }
         .start()
     }
@@ -1220,6 +1276,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
+            unchecked: None,
         }
         .start()
     }
@@ -1240,6 +1297,9 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
+    /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
+    /// process waits for a change.
+    unchecked: Option<Option<Loader>>,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1289,6 +1349,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            unchecked,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1421,8 +1482,18 @@ impl Run<'_> {
             }
         }
 
-        match vm.load_entry_point(entry) {
-            Ok(promise) => {
+        let has_type_errors = unchecked.is_some_and(|loader| {
+            let watching = crate::cli::check_command::watching(vm);
+            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
+        });
+        if has_type_errors {
+            // It is not read if the options are wrong.
+            vm.add_main_to_watcher_if_needed();
+        }
+        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
+        match loaded {
+            None => {}
+            Some(Ok(promise)) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
@@ -1460,7 +1531,7 @@ impl Run<'_> {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err.into()),
+            Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
         }
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
@@ -2439,6 +2510,13 @@ impl RunCommand {
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
+                        // A script has no entry point to start from: the project is checked, as by `bun check`.
+                        if ctx.runtime_options.check
+                            && !crate::cli::check_command::check_project_before()
+                        {
+                            Global::exit(1);
+                        }
+
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground_with_shell_path(
                                 ctx,
@@ -2575,8 +2653,9 @@ impl RunCommand {
         }
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
+        // With `--check` the way below is taken, on which the project is checked.
         #[cfg(windows)]
-        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && !ctx.runtime_options.check {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
@@ -2633,6 +2712,12 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    // It has no entry point to start from, like a script of a package.json.
+                    if ctx.runtime_options.check
+                        && !crate::cli::check_command::check_project_before()
+                    {
+                        Global::exit(1);
+                    }
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();

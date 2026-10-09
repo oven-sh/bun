@@ -87,7 +87,7 @@ if (isDockerEnabled()) {
       name: "MySQL with TLS",
       image: "mysql_tls",
     },
-  ].filter(Boolean);
+  ].filter(Boolean) as { name: string; image: string; env?: Record<string, string> }[];
 
   for (const image of images) {
     describeWithContainer(
@@ -140,7 +140,7 @@ if (isDockerEnabled()) {
 
         let sql: SQL;
         const password = image.image === "mysql_plain" ? "" : "bun";
-        const getOptions = (): Bun.SQL.Options => ({
+        const getOptions = (): Bun.SQL.PostgresOrMySQLOptions => ({
           url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
           allowPublicKeyRetrieval: true,
@@ -192,7 +192,7 @@ if (isDockerEnabled()) {
           expect(
             await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
               ...bunEnv,
-              MYSQL_URL: getOptions().url,
+              MYSQL_URL: getOptions().url as string,
               CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
             }),
           ).toSpawn();
@@ -499,12 +499,12 @@ if (isDockerEnabled()) {
 
         test("Uses default database without slash", async () => {
           const sql = new SQL("mysql://localhost");
-          expect("mysql").toBe(sql.options.database);
+          expect("mysql").toBe(sql.options.database!);
         });
 
         test("Uses default database with slash", async () => {
           const sql = new SQL("mysql://localhost/");
-          expect("mysql").toBe(sql.options.database);
+          expect("mysql").toBe(sql.options.database!);
         });
 
         test("Result is array", async () => {
@@ -806,7 +806,7 @@ if (isDockerEnabled()) {
         });
 
         test("Fragments in transactions", async () => {
-          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false });
+          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false } as Bun.SQL.Options);
           expect((await sql.begin(sql => sql`select 1 as x where ${sql`1=1`}`))[0].x).toBe(1);
         });
 
@@ -1241,7 +1241,7 @@ if (isDockerEnabled()) {
               try {
                 await sql`select 1`;
                 throw new Error("should not reach");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(Error);
                 expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT" as any);
                 expect(e.message).toMatch(/Connection time(d out|out) after 200ms/);
@@ -1277,7 +1277,7 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
@@ -1360,7 +1360,7 @@ test("MySQL: a row split across several maximum-size wire packets is reassembled
     let authed = false;
     let queryIndex = 0;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;

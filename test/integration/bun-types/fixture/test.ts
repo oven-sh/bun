@@ -391,6 +391,27 @@ test.each(mylist)("test.each", (a, done) => {
   expectType<(err?: unknown) => void>(done);
 });
 
+const readonlyList = ["hoisted", "isolated"] as const;
+describe.each(readonlyList)("describe.each", a => {
+  expectType<"hoisted" | "isolated">(a);
+});
+test.each(readonlyList)("test.each", a => {
+  expectType<"hoisted" | "isolated">(a);
+});
+
+// #25959
+test.todo("only a label");
+describe.todo("only a label");
+// @ts-expect-error
+test("only a label");
+
+// A call that is only generic in its return type is not the `expect()` that takes no arguments
+declare function query<T = any>(): Promise<T>;
+expectType<Matchers<any>>(expect(await query()));
+expect(await query()).toEqual([{ x: 1 }]);
+expect(await query<number>()).toBe(1);
+expectType<Matchers<undefined>>(expect());
+
 // Advanced use case tests for #18511:
 
 // 1. => When assignable to, we should pass (e.g. new Set() is assignable to Set<string>).
@@ -421,3 +442,44 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+test("options before the function", { timeout: 1000, retry: 1 }, () => {});
+test("options before the function", 1000, async () => {});
+test.each([[1, "a"]])("options before the function", { timeout: 1000 }, (a, b) => {
+  expectType<number>(a);
+  expectType<string>(b);
+});
+// The signature that `Parameters<>` reads is still (label, fn, options?)
+expectType<Parameters<typeof test>[1]>(() => {});
+function wrapped(...args: Parameters<typeof test>) {
+  test(...args);
+}
+wrapped("label", () => {});
+wrapped("label", () => {}, 1000);
+
+// A row that is a readonly array is spread, like any other array
+declare const readonlyRows: readonly (readonly string[])[];
+test.each(readonlyRows)("test.each", (...args) => {
+  expectType<readonly string[]>(args);
+});
+describe.each(readonlyRows)("describe.each", (...args) => {
+  expectType<string[]>(args);
+});
+
+test.skip("only a label");
+describe.skip("only a label");
+// ...and `Parameters<>` still reads (label, fn, options?) for `skip` and `todo`
+expectType<Parameters<typeof test.skip>>(["label", () => {}, 1000]);
+expectType<Parameters<typeof test.todo>>(["label", () => {}]);
+expectType<Parameters<typeof describe.skip>>(["label", () => {}]);
+expectType<Parameters<typeof describe.todo>>(["label", () => {}]);
+// On its own, a function is the body of the group and not its label, so a class throws
+describe.skip(123);
+describe.skip(() => {});
+// @ts-expect-error
+describe.skip(class Foo {});
+// @ts-expect-error
+describe.todo(class Foo {});
+// @ts-expect-error
+describe.skip({ name: "label" });
+describe.skip(class Foo {}, () => {});

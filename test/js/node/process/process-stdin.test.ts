@@ -115,7 +115,8 @@ test.concurrent("stdin with 'data' event handler should NOT receive data when pa
 // Drains the child; its stderr joins the comparison only when it failed, so a
 // crash shows up in the diff without asserting stderr empty on success (debug
 // builds write benign noise there).
-async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">) {
+type StdioResult = { stdout: string; exitCode: number; stderr?: string };
+async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">): Promise<StdioResult> {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
 }

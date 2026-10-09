@@ -12,7 +12,7 @@ const cert = fs.readFileSync(new URL("./fixtures/agent1-cert.pem", import.meta.u
 // A server wraps an accepted socket in a TLSSocket, then calls raw.end() on the socket it wrapped, before the
 // handshake can start. Returns the ordered events of both sockets and how finished() settled the TLS socket.
 async function rawEnd(when) {
-  const events = [];
+  const events: string[] = [];
   const { promise, resolve } = Promise.withResolvers();
   // The 'close' of both sockets, and finished().
   let pending = 3;
@@ -22,9 +22,9 @@ async function rawEnd(when) {
     for (const [name, socket] of [
       ["raw", raw],
       ["tls", wrap],
-    ]) {
+    ] as [string, net.Socket][]) {
       socket.on("end", () => events.push(`${name} end`));
-      socket.on("error", err => events.push(`${name} error ${err.code}`));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`${name} error ${err.code}`));
       socket.on("close", () => {
         events.push(`${name} close`);
         settle();
@@ -38,8 +38,8 @@ async function rawEnd(when) {
     if (when === "nextTick") process.nextTick(() => raw.end());
     else setImmediate(() => raw.end());
   });
-  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
-  const peer = net.connect(server.address().port, "127.0.0.1");
+  await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+  const peer = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
   peer.on("error", () => {});
   peer.on("end", () => peer.end());
   peer.resume();

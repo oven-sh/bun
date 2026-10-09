@@ -260,7 +260,9 @@ impl PreserveCaughtError {
         let is_plain = matches!(property.kind(), PropKind::Init | PropKind::Shorthand);
         if !(is_plain && value.as_ident() == Some(caught)) {
             let value_span = property.func().map_or_else(|| value.span(), Func::span_from_params);
-            let report = cx.report(value_span, INCORRECT_CAUSE);
+            // oxlint points at the statement.
+            let place = if cx.language().is_oxlint { statement.span() } else { value_span };
+            let report = cx.report(place, INCORRECT_CAUSE);
             // With several definitions of `cause`, a suggestion could be confusing.
             if !has_multiple_definitions {
                 report.suggest(INCLUDE_CAUSE, |fixer| match property.kind() {

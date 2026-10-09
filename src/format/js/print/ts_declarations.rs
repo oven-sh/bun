@@ -242,7 +242,9 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     let (operator_line_run, has_line_comment_on_operator_line) = operator_line;
 
     let layout = match type_alias_layout(alias, ty, f) {
-        AssignmentLikeLayout::Fluid if has_line_comment_on_operator_line => {
+        AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
+            if has_line_comment_on_operator_line =>
+        {
             AssignmentLikeLayout::BreakAfterOperator
         }
         layout => layout,
@@ -291,6 +293,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             write!(f, group(&soft_line_indent_or_space(&right)))
         }
         AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
+        AssignmentLikeLayout::NeverBreakAfterOperator => write!(f, [space(), right]),
         _ => {
             let group_id = f.group_id("assignment_like");
             write!(
@@ -422,6 +425,13 @@ fn type_alias_layout<'a>(
             .any(|param| param.constraint().is_some() || param.default().is_some())
     {
         return AssignmentLikeLayout::BreakLeftHandSide;
+    }
+    // It is up to the union where it breaks, also if it has nowhere to.
+    if matches!(ty.kind(), TypeKind::Union(_))
+        && union_breaks_one_per_line(f)
+        && (f.is_quiet() || !f.comments().has_comment_before(ty.span().start))
+    {
+        return AssignmentLikeLayout::NeverBreakAfterOperator;
     }
     AssignmentLikeLayout::Fluid
 }

@@ -673,8 +673,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && name == b"static"
                         {
                             p.lexer.keyword_was_taken(escaped_word.take());
-                            // esbuild leaves this arm when there are decorators and its lexer stops
-                            // at the "{". `Lexer::expect` keeps parsing, so the report is here.
+                            // esbuild skips this arm here and its lexer stops at the "{". Ours keeps parsing.
                             if !p.is_tolerant()
                                 && let Some(decorator) = opts.ts_decorators.slice().first()
                             {

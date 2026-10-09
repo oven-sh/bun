@@ -303,22 +303,15 @@ describe("a decorator in front of `declare` or `abstract` that is a name", () =>
     "@dec((d) => d) export abstract = 2;",
     "@dec(0) declare(0);",
     "@dec(0) abstract = 2;",
-  ])("%s is a syntax error", async statement => {
-    using dir = tempDir("decorator-in-front-of-a-name", {
-      "bad.ts": `function dec(...args: any[]): any {}\nvar declare: any = () => {};\nvar abstract: any = 1;\n${statement}\nfunction f() { { let x; } }\nconsole.log("ran");\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "bad.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-  });
+  ])("%s is a syntax error", statement =>
+    expectOneError(
+      {
+        "bad.ts": `function dec(...args: any[]): any {}\nvar declare: any = () => {};\nvar abstract: any = 1;\n${statement}\nfunction f() { { let x; } }\nconsole.log("ran");\n`,
+      },
+      ["bad.ts"],
+      "Decorators are not valid here",
+    ),
+  );
 });
 
 describe("macro tagged templates visit their interpolations", () => {

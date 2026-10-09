@@ -64,8 +64,7 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-/// Version 35: A decorator on a class static block is a syntax error. Older entries
-/// hold output for such a source.
+/// Version 35: A decorator on a class static block is a syntax error.
 const EXPECTED_VERSION: u32 = 35;
 
 /// Source files smaller than this are not written to / read from the on-disk

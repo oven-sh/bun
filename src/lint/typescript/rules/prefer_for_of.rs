@@ -34,6 +34,21 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
     (!right.is_chain_root()).then_some(object)
 }
 
+/// oxlint looks at a loop only if the array is a name or a member whose name is written there: `a`, `a.b`, `a["b"]`.
+fn oxlint_knows_name_of(array: Expr) -> bool {
+    !array.is_parenthesized()
+        && match array.kind() {
+            ExprKind::Ident(_) => true,
+            ExprKind::Dot { name, .. } => !name.name().bytes().starts_with(b"#"),
+            ExprKind::Index { index, .. } => match index.kind() {
+                ExprKind::String(_) => true,
+                ExprKind::Template(template) => template.exprs().is_empty(),
+                _ => false,
+            },
+            _ => false,
+        }
+}
+
 fn is_increment<'a>(update: Expr<'a>, name: Name<'a>) -> bool {
     match update.kind() {
         ExprKind::Unary { op: UnOp::PreInc | UnOp::PostInc, operand } => is_matching_identifier(operand, name),
@@ -116,14 +131,17 @@ fn check<'a>(_: &PreferForOf, stmt: Stmt<'a>, cx: &mut Cx<'a, PreferForOf>) {
     let Some(array) = is_less_than_length_expression(test, index_name) else {
         return;
     };
-    if !is_increment(update, index_name) {
+    let is_oxlint = cx.language().is_oxlint;
+    if !is_increment(update, index_name) || is_oxlint && !oxlint_knows_name_of(array) {
         return;
     }
     let Some(index_var) = declarator.pat().symbol() else {
         return;
     };
     if is_index_only_used_with_array(body, index_var, array, &mut cx.state) {
-        cx.report(stmt, PREFER_FOR_OF);
+        // oxlint points at what is between the parentheses.
+        let place = if is_oxlint { Span::new(init.span().start, update.span().end) } else { stmt.span() };
+        cx.report(place, PREFER_FOR_OF);
     }
 }
 

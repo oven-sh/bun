@@ -586,9 +586,15 @@ impl Parser<'_> {
         }
 
         // Scan for end of line
-        while off < self.size && !helpers::is_newline(self.text[off as usize]) {
-            off += 1;
-        }
+        let rest = &self.text[off as usize..];
+        off = match if self.has_carriage_return {
+            bun_core::strings::index_of_any(rest, b"\r\n")
+        } else {
+            bun_core::strings::index_of_char_usize(rest, b'\n')
+        } {
+            Some(len) => off + len as OFF,
+            None => self.size,
+        };
 
         line.end = off;
 

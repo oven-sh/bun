@@ -33,6 +33,7 @@ pub(crate) use super::ref_defs::RefDef;
 pub(crate) struct Parser<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) size: OFF,
+    pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
 
     // Output
@@ -267,6 +268,7 @@ impl<'a> Parser<'a> {
         let mut p = Parser {
             text,
             size,
+            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
             flags,
             renderer: rend,
             image_nesting_level: 0,

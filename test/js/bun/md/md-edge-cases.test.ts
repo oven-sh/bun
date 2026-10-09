@@ -1906,3 +1906,9 @@ describe("a line of dashes under reference definitions", () => {
     expect(Markdown.html("[ref]: /uri\n---\n")).toBe("<hr />\n");
   });
 });
+
+test("list markers on one line are not looked at again from each of them", () => {
+  const depth = 100_000;
+  const html = Markdown.html("- ".repeat(depth) + "a\n");
+  expect(html.length).toBe("<ul>\n<li>\n</li>\n</ul>\n".length * depth);
+});

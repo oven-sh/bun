@@ -67,6 +67,8 @@ pub(crate) struct Parser<'a> {
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    // No thematic break starts between these two places. See `is_hr_line`.
+    pub(crate) not_hr: Cell<(OFF, OFF)>,
 
     // Number of active containers
     pub(crate) n_containers: u32,
@@ -282,6 +284,7 @@ impl<'a> Parser<'a> {
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            not_hr: Cell::new((0, 0)),
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

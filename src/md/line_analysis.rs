@@ -89,6 +89,12 @@ impl Parser<'_> {
         if c != b'-' && c != b'_' && c != b'*' {
             return false;
         }
+        // `- - - a`: what has kept the first marker from being one keeps the
+        // others too. Looking for it from each of them is quadratic.
+        let not_hr = self.not_hr.get();
+        if not_hr.0 <= off && off < not_hr.1 {
+            return false;
+        }
 
         let mut pos = off;
         let mut count: u32 = 0;
@@ -96,6 +102,7 @@ impl Parser<'_> {
             if ch(self.text, pos) == c {
                 count += 1;
             } else if !helpers::is_blank(ch(self.text, pos)) {
+                self.not_hr.set((off, pos));
                 return false;
             }
             pos += 1;

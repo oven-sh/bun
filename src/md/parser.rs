@@ -58,6 +58,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) block_bytes: Vec<u8>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) emph_delims: Vec<EmphDelim>,
+    // Scratch storage recycled by resolve_emphasis_delimiters (inlines.rs).
+    pub(crate) prev_candidate: Vec<usize>,
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
     pub(crate) bracket_pairs: Vec<crate::links::Bracket>,
@@ -283,6 +285,7 @@ impl<'a> Parser<'a> {
             block_bytes: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
+            prev_candidate: Vec::new(),
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),

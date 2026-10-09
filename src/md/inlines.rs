@@ -136,8 +136,20 @@ impl Parser<'_> {
             return Ok(());
         }
 
-        self.buffer.clear();
+        // One line is not copied
+        if let [vline] = block_lines
+            && vline.beg <= vline.end
+            && vline.end <= self.size
+        {
+            let text = self.text;
+            let mut line = &text[vline.beg as usize..vline.end as usize];
+            if trim_trailing {
+                line = helpers::trim_blank_end(line);
+            }
+            return self.process_inline_content(line);
+        }
 
+        self.buffer.clear();
         for vline in block_lines {
             if vline.beg > vline.end || vline.end > self.size {
                 continue;
@@ -214,8 +226,8 @@ impl Parser<'_> {
         self.collect_emphasis_delimiters(cur, &brackets, base);
         self.resolve_emphasis_delimiters();
 
-        // Copy resolved delimiters locally (label frames reuse emph_delims)
-        let mut resolved: Vec<EmphDelim> = self.emph_delims.clone();
+        // Take the resolved delimiters (label frames reuse emph_delims)
+        let mut resolved: Vec<EmphDelim> = core::mem::take(&mut self.emph_delims);
 
         // Phase 2: Emit content using resolved emphasis info
         let mut i: usize = 0;
@@ -240,7 +252,7 @@ impl Parser<'_> {
                 cur = &cur[parse.label_start..parse.label_end];
                 self.collect_emphasis_delimiters(cur, &brackets, base);
                 self.resolve_emphasis_delimiters();
-                resolved = self.emph_delims.clone();
+                resolved = core::mem::take(&mut self.emph_delims);
                 i = 0;
                 text_start = 0;
                 delim_cursor = 0;
@@ -574,7 +586,8 @@ impl Parser<'_> {
                     base = frame.base;
                     i = frame.i;
                     text_start = frame.text_start;
-                    resolved = frame.resolved;
+                    // The storage of the label's delimiters is for the next label.
+                    self.emph_delims = core::mem::replace(&mut resolved, frame.resolved);
                     delim_cursor = frame.delim_cursor;
                 }
                 None => break 'frames,
@@ -583,6 +596,7 @@ impl Parser<'_> {
 
         // Hand the frame storage back for reuse by the next block.
         self.label_frames = frames;
+        self.emph_delims = resolved;
 
         // Hand the bracket-map storage back for reuse by the next block.
         self.bracket_pairs = brackets.into_storage();
@@ -800,7 +814,9 @@ impl Parser<'_> {
             ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
-        let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();
+        let mut prev_candidate = core::mem::take(&mut self.prev_candidate);
+        prev_candidate.clear();
+        prev_candidate.extend((0..len).map(|i| i.wrapping_sub(1)));
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
@@ -918,6 +934,7 @@ impl Parser<'_> {
 
             closer_idx = closer_idx.wrapping_add(1);
         }
+        self.prev_candidate = prev_candidate;
     }
 
     pub(crate) fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {

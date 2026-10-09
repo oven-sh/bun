@@ -207,7 +207,8 @@ fn write_jsx_expression_container<'a>(
     let has_comment = !f.is_quiet()
         && (f.comments().has_comment_before(expression.span().start)
             || f.comments()
-                .has_comment_in_range(expression.span().end, span.end));
+                .has_comment_in_range(expression.span().end, span.end)
+            || (has_only_comments(expression, f) && comments_alone_in_braces_are_not_hugged(f)));
     let is_child = matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_));
     if !has_comment && should_inline_jsx_expression(expression, is_child) {
         return write!(
@@ -230,6 +231,34 @@ fn write_jsx_expression_container<'a>(
             "}"
         ))
     );
+}
+
+/// `{}`, `[]` or the `()` of a call with nothing but comments in it, which are comments of `expression` for Prettier.
+fn has_only_comments<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let empty = match expression.kind() {
+        ExprKind::Object(properties) if properties.is_empty() => expression.span(),
+        ExprKind::Array(elements) if elements.is_empty() => expression.span(),
+        ExprKind::Call(call) | ExprKind::New(call) if call.args().is_empty() => {
+            Span::after(call.callee().outer_span(), expression.span().end)
+        }
+        _ => return false,
+    };
+    f.comments().has_comment_in_span(empty)
+}
+
+/// ```jsx
+/// <a                 <a
+///   b={                b={{
+///     {                  // comment
+///       // comment     }}
+///     }              />
+///   }
+/// />
+/// ```
+///
+/// Prettier on the left, oxfmt on the right.
+fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and

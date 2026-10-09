@@ -565,7 +565,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         let noted = strings::split(filenames, b"\n")
                             .filter_map(|line| strings::split_once(line, b"\t"));
                         let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
-                        let name = noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
+                        let name =
+                            noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
                         let extension: &[u8] = match (named_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",

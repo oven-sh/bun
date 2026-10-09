@@ -742,6 +742,20 @@ try {
     expect(result.exitCode).toBe(1);
   });
 
+  test("an e after a dot or a digit is a letter like another, unless it is an exponent of zero", async () => {
+    const result = await format(
+      { "a.html": "<script>e. e</script>\n", "b.vue": "<script>\nmodule  .  exports = a1.e + 1e0 + 1.e-00\n</script>\n" },
+      [],
+      { reads: ["a.html", "b.vue"] },
+    );
+    expect(result.stderr).not.toContain("[error]");
+    expect(result.files).toEqual({
+      "a.html": "<script>\n  e.e;\n</script>\n",
+      "b.vue": "<script>\nmodule.exports = a1.e + 1 + 1;\n</script>\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("JSON", async () => {
     const result = await format(
       {

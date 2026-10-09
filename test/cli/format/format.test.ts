@@ -961,6 +961,21 @@ exports.format = async (text, options) => {
       }
     });
 
+    test("a promise that nothing can settle any more is an error for the file", async () => {
+      const waits = packages["node_modules/prettier/index.cjs"].replace(
+        "exports.format = async (text, options) => {",
+        'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
+      );
+      const result = await format(
+        { ...files, "node_modules/prettier/index.cjs": waits, "c.svelte": "<p   >waits</p>\n" },
+        [],
+        { reads: ["a.svelte", "c.svelte"] },
+      );
+      expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
+      expect(result.stderr).toContain("[error] c.svelte: A promise is not settled, and nothing is left to wait for.");
+      expect(result.exitCode).toBe(2);
+    });
+
     test("what Prettier leaves running does not keep the run from ending", async () => {
       const leaves = `setInterval(() => {}, 1000);
 require("node:net").createServer(() => {}).listen(0, "127.0.0.1");
@@ -2861,6 +2876,15 @@ describe.concurrent("what bun format takes from Bun", () => {
     const files = { "sub/.prettierrc.mjs": "export default { semi: false };\n", "sub/b.js": "b;\n" };
     const result = await bun(files, ["format", "-l", "b.js"], { BUN_OPTIONS: "--cwd=sub" });
     expect(result).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
+  });
+
+  // Prettier prints the names and never ends.
+  test("a configuration file that leaves a timer behind", async () => {
+    const files = {
+      "prettier.config.mjs": "setInterval(() => {}, 1000);\nexport default { semi: false };\n",
+      "b.js": "b;\n",
+    };
+    expect(await bun(files, ["format", "-l", "b.js"])).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
   });
 
   test("the bunfig.toml of the project is not read", async () => {

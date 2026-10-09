@@ -312,11 +312,21 @@ fn write_more_trailing_comments<'a>(
     // Prettier's `printTrailingComment`
     let mut is_after_line_comment =
         (f.comments().printed_comments().last()).is_some_and(|comment| {
-            // It trails `previous`, and is not in it: `{ // comment⏎};`
-            let rest = Span::new(comment.end(), previous.span().end.max(comment.end()));
+            // It trails `previous`, and is not in it, as in `{ // comment⏎};`: nothing is between it and the end of
+            // `previous` but the `;` and other comments.
+            let end = previous.span().end;
+            let is_blank = |from: u32, to: u32| {
+                (f.source_text()).all_bytes(Span::new(from.min(to), to), |b| {
+                    b.is_ascii_whitespace() || b == b';'
+                })
+            };
+            let mut at = comment.end();
             comment.is_line()
                 && comment.span.start >= previous.span().start
-                && matches!(f.source_text().text_for(&rest).trim_ascii(), b"" | b";")
+                && (comments.iter())
+                    .take_while(|it| it.start() < end)
+                    .all(|it| is_blank(core::mem::replace(&mut at, it.end()), it.start()))
+                && is_blank(at, end.max(at))
         });
     let mut has_line_suffix = is_after_line_comment;
     for (comment, _) in comments

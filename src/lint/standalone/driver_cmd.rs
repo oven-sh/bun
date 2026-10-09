@@ -16,6 +16,9 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         .arg(script.source.concat())
         .args(script.arguments.iter().map(|it| os_text(it)))
         .current_dir(os_text(script.cwd));
+    for name in Script::NOT_INHERITED {
+        command.env_remove(os_text(name));
+    }
     let output = command
         .output()
         .map_err(|error| format!("Cannot run bun: {error}").into_bytes())?;

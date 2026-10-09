@@ -15,11 +15,14 @@ function objectId(object) {
 const located = new Map();
 // The modules that have been looked at.
 const scanned = new Set();
+// The configuration file without links, which is what a module that is reached through one is called.
+let realPath;
 // Looks at those that were loaded since the last time: a plugin can load its rules when it is asked for them.
 function scan() {
+  realPath ??= fs.realpathSync(path);
   for (const [module, { exports }] of Object.entries(require.cache)) {
     // What only the configuration file has is not to be had without running it.
-    if (scanned.has(module) || module === path) continue;
+    if (scanned.has(module) || module === path || module === realPath) continue;
     scanned.add(module);
     const note = (value, path) => {
       if (value !== null && typeof value === "object" && !located.has(value))

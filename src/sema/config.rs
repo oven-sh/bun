@@ -853,7 +853,7 @@ pub fn matched_include_spec<'s>(
         .iter()
         .find(|spec| {
             GlobPattern::compile(&spec.1, base, Usage::Files, case_sensitive)
-                .is_some_and(|pattern| pattern.matches(typescript_path(path), b""))
+                .is_some_and(|pattern| pattern.matches_path(typescript_path(path)))
         })
         .map(|spec| spec.0.as_slice())
         .filter(|spec| !spec.is_empty())
@@ -913,7 +913,7 @@ fn file_names_from_specs(
                 });
                 if patterns
                     .iter()
-                    .any(|p| p.matches(typescript_path(&file), b""))
+                    .any(|p| p.matches_path(typescript_path(&file)))
                 {
                     let key = key(&file);
                     if !literal_files.contains_key(&key) && !wildcard_json_files.contains_key(&key)
@@ -1010,13 +1010,28 @@ fn is_package_folder(name: &[u8]) -> bool {
         || name.eq_ignore_ascii_case(b"bower_components")
 }
 
-/// `nextPathPartParts`: the path components of `prefix` followed by `suffix`, which is a single
-/// component or empty. `prefix` is a `typescript_path`. A `/` at its start comes first, as `""`.
-fn path_parts<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + Clone {
-    let root = prefix.starts_with(b"/").then_some(&b""[..]);
-    root.into_iter()
-        .chain(strings::split(prefix, b"/").filter(|p| !p.is_empty()))
-        .chain((!suffix.is_empty()).then_some(suffix))
+/// `nextPathPartParts`: the path components of `directory`, followed by `name`, which is a single component or empty.
+#[derive(Copy, Clone)]
+struct PathParts<'a> {
+    directory: &'a [&'a [u8]],
+    name: &'a [u8],
+}
+
+impl<'a> PathParts<'a> {
+    /// The components of `directory`, which is a `typescript_path`. A `/` at its start comes first, as `""`. Once for a
+    /// directory, not once for each pattern and each name in it.
+    fn of_directory(directory: &[u8]) -> Vec<&[u8]> {
+        let root = directory.starts_with(b"/").then_some(&b""[..]);
+        let names = strings::split(directory, b"/").filter(|p| !p.is_empty());
+        root.into_iter().chain(names).collect()
+    }
+
+    fn get(self, index: usize) -> Option<&'a [u8]> {
+        match self.directory.get(index) {
+            Some(&part) => Some(part),
+            None => (index == self.directory.len() && !self.name.is_empty()).then_some(self.name),
+        }
+    }
 }
 
 impl GlobPattern {
@@ -1058,25 +1073,33 @@ impl GlobPattern {
         })
     }
 
-    fn matches(&self, prefix: &[u8], suffix: &[u8]) -> bool {
-        self.match_parts(path_parts(prefix, suffix), 0, false)
+    fn matches_path(&self, path: &[u8]) -> bool {
+        let directory = &PathParts::of_directory(path);
+        self.matches(PathParts {
+            directory,
+            name: b"",
+        })
+    }
+
+    fn matches(&self, path: PathParts) -> bool {
+        self.match_parts(path, 0, 0, false)
     }
 
     /// Whether files under the directory could match.
-    fn matches_prefix(&self, prefix: &[u8], suffix: &[u8]) -> bool {
-        self.match_parts(path_parts(prefix, suffix), 0, true)
+    fn matches_prefix(&self, path: PathParts) -> bool {
+        self.match_parts(path, 0, 0, true)
     }
 
-    /// `matchPathParts`
-    fn match_parts<'a>(
+    /// `matchPathParts`. `from`: the first of the parts of `path` that is not matched yet.
+    fn match_parts(
         &self,
-        mut parts: impl Iterator<Item = &'a [u8]> + Clone,
+        path: PathParts,
+        mut from: usize,
         mut at: usize,
         prefix_only: bool,
     ) -> bool {
         loop {
-            let before = parts.clone();
-            let Some(part) = parts.next() else {
+            let Some(part) = path.get(from) else {
                 // Only trailing `**` can match nothing.
                 return prefix_only
                     || self.components[at.min(self.components.len())..]
@@ -1088,12 +1111,13 @@ impl GlobPattern {
             };
             match component {
                 Component::DoubleAsterisk => {
-                    if self.match_parts(before, at + 1, prefix_only) {
+                    if self.match_parts(path, from, at + 1, prefix_only) {
                         return true;
                     }
                     if !self.is_exclude && (is_hidden(part) || is_package_folder(part)) {
                         return false;
                     }
+                    from += 1;
                     continue;
                 }
                 Component::Literal(literal) => {
@@ -1110,6 +1134,7 @@ impl GlobPattern {
                     }
                 }
             }
+            from += 1;
             at += 1;
         }
     }
@@ -1267,24 +1292,24 @@ impl GlobMatcher {
     }
 
     /// The index of the include pattern the file matches.
-    fn matches_file(&self, prefix: &[u8], name: &[u8]) -> Option<usize> {
-        if self.excludes.iter().any(|p| p.matches(prefix, name)) {
+    fn matches_file(&self, path: PathParts) -> Option<usize> {
+        if self.excludes.iter().any(|p| p.matches(path)) {
             return None;
         }
         if self.includes.is_empty() {
             return (!self.had_includes).then_some(0);
         }
-        self.includes.iter().position(|p| p.matches(prefix, name))
+        self.includes.iter().position(|p| p.matches(path))
     }
 
-    fn matches_directory(&self, prefix: &[u8], name: &[u8]) -> bool {
-        if self.excludes.iter().any(|p| p.matches(prefix, name)) {
+    fn matches_directory(&self, path: PathParts) -> bool {
+        if self.excludes.iter().any(|p| p.matches(path)) {
             return false;
         }
         if self.includes.is_empty() {
             return !self.had_includes;
         }
-        self.includes.iter().any(|p| p.matches_prefix(prefix, name))
+        self.includes.iter().any(|p| p.matches_prefix(path))
     }
 }
 
@@ -1371,20 +1396,24 @@ fn match_files(
             } else {
                 [path, b"/"].concat()
             };
-            let absolute = typescript_path(&prefix);
+            let directory = &PathParts::of_directory(typescript_path(&prefix));
             Listed {
                 files: files
                     .into_iter()
                     .filter(|file| file_extension_is_one_of(file, self.extensions))
                     .filter_map(|file| {
-                        let index = self.files.matches_file(absolute, &file)?;
+                        let name = &file[..];
+                        let index = self.files.matches_file(PathParts { directory, name })?;
                         Some((index, [&prefix[..], &file[..]].concat()))
                     })
                     .collect(),
                 directories: directories
                     .into_iter()
-                    .filter(|directory| self.directories.matches_directory(absolute, directory))
-                    .map(|directory| [&prefix[..], &directory[..]].concat())
+                    .filter(|name| {
+                        self.directories
+                            .matches_directory(PathParts { directory, name })
+                    })
+                    .map(|name| [&prefix[..], &name[..]].concat())
                     .collect(),
             }
         }

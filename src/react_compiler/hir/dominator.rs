@@ -10,6 +10,7 @@
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
 use crate::collections::{FxHashSet as HashSet, IdMap};
+use smallvec::SmallVec;
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -181,7 +182,8 @@ fn dfs_postorder(
     visited: &mut HashSet<BlockId>,
     postorder: &mut Vec<BlockId>,
 ) {
-    let mut stack = vec![(id, false)];
+    let mut stack: SmallVec<[(BlockId, bool); 32]> = SmallVec::new();
+    stack.push((id, false));
     while let Some((id, is_after_successors)) = stack.pop() {
         if is_after_successors {
             postorder.push(id);

@@ -6,6 +6,7 @@ use crate::linter::write_json_string;
 
 /// The program: the names of its parts in `worker/`, and what is in them. They share one scope.
 pub const PROGRAM: &[(&str, &str)] = &[
+    ("paths.js", include_str!("worker/paths.js")),
     ("ast.js", include_str!("worker/ast.js")),
     ("tokens.js", include_str!("worker/tokens.js")),
     ("scope.js", include_str!("worker/scope.js")),

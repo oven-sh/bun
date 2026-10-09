@@ -6,7 +6,7 @@
 
 namespace Bun {
 
-// Yarr's bytecode interpreter, which runs without a VM. JavaScriptCore/RegularExpression.h takes only the flags i, m and v, gives no groups, and is for one thread.
+// Yarr's bytecode interpreter, which runs without a VM. JavaScriptCore/RegularExpression.h takes only the flags i, m and v, and gives no groups.
 struct RegularExpression {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RegularExpression);
     WTF_MAKE_NONCOPYABLE(RegularExpression);
@@ -28,7 +28,7 @@ struct RegularExpression {
         // NOLINTEND
         JSC::Yarr::YarrPattern pattern(source, OptionSet<JSC::Yarr::Flags>::fromRaw(flags), error);
         if (!JSC::Yarr::hasError(error))
-            bytecode = JSC::Yarr::byteCompile(pattern, &allocator, error, &lock);
+            bytecode = JSC::Yarr::byteCompile(pattern, &allocator, error);
     }
 
     // Where the match starts, or JSC::Yarr::offsetNoMatch. `offsets` has room for `bytecode->m_offsetsSize`.
@@ -57,9 +57,8 @@ struct RegularExpression {
         }
     }
 
-    // A match keeps what it needs to backtrack in the allocator, which is not reentrant: `interpret` holds the lock meanwhile.
+    // A match keeps what it needs to backtrack in the allocator, which is not reentrant: one match at a time.
     WTF::BumpPointerAllocator allocator;
-    JSC::ConcurrentJSLock lock;
     JSC::Yarr::ErrorCode error { JSC::Yarr::ErrorCode::NoError };
     std::unique_ptr<JSC::Yarr::BytecodePattern> bytecode;
 };

@@ -1,10 +1,11 @@
 // The first part of a script that runs a configuration file. It keeps track of what the result
 // depends on, so that it can be kept for the next run: the files that are loaded or looked at, and
 // the environment variables that are read. The second part calls `finish` with the result.
-const path = process.argv.at(-1);
-const marker = process.argv.at(-2);
 const { fileURLToPath, pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
+// It arrives with `/`. As the system writes it, it is the same text as what `resolve` returns.
+const path = resolve(process.argv.at(-1));
+const marker = process.argv.at(-2);
 
 // Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.
 for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
@@ -25,6 +26,9 @@ const touched = new Set();
 const environment = new Set();
 // It depends on something that cannot be checked again cheaply.
 let uncacheable = false;
+// Bun has read these, in the working directory, into the environment of this process. Who checks the variables again has not.
+const startedIn = process.cwd();
+const dotenv = ["", ".development", ".production", ".test"].flatMap(mode => [`.env${mode}`, `.env${mode}.local`]);
 
 function wrap(object, names, before) {
   for (const name of names) {
@@ -84,11 +88,14 @@ process.env = new Proxy(process.env, {
 function finish(config, dependencies = [path]) {
   // A package is as good as its `package.json`, which is written when it is installed.
   const files = new Set();
+  if (environment.size > 0) for (const name of dotenv) touched.add(resolve(startedIn, name));
   for (const file of [...dependencies, ...Object.keys(require.cache), ...touched]) {
     const match = /^(.*[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+)[\\/]/.exec(file);
     files.add(match ? resolve(match[1], "package.json") : file);
   }
+  // A timer, a watcher or a server that the configuration has left behind would keep the process alive for ever.
   process.stdout.write(
     marker + JSON.stringify({ config, files: [...files], environment: [...environment], uncacheable }),
+    () => process.exit(),
   );
 }

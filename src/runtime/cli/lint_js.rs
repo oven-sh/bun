@@ -15,7 +15,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
     virtual_machine::VirtualMachine,
 };
-use bun_lint_driver::js_plugin::{Demand, Engine, PROGRAM, Serve, Vm};
+use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, PROGRAM, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::Arc;
 use std::thread::ThreadId;
@@ -481,7 +481,7 @@ impl Engines {
     }
 
     /// Waits for an engine.
-    fn borrow(&self, size: usize) -> Result<Borrowed<'_>, Vec<u8>> {
+    fn borrow(&self, size: usize, is_heavy: bool) -> Result<Borrowed<'_>, Vec<u8>> {
         let me = std::thread::current().id();
         let mut state = self.state.lock();
         // Nothing is asked of it at the moment: this thread would be waiting for the answer.
@@ -495,16 +495,22 @@ impl Engines {
             });
         }
         let at = loop {
-            // The one that it had, which has grown by what this thread has given it.
-            let mine = (state.idle.iter()).rposition(|&at| state.all[at].1 == me);
-            if let Some(at) = mine
-                .map(|it| state.idle.remove(it))
-                .or_else(|| state.idle.pop())
-            {
+            // What is heavy is for the first. Else the one that it had, which has grown by what this thread has given it, and the
+            // first one last.
+            let find = |is_it: &dyn Fn(usize) -> bool| state.idle.iter().rposition(|&at| is_it(at));
+            let found = match is_heavy {
+                true => find(&|at| at == 0),
+                false => find(&|at| state.all[at].1 == me)
+                    .or_else(|| find(&|at| at != 0))
+                    .or_else(|| find(&|_| true)),
+            };
+            if let Some(found) = found {
+                let at = state.idle.remove(found);
                 state.all[at].1 = me;
                 break at;
             }
-            if (self.demand).is_worth_another(state.all.len() - state.kept) {
+            let can_start = !is_heavy || state.all.is_empty();
+            if can_start && (self.demand).is_worth_another(state.all.len() - state.kept) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
                 // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
@@ -531,12 +537,12 @@ impl Engines {
 
 impl Engine for Engines {
     fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        then(&mut self.borrow(size)?);
+        then(&mut self.borrow(size, size >= HEAVY)?);
         Ok(())
     }
 
     fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        let borrowed = self.borrow(0)?;
+        let borrowed = self.borrow(0, true)?;
         self.state.lock().kept += 1;
         self.is_idle.notify_all();
         then();

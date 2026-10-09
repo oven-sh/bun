@@ -140,6 +140,30 @@ fn is_implicitly_narrowed_literal_declaration(assertion: Assertion) -> bool {
     }
 }
 
+/// tsgolint's `hasEnumType`.
+fn tsgolint_has_enum_type(ty: Type) -> bool {
+    let is_enum = |it: Type| is_type_flag_set(it, TypeFlags::ENUM_LIKE);
+    is_enum(ty)
+        || (ty.is_union() || ty.is_intersection())
+            && ty.types().iter().any(|part| is_enum(part) || part.is_intersection() && part.types().iter().any(is_enum))
+}
+
+/// tsgolint's `isReceiverOfWriteAccess`, for the assertions around `expression`: `(a as B).c.d = 1`.
+fn tsgolint_is_receiver_of_write_access(expression: Expr) -> bool {
+    let (mut current, mut is_access) = (expression, false);
+    while let Node::Expr(parent) = current.parent() {
+        match parent.kind() {
+            ExprKind::As { .. } if !is_access => {}
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == current => is_access = true,
+            ExprKind::Assign { target, .. } => return is_access && target == current,
+            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => return is_access,
+            _ => return false,
+        }
+        current = parent;
+    }
+    false
+}
+
 fn is_type_unchanged<'a>(
     type_annotation: Option<TypeNode<'a>>,
     expression: Expr<'a>,
@@ -149,6 +173,14 @@ fn is_type_unchanged<'a>(
 ) -> bool {
     if uncast == cast {
         return true;
+    }
+    // What tsgolint 7.0 has besides. A numeric enum and `number` can be assigned to each other, and are not the same.
+    if expression.file().language().is_oxlint
+        && (tsgolint_has_enum_type(uncast)
+            || tsgolint_has_enum_type(cast)
+            || is_type_parameter(uncast) && tsgolint_is_receiver_of_write_access(expression))
+    {
+        return false;
     }
     if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast, known) {
         return false;
@@ -722,13 +754,46 @@ fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> Sm
 /// tsgolint's `isInNarrowingAssignment`, for an assertion that is all of what is assigned: `a = b as C;` narrows `a`
 /// for the statements that follow, so that `a` accepts `b` does not make the assertion unnecessary.
 fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>, cast_type: Type<'a>) -> bool {
-    let Some((assignment, None)) = as_assigned_value(node) else {
-        return false;
+    // Up to the assignment that `node` can be the value of, or a part of the value: `a = b && (a as C)`,
+    // `[a] = [a as C]`. What else can be the value is not looked at, which leaves more alone than tsgolint does.
+    let (mut current, mut is_in_literal) = (node, false);
+    let target = loop {
+        let parent = match current.parent() {
+            Node::Expr(parent) => parent,
+            Node::Prop(property) if property.value() == Some(current) => match property.parent() {
+                Node::Expr(object) => object,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        match parent.kind() {
+            ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } if left == current && !is_in_literal => {
+                // These discard `null` and `undefined` themselves.
+                if uncast_type.get_non_nullable_type() == cast_type.get_non_nullable_type() {
+                    return false;
+                }
+            }
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
+            ExprKind::Binary { op: BinOp::Comma, right, .. } if right == current => {}
+            ExprKind::Cond { test, .. } if test != current => {}
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) if !parent.is_assignment_target() => {
+                is_in_literal = true;
+            }
+            ExprKind::Assign { op: None, target, value } if value == current && !parent.is_assignment_target() => {
+                break target;
+            }
+            _ => return false,
+        }
+        current = parent;
     };
-    let ExprKind::Assign { target, .. } = assignment.kind() else {
-        return false;
+    let receiver_type = match (is_in_literal, target.tag()) {
+        (false, _) => target.ty(),
+        (true, ExprTag::Array | ExprTag::Object) => match node.contextual_type() {
+            Some(it) => it,
+            None => return false,
+        },
+        (true, _) => return false,
     };
-    let receiver_type = target.ty();
     let receiver_type = receiver_type.get_base_constraint_of_type().unwrap_or(receiver_type);
     receiver_type.is_union()
         && get_assignment_reduced_type(receiver_type, uncast_type)

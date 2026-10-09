@@ -5,7 +5,7 @@
 //! the program ([`PROGRAM`]), a call (its kind), the answer to what it asked for (0). From a process: what it asks for (its
 //! kind), what a call returns ([`RESULT`]).
 
-use bun_lint::js_plugin::{Demand, Engine, Serve, Vm};
+use bun_lint::js_plugin::{Demand, Engine, HEAVY, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
@@ -33,6 +33,8 @@ struct Process {
     /// To write messages in.
     buffer: Vec<u8>,
     has_failed: bool,
+    /// The one that all [`HEAVY`] files go to: the first.
+    is_for_heavy: bool,
 }
 
 impl Process {
@@ -85,6 +87,9 @@ struct State {
     count: usize,
     /// Which thread has which. `None`: it is being called.
     lent: Vec<(ThreadId, Option<Process>)>,
+    has_one_for_heavy: bool,
+    /// How many are kept: [`Engine::keep_vm`].
+    kept: usize,
 }
 
 /// The process that a thread has. As with an engine of `bun lint`, what asks for one further down on that thread has the same.
@@ -143,25 +148,34 @@ impl<'e> Processes<'e> {
         self.program = program;
     }
 
-    fn start(&self) -> Result<Process, Vec<u8>> {
+    fn start(&self, is_for_heavy: bool) -> Result<Process, Vec<u8>> {
         let mut process = Process {
             channel: (self.spawn)()?,
             buffer: Vec::new(),
             has_failed: false,
+            is_for_heavy,
         };
         process.send(PROGRAM, &mut |out| out.extend_from_slice(&self.program))?;
         Ok(process)
     }
 
     /// One less.
-    fn lose(&self) {
-        self.state.lock().count -= 1;
+    fn lose(&self, was_for_heavy: bool) {
+        let mut state = self.state.lock();
+        state.has_one_for_heavy &= !was_for_heavy;
+        state.count -= 1;
+        drop(state);
         self.is_idle.notify_one();
     }
 }
 
-impl Engine for Processes<'_> {
-    fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+impl Processes<'_> {
+    fn lend(
+        &self,
+        size: usize,
+        is_heavy: bool,
+        then: &mut dyn FnMut(&mut dyn Vm),
+    ) -> Result<(), Vec<u8>> {
         let to = std::thread::current().id();
         let mut state = self.state.lock();
         if state.lent.iter().any(|it| it.0 == to) {
@@ -170,22 +184,29 @@ impl Engine for Processes<'_> {
             return Ok(());
         }
         let idle = loop {
-            if let Some(process) = state.idle.pop() {
-                break Some(process);
+            let found = (state.idle.iter())
+                .rposition(|it| it.is_for_heavy == is_heavy)
+                .or_else(|| state.idle.len().checked_sub(1).filter(|_| !is_heavy));
+            if let Some(found) = found {
+                break Ok(state.idle.remove(found));
             }
-            let is_worth_it =
-                !self.is_told.load(Ordering::Relaxed) || self.demand.is_worth_another(state.count);
-            if state.count < self.max && is_worth_it {
+            let is_worth_it = !self.is_told.load(Ordering::Relaxed)
+                || (self.demand).is_worth_another(state.count - state.kept);
+            let can_start = !is_heavy || !state.has_one_for_heavy;
+            if can_start && state.count < self.max && is_worth_it {
                 state.count += 1;
-                break None;
+                break Err(!std::mem::replace(&mut state.has_one_for_heavy, true));
             }
             self.is_idle.wait_guarded(&mut state);
         };
         drop(state);
         let process = match idle {
-            Some(process) => process,
-            None => self.start().inspect_err(|_| self.lose())?,
+            Ok(process) => process,
+            Err(is_for_heavy) => {
+                (self.start(is_for_heavy)).inspect_err(|_| self.lose(is_for_heavy))?
+            }
         };
+        let is_for_heavy = process.is_for_heavy;
         self.state.lock().lent.push((to, Some(process)));
         then(&mut Lent { by: self, to });
         self.demand.note(size);
@@ -199,10 +220,25 @@ impl Engine for Processes<'_> {
             }
             _ => {
                 drop(state);
-                self.lose();
+                self.lose(is_for_heavy);
             }
         }
         Ok(())
+    }
+}
+
+impl Engine for Processes<'_> {
+    fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        self.lend(size, size >= HEAVY, then)
+    }
+
+    fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.lend(0, true, &mut |_| {
+            self.state.lock().kept += 1;
+            self.is_idle.notify_all();
+            then();
+            self.state.lock().kept -= 1;
+        })
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

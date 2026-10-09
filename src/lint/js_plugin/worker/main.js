@@ -732,8 +732,11 @@ function lint() {
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
   fileDialect = (flags >> 2) & 1;
-  filename = decode(buffer, pathStart, pathStart + pathLength);
-  physicalFilename = physicalLength === pathLength ? filename : decode(buffer, pathStart, pathStart + physicalLength);
+  filename = nativePath(decode(buffer, pathStart, pathStart + pathLength), nodePath);
+  physicalFilename =
+    physicalLength === pathLength
+      ? filename
+      : nativePath(decode(buffer, pathStart, pathStart + physicalLength), nodePath);
   text = decode(buffer, pathStart + pathLength, length);
   for (let position = 0; position < count; position++) {
     const entry = entries[position];

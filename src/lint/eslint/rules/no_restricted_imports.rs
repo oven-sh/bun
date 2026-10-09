@@ -496,22 +496,25 @@ fn includes(names: &[Box<[u8]>], name: &[u8]) -> bool {
     names.iter().any(|it| **it == *name)
 }
 
+type ReportAt<'r, 'a> = &'r dyn Fn(Span, Message) -> Report<'a>;
+
 impl Restriction {
     /// ESLint's `checkRestrictedPathAndReport` for one entry, and `reportPathForPatterns`.
-    fn check<'a, R: Rule>(&self, cx: &Cx<'a, R>, imported: &Imported<'a>) {
+    /// `report_at`: [`Cx::report`] of the rule, of which there are two. This is compiled once.
+    #[inline(never)]
+    fn check<'a>(&self, report_at: ReportAt<'_, 'a>, is_oxlint: bool, imported: &Imported<'a>) {
         if self.allow_type_imports && imported.is_type_only {
             return;
         }
         let report = |at: Span, (plain, with_custom_message): Messages| -> Report<'a> {
             match &self.message {
-                Some(message) => (cx.report(at, with_custom_message))
+                Some(message) => (report_at(at, with_custom_message))
                     .data("customMessage", message.to_vec()),
-                None => cx.report(at, plain),
+                None => report_at(at, plain),
             }
             .data("importSource", imported.source)
         };
         // oxlint has the names with commas between them, and a pattern as it is in the configuration.
-        let is_oxlint = cx.language().is_oxlint;
         let list = |names: &[Box<[u8]>]| match is_oxlint {
             true => names.join(&b", "[..]),
             false => format_import_names(names),
@@ -709,7 +712,7 @@ impl Restrictions {
         let imported = Imported::new(statement, dialect, source);
         if !is_oxlint || !imported.specifiers.is_empty() {
             for restriction in applying {
-                restriction.check(cx, &imported);
+                restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
             }
             return;
         }
@@ -726,7 +729,7 @@ impl Restrictions {
                 Matcher::Group(..) => Some(i) == last_group,
             };
             if holds {
-                restriction.check(cx, &imported);
+                restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
             }
         }
     }
@@ -767,9 +770,10 @@ impl Restrictions {
             is_type_only: false,
             specifiers: SmallVec::new(),
         };
-        for restriction in self.applying_to(imported.source, cx.language().is_oxlint) {
+        let is_oxlint = cx.language().is_oxlint;
+        for restriction in self.applying_to(imported.source, is_oxlint) {
             if !restriction.is_about_names() {
-                restriction.check(cx, &imported);
+                restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
             }
         }
     }

@@ -26,39 +26,28 @@ struct Far<'a> {
 }
 
 impl<'a> Far<'a> {
-    /// Walks on from `from` until `decide` says that it has an answer. The nodes it passes get the index of the answer:
-    /// the one that is known already, which it returns, or else `next`. It also returns whether it has passed any.
+    #[inline(never)]
+    fn get(&self, node: Node<'a>) -> Option<u32> {
+        self.known.get(&node).copied()
+    }
+
+    /// `index` is the answer for what a walk of `steps` steps from `node` has passed after the first [`PLAIN_STEPS`].
     #[cold]
     #[inline(never)]
-    fn walk(
+    fn remember(
         &mut self,
-        from: Node<'a>,
-        next: u32,
+        node: Node<'a>,
+        steps: usize,
+        index: u32,
         up: &dyn Fn(Node<'a>) -> Node<'a>,
-        decide: &mut dyn FnMut(Node<'a>, Node<'a>) -> bool,
-    ) -> (Option<u32>, bool) {
-        let mut child = from;
-        let mut steps = 0usize;
-        let known = loop {
-            if matches!(child, Node::File(_)) {
-                break None;
+    ) {
+        let mut passed = node;
+        for step in 0..steps {
+            if step >= PLAIN_STEPS {
+                self.known.insert(passed, index);
             }
-            if let Some(&known) = self.known.get(&child) {
-                break Some(known);
-            }
-            let parent = up(child);
-            if decide(child, parent) {
-                break None;
-            }
-            child = parent;
-            steps += 1;
-        };
-        let mut passed = from;
-        for _ in 0..steps {
-            self.known.insert(passed, known.unwrap_or(next));
             passed = up(passed);
         }
-        (known, steps > 0)
     }
 }
 
@@ -95,40 +84,46 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
         mut decide: impl FnMut(Node<'a>, Node<'a>) -> Option<T>,
     ) -> Option<T> {
         let mut child = node;
-        for _ in 0..PLAIN_STEPS {
+        let mut steps = 0;
+        let mut known = None;
+        let answer = loop {
             if matches!(child, Node::File(_)) {
-                return None;
+                break None;
+            }
+            if steps >= PLAIN_STEPS {
+                known = self.far.get(child);
+                if let Some(known) = known {
+                    break self.answers.get(known as usize).copied().flatten();
+                }
             }
             let parent = up(child);
             let answer = decide(child, parent);
             if answer.is_some() {
-                return answer;
+                break answer;
             }
             child = parent;
-        }
-        self.find_far(child, &up, &mut decide)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn find_far(
-        &mut self,
-        from: Node<'a>,
-        up: &dyn Fn(Node<'a>) -> Node<'a>,
-        decide: &mut dyn FnMut(Node<'a>, Node<'a>) -> Option<T>,
-    ) -> Option<T> {
-        let mut answer = None;
-        let next = self.answers.len() as u32;
-        let (known, has_passed) = self.far.walk(from, next, up, &mut |child, parent| {
-            answer = decide(child, parent);
-            answer.is_some()
-        });
-        if let Some(known) = known {
-            return self.answers.get(known as usize).copied().flatten();
-        }
-        if has_passed {
-            self.answers.push(answer);
+            steps += 1;
+        };
+        if steps > PLAIN_STEPS {
+            self.remember(node, steps, (known, answer), &up);
         }
         answer
+    }
+
+    /// `known`: the index of `answer`, if it has one.
+    #[cold]
+    #[inline(never)]
+    fn remember(
+        &mut self,
+        node: Node<'a>,
+        steps: usize,
+        (known, answer): (Option<u32>, Option<T>),
+        up: &dyn Fn(Node<'a>) -> Node<'a>,
+    ) {
+        let index = known.unwrap_or(self.answers.len() as u32);
+        if known.is_none() {
+            self.answers.push(answer);
+        }
+        self.far.remember(node, steps, index, up);
     }
 }

@@ -111,6 +111,10 @@ fn call_around_arrow(func: Func<'_>) -> Option<Expr<'_>> {
     if !func.is_arrow() {
         return None;
     }
+    call_around(func)
+}
+
+fn call_around(func: Func<'_>) -> Option<Expr<'_>> {
     func.owner().as_expr()?.parent().as_expr().filter(|it| it.tag() == ExprTag::Call)
 }
 
@@ -161,8 +165,11 @@ fn is_in_field_initializer<'a>(e: Expr<'a>, function: Option<Func<'a>>, memo: &m
     };
     match function {
         None => true,
-        Some(function) => call_around_arrow(function)
-            .is_some_and(|call| field.init() == Some(call) && !call.is_chain_root()),
+        // For oxlint it can be a function expression too.
+        Some(function) if function.is_arrow() || function.file().language().is_oxlint => {
+            call_around(function).is_some_and(|call| field.init() == Some(call) && !call.is_chain_root())
+        }
+        Some(_) => false,
     }
 }
 

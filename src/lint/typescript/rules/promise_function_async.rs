@@ -16,10 +16,35 @@ pub struct PromiseFunctionAsync {
 
 const MISSING_ASYNC: Message =
     Message::new("missingAsync", "Functions that return promises must be async.");
+/// Of tsgolint.
+const MISSING_ASYNC_HYBRID_RETURN_SUGGESTION: Message =
+    Message::new("missingAsyncHybridReturnSuggestion", "Add `async` keyword to the function.");
 const MISSING_ASYNC_HYBRID_RETURN: Message = Message::new(
     "missingAsyncHybridReturn",
     "Functions that return promises must be async. Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types.",
 );
+
+/// Where tsgolint 7.0 puts it, and with which spaces: before the name of a method, after `export` or `default`, or else
+/// before the function.
+fn add_async_as_tsgolint<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Fix {
+    let file = fixer.file();
+    let key = match node.owner() {
+        Node::Member(member) => member.key(),
+        Node::Expr(value) if node.kind() == FnKind::Method => match value.parent() {
+            Node::Prop(property) => property.key(),
+            _ => None,
+        },
+        _ => None,
+    };
+    let function = node.estree_span();
+    match (key, node.owner()) {
+        (Some(key), _) => fixer.insert_before(key.span(file), " async "),
+        (None, Node::Stmt(statement)) if statement.is_exported() => {
+            fixer.insert_after(Span::empty(file.end_of_token_before(function.start)), " async")
+        }
+        _ => fixer.insert_before(function, " async "),
+    }
+}
 
 fn add_async<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Option<Fix> {
     let file = fixer.file();
@@ -120,7 +145,15 @@ impl PromiseFunctionAsync {
             true => MISSING_ASYNC_HYBRID_RETURN,
             false => MISSING_ASYNC,
         };
-        cx.report(place(node, cx), message).fix(|fixer| add_async(fixer, node));
+        let report = cx.report(place(node, cx), message);
+        match (cx.language().is_oxlint, is_hybrid_return_type) {
+            // tsgolint only suggests it.
+            (true, true) => report.suggest(MISSING_ASYNC_HYBRID_RETURN_SUGGESTION, |fixer| {
+                add_async_as_tsgolint(fixer, node)
+            }),
+            (true, false) => report.fix(|fixer| add_async_as_tsgolint(fixer, node)),
+            (false, _) => report.fix(|fixer| add_async(fixer, node)),
+        };
     }
 }
 

@@ -48,6 +48,9 @@ pub struct Fixed {
     pub applied: Vec<RuleId>,
 }
 
+/// The byte order mark.
+const MARK: &[u8] = b"\xEF\xBB\xBF";
+
 /// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches one that is applied before
 /// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function.
 pub fn apply_fixes(
@@ -85,6 +88,10 @@ pub fn apply_fixes(
         }
         // A range can go beyond the text, as for `String.prototype.slice`.
         output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..start.min(text.len())]);
+        // ESLint's "Remove BOM": the mark that the fix brings replaces the one that is there.
+        if start == MARK.len() && text.starts_with(MARK) && fix.text.starts_with(MARK) {
+            output.clear();
+        }
         output.extend_from_slice(&fix.text);
         last = Some(end);
         if let Some(rule) = message.rule_id

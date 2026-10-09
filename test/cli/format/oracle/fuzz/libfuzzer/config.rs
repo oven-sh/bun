@@ -168,6 +168,11 @@ fn run(data: &[u8]) {
     if let Some(first) = outcome.as_ref().filter(|it| writes && !is_for_lint && it.exit_code == 0 && source == SOURCES[0].1.as_bytes())
         && let Some(Some(second)) = run.guarded(|| format(b"--check", &environment))
         && second.exit_code != 0
+        // Not the files of the fuzzer's, which are formatted too: garbage is not always printed as what is left alone.
+        && SOURCES.iter().any(|(name, _)| {
+            let line = format!("] {name}");
+            [&second.stdout, &second.stderr].iter().any(|it| it.windows(line.len()).any(|it| it == line.as_bytes()))
+        })
     {
         let detail = [&first.stdout[..], &first.stderr, b"\n", &second.stdout, &second.stderr].concat();
         run.report("not-formatted-after-write", name, &String::from_utf8_lossy(&detail));

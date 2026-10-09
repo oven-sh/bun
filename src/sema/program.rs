@@ -780,6 +780,8 @@ struct UnsupportedExtension {
 struct Parse<'s> {
     hir: hir::File<'s>,
     bound: Bound<'s>,
+    /// `rename_private_names` has been through it.
+    is_renamed: bool,
 }
 
 /// All that `parse_and_bind` is given for a file besides its path and its text.
@@ -819,6 +821,11 @@ impl<'u> Run<'u> {
         self.parses.load(Ordering::Relaxed)
     }
 
+    fn is_provided(&self, host: &dyn Host, path: &[u8]) -> bool {
+        !self.provided.is_empty()
+            && (self.provided).contains(&*to_path(path, host.is_case_sensitive()))
+    }
+
     /// Whether `parse` may answer for `path` without its text.
     fn has(&self, path: &[u8]) -> bool {
         self.parsed.get_ref(path).is_some()
@@ -829,7 +836,7 @@ impl<'u> Run<'u> {
         host: &dyn Host,
         path: &[u8],
         key: ParseKey,
-        text: impl FnOnce() -> Cow<'static, [u8]>,
+        text: Option<Cow<'static, [u8]>>,
     ) -> &'u Parse<'u> {
         let of_path = match self.parsed.get_ref(path) {
             Some(of_path) => of_path,
@@ -852,7 +859,7 @@ impl<'u> Run<'u> {
             path,
             key.is_lib,
             key.specifies_esm,
-            text(),
+            text.unwrap_or_else(|| host.read_source(path)),
         );
         rename_private_names(&mut hir, &bound, &self.atoms, path);
         // Nothing drops it.
@@ -860,7 +867,11 @@ impl<'u> Run<'u> {
         keep_list(self.session, &mut hir.diagnostics);
         keep_list(self.session, &mut hir.jsdoc_member_comments);
         keep_list(self.session, &mut hir.jsdoc_param_errors);
-        let parse: &'u Parse<'u> = arena.alloc(Parse { hir, bound });
+        let parse: &'u Parse<'u> = arena.alloc(Parse {
+            hir,
+            bound,
+            is_renamed: true,
+        });
         of_path.push((key, parse));
         parse
     }
@@ -4804,10 +4815,17 @@ impl<'s> Files<'s> {
                             specifies_esm,
                             text,
                         );
-                        Parse { hir, bound }
+                        Parse {
+                            hir,
+                            bound,
+                            is_renamed: false,
+                        }
                     });
                     (module.hir, module.bound) = (parse.hir, parse.bound);
-                    rename_private_names(&mut module.hir, &module.bound, &atoms, path);
+                    // What the run has is spelled with the path of the copy that was parsed, which no other module has.
+                    if !parse.is_renamed {
+                        rename_private_names(&mut module.hir, &module.bound, &atoms, path);
+                    }
                 }
                 seen[file.idx()] = true;
                 log.append(&mut traces[file.idx()]);
@@ -5463,17 +5481,41 @@ impl<'s> Files<'s> {
                             load_parsed(specifies_esm, &parse)
                         }
                         (Some(_), None) => {
-                            let (hir, bound) = Self::parse_and_bind(
-                                arena,
-                                host,
-                                options.for_parsing(),
-                                atoms,
-                                path,
-                                is_lib,
-                                specifies_esm,
-                                text.unwrap_or_default(),
-                            );
-                            let parse = Arc::new(Parse { hir, bound });
+                            let text = text.unwrap_or_default();
+                            let parse = match run.filter(|run| !run.is_provided(host, path)) {
+                                Some(run) => {
+                                    let key = ParseKey {
+                                        options: options.for_parsing(),
+                                        script_kind: host.script_kind(path),
+                                        is_lib,
+                                        specifies_esm,
+                                    };
+                                    let parse = run.parse(host, path, key, Some(text));
+                                    Parse {
+                                        hir: parse.hir.share(arena, session),
+                                        bound: parse.bound.copy_in(arena),
+                                        is_renamed: true,
+                                    }
+                                }
+                                None => {
+                                    let (hir, bound) = Self::parse_and_bind(
+                                        arena,
+                                        host,
+                                        options.for_parsing(),
+                                        atoms,
+                                        path,
+                                        is_lib,
+                                        specifies_esm,
+                                        text,
+                                    );
+                                    Parse {
+                                        hir,
+                                        bound,
+                                        is_renamed: false,
+                                    }
+                                }
+                            };
+                            let parse = Arc::new(parse);
                             let loaded = load_parsed(specifies_esm, &parse);
                             parsed_now = Some(Slot::Done {
                                 parse,
@@ -5670,12 +5712,7 @@ impl<'s> Files<'s> {
         text: Option<Cow<'static, [u8]>>,
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
-        let text = || text.unwrap_or_else(|| host.read_source(path));
-        let is_provided = |run: &Run| {
-            !run.provided.is_empty()
-                && (run.provided).contains(&*to_path(path, host.is_case_sensitive()))
-        };
-        let (hir, bound) = match run.filter(|run| !is_provided(run)) {
+        let (hir, bound) = match run.filter(|run| !run.is_provided(host, path)) {
             Some(run) => {
                 let key = ParseKey {
                     options: options.for_parsing(),
@@ -5695,7 +5732,7 @@ impl<'s> Files<'s> {
                     path,
                     is_lib,
                     specifies_esm,
-                    text(),
+                    text.unwrap_or_else(|| host.read_source(path)),
                 );
                 rename_private_names(&mut hir, &bound, atoms, path);
                 (hir, bound)

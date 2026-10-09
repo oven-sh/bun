@@ -133,7 +133,7 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB: each has to load the plugins again, and takes memory.
+- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB: each has to load the plugins again, and takes memory. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time.
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 
@@ -326,7 +326,7 @@ bun lint -c eslint.ci.config.js
 
 Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
 
-Loading `typescript-eslint` takes longer than linting most projects, so Bun keeps the evaluated configuration in `node_modules/.cache/bun-lint`. Bun evaluates the file again when it changes, or when a file it imports or reads, an installed package it imports, or an environment variable it reads changes. Use `--no-config-cache` to evaluate it every time. In CI, keep that directory between runs.
+Loading `typescript-eslint` takes longer than linting most projects, so Bun keeps the evaluated configuration in `node_modules/.cache/bun-lint`. Bun evaluates the file again when it changes, or when a file it imports or reads, an installed package it imports, or an environment variable it reads changes. That includes a variable from an `.env` file next to the configuration file. Use `--no-config-cache` to evaluate it every time. In CI, keep that directory between runs.
 
 ### A project with both tools
 
@@ -559,6 +559,7 @@ These differences are intentional:
 - **`--fix` does not write a file that no longer parses.** If the fixes of a pass leave a syntax error, `bun lint` takes them back, reports the problems as not fixed, and names the rules in a warning. ESLint writes the file.
 - **`--fix` does not write through a link that leads out of the repository**, or out of the working directory if that is in no repository. ESLint and oxlint do. The run fails and names the file.
 - **A file that TypeScript finds too large for control flow analysis (TS2563) gets a warning.** What rules that need types say about it may be wrong or incomplete, as in typescript-eslint, which says nothing.
+- **A configuration file that leaves a timer or a server running does not keep the run alive.** ESLint prints its report and never exits.
 - **A summary line on stderr** says how many files were linted and how long it took.
 
 ## Differences from oxlint

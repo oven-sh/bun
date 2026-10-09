@@ -3404,6 +3404,24 @@ describe("react-compiler does not overflow the stack on a component that is nest
           "<div>{a0}</div>",
         ),
     ],
+    // Blocks in a row, which three walks of the control flow graph and the renaming for SSA
+    // followed one call deep each. A variable named `fbt` ends the compilation after the lowering, and
+    // one that is read before its declaration ends it in SSA, so what a case costs does not depend on the stack.
+    [
+      "assignments in a try",
+      depthOf(4000, 8000, 16000),
+      n => component(`const fbt = s; let x; try { ${Array(n).fill("x = <a />;").join("")} } catch (e) {}`),
+    ],
+    [
+      "if statements in a row",
+      depthOf(5000, 10000, 30000),
+      n => component(`const fbt = s; ${Array(n).fill("if (s) {}").join("")}`),
+    ],
+    [
+      "a read after if statements in a row",
+      depthOf(2000, 5000, 10000),
+      n => component(`${Array(n).fill("if (props.a) {}").join("")} props.f(x); let x = 0;`),
+    ],
   ];
 
   test.concurrent.each(shapes)("%s", async (name, depth, source) => {

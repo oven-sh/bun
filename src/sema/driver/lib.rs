@@ -1939,7 +1939,16 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.build || !project.references.is_empty() {
-        check_with_references(disk, project, request, report, started, named, of.elsewhere)
+        check_with_references(
+            disk,
+            project,
+            request,
+            report,
+            started,
+            named,
+            of.elsewhere,
+            of.run,
+        )
     } else {
         // All of its files: the project, with what no file imports.
         let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
@@ -2309,6 +2318,7 @@ fn check_with_references(
     started: Instant,
     named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
+    run: Option<&Run<'_>>,
 ) -> Report {
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
@@ -2387,6 +2397,9 @@ fn check_with_references(
         })
         .collect();
     let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
+    // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
+    // another reads, and several run at the same time.
+    let run = run.filter(|_| reads_sources && !reports_references);
     // Nothing waits for what is not emitted.
     let up_stream: Vec<Vec<usize>> = (projects.iter())
         .map(|p| match reads_sources {
@@ -2604,8 +2617,7 @@ fn check_with_references(
             named,
             Some(&owned_elsewhere),
             Some(&|| !host.awaited.lock().is_empty()),
-            // What one of these programs emits another reads: the files change.
-            None,
+            run,
         );
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {

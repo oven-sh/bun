@@ -1085,7 +1085,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB are 6 MB, which three engines are for.
+      // 24 files of 250 KB, which are not heavy yet, are 6 MB, which three engines are for.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1415,6 +1415,131 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  test("a path reaches a rule as the system writes it, also on Windows", async () => {
+    const source = readFileSync(join(import.meta.dir, "../../../src/lint/js_plugin/worker/paths.js"), "utf8");
+    const paths = ["C:/proj/src/a.js", "C:/proj/a.md/0_x.js", "//server/share/a.js", "/proj/a\\b.js"];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${source}
+        const { posix, win32 } = require("node:path");
+        const paths = ${JSON.stringify(paths)};
+        console.log(JSON.stringify([paths.map(it => nativePath(it, win32)), paths.map(it => nativePath(it, posix))]));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([
+      [
+        String.raw`C:\proj\src\a.js`,
+        String.raw`C:\proj\a.md\0_x.js`,
+        String.raw`\\server\share\a.js`,
+        String.raw`\proj\a\b.js`,
+      ],
+      paths,
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // What eslint-plugin-turbo does with them: `physicalFilename.startsWith(directoryOfTheWorkspace)`.
+  test(
+    "context.filename and context.physicalFilename are what node:path makes of context.cwd",
+    async () => {
+      const where = `{
+        rules: {
+          is: {
+            create(context) {
+              return {
+                Program(node) {
+                  const { cwd, filename, physicalFilename } = context;
+                  context.report({
+                    node,
+                    message: JSON.stringify({
+                      filename: relative(cwd, filename).split(sep),
+                      isJoined: filename === join(cwd, relative(cwd, filename)),
+                      isInside: filename.startsWith(cwd + sep),
+                      physicalFilename: relative(cwd, physicalFilename).split(sep),
+                      isPhysicalJoined: physicalFilename === join(cwd, relative(cwd, physicalFilename)),
+                      methods: context.getFilename() === filename && context.getPhysicalFilename() === physicalFilename,
+                    }),
+                  });
+                },
+              };
+            },
+          },
+        },
+      }`;
+      const imports = `import { join, relative, sep } from "node:path";`;
+      // The format is one that is the same whosever the configuration is.
+      const [ofOxlint, ofEslint] = await Promise.all([
+        lint(
+          {
+            ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "where/is": "error" } }),
+            "plugin.mjs": `${imports}\nexport default { meta: { name: "where" }, ...${where} };`,
+            "src/deep/a.js": "a;\n",
+          },
+          ["-f", "json-with-metadata"],
+        ),
+        lint(
+          {
+            "eslint.config.mjs": `${imports}
+            const processor = { preprocess: text => [{ text, filename: "x.js" }], postprocess: lists => lists.flat() };
+            export default [
+              { files: ["**/*.txt"], processor },
+              { files: ["**/*.js"], plugins: { where: ${where} }, rules: { "where/is": "error" } },
+            ];`,
+            "src/deep/a.js": "a;\n",
+            "src/b.txt": "b;\n",
+          },
+          ["-f", "json-with-metadata", "src"],
+        ),
+      ]);
+      const said = ({ raw }: { raw: string }) =>
+        (JSON.parse(raw).results as { messages: { message: string }[] }[]).flatMap(it =>
+          it.messages.map(it => JSON.parse(it.message)),
+        );
+      const all = { isJoined: true, isInside: true, isPhysicalJoined: true, methods: true };
+      const file = { ...all, filename: ["src", "deep", "a.js"], physicalFilename: ["src", "deep", "a.js"] };
+      const block = { ...all, filename: ["src", "b.txt", "0_x.js"], physicalFilename: ["src", "b.txt"] };
+      expect(said(ofOxlint)).toEqual([file]);
+      expect(said(ofEslint)).toEqual([block, file]);
+    },
+    timeout,
+  );
+
+  test(
+    "fixes that take, give and replace the byte order mark",
+    async () => {
+      const rule = (test: string, fix: string) =>
+        `{ meta: { fixable: "code" }, create: context => ({ Program(node) { if (${test}) context.report({ node, message: "mark", fix: fixer => ${fix} }); } }) }`;
+      const { files, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `const marks = { rules: {
+              never: ${rule("context.sourceCode.hasBOM", "fixer.removeRange([-1, 0])")},
+              always: ${rule("!context.sourceCode.hasBOM", 'fixer.insertTextBeforeRange([0, 1], "\\uFEFF")')},
+              again: ${rule('context.sourceCode.text.startsWith("v")', 'fixer.insertTextBeforeRange([0, 1], "\\uFEFF//\\r\\n")')},
+            } };
+            export default ["never", "always", "again"].map(name => ({ files: [name + ".js"], plugins: { marks }, rules: { ["marks/" + name]: "error" } }));`,
+          "never.js": "\uFEFFvar a;\r\n",
+          "always.js": "var a;\r\n",
+          "again.js": "\uFEFFvar a;\r\n",
+        },
+        ["--fix", "never.js", "always.js", "again.js"],
+        ["never.js", "always.js", "again.js"],
+      );
+      expect(files).toEqual({
+        "never.js": "var a;\r\n",
+        "always.js": "\uFEFFvar a;\r\n",
+        "again.js": "\uFEFF//\r\nvar a;\r\n",
+      });
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "without rules in JavaScript there is no engine",
     async () => {
@@ -1474,6 +1599,55 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect(few).toEqual([expect.stringMatching(/^[1-9]/)]);
       expect(many).toEqual(["0"]);
       expect(asked).toEqual(["2"]);
+    },
+    timeout,
+  );
+
+  test(
+    "files of 256 KB and more all go to one engine, with types and without, however many threads there are",
+    async () => {
+      const run = async (heavy: number, extension: string, threads: string) => {
+        const files: Record<string, string> = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
+          "eslint.config.mjs": `
+            import own from "./plugin.mjs";
+            export default [
+              // A pattern, which starts JavaScriptCore before any engine does.
+              { files: ["src/*"], plugins: { own }, rules: { "own/realm": "error", "id-match": ["error", "^[a-z]+$"] } },
+              {
+                files: ["**/*.ts"],
+                plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+                languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+                rules: { "@typescript-eslint/no-floating-promises": "error" },
+              },
+            ];`,
+          "plugin.mjs": `
+            const realm = String(Math.random());
+            export default { rules: { realm: { create: context => ({ Program: node => context.report({ node, message: realm }) }) } } };`,
+        };
+        const text = (size: number) => "foo;\n" + Buffer.alloc(size, "// comment\n").toString();
+        for (let i = 0; i < heavy; i++) files[`src/heavy${i}.${extension}`] = text(270_000);
+        for (let i = 0; i < 24; i++) files[`src/light${i}.${extension}`] = text(250_000);
+        const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", threads, "src"]);
+        expect(exitCode).toBe(1);
+        const realmsOf = (name: string) =>
+          JSON.parse(raw).flatMap((it: any) =>
+            it.filePath.includes(name) ? it.messages.map((it: any) => it.message) : [],
+          );
+        return {
+          heavy: [realmsOf("heavy").length, new Set(realmsOf("heavy")).size],
+          light: new Set(realmsOf("light")).size,
+        };
+      };
+      const more = availableParallelism() + 1;
+      const [one, many, typed] = await Promise.all([run(1, "js", "8"), run(more, "js", "0"), run(9, "ts", "8")]);
+      expect([one.heavy, many.heavy, typed.heavy]).toEqual([
+        [1, 1],
+        [more, 1],
+        [9, 1],
+      ]);
+      // 6 MB of the others.
+      for (const it of [one, many, typed]) expect(it.light).toBeGreaterThan(1);
     },
     timeout,
   );

@@ -19,6 +19,9 @@ pub struct NoUnusedVars {
     ignore_class_with_static_init_block: bool,
     report_used_ignore_pattern: bool,
     autofixes_imports: bool,
+    /// Options of oxlint.
+    fix_imports: FixMode,
+    fix_variables: FixMode,
     /// The options are an object.
     has_options_object: bool,
     /// An option of oxlint.
@@ -933,6 +936,141 @@ fn fix_import<'a>(fixer: Fixer<'a>, fix: ImportFix<'a>, reported: &SymbolSet) ->
     }
 }
 
+// ───────────────────────────── what oxlint changes ─────────────────────────────
+
+/// oxlint's `fix.imports` and `fix.variables`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FixMode {
+    Off,
+    Suggestion,
+    Fix,
+    SafeFix,
+}
+
+impl FixMode {
+    fn new(options: Object, key: &str) -> FixMode {
+        match options.str(key) {
+            Some("off") => FixMode::Off,
+            Some("fix") => FixMode::Fix,
+            Some("safe-fix") => FixMode::SafeFix,
+            _ => FixMode::Suggestion,
+        }
+    }
+}
+
+/// Where the white space ends that starts at `from`, with the commas in it if `with_commas`.
+fn end_of_blank(text: &[u8], from: u32, with_commas: bool) -> u32 {
+    let rest = text.get(from as usize..).unwrap_or_default();
+    let is_blank = |it: &&u8| it.is_ascii_whitespace() || **it == 0x0B || with_commas && **it == b',';
+    from + rest.iter().take_while(is_blank).count() as u32
+}
+
+/// Where the white space starts that ends at `to`: with the commas in it, or else on the line of `to`.
+fn start_of_blank(text: &[u8], to: u32, with_commas: bool) -> u32 {
+    let before = text.get(..to as usize).unwrap_or_default();
+    let is_blank = |it: &&u8| match **it {
+        b',' | b'\n' | b'\r' => with_commas,
+        it => it.is_ascii_whitespace() || it == 0x0B,
+    };
+    to - before.iter().rev().take_while(is_blank).count() as u32
+}
+
+/// oxlint's `remove_unused_import_declaration`. `reported`: all that is unused in the file.
+#[cold]
+#[inline(never)]
+fn oxlint_remove_import<'a>(fixer: Fixer<'a>, def: Declaration<'a>, reported: &SymbolSet) -> Option<Vec<Fix>> {
+    let (file, text) = (fixer.file(), fixer.file().text());
+    let import = match def {
+        Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => it,
+        Declaration::ImportSpec(it) => it.import(),
+        _ => return None,
+    };
+    let whole = import.span();
+    if are_all_specifiers_unused(import, reported) {
+        let has_break = matches!(text.get(whole.end as usize), Some(b'\n' | b'\r'));
+        let lines = Span::new(start_of_blank(text, whole.start, false), whole.end + u32::from(has_break));
+        return Some(vec![fixer.remove(lines)]);
+    }
+    let default = import.default().map(|it| it.span());
+    let Declaration::ImportSpec(specifier) = def else {
+        // `import a, * as b from "c"`, `import a, { b } from "c"`
+        let others = match import.namespace_span() {
+            Some(namespace) => namespace,
+            None => file.tokens_in(Span::after(default?, whole.end)).find(|it| it.is_punctuator("{"))?.span(),
+        };
+        return Some(vec![fixer.remove(match def {
+            Declaration::ImportDefault(_) => Span::before(default?.start, others),
+            _ => Span::after(default?, others.end),
+        })]);
+    };
+    let own = specifier.span();
+    let (before, after) = (file.token_before(own)?, file.token_after(own)?);
+    let next = if after.is_punctuator(",") { file.token_after(after)? } else { after };
+    let (is_first, is_last) = (before.is_punctuator("{"), next.is_punctuator("}"));
+    if is_first && is_last {
+        // `import a, { b } from "c"`: from the `,` to the `}`.
+        let comma = file.token_after(default?).filter(|it| it.is_punctuator(","))?;
+        return Some(vec![fixer.remove(Span::new(comma.start(), next.end()))]);
+    }
+    if is_last {
+        // With the `,` before it. One after it stays.
+        let blank_end = end_of_blank(text, own.end, false);
+        let end = if text.get(blank_end as usize) == Some(&b',') { blank_end } else { own.end };
+        return Some(vec![fixer.remove(Span::after(file.token_before(before)?.span(), end))]);
+    }
+    let blank_end = end_of_blank(text, own.end, true);
+    Some(match after.start() >= blank_end {
+        // There is a comment before the `,`.
+        true => vec![fixer.remove(own), fixer.remove(after)],
+        false => vec![fixer.remove(Span::new(own.start, blank_end))],
+    })
+}
+
+/// oxlint's `would_capture_existing_reference`: something in the scope of `symbol` means something else by `name`.
+fn oxlint_would_capture<'a>(symbol: Symbol<'a>, name: &[u8]) -> bool {
+    let scope = symbol.scope();
+    let is_captured = |it: Reference<'a>| it.is_value() && scope.contains(it.scope());
+    let outer = scope.parent().and_then(|it| it.resolve_bytes(name));
+    outer.is_some_and(|it| it.references().any(is_captured))
+        || symbol.file().unresolved_references_to(name).any(is_captured)
+}
+
+/// oxlint's `Symbol::rename` to the name of `get_unused_name`: with a `_` before it, and a number after it if that is
+/// taken.
+#[cold]
+#[inline(never)]
+fn oxlint_rename<'a>(fixer: Fixer<'a>, variable: Variable<'a>) -> Option<Vec<Fix>> {
+    let symbol = variable.symbol();
+    let mut name = [b"_", variable.name().bytes()].concat();
+    let len = name.len();
+    let mut number = 0u32;
+    while symbol.scope().get_bytes(&name).is_some() || oxlint_would_capture(symbol, &name) {
+        name.truncate(len);
+        name.extend_from_slice(number.to_string().as_bytes());
+        number += 1;
+    }
+    let mut places = vec![variable.defs().next()?.name_span()?];
+    // What a declaration initializes is no reference for oxc.
+    places.extend(variable.references().filter(|it| !it.is_init()).map(Reference::span));
+    places.dedup();
+    Some(places.into_iter().map(|it| fixer.replace(it, name.as_slice())).collect())
+}
+
+/// oxlint's `delete_from_list`: a declarator that is one of several.
+fn oxlint_remove_declarator<'a>(fixer: Fixer<'a>, declarator: VarDecl<'a>) -> Option<Fix> {
+    let file = fixer.file();
+    let mut removed = declarator.span();
+    let is_comma = |it: &Token<'a>| it.is_punctuator(",");
+    let (before, after) = (file.token_before(removed).filter(is_comma), file.token_after(removed).filter(is_comma));
+    if let Some(comma) = before {
+        removed.start = file.token_before(comma)?.end();
+    }
+    if let Some(comma) = after {
+        removed.end = file.token_after(comma)?.start();
+    }
+    Some(fixer.replace(removed, if before.is_some() && after.is_some() { ", " } else { "" }))
+}
+
 // ───────────────────────────── the rule ─────────────────────────────
 
 impl NoUnusedVars {
@@ -1037,6 +1175,100 @@ impl NoUnusedVars {
         }
     }
 
+    /// oxlint's `rename_or_remove_var_declaration`. `own`: where the declarator binds the name.
+    #[cold]
+    #[inline(never)]
+    fn oxlint_fix_variable<'a>(&self, fixer: Fixer<'a>, variable: Variable<'a>, own: Pat<'a>) -> Option<Vec<Fix>> {
+        let (file, text) = (fixer.file(), fixer.file().text());
+        let Some(Node::VarDecl(declarator)) = Declaration::Var(own).node() else {
+            return None;
+        };
+        let is_kept = |init: Expr<'a>| match init.skip_type_wrappers().tag() {
+            ExprTag::Fn => variable.scope() == file.top_level_scope(),
+            tag => tag == ExprTag::Await,
+        };
+        let Node::Stmt(statement) = declarator.parent() else {
+            return None;
+        };
+        let StmtKind::Var(declarators) = statement.kind() else {
+            return None;
+        };
+        if declarator.init().is_some_and(is_kept) {
+            return None;
+        }
+        let is_in_head =
+            matches!(statement.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf));
+        if is_in_head || variable.references().any(|it| !it.is_init()) {
+            let can_rename = match &self.vars_ignore_pattern {
+                Some(pattern) => pattern.source() == "^_",
+                None => self.oxlint_ignores_underscore_by_default(file),
+            };
+            return if can_rename { oxlint_rename(fixer, variable) } else { None };
+        }
+        // What it is in a pattern, whether that is `...a`, an array, and it the last in it, and how much the pattern has.
+        let is_in_whole = |parent: Node<'a>| parent == Node::Pat(declarator.pat());
+        let (part, is_rest, is_in_array, is_last, count) = match (own.parent(), declarator.pat().kind()) {
+            (Node::VarDecl(_), _) if declarators.len() > 1 => {
+                return Some(vec![oxlint_remove_declarator(fixer, declarator)?]);
+            }
+            (Node::VarDecl(_), _) => return Some(vec![fixer.remove(statement)]),
+            (Node::PatProp(it), PatKind::Object(all)) if is_in_whole(it.parent()) => {
+                (it.span(), it.is_rest(), false, true, all.len())
+            }
+            (Node::PatElem(it), PatKind::Array(all)) if is_in_whole(it.parent()) => {
+                (it.span(), it.is_rest(), true, all.last() == Some(it), all.len())
+            }
+            _ => return None,
+        };
+        match (is_rest, count) {
+            (false, 1) => return (declarators.len() == 1).then(|| vec![fixer.remove(statement)]),
+            (true, 3..) => return None,
+            _ => {}
+        }
+        let start = match is_in_array && is_last && count > 1 {
+            true => start_of_blank(text, part.start, true),
+            false => part.start,
+        };
+        let removed = Span::new(start, end_of_blank(text, part.end, true));
+        // In an array the ones after it stay where they are.
+        Some(vec![fixer.replace(removed, if is_last { "" } else { "," })])
+    }
+
+    /// What oxlint makes of a variable that `def` declares. `reported`: all that is unused in the file.
+    #[cold]
+    #[inline(never)]
+    fn oxlint_fix<'a>(
+        &self,
+        fixer: Fixer<'a>,
+        variable: Variable<'a>,
+        def: Declaration<'a>,
+        reported: &SymbolSet,
+    ) -> Option<Vec<Fix>> {
+        let file = fixer.file();
+        match def {
+            // oxlint's `remove_unused_catch_parameter`: with the parentheses.
+            Declaration::Var(_) if def.is_catch_parameter() => {
+                let Some(Node::VarDecl(parameter)) = def.node() else {
+                    return None;
+                };
+                let open = file.token_before(parameter.pat()).filter(|it| it.is_punctuator("("))?;
+                let close = file.token_after(parameter.binding_span()).filter(|it| it.is_punctuator(")"))?;
+                Some(vec![fixer.remove(Span::new(open.start(), close.end()))])
+            }
+            Declaration::Var(own) => self.oxlint_fix_variable(fixer, variable, own),
+            // oxlint's `rename_unused_function_parameter`
+            Declaration::Param(own) => {
+                let can_rename = match &self.args_ignore_pattern {
+                    Some(pattern) => pattern.source() == "^_",
+                    None => self.oxlint_ignores_underscore_by_default(file),
+                };
+                let is_plain = matches!(own.parent(), Node::Param(it) if !it.is_rest() && !it.is_parameter_property());
+                if can_rename && is_plain { oxlint_rename(fixer, variable) } else { None }
+            }
+            _ => oxlint_remove_import(fixer, def, reported),
+        }
+    }
+
     fn report<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -1077,6 +1309,21 @@ impl NoUnusedVars {
             .data("additional", additional);
         if is_oxlint {
             report = report.data("text", self.oxlint_text(unused_var, message));
+            let Some(def) = unused_var.defs().next() else {
+                return;
+            };
+            let is_import = def.kind() == Some(DeclarationKind::ImportBinding);
+            let fix = |fixer: Fixer<'a>| self.oxlint_fix(fixer, unused_var, def, reported);
+            match if is_import { self.fix_imports } else { self.fix_variables } {
+                FixMode::Off => {}
+                _ if matches!(def, Declaration::ImportEquals(_)) => {}
+                FixMode::SafeFix => drop(report.fix(fix)),
+                FixMode::Suggestion if is_import || def.is_catch_parameter() => {
+                    report.suggest_with(REMOVE_UNUSED_VAR, &[("varName", name.bytes())], fix);
+                }
+                _ => drop(report.fix_dangerously(fix)),
+            }
+            return;
         }
         let Some(fix) = get_import_fixer(unused_var, reported) else {
             return;
@@ -1300,6 +1547,7 @@ impl NoUnusedVars {
         }
 
         let mut used_beside_infer = None;
+        let mut found = Vec::new();
         for unused_var in unused_vars {
             if file.language().is_oxlint
                 && (oxlint_leaves_alone(unused_var)
@@ -1321,6 +1569,15 @@ impl NoUnusedVars {
             {
                 continue;
             }
+            found.push((unused_var, used_only_as_type));
+        }
+        // What oxlint makes of an import depends on which of the others are unused.
+        if file.language().is_oxlint {
+            for (unused_var, _) in &found {
+                reported.insert(unused_var.symbol());
+            }
+        }
+        for (unused_var, used_only_as_type) in found {
             let action = match unused_var.references().any(Reference::is_write) {
                 true => "assigned a value",
                 false => "defined",
@@ -1362,6 +1619,8 @@ impl Rule for NoUnusedVars {
             ignore_class_with_static_init_block: object.bool_or("ignoreClassWithStaticInitBlock", false),
             report_used_ignore_pattern: object.bool_or("reportUsedIgnorePattern", false),
             autofixes_imports: object.object("enableAutofixRemoval").bool_or("imports", false),
+            fix_imports: FixMode::new(object.object("fix"), "imports"),
+            fix_variables: FixMode::new(object.object("fix"), "variables"),
             has_options_object: options.get(0).is_some_and(|it| it.as_object().is_some()),
             reports_vars_only_used_as_types: object.bool_or("reportVarsOnlyUsedAsTypes", false),
             vars_ignore_pattern: Pattern::new(object, "varsIgnorePattern"),

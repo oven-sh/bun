@@ -51,21 +51,6 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     found
 }
 
-/// What steers a `bun` process and is not meant for the one that runs a configuration file. All else is passed on: ESLint and
-/// Prettier run the file in their own process, so it sees what they were started with.
-const NOT_FOR_SCRIPTS: [&[u8]; 7] = [
-    // This process has applied these flags. `--cwd=sub` would be applied once more, in `sub`.
-    b"BUN_OPTIONS",
-    // A debugger in every such process, which can wait for its client for ever. Editors set these for all that their terminals start.
-    b"BUN_INSPECT",
-    b"BUN_INSPECT_CONNECT_TO",
-    b"BUN_INSPECT_NOTIFY",
-    b"BUN_INSPECT_PRELOAD",
-    // The channel to what has started this process. The descriptor is not passed on.
-    b"NODE_CHANNEL_FD",
-    b"NODE_CHANNEL_SERIALIZATION_MODE",
-];
-
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
@@ -74,7 +59,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     };
     let mut variables = bun_dotenv::Loader::init();
     let read = variables.load_process();
-    for name in NOT_FOR_SCRIPTS {
+    for name in Script::NOT_INHERITED {
         variables.map.remove(name);
     }
     let Ok(envp) = read.and_then(|()| variables.map.create_null_delimited_env_map()) else {

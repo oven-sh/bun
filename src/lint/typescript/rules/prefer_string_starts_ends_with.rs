@@ -296,6 +296,13 @@ impl PreferStringStartsEndsWith {
         if !is_null(it.right) || !is_string_type(it.object) {
             return;
         }
+        // What `match` gives is never `undefined`: tsgolint 7.0 leaves `=== undefined`.
+        if cx.language().is_oxlint
+            && matches!(it.op, BinOp::EqEqEq | BinOp::NotEqEq)
+            && !matches!(static_value(it.right), Some(StaticValue::Null))
+        {
+            return;
+        }
         let Some((side, text)) = parse_reg_exp(argument) else {
             return;
         };

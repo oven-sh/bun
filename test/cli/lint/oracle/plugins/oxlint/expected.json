@@ -4157,5 +4157,6 @@
   "d.ts:5:24 typescript(no-unnecessary-type-assertion)",
   "d.ts:7:26 typescript(no-unnecessary-type-assertion)",
   "z.ts:2:18 typescript(no-unnecessary-type-assertion)"
- ]
+ ],
+ "no-useless-assignment/what-only-a-type-query-reads": []
 }

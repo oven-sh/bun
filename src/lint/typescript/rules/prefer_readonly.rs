@@ -155,6 +155,13 @@ impl<'a> ClassScope<'a> {
         {
             return;
         }
+        // tsgolint 7.0 leaves `private [a] = 1`.
+        if let ParameterOrPropertyDeclaration::Property(member) = node
+            && member.file().language().is_oxlint
+            && key.is_some_and(Key::is_computed)
+        {
+            return;
+        }
         let member_name = match node {
             ParameterOrPropertyDeclaration::Parameter(param) => param.pat().as_ident().map(|name| name.bytes()),
             ParameterOrPropertyDeclaration::Property(member) => key.and_then(|key| get_member_name(key, member.file())),

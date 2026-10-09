@@ -12,7 +12,7 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Engine, Host, Loading, Route};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
 use bun_lint::linter::{FileConfig, LintMessage, Linter, Registry, RuleId};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -45,6 +45,23 @@ pub struct Script<'s> {
     pub arguments: &'s [&'s [u8]],
     /// The working directory.
     pub cwd: &'s [u8],
+}
+
+impl Script<'_> {
+    /// The variables of the environment that steer a `bun` process and are not meant for the one that runs the program. It
+    /// inherits all others: ESLint and Prettier run a configuration file in their own process, so it sees what they were started with.
+    pub const NOT_INHERITED: [&'static [u8]; 7] = [
+        // This process has applied these flags. `--cwd=sub` would be applied once more, in `sub`.
+        b"BUN_OPTIONS",
+        // A debugger in every such process, which can wait for its client for ever. Editors set these for all that their terminals start.
+        b"BUN_INSPECT",
+        b"BUN_INSPECT_CONNECT_TO",
+        b"BUN_INSPECT_NOTIFY",
+        b"BUN_INSPECT_PRELOAD",
+        // The channel to what has started this process. The descriptor is not passed on.
+        b"NODE_CHANNEL_FD",
+        b"NODE_CHANNEL_SERIALIZATION_MODE",
+    ];
 }
 
 /// What `bun lint` takes from the process that it runs in.
@@ -144,8 +161,9 @@ enum Needs {
     Engine,
     /// One for which the engine has to run the configuration file, with all that it imports.
     Configuration,
-    /// ESLint's own `Linter`, with a parser that makes a TypeScript program: gigabytes, in each engine that is given such a file.
-    Program,
+    /// What makes an engine grow: a file of [`HEAVY`] bytes, or ESLint's own `Linter` with a parser that makes a TypeScript
+    /// program: gigabytes.
+    Heavy,
 }
 
 fn needs(target: &Target) -> Needs {
@@ -155,7 +173,7 @@ fn needs(target: &Target) -> Needs {
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
     let route = target.route();
     if route != Route::Native && config.language.wants_types {
-        return Needs::Program;
+        return Needs::Heavy;
     }
     let processor = config
         .processor_location
@@ -167,11 +185,20 @@ fn needs(target: &Target) -> Needs {
             .clone()
             .any(|it| it.configured.rule.needs_the_configuration)
     {
-        Needs::Configuration
+        Needs::Configuration.or_heavy(target)
     } else if on.next().is_some() || route != Route::Native {
-        Needs::Engine
+        Needs::Engine.or_heavy(target)
     } else {
         Needs::Nothing
+    }
+}
+
+impl Needs {
+    fn or_heavy(self, target: &Target) -> Needs {
+        match target.size >= HEAVY as u64 {
+            true => Needs::Heavy,
+            false => self,
+        }
     }
 }
 
@@ -696,7 +723,7 @@ impl Run<'_> {
         let most_engines = (pool.threads())
             .min(MOST_ENGINES)
             .min(context.js_plugins.most_realms());
-        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Program);
+        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         (context.js_plugins).expect(with_engine.count(), size, most_engines);
         if !with_types.is_empty() {
@@ -719,7 +746,7 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (with_program, with_engine) = with_engine.split_at(count(Needs::Program));
+        let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
         let (taken, first, last) = (
             AtomicUsize::new(0),
             AtomicUsize::new(0),
@@ -749,8 +776,8 @@ impl Run<'_> {
                     }
                 }
             };
-            if worker == 0 && !with_program.is_empty() {
-                let mut lint_all = || with_program.iter().for_each(|target| lint(target));
+            if worker == 0 && !heavy.is_empty() {
+                let mut lint_all = || heavy.iter().for_each(|target| lint(target));
                 if context.js_plugins.keep_a_realm(&mut lint_all).is_err() {
                     lint_all();
                 }

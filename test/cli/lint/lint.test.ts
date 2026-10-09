@@ -3044,6 +3044,19 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  // ESLint prints its report and never ends.
+  test.each([
+    ["a timer", "setInterval(() => {}, 1000);"],
+    ["a server", `import { createServer } from "node:http";\ncreateServer().listen(0);`],
+  ])("a configuration file that leaves %s behind", async (_, code) => {
+    // More than a pipe holds.
+    const config = `${code}\nexport default [{ rules: { "no-debugger": "error" }, settings: { s: "x".repeat(3 << 20) } }];`;
+    const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };
+    const result = await bun(all, ["lint", "-f", "unix", "a.js"]);
+    expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
+    expect(result.exitCode).toBe(1);
+  });
+
   test("what else this process was started with is", async () => {
     const config = `export default [{ rules: { [process.env.THE_RULE]: "error" } }];`;
     const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };

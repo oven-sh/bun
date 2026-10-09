@@ -19,7 +19,8 @@ pub trait Engine: Sync {
     /// `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and `then` was not called.
     fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
 
-    /// Calls `then`. Whatever asks for a realm meanwhile, on this thread, has the same one. `Err`: as of [`Engine::with_vm`].
+    /// Calls `then`. Whatever asks for a realm meanwhile, on this thread, has the same one: that for [`HEAVY`] files. `Err`: as of
+    /// [`Engine::with_vm`].
     fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
         self.with_vm(0, &mut |_| then())
     }
@@ -33,6 +34,10 @@ pub trait Engine: Sync {
         usize::MAX
     }
 }
+
+/// A file of this size is heavy: its tree, tokens and lines take about 150 bytes in a realm for each of its own, and a realm keeps
+/// what it has grown to. So all heavy files go to one realm, one at a time. 0.24 % of the files of 391 repositories are.
+pub const HEAVY: usize = 256 << 10;
 
 /// How much of what a realm costs it has to save: time against memory. With 0.5 openlayers (8 MB) and mermaid (7 MB) have 3 realms
 /// and vscode (180 MB) 16, and none takes twice the memory of ESLint. With 1 they have 3, 2 and 13, with 0.25 4, 4 and 16.

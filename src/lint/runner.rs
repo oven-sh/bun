@@ -7,9 +7,9 @@ use crate::ast::{
 };
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
+use crate::literal::Literal;
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
-use crate::semantic::Symbol;
 use crate::span::Span;
 use bun_sema::hir;
 use std::cell::OnceCell;
@@ -565,9 +565,22 @@ impl RuleEntry {
     }
 }
 
+// Lists, and not functions that are given a `&mut dyn FnMut`: in `run_unordered` that would be made of a closure that has
+// the type of the rule, with a table of its own for each rule. The linker of macOS folds code alone, so to it functions
+// that refer to tables with the same content are not the same.
+
 #[inline(never)]
-fn every_symbol<'a>(file: &'a File<'a>, visit: &mut dyn FnMut(Symbol<'a>)) {
-    file.symbols().for_each(visit);
+fn number_literals<'a>(file: &'a File<'a>) -> Vec<Literal<'a>> {
+    let mut all = Vec::new();
+    file.every_number_literal(&mut |it| all.push(it));
+    all
+}
+
+#[inline(never)]
+fn nodes_of<'a>(file: &'a File<'a>, tags: NodeTags) -> Vec<Node<'a>> {
+    let mut all = Vec::new();
+    file.every_node_of(tags, &mut |node| all.push(node));
+    all
 }
 
 /// A rule at work on a file.
@@ -670,13 +683,19 @@ fn run_unordered<'a, R: Rule>(
                 file.every_string_literal(|it| listener(rule, it, cx))
             }
             Entry::NumberLiterals(listener) => {
-                file.every_number_literal(&mut |it| listener(rule, it, cx))
+                for it in number_literals(file) {
+                    listener(rule, it, cx);
+                }
             }
             Entry::Symbols(listener) => {
-                every_symbol(file, &mut |symbol| listener(rule, symbol, cx))
+                for symbol in file.symbols() {
+                    listener(rule, symbol, cx);
+                }
             }
             Entry::Nodes(tags, listener) => {
-                file.every_node_of(tags, &mut |node| listener(rule, node, cx))
+                for node in nodes_of(file, tags) {
+                    listener(rule, node, cx);
+                }
             }
             Entry::Enter(..)
             | Entry::Exit(..)

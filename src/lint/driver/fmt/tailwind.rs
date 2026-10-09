@@ -361,9 +361,13 @@ impl Classes {
             &mut text,
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
-        fs::write_new_atomically(&question, &text).map_err(|error| fail(&fs::describe(&error)))?;
-        let answer = evaluate_at(environment, SCRIPT, &question, Some(kept))
-            .map_err(|Fatal(error)| error)?;
+        // Another `bun format` can be asking at the same time.
+        let own = fs::temporary_name(&question);
+        fs::write_new(&own, &text).map_err(|error| fail(&fs::describe(&error)))?;
+        let answer = evaluate_at(environment, SCRIPT, &own, Some(kept));
+        // The next run asks it again if Tailwind has changed.
+        fs::rename_or_remove(&own, &question);
+        let answer = answer.map_err(|Fatal(error)| error)?;
         match known.take_in(&answer) {
             Some(error) => Err(fail(&error)),
             None => Ok(()),

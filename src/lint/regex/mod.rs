@@ -32,9 +32,8 @@
 //! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
 //! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape_string_regexp`](crate::utils::text::escape_string_regexp) |
 //!
-//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. Those that
-//! search with the same one at the same time take turns. [`Regex::test`] and [`Regex::find`] start at 0
-//! whatever the flags.
+//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`]
+//! and [`Regex::find`] start at 0 whatever the flags.
 //!
 //! # Text and positions
 //!

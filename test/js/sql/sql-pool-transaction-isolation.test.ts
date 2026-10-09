@@ -5,8 +5,9 @@
 // Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import type net from "node:net";
+import { join } from "node:path";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -436,6 +437,82 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         { conn: 0, sql: "SELECT 'still reserved'" },
       ]);
     } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // unsafe() and file() take their values as an array. Only undefined and null mean "no
+  // values": 0, false and "" are rejected like 5, true and "abc", and nothing is sent.
+  const scalars = [0, -0, NaN, false, "", 0n, 5, true, "abc", 1n];
+  const notAnArray = "values must be an array";
+  const rejection = (query: PromiseLike<unknown>) =>
+    query.then(
+      () => null,
+      e => e.message,
+    );
+
+  test("a scalar as the values of unsafe() or file() is rejected in a transaction and on a reservation", async () => {
+    using dir = tempDir("sql-scalar-values", { "query.sql": "SELECT 'never sent'" });
+    const file = join(String(dir), "query.sql");
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const rejections = async (handle: Bun.ReservedSQL | Bun.TransactionSQL) => {
+        for (const value of scalars) {
+          expect({
+            value,
+            unsafe: await rejection(handle.unsafe("SELECT 'never sent'", value as any)),
+            file: await rejection(handle.file(file, value as any)),
+          }).toEqual({ value, unsafe: notAnArray, file: notAnArray });
+        }
+      };
+
+      const reserved = await sql.reserve();
+      try {
+        await rejections(reserved);
+      } finally {
+        reserved.release();
+      }
+      await sql.begin(rejections);
+
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("sql.unsafe passed to Array#map rejects its first query like the others", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      // Array#map passes the index as the second argument: 0, then 1.
+      const queries = ["SELECT 'a'", "SELECT 'b'"].map(sql.unsafe as any) as PromiseLike<unknown>[];
+      expect(await Promise.all(queries.map(query => rejection(query)))).toEqual([notAnArray, notAnArray]);
+      expect(received).toEqual([]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("undefined, null and an empty array as the values of unsafe() still mean no values", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      class Values extends Array<unknown> {}
+      for (const values of [undefined, null, [], new Values()]) {
+        await sql.unsafe("SELECT 'sent'", values as any);
+      }
+      expect(received.map(r => r.sql)).toEqual(["SELECT 'sent'", "SELECT 'sent'", "SELECT 'sent'", "SELECT 'sent'"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }
   });

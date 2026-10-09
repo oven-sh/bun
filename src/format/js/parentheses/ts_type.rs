@@ -34,11 +34,11 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
             {
                 return true;
             }
-            function_like_type_needs_parentheses(ty, parent, func.return_type())
+            function_like_type_needs_parentheses(ty, parent, func.return_type(), f)
         }
         TypeKind::Infer(param) => match effective_parent(ty.ast_parent()) {
             AstNodes::TSIntersectionType(_) | AstNodes::TSUnionType(_) => {
-                param.constraint().is_some()
+                param.constraint().is_some() || every_infer_in_union_has_parentheses(f)
             }
             AstNodes::TSRestType(_) => false,
             parent => operator_type_or_higher_needs_parens(ty, parent),
@@ -88,10 +88,22 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
     }
 }
 
+/// `A extends (infer B) | C`. Prettier writes the parentheses only if `B` has a constraint.
+fn every_infer_in_union_has_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `A extends ((b: B) => b is C) ? D : E`. Prettier writes the parentheses only if `C` is an `infer` with a
+/// constraint.
+fn every_predicate_after_extends_has_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 fn function_like_type_needs_parentheses<'a>(
     ty: TypeNode<'a>,
     parent: AstNodes<'a>,
     return_type: Option<TypeNode<'a>>,
+    f: &Formatter<'a>,
 ) -> bool {
     match parent {
         AstNodes::TSConditionalType(conditional) => {
@@ -105,6 +117,11 @@ fn function_like_type_needs_parentheses<'a>(
                 return false;
             }
             let return_type = match return_type.map(TypeNode::kind) {
+                Some(TypeKind::Predicate { ty: Some(_), .. })
+                    if every_predicate_after_extends_has_parentheses(f) =>
+                {
+                    return true;
+                }
                 Some(TypeKind::Predicate {
                     ty: Some(asserted), ..
                 }) => Some(asserted),

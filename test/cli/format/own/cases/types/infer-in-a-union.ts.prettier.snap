@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A<T> = T extends infer P | undefined ? P : never;
+type B<T> = T extends infer P & object ? P : never;
+type C<T> = T extends (infer P extends string) | undefined ? P : never;
+type D<T> = T extends infer P | undefined ? P : never;
+type E<T> = T extends [...infer P] ? P : never;
+type F<T> = T extends (infer P)[] ? P : never;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A<T> = T extends infer P | undefined ? P : never;
+type B<T> = T extends infer P & object ? P : never;
+type C<T> = T extends (infer P extends string) | undefined ? P : never;
+type D<T> = T extends infer P | undefined ? P : never;
+type E<T> = T extends [...infer P] ? P : never;
+type F<T> = T extends (infer P)[] ? P : never;
+
+===================== End =====================

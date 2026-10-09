@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A<T> = T extends (x: any) => x is infer U ? U : never;
+type B<T> = T extends (x: any) => x is infer U ? U : never;
+type C<T> = T extends (x: any) => x is string ? 1 : never;
+type D<T> = T extends (x: any) => asserts x ? 1 : never;
+type E<T> = T extends (x: any) => asserts x is string ? 1 : never;
+type F<T> = T extends (x: any) => infer U ? U : never;
+type G<T> = T extends ((x: any) => infer U extends string) ? U : never;
+type H<T> = T extends (new (x: any) => infer U extends string) ? U : never;
+export type Guarded<T> = T extends (x: any, ...args: any[]) => x is infer U
+  ? U
+  : never;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A<T> = T extends (x: any) => x is infer U ? U : never;
+type B<T> = T extends (x: any) => x is infer U ? U : never;
+type C<T> = T extends (x: any) => x is string ? 1 : never;
+type D<T> = T extends (x: any) => asserts x ? 1 : never;
+type E<T> = T extends (x: any) => asserts x is string ? 1 : never;
+type F<T> = T extends (x: any) => infer U ? U : never;
+type G<T> = T extends ((x: any) => infer U extends string) ? U : never;
+type H<T> = T extends (new (x: any) => infer U extends string) ? U : never;
+export type Guarded<T> = T extends (x: any, ...args: any[]) => x is infer U ? U : never;
+
+===================== End =====================

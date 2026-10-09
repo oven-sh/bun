@@ -45,6 +45,8 @@ fn defines_path() -> FsPath<'static> {
 // `process.env.*` → define entries
 // ══════════════════════════════════════════════════════════════════════════
 
+pub(crate) const PROCESS_ENV: &[u8] = b"process.env.";
+
 fn env_string_store_put(
     store: &mut UserDefinesArray,
     bump: &bun_alloc::Arena,
@@ -80,7 +82,6 @@ pub(crate) fn copy_env_for_define(
     bump: &bun_alloc::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
-    const PROCESS_ENV: &[u8] = b"process.env.";
 
     if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
         return Ok(());

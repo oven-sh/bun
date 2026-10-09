@@ -474,6 +474,32 @@ fn written(name: &[u8], value: &bun_lint::options::Json) -> Vec<(Vec<u8>, Vec<u8
     }
 }
 
+/// What `text` says, as Bun's parsers for JSON, JSON5 and YAML read it. Nothing: they do not read it.
+fn value_of(target: &str, path: &str, text: &[u8]) -> Option<bun_lint::options::Json> {
+    use bun_lint::json::{Notation, parse, parse_as};
+    use bun_lint::options::Json;
+    /// Prettier drops the blanks at the ends of the lines of a block scalar, and line breaks at its end.
+    fn without_blanks_at_ends(value: Json) -> Json {
+        let text = |text: Vec<u8>| {
+            let lines: Vec<&[u8]> = text.split(|&it| it == b'\n').map(<[u8]>::trim_ascii_end).collect();
+            lines.join(&b'\n').trim_ascii_end().to_vec()
+        };
+        match value {
+            Json::String(it) => Json::String(text(it)),
+            Json::Array(all) => Json::Array(all.into_iter().map(without_blanks_at_ends).collect()),
+            Json::Object(all) => {
+                Json::Object(all.into_iter().map(|(key, value)| (text(key), without_blanks_at_ends(value))).collect())
+            }
+            other => other,
+        }
+    }
+    match target {
+        "yaml" => parse_as(Notation::Yaml, text).ok().map(without_blanks_at_ends),
+        _ if path.ends_with(".json5") => parse_as(Notation::Json5, text).ok(),
+        _ => parse(text),
+    }
+}
+
 /// `options` without what moves or removes things: sorted imports, sorted keys, formatted JSDoc comments. Nothing: they ask
 /// for none of that.
 fn without_steps(options: &FormatOptions) -> Option<FormatOptions> {
@@ -738,6 +764,16 @@ fn run(data: &[u8]) {
     if printed / target.growth.max(1) > text.len() + 64 && target.growth != usize::MAX {
         let detail = format!("{} bytes become {printed}, and {} with the indentation", text.len(), once.len());
         run.report("growth", &variant, &detail);
+    }
+    // The value that Bun's own parser reads is the same before and after.
+    let wraps_prose = input.has(13) || input.has(14);
+    if matches!(target.name, "json" | "yaml") && plain.is_none() && input.flags >> 30 < 2 && !wraps_prose {
+        let values = run.guarded(|| (value_of(target.name, path, text), value_of(target.name, path, &once)));
+        match values {
+            Some((Some(before), Some(after))) if before != after => run.report("value-changed", &variant, ""),
+            Some((Some(_), None)) => run.report("value-cannot-be-read", &variant, ""),
+            _ => {}
+        }
     }
     match &plain {
         Some(Ok(plain)) => {

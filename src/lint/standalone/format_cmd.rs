@@ -9,6 +9,7 @@
 //!   written there. `oxfmt-fixtures <fixtures>`: those of oxfmt.
 //! - `check-idempotent <paths..>`: formatting what has been formatted changes nothing.
 //! - `verify <paths..>`: what has been formatted is the same program. See `bun_format::verify`.
+//! - `letters <paths..>`: see `letters.rs`.
 //! - `verify-pairs`: answers whether the second of two texts is the same program as the first.
 //!   test/cli/format/oracle/verify-mutants.ts talks to it.
 //! - `bench <paths..> [--iterations=n] [--threads=n] [--check] [--only=parse]`: MB/s, with and without parsing.
@@ -18,6 +19,7 @@
 mod bench;
 mod conformance;
 mod cursor;
+mod letters;
 mod markdown;
 mod sort_imports;
 mod value;
@@ -538,6 +540,7 @@ pub(crate) fn run(args: &[String]) {
         }
         Some("check-idempotent") => check_idempotent(&args),
         Some("value") => value::run(&args),
+        Some("letters") => letters::run(&args),
         Some("verify") => verify::verify(&args),
         Some("verify-pairs") => verify::verify_pairs(&args),
         Some("bench") => bench::bench(&args),

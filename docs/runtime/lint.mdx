@@ -176,18 +176,18 @@ With `--allow-unsupported` these lines are warnings, and the exit code is that o
 
 No tool reads the configuration files of another. So `bun lint` first decides which tool it stands in for: it looks in the working directory, then in each parent directory, for the first of this list:
 
-1. `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
-2. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
+1. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
+2. `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
 3. [The files of ESLint 8](#eslintrc)
 
 Only the files of that tool count, also in the directories further down. For each file, `bun lint` uses the nearest of them: it looks in the directory of the file, then in each parent directory. Apart from the files of ESLint 8, configuration files are not merged.
 
 The working directory decides. In a directory that has a configuration file of ESLint of its own, inside a project with an `.oxlintrc.json`, run `bun lint` from the root of the project, or pass `--flavor=oxlint`.
 
-If a directory has an `eslint.config.js` and an `.oxlintrc.json`, `bun lint` says which one it uses. That is the `eslint.config.js`, unless it has no rules for JavaScript, or the command line has a flag that only oxlint has, such as `-D`. Use `--flavor` to choose:
+If a directory has an `eslint.config.js` and an `.oxlintrc.json`, `bun lint` uses the `.oxlintrc.json`, and says so. Use `--flavor` to choose:
 
 ```bash terminal icon="terminal"
-bun lint --flavor=oxlint
+bun lint --flavor=eslint
 ```
 
 Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.

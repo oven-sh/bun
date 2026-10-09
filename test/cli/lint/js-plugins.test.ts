@@ -1181,6 +1181,52 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `eslint-plugin-rulesdir` and the plugin of nodejs/node: without the assignment the plugin has no rules.
+  test(
+    "a plugin that the configuration file tells where its rules are",
+    async () => {
+      const rule = (message: string) =>
+        `module.exports = { create: context => ({ Program(node) { context.report({ node, message: "${message}" }); } }) };`;
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import local from "./local.cjs";
+          import other from "./other.mjs";
+          local.RULES_DIR = new URL("./rules", import.meta.url).pathname;
+          export default [
+            { files: ["a.js"], plugins: { local, other }, rules: { "local/one": "error", "local/two": "error", "other/last": "error" } },
+          ];`,
+          "local.cjs": `
+          const { readdirSync } = require("node:fs");
+          const { resolve } = require("node:path");
+          let cache;
+          module.exports = {
+            get rules() {
+              const directory = module.exports.RULES_DIR;
+              if (!directory) return {};
+              cache ??= Object.fromEntries(readdirSync(directory).map(file => [file.slice(0, -3), require(resolve(directory, file))]));
+              return cache;
+            },
+          };`,
+          "rules/one.js": rule("one"),
+          "rules/two.js": rule("two"),
+          "other.mjs": `export default { rules: { last: { create: context => ({ Program(node) { context.report({ node, message: "last" }); } }) } } };`,
+          "a.js": "1;\n",
+        },
+        ["-f", "unix"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: one [Error/local/one]
+        <dir>/a.js:1:1: two [Error/local/two]
+        <dir>/a.js:1:1: last [Error/other/last]
+
+        3 problems"
+      `);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "without rules in JavaScript there is no engine",
     async () => {

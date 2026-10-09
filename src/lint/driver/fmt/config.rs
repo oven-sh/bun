@@ -423,22 +423,47 @@ pub(super) fn has_configuration_of_oxfmt(directory: &[u8]) -> bool {
         .any(|name| fs::is_file(&paths::join(directory, name)))
 }
 
-/// Whether the `package.json` nearest to `directory` has oxfmt among its dependencies, or Vite+, which brings it, and
-/// whether it has Prettier. That tells what a project without a configuration file is formatted with.
-fn formatters_depended_on(directory: &[u8]) -> (bool, bool) {
-    let nearest = paths::ancestors(directory)
-        .find_map(|it| fs::read(&paths::join(it, b"package.json")).ok())
-        .and_then(|text| json::parse(&text));
-    let Some(json) = nearest else {
-        return (false, false);
-    };
-    let has = |name: &[u8]| {
-        [&b"dependencies"[..], b"devDependencies"]
-            .iter()
-            .any(|key| json.get(key).is_some_and(|it| it.get(name).is_some()))
-    };
-    (has(b"oxfmt") || has(b"vite-plus"), has(b"prettier"))
+/// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
+/// formatted with.
+#[derive(Copy, Clone, Default)]
+struct Formatters {
+    oxfmt: bool,
+    /// It brings oxfmt, as `vp fmt`, whose options are the `fmt` of the `vite.config.ts`.
+    vite_plus: bool,
+    prettier: bool,
 }
+
+impl Formatters {
+    /// Those in the `package.json` nearest to `directory`.
+    fn depended_on(directory: &[u8]) -> Formatters {
+        let nearest = paths::ancestors(directory)
+            .find_map(|it| fs::read(&paths::join(it, b"package.json")).ok())
+            .and_then(|text| json::parse(&text));
+        let Some(json) = nearest else {
+            return Formatters::default();
+        };
+        let has = |name: &[u8]| {
+            [&b"dependencies"[..], b"devDependencies"]
+                .iter()
+                .any(|key| json.get(key).is_some_and(|it| it.get(name).is_some()))
+        };
+        Formatters {
+            oxfmt: has(b"oxfmt"),
+            vite_plus: has(b"vite-plus"),
+            prettier: has(b"prettier"),
+        }
+    }
+}
+
+/// Where Vite+ has its configuration.
+const NAMES_OF_VITE: [&[u8]; 6] = [
+    b"vite.config.ts",
+    b"vite.config.mts",
+    b"vite.config.cts",
+    b"vite.config.js",
+    b"vite.config.mjs",
+    b"vite.config.cjs",
+];
 
 impl Config {
     fn new(path: &[u8], json: &Json, is_oxfmt: bool) -> Config {
@@ -596,11 +621,14 @@ impl<'c> Configs<'c> {
             unsupported_options: Guarded::new(Vec::new()),
             classes: Arc::default(),
         };
+        let mut formatters = Formatters::default();
         let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
             Ok(scope) => match &scope.config {
                 Some(config) => config.is_oxfmt,
                 None => options.is_like_oxfmt.unwrap_or_else(|| {
-                    let (has_oxfmt, has_prettier) = formatters_depended_on(&environment.cwd);
+                    formatters = Formatters::depended_on(&environment.cwd);
+                    let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
+                    let has_prettier = formatters.prettier;
                     if has_oxfmt && has_prettier {
                         configs.warn(&[
                             b"There is no configuration file, and the project depends on both oxfmt and prettier: files are formatted like Prettier does. --flavor oxfmt, or an .oxfmtrc.json, which bun format --init writes, changes that.",
@@ -626,9 +654,25 @@ impl<'c> Configs<'c> {
                 || (is_oxfmt && !strings::contains(name, b"prettier") && name != b"package.json");
             configs.named = Some(match configs.load(&path, is_oxfmt) {
                 Ok(Some(config)) => Ok(config),
+                Ok(None) if NAMES_OF_VITE.contains(&name) => Err(Fatal(
+                    [
+                        b"Failed to load configuration file.\nExpected a `fmt` field in the default export of ",
+                        &path[..],
+                    ]
+                    .concat(),
+                )),
                 Ok(None) => Ok(Arc::new(Config::new(&path, &Json::Null, is_oxfmt))),
                 Err(error) => Err(error),
             });
+        } else if is_oxfmt && formatters.vite_plus {
+            // One for the whole project: the nearest from the working directory upwards that has `fmt`.
+            configs.named = paths::ancestors(&environment.cwd)
+                .filter_map(|directory| {
+                    (NAMES_OF_VITE.iter())
+                        .map(|name| paths::join(directory, name))
+                        .find(|path| fs::is_file(path))
+                })
+                .find_map(|path| configs.load(&path, true).transpose());
         }
         if is_oxfmt {
             configs.flavor = Flavor::Oxfmt;

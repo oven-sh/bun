@@ -61,7 +61,7 @@ It leaves files in a language that Prettier or oxfmt would format and it cannot,
 | `oxfmt`           | `bun format`         |
 | `oxfmt --check .` | `bun format --check` |
 
-Without any configuration file, `bun format` is like oxfmt if the nearest `package.json` has `oxfmt` or `vite-plus` among its dependencies and not `prettier`, or if you pass `--flavor oxfmt`. `bun format --init` writes an `.oxfmtrc.json`, so that the choice stays when you remove the package.
+Without any configuration file, `bun format` is like oxfmt if the nearest `package.json` has `oxfmt` or `vite-plus` among its dependencies and not `prettier`, or if you pass `--flavor oxfmt`. `bun format --init` writes an `.oxfmtrc.json`, so that the choice stays when you remove the package. With `vite-plus`, the options are the `fmt` of the nearest `vite.config.ts` that has one, as for `vp fmt`.
 
 If the configuration file nearest to the working directory is one of these, `bun format` finds files and configuration the way oxfmt does:
 

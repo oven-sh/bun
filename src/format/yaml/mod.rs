@@ -82,6 +82,7 @@ fn write_document(
         is_oxfmt: options.flavor.is_oxfmt(),
         is_last_document: true,
         is_first_item_ignored: false,
+        comment_in_brackets: None,
         printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
         out,

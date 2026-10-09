@@ -43,6 +43,7 @@ The formatter is called through `bun_lint_driver::fmt::format_for_tests`, which 
 | `import-lost`, `import-added`, `import-less-often`, `import-more-often` | see "Steps that move or remove things" |
 | `import-removed-though-named`, `rest-changed`, `comment-lost`, `comment-added`, `jsdoc-word-lost`, `word-lost`, `word-added`, .. | the same |
 | `refused-only-with-the-step`, `accepted-only-with-the-step` | the same |
+| `value-changed`, `value-cannot-be-read` | `json`, `yaml`: Bun's own parser reads another value from what is printed than from the text, or none. In YAML without the blanks at the ends of lines, which Prettier drops, and not with `proseWrap`, with which it changes values |
 | `fix-breaks-the-syntax` | `lint`: the text can be parsed, and after the fixes it cannot |
 | `accepted`, `different` | `parser`: it parses what the other parser has an error for, or to another tree |
 

@@ -176,7 +176,7 @@ fn with_file(
     // To Prettier the name of the file is still that of the HTML, so `<T,>() => {}` keeps its comma: it is not `.ts`.
     // oxfmt prints a script like a file of its own.
     if !matches!(piece, Piece::Script(flavor) if flavor.is_oxfmt()) {
-        options.filepath = f.options().filepath.clone();
+        options.filepath.clone_from(&f.options().filepath);
     }
     // A plugin of Prettier sorts the imports of the text before it is parsed.
     let mut sorts_text = None;

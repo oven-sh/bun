@@ -1864,7 +1864,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             let content = bun_core::strings::replace_owned(&content, b"\r\n", b"\n");
             bun_core::strings::replace_owned(&content, b"&quot;", b"\"")
         };
-        self.check(value(x) == value(y), "the value of an attribute")
+        let (x, y) = (value(x), value(y));
+        // Allowed: classes are sorted.
+        self.check(
+            x == y || (self.classes_can_move && has_same_words(&x, &y)),
+            "the value of an attribute",
+        )
     }
 
     /// Allowed: the white space in JSX text, and `{" "}`. The words are the same.

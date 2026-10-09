@@ -44,8 +44,6 @@ FAIL oxfmt css/format/less/important-comments.less { printWidth: 80 }
 FAIL oxfmt css/format/less/important-comments.less { printWidth: 100 }
 FAIL oxfmt css/format/less/javascript-verbatim.less { printWidth: 80 }
 FAIL oxfmt css/format/less/javascript-verbatim.less { printWidth: 100 }
-FAIL oxfmt css/format/less/line-comment-after-comma.less { printWidth: 80 }
-FAIL oxfmt css/format/less/line-comment-after-comma.less { printWidth: 100 }
 FAIL oxfmt css/format/less/line-comment-continuation-indent.less { printWidth: 80 }
 FAIL oxfmt css/format/less/line-comment-continuation-indent.less { printWidth: 100 }
 FAIL oxfmt css/format/less/lookup-glue.less { printWidth: 80 }
@@ -70,12 +68,8 @@ FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/include-leading-comment.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/include-leading-comment.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/inline-comment-before-call.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/inline-comment-before-call.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/inline-comment-before-multivalue-arg.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/inline-comment-before-multivalue-arg.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/interpolation-quotes.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 80 }
@@ -84,8 +78,6 @@ FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/list-leading-comment.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/list-leading-comment.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 80 }
@@ -298,7 +290,6 @@ FAIL oxfmt ts/assignments/type-alias-leading-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/assignments/type-alias-leading-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 100 }
-FAIL oxfmt ts/class/issue-16259.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 80 }
@@ -357,11 +348,5 @@ FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: false }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: false }
 FAIL prettier ts/union/suppression.ts { printWidth: 80 }
 FAIL prettier ts/union/suppression.ts { printWidth: 100 }
-FAIL oxfmt ts/union/suppression.ts { printWidth: 80 }
-FAIL oxfmt ts/union/suppression.ts { printWidth: 100 }
-FAIL oxfmt yaml/yaml/flow-comments.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/flow-comments.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/keep-chomped-eos-spaces-only.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/keep-chomped-eos-spaces-only.yaml { printWidth: 100 }
 as Prettier prints them: 1548/1570
 as oxfmt prints them, in its flavor: 1102/1498

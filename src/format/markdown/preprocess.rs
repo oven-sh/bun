@@ -498,8 +498,17 @@ impl Preprocessor<'_> {
         }
         // The column that the content of an item starts in.
         let item_start = |item: NodeId| {
-            let child = self.tree.get(self.tree.get(item)?.first_child)?;
-            Some((child.start - self.tree.line_start(child.start)) as usize)
+            let item = self.tree.get(item)?;
+            let child = self.tree.get(item.first_child)?;
+            // mdast-util-gfm-task-list-item passes the character behind `[x]` by adding one to the column, also if it
+            // is a line break.
+            let start = match child.start.checked_sub(1) {
+                Some(before) if item.checked != 0 && self.original[before as usize] == b'\n' => {
+                    return Some((before - self.tree.line_start(before)) as usize + 1);
+                }
+                _ => child.start,
+            };
+            Some((start - self.tree.line_start(start)) as usize)
         };
         let Some(first_start) = item_start(first) else {
             return false;

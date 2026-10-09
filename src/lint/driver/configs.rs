@@ -82,9 +82,17 @@ pub(crate) fn is_for_oxlint(flavor: Option<Tool>, cwd: &[u8]) -> bool {
     let mut directories = paths::ancestors(cwd);
     match flavor {
         Some(tool) => tool == Tool::Oxlint,
+        // Of two side by side oxlint's.
         None => directories
-            .find_map(|directory| NAMES.iter().find(|it| is_there(directory, it.0)))
-            .is_some_and(|it| it.1 == Flavor::Oxlint),
+            .find_map(|directory| {
+                let mut there = NAMES
+                    .iter()
+                    .filter(|it| is_there(directory, it.0))
+                    .peekable();
+                there.peek()?;
+                Some(there.any(|it| it.1 == Flavor::Oxlint))
+            })
+            .unwrap_or(false),
     }
 }
 

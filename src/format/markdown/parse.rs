@@ -267,7 +267,7 @@ fn span_at(
     if index == 0
         && can_start_with_check
         && let [b'[', value, b']', after, ..] = *bytes
-        && matches!(value, b' ' | b'\t' | b'\n' | b'x' | b'X')
+        && matches!(value, b' ' | b'\t' | b'x' | b'X')
         && (after == b'\n' || (is_space(after) && bytes[3..].iter().any(|&byte| !is_space(byte))))
     {
         return Some(ExtensionSpan {

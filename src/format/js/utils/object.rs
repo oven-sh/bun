@@ -5,7 +5,9 @@ use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
     is_es5_identifier_name, is_simple_number,
 };
-use super::tailwindcss::{context_of_string, sorted_string_literal};
+use super::tailwindcss::{
+    context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
+};
 use crate::ir::width::string_width;
 use crate::js::format::format_node;
 use crate::prelude::*;
@@ -95,6 +97,16 @@ fn printed_key<'a>(
     {
         let place = (span, parent);
         return Cow::Owned(sorted_string_literal(source, false, place, context, f));
+    }
+    if let (KeyKind::ComputedString(_), [b'`', text @ .., b'`']) = (key.kind(), source)
+        && has_white_space(text)
+        && let (Some(context), Some(tailwind)) = (
+            f.context().tailwind_context(),
+            f.options().tailwind.as_deref(),
+        )
+    {
+        let sorted = sorted_template_text(text, (true, true), context, tailwind);
+        return Cow::Owned([&b"`"[..], &sorted, b"`"].concat());
     }
     match key.kind() {
         KeyKind::Ident(name) if should_quote_keys(parent, f) => quoted(name.bytes(), f),

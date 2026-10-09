@@ -883,4 +883,32 @@ export const cases: Case[] = [
     reports: { "@typescript-eslint/no-duplicate-type-constituents": 2_399 },
     exitCode: 1,
   },
+  // ── the type checker alone: the rule asks for nothing ──
+  ...(
+    [
+      ["120,000 call statements in a row", () => "declare const a: any;\n" + rep("a();\n", 120_000)],
+      [
+        "a variable with 24,000 assignments that 24,000 functions refer to",
+        () =>
+          `export function f() {\n  let v = 0;\n${seq(24_000, i => `  { { { { { { v = ${i}; } } } } } }\n`)}` +
+          `  return [\n${rep("    () => v,\n", 24_000)}  ];\n}\n`,
+      ],
+      [
+        "an array literal with 60,000 functions, for an array type",
+        () => `export const a: readonly (() => void)[] = [\n${rep("  () => {},\n", 60_000)}];\n`,
+      ],
+      ["a pattern with 120,000 properties", () => `export const {\n${seq(120_000, i => `  p${i} = 0,\n`)}} = {};\n`],
+    ] as const
+  ).map(
+    ([name, text]): Case => ({
+      name,
+      isHeavy: true,
+      file: "a.ts",
+      text,
+      rules: { "typescript/await-thenable": "error" },
+      args: typed,
+      reports: {},
+      exitCode: 0,
+    }),
+  ),
 ];

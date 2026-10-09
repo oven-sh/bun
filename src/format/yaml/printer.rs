@@ -24,6 +24,8 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) is_last_document: bool,
     /// Of the mapping or sequence whose first item is printed next.
     pub(crate) is_first_item_ignored: bool,
+    /// A comment that is printed behind the `[` or `{` that is at the position, not behind the key before it.
+    pub(crate) comment_in_brackets: Option<(Id, u32)>,
     /// `printedEmptyLineCache`: for each position, whether a node ends there whose next line has been looked at.
     pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
@@ -379,6 +381,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         if let Some(comment) = node.trailing_comment
             && !matches!(node.kind, Kind::Document | Kind::DocumentHead)
+            && self.comment_in_brackets.is_none_or(|(it, _)| it != comment)
         {
             let parent = self.parent(node);
             let is_key_of_mapping = parent.is_some_and(|parent| {
@@ -437,8 +440,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         && last.chomping == Chomping::Keep)
                         // For oxfmt a file ends with a line break, and here none has been kept.
                         || (self.is_oxfmt
-                            && strings::index_of_char_usize(source, b'\n')
-                                .is_none_or(|newline| newline + 1 == source.len()));
+                            && strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
+                                source[newline + 1..].iter().all(|byte| *byte == b' ')
+                            }));
                 let mut keeps_line_breaks = false;
                 for (index, child) in tree.items(node.children).enumerate() {
                     let document = self.node(child);
@@ -523,8 +527,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     let start = self.node(first_comment).position.start.offset as usize;
                     let is_block = matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral);
                     let hard_lines = if self.is_oxfmt && !has_newline_backwards(self.text, start) {
-                        // It stays on its line.
-                        self.out.token(" ");
+                        // It stays on its line. Behind a tag or an anchor that nothing follows there is a blank.
+                        if !self.source(last).is_empty() {
+                            self.out.token(" ");
+                        }
                         0
                     } else if self.is_oxfmt && !(is_block && last.chomping == Chomping::Keep) {
                         1 + usize::from(is_previous_line_empty(self.text, start))
@@ -998,6 +1004,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.text(if is_mapping { b"{" } else { b"[" });
         self.start_align(self.tab_width);
         self.out.line(bracket_spacing);
+        if let Some((comment, _)) = self
+            .comment_in_brackets
+            .take_if(|(_, start)| *start == node.position.start.offset)
+        {
+            self.has_no_next_empty_line(comment);
+            self.print(comment, false);
+            self.out.hard_line();
+        }
         for id in tree.items(node.children) {
             let child = self.node(id);
             self.print(id, is_last_descendant && child.next.is_none());
@@ -1088,6 +1102,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.token(": ");
         }
         let (key_content, value_content) = (self.first_child(key), self.first_child(value));
+        // For oxfmt a comment behind the `[` or `{` of the value stays between the brackets. Prettier takes it for one
+        // behind the key.
+        let mut key_comment = key_content.and_then(|it| it.trailing_comment);
+        if self.is_oxfmt
+            && let (Some(comment), Some(value)) = (key_comment, value_content)
+            && matches!(value.kind, Kind::FlowMapping | Kind::FlowSequence)
+            && !value.children.is_empty()
+            && value.position.start.offset < self.node(comment).position.start.offset
+        {
+            self.comment_in_brackets = Some((comment, value.position.start.offset));
+            key_comment = None;
+        }
         // `needsSpaceInFrontOfMappingValue`
         let space_before_colon: &[u8] = if key_content.is_some_and(|it| it.kind == Kind::Alias) {
             b" "
@@ -1148,7 +1174,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             content.is_none_or(|it| it.leading_comments.is_empty() && it.middle_comments.is_empty())
         };
         let key_has_no_comments = has_no_comments_before_or_in(key_content)
-            && key_content.is_none_or(|it| it.trailing_comment.is_none())
+            && key_comment.is_none()
             && key.end_comments.is_empty();
         // `isSingleLineNode`
         let is_single_line_key = key_content.is_none_or(|it| match it.kind {
@@ -1192,7 +1218,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     && !is_oxfmt
                     && value_content.is_some_and(|it| !is_block_collection(it)))
                 || (parent.is_some_and(|it| it.kind == Kind::Mapping || is_oxfmt)
-                    && key_content.is_some_and(|it| it.trailing_comment.is_some())
+                    && key_comment.is_some()
                     && is_inline_node(value_content))
                 || value_content.is_some_and(|it| {
                     is_block_collection(it) && it.tag.is_none() && it.anchor.is_none()

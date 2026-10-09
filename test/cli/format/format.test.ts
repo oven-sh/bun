@@ -685,6 +685,35 @@ describe.concurrent("bun format", () => {
       ).toBe(asPrettier);
     });
 
+    test("a project that depends on Vite+ has its options in the fmt of the nearest vite.config.ts that has one", async () => {
+      const files = {
+        "package.json": '{ "devDependencies": { "vite-plus": "1.0.0" } }\n',
+        "vite.config.ts":
+          'import { defineConfig } from "vite-plus";\nexport default defineConfig(() => ({ fmt: { semi: false, ignorePatterns: ["c.js"] } }));\n',
+        "a.js": "a;\n",
+        "c.js": "c  ;\n",
+        // One configuration for the whole project.
+        "nested/vite.config.ts": "export default { fmt: { semi: true } };\n",
+        "nested/b.js": "b;\n",
+        "other/vite.config.mjs": "export default { plugins: [] };\n",
+        "other/d.js": "d;\n",
+      };
+      const reads = ["a.js", "c.js", "nested/b.js", "other/d.js"];
+      const result = await format(files, ["a.js", "c.js", "nested", "other/d.js"], { reads });
+      expect(result.files).toEqual({ "a.js": "a\n", "c.js": "c  ;\n", "nested/b.js": "b\n", "other/d.js": "d\n" });
+      expect(result.exitCode).toBe(0);
+      // From a directory whose own has no fmt, the one above counts.
+      const below = await format(files, ["d.js"], { reads, cwd: "other" });
+      expect(below.files["other/d.js"]).toBe("d\n");
+      const named = await format(files, ["--config", "other/vite.config.mjs", "a.js"], { reads });
+      expect(named.stderr).toContain("Expected a `fmt` field in the default export of");
+      expect(named.files["a.js"]).toBe("a;\n");
+      expect(named.exitCode).toBe(1);
+      // Without the dependency the file is Vite's alone.
+      const without = await format({ ...files, "package.json": "{}\n" }, ["a.js"], { reads });
+      expect(without.files["a.js"]).toBe("a;\n");
+    });
+
     test("--flavor says which", async () => {
       expect(await after({}, ["--flavor", "oxfmt"])).toBe(asOxfmt);
       expect(

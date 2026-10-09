@@ -142,7 +142,7 @@ const NOT_A_DEPENDENCY_HERE = (name: string, ...workspaces: string[]) =>
   notADependencyOf("this workspace", name, ...workspaces);
 const NOT_A_DEPENDENCY_OF_SELECTION = (name: string, ...workspaces: string[]) =>
   notADependencyOf("the selected workspaces", name, ...workspaces);
-const notCheckedWarning = (server: Bun.Server, name: string, version: string, status: number) =>
+const notCheckedWarning = (server: Bun.Server<undefined>, name: string, version: string, status: number) =>
   `warn: ${name}@${version} was not checked for updates: GET ${server.url.origin}/${name} - ${status}\n`;
 
 // The manifest-cache progress bar must never leak its `Resolving... ` fragment into a piped stderr.
@@ -1280,13 +1280,13 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: Regis
 }
 
 // Installs `pinned` against the in-memory registry, then re-installs `packageJson`, which drops the pins that parked the transitive edges.
-async function setupServed(server: Bun.Server, prefix: string, pinned: Json, packageJson: Json = pinned) {
+async function setupServed(server: Bun.Server<undefined>, prefix: string, pinned: Json, packageJson: Json = pinned) {
   const dir = await installServed(server, prefix, pinned);
   if (packageJson !== pinned) await reinstall(dir, packageJson);
   return dir;
 }
 
-const servedBunfig = (server: Bun.Server, dir: string, extra: Json = {}) =>
+const servedBunfig = (server: Bun.Server<undefined>, dir: string, extra: Json = {}) =>
   write(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
@@ -1300,14 +1300,14 @@ const servedBunfig = (server: Bun.Server, dir: string, extra: Json = {}) =>
     }),
   );
 
-async function installServed(server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) {
+async function installServed(server: Bun.Server<undefined>, prefix: string, packageJson: Json, ...args: string[]) {
   const dir = String(tempDir(prefix, { "package.json": stringify(packageJson) }));
   await servedBunfig(server, dir);
   await install(dir, ...args);
   return dir;
 }
 
-const freshInstallLock = async (server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) =>
+const freshInstallLock = async (server: Bun.Server<undefined>, prefix: string, packageJson: Json, ...args: string[]) =>
   lock(await installServed(server, prefix, packageJson, ...args));
 
 test.concurrent("`bun update <name>` leaves the named package's own dependencies where they are", async () => {
@@ -1613,7 +1613,7 @@ const STALE_CHILDREN: Manifests = {
   "other-leaf": { "1.0.0": {}, "1.1.0": {} },
 };
 
-async function staleChildren(server: Bun.Server) {
+async function staleChildren(server: Bun.Server<undefined>) {
   const packageJson = pkgJson({ parent: "^1.0.0", other: "^1.0.0" });
   const dir = await setupServed(
     server,
@@ -1675,7 +1675,7 @@ const LEAF_1_1_0_FATAL_SCANNER = `export const scanner = {
 };
 `;
 
-async function withLeafScanner(server: Bun.Server, dir: string) {
+async function withLeafScanner(server: Bun.Server<undefined>, dir: string) {
   await write(join(dir, "scanner.ts"), LEAF_1_1_0_FATAL_SCANNER);
   await servedBunfig(server, dir, { security: { scanner: "./scanner.ts" } });
   return lockText(dir);
@@ -1753,7 +1753,7 @@ const TAGGED: Manifests = {
 };
 
 // `stable` is moved after the install; `bun install` keeps the locked version, so only `bun update` can follow it.
-async function movedTag(server: Bun.Server, tags: Tags, from: string, to: string) {
+async function movedTag(server: Bun.Server<undefined>, tags: Tags, from: string, to: string) {
   const packageJson = pkgJson({ parent: "^1.0.0" });
   const dir = await setupServed(server, "update-moved-tag-", packageJson);
   expect(await lockedVersions(dir, "leaf")).toStrictEqual([from]);
@@ -2050,10 +2050,10 @@ test.concurrent("`bun update --silent` swallows the unfetchable-manifest warning
 
 // `bun outdated` and `bun update -i` exist to answer for the direct dependencies, so for them a manifest that does not arrive is reported and fails the command (a registry that is down must not read as "nothing to update"); only an optional dependency's is a warning.
 const errorLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("error:"));
-const manifestFailure = (server: Bun.Server, status: number) => `GET ${server.url.origin}/leaf - ${status}`;
+const manifestFailure = (server: Bun.Server<undefined>, status: number) => `GET ${server.url.origin}/leaf - ${status}`;
 
 // leaf@1.0.0 installed while 1.1.0 exists, with the manifest cache off so every later command asks the registry again.
-async function staleDirectLeaf(server: Bun.Server, groups: Groups = {}) {
+async function staleDirectLeaf(server: Bun.Server<undefined>, groups: Groups = {}) {
   const dir = await installServed(server, "direct-manifest-failure-", grouped({ leaf: "1.0.0" }, groups));
   await servedBunfig(server, dir, { cache: false });
   return dir;
@@ -2138,7 +2138,11 @@ const hangUp = () =>
   Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: socket => void socket.end(), data() {} } });
 
 // Breaks the download of leaf's manifest or of leaf@1.1.0's tarball; `down` is the origin of a `hangUp()` host. Returns the one warning to expect and the flags the update needs.
-type Outage = (server: Bun.Server, knobs: RegistryKnobs, down: string) => { warning: unknown; flags?: string[] };
+type Outage = (
+  server: Bun.Server<undefined>,
+  knobs: RegistryKnobs,
+  down: string,
+) => { warning: unknown; flags?: string[] };
 const OUTAGES: Record<string, Outage> = {
   "a 404 for the manifest": (server, knobs) => {
     knobs.status!.leaf = 404;
@@ -2195,7 +2199,7 @@ test.concurrent.each(
 
   const { warning, flags = [] } = OUTAGES[outage](server, knobs, `http://127.0.0.1:${down.port}`);
   const { stderr, exitCode } = await run(dir, "update", ...args, ...flags);
-  expect(warningLines(stderr)).toStrictEqual([warning]);
+  expect(warningLines(stderr)).toStrictEqual<unknown[]>([warning]);
   expect(errorLines(stderr)).toStrictEqual([]);
   expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonText(dir)).toBe(before.packageJson);

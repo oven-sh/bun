@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SourceMapConsumer } from "source-map";
-import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { SourceMapConsumer, type RawSourceMap } from "source-map";
+import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 import { checkGraph, run } from "./splitting-fuzz";
 
 const env = {
@@ -26,7 +26,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/client.js",
@@ -56,7 +56,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -82,7 +82,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -112,7 +112,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -147,7 +147,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -193,7 +193,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -227,7 +227,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -256,7 +256,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: [
       {
@@ -283,7 +283,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -321,7 +321,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -520,8 +520,7 @@ describe("bundler", () => {
       pinned,
       folded,
       ...options
-    }: Omit<Parameters<typeof itBundled>[1], "onAfterBundle"> &
-      Record<"pinned" | "folded", (api: BundlerTestBundleAPI) => void>,
+    }: Omit<BundlerTestInput, "onAfterBundle"> & Record<"pinned" | "folded", (api: BundlerTestBundleAPI) => void>,
   ) {
     const entry = options.entryPoints![0].replace(/^\/|\.[jt]s$/g, "");
     itBundled(id, {
@@ -3992,7 +3991,7 @@ describe("bundler", () => {
         console.log(result.outputs.length);
       `,
     });
-    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env;
+    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env as NodeJS.Dict<string>;
     const chunks = async (...flags: string[]) => {
       const { stdout, ...rest } = await run([bunExe(), ...flags, "build.js"], String(dir), withoutInternals);
       return { stdout: stdout.trim(), ...rest };
@@ -4720,7 +4719,7 @@ describe("bundler", () => {
     // `util("admin")` follows the dynamic import on the same line, so the map
     // only points at it if the mappings were shifted by the difference between
     // the placeholder and the path written over it.
-    async function expectUtilCallToBeMapped(code: string, map: object) {
+    async function expectUtilCallToBeMapped(code: string, map: RawSourceMap) {
       const generatedLines = code.split("\n");
       const line = generatedLines.findIndex(l => l.includes('util("admin")')) + 1;
       expect(line).toBeGreaterThan(0);

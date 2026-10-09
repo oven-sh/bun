@@ -50,9 +50,9 @@ let wssPort: number;
 
 beforeAll(() => {
   wsServer = startEchoServer();
-  wsPort = wsServer.port;
+  wsPort = wsServer.port!;
   wssServer = startEchoServer({ tls: true });
-  wssPort = wssServer.port;
+  wssPort = wssServer.port!;
 });
 
 afterAll(() => {
@@ -348,7 +348,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       events: ["after-ping", { code: 1000, reason: "", wasClean: true }],
       pongs: 1,
       serverCloseCode: 1000,
-      requests: [connectRequest(pingServer.port)],
+      requests: [connectRequest(pingServer.port!)],
     });
     gc();
   });
@@ -590,7 +590,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       ws.addEventListener("open", () => ws.send("go"));
       expect({ events: await clientEvents(ws), requests: recorded.requests }).toEqual({
         events: serverClose,
-        requests: route === "direct" ? [] : [connectRequest(origin.port)],
+        requests: route === "direct" ? [] : [connectRequest(origin.port!)],
       });
     });
 

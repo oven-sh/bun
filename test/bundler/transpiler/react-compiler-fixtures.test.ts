@@ -354,14 +354,13 @@ async function compileInto(into: Compiled, minify: false | { syntax: true }): Pr
       external: ["*"],
       treeShaking: false,
       minify,
-      // @ts-expect-error — wired in JSBundler.rs but not yet in bun-types
       reactCompiler: true,
       reactCompilerParseTestPragmas: true,
       // Upstream's Babel harness enables the TS plugin unconditionally, so
       // many `.js` fixtures contain TS syntax (casts, type params).
       loader: { ".js": "tsx", ".mjs": "tsx" },
       throw: false,
-    });
+    } as Bun.BuildConfig);
 
     if (result.success) {
       for (const artifact of result.outputs) {

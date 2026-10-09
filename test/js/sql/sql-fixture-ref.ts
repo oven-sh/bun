@@ -14,7 +14,7 @@
 import { sql } from "bun";
 process.exitCode = 1;
 
-let values = [];
+let values: number[] = [];
 
 async function first() {
   const result = await sql`select 1 as x`;

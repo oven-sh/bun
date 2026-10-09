@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } 
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
-describe.concurrent(
+(describe.concurrent as any)(
   "bun build",
   () => {
     test("warnings dont return exit code 1", async () => {

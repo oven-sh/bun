@@ -39,7 +39,7 @@ async function plaintextOnlyServer() {
   return listeningServer(socket => {
     let buf = Buffer.alloc(0);
     let sawSSLRequest = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!sawSSLRequest && buf.length >= 8 && buf.readInt32BE(0) === 8 && buf.readInt32BE(4) === 80877103) {
         sawSSLRequest = true;
@@ -56,7 +56,7 @@ async function plaintextOnlyServer() {
 }
 
 function pgEnv(port: number, extra: Record<string, string> = {}) {
-  const env: Record<string, string> = { ...bunEnv };
+  const env: Record<string, string | undefined> = { ...bunEnv };
   for (const key of Object.keys(env)) {
     if (/^(PG|PG_|POSTGRES_|DATABASE_|TLS_|MYSQL|MARIADB|SQLITE)/.test(key)) delete env[key];
   }

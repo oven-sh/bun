@@ -669,11 +669,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
             let path = if p.lexer.token != T::TStringLiteral && p.is_tolerant() {
                 // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
-                // missing. `checkGrammarModuleElementContext` returns first in a block or a function.
+                // missing. `checkGrammarModuleElementContext` returns first.
                 let at = p.lexer.loc();
                 let specifier = p.parse_expr(Level::Lowest)?;
                 let is_written = !specifier.is_missing();
-                if is_written && p.current_scope().kind == ScopeKind::Entry {
+                if is_written && p.is_in_appropriate_context() {
                     p.ts_checker_error(p.lexer.range_from(at), 1141);
                 }
                 external = Some(crate::sema::ts_syntax::ModuleReference::External {
@@ -781,13 +781,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TPrivateIdentifier => value.name = js_ast::StoreStr::new(p.lexer.identifier),
             T::TOpenBracket => {
                 p.lexer.next()?;
-                // `[("a")]`: a `ParenthesizedExpression` is no literal.
-                let is_literal = p.lexer.token != T::TOpenParen;
                 let old_allow_in = core::mem::replace(&mut p.allow_in, true);
                 let name = p.parse_expr(Level::Lowest);
                 p.allow_in = old_allow_in;
                 // `["a"]` and `[1]` are names like `"a"` and `1`. Any other expression leaves the member without a name.
                 let name = name?;
+                // `IsStringOrNumericLiteralLike`: not `("a")`, `"a" as const`, `"a"!`, `<T>"a"`.
+                let is_literal = p.last_cast(&name).is_none();
                 match name.data {
                     js_ast::ExprData::EString(string) if is_literal && !string.is_utf16 => {
                         value.name = string.data;
@@ -922,7 +922,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Parse the initializer
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                value.value = Some(p.parse_expr(Level::Comma)?);
+                value.value = Some(p.parse_expr_allow_in(Level::Comma)?);
             }
 
             let value_name = value.name;

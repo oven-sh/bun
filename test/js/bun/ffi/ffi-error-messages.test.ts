@@ -148,11 +148,11 @@ describe("FFI error messages", () => {
 
   test("linkSymbols with non-object property values throws TypeError", () => {
     expect(() => {
-      linkSymbols({ foo: 42 });
+      linkSymbols({ foo: 42 as any });
     }).toThrow("Expected an object");
 
     expect(() => {
-      linkSymbols({ a: "hello", b: 123, c: true });
+      linkSymbols({ a: "hello", b: 123, c: true } as any);
     }).toThrow("Expected an object");
   });
 

@@ -184,7 +184,8 @@ pub struct Problem {
 
 /// Parses `--name text` from a command line: the canonical spelling of the option, which `name`
 /// matches case-insensitively, and its value. `None`: there is no such option, its value cannot be
-/// expressed as a single word, or `text` is not a valid value for it.
+/// expressed as a single word, or `text` is not a valid value for it. What is no key of the
+/// `EnumMap` of the option is left as it is written, for `invalid_enum_type`.
 pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
     let &(name, kind) = OPTIONS.get_ascii_case_insensitive(name)?;
     let value = match kind {
@@ -193,9 +194,19 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
         Kind::Boolean | Kind::Object | Kind::List(Element::Object) | Kind::ListOrElement => {
             return None;
         }
-        Kind::String | Kind::FilePath | Kind::OneOf(..) => Json::String(text.to_vec()),
+        Kind::String | Kind::FilePath => Json::String(text.to_vec()),
+        Kind::OneOf(..) => Json::String(
+            convert_json_option_of_enum_type(kind, text.trim_ascii())
+                .unwrap_or_else(|| text.to_vec()),
+        ),
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
-        // `ParseListTypeOption`: only the items of an enum-valued list are trimmed.
+        // `ParseListTypeOption`: a flag is no list. Only the items of an enum-valued list are
+        // trimmed.
+        Kind::List(Element::String | Element::FilePath | Element::Lib)
+            if text.trim_ascii().starts_with(b"-") =>
+        {
+            Json::Array(Vec::new())
+        }
         Kind::List(element @ (Element::String | Element::FilePath | Element::Lib)) => Json::Array(
             bun_core::strings::split(text.trim_ascii(), b",")
                 .map(|item| {
@@ -206,7 +217,10 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
                     }
                 })
                 .filter(|item| !item.is_empty())
-                .map(|item| Json::String(item.to_vec()))
+                .map(|item| {
+                    let key = convert_json_option_of_enum_type(kind, item);
+                    Json::String(key.unwrap_or_else(|| item.to_vec()))
+                })
                 .collect(),
         ),
     };
@@ -222,18 +236,33 @@ pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     }
 }
 
-/// The items of `value`, which `from_text` has made of the option `name`, that are not among the
-/// allowed ones, if the option is a list of those: all that are allowed.
-pub fn choices_of_list(name: &[u8], value: &Json) -> Option<Vec<&'static [u8]>> {
-    let Kind::List(Element::Lib) = OPTIONS.get_ascii_case_insensitive(name)?.1 else {
-        return None;
+/// `createDiagnosticForInvalidEnumType` for `value`, which `from_text` has made of the option
+/// `name`: the allowed values, if it is no key of `EnumMap` or has an item that is none.
+pub fn invalid_enum_type(name: &[u8], value: &Json) -> Option<Vec<&'static [u8]>> {
+    let kind = OPTIONS.get_ascii_case_insensitive(name)?.1;
+    let is_key = |item: &Json| {
+        (item.as_str()).is_some_and(|it| convert_json_option_of_enum_type(kind, it).is_some())
     };
-    let is_allowed = |item: &Json| item.as_str().is_some_and(is_lib);
-    (!value.as_array()?.iter().all(is_allowed)).then(|| crate::resolve::LIBS.iter().collect())
+    match kind {
+        Kind::OneOf(now, _) => (!is_key(value)).then(|| now.to_vec()),
+        Kind::List(Element::Lib) => {
+            let has_only_keys = value.as_array()?.iter().all(is_key);
+            (!has_only_keys).then(|| crate::resolve::LIBS.iter().collect())
+        }
+        _ => None,
+    }
 }
 
-fn is_lib(name: &[u8]) -> bool {
-    crate::resolve::LIBS.contains(&name.to_ascii_lowercase())
+/// `convertJsonOptionOfEnumType`: the key of `EnumMap` that `value` is, in whatever letter case.
+/// `kind` is that of the option, or that of the list that has the option for its `Elements`.
+fn convert_json_option_of_enum_type(kind: Kind, value: &[u8]) -> Option<Vec<u8>> {
+    let key = crate::config::strings_to_lower(value);
+    let is_key = match kind {
+        Kind::OneOf(now, once) => now.iter().chain(once).any(|&one| one == key),
+        Kind::List(Element::Lib) => crate::resolve::LIBS.contains(&key),
+        _ => false,
+    };
+    is_key.then_some(key)
 }
 
 /// The rest of `convertJsonOption`, for a value of the right type. `convertJsonOptionOfListType`
@@ -251,21 +280,30 @@ pub fn converted(
         Json::String(text) => text.is_empty() && name != b"moduleSuffixes",
         _ => false,
     };
-    let normalized = |is_file_path: bool, value: &Json| match value {
-        Json::String(path) if is_file_path => Json::String(
-            crate::config::normalize_non_list_option_value(path, base_path),
-        ),
-        _ => value.clone(),
-    };
-    match (kind_of(name), value) {
-        (Some(Kind::List(element)), Json::Array(items)) => Json::Array(
+    let kind = kind_of(name);
+    match (kind, value) {
+        (Some(Kind::List(_)), Json::Array(items)) => Json::Array(
             (items.iter().enumerate())
                 .filter(|(index, _)| !is_invalid(*index))
-                .map(|(_, item)| normalized(element == Element::FilePath, item))
+                .map(|(_, item)| converted_non_list(kind, item, base_path))
                 .filter(|item| !is_falsy(item))
                 .collect(),
         ),
-        (kind, _) => normalized(kind == Some(Kind::FilePath), value),
+        _ => converted_non_list(kind, value, base_path),
+    }
+}
+
+/// `converted` for a value that is no list. `kind` is that of the option, or that of the list that
+/// has the option for its `Elements`.
+fn converted_non_list(kind: Option<Kind>, value: &Json, base_path: &[u8]) -> Json {
+    match (kind, value) {
+        (Some(Kind::FilePath | Kind::List(Element::FilePath)), Json::String(path)) => Json::String(
+            crate::config::normalize_non_list_option_value(path, base_path),
+        ),
+        (Some(kind @ (Kind::OneOf(..) | Kind::List(Element::Lib))), Json::String(text)) => {
+            convert_json_option_of_enum_type(kind, text).map_or_else(|| value.clone(), Json::String)
+        }
+        _ => value.clone(),
     }
 }
 
@@ -294,7 +332,7 @@ pub(crate) fn is_enum(name: &[u8]) -> bool {
 
 /// `CommandLineCompilerOptionsMap.Get(name)`, its name: `name` in whatever letter case. The map has
 /// the command-line-only options too.
-fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
+pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     let is_name = |option: &&'static [u8]| option.eq_ignore_ascii_case(name);
     match OPTIONS.get_ascii_case_insensitive(name) {
         Some(option) => Some(option.0),
@@ -302,20 +340,10 @@ fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-/// `getSpellingSuggestion`, as `createUnknownOptionError` called it before TypeScript 7: the option
-/// whose name is closest to `name`.
-fn nearest(name: &[u8]) -> Option<&'static [u8]> {
-    let names = OPTIONS.values().map(|option| option.0);
-    crate::check::regexp_scanner::get_spelling_suggestion(name, names, |name| name, Ord::cmp)
-}
-
 /// Which object of a configuration file the options are in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
-    /// For an unknown option, whether to suggest only a different letter case, as TypeScript 7 does.
-    CompilerOptions {
-        as_typescript_does: bool,
-    },
+    CompilerOptions,
     /// `tsconfigRootOptionsMap`. What it does not have is not an error, but for `excludes`.
     Root,
     TypeAcquisition,
@@ -411,8 +439,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
         let value = &file.convert_property_value_to_json(file.initializer(property));
         let name_span = Some(file.name_span(property));
         let value_span = Some(file.span(file.initializer(property)));
-        if matches!(within, In::CompilerOptions { .. }) && COMMAND_LINE_ONLY_OPTIONS.contains(name)
-        {
+        if within == In::CompilerOptions && COMMAND_LINE_ONLY_OPTIONS.contains(name) {
             out.push(Problem {
                 property,
                 index: None,
@@ -439,7 +466,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
         }
         let kind = match within {
             In::Root => kind_of_root(name),
-            In::CompilerOptions { .. } => kind_of(name),
+            In::CompilerOptions => kind_of(name),
             In::TypeAcquisition => (TYPE_ACQUISITION_OPTIONS.iter())
                 .find(|option| option.0 == &name[..])
                 .map(|option| option.1),
@@ -452,14 +479,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                     let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
                     (other_case.map(|option| option.0), 17018, 17010)
                 }
-                In::CompilerOptions { as_typescript_does } => {
-                    let other_case = possible_option(name);
-                    let suggestion = match as_typescript_does {
-                        true => other_case,
-                        false => other_case.or_else(|| nearest(name)),
-                    };
-                    (suggestion, 5025, 5023)
-                }
+                In::CompilerOptions => (possible_option(name), 5025, 5023),
             };
             let (code, args) = match suggestion {
                 Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),
@@ -522,7 +542,10 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
                             | (Element::Object, Json::Object(_)) => continue,
-                            (Element::Lib, Json::String(lib)) if lib.is_empty() || is_lib(lib) => {
+                            (Element::Lib, Json::String(lib))
+                                if lib.is_empty()
+                                    || convert_json_option_of_enum_type(kind, lib).is_some() =>
+                            {
                                 continue;
                             }
                             (Element::Lib, Json::String(_)) => {
@@ -547,12 +570,11 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                 }
             },
             // `getCompilerOptionValueTypeString` is the name of the kind.
-            Kind::OneOf(now, once) => match value.as_str() {
+            Kind::OneOf(now, _) => match value.as_str() {
                 None => wrong(b"enum"),
                 Some(b"") => {}
                 Some(specified) => {
-                    let specified = specified.to_ascii_lowercase();
-                    if !now.iter().chain(once).any(|&one| one == specified) {
+                    if convert_json_option_of_enum_type(kind, specified).is_none() {
                         out.push(Problem {
                             property,
                             index: None,

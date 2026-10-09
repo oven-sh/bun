@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::text::{number_to_string, string_to_number};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Disallow duplicate enum member values.
@@ -62,6 +62,39 @@ fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
     (!number.is_nan()).then_some(Value::Number(if is_negated { -number } else { number }))
 }
 
+fn report<'a>(place: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
+    let report = cx.report(place, DUPLICATE_VALUE);
+    match value {
+        Value::Number(value) => report.data("value", number_to_string(value)),
+        Value::String(value) => report.data("value", value),
+    };
+}
+
+/// oxlint looks at the numbers and the strings that are written as such, and points at the value that is repeated: the
+/// first of the numbers, the string before this one.
+fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
+    let mut seen: FxHashMap<(bool, u64), Span> = FxHashMap::default();
+    for member in declaration.members() {
+        let Some(initializer) = member.init().filter(|it| !it.is_parenthesized()) else {
+            continue;
+        };
+        let value = match initializer.kind() {
+            ExprKind::Number(value) => Value::Number(value),
+            ExprKind::String(value) => Value::String(value),
+            _ => continue,
+        };
+        let here = initializer.span();
+        let before = seen.entry(value.key()).or_insert(here);
+        if *before != here {
+            let place = *before;
+            if matches!(value, Value::String(_)) {
+                *before = here;
+            }
+            report(place, value, cx);
+        }
+    }
+}
+
 impl Rule for NoDuplicateEnumValues {
     const META: Meta = Meta::typescript("no-duplicate-enum-values", Kind::Problem).recommended();
     type State<'a> = ();
@@ -75,6 +108,9 @@ impl Rule for NoDuplicateEnumValues {
             let StmtKind::Enum(declaration) = stmt.kind() else {
                 return;
             };
+            if cx.language().is_oxlint {
+                return check_as_oxlint(declaration, cx);
+            }
             let mut seen: SmallVec<[Value<'a>; 8]> = SmallVec::new();
             // All of them, as soon as they are more than a few.
             let mut keys: FxHashSet<(bool, u64)> = FxHashSet::default();
@@ -95,11 +131,7 @@ impl Rule for NoDuplicateEnumValues {
                     }
                     continue;
                 }
-                let report = cx.report(member, DUPLICATE_VALUE);
-                match value {
-                    Value::Number(value) => report.data("value", number_to_string(value)),
-                    Value::String(value) => report.data("value", value),
-                };
+                report(member.span(), value, cx);
             }
         });
     }

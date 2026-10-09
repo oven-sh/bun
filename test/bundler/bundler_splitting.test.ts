@@ -2712,6 +2712,27 @@ describe("bundler", () => {
     ],
   });
 
+  // index.js is in the chunk of m0.js alone. m6.js, a wrapper that m1.js loads too, imports it first
+  // and does not run it. So it prints where m0.js imports it, after the call that enters the cycle at m3.js.
+  itBundled("splitting/SharedChunkOrderConflictEntryChunkFileBehindWrapper", {
+    files: {
+      "/m0.js": `import { v3 } from "./m3.js"; import { K } from "p"; console.log("0", v3, K);`,
+      "/m1.js": `import { f6 } from "./m6.js"; export * from "./m3.js"; export const v1 = "v1"; console.log("1", typeof f6);`,
+      "/m3.js": `import { f6 } from "./m6.js"; export const v3 = "v3"; console.log("3", typeof f6);`,
+      "/m6.js": `import * as unused from "p"; export function f6() {} export const v6 = "v6";`,
+      "/node_modules/p/package.json": `{ "name": "p", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/p/index.js": `export * as y from "../../m1.js"; export const K = "K";`,
+    },
+    entryPoints: ["/m0.js", "/m1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/m0.js", stdout: "1 function\n3 function\n0 v3 K" },
+      { file: "/out/m1.js", stdout: "3 function\n1 function" },
+    ],
+  });
+
   // f2.cjs has started when it requires f1.js, so f1.js comes after a wrapper and is one.
   itBundled("splitting/SharedChunkOrderConflictRequireAtLoad", {
     files: {

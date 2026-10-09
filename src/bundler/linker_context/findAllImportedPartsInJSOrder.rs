@@ -498,12 +498,19 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 #[derive(Clone, Copy)]
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
-    Enter { source_index: IndexInt, loader: u32 },
+    /// `wrapper`: the ESM wrapper whose `import` leads here, or `NO_WRAPPER`. It runs only what it calls.
+    Enter {
+        source_index: IndexInt,
+        loader: u32,
+        wrapper: IndexInt,
+    },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
 }
+
+const NO_WRAPPER: IndexInt = IndexInt::MAX;
 
 struct OwnedChunk {
     chunk_index: u32,
@@ -578,13 +585,17 @@ impl EntryWalk {
                 .then(|| plan.slot_of_chunk[chunk_index as usize])
         };
 
+        // Per file: the last wrapper that led to it and does not run it.
+        let mut passed: HashMap<IndexInt, IndexInt> = HashMap::default();
+
         debug_assert!(stack.is_empty());
         stack.push(WalkFrame::Enter {
             source_index: root,
             loader: entry_id,
+            wrapper: NO_WRAPPER,
         });
         while let Some(frame) = stack.pop() {
-            let (source_index, loader) = match frame {
+            let (source_index, loader, wrapper) = match frame {
                 WalkFrame::Place { run, slot } => {
                     self.owned[slot as usize].runs.push(run);
                     continue;
@@ -603,9 +614,29 @@ impl EntryWalk {
                 WalkFrame::Enter {
                     source_index,
                     loader,
-                } => (source_index, loader),
+                    wrapper,
+                } => (source_index, loader, wrapper),
             };
             if seen.is_set(source_index as usize) {
+                continue;
+            }
+            // The file goes where an `import` runs it. The wrapper calls what is behind it (`find_wrappers_behind_imports`).
+            if wrapper != NO_WRAPPER && !c.runs_with(wrapper, source_index) {
+                if passed.insert(source_index, wrapper) != Some(wrapper) {
+                    let mark = stack.len();
+                    for_each_edge(c, source_index, false, |_, edge| {
+                        if let Edge::Import(other) = edge
+                            && css[other as usize].is_none()
+                        {
+                            stack.push(WalkFrame::Enter {
+                                source_index: other,
+                                loader,
+                                wrapper,
+                            });
+                        }
+                    });
+                    stack[mark..].reverse();
+                }
                 continue;
             }
             seen.set(source_index as usize);
@@ -619,11 +650,16 @@ impl EntryWalk {
             let runs = slot.is_some() || loads(source_index, loader);
             // Wrapped files can't be split because they are all inside the wrapper
             let splits = slot.is_some() && flags[source_index as usize].wrap == Wrap::None;
+            let wrapper = if runs && flags[source_index as usize].wrap == Wrap::Esm {
+                source_index
+            } else {
+                NO_WRAPPER
+            };
             let mut begin = 0;
             let mark = stack.len();
 
             // The parts ahead of the one that imports `other` print before `other` does.
-            let mut import = |part_index: u32, other: IndexInt, loader: u32| {
+            let mut import = |part_index: u32, other: IndexInt, loader: u32, wrapper: IndexInt| {
                 if other == Index::RUNTIME.value() || seen.is_set(other as usize) {
                     return;
                 }
@@ -668,15 +704,19 @@ impl EntryWalk {
                     _ => WalkFrame::Enter {
                         source_index: other,
                         loader,
+                        wrapper,
                     },
                 });
             };
 
             for_each_edge(c, source_index, runs, |part_index, edge| match edge {
-                Edge::Import(other) => import(part_index, other, loader),
-                Edge::LoadNow(other) => {
-                    import(part_index, other, plan.entry_id_of_file[other as usize])
-                }
+                Edge::Import(other) => import(part_index, other, loader, wrapper),
+                Edge::LoadNow(other) => import(
+                    part_index,
+                    other,
+                    plan.entry_id_of_file[other as usize],
+                    NO_WRAPPER,
+                ),
                 Edge::LoadLater(_) => {}
             });
             if let Some(slot) = slot {

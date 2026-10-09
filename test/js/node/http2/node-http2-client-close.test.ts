@@ -4,17 +4,23 @@
  *   any other code     -> 'error', 'close'           (no 'end': the body was killed by RST_STREAM)
  * Once the peer's half has ended (END_STREAM on a HEADERS frame, or a server push, which has no
  * inbound half) the readable already has its EOF, so 'end' comes first for every code.
+ * close(code) stores its code before it emits 'aborted'. A destroy() or close() made inside that
+ * event (stream.pipeline() destroys the stream there) does not change the code.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { describe, test } from "node:test";
+import { PassThrough, Writable, compose, finished, pipeline, promises } from "node:stream";
+import { after, before, describe, test } from "node:test";
 
-const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
+const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_ENHANCE_YOUR_CALM } =
+  http2.constants;
 
 // Raw h2c server: replies 200 + one DATA frame and never sends END_STREAM, so the only way the
 // stream ends is via the client's close(code).
@@ -320,6 +326,172 @@ for (const [site, table] of [
       }
     });
   }
+}
+
+// close(code) stores its code before it hands control to a listener. What the listener then does
+// to the stream does not change the code: stream.pipeline() and its relatives destroy the stream
+// from inside 'aborted' when end-of-stream reports a premature close, and a second close(code) is
+// a no-op.
+const codes = [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_REFUSED_STREAM];
+const discard = () =>
+  new Writable({
+    write(chunk, encoding, callback) {
+      callback();
+    },
+  });
+
+// Attached before close(code). Each one acts on the stream from inside 'aborted': destroy(), or
+// close(3) for the last one.
+const readers: [name: string, attach: (stream: http2.Http2Stream) => unknown][] = [
+  ["pipeline(stream, sink, cb)", stream => pipeline(stream, discard(), () => {})],
+  ["promises.pipeline(stream, sink)", stream => promises.pipeline(stream, discard()).catch(() => {})],
+  ["compose(stream, PassThrough)", stream => compose(stream, new PassThrough()).on("error", () => {})],
+  ["pipeline(stream, PassThrough, stream, cb)", stream => pipeline(stream, new PassThrough(), stream, () => {})],
+  ["finished(stream, () => stream.destroy())", stream => finished(stream, () => stream.destroy())],
+  ["on('aborted', () => stream.destroy(err))", stream => stream.on("aborted", () => stream.destroy(new Error("boom")))],
+  ["on('aborted', () => stream.destroy())", stream => stream.on("aborted", () => stream.destroy())],
+  ["on('aborted', () => stream.close(3))", stream => stream.on("aborted", () => stream.close(3))],
+];
+
+// The stream shows the code given to close(code) inside 'aborted', at 'close' and one turn later.
+const codeIsKept = {
+  [NGHTTP2_NO_ERROR]: ["aborted:0", "close:0", "immediate:0"],
+  [NGHTTP2_CANCEL]: ["aborted:8", "close:8", "immediate:8"],
+  [NGHTTP2_REFUSED_STREAM]: ["aborted:7", "close:7", "immediate:7"],
+};
+
+// Records the 'error' and 'close' events of a stream and resolves at 'close'.
+function errorAndClose(stream: http2.Http2Stream): Promise<string[]> {
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  stream.on("error", err => events.push("error:" + ((err as NodeJS.ErrnoException).code ?? err.message)));
+  stream.on("close", () => {
+    events.push("close:" + stream.rstCode);
+    resolve(events);
+  });
+  return promise;
+}
+
+for (const side of ["server", "client"] as const) {
+  describe(`${side} stream keeps the code given to close(code)`, () => {
+    let server: http2.Http2Server;
+    let client: http2.ClientHttp2Session;
+    let sessionFailed: Promise<never>;
+    before(async () => {
+      server = http2.createServer();
+      server.on("stream", stream => stream.on("error", () => {}));
+      client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+      sessionFailed = new Promise((_, reject) => client.on("error", reject));
+      sessionFailed.catch(() => {});
+    });
+    after(() => {
+      client.destroy();
+      server.close();
+    });
+
+    // Opens a POST whose body stays open, so both halves of the stream are open, and calls
+    // run(stream, peer) with this side's end first. The server side runs inside the server's
+    // 'stream' event. The client side runs once the server has the stream: node v26.3.0 spins
+    // when a request is destroyed inside 'aborted' in the same tick as request().
+    type Run<T> = (stream: http2.Http2Stream, peer: http2.Http2Stream) => Promise<T>;
+    async function open<T>(run: Run<T>): Promise<T> {
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      if (side === "client") {
+        const [stream] = await once(server, "stream");
+        return run(req, stream);
+      }
+      const { promise, resolve } = Promise.withResolvers<T>();
+      server.once("stream", stream => resolve(run(stream, req)));
+      return promise;
+    }
+    const withStream = <T>(run: Run<T>) => Promise.race([open(run), sessionFailed]);
+
+    // For each code: attaches the reader, calls close(code) and records rstCode inside 'aborted'
+    // (after the reader's own 'aborted' listener), at 'close' and one setImmediate turn after
+    // 'close'.
+    async function closeEachCode(attach: (stream: http2.Http2Stream) => unknown) {
+      const seen: Record<number, string[]> = {};
+      for (const code of codes) {
+        seen[code] = await withStream(stream => {
+          const events: string[] = [];
+          const { promise, resolve } = Promise.withResolvers<string[]>();
+          attach(stream);
+          stream.on("aborted", () => events.push("aborted:" + stream.rstCode));
+          stream.on("close", () => {
+            events.push("close:" + stream.rstCode);
+            setImmediate(() => {
+              events.push("immediate:" + stream.rstCode);
+              resolve(events);
+            });
+          });
+          stream.close(code);
+          return promise;
+        });
+      }
+      return seen;
+    }
+
+    test("close(code): 'aborted' sees rstCode", async () => {
+      assert.deepStrictEqual(await closeEachCode(() => {}), codeIsKept);
+    });
+
+    for (const [name, attach] of readers) {
+      test(`close(code) under ${name}`, async () => {
+        assert.deepStrictEqual(await closeEachCode(attach), codeIsKept);
+      });
+    }
+
+    test("close(code) then destroy() inside 'aborted': 'error' for an error code only", async () => {
+      const seen: Record<number, string[]> = {};
+      for (const code of codes) {
+        seen[code] = await withStream(stream => {
+          const atClose = errorAndClose(stream);
+          stream.on("aborted", () => stream.destroy());
+          stream.close(code);
+          return atClose;
+        });
+      }
+      assert.deepStrictEqual(seen, {
+        [NGHTTP2_NO_ERROR]: ["close:0"],
+        [NGHTTP2_CANCEL]: ["close:8"],
+        [NGHTTP2_REFUSED_STREAM]: ["error:ERR_HTTP2_STREAM_ERROR", "close:7"],
+      });
+    });
+
+    test("close(0) then destroy(err)", async () => {
+      const events = await withStream(stream => {
+        const atClose = errorAndClose(stream);
+        stream.close(NGHTTP2_NO_ERROR);
+        stream.destroy(new Error("boom"));
+        return atClose;
+      });
+      assert.deepStrictEqual(events, ["error:boom", "close:0"]);
+    });
+
+    test("close(7) under pipeline(stream, sink, cb): diagnostics channel", async () => {
+      const channel = `http2.${side}.stream.close`;
+      const published: number[] = [];
+      let closing: http2.Http2Stream | undefined;
+      const onClose = (message: unknown) => {
+        const { stream } = message as { stream: http2.Http2Stream };
+        if (stream === closing) published.push(stream.rstCode);
+      };
+      dc.subscribe(channel, onClose);
+      try {
+        await withStream(stream => {
+          closing = stream;
+          const atClose = errorAndClose(stream);
+          pipeline(stream, discard(), () => {});
+          stream.close(NGHTTP2_REFUSED_STREAM);
+          return atClose;
+        });
+      } finally {
+        dc.unsubscribe(channel, onClose);
+      }
+      assert.deepStrictEqual(published, [NGHTTP2_REFUSED_STREAM]);
+    });
+  });
 }
 
 if (typeof Bun !== "undefined") {

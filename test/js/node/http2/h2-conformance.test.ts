@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { PassThrough, Writable, duplexPair, finished, pipeline, promises } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -2164,5 +2164,199 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
+  });
+});
+
+describe("close(code) reset code", () => {
+  // One connection per test carries three streams. Stream id -> the code given to close(code).
+  const codeOf: Record<number, number> = { 1: ErrorCode.NO_ERROR, 3: ErrorCode.CANCEL, 5: ErrorCode.REFUSED_STREAM };
+  const sids = [1, 3, 5];
+  const theGivenCode = { "close(0)": [0], "close(8)": [8], "close(7)": [7] };
+
+  const discard = () =>
+    new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+
+  // Attached before close(code). Each one destroys the stream, or calls close(3), from inside
+  // close(code): from 'aborted', or for the last one from the 'readable' that close(0) and close(8)
+  // emit when they end the readable of a stream that was read.
+  const readers: Record<string, (stream: http2.Http2Stream) => unknown> = {
+    "pipeline(stream, sink, cb)": stream => pipeline(stream, discard(), () => {}),
+    "promises.pipeline(stream, sink)": stream => promises.pipeline(stream, discard()).catch(() => {}),
+    "pipeline(stream, PassThrough, stream, cb)": stream => pipeline(stream, new PassThrough(), stream, () => {}),
+    "finished(stream, () => stream.destroy())": stream => finished(stream, () => stream.destroy()),
+    "on('aborted', () => stream.destroy(err))": stream => stream.on("aborted", () => stream.destroy(new Error("boom"))),
+    "on('aborted', () => stream.destroy())": stream => stream.on("aborted", () => stream.destroy()),
+    "on('aborted', () => stream.close(3))": stream => stream.on("aborted", () => stream.close(3)),
+    "read() and on('readable', () => stream.destroy(err))": stream => {
+      stream.on("readable", () => stream.destroy(new Error("boom")));
+      stream.read();
+    },
+  };
+
+  const isHeaders = (sid: number) => (f: Frame) => f.type === FrameType.HEADERS && f.streamId === sid;
+  const isReset = (sid: number) => (f: Frame) => f.type === FrameType.RST_STREAM && f.streamId === sid;
+  const isPingAck = (opaque: number) => (f: Frame) =>
+    f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === opaque;
+  // HEADERS with END_HEADERS and without END_STREAM.
+  const upload = (sid: number) => encodeFrame(FrameType.HEADERS, 0x4, sid, requestHeaderBlock("POST"));
+
+  // ping(raw, 0) follows close(code) in the same tick, so the session reads a frame while its
+  // reset is in flight.
+  const ping = (raw: RawH2 | RawH2Server, opaque: number) =>
+    raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, opaque));
+
+  /** The distinct RST_STREAM codes on each of the three streams. */
+  function resetCodes(frames: Frame[]) {
+    return Object.fromEntries(
+      sids.map(sid => [
+        `close(${codeOf[sid]})`,
+        [...new Set(frames.filter(isReset(sid)).map(f => f.payload.readUInt32BE(0)))],
+      ]),
+    );
+  }
+
+  /**
+   * Two PING round trips: every frame the peer wrote before the second ACK has been parsed by
+   * then. The second round trip is for a frame that a deferred callback writes after the first ACK.
+   */
+  async function twoPings(raw: RawH2 | RawH2Server) {
+    for (const round of [1, 2]) {
+      ping(raw, round);
+      await raw.waitFor(isPingAck(round));
+    }
+  }
+
+  /**
+   * Waits for the RST_STREAM of each stream in `ids`, then for two PING round trips. A reset that
+   * never arrives shows in the caller's assertion, not as a bare timeout.
+   */
+  async function resetsThenTwoPings(raw: RawH2 | RawH2Server, ids = sids) {
+    await Promise.allSettled(ids.map(sid => raw.waitFor(isReset(sid))));
+    await twoPings(raw);
+  }
+
+  /** Runs `body` with a raw client that is connected to `listener`, after the SETTINGS handshake. */
+  async function withRawClient(listener: net.Server | http2.Http2Server, body: (c: RawH2) => Promise<void>) {
+    listener.listen(0);
+    await once(listener, "listening");
+    const c = await RawH2.connect((listener.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      await body(c);
+    } finally {
+      c.destroy();
+      listener.close();
+    }
+  }
+
+  /** Runs `body` with a client session that is connected to a raw server. */
+  async function withRawServer(body: (client: http2.ClientHttp2Session, raw: RawH2Server) => Promise<void>) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await body(client, raw);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  describe("server stream", () => {
+    for (const [name, attach] of Object.entries(readers)) {
+      test(`close(code) under ${name}`, async () => {
+        const server = http2.createServer();
+        await withRawClient(server, async c => {
+          server.on("stream", stream => {
+            stream.on("error", () => {});
+            attach(stream);
+            stream.close(codeOf[stream.id!]);
+            ping(c, 0);
+          });
+          c.send(Buffer.concat(sids.map(upload)));
+          await resetsThenTwoPings(c);
+          expect(resetCodes(c.frames)).toEqual(theGivenCode);
+        });
+      });
+    }
+
+    test("close(code) under pipeline(stream, sink, cb) after respond()", async () => {
+      const server = http2.createServer();
+      await withRawClient(server, async c => {
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          stream.respond({ ":status": 200 });
+          pipeline(stream, discard(), () => {});
+          stream.close(codeOf[stream.id!]);
+          ping(c, 0);
+        });
+        c.send(Buffer.concat(sids.map(upload)));
+        await resetsThenTwoPings(c);
+        expect(resetCodes(c.frames)).toEqual(theGivenCode);
+      });
+    });
+
+    // The session's transport is one side of a duplexPair(), not a socket. The other side is
+    // piped to a TCP socket so that the raw client can drive it.
+    test("close(7) under pipeline(stream, sink, cb) on an in-memory Duplex transport", async () => {
+      const server = http2.createServer();
+      const relay = net.createServer(socket => {
+        const [near, far] = duplexPair();
+        pipeline(socket, near, socket, () => {});
+        server.emit("connection", far);
+      });
+      await withRawClient(relay, async c => {
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          pipeline(stream, discard(), () => {});
+          stream.close(ErrorCode.REFUSED_STREAM);
+          ping(c, 0);
+        });
+        c.send(upload(1));
+        await resetsThenTwoPings(c, [1]);
+        expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([7]);
+      });
+    });
+  });
+
+  describe("client stream", () => {
+    /** Opens `count` POSTs and resolves once the raw server has the HEADERS of each. */
+    async function openUploads(
+      client: http2.ClientHttp2Session,
+      raw: RawH2Server,
+      count: number,
+      options?: http2.ClientSessionRequestOptions,
+    ) {
+      const requests = Array.from({ length: count }, () => {
+        const req = client.request({ ":method": "POST", ":path": "/" }, options);
+        req.on("error", () => {});
+        return req;
+      });
+      await Promise.all(requests.map((_, i) => raw.waitFor(isHeaders(1 + 2 * i))));
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      return requests;
+    }
+
+    for (const [name, attach] of Object.entries(readers)) {
+      test(`close(code) under ${name}`, async () => {
+        await withRawServer(async (client, raw) => {
+          for (const req of await openUploads(client, raw, sids.length)) {
+            attach(req);
+            req.close(codeOf[req.id!]);
+            ping(raw, 0);
+          }
+          await resetsThenTwoPings(raw);
+          expect(resetCodes(raw.frames)).toEqual(theGivenCode);
+        });
+      });
+    }
   });
 });

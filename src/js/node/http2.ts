@@ -2060,6 +2060,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // close() chose the stream's reset code, before any of its listeners ran. _destroy keeps that
+  // code, NGHTTP2_NO_ERROR included, and a close() from inside those listeners does nothing.
+  CloseRecorded = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2554,7 +2557,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     );
   }
   close(code?, callback?) {
-    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
+    if ((this[bunHTTP2StreamStatus] & (StreamState.Closed | StreamState.CloseRecorded)) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
       if (code === undefined) code = 0;
@@ -2570,6 +2573,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
+      // Like node's closeStream, the code is stored before the user code below can run (push(null),
+      // 'aborted', end()): stream.pipeline() destroys the stream from inside 'aborted'.
+      this.rstCode = code;
+      this[bunHTTP2StreamStatus] |= StreamState.CloseRecorded;
       if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
@@ -2584,7 +2591,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         this.end();
       }
-      this.rstCode = code;
       markStreamClosed(this);
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
@@ -2609,6 +2615,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    const closeRecorded = (this[bunHTTP2StreamStatus] & StreamState.CloseRecorded) !== 0;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2631,7 +2638,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     assertSession(session);
 
     let rstCode = this.rstCode;
-    if (!rstCode) {
+    if (rstCode === undefined || (rstCode === 0 && !closeRecorded)) {
       if (err != null) {
         if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.

@@ -421,11 +421,14 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 }
 
 impl Options {
+    // By value: each caller hands over its `CommandLineArguments`. A borrow
+    // moves this lint to `PackageManager::init` and its callers.
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
-        maybe_cli: Option<CommandLineArguments>,
+        cli: CommandLineArguments,
         // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
@@ -651,26 +654,24 @@ impl Options {
             }
         }
 
-        if let Some(cli) = &maybe_cli {
-            if !cli.registry.is_empty() {
-                let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_credentials() {
-                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                } else {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
-                        self.scope.token = Box::default();
-                        self.scope.auth = Box::default();
-                        self.scope.user = Box::default();
-                    }
-                    self.scope.set_url(api_registry.url);
+        if !cli.registry.is_empty() {
+            let api_registry = Api::NpmRegistry::from_url(cli.registry);
+            if api_registry.has_credentials() {
+                self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+            } else {
+                let new_url = bun_url::URL::parse(&api_registry.url);
+                let same_origin = {
+                    let prev_url = self.scope.url.url();
+                    bun_core::without_trailing_slash(new_url.host)
+                        == bun_core::without_trailing_slash(prev_url.host)
+                        && (new_url.is_https() || !prev_url.is_https())
+                };
+                if !same_origin {
+                    self.scope.token = Box::default();
+                    self.scope.auth = Box::default();
+                    self.scope.user = Box::default();
                 }
+                self.scope.set_url(api_registry.url);
             }
         }
 
@@ -725,7 +726,7 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
-        if let Some(cli) = maybe_cli {
+        {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
@@ -919,14 +920,6 @@ impl Options {
             // `bun pm why` command options
             self.top_only = cli.top_only;
             self.depth = cli.depth;
-        } else {
-            self.log_level = if default_disable_progress_bar {
-                LogLevel::DefaultNoProgress
-            } else {
-                LogLevel::Default
-            };
-            // SAFETY: main-thread CLI option load — single writer.
-            super::PackageManager::set_verbose_install(false);
         }
 
         // If the lockfile is frozen, don't save it to disk.

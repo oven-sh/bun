@@ -1961,7 +1961,7 @@ pub fn init(
         ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
-    // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
+    // Captured before `cli` is moved into `options.load(cli, ...)` below.
     let cli_network_concurrency = cli.network_concurrency;
 
     let options = Options {
@@ -2239,7 +2239,7 @@ pub fn init(
             // create_context_data(); single-threaded init region.
             unsafe { &mut *ctx.log },
             env,
-            Some(cli),
+            cli,
             ctx.install.as_deref(),
             subcommand,
         )?;
@@ -2647,7 +2647,7 @@ fn init_with_runtime_once(
 
     match manager
         .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
+        .load(log, env, cli, bun_install, Subcommand::Install)
     {
         Ok(()) => {}
         Err(e) => {

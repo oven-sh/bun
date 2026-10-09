@@ -24,11 +24,32 @@ fn report<'a>(reference: Reference<'a>, cx: &mut Cx<'a, NoUseBeforeDefine>) {
     cx.report(reference, NO_USE_BEFORE_DEFINE).data("name", reference.name());
 }
 
+/// For oxlint the computed key of a member that is only a type is a reference in a type: `{ [a]: 1 }` as a type or in
+/// an interface, `declare [a]: 1` and `abstract [a]: 1` in a class.
+fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
+    let Some(mut e) = reference.expr() else {
+        return false;
+    };
+    loop {
+        match e.parent() {
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == e) => e = parent,
+            Node::Member(member) => {
+                return member.is_signature() || member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT);
+            }
+            _ => return false,
+        }
+    }
+}
+
 impl NoUseBeforeDefine {
     /// typescript-eslint's `isForbidden`.
     fn is_forbidden<'a>(&self, variable: Symbol<'a>, kind: DeclarationKind, reference: Reference<'a>) -> bool {
         let config = &self.config;
-        if config.ignore_type_references && (reference.is_type() || reference_contains_type_query(reference)) {
+        if config.ignore_type_references
+            && (reference.is_type()
+                || reference_contains_type_query(reference)
+                || variable.file().language().is_oxlint && oxlint_is_in_key_of_type(reference))
+        {
             return false;
         }
         if kind == DeclarationKind::FunctionName {

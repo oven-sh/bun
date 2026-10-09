@@ -1622,13 +1622,10 @@ describe("backpressure", () => {
             (server.address() as AddressInfo).port,
             `${method} / HTTP/1.1\r\nHost: localhost\r\n\r\n`,
           );
-          const { returned, writableNeedDrain, drains } = await seen.promise;
-          expect({ returned, writableNeedDrain, drains }).toEqual({
-            // false for the GET request on Node.js 26.3, true from 26.9 on.
-            returned: method === "HEAD" ? true : returned,
-            writableNeedDrain: !returned,
-            drains: 0,
-          });
+          // Node.js returns false for the GET request up to 26.8, and true from 26.9 on.
+          const [major, minor] = process.versions.node.split(".").map(Number);
+          const returned = method === "HEAD" || major > 26 || (major === 26 && minor >= 9);
+          expect(await seen.promise).toEqual({ returned, writableNeedDrain: !returned, drains: 0 });
         },
       );
     });
@@ -3104,9 +3101,10 @@ describe("backpressure", () => {
       const client = await connection.connect();
       try {
         client.write(singlePair);
-        const { returned, writableNeedDrain } = await seen.promise;
-        // write() returns false on Node.js 26.3, and true from 26.9 on.
-        expect(writableNeedDrain).toBe(!returned);
+        // Node.js returns false up to 26.8, and true from 26.9 on.
+        const [major, minor] = process.versions.node.split(".").map(Number);
+        const returned = major > 26 || (major === 26 && minor >= 9);
+        expect(await seen.promise).toEqual({ returned, writableNeedDrain: !returned });
       } finally {
         client.destroy();
       }

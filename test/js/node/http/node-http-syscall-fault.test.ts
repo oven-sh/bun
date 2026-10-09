@@ -311,11 +311,11 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
   });
 });
 
-// Every send takes 1000 bytes, so a write backs the socket up at once, with no megabytes and no slow client.
+// Every send takes a few bytes, so a write backs the socket up at once, with no megabytes and no slow client.
 describe.skipIf(skip)("node:http 'drain' under short sends", () => {
   const CHUNK16 = Buffer.alloc(16 * 1024, "b");
-  const shortSends = () => {
-    for (const syscall of ["send", "writev"] as const) fault.set({ syscall, action: "short", bytes: 1000, repeat: -1 });
+  const shortSends = (bytes = 1000) => {
+    for (const syscall of ["send", "writev"] as const) fault.set({ syscall, action: "short", bytes, repeat: -1 });
   };
   async function receive(server: http.Server, request: string) {
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -397,6 +397,38 @@ describe.skipIf(skip)("node:http 'drain' under short sends", () => {
       ],
       length: total + 4,
       inOrder: true,
+    });
+  });
+
+  // With highWaterMark 0 a small write() returns false while the response
+  // waits. At its turn that one write fits the cork buffer, so the handle
+  // accepts it whole and reports no backpressure. The socket then takes only
+  // part of it.
+  test("a small write() that returned false while the response waited gets its 'drain' after the socket took it", async () => {
+    const events: string[] = [];
+    let first: http.ServerResponse;
+    await using server = http.createServer({ highWaterMark: 0 }, (req, res) => {
+      if (req.url === "/first") return void (first = res);
+      res.setHeader("Content-Length", 100 + 4);
+      const returned = res.write(Buffer.alloc(100, "b"));
+      events.push(`waits: write() returned ${returned}, writableNeedDrain ${res.writableNeedDrain}`);
+      res.on("drain", () => {
+        events.push(`'drain': writableNeedDrain ${res.writableNeedDrain}, writableLength ${res.writableLength}`);
+        res.end("tail");
+      });
+      shortSends(50);
+      first.end("first");
+    });
+    const body = await receive(
+      server,
+      "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    expect({ events, body: body.toString() }).toEqual({
+      events: [
+        "waits: write() returned false, writableNeedDrain true",
+        "'drain': writableNeedDrain false, writableLength 0",
+      ],
+      body: Buffer.alloc(100, "b") + "tail",
     });
   });
 });

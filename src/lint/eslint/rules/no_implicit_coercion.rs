@@ -18,6 +18,8 @@ pub struct NoImplicitCoercion {
     checks_concatenation: bool,
     /// `` `${foo}` ``
     checks_templates: bool,
+    /// The option `string`, without which oxlint does not look at templates.
+    checks_strings: bool,
 }
 
 const IMPLICIT_COERCION: Message = Message::new(
@@ -267,10 +269,11 @@ impl Rule for NoImplicitCoercion {
             checks_subtraction: checks("number", "-"),
             checks_concatenation: checks("string", "+"),
             checks_templates: object.bool_or("disallowTemplateShorthand", false),
+            checks_strings: object.bool_or("string", true),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if self.checks_double_negation
             || self.checks_index_of
             || self.checks_unary_plus
@@ -284,7 +287,7 @@ impl Rule for NoImplicitCoercion {
         if self.checks_concatenation {
             on.exprs([ExprTag::Assign], Self::check_assignment);
         }
-        if self.checks_templates {
+        if self.checks_templates && (self.checks_strings || !file.language().is_oxlint) {
             on.exprs([ExprTag::Template], Self::check_template);
         }
     }

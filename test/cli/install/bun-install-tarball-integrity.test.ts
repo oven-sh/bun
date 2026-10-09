@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { exists, mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -852,5 +852,437 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         expect(exitCode).not.toBe(0);
       }
     });
+  });
+});
+
+// bun.lock pins a URL tarball and a `file:` tarball by the sha512 of its
+// bytes. The tests below make bun resolve such a dependency again (its line in
+// package.json moves to another group or is renamed, another workspace
+// declares it, `bun update` runs) after the bytes behind the URL or the path
+// changed. Each test has its own project, server and caches.
+describe.concurrent("pinned tarball that is resolved again", () => {
+  const PKG = "pinned-pkg";
+  const kinds = ["url", "file"] as const;
+  type Kind = (typeof kinds)[number];
+
+  const sri = (algorithm: string, bytes: Uint8Array) =>
+    `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`;
+
+  /** A package tarball whose index.js exports `marker`. */
+  function tarballOf(marker: string, manifest: Record<string, unknown> = {}, name = PKG) {
+    return new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
+        "package/index.js": `module.exports = ${JSON.stringify(marker)};\n`,
+      },
+      { compress: "gzip" },
+    ).bytes();
+  }
+
+  function fixture(kind: Kind) {
+    const dir = tempDir("pinned-tarball", { project: { vendor: {} } });
+    const root = String(dir);
+    const project = join(root, "project");
+    // URL path -> the bytes the server answers with
+    const served = new Map<string, Uint8Array>();
+    let requests = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests++;
+        const bytes = served.get(new URL(req.url).pathname);
+        return bytes ? new Response(bytes) : new Response("not found", { status: 404 });
+      },
+    });
+
+    return {
+      kind,
+      project,
+      /** How package.json writes the tarball `name`. */
+      spec: (name = "one.tgz") =>
+        kind === "url" ? `http://localhost:${server.port}/${name}` : `file:./vendor/${name}`,
+      /** Puts `bytes` behind the URL and the path of the tarball `name`. */
+      async put(bytes: Uint8Array, name = "one.tgz") {
+        served.set(`/${name}`, bytes);
+        await writeFile(join(project, "vendor", name), bytes);
+      },
+      async manifest(manifest: Record<string, unknown>, at = ".") {
+        await mkdir(join(project, at), { recursive: true });
+        await writeFile(
+          join(project, at, "package.json"),
+          JSON.stringify({ name: "root", version: "1.0.0", ...manifest }),
+        );
+      },
+      /** "warm" is the cache of the first install. "cold" is a cache that has never held the tarball. */
+      async bun(cache: "cold" | "warm", args: string[], extraEnv: Record<string, string> = {}) {
+        requests = 0;
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: project,
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, `cache-${cache}`), ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out: stdout + stderr, exitCode, requests };
+      },
+      /** The marker the installed package exports, or null when it is not installed. */
+      async installed(at = join("node_modules", PKG)): Promise<string | null> {
+        const index = file(join(project, at, "index.js"));
+        if (!(await index.exists())) return null;
+        const text = await index.text();
+        return JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+      },
+      lock: () => file(join(project, "bun.lock")).text(),
+      /** The names of the packages that the cache holds as extracted tarballs. */
+      async cached(cache: "cold" | "warm") {
+        const names: string[] = [];
+        const cacheDir = join(root, `cache-${cache}`);
+        for (const entry of (await exists(cacheDir)) ? await readdirSorted(cacheDir) : []) {
+          const manifest = file(join(cacheDir, entry, "package.json"));
+          if (entry.startsWith("@T@") && (await manifest.exists())) names.push((await manifest.json()).name);
+        }
+        return names;
+      },
+      async removeNodeModules() {
+        for (const at of [".", join("packages", "a"), join("packages", "b")]) {
+          await rm(join(project, at, "node_modules"), { recursive: true, force: true });
+        }
+      },
+      async [Symbol.asyncDispose]() {
+        await server.stop(true);
+        await dir[Symbol.asyncDispose]();
+      },
+    };
+  }
+  type Fixture = ReturnType<typeof fixture>;
+
+  /** A project whose bun.lock pins the bytes with marker "v1". node_modules is removed again. */
+  async function pinned(
+    kind: Kind,
+    write: (fx: Fixture) => Promise<void> = fx => fx.manifest({ dependencies: { [PKG]: fx.spec() } }),
+  ) {
+    const fx = fixture(kind);
+    const bytes = await tarballOf("v1");
+    await fx.put(bytes);
+    await write(fx);
+    const first = await fx.bun("warm", ["install"]);
+    expect(first.out).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    const pin = sri("sha512", bytes);
+    const pinnedLock = await fx.lock();
+    expect(pinnedLock).toContain(pin);
+    await fx.removeNodeModules();
+    return Object.assign(fx, { pin, pinnedLock });
+  }
+  type Pinned = Awaited<ReturnType<typeof pinned>>;
+
+  /** bun refused the changed bytes: it installed nothing, bun.lock keeps the pin and the cold cache does not hold them. */
+  async function expectRefused(pin: Pinned, result: { out: string; exitCode: number }, at = join("node_modules", PKG)) {
+    expect({
+      installed: await pin.installed(at),
+      pinned: (await pin.lock()).includes(pin.pin),
+      cached: (await pin.cached("cold")).filter(name => name === PKG),
+    }).toEqual({ installed: null, pinned: true, cached: [] });
+    expect(result.out).toContain("Integrity check failed");
+    expect(result.exitCode).toBe(1);
+  }
+
+  describe.each(kinds)("%s, changed bytes, cold cache", kind => {
+    const groups = ["devDependencies", "optionalDependencies", "peerDependencies"] as const;
+    const commands = [["install"], ["install", "--frozen-lockfile"], ["ci"]];
+
+    describe.each(groups)("the line moves to %s", group => {
+      it.each(commands.map(args => [args]))("refuses: bun %j", async args => {
+        await using pin = await pinned(kind);
+        await pin.put(await tarballOf("v2"));
+        await pin.manifest({ [group]: { [PKG]: pin.spec() } });
+
+        await expectRefused(pin, await pin.bun("cold", args));
+      });
+    });
+
+    it("refuses when the key is renamed", async () => {
+      await using pin = await pinned(kind);
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+      await expectRefused(pin, await pin.bun("cold", ["install"]), join("node_modules", "renamed-key"));
+    });
+
+    it("refuses when a key that never was the package name moves", async () => {
+      await using pin = await pinned(kind, fx => fx.manifest({ dependencies: { "other-key": fx.spec() } }));
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest({ devDependencies: { "other-key": pin.spec() } });
+
+      await expectRefused(pin, await pin.bun("cold", ["ci"]), join("node_modules", "other-key"));
+    });
+
+    it("refuses when an override names the same tarball", async () => {
+      await using pin = await pinned(kind);
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest({ dependencies: { [PKG]: pin.spec() }, overrides: { [PKG]: pin.spec() } });
+
+      await expectRefused(pin, await pin.bun("cold", ["install"]));
+    });
+
+    it("does not run the postinstall of the changed bytes for a trusted dependency", async () => {
+      await using pin = await pinned(kind, fx =>
+        fx.manifest({ dependencies: { [PKG]: fx.spec() }, trustedDependencies: [PKG] }),
+      );
+      // The script runs in node_modules/<PKG> and leaves its mark in the project.
+      await pin.put(
+        await tarballOf("v2", {
+          scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('../../postinstall-ran', '')"` },
+        }),
+      );
+      await pin.manifest({ devDependencies: { [PKG]: pin.spec() }, trustedDependencies: [PKG] });
+
+      const result = await pin.bun("cold", ["install", "--frozen-lockfile"]);
+
+      expect(await exists(join(pin.project, "postinstall-ran"))).toBe(false);
+      await expectRefused(pin, result);
+    });
+  });
+
+  // The root declares the tarball. `packages/*` are its workspaces.
+  const withWorkspaces = (fx: Fixture) =>
+    fx.manifest({ workspaces: ["packages/*"], dependencies: { [PKG]: fx.spec() } });
+
+  it.each([[["install"]], [["install", "--frozen-lockfile"]]])(
+    "url, changed bytes: refuses when a new workspace declares the tarball: bun %j",
+    async args => {
+      await using pin = await pinned("url", withWorkspaces);
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest({ name: "a", dependencies: { [PKG]: pin.spec() } }, join("packages", "a"));
+
+      const result = await pin.bun("cold", args);
+
+      expect(await pin.installed(join("packages", "a", "node_modules", PKG))).toBe(null);
+      await expectRefused(pin, result);
+    },
+  );
+
+  describe.each(kinds)("%s, changed bytes, workspaces", kind => {
+    it("refuses when a workspace that declares the tarball gets another dependency", async () => {
+      // A `file:` path is relative to the package.json that declares it.
+      const fromWorkspace = (fx: Fixture) => (kind === "url" ? fx.spec() : "file:../../vendor/one.tgz");
+      await using pin = await pinned(kind, async fx => {
+        await withWorkspaces(fx);
+        await fx.manifest({ name: "a", dependencies: { [PKG]: fromWorkspace(fx) } }, join("packages", "a"));
+        await fx.manifest({ name: "b" }, join("packages", "b"));
+      });
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest(
+        { name: "a", dependencies: { [PKG]: fromWorkspace(pin), b: "workspace:*" } },
+        join("packages", "a"),
+      );
+
+      const result = await pin.bun("cold", ["install"]);
+
+      expect(await pin.installed(join("packages", "a", "node_modules", PKG))).toBe(null);
+      await expectRefused(pin, result);
+    });
+  });
+
+  it("refuses a changed tarball that another tarball declares when the line of that tarball moves", async () => {
+    await using pin = await pinned("url", async fx => {
+      await fx.put(await tarballOf("parent", { dependencies: { [PKG]: fx.spec() } }, "parent-pkg"), "parent.tgz");
+      await fx.manifest({ dependencies: { "parent-pkg": fx.spec("parent.tgz") } });
+    });
+    await pin.put(await tarballOf("v2"));
+    await pin.manifest({ devDependencies: { "parent-pkg": pin.spec("parent.tgz") } });
+
+    await expectRefused(pin, await pin.bun("cold", ["install", "--frozen-lockfile"]));
+  });
+
+  // Two checkouts of one project share the cache. A command in the checkout
+  // that moved the line must not put the changed bytes where the checkout
+  // with no edit takes its install from.
+  describe.each(kinds)("%s, changed bytes, a checkout that shares the cache", kind => {
+    it.each([[["install", "--dry-run"]], [["install", "--frozen-lockfile"]], [["install"]]])(
+      "bun %j on a moved line leaves the cache of the project with no edit alone",
+      async args => {
+        await using pin = await pinned(kind);
+        await pin.put(await tarballOf("v2"));
+        await pin.manifest({ devDependencies: { [PKG]: pin.spec() } });
+        await pin.bun("warm", args);
+
+        // back to the project with no edit
+        await pin.manifest({ dependencies: { [PKG]: pin.spec() } });
+        await writeFile(join(pin.project, "bun.lock"), pin.pinnedLock);
+        await pin.removeNodeModules();
+        const result = await pin.bun("warm", ["install", "--frozen-lockfile"]);
+
+        expect(result.out).not.toContain("error:");
+        expect({ installed: await pin.installed(), requests: result.requests }).toEqual({
+          installed: "v1",
+          requests: 0,
+        });
+        expect(result.exitCode).toBe(0);
+      },
+    );
+  });
+
+  // bun reads the pin of a tarball from the lockfile of npm and of pnpm when the project has no bun.lock yet.
+  describe("url, the lockfile of another package manager", () => {
+    const foreign: Record<string, (url: string, integrity: string) => string> = {
+      "package-lock.json": (url, integrity) =>
+        JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": { name: "root", version: "1.0.0", dependencies: { [PKG]: url } },
+            [`node_modules/${PKG}`]: { version: "1.0.0", resolved: url, integrity },
+          },
+        }),
+      "pnpm-lock.yaml": (url, integrity) =>
+        [
+          "lockfileVersion: '9.0'",
+          "",
+          "settings:",
+          "  autoInstallPeers: true",
+          "  excludeLinksFromLockfile: false",
+          "",
+          "importers:",
+          "",
+          "  .:",
+          "    dependencies:",
+          `      ${PKG}:`,
+          `        specifier: ${url}`,
+          `        version: ${url}`,
+          "",
+          "packages:",
+          "",
+          `  ${PKG}@${url}:`,
+          `    resolution: {integrity: ${integrity}, tarball: ${url}}`,
+          "    version: 1.0.0",
+          "",
+          "snapshots:",
+          "",
+          `  ${PKG}@${url}: {}`,
+          "",
+        ].join("\n"),
+    };
+    const cases = [
+      ["package-lock.json", "sha512"],
+      ["package-lock.json", "sha1"],
+      ["pnpm-lock.yaml", "sha512"],
+    ] as const;
+
+    describe.each(cases)("%s with a %s pin", (lockName, algorithm) => {
+      it.each([
+        ["with no edit", "dependencies"],
+        ["when the line moves", "devDependencies"],
+      ] as const)("refuses changed bytes %s", async (_, group) => {
+        await using fx = fixture("url");
+        await fx.put(await tarballOf("v2"));
+        await writeFile(
+          join(fx.project, lockName),
+          foreign[lockName](fx.spec(), sri(algorithm, await tarballOf("v1"))),
+        );
+        await fx.manifest({ [group]: { [PKG]: fx.spec() } });
+
+        const result = await fx.bun("cold", ["install"]);
+
+        expect({ installed: await fx.installed(), cached: await fx.cached("cold") }).toEqual({
+          installed: null,
+          cached: [],
+        });
+        expect(result.out).toContain("Integrity check failed");
+        expect(result.exitCode).toBe(1);
+      });
+    });
+  });
+
+  // `bun update` asks for the bytes the tarball has now. bun.lock then pins what was installed.
+  describe.each(kinds)("%s, bun update", kind => {
+    const updates = [[["update"]], [["update", PKG]], [["update", "--latest"]]] as const;
+
+    it.each(updates)("keeps the pin when the bytes are unchanged: bun %j", async args => {
+      await using pin = await pinned(kind);
+
+      const result = await pin.bun("cold", [...args]);
+
+      expect(result.out).not.toContain("error:");
+      expect({ installed: await pin.installed(), lock: await pin.lock() }).toEqual({
+        installed: "v1",
+        lock: pin.pinnedLock,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it.each(updates)("installs changed bytes and pins them: bun %j", async args => {
+      await using pin = await pinned(kind);
+      const changed = await tarballOf("v2");
+      await pin.put(changed);
+
+      const update = await pin.bun("warm", [...args]);
+
+      expect(update.out).not.toContain("error:");
+      expect({ installed: await pin.installed(), lock: await pin.lock() }).toEqual({
+        installed: "v2",
+        lock: pin.pinnedLock.replace(pin.pin, sri("sha512", changed)),
+      });
+      expect(update.exitCode).toBe(0);
+
+      // The new pin is the one an install on another machine checks.
+      await pin.removeNodeModules();
+      const install = await pin.bun("cold", ["install", "--frozen-lockfile"]);
+      expect(install.out).not.toContain("error:");
+      expect(await pin.installed()).toBe("v2");
+      expect(install.exitCode).toBe(0);
+    });
+
+    it("bun update <package name> reaches a dependency that another key declares", async () => {
+      await using pin = await pinned(kind, fx => fx.manifest({ dependencies: { "other-key": fx.spec() } }));
+      const changed = await tarballOf("v2");
+      await pin.put(changed);
+
+      const result = await pin.bun("cold", ["update", PKG]);
+
+      expect(result.out).not.toContain("error:");
+      expect({ installed: await pin.installed(join("node_modules", "other-key")), lock: await pin.lock() }).toEqual({
+        installed: "v2",
+        lock: pin.pinnedLock.replace(pin.pin, sri("sha512", changed)),
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  it("file, bun add of the tarball installs changed bytes and pins them", async () => {
+    await using pin = await pinned("file");
+    const changed = await tarballOf("v2");
+    await pin.put(changed);
+
+    const result = await pin.bun("warm", ["add", "./vendor/one.tgz"]);
+
+    expect(result.out).not.toContain("error:");
+    expect({ installed: await pin.installed(), pinned: (await pin.lock()).includes(sri("sha512", changed)) }).toEqual({
+      installed: "v2",
+      pinned: true,
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe.each(kinds)("%s, unchanged bytes", kind => {
+    it.each([[["install"]], [["install", "--frozen-lockfile"]], [["ci"]]])(
+      "installs the pinned bytes when the line moves: bun %j",
+      async args => {
+        await using pin = await pinned(kind);
+        await pin.manifest({ devDependencies: { [PKG]: pin.spec() } });
+
+        const result = await pin.bun("cold", args);
+
+        expect(result.out).not.toContain("error:");
+        expect({ installed: await pin.installed(), pinned: (await pin.lock()).includes(pin.pin) }).toEqual({
+          installed: "v1",
+          pinned: true,
+        });
+        expect(result.exitCode).toBe(0);
+      },
+    );
   });
 });

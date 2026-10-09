@@ -1269,6 +1269,7 @@ fn run_tasks_erased(
                                         Some(&any_root),
                                         install_peer,
                                     )?;
+                                    pin_loaded_package_to_extracted(manager, id, &pkg);
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -1855,7 +1856,13 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
 
     let owner = this.lockfile.str(&repository.owner);
     let repo = this.lockfile.str(&repository.repo);
-    let committish = this.lockfile.str(&repository.committish);
+    // A resolved package is fetched by its commit. The ref it was declared
+    // with, which a bun.lockb keeps, can name another commit by now.
+    let committish = crate::repository::github_locked_hash(
+        repository,
+        this.lockfile.buffers.string_bytes.as_slice(),
+    )
+    .unwrap_or_else(|| this.lockfile.str(&repository.committish));
 
     let mut out = Vec::new();
     write!(
@@ -1984,6 +1991,44 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
+/// A row that waited for an extract can end on the package the lockfile loaded
+/// for the same resolution, not on `extracted`. The bytes came in with no pin:
+/// the loaded package had none, or `bun update` or `bun add` asked for the
+/// tarball again. The lockfile then pins what was extracted.
+fn pin_loaded_package_to_extracted(
+    manager: &mut PackageManager,
+    dependency_id: DependencyID,
+    extracted: &Package,
+) {
+    if !extracted.meta.integrity.tag.is_supported() {
+        return;
+    }
+    let bound = manager.lockfile.buffers.resolutions[dependency_id as usize];
+    if bound == extracted.meta.id || bound >= manager.lockfile.loaded_package_count {
+        return;
+    }
+    let buf = manager.lockfile.buffers.string_bytes.as_slice();
+    if !manager.lockfile.packages.items_resolution()[bound as usize].eql(
+        &extracted.resolution,
+        buf,
+        buf,
+    ) {
+        return;
+    }
+    let meta = &mut manager.lockfile.packages.items_meta_mut()[bound as usize];
+    if bytemuck::bytes_of(&meta.integrity) == bytemuck::bytes_of(&extracted.meta.integrity) {
+        return;
+    }
+    meta.integrity = extracted.meta.integrity;
+    manager
+        .options
+        .enable
+        .set(Enable::FORCE_SAVE_LOCKFILE, true);
+}
+
+/// A tarball fetch for `package`, a package of the lockfile: its integrity is
+/// what the bytes are verified against. A dependency that has no package yet
+/// goes through `generate_network_task_for_unresolved_tarball`.
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,

@@ -839,6 +839,11 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        // An error while resolving fails a full install below, before it saves.
+        // Here it would save a lockfile without the package that failed.
+        if had_errors_before_cleaning_lockfile {
+            Global::crash();
+        }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,

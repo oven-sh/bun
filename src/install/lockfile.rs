@@ -2329,6 +2329,23 @@ impl Lockfile {
         None
     }
 
+    /// The loaded package with this resolution: the same URL, path or commit.
+    #[cold]
+    pub(crate) fn loaded_package_with_resolution(
+        &self,
+        resolution: &Resolution,
+    ) -> Option<PackageID> {
+        let loaded = (self.loaded_package_count as usize).min(self.packages.len());
+        if loaded == 0 {
+            return None;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        self.packages.items_resolution()[..loaded]
+            .iter()
+            .position(|existing| existing.eql(resolution, buf, buf))
+            .map(|id| id as PackageID)
+    }
+
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
     ///
     /// The string buffer is read from `self`, splitting borrows at the field

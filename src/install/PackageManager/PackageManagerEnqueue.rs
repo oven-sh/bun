@@ -237,8 +237,6 @@ pub fn enqueue_tarball_for_reading(
         return;
     }
 
-    let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
-
     let task = enqueue_local_tarball(
         this,
         task_id,
@@ -246,7 +244,7 @@ pub fn enqueue_tarball_for_reading(
         alias,
         path,
         resolution,
-        &integrity,
+        Some(package_id),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
@@ -726,6 +724,119 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
     this.patch_task_fifo
         .write_item_assume_capacity(bun_core::heap::into_raw(task));
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Does `bun update` resolve this row again? `name` is the package's own name,
+/// which differs from the dependency's for an alias.
+#[inline(always)]
+fn is_update_target(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    name: SemverString,
+) -> bool {
+    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
+    // borrows `this.lockfile` and `this` at once. Split via raw root.
+    this.to_update
+        && if !this.update_requests.is_empty() {
+            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
+            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
+                || (name_hash != dependency.name_hash
+                    && this.is_update_request(name_hash, name.slice(string_buf))))
+                && crate::update_scope::UpdateScope::of(&*this)
+                    .contains_dependency(&this.lockfile, dependency_id)
+        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
+            // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
+            dependency.version.tag == dependency::version::Tag::Catalog
+                || this
+                    .lockfile
+                    .is_dependency_of_workspace_in(targets, dependency_id)
+        } else {
+            // Bare `bun update`: direct deps of the cwd workspace; catalogs are root-scoped.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+            // `manager.workspace_package_json_cache` only — disjoint from
+            // `manager.lockfile`.
+            dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+        }
+}
+
+/// The integrity that the fetch of a URL or `file:` tarball is verified
+/// against when its dependency has no package yet: the pin of the package the
+/// loaded lockfile holds for the same URL or path.
+///
+/// `bun update` and a `bun add` of the dependency ask for the bytes the
+/// tarball has now. Their fetch has no pin, and the lockfile takes the new
+/// hash when the extract completes (`pin_loaded_package_to_extracted`).
+#[cold]
+fn pin_for_unresolved_tarball(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    resolution: &Resolution,
+) -> Integrity {
+    if !matches!(
+        resolution.tag,
+        ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball
+    ) {
+        return Integrity::default();
+    }
+    let Some(package_id) = this.lockfile.loaded_package_with_resolution(resolution) else {
+        return Integrity::default();
+    };
+    let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+    if !integrity.tag.is_supported() {
+        return integrity;
+    }
+    let dependency = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
+    let name = this.lockfile.packages.items_name()[package_id as usize];
+    let name_hash = this.lockfile.packages.items_name_hash()[package_id as usize];
+    let refresh = if this.to_update {
+        is_update_target(this, &dependency, dependency_id, name_hash, name)
+    } else {
+        this.subcommand == crate::Subcommand::Add && {
+            let buf = this.lockfile.buffers.string_bytes.as_slice();
+            this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
+                || this.is_update_request(name_hash, name.slice(buf))
+        }
+    };
+    if refresh {
+        Integrity::default()
+    } else {
+        integrity
+    }
+}
+
+/// A tarball fetch for a dependency that has no package yet: a URL tarball
+/// whose package.json has not been read.
+fn generate_network_task_for_unresolved_tarball<'a>(
+    this: &'a mut PackageManager,
+    task_id: Task::Id,
+    url: &[u8],
+    dependency_id: DependencyID,
+    dependency: &Dependency,
+    resolution: &Resolution,
+) -> Result<Option<&'a mut NetworkTask>, crate::network_task::ForTarballError> {
+    let mut package = Package {
+        name: dependency.name,
+        name_hash: dependency.name_hash,
+        resolution: *resolution,
+        ..Package::default()
+    };
+    package.meta.integrity = pin_for_unresolved_tarball(this, dependency_id, resolution);
+    run_tasks::generate_network_task_for_tarball(
+        this,
+        task_id,
+        url,
+        dependency.behavior.is_required(),
+        dependency_id,
+        &package,
+        None,
+        crate::network_task::Authorization::NoAuthorization,
+    )
 }
 
 /// A resolve task's callback queue is drained exactly once. If `task_id`
@@ -1787,37 +1898,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // `enqueue_local_tarball` copies `dep_name` into the
                     // filename store.
                     let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let task = enqueue_local_tarball(
-                        this,
-                        task_id,
-                        id,
-                        dep_name,
-                        url,
-                        &res,
-                        &Integrity::default(),
-                    );
+                    let task = enqueue_local_tarball(this, task_id, id, dep_name, url, &res, None);
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    // `generate_network_task_for_tarball` returns
+                    // `generate_network_task_for_unresolved_tarball` returns
                     // `&'a mut NetworkTask` tied to `this`; coerce to `*mut`
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        match run_tasks::generate_network_task_for_tarball(
-                            this,
-                            task_id,
-                            url,
-                            dependency.behavior.is_required(),
-                            id,
-                            &Package {
-                                name: dependency.name,
-                                name_hash: dependency.name_hash,
-                                resolution: res,
-                                ..Package::default()
-                            },
-                            None,
-                            crate::network_task::Authorization::NoAuthorization,
+                        match generate_network_task_for_unresolved_tarball(
+                            this, task_id, url, id, dependency, &res,
                         ) {
                             // --offline miss: already reported / skipped
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
@@ -2112,6 +2203,8 @@ pub fn enqueue_git_checkout(
     this.preallocated_resolve_tasks.get_init(task_value)
 }
 
+/// `package_id` is the lockfile package the tarball is read for. A dependency
+/// that has no package yet passes `None`, and the loaded lockfile gives the pin.
 fn enqueue_local_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -2119,8 +2212,13 @@ fn enqueue_local_tarball(
     name: &[u8],
     path: &[u8],
     resolution: &Resolution,
-    integrity: &Integrity,
+    package_id: Option<PackageID>,
 ) -> *mut ThreadPool::Task {
+    let integrity = match package_id {
+        Some(package_id) => this.lockfile.packages.items_meta()[package_id as usize].integrity,
+        None => pin_for_unresolved_tarball(this, dependency_id, resolution),
+    };
+
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
     // `lockfile.packages` / `lockfile.buffers.string_bytes`: those buffers
@@ -2165,7 +2263,7 @@ fn enqueue_local_tarball(
                     cache_dir: get_cache_directory(this),
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
-                    integrity: *integrity,
+                    integrity,
                     url: StringOrTinyString::init_append_if_needed(
                         path,
                         &mut crate::network_task::filename_store_appender(),
@@ -2297,33 +2395,7 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = this.to_update
-        && if !this.update_requests.is_empty() {
-            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
-            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
-                || (name_hash != dependency.name_hash
-                    && this.is_update_request(name_hash, name.slice(string_buf))))
-                && crate::update_scope::UpdateScope::of(&*this)
-                    .contains_dependency(&this.lockfile, dependency_id)
-        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
-            // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
-            dependency.version.tag == dependency::version::Tag::Catalog
-                || this
-                    .lockfile
-                    .is_dependency_of_workspace_in(targets, dependency_id)
-        } else {
-            // Bare `bun update`: direct deps of the cwd workspace; catalogs are root-scoped.
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-            // `manager.workspace_package_json_cache` only — disjoint from
-            // `manager.lockfile`.
-            dependency.version.tag == dependency::version::Tag::Catalog
-                || unsafe { &*(*this_ptr).lockfile }
-                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
-        };
+    let should_update = is_update_target(this, dependency, dependency_id, name_hash, name);
 
     // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
     if should_update && !behavior.is_peer() {

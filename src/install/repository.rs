@@ -224,6 +224,17 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+/// The commit a resolved `github:` package is locked to: the short hash at the
+/// end of `resolved` (`<owner>-<repo>-<hash>`).
+pub(crate) fn github_locked_hash<'a>(
+    repository: &'a Repository,
+    buf: &'a [u8],
+) -> Option<&'a [u8]> {
+    let resolved = repository.resolved.slice(buf);
+    let hash = &resolved[strings::last_index_of_char(resolved, b'-')? + 1..];
+    (!hash.is_empty()).then_some(hash)
+}
+
 /// Install-tier `Repository` behaviour: parsing, formatting, clone URL forms.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;

@@ -108,7 +108,13 @@ async function run(form: string) {
   }
   fs.closeSync(otherFd);
   fs.closeSync(keepOpen);
-  return { ...result, openWhilePending, otherTookTheNumber, collected: collected - collectedBefore, closedAfterTheRead };
+  return {
+    ...result,
+    openWhilePending,
+    otherTookTheNumber,
+    collected: collected - collectedBefore,
+    closedAfterTheRead,
+  };
 }
 
 // The forms run one after the other. The dropped form leaves its handle open, so it is last.

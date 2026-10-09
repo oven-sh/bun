@@ -250,7 +250,7 @@ const _appendFile = fs.appendFile.bind(fs);
 // pending call then rejects with ERR_OUT_OF_RANGE because it reads handle.fd for each request.
 // A closed handle takes no ref: the native call rejects with ERR_OUT_OF_RANGE as in node, and
 // [kUnref] does not reach its last-ref arm a second time.
-async function readFileOfHandle(handle, fd: number, options) {
+async function readFileOfHandle(handle, fd, options) {
   if (fd === -1) return _readFile(fd, options);
   try {
     handle[kRef]();
@@ -260,7 +260,7 @@ async function readFileOfHandle(handle, fd: number, options) {
   }
 }
 
-async function writeFileOfHandle(handle, fd: number, data, options) {
+async function writeFileOfHandle(handle, fd, data, options) {
   if (fd === -1) return _writeFile(fd, data, options);
   try {
     handle[kRef]();
@@ -278,7 +278,7 @@ async function writeFileOfHandle(handle, fd: number, data, options) {
   }
 }
 
-async function appendFileOfHandle(handle, fd: number, data, options) {
+async function appendFileOfHandle(handle, fd, data, options) {
   if (fd === -1) return _appendFile(fd, data, options);
   try {
     handle[kRef]();

@@ -445,8 +445,16 @@ describe("fs.promises functions with a FileHandle argument", () => {
 
   it.each([
     ["a fulfilled call", handle => fsPromises.readFile(handle), undefined],
-    ["an argument error", handle => fsPromises.readFile(handle, { encoding: "no-such-encoding" }), "ERR_INVALID_ARG_VALUE"],
-    ["a signal that is already aborted", handle => fsPromises.readFile(handle, { signal: AbortSignal.abort() }), "ABORT_ERR"],
+    [
+      "an argument error",
+      handle => fsPromises.readFile(handle, { encoding: "no-such-encoding" }),
+      "ERR_INVALID_ARG_VALUE",
+    ],
+    [
+      "a signal that is already aborted",
+      handle => fsPromises.readFile(handle, { signal: AbortSignal.abort() }),
+      "ABORT_ERR",
+    ],
     // the handle is open for reading only
     ["a task that fails", handle => fsPromises.writeFile(handle, "x"), expect.any(String)],
     [
@@ -721,7 +729,14 @@ it.each([
 // the pipe, and the descriptor must stay open under it. One child process runs all forms.
 it.skipIf(isWindows)("a pending read keeps the descriptor of its FileHandle", async () => {
   // The dropped form leaves its handle open, so it is last.
-  const forms = ["readFile-closed", "writer-endSync", "writer-fail", "writer-dispose", "pullSync-return", "readFile-dropped"];
+  const forms = [
+    "readFile-closed",
+    "writer-endSync",
+    "writer-fail",
+    "writer-dispose",
+    "pullSync-return",
+    "readFile-dropped",
+  ];
   using dir = tempDir("handle-pending-read", {});
   for (const form of forms) mkfifo(join(String(dir), "pipe-" + form), 0o666);
   await using proc = Bun.spawn({

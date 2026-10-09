@@ -31,8 +31,12 @@ struct Frame {
     is_after_hole: bool,
 }
 
+/// What is allocated to write a document.
 #[derive(Default)]
-pub(super) struct Frames(Vec<Frame>);
+pub(super) struct Frames {
+    frames: Vec<Frame>,
+    line_start: Vec<u8>,
+}
 
 struct Writer<'t, 'o> {
     text: &'t [u8],
@@ -42,6 +46,8 @@ struct Writer<'t, 'o> {
     level: u32,
     /// Where the next byte goes on the line.
     column: u32,
+    /// A line break and the deepest indentation so far.
+    line_start: &'o mut Vec<u8>,
 }
 
 /// Appends `tree`, which has a node and no comments, to `out`.
@@ -52,8 +58,10 @@ pub(super) fn write(
     frames: &mut Frames,
     out: &mut Vec<u8>,
 ) {
-    let frames = &mut frames.0;
+    let Frames { frames, line_start } = frames;
     frames.clear();
+    line_start.clear();
+    line_start.extend_from_slice(config.line_ending);
     out.reserve(text.len() + text.len() / 4);
     let mut writer = Writer {
         text,
@@ -61,6 +69,7 @@ pub(super) fn write(
         out,
         level: 0,
         column: config.alignment,
+        line_start,
     };
     let nodes = &tree.nodes[..];
     let trailing_comma = u32::from(config.trailing_comma);
@@ -185,15 +194,17 @@ impl Writer<'_, '_> {
     }
 
     fn new_line(&mut self) {
-        self.out.extend_from_slice(self.config.line_ending);
-        let len = self.out.len();
         let Config {
             alignment,
             indent_width,
+            line_ending,
             ..
         } = *self.config;
-        self.column = match self.config.indent_style {
-            IndentStyle::Space => alignment.saturating_add(self.level.saturating_mul(indent_width)),
+        let (byte, count) = match self.config.indent_style {
+            IndentStyle::Space => {
+                self.column = alignment.saturating_add(self.level.saturating_mul(indent_width));
+                (b' ', self.column)
+            }
             // What is left of the alignment is a tab too, unless it is the end of the indentation.
             IndentStyle::Tab => {
                 let (tabs, spaces) = (
@@ -201,17 +212,21 @@ impl Writer<'_, '_> {
                     alignment % indent_width.max(1),
                 );
                 if tabs == 0 {
-                    self.out.resize(len + spaces as usize, b' ');
+                    self.out.extend_from_slice(line_ending);
+                    self.out.resize(self.out.len() + spaces as usize, b' ');
                     self.column = spaces;
                     return;
                 }
                 let tabs = tabs + u32::from(spaces > 0);
-                self.out.resize(len + tabs as usize, b'\t');
                 self.column = tabs.saturating_mul(indent_width);
-                return;
+                (b'\t', tabs)
             }
         };
-        self.out.resize(len + self.column as usize, b' ');
+        let len = line_ending.len() + count as usize;
+        if self.line_start.len() < len {
+            self.line_start.resize(len, byte);
+        }
+        self.out.extend_from_slice(&self.line_start[..len]);
     }
 
     fn close(&mut self, frame: &Frame) {
@@ -250,12 +265,26 @@ impl Writer<'_, '_> {
     }
 
     /// Anything but an object, an array and a sign.
+    #[inline]
     fn scalar(&mut self, node: &Node) {
         self.column = self.column.saturating_add(node.width);
         let source = self
             .text
             .get(node.start as usize..node.end as usize)
             .unwrap_or_default();
+        if matches!(node.kind, Kind::String | Kind::Number | Kind::Identifier)
+            && !node.has(REWRITTEN)
+            && node.width != MUST_BREAK
+        {
+            self.out.extend_from_slice(source);
+        } else {
+            self.rare_scalar(node, source);
+        }
+    }
+
+    /// What is not written as it is in the source, which is `source`, or not always.
+    #[inline(never)]
+    fn rare_scalar(&mut self, node: &Node, source: &[u8]) {
         match node.kind {
             Kind::Hole if self.config.is_stringify() => self.out.extend_from_slice(b"null"),
             Kind::Template if self.config.is_stringify() => {

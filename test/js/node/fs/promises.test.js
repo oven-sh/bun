@@ -1,4 +1,5 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -416,6 +417,60 @@ it("teardown waits for every concurrent in-flight write", async () => {
   await p2; // must not reject with EBADF
   expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength * 2);
   expect(fh.fd).toBe(-1);
+});
+
+// readFile, writeFile and appendFile of fs.promises take a FileHandle and run on its
+// descriptor number. close() must wait for them, as it waits for the FileHandle methods.
+it.each([
+  ["readFile", handle => fsPromises.readFile(handle)],
+  ["writeFile", handle => fsPromises.writeFile(handle, "data")],
+  ["writeFile with an iterable", handle => fsPromises.writeFile(handle, ["da", "ta"])],
+  ["appendFile", handle => fsPromises.appendFile(handle, "data")],
+])("fs.promises.%s(handle) keeps the descriptor open until it settles", async (_name, call) => {
+  await using dir = tempDir("handle-argument", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  const fd = fh.fd;
+  const pending = call(fh);
+  const closed = fh.close();
+  expect(fh.fd).toBe(fd);
+  await pending;
+  await closed;
+  expect(fh.fd).toBe(-1);
+});
+
+// Each form parks one read of a FileHandle on a named pipe. While the read is pending, the
+// handle is closed or dropped, or a writer()/pullSync() with autoClose ends. Then another
+// file takes the descriptor number if the number is free. The read must give the bytes of
+// the pipe, and the descriptor must stay open under it.
+describe.skipIf(isWindows)("a pending read keeps the descriptor of its FileHandle", () => {
+  test.concurrent.each([
+    "readFile-closed",
+    "readFile-dropped",
+    "writer-endSync",
+    "writer-fail",
+    "writer-dispose",
+    "pullSync-return",
+  ])("%s", async form => {
+    using dir = tempDir("handle-pending-read", {});
+    mkfifo(join(String(dir), "pipe"), 0o666);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-promises-filehandle-pending-op-fixture.ts"), form, String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      fulfilled: "bytes of the pipe;",
+      openWhilePending: true,
+      otherTookTheNumber: false,
+      collected: 0,
+      // The dropped handle is never closed: nobody holds it to close it.
+      ...(form === "readFile-dropped" ? {} : { closedAfterTheRead: true }),
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // node rejects abortable fs APIs with an AbortError (an Error whose code is the

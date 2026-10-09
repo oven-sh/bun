@@ -64,6 +64,7 @@ pub use crate::linker_context::metafile_builder as MetafileBuilder;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
+use crate::linker_context::find_wrappers_behind_imports::find_wrappers_behind_imports;
 pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
@@ -513,6 +514,10 @@ impl<'a> LinkerContext<'a> {
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap
                         == WrapKind::None
+                    && !self
+                        .graph
+                        .wrappers_behind_import
+                        .contains_key(&(source_index, s_import.import_record_index))
                 {
                     return false;
                 }
@@ -953,6 +958,7 @@ impl<'a> LinkerContext<'a> {
 
         self.tree_shaking_and_code_splitting()?;
         resolve_chunk_order_conflicts(self)?;
+        find_wrappers_behind_imports(self)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -1235,6 +1241,12 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
+        self.mark_live(worklist);
+        Ok(())
+    }
+
+    /// Marks live what tree shaking did not, with everything that it depends on.
+    pub(crate) fn mark_live(&mut self, worklist: Vec<TreeShakeWork>) {
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
         let parts_live: *mut [AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
@@ -1255,7 +1267,6 @@ impl<'a> LinkerContext<'a> {
             }
         };
         self.drain_tree_shake_worklist(&mut ctx);
-        Ok(())
     }
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
@@ -2389,6 +2400,7 @@ impl<'a> LinkerContext<'a> {
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
+        source_index: crate::IndexInt,
         import_record_index: u32,
         alloc: &Bump,
         ast: &JSAst<'_>,
@@ -2396,6 +2408,14 @@ impl<'a> LinkerContext<'a> {
         let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
         if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
+            return Ok(true);
+        }
+        if self.append_calls_of_wrappers_behind_import(
+            stmts,
+            source_index,
+            import_record_index,
+            loc,
+        ) {
             return Ok(true);
         }
         // Is this an external import?
@@ -2488,34 +2508,62 @@ impl<'a> LinkerContext<'a> {
                     return Ok(true);
                 }
 
-                let wrapper_ref =
-                    self.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
-                if wrapper_ref.is_empty() {
-                    return Ok(true);
-                }
-
                 // Replace the statement with a call to "init()"
-                let init_call = Expr::init(
-                    E::Call {
-                        target: Expr::init_identifier(wrapper_ref, loc),
-                        ..Default::default()
-                    },
-                    loc,
-                );
-
-                if other_flags.is_async_or_has_async_dependency {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_async_dependency(init_call)?;
-                } else {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_sync_dependency(init_call)?;
-                }
+                self.append_wrapper_call(stmts, record.source_index.get(), loc);
             }
         }
 
         Ok(true)
+    }
+
+    /// `init_x()`, where the `import` of a file with an ESM wrapper is.
+    pub(crate) fn append_wrapper_call(
+        &self,
+        stmts: &mut StmtList,
+        source_index: crate::IndexInt,
+        loc: Loc,
+    ) {
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+        if wrapper_ref.is_empty() {
+            return;
+        }
+        let init_call = Expr::init(
+            E::Call {
+                target: Expr::init_identifier(wrapper_ref, loc),
+                ..Default::default()
+            },
+            loc,
+        );
+        if self.graph.meta.items_flags()[source_index as usize].is_async_or_has_async_dependency {
+            stmts
+                .inside_wrapper_prefix
+                .append_async_dependency(init_call);
+        } else {
+            stmts
+                .inside_wrapper_prefix
+                .append_sync_dependency(init_call);
+        }
+    }
+
+    /// Whether the `import` has such wrappers (`find_wrappers_behind_imports`).
+    pub(crate) fn append_calls_of_wrappers_behind_import(
+        &self,
+        stmts: &mut StmtList,
+        source_index: crate::IndexInt,
+        import_record_index: u32,
+        loc: Loc,
+    ) -> bool {
+        let Some(wrappers) = self
+            .graph
+            .wrappers_behind_import
+            .get(&(source_index, import_record_index))
+        else {
+            return false;
+        };
+        for &wrapper in wrappers.iter() {
+            self.append_wrapper_call(stmts, wrapper, loc);
+        }
+        true
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(
@@ -5439,7 +5487,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    fn append_sync_dependency(&mut self, call_expr: Expr) {
         self.stmts.push(Stmt::alloc(
             S::SExpr {
                 value: call_expr,
@@ -5447,11 +5495,10 @@ impl InsideWrapperPrefix {
             },
             call_expr.loc,
         ));
-        Ok(())
     }
 
     /// The call starts the dependency. What comes after it in the source does not wait for it.
-    pub(crate) fn append_async_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    fn append_async_dependency(&mut self, call_expr: Expr) {
         self.async_dependencies.push((self.stmts.len(), call_expr));
         self.append_sync_dependency(call_expr)
     }

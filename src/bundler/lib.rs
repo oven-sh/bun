@@ -122,6 +122,8 @@ pub mod linker_context {
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
 
+    #[path = "findWrappersBehindImports.rs"]
+    pub(crate) mod find_wrappers_behind_imports;
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
 

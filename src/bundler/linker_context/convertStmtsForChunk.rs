@@ -100,6 +100,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         stmts,
                         stmt.loc,
                         s.namespace_ref,
+                        source_index,
                         s.import_record_index,
                         bump,
                         ast,
@@ -120,6 +121,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             stmts,
                             stmt.loc,
                             s.namespace_ref,
+                            source_index,
                             s.import_record_index,
                             bump,
                             ast,
@@ -269,34 +271,17 @@ pub(crate) fn convert_stmts_for_chunk(
                             }
                         }
                     } else {
-                        if record.source_index.is_valid() {
-                            let other_source_index = record.source_index.get() as usize;
-                            let flag = c.graph.meta.items_flags()[other_source_index];
-                            let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
-                            if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
-                                let init_call = Expr::init(
-                                    E::Call {
-                                        target: Expr::init(
-                                            E::Identifier {
-                                                ref_: wrapper_ref,
-                                                ..Default::default()
-                                            },
-                                            stmt.loc,
-                                        ),
-                                        ..Default::default()
-                                    },
-                                    stmt.loc,
-                                );
-                                if flag.is_async_or_has_async_dependency {
-                                    stmts
-                                        .inside_wrapper_prefix
-                                        .append_async_dependency(init_call)?;
-                                } else {
-                                    stmts
-                                        .inside_wrapper_prefix
-                                        .append_sync_dependency(init_call)?;
-                                }
-                            }
+                        if record.source_index.is_valid()
+                            && !c.append_calls_of_wrappers_behind_import(
+                                stmts,
+                                source_index,
+                                s.import_record_index,
+                                stmt.loc,
+                            )
+                            && c.graph.meta.items_flags()[record.source_index.get() as usize].wrap
+                                == WrapKind::Esm
+                        {
+                            c.append_wrapper_call(stmts, record.source_index.get(), stmt.loc);
                         }
 
                         if is_module_exports_of_wrapped_file {
@@ -404,6 +389,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         stmts,
                         stmt.loc,
                         s.namespace_ref,
+                        source_index,
                         s.import_record_index,
                         bump,
                         ast,

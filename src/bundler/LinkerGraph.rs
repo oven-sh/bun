@@ -258,6 +258,9 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+    /// (file, import record) to the wrapped files that the `import` runs in place of a target that does not run.
+    pub(crate) wrappers_behind_import:
+        bun_collections::HashMap<(index::Int, u32), Box<[index::Int]>>,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -319,6 +322,7 @@ impl Default for LinkerGraph<'_> {
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            wrappers_behind_import: Default::default(),
         }
     }
 }

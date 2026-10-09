@@ -315,7 +315,6 @@ fn find_files_to_wrap(
 /// The evaluation order of each entry point, computed on demand.
 struct EvaluationOrders {
     by_entry_id: Vec<Option<EvaluationOrder>>,
-    entry_id_of_file: Vec<u32>,
     /// The files that an order lists.
     is_tracked: Vec<bool>,
 }
@@ -326,14 +325,6 @@ impl EvaluationOrders {
         group_of_file: &[u32],
         effects: &[(IndexInt, u32)],
     ) -> EvaluationOrders {
-        let entry_points = c.graph.entry_points.items_source_index();
-        let mut entry_id_of_file: Vec<u32> = vec![u32::MAX; group_of_file.len()];
-        for (entry_id, &source_index) in entry_points.iter().enumerate() {
-            let slot = &mut entry_id_of_file[source_index as usize];
-            if *slot == u32::MAX {
-                *slot = entry_id as u32;
-            }
-        }
         let mut is_tracked: Vec<bool> = group_of_file
             .iter()
             .map(|&group| group != NO_GROUP)
@@ -342,10 +333,9 @@ impl EvaluationOrders {
             is_tracked[source_index as usize] = true;
         }
         let mut by_entry_id = Vec::new();
-        by_entry_id.resize_with(entry_points.len(), || None);
+        by_entry_id.resize_with(c.graph.entry_points.len(), || None);
         EvaluationOrders {
             by_entry_id,
-            entry_id_of_file,
             is_tracked,
         }
     }
@@ -362,20 +352,13 @@ impl EvaluationOrders {
                 });
             }
         }
-        struct Ctx<'a, 'c> {
-            c: &'a LinkerContext<'c>,
-            entry_id_of_file: &'a [u32],
-            is_tracked: &'a [bool],
-        }
         c.worker_pool().each_ptr(
-            Ctx {
-                c,
-                entry_id_of_file: &self.entry_id_of_file,
-                is_tracked: &self.is_tracked,
-            },
-            |ctx: &Ctx, order: *mut EvaluationOrder, _: usize| {
+            (c, self.is_tracked.as_slice()),
+            |&(c, is_tracked): &(&LinkerContext, &[bool]),
+             order: *mut EvaluationOrder,
+             _: usize| {
                 // SAFETY: `each_ptr` hands each task a distinct `*mut EvaluationOrder`.
-                unsafe { &mut *order }.compute(ctx.c, ctx.entry_id_of_file, ctx.is_tracked);
+                unsafe { &mut *order }.compute(c, is_tracked);
             },
             &mut pending,
         );
@@ -492,54 +475,63 @@ struct EvaluationOrder {
 }
 
 impl EvaluationOrder {
-    fn compute(&mut self, c: &LinkerContext, entry_id_of_file: &[u32], is_tracked: &[bool]) {
+    fn compute(&mut self, c: &LinkerContext, is_tracked: &[bool]) {
         #[derive(Clone, Copy)]
         enum Frame {
-            /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
+            /// `importer`: the file whose `import` leads here, through files that do not run with it.
             Enter {
                 source_index: IndexInt,
-                loader: u32,
+                importer: IndexInt,
             },
             Leave(IndexInt),
         }
 
-        let entry_bits = c.graph.files.items_entry_bits();
-        let mut visited = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
+        let files_len = c.graph.files.len();
+        let mut visited = bun_core::handle_oom(AutoBitSet::init_empty(files_len));
+        // Per file: 1 + the last importer that went through it.
+        let mut passed: Vec<u32> = vec![0; files_len];
+        let entry_point = c.graph.entry_points.items_source_index()[self.entry_id as usize];
         let mut stack: Vec<Frame> = vec![Frame::Enter {
-            source_index: c.graph.entry_points.items_source_index()[self.entry_id as usize],
-            loader: self.entry_id,
+            source_index: entry_point,
+            importer: entry_point,
         }];
         while let Some(frame) = stack.pop() {
-            let (source_index, loader) = match frame {
+            let (source_index, importer) = match frame {
                 Frame::Leave(source_index) => {
                     self.files.push(source_index);
                     continue;
                 }
                 Frame::Enter {
                     source_index,
-                    loader,
-                } => (source_index, loader),
+                    importer,
+                } => (source_index, importer),
             };
             if source_index == Index::RUNTIME.value() || visited.is_set(source_index as usize) {
                 continue;
             }
-            visited.set(source_index as usize);
+            let runs = c.runs_with(importer, source_index);
+            if runs {
+                visited.set(source_index as usize);
+            } else if core::mem::replace(&mut passed[source_index as usize], importer + 1)
+                == importer + 1
+            {
+                continue;
+            }
+            let importer = if runs { source_index } else { importer };
 
-            let is_evaluated = c.graph.files_live.is_set(source_index as usize)
-                && entry_bits[source_index as usize].is_set(loader as usize);
             let mark = stack.len();
-            for_each_edge(c, source_index, is_evaluated, |_, edge| match edge {
+            for_each_edge(c, source_index, runs, |_, edge| match edge {
                 Edge::Import(source_index) => stack.push(Frame::Enter {
                     source_index,
-                    loader,
+                    importer,
                 }),
                 Edge::LoadNow(source_index) => stack.push(Frame::Enter {
                     source_index,
-                    loader: entry_id_of_file[source_index as usize],
+                    importer: source_index,
                 }),
                 Edge::LoadLater(_) => {}
             });
-            if is_evaluated && is_tracked[source_index as usize] {
+            if runs && is_tracked[source_index as usize] {
                 stack.push(Frame::Leave(source_index));
             }
             stack[mark..].reverse();

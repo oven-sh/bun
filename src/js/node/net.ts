@@ -2113,6 +2113,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
+  dropOnreadTail(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2385,6 +2386,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  dropOnreadTail(this);
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -2524,6 +2526,13 @@ Object.defineProperty(Socket.prototype, "pending", {
 // ciphertext queues behind the pending writes (order + callbacks preserved).
 function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
+}
+
+// The undelivered bytes of a read belong to the connection, as kernel-buffered bytes do in node.
+function dropOnreadTail(self) {
+  if (self[kOnreadBuffer] === undefined) return;
+  self[kOnreadTail] = undefined;
+  self[kOnreadPendingEnd] = false;
 }
 
 function drainOnreadTail(self, fromRead?) {

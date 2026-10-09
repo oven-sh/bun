@@ -99,6 +99,65 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     });
   });
 
+  it("does not replay the declined onread tail of the previous connection", async () => {
+    // The first connection's callback takes one 4-byte slice and returns false. The
+    // rest of that read belongs to the connection that connect() replaces, so the
+    // second connection must only see its own bytes.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { createServer, connect } = require("node:net");
+          const { once } = require("node:events");
+          let connections = 0;
+          const srv = createServer(c => {
+            c.on("error", () => {});
+            c.end(++connections === 1 ? "AAAABBBBCCCC" : "xxxxyyyy");
+          });
+          srv.listen(0, "127.0.0.1", async () => {
+            const port = srv.address().port;
+            const received = ["", ""];
+            let connection = 0;
+            const first = Promise.withResolvers();
+            const s = connect({
+              port,
+              host: "127.0.0.1",
+              onread: {
+                buffer: Buffer.alloc(4),
+                callback(n, buf) {
+                  received[connection] += buf.toString("latin1", 0, n);
+                  if (connection === 0) {
+                    first.resolve();
+                    return false;
+                  }
+                },
+              },
+            });
+            s.on("error", () => {});
+            await first.promise;
+            connection = 1;
+            s.connect({ port, host: "127.0.0.1" });
+            await once(s, "connect");
+            s.resume();
+            await once(s, "close");
+            srv.close();
+            console.log(JSON.stringify({ firstIsPrefix: "AAAABBBBCCCC".startsWith(received[0]) && received[0].length <= 4, second: received[1] }));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ firstIsPrefix: true, second: "xxxxyyyy" }),
+      stderr,
+      exitCode: 0,
+    });
+  });
+
   it("does not crash when reconnecting while the first connect is still in flight", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -3067,10 +3067,10 @@ describe("bundler", () => {
 // rebuilt a hash index for each block it took out of a map. A chain of 400
 // terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
 test("react-compiler memory does not grow with the square of the size of a component", async () => {
-  // A debug build is 20 times slower, and its larger frames overflow the stack
-  // on a longer chain.
+  // A debug build is 20 times slower, and its larger frames leave the stack for
+  // a chain of 94: a longer one is not compiled.
   const small = isDebug || isASAN;
-  const terms = small ? 100 : 400;
+  const terms = small ? 90 : 400;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
     "empty.jsx": `export default function App() { return null; }`,

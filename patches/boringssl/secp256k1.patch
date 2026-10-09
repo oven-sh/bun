@@ -1,0 +1,167 @@
+--- a/crypto/ec/ec_asn1.cc
++++ b/crypto/ec/ec_asn1.cc
+@@ -47,6 +47,7 @@ static auto get_all_groups() {
+       EC_group_p256(),
+       EC_group_p384(),
+       EC_group_p521(),
++      EC_group_secp256k1(),
+   };
+ }
+ 
+--- a/crypto/evp/evp_asn1.cc
++++ b/crypto/evp/evp_asn1.cc
+@@ -415,7 +415,8 @@ int i2d_DSA_PUBKEY(const DSA *dsa, uint8_t **outp) {
+ EC_KEY *d2i_EC_PUBKEY(EC_KEY **out, const uint8_t **inp, long len) {
+   return D2IFromCBS(out, inp, len, [](CBS *cbs) -> UniquePtr<EC_KEY> {
+     const EVP_PKEY_ALG *const algs[] = {EVP_pkey_ec_p224(), EVP_pkey_ec_p256(),
+-                                        EVP_pkey_ec_p384(), EVP_pkey_ec_p521()};
++                                        EVP_pkey_ec_p384(), EVP_pkey_ec_p521(),
++                                        evp_pkey_ec_secp256k1()};
+     UniquePtr<EVP_PKEY> pkey = parse_spki(cbs, algs);
+     if (pkey == nullptr) {
+       return nullptr;
+--- a/crypto/evp/internal.h
++++ b/crypto/evp/internal.h
+@@ -382,6 +382,10 @@ struct KemAdapter {
+ // cannot be used to parse anything and is only useful for key generation.
+ const EVP_PKEY_ALG *evp_pkey_ec_no_curve();
+ 
++// evp_pkey_ec_secp256k1 returns an internal `EVP_PKEY_ALG` for secp256k1, so
++// that `EVP_parse_public_key` and `EVP_parse_private_key` accept that curve.
++const EVP_PKEY_ALG *evp_pkey_ec_secp256k1();
++
+ // evp_pkey_hkdf returns an internal `EVP_PKEY_ALG` used to implement
+ // `EVP_PKEY_HKDF`. It has no associated key type.
+ const EVP_PKEY_ALG *evp_pkey_hkdf();
+@@ -404,6 +408,7 @@ inline auto GetDefaultEVPAlgorithms() {
+       EVP_pkey_ec_p256(),
+       EVP_pkey_ec_p384(),
+       EVP_pkey_ec_p521(),
++      evp_pkey_ec_secp256k1(),
+       EVP_pkey_ed25519(),
+       EVP_pkey_rsa(),
+       EVP_pkey_x25519(),
+--- a/crypto/evp/p_ec.cc
++++ b/crypto/evp/p_ec.cc
+@@ -543,6 +543,12 @@ const EVP_PKEY_ALG *bssl::evp_pkey_ec_no_curve() {
+   return &kAlg;
+ }
+ 
++const EVP_PKEY_ALG *bssl::evp_pkey_ec_secp256k1() {
++  static const EVP_PKEY_ALG_EC kAlg = {{&ec_asn1_meth, &ec_pkey_meth},
++                                       &EC_group_secp256k1};
++  return &kAlg;
++}
++
+ int EVP_PKEY_set1_EC_KEY(EVP_PKEY *pkey, EC_KEY *key) {
+   if (EVP_PKEY_assign_EC_KEY(pkey, key)) {
+     EC_KEY_up_ref(key);
+--- a/crypto/fipsmodule/ec/ec.cc.inc
++++ b/crypto/fipsmodule/ec/ec.cc.inc
+@@ -256,6 +256,80 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
+   return 1;
+ }
+ 
++static CRYPTO_once_t g_secp256k1_once = CRYPTO_ONCE_INIT;
++static EC_GROUP *g_secp256k1_group = nullptr;
++
++static void ec_group_secp256k1_init(void) {
++  // secp256k1 domain parameters (SEC 2, v2, section 2.4.1). secp256k1 is not one
++  // of BoringSSL's optimized built-in curves, so construct it once as a generic
++  // prime-field group (the same machinery as |EC_GROUP_new_curve_GFp|).
++  static const uint8_t kP[] = {
++      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++      0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xfc, 0x2f};
++  static const uint8_t kA[] = {0x00};
++  static const uint8_t kB[] = {0x07};
++  static const uint8_t kGX[] = {
++      0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62,
++      0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce,
++      0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98};
++  static const uint8_t kGY[] = {
++      0x48, 0x3a, 0xda, 0x77, 0x26, 0xa3, 0xc4, 0x65, 0x5d, 0xa4, 0xfb,
++      0xfc, 0x0e, 0x11, 0x08, 0xa8, 0xfd, 0x17, 0xb4, 0x48, 0xa6, 0x85,
++      0x54, 0x19, 0x9c, 0x47, 0xd0, 0x8f, 0xfb, 0x10, 0xd4, 0xb8};
++  static const uint8_t kOrder[] = {
++      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++      0xff, 0xff, 0xff, 0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48,
++      0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41};
++  static const uint8_t kCofactor[] = {0x01};
++  // DER contents (without tag/length) of OID 1.3.132.0.10.
++  static const uint8_t kOID[] = {0x2b, 0x81, 0x04, 0x00, 0x0a};
++
++  UniquePtr<BN_CTX> ctx(BN_CTX_new());
++  UniquePtr<BIGNUM> p(BN_bin2bn(kP, sizeof(kP), nullptr));
++  UniquePtr<BIGNUM> a(BN_bin2bn(kA, sizeof(kA), nullptr));
++  UniquePtr<BIGNUM> b(BN_bin2bn(kB, sizeof(kB), nullptr));
++  UniquePtr<BIGNUM> x(BN_bin2bn(kGX, sizeof(kGX), nullptr));
++  UniquePtr<BIGNUM> y(BN_bin2bn(kGY, sizeof(kGY), nullptr));
++  UniquePtr<BIGNUM> order(BN_bin2bn(kOrder, sizeof(kOrder), nullptr));
++  UniquePtr<BIGNUM> cofactor(BN_bin2bn(kCofactor, sizeof(kCofactor), nullptr));
++  if (ctx == nullptr || p == nullptr || a == nullptr || b == nullptr ||
++      x == nullptr || y == nullptr || order == nullptr || cofactor == nullptr) {
++    return;
++  }
++
++  UniquePtr<EC_GROUP> group(
++      EC_GROUP_new_curve_GFp(p.get(), a.get(), b.get(), ctx.get()));
++  if (group == nullptr) {
++    return;
++  }
++  UniquePtr<EC_POINT> generator(EC_POINT_new(group.get()));
++  if (generator == nullptr ||
++      !EC_POINT_set_affine_coordinates_GFp(group.get(), generator.get(),
++                                           x.get(), y.get(), ctx.get()) ||
++      !EC_GROUP_set_generator(group.get(), generator.get(), order.get(),
++                              cofactor.get())) {
++    return;
++  }
++
++  // Tag the group with its name and OID so it marshals and compares as a named
++  // curve, matching OpenSSL output. Once |curve_name| is non-|NID_undef|,
++  // |EC_GROUP_free| and |EC_GROUP_dup| treat the group as static, so this
++  // process-lifetime singleton is intentionally never freed.
++  group->curve_name = NID_secp256k1;
++  group->comment = "SECG curve over a 256 bit prime field";
++  static_assert(sizeof(kOID) <= sizeof(group->oid), "secp256k1 OID too long");
++  OPENSSL_memcpy(group->oid, kOID, sizeof(kOID));
++  group->oid_len = sizeof(kOID);
++
++  g_secp256k1_group = group.release();
++}
++
++const EC_GROUP *EC_group_secp256k1(void) {
++  CRYPTO_once(&g_secp256k1_once, ec_group_secp256k1_init);
++  return g_secp256k1_group;
++}
++
+ EC_GROUP *EC_GROUP_new_by_curve_name(int nid) {
+   switch (nid) {
+     case NID_secp224r1:
+@@ -266,6 +340,8 @@ EC_GROUP *EC_GROUP_new_by_curve_name(int nid) {
+       return (EC_GROUP *)EC_group_p384();
+     case NID_secp521r1:
+       return (EC_GROUP *)EC_group_p521();
++    case NID_secp256k1:
++      return (EC_GROUP *)EC_group_secp256k1();
+     default:
+       OPENSSL_PUT_ERROR(EC, EC_R_UNKNOWN_GROUP);
+       return nullptr;
+--- a/crypto/fipsmodule/ec/internal.h
++++ b/crypto/fipsmodule/ec/internal.h
+@@ -590,6 +590,14 @@ struct ec_group_st {
+   int field_greater_than_order;
+ } /* EC_GROUP */;
+ 
++// EC_group_secp256k1 returns the |EC_GROUP| for secp256k1 (the SECG curve over a
++// 256-bit prime field, OID 1.3.132.0.10), lazily constructing it on first use.
++// It returns NULL only on allocation failure. Unlike the NIST curves above,
++// secp256k1 is not one of BoringSSL's optimized built-in curves; it is built
++// with the generic field arithmetic backend and provided for OpenSSL/Node
++// compatibility.
++const EC_GROUP *EC_group_secp256k1(void);
++
+ BSSL_NAMESPACE_BEGIN
+ 
+ class ECCustomGroup : public ec_group_st, public RefCounted<ECCustomGroup> {

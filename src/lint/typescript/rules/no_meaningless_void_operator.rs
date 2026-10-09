@@ -44,6 +44,8 @@ impl NoMeaninglessVoidOperator {
             return;
         };
         match unwrap_void_argument(argument).kind() {
+            // tsgolint 7.0 goes by the type, whatever the operand is.
+            _ if cx.language().is_oxlint => {}
             ExprKind::Call(_) => {}
             // `void 0` is a common way to write `undefined`.
             ExprKind::Number(0.0) => return,

@@ -9,7 +9,8 @@ use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::Registry;
+use crate::linter::registry::{Registry, oxlint_rule_key};
+use crate::linter::resolved::find_js_rule;
 use crate::linter::space::trim_end;
 use crate::options::Json;
 use crate::rule::{Meta, Plugin};
@@ -238,7 +239,18 @@ impl Rc<'_, '_> {
         let Some(rules) = json.get(b"rules") else {
             return Ok(Vec::new());
         };
-        self.reader.rules(&with_eslint_severities(rules), &[])
+        let mut rules = with_eslint_severities(rules);
+        // All names of a rule are one rule, so what the file says last about it counts.
+        if self.flavor == RcFlavor::Oxlint
+            && let Json::Object(entries) = &mut rules
+        {
+            for (id, _) in entries {
+                if find_js_rule(&self.reader.js_plugins, id).is_none() {
+                    *id = oxlint_rule_key(id);
+                }
+            }
+        }
+        self.reader.rules(&rules, &[])
     }
 
     /// Loads what `jsPlugins` of `json` names, which is a file in `directory` or one of its overrides.

@@ -640,6 +640,161 @@ describe.concurrent("bun lint", () => {
         expect(byDefault.stdout).toBe("");
         expect(byDefault.exitCode).toBe(0);
       });
+
+      // What is expected in the next two tests is what oxlint 1.80.0 prints for the same files and arguments.
+      const places = (raw: string) =>
+        JSON.parse(raw)
+          .diagnostics.map((it: any) => `${it.filename}:${it.labels[0].span.line} ${it.code} ${it.severity}`)
+          .sort();
+      const unused = { "a.ts": "const u = 1;\nexport {};\n" };
+      const any = { "a.ts": "export let a: any;\n" };
+
+      test("all names of a rule are one rule, and what is said last about it counts", async () => {
+        const hooks = { "a.jsx": "function C(a) {\n  if (a) useState();\n}\n" };
+        const spread = { "a.js": "x.reduce((acc, it) => [...acc, it], []);\n" };
+        // The directory, what its .oxlintrc.json says, its files.
+        const rows: [string, object, Record<string, string>][] = [
+          [
+            "off-then-typescript",
+            { plugins: ["react"], rules: { "no-unused-vars": "off", "typescript/no-unused-vars": "warn" } },
+            unused,
+          ],
+          [
+            "typescript-then-off",
+            { plugins: ["react"], rules: { "typescript/no-unused-vars": "warn", "no-unused-vars": "off" } },
+            unused,
+          ],
+          [
+            "warn-then-error",
+            {
+              plugins: ["react"],
+              rules: { "eslint/no-unused-vars": "warn", "@typescript-eslint/no-unused-vars": "error" },
+            },
+            unused,
+          ],
+          ["no-plugins", { plugins: [], rules: { "@typescript-eslint/no-unused-vars": "warn" } }, unused],
+          ["underscore", { rules: { "typescript_eslint/no-unused-vars": "warn" } }, unused],
+          [
+            "overrides",
+            {
+              plugins: ["react"],
+              rules: { "no-unused-vars": "off" },
+              overrides: [{ files: ["*.ts"], rules: { "typescript/no-unused-vars": "warn" } }],
+            },
+            unused,
+          ],
+          [
+            "extends",
+            { plugins: ["react"], extends: ["./base.json"] },
+            { ...unused, "base.json": JSON.stringify({ rules: { "typescript/no-unused-vars": "warn" } }) },
+          ],
+          ["bare-then-off", { rules: { "no-explicit-any": "warn", "typescript/no-explicit-any": "off" } }, any],
+          [
+            "off-then-bare",
+            { rules: { "@typescript-eslint/no-explicit-any": "off", "no-explicit-any": "error" } },
+            any,
+          ],
+          ["bare-without-its-plugin", { plugins: ["react"], rules: { "no-explicit-any": "error" } }, any],
+          // `import/no-namespace`, and that plugin is not on.
+          ["bare-of-the-first-plugin", { rules: { "no-namespace": "error" } }, { "a.ts": "namespace N {}\n" }],
+          ["bare-hooks", { plugins: ["react"], rules: { "rules-of-hooks": "warn" } }, hooks],
+          [
+            "hooks-then-off",
+            { plugins: ["react"], rules: { "react-hooks/rules-of-hooks": "warn", "react/rules-of-hooks": "off" } },
+            hooks,
+          ],
+          [
+            "package-name",
+            { plugins: ["react"], rules: { "eslint-plugin-react-hooks/rules-of-hooks": "warn" } },
+            hooks,
+          ],
+          [
+            "deepscan",
+            { rules: { "oxc/no-accumulating-spread": "off", "deepscan/no-accumulating-spread": "warn" } },
+            spread,
+          ],
+          [
+            "bare-cycle",
+            { plugins: ["import"], rules: { "no-cycle": "warn" } },
+            { "a.js": 'import "./b";\n', "b.js": 'import "./a";\n' },
+          ],
+          // oxlint has one in `eslint`, which needs no types, and one in `typescript`.
+          [
+            "two-rules",
+            { rules: { "require-await": "warn", "typescript/require-await": "off" } },
+            { "a.ts": "export async function f() {\n  x;\n}\n" },
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const [directory, config, texts] of rows) {
+          files[`${directory}/.oxlintrc.json`] = rc({ rules: {}, ...config });
+          for (const [name, text] of Object.entries(texts)) files[`${directory}/${name}`] = text;
+        }
+        const { raw, exitCode } = await lint(files, ["-f", "json"]);
+        expect(places(raw)).toEqual([
+          "bare-cycle/a.js:1 import(no-cycle) warning",
+          "bare-cycle/b.js:1 import(no-cycle) warning",
+          "bare-hooks/a.jsx:2 react-hooks(rules-of-hooks) warning",
+          "deepscan/a.js:1 oxc(no-accumulating-spread) warning",
+          "extends/a.ts:1 eslint(no-unused-vars) warning",
+          "no-plugins/a.ts:1 eslint(no-unused-vars) warning",
+          "off-then-bare/a.ts:1 typescript(no-explicit-any) error",
+          "off-then-typescript/a.ts:1 eslint(no-unused-vars) warning",
+          "overrides/a.ts:1 eslint(no-unused-vars) warning",
+          "package-name/a.jsx:2 react-hooks(rules-of-hooks) warning",
+          "two-rules/a.ts:1 eslint(require-await) warning",
+          "underscore/a.ts:1 eslint(no-unused-vars) warning",
+          "warn-then-error/a.ts:1 eslint(no-unused-vars) error",
+        ]);
+        expect(exitCode).toBe(1);
+      });
+
+      test("-A, -W and -D come after `rules`, a category too, and know a rule by the plugin that oxlint has it in", async () => {
+        const debug = { "a.js": "debugger;\n" };
+        // The arguments, `rules`, the files, what is reported.
+        const rows: [string[], object, Record<string, string>, string[]][] = [
+          [["-D", "correctness"], { "no-debugger": "off" }, debug, ["a.js:1 eslint(no-debugger) error"]],
+          [["-W", "correctness"], { "no-debugger": "error" }, debug, ["a.js:1 eslint(no-debugger) warning"]],
+          [["-A", "correctness"], { "no-debugger": "error" }, debug, []],
+          [["-D", "all"], { "no-debugger": "off" }, debug, ["a.js:1 eslint(no-debugger) error"]],
+          [["-D", "no-debugger", "-A", "correctness"], {}, debug, []],
+          [
+            ["-A", "typescript/no-unused-vars"],
+            { "no-unused-vars": "warn" },
+            unused,
+            ["a.ts:1 eslint(no-unused-vars) warning"],
+          ],
+          [
+            ["-D", "@typescript-eslint/no-unused-vars"],
+            { "no-unused-vars": "warn" },
+            unused,
+            ["a.ts:1 eslint(no-unused-vars) warning"],
+          ],
+          [["-A", "no-unused-vars"], { "typescript/no-unused-vars": "warn" }, unused, []],
+          // The options stay.
+          [
+            ["-D", "eslint/no-unused-vars"],
+            { "typescript/no-unused-vars": ["warn", { varsIgnorePattern: "^u" }] },
+            unused,
+            [],
+          ],
+          [
+            ["-D", "no-explicit-any"],
+            { "typescript/no-explicit-any": "warn" },
+            any,
+            ["a.ts:1 typescript(no-explicit-any) error"],
+          ],
+        ];
+        const results = await Promise.all(
+          rows.map(([args, rules, texts]) =>
+            lint({ ".oxlintrc.json": rc({ rules }), ...texts }, [...args, "-f", "json"]),
+          ),
+        );
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[3]));
+        expect(results.map(it => it.exitCode)).toEqual(
+          rows.map(it => (it[3].some(it => it.endsWith("error")) ? 1 : 0)),
+        );
+      });
     });
 
     test(".eslintrc.json", async () => {

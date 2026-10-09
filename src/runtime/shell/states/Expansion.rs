@@ -48,6 +48,8 @@ pub(crate) struct Expansion {
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
+    /// A quoted expansion (`"$unset"`) does not set this: it is a fact of the
+    /// word, read from `ast::Atom::has_quoted_expansion`.
     pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
@@ -232,6 +234,8 @@ impl Expansion {
                         me.current_out.splice(0..0, home.slice().iter().copied());
                     }
                     Some(_) => me.current_out.insert(0, b'~'),
+                    // `~"$unset"` is a literal `~` as in bash, never $HOME.
+                    None if atom.has_quoted_expansion() => me.current_out.push(b'~'),
                     // `~""` expands to $HOME,
                     // but `~$unset` expands to nothing (word is dropped).
                     None if me.has_quoted_empty => {
@@ -241,7 +245,7 @@ impl Expansion {
                 }
                 // The first two arms prepend; shift the recorded brace
                 // metacharacter offsets so they keep pointing at the same
-                // bytes. The `extend_from_slice` arm only runs when
+                // bytes. The `None` arms only run when
                 // `current_out` (and therefore `meta_offsets`) is
                 // empty, so the shift is a no-op there.
                 let prepended = (me.current_out.len() - len_before) as u32;
@@ -479,7 +483,7 @@ impl Expansion {
                 // both leave `out.buf` empty.
                 *has_quoted_empty = true;
             }
-            ast::SimpleAtom::Var(label) => {
+            ast::SimpleAtom::Var(label) | ast::SimpleAtom::QuotedVar(label) => {
                 // Spec `expandVar`: shell_env first, then export_env, else "".
                 let key = EnvStr::init_slice(label);
                 if let Some(v) = shell.shell_env.get(key) {
@@ -490,7 +494,7 @@ impl Expansion {
                     v.deref();
                 }
             }
-            ast::SimpleAtom::VarArgv(int) => {
+            ast::SimpleAtom::VarArgv(int) | ast::SimpleAtom::QuotedVarArgv(int) => {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }

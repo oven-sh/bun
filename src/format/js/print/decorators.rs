@@ -36,6 +36,11 @@ impl<'a> FormatDecorators<'a> {
     }
 }
 
+/// Of a member of a class. Prettier does not.
+fn keeps_empty_lines_between_decorators(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 impl<'a> Format<'a> for FormatDecorators<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if self.decorators.is_empty() {
@@ -50,7 +55,12 @@ impl<'a> Format<'a> for FormatDecorators<'a> {
                     f,
                     group(&format_args!(
                         format_with(|f| {
-                            f.join_nodes_with_soft_line().entries(decorators());
+                            if keeps_empty_lines_between_decorators(f) {
+                                f.join_nodes_with_soft_line().entries(decorators());
+                            } else {
+                                f.join_with(soft_line_break_or_space())
+                                    .entries(decorators());
+                            }
                         }),
                         soft_line_break_or_space()
                     ))

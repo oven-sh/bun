@@ -1,3 +1,4 @@
+use super::jsx::ignored_jsx_gets_no_parentheses;
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::expression::ExpressionLeftSide;
@@ -48,9 +49,12 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 ..
             }
         );
-        let is_jsx = matches!(argument.kind(), ExprKind::Jsx(_));
+        // JSX writes parentheses of its own around its comments, unless it is written as it is.
+        let has_own_parentheses = matches!(argument.kind(), ExprKind::Jsx(_))
+            && !(ignored_jsx_gets_no_parentheses(f)
+                && f.comments().is_suppressed(argument.span().start));
 
-        if !is_jsx && !f.is_quiet() && has_argument_leading_comments(argument, f) {
+        if !has_own_parentheses && !f.is_quiet() && has_argument_leading_comments(argument, f) {
             write!(f, ["(", block_indent(&argument), ")"]);
         } else if is_cast_target_that_hides_its_kind(argument, f) {
             // For Prettier it is a `ParenthesizedExpression`, whatever is in it.

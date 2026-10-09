@@ -193,6 +193,10 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
             format_with(|f| self.format_trailing_comments(f))
         );
         match self.get_wrap_state() {
+            // Prettier's `printIgnored` comes before `maybeWrapJsxElementInParens`.
+            _ if is_suppressed && ignored_jsx_gets_no_parentheses(f) => {
+                write!(f, format_with_comments);
+            }
             WrapState::NoWrap => write!(f, format_with_comments),
             WrapState::WrapOnBreak => {
                 let needs_parentheses = needs_parentheses(self.expr, f);
@@ -208,6 +212,18 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
             }
         }
     }
+}
+
+/// ```jsx
+/// a = (                      a =
+///   // prettier-ignore         // prettier-ignore
+///   <b   />                    <b   />;
+/// );
+/// ```
+///
+/// oxfmt on the left, Prettier on the right.
+pub(crate) fn ignored_jsx_gets_no_parentheses(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// `{items.map((item) => <a />)}`: the body of an arrow function that is an argument of a call

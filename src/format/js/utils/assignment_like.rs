@@ -14,6 +14,7 @@ use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpression
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::decorators::FormatDecorators;
 use crate::js::print::expressions::unary_argument_has_comments;
+use crate::js::print::jsx::ignored_jsx_gets_no_parentheses;
 use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
 use crate::js::print::type_parameters::type_arguments;
@@ -749,7 +750,7 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
     }
     let start = right.span().start;
     if right.tag() == ExprTag::Jsx {
-        return match f.comments().is_suppressed(start) {
+        return match f.comments().is_suppressed(start) && ignored_jsx_gets_no_parentheses(f) {
             true => LeadingComments::Break,
             false => LeadingComments::None,
         };

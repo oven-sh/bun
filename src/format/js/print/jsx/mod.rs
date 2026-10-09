@@ -5,6 +5,7 @@ mod element;
 mod opening_element;
 
 use self::element::AnyJsxTagWithChildren;
+pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
 use crate::js::format::format_node;
 use crate::prelude::*;
 use crate::{format_args, write};

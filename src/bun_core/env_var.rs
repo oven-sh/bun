@@ -51,6 +51,7 @@ new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
+new!(pub BUN_CONFIG_RANDOMIZE_HASHES: boolean, "BUN_CONFIG_RANDOMIZE_HASHES", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
 // quoted: Amazon Web Services recommends 5 seconds:
 // https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html

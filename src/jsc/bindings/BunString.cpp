@@ -502,9 +502,9 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" void Bun__initializeHashSecrets()
+extern "C" void Bun__initializeHashSecrets(bool perProcess)
 {
-    WTF::initializeHashSecrets();
+    WTF::initializeHashSecrets(perProcess ? WTF::HashSecretsChoice::PerProcess : WTF::HashSecretsChoice::Stable);
 }
 
 namespace Bun {

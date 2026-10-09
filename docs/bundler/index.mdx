@@ -564,30 +564,52 @@ With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of it
 
 #### Evaluation order of a shared chunk
 
-Each entrypoint is a program of its own, and it evaluates the modules it imports in the order of its own `import` statements. A chunk is one file, so it prints its modules in one order. When every entrypoint and `import()` target that can be the first to load a chunk evaluates its modules in the same order, the chunk prints them in that order.
+Each entrypoint is a program of its own. It evaluates the modules it imports in the order of its own `import` statements. A chunk is one file, so Bun writes the modules of a chunk in one order. Two entrypoints that share a chunk can need two orders:
 
-When they do not, no printed order is right for all of them:
+<CodeGroup>
 
-```ts title="index.ts" icon="/icons/typescript.svg"
+```ts index.ts icon="/icons/typescript.svg"
 import "./a.ts";
 import "./b.ts";
 ```
 
-```ts title="worker.ts" icon="/icons/typescript.svg"
+```ts worker.ts icon="/icons/typescript.svg"
 import "./b.ts";
 import "./a.ts";
 ```
 
-The chunk then holds each module behind a lazy wrapper (`var init_a = __esm(() => { ... })`) and runs nothing when it loads. Each importer calls the wrappers of what it imports, where it imports it, so `index.js` runs `a` then `b` and `worker.js` runs `b` then `a`, and both still share one copy of the two modules. A shared module that one of these entrypoints evaluates after a wrapped one is wrapped as well, so that it does not run ahead of it. Modules that only declare functions do not count: nothing can observe their order.
+```ts a.ts icon="/icons/typescript.svg"
+console.log("a");
+```
 
-The same holds for two `import()` targets: the one that loads first decides the order of the modules they share, as it does when the source runs unbundled. So the bundle evaluates modules in an order that the source could have evaluated them in, and it is deterministic wherever the source is. When two such `import()` calls are in flight at once, the host decides which target evaluates first, from source and from the bundle alike:
+```ts b.ts icon="/icons/typescript.svg"
+console.log("b");
+```
 
-```ts title="index.ts" icon="/icons/typescript.svg"
+</CodeGroup>
+
+Bun then writes each module of the chunk inside a function (`var init_a = __esm(() => { ... })`):
+
+- Loading the chunk runs nothing.
+- Each importer calls the functions of the modules it imports, where it imports them. `index.js` logs `a` then `b`, and `worker.js` logs `b` then `a`.
+- Both entrypoints still share one copy of each module.
+- A shared module that an entrypoint evaluates after one of these modules is written the same way, so that it does not run ahead of them.
+
+A chunk whose entrypoints all agree is written as before. Modules without side effects do not count, except inside an import cycle, where the order decides which bindings are ready.
+
+The same applies to two `import()` targets that share a chunk: the target that loads first decides the order, as it does when the source runs unbundled. When both calls are in flight at once, the host decides which target evaluates first:
+
+```ts index.ts icon="/icons/typescript.svg"
 // x.ts imports a.ts then b.ts, and y.ts imports b.ts then a.ts
 await Promise.all([import("./x.ts"), import("./y.ts")]); // a, b or b, a
 ```
 
-If the order matters, `await` the first `import()` before you start the second. esbuild and Rollup differ here: they fix the order of a shared chunk when they build it, whichever target loads first.
+If the order matters, `await` the first `import()` before you start the second.
+
+This covers the order of the modules inside shared chunks. Two limits remain:
+
+- A module that an HTML entrypoint names in a `<script src>`, and the shared modules that run before it, keep one order for every page.
+- A shared chunk still runs before the code of the entrypoint that imports it, including the entrypoint's own earlier imports.
 
 #### Tree-shaking `import()` and `require()` results
 

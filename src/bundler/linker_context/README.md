@@ -42,9 +42,10 @@ The LinkerContext operates in several main phases:
 2. Computes source map data if needed
 3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
 4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
-5. **Phase 3**: `computeChunks()` - Creates the final chunk structure
-6. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
-7. Follows symbol references to ensure consistency
+5. `resolveChunkOrderConflicts()` and `findWrappersBehindImports()` - Wrap the shared files that need more than one order, and find the wrapper calls that no `import` prints
+6. **Phase 3**: `computeChunks()` - Creates the final chunk structure
+7. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
+8. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
 
@@ -731,7 +732,20 @@ The renamed symbols are then used during final code generation to produce output
 - A group whose first loaders disagree becomes lazy: `wrap_files_as_esm` turns each file into `var init_x = __esm(() => { ... })` and every `import` of it into a call, as `scanImportsAndExports()` does for a file that is wrapped from the start
 - An `import` of a chunk runs ahead of the code that makes those calls. So a group becomes lazy too when an entry point that can be the first to load it evaluates one of its files after a file of a lazy group
 - `compute_entry_bits` runs again afterwards: the wrappers use `__esm` from the runtime. An `import` of a `"sideEffects": false` file loaded nothing and the call of its wrapper does, so when such a file was wrapped, who loads what has changed and the pass looks again
-- A file that an HTML file names in a `<script src>` stays unwrapped, with what comes ahead of it: an HTML file prints nothing for the tag, so nothing would call the wrapper
+- The `await` of an unwrapped file holds up the calls that print after it. So a file that reaches a top-level await becomes lazy when a lazy file comes after it, also in the chunk of the one entry point that loads it
+- A file that calls a split `require()` at load has started by then: it is listed ahead of what it requires
+- A file that an HTML file names in a `<script src>` stays unwrapped, with what comes ahead of it: an HTML file prints nothing for the tag, so nothing would call the wrapper. So does a file with no symbol for a wrapper (`AstBuilder`)
+
+#### `findWrappersBehindImports.rs`
+
+**Purpose**: Finds the calls of ESM wrappers that no `import` of the wrapped file prints. Runs after `resolveChunkOrderConflicts.rs`, with or without code splitting.
+
+**Key functions**:
+
+- An `import` statement runs its target, or when the target does not run with the importer (`runs_with`), what the `import` statements of the target run. The order model (`EvaluationOrder`) and the printed calls (`for_each_file_run_by_import`) both go by `runs_with` and `for_each_edge`
+- An unwrapped file runs when its chunk loads, so it does not need a call. A wrapper does. It has none when tree shaking dropped the `"sideEffects": false` barrel that re-exports it, or dropped the `import` statement
+- Records those wrappers per import record (`LinkerGraph.wrappers_behind_import`), makes the part depend on their symbols, and marks it live
+- Records the use of `__esmWait` in a file outside of a wrapper that imports an async wrapper
 
 #### `computeChunks.rs`
 

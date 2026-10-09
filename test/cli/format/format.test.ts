@@ -598,6 +598,21 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test.each([
+    ["interpolations in <pre>", "a.vue", `<template><pre>${"{{a}}".repeat(30_000)}</pre></template>\n`],
+    [
+      "names after prettier-ignore-attribute",
+      "a.html",
+      `<!-- prettier-ignore-attribute${" a".repeat(20_000)} -->\n<div${" b".repeat(20_000)}></div>\n`,
+    ],
+    ["end tags in a string of TypeScript", "a.vue", `<script lang="ts">\na = "${"</ ".repeat(60_000)}";\n</script>\n`],
+    ["blanks in v-for", "a.vue", `<template><a v-for="a${" ".repeat(60_000)}b"></a></template>\n`],
+  ])("HTML does not take quadratic time: %s", async (_, name, text) => {
+    const result = await format({ [name]: text }, ["--check", name]);
+    expect(result.stderr).not.toContain("[error]");
+    expect(result.exitCode).toBe(1);
+  });
+
   test("JSON", async () => {
     const result = await format(
       {

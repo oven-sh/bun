@@ -35,19 +35,32 @@ fn is_destructuring_pattern(pattern: Pat) -> bool {
 }
 
 /// Upstream goes down from each of these places to the optional chains. This is the way up.
-fn usage_of(e: Expr<'_>) -> Usage<'_> {
+///
+/// oxlint 1.80 sees through what only concerns types, as in `(a?.b as T).c` and `(a?.b)!.c`. It says nothing about a
+/// spread among arguments, about the default value of a parameter and about `#a in b?.c`.
+fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
     let unsafe_if = |is_unsafe: bool| if is_unsafe { Usage::Unsafe } else { Usage::Safe };
     match e.parent() {
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::Binary { op, right, .. } => match op {
+            ExprKind::Binary { op, left, right } => match op {
                 BinOp::And => Usage::ValueOf(parent),
                 BinOp::Or | BinOp::Nullish | BinOp::Comma if right == e => Usage::ValueOf(parent),
+                BinOp::In if is_oxlint && left.tag() == ExprTag::PrivateIdentifier => Usage::Safe,
                 BinOp::In | BinOp::Instanceof => unsafe_if(right == e),
                 _ if is_arithmetic(op) => Usage::Arithmetic,
                 _ => Usage::Safe,
             },
             ExprKind::Cond { test, .. } if test != e => Usage::ValueOf(parent),
             ExprKind::Await(_) => Usage::ValueOf(parent),
+            ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Satisfies { .. }
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+                if is_oxlint =>
+            {
+                Usage::ValueOf(parent)
+            }
             // Also the default value of a pattern in the target of an assignment.
             ExprKind::Assign { op, target, value } if value == e => match op {
                 None => unsafe_if(matches!(target.tag(), ExprTag::Object | ExprTag::Array)),
@@ -60,13 +73,18 @@ fn usage_of(e: Expr<'_>) -> Usage<'_> {
                 unsafe_if(obj == e && chain != Chain::Start)
             }
             // In an array or among arguments, not among the children of a JSX element.
+            ExprKind::Spread(_) if is_oxlint => {
+                unsafe_if(matches!(parent.parent(), Node::Expr(list) if list.tag() == ExprTag::Array))
+            }
             ExprKind::Spread(_) => unsafe_if(parent.jsx_container_span().is_none()),
             ExprKind::Unary { op: UnOp::Plus | UnOp::Minus, .. } => Usage::Arithmetic,
             _ => Usage::Safe,
         },
         Node::Class(class) => unsafe_if(class.extends() == Some(e)),
         Node::VarDecl(declaration) => unsafe_if(is_destructuring_pattern(declaration.pat())),
-        Node::Param(param) => unsafe_if(param.default() == Some(e) && is_destructuring_pattern(param.pat())),
+        Node::Param(param) => {
+            unsafe_if(!is_oxlint && param.default() == Some(e) && is_destructuring_pattern(param.pat()))
+        }
         Node::PatProp(property) => {
             unsafe_if(property.default() == Some(e) && is_destructuring_pattern(property.value()))
         }
@@ -88,10 +106,12 @@ pub enum Outcome {
     Safe,
 }
 
+type State<'a> = FxHashMap<Expr<'a>, Outcome>;
+
 /// How far up the way is before it is remembered. Otherwise every operand of a long `a?.b && c?.d && ..` goes all of it.
 const MANY_STEPS: u32 = 32;
 
-fn outcome_of<'a>(chain: Expr<'a>, remembered: &mut FxHashMap<Expr<'a>, Outcome>) -> Outcome {
+fn outcome_of<'a>(chain: Expr<'a>, is_oxlint: bool, remembered: &mut State<'a>) -> Outcome {
     let (mut at, mut steps, mut far) = (chain, 0, None);
     let outcome = loop {
         if steps >= MANY_STEPS {
@@ -100,7 +120,7 @@ fn outcome_of<'a>(chain: Expr<'a>, remembered: &mut FxHashMap<Expr<'a>, Outcome>
             }
             far.get_or_insert(at);
         }
-        match usage_of(at) {
+        match usage_of(at, is_oxlint) {
             Usage::ValueOf(parent) => at = parent,
             Usage::Unsafe => break Outcome::Unsafe,
             Usage::Arithmetic => break Outcome::Arithmetic,
@@ -110,7 +130,7 @@ fn outcome_of<'a>(chain: Expr<'a>, remembered: &mut FxHashMap<Expr<'a>, Outcome>
     };
     while let Some(e) = far {
         remembered.insert(e, outcome);
-        far = match usage_of(e) {
+        far = match usage_of(e, is_oxlint) {
             Usage::ValueOf(parent) if e != at => Some(parent),
             _ => None,
         };
@@ -123,7 +143,7 @@ impl NoUnsafeOptionalChaining {
         if !chain.is_chain_root() {
             return;
         }
-        match outcome_of(chain, &mut cx.state) {
+        match outcome_of(chain, cx.language().is_oxlint, &mut cx.state) {
             Outcome::Unsafe => {
                 cx.report(chain, UNSAFE_OPTIONAL_CHAIN);
             }
@@ -137,7 +157,7 @@ impl NoUnsafeOptionalChaining {
 
 impl Rule for NoUnsafeOptionalChaining {
     const META: Meta = Meta::eslint("no-unsafe-optional-chaining", Kind::Problem).recommended();
-    type State<'a> = FxHashMap<Expr<'a>, Outcome>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoUnsafeOptionalChaining {

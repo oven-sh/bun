@@ -82,6 +82,23 @@ void JSAsyncIteratorSourceOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::PullPromise), "pullPromise"_s);
 }
 
+JSPromise* JSAsyncIteratorSourceOperation::closeIterator(JSGlobalObject* globalObject)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* iterator = this->iterator();
+    if (!iterator)
+        return nullptr;
+    // Emptied before return() runs, so a teardown that re-enters finds nothing to call.
+    clearIterator();
+    MarkedArgumentBuffer noArgs;
+    JSValue returned = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, noArgs);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!returned)
+        return nullptr;
+    RELEASE_AND_RETURN(scope, promiseResolvedWithFast(globalObject, returned));
+}
+
 static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterFinishWithError(JSGlobalObject*, JSAsyncIteratorSourceOperation*, JSValue error);
@@ -152,16 +169,9 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    JSObject* iterator = op->iterator();
-    op->clearIterator();
-    if (!iterator) {
-        settlePullPromiseResolved(globalObject, op);
-        return;
-    }
-    MarkedArgumentBuffer noArgs;
-    JSValue returned = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, noArgs);
+    auto* returnPromise = op->closeIterator(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    if (auto* returnPromise = asPromise(returned)) {
+    if (returnPromise) {
         returnPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceCleanupSettled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
         return;
     }
@@ -395,22 +405,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorRethrow, 
     return JSValue::encode(jsUndefined());
 }
 
-// context = the reason cancel() threw into the iterator. The iterator letting that reason
-// propagate is the expected outcome of a cancel and resolves it; anything else thrown while
-// unwinding (a throwing `finally`) still rejects it.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceCancelRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue rejection = callFrame->argument(0);
-    bool sameReason = JSValue::strictEqual(globalObject, rejection, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (sameReason)
-        return JSValue::encode(jsUndefined());
-    throwException(globalObject, scope, rejection);
-    return {};
-}
-
 // -- [method-convention] direct-source methods: this = the op, (...callArgs) --
 
 // pull(controller): one drive of the iterator runs at a time; every pull while it runs gets
@@ -438,54 +432,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourcePull, (JSGlobalO
     return JSValue::encode(pullPromise);
 }
 
-// cancel(reason): reason ? iterator.throw(reason) : iterator.return(); the result is
-// returned so the stream's cancel promise chains onto it, and a throw propagates to the caller.
-// The iterator letting the injected reason itself escape (a rejection or a synchronous rethrow
-// of that same value) is a normal cancel and resolves.
+// cancel(reason): the consumer is gone, so the iterator is closed whatever the reason; the stream's cancel promise chains onto return()'s.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
     op->m_cancelled = true;
-    JSObject* iterator = op->iterator();
-    op->clearIterator();
     // The pump is abandoned: whatever awaited pull() resolves, like the old converter.
     settlePullPromiseResolved(globalObject, op);
-    if (!iterator)
-        return JSValue::encode(jsUndefined());
-    JSValue reason = callFrame->argument(0);
-    MarkedArgumentBuffer args;
-    JSValue result;
-    // Truthiness, not definedness: an absent/falsy reason means a graceful return(), never
-    // an injected throw (which would surface as an uncatchable rejection).
-    if (reason.toBoolean(globalObject)) {
-        args.append(reason);
-        result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
-        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-            // Identity, not strictEqual: nothing may re-enter the VM while the exception is pending.
-            if (!(exception->value() == reason))
-                return {};
-            TRY_CLEAR_EXCEPTION(scope, {});
-            return JSValue::encode(jsUndefined());
-        }
-        if (!result)
-            return JSValue::encode(jsUndefined());
-        // `await` semantics for the result: a foreign thenable is adopted, a plain value fulfills.
-        JSPromise* thrownPromise = asPromise(result);
-        if (!thrownPromise) {
-            thrownPromise = promiseResolvedWith(globalObject, result);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* settled = JSPromise::create(vm, globalObject->promiseStructure());
-        auto* runtime = JSStreamsRuntime::from(globalObject);
-        thrownPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onAsyncIterableSourceCancelRejected(), settled, reason);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(settled);
-    }
-    result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, args);
+    auto* returnPromise = op->closeIterator(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(result ? result : jsUndefined());
+    return JSValue::encode(returnPromise ? JSValue(returnPromise) : jsUndefined());
 }
 
 // close(): the consumer is gone; the iterator's finally still runs via return(), and a throw from

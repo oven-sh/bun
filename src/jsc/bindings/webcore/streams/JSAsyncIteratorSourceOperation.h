@@ -53,6 +53,8 @@ public:
     void setController(JSC::VM& vm, JSC::JSObject* controller) { internalField(Field::Controller).set(vm, this, controller); }
     void setPullPromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::PullPromise).set(vm, this, promise); }
 
+    // The consumer is done: iterator.return?.() and never throw(), which a body can catch and outlive.
+    JSC::JSPromise* closeIterator(JSC::JSGlobalObject*);
     void clearIterator() { internalField(Field::Iterator).clear(); }
     void clearPullPromise() { internalField(Field::PullPromise).clear(); }
 

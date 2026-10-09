@@ -13,6 +13,7 @@ import {
   tempDir,
 } from "harness";
 import path from "node:path";
+import { asyncIterableBodyShapes, settled } from "../../web/streams/async-iterable-body-shapes";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -503,6 +504,45 @@ describe("spawn stdin ReadableStream", () => {
   test("parent exits after the child dies when stdin is a ReadableStream", async () => {
     await expectParentExitsAfterChildDies(false);
   });
+
+  // The child closes its stdin and lives on. Then the body gives its first chunk, and that write
+  // fails. The sink hands the error to the body, which is closed the way `for await` leaves an
+  // iterator: return(). The error is not thrown into it.
+  // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so the child
+  // cannot close its stdin and live on.
+  describe.skipIf(isWindows).each(asyncIterableBodyShapes)(
+    "%s as stdin is closed with return() when the child closed its stdin before a chunk",
+    (_, make) => {
+      test.concurrent.each([
+        // A small write is buffered. Its failure comes back when the sink closes.
+        ["of 6 bytes", "chunk\n"],
+      ])("%s", async (_, chunk) => {
+        const childClosedStdin = Promise.withResolvers<void>();
+        const shape = make({ chunk, start: childClosedStdin.promise });
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `require("fs").closeSync(0);
+             console.log("closed");
+             setTimeout(() => {}, 30_000);`,
+          ],
+          stdin: new Response(shape.body),
+          stdout: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+        });
+        let stdout = "";
+        for await (const bytes of proc.stdout) {
+          stdout += new TextDecoder().decode(bytes);
+          if (stdout.includes("closed")) break;
+        }
+        expect(stdout).toContain("closed");
+        childClosedStdin.resolve();
+        expect(await settled(shape)).toEqual(shape.expected);
+      });
+    },
+  );
 
   test("ReadableStream with process that exits immediately", async () => {
     const stream = new ReadableStream({

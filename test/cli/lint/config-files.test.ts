@@ -333,6 +333,65 @@ describe.concurrent("an eslint.config.js", () => {
     }).toEqual({ configs: ["C:/t/.eslintrc.json"], parsers: ["C:/t/.eslintrc.json"], plugins: ["C:/t"] });
   });
 
+  // `extends: [require.resolve("./base")]`
+  test("what the program for ESLint 8 answers about a path that is extended is under that path with `/`", async () => {
+    using dir = tempDir("bun-lint-config-files", {});
+    const parts = ["track", "describe", "eslintrc"];
+    const source = parts
+      .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
+      .join("")
+      .replaceAll('require("node:path")', 'require("node:path").win32');
+    const content = { extends: ["C:\\t\\base.json", ".\\near.json", "a-package"] };
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        source,
+        JSON.stringify({ pluginsFrom: "C:/t", content }),
+        "<marker>",
+        "C:/t/.eslintrc.json",
+      ],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = await proc.stdout.text();
+    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    expect(Object.keys(config.configs["C:/t/.eslintrc.json"])).toEqual([
+      "C:/t/base.json",
+      "./near.json",
+      "eslint-config-a-package",
+    ]);
+  });
+
+  // The same for a file that it reads. `/./` is what `path.resolve` would take out, on every system.
+  test("what the program for ESLint 8 answers about the file that it runs is under the path that it was given", async () => {
+    using dir = tempDir("bun-lint-config-files", {
+      ".eslintrc.js": `module.exports = { extends: "./base.json" };`,
+      "base.json": "{}",
+    });
+    const parts = ["track", "describe", "eslintrc"];
+    const source = parts.map(it =>
+      readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"),
+    );
+    const root = String(dir).replaceAll("\\", "/");
+    const path = `${root}/./.eslintrc.js`;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", source.join(""), JSON.stringify({ pluginsFrom: root }), "<marker>", path],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = await proc.stdout.text();
+    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    expect({ files: Object.keys(config.files), configs: Object.keys(config.configs) }).toEqual({
+      files: [path],
+      configs: [path],
+    });
+  });
+
   test("the program that runs the file knows it, however its path is spelled", async () => {
     using dir = tempDir("bun-lint-config-files", {
       "real/eslint.config.mjs": `export const local = { rules: { r: { create: () => ({}) } } };

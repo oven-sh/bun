@@ -18,7 +18,8 @@ use crate::pe::{DOSHeader, PEHeader, SectionHeader};
 use crate::read_struct;
 
 const MAGIC: &[u8; 8] = b"BUNBLTNS";
-const FORMAT_VERSION: u32 = 1;
+/// Keep equal to `BUILTINS_FORMAT_VERSION` in src/codegen/bundle-modules.ts, which says what version 2 promises.
+const FORMAT_VERSION: u32 = 2;
 const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 

@@ -421,7 +421,11 @@ writeIfNotChanged(
 //
 // A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
 // here so that a debug bun works as a `--compile` target like any other.
-const BUILTINS_FORMAT_VERSION = 1;
+//
+// Version 2 has the layout of version 1. It exists because a bun that reads version 1 (1.4.1, 1.4.2) crashes on a
+// module that uses a private name (`@name`) it does not have (oven-sh/WebKit#786). A bun that reads version 2 gives
+// that module no bytecode, so a new private name in src/js needs no new version. Change the version with the layout.
+const BUILTINS_FORMAT_VERSION = 2;
 const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for

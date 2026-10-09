@@ -5,6 +5,7 @@
 // parses a module or a @-intrinsic builtin function from the blob.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { sliceSourceCode } from "../../src/codegen/builtin-parser";
 
 test("internal JS builtin function and module sources parse from the linked blob", async () => {
   await using proc = Bun.spawn({
@@ -36,4 +37,20 @@ test("internal JS builtin function and module sources parse from the linked blob
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "blob-ok", stderr: "", exitCode: 0 });
+});
+
+// $getByIdDirectPrivate and $putByIdDirectPrivate take a private name as a string. JavaScriptCore looks it up when it
+// compiles the function that has the call, and a name it does not have is a SyntaxError at the first call of that
+// function. The codegen that bundles src/js stops the build for such a name.
+test("the private name that an intrinsic takes as a string is a row of BunBuiltinNames.h", () => {
+  const source = `{ $putByIdDirectPrivate(stream, "bunNativePtr", f(a, [b, c])); return $getByIdDirectPrivate(this, 'writer'); }`;
+  expect(sliceSourceCode(source, true).result).toBe(
+    `{ __intrinsic__putByIdDirectPrivate(stream, "bunNativePtr", f(a, [b, c])); return __intrinsic__getByIdDirectPrivate(this, 'writer'); }`,
+  );
+  expect(() => sliceSourceCode(`{ return $getByIdDirectPrivate(f(a, b), "writerr"); }`, true)).toThrow(
+    `"writerr" is not a private name in src/js/builtins/BunBuiltinNames.h`,
+  );
+  expect(() => sliceSourceCode(`{ $putByIdDirectPrivate(this, name, 1); }`, true)).toThrow(
+    "$putByIdDirectPrivate takes a private name as a string literal",
+  );
 });

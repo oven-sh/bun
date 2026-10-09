@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -172,7 +174,29 @@ export const function_replacements = [
   "$isPromiseRejected",
   "$isPromisePending",
   "$bindgenFn",
+  "$getByIdDirectPrivate",
+  "$putByIdDirectPrivate",
 ];
+
+// The private names bun registers with JavaScriptCore: the rows of BunBuiltinNames.h.
+const registeredPrivateNames = new Set(
+  readFileSync(path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"), "utf8")
+    .matchAll(/^\s*macro\(([\w$]+)\)/gm)
+    .map(row => row[1]),
+);
+
+/** The private name that `$getByIdDirectPrivate(object, "name")` or `$putByIdDirectPrivate(object, "name", value)` gives as a string. */
+function privateNameArgument(args: string): string | undefined {
+  // `args` is "(object, ...)" as sliceSourceCode returns it. The first argument ends at the first comma that is not
+  // inside brackets; a string or a regular expression with a comma or a bracket in it is not expected there.
+  let depth = 0;
+  for (let i = 1; i < args.length; i++) {
+    const c = args[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) return args.slice(i + 1).match(/^\s*(["'])([\w$]+)\1\s*[,)]/)?.[2];
+  }
+}
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
 /** Applies source code replacements as defined in `replacements` */
@@ -267,6 +291,20 @@ export function applyReplacements(src: string, length: number) {
         args = `(__intrinsic__peekPromiseStatus${inner.result} === ${status})`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "getByIdDirectPrivate" || name === "putByIdDirectPrivate") {
+      // JavaScriptCore looks the name up when it compiles the function that has the call. A name it does not have is a
+      // SyntaxError there, at the first call of that function. So a wrong name stops the build here.
+      const inner = sliceSourceCode(rest, true);
+      const privateName = privateNameArgument(inner.result);
+      if (privateName === undefined) {
+        throw new Error(`$${name} takes a private name as a string literal, but got '$${name}${inner.result}'`);
+      }
+      if (!registeredPrivateNames.has(privateName)) {
+        throw new Error(
+          `'$${name}${inner.result}': "${privateName}" is not a private name in src/js/builtins/BunBuiltinNames.h`,
+        );
+      }
+      return [slice.slice(0, match.index) + "__intrinsic__" + name + inner.result, inner.rest, true];
     } else if (name === "bindgenFn") {
       const inner = sliceSourceCode(rest, true);
       let args;

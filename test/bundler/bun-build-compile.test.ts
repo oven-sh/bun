@@ -18,6 +18,7 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -25,6 +26,7 @@ import {
   readSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
@@ -1947,6 +1949,281 @@ server.close();`,
     // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
     60_000,
   );
+
+  // The executable a build goes into can be another version of bun. Its internal modules are compiled here, and one of
+  // them can use a private name (`@name`, or the string that $getByIdDirectPrivate takes) that this bun does not have,
+  // or not parse here at all. JavaScriptCore used to write through a null pointer for such a name. Now that module
+  // gets no bytecode and the others do.
+  describe("an internal module that this bun cannot compile", () => {
+    const good = "(function (a) { function check() { return @isCallable(a); } return check(); })";
+    const cannotCompile = [
+      "(function (a) { return @nope; })",
+      "(function (a) { return a.@nope; })",
+      "(function (a) { return a.@@nope; })",
+      "(function (a) { return @; })",
+      "(function (a) { return @1; })",
+      "(function (a) { return 1 +; })",
+      '(function (a) { return @getByIdDirectPrivate(a, "nope"); })',
+      '(function (a) { return @putByIdDirectPrivate(a, "nope", 1); })',
+      // In a nested function, with another one generated after it.
+      "(function (a) { function first() { return @nope; } function second() { return 1; } return 2; })",
+      '(function (a) { function first() { return @getByIdDirectPrivate(a, "nope"); } function second() { return 1; } return 2; })',
+      '(function (a) { function first() { return 1; } var second = function () { function deep() { return @putByIdDirectPrivate(a, "nope", 1); } return deep; }; function third() { return 3; } return 2; })',
+    ];
+
+    // What the build does with the source of one module of another executable (bun:internal-for-testing).
+    test("internalModuleBytecode(source, name) throws, and the next module is not affected", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { internalModuleBytecode } = require("bun:internal-for-testing");
+           const hex = () => Buffer.from(internalModuleBytecode(${JSON.stringify(good)}, "good").bytecode).toString("hex");
+           const before = hex();
+           const errors = ${JSON.stringify(cannotCompile)}.map(source => {
+             try {
+               internalModuleBytecode(source, "x");
+               return "no error";
+             } catch (error) {
+               return error.message;
+             }
+           });
+           console.log(JSON.stringify({ errors, hasBytecode: before.length > 0, sameBytecodeAfter: hex() === before }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // (stderr is not asserted: JavaScriptCore prints a line there for a builtin that does not parse, except where it
+      // validates builtins when it makes them, as a build with assertions does.)
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(
+        JSON.stringify({
+          errors: cannotCompile.map(() => "could not generate bytecode for x"),
+          hasBytecode: true,
+          sameBytecodeAfter: true,
+        }),
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    // The same names in a script. BUN_JSC_exposePrivateIdentifiers gives this syntax to every script.
+    test("the same names are a SyntaxError in a script with BUN_JSC_exposePrivateIdentifiers", async () => {
+      const scripts = [
+        ["@nope", "Invalid private name '@nope'"],
+        ["({}).@nope", "Invalid private name '@nope'"],
+        ["@@nope", "Invalid private name '@@nope'"],
+        ["({}).@@nope", "Invalid private name '@@nope'"],
+        ["@;", "Invalid private name '@'"],
+        ["@1", "Invalid private name '@1'"],
+        ['@getByIdDirectPrivate({}, "nope")', "Invalid private name 'nope'"],
+        ['@putByIdDirectPrivate({}, "nope", 1)', "Invalid private name 'nope'"],
+      ];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+           const ways = [source => (0, eval)(source), source => new Function(source)(), source => vm.runInThisContext(source)];
+           const errors = ${JSON.stringify(scripts.map(([source]) => source))}.map(source =>
+             ways.map(run => {
+               try {
+                 run(source);
+                 return "no error";
+               } catch (error) {
+                 return error.name + ": " + error.message;
+               }
+             }),
+           );
+           console.log(JSON.stringify({ known: ways.map(run => run("this.known = @isCallable(() => 1)")), errors }));`,
+        ],
+        env: { ...bunEnv, BUN_JSC_exposePrivateIdentifiers: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({
+          known: [true, null, true],
+          errors: scripts.map(([, message]) => Array(3).fill("SyntaxError: " + message)),
+        }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A debug build of bun is 800 MB. These read the parts of an executable that they need, not the file.
+    function readAt(fd: number, offset: number, length: number) {
+      const bytes = Buffer.alloc(length);
+      let filled = 0;
+      while (filled < length) {
+        const count = readSync(fd, bytes, filled, length - filled, offset + filled);
+        if (count === 0) break;
+        filled += count;
+      }
+      return bytes.subarray(0, filled);
+    }
+    // Where `text` is in the file: every place, from the start, or from the end.
+    function* placesOf(fd: number, text: string, fromEnd = false) {
+      const chunk = 16 * 1024 * 1024;
+      const size = fstatSync(fd).size;
+      for (let i = 0; i * chunk < size; i++) {
+        const start = fromEnd ? Math.max(0, size - (i + 1) * chunk) : i * chunk;
+        // Longer than a chunk by what a match across its end needs, so each match is in one chunk only.
+        const bytes = readAt(fd, start, chunk + text.length - 1);
+        let at = fromEnd ? bytes.lastIndexOf(text, undefined as any, "latin1") : bytes.indexOf(text, 0, "latin1");
+        while (at !== -1) {
+          yield start + at;
+          if (fromEnd && at === 0) break;
+          at = fromEnd ? bytes.lastIndexOf(text, at - 1, "latin1") : bytes.indexOf(text, at + 1, "latin1");
+        }
+      }
+    }
+
+    // The builtins section of a bun executable (src/codegen/bundle-modules.ts): where its format version is in the
+    // file, and for each internal module its id, its source, and where that is in the file.
+    function builtinsSection(fd: number) {
+      for (const at of placesOf(fd, "BUNBLTNS")) {
+        const header = readAt(fd, at, 48);
+        const field = (i: number) => header.readUInt32LE(8 + i * 4);
+        // The magic is also a constant of the code that reads the section. The header is the one followed by its size.
+        if (header.length < 48 || field(3) !== 48) continue;
+        const [count, modulesOffset, dataOffset, dataLength] = [field(2), field(3), field(6), field(7)];
+        const section = readAt(fd, at, dataOffset + dataLength);
+        const modules = new Map<string, { id: number; source: string; sourceAt: number }>();
+        for (let id = 0; id < count; id++) {
+          const record = modulesOffset + id * 24;
+          const span = (k: number) => {
+            const offset = dataOffset + section.readUInt32LE(record + k * 8);
+            return { offset, end: offset + section.readUInt32LE(record + k * 8 + 4) };
+          };
+          const [name, source] = [span(0), span(2)];
+          modules.set(section.toString("latin1", name.offset, name.end), {
+            id,
+            source: section.toString("latin1", source.offset, source.end),
+            sourceAt: at + source.offset,
+          });
+        }
+        return { versionAt: at + 8, modules };
+      }
+      throw new Error("no builtins section in " + bunExe());
+    }
+
+    // The ids of the internal modules that a compiled executable has bytecode for (StandaloneModuleGraph's trailer).
+    function internalModuleBytecodeIds(outfile: string) {
+      const fd = openSync(outfile, "r");
+      try {
+        const [trailer] = placesOf(fd, "\n---- Bun! ----\n", true);
+        // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
+        const offsets = readAt(fd, trailer - 32, 32);
+        const base = trailer - 32 - Number(offsets.readBigUInt64LE(0));
+        const modules = { offset: offsets.readUInt32LE(8), length: offsets.readUInt32LE(12) };
+        const flags = offsets.readUInt32LE(28);
+        // Records chained after the module table, in `Flags` bit order: source hashes, then builtin bytecode.
+        let at = base + modules.offset + modules.length;
+        if (flags & (1 << 5)) at += (modules.length / 52) * 4;
+        if (!(flags & (1 << 6))) return [];
+        const count = readAt(fd, at, 4).readUInt32LE(0);
+        const table = readAt(fd, at + 4, count * 12);
+        return Array.from({ length: count }, (_, i) => table.readUInt32LE(i * 12));
+      } finally {
+        closeSync(fd);
+      }
+    }
+
+    async function compile(dir: string, target: string, name: string) {
+      const outfile = join(dir, exeName(name));
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "--bytecode",
+          "--format=esm",
+          `--compile-executable-path=${target}`,
+          join(dir, "app.js"),
+          "--outfile",
+          outfile,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(exitCode).toBe(0);
+      return outfile;
+    }
+    const exeName = (name: string) => (isWindows ? name + ".exe" : name);
+
+    // The target is a copy of this bun with two names rewritten in its builtins section: `@throwRangeError` in
+    // node:punycode, and the string of the $putByIdDirectPrivate call in internal:shared, which node:path depends on.
+    // The app imports both modules and loads neither: the copy's own runtime cannot compile them either, and a
+    // release build reads them out of that section. node:os depends on no other module.
+    // (The timeout: a copy of this bun is 800 MB for a debug build, and it is the target of two --compile builds.)
+    test("--compile --bytecode into an executable that has one gives that module no bytecode", async () => {
+      using dir = tempDir("build-compile-builtin-unknown-private-name", {
+        "app.js": `import os from "node:os";
+if (process.argv.length > 99) {
+  require("node:punycode");
+  require("node:path");
+}
+console.log(JSON.stringify({ eol: os.EOL }));`,
+      });
+      const target = join(String(dir), exeName("target"));
+      cpSync(bunExe(), target);
+      chmodSync(target, 0o755);
+      const fd = openSync(target, "r+");
+      try {
+        const { versionAt, modules } = builtinsSection(fd);
+        for (const [module, name, unknown] of [
+          ["node:punycode", "@throwRangeError", "@zzzzzzzzzzzzzzz"],
+          ["internal:shared", '"internal"', '"zzzzzzzz"'],
+        ]) {
+          const { source, sourceAt } = modules.get(module)!;
+          expect(source, module).toContain(name);
+          writeSync(fd, unknown, sourceAt + source.indexOf(name), "latin1");
+        }
+
+        const ids = internalModuleBytecodeIds(await compile(String(dir), target, "app"));
+        const hasBytecode = (module: string) => ids.includes(modules.get(module)!.id);
+        expect({
+          "node:os": hasBytecode("node:os"),
+          "node:path": hasBytecode("node:path"),
+          "internal:validators": hasBytecode("internal:validators"),
+          "node:punycode": hasBytecode("node:punycode"),
+          "internal:shared": hasBytecode("internal:shared"),
+        }).toEqual({
+          "node:os": true,
+          "node:path": true,
+          "internal:validators": true,
+          "node:punycode": false,
+          "internal:shared": false,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [join(String(dir), exeName("app"))],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr }).toEqual({
+          stdout: JSON.stringify({ eol: isWindows ? "\r\n" : "\n" }),
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+
+        // Format 1 is what bun 1.4.1 and 1.4.2 write, and they are the ones that crash on such a name. Nothing of a
+        // section with another format version is compiled, and the build succeeds without builtin bytecode.
+        const version = Buffer.alloc(4);
+        version.writeUInt32LE(1);
+        writeSync(fd, version, 0, 4, versionAt);
+        expect(internalModuleBytecodeIds(await compile(String(dir), target, "app-format-1"))).toEqual([]);
+      } finally {
+        closeSync(fd);
+      }
+    }, 180_000);
+  });
 
   // A position in a stack trace needs to know where the lines of the source start. Finding that out by reading the
   // source would read what an executable that runs from bytecode has otherwise never read.

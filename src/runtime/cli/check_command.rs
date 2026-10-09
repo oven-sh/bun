@@ -700,7 +700,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("{}", BStr::new(&file.message(&path))),
+            format_args!("{}", BStr::new(&file.message(path))),
         );
     }
     report.is_ok()

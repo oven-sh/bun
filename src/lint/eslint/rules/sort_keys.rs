@@ -92,12 +92,17 @@ impl SortKeys {
             if let Some(before) = before
                 && !self.is_valid_order(&before, &this_name)
             {
-                cx.report(key.inner_span(cx.file()), SORT_KEYS)
+                // oxlint says one thing about an object, and points at it.
+                let is_oxlint = cx.language().is_oxlint;
+                cx.report(if is_oxlint { object.span() } else { key.inner_span(cx.file()) }, SORT_KEYS)
                     .data("thisName", this_name)
                     .data("prevName", before)
                     .data("order", if self.is_descending { "desc" } else { "asc" })
                     .data("insensitive", if self.is_insensitive { "insensitive " } else { "" })
                     .data("natural", if self.is_natural { "natural " } else { "" });
+                if is_oxlint {
+                    return;
+                }
             }
         }
     }

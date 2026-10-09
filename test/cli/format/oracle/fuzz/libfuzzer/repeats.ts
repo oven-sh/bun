@@ -104,7 +104,7 @@ function run(variant: number, shape: Shape, size: number, slot: number) {
   writeFileSync(path, Buffer.concat([header, shape.make(size)]));
   const script = COMMAND
     ? `ulimit -c 0; ulimit -v 8000000; exec /usr/bin/time -f "CPU %U %S" timeout 20 ${COMMAND} "$1"`
-    : `ulimit -c 0; ulimit -s ${STACK_KB}; exec /usr/bin/time -f "CPU %U %S" "$0" -timeout=20 -rss_limit_mb=4096 -malloc_limit_mb=2048 "$1"`;
+    : `ulimit -c 0; ulimit -s ${STACK_KB}; exec /usr/bin/time -f "CPU %U %S" "$0" -timeout=300 -rss_limit_mb=4096 -malloc_limit_mb=2048 "$1"`;
   return new Promise<{ ms: number; died: string }>(done => {
     const child = spawn("/bin/sh", ["-c", script, join(binaries, `fuzz_${target}`), path], {
       env: { ...process.env, FUZZ_STACK_KB: STACK_KB, FUZZ_FINDINGS: join(directory, "findings"), FUZZ_SLOW_MS: "100000", ASAN_OPTIONS: "detect_leaks=0:detect_stack_use_after_return=0:allocator_may_return_null=1" },
@@ -114,7 +114,7 @@ function run(variant: number, shape: Shape, size: number, slot: number) {
     child.stderr.on("data", data => (errors = (errors + data).slice(-20000)));
     child.on("close", (code, signal) => {
       const why = /ERROR: (AddressSanitizer: [\w-]+|libFuzzer: [\w- ]+)|(has overflowed its stack|terminated by signal \d+)/.exec(errors)?.slice(1).find(Boolean) ?? `${signal ?? code}`;
-      // Processor time, not the time of day: other processes want the processor too.
+      // Processor time, not the time of day: other processes want the processor too. So libFuzzer's own limit, which goes by the clock, is far away.
       const [, user, system] = /CPU ([\d.]+) ([\d.]+)/.exec(errors) ?? [];
       const ms = (Number(user) + Number(system)) * 1000;
       // The exit codes of `bun format --check`: 1: not formatted, 2: a syntax error.

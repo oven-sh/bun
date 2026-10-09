@@ -73,8 +73,13 @@ function parse(how) {
   for (const flag of flags) {
     const [, name, text] = /^([\w.]+)=(.*)$/s.exec(flag);
     let value = text;
-    if (/^(true|false|\d+|[[{].*)$/s.test(text)) value = JSON.parse(text);
-    if (name == "plugins") tool = value[0];
+    // The target `options` makes names and values that are no flags.
+    try {
+      if (/^(true|false|\d+|[[{].*)$/s.test(text)) value = JSON.parse(text);
+    } catch {
+      return;
+    }
+    if (name == "plugins") tool = Array.isArray(value) ? value[0] : value;
     else if (name == "flavor") isOxfmt = true;
     else if (name.startsWith("tsconfig.")) (options.tsconfig ??= {})[name.slice(9)] = value;
     else if (name.startsWith("jsdoc.")) (options.jsdoc = options.jsdoc === true || !options.jsdoc ? {} : options.jsdoc)[name.slice(6)] = value;

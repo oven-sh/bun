@@ -750,7 +750,9 @@ fn run(data: &[u8]) {
         // No formatter adds or drops a letter. The pragma has some.
         None if !options.insert_pragma && without_steps(&options).is_none() => {
             let (before, after) = (kept::letters(text), kept::letters(&once));
-            if let Some(at) = (0..before.len()).find(|&at| before[at] != after[at]) {
+            // U+FFFD can take the place of a NUL and of what is not UTF-8.
+            let counted = if str::from_utf8(text).is_ok() && !text.contains(&0) { before.len() } else { 26 };
+            if let Some(at) = (0..counted).find(|&at| before[at] != after[at]) {
                 let letter = if at < 26 { (b'a' + at as u8) as char } else { '~' };
                 let way = if before[at] > after[at] { "lost" } else { "added" };
                 let detail = format!("{letter}: {} times, then {} times", before[at], after[at]);

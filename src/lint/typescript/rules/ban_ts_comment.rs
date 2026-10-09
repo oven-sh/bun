@@ -159,7 +159,7 @@ impl BanTsComment {
             };
             // oxlint points at what is in the comment.
             let place = match cx.language().is_oxlint {
-                true => Span::new(comment.start() + 2, comment.span().end),
+                true => Span::new(comment.start() + 2, comment.start() + 2 + comment.comment_value().len() as u32),
                 false => comment.span(),
             };
             match option {
@@ -169,9 +169,7 @@ impl BanTsComment {
                     cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).fix(|fixer| {
                         let value = comment.comment_value();
                         let parts: Vec<&[u8]> = strings::split(value, TS_IGNORE).collect();
-                        let start = comment.start() + 2;
-                        let inside = Span::new(start, start + value.len() as u32);
-                        fixer.replace(inside, parts.join(&b"@ts-expect-error"[..]))
+                        fixer.replace(place, parts.join(&b"@ts-expect-error"[..]))
                     });
                 }
                 DirectiveConfig::Banned if directive == "ignore" => {

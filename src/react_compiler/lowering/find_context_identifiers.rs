@@ -60,6 +60,8 @@ struct ContextIdentifierVisitor<'a> {
     error: Option<CompilerError>,
     /// How many statements, expressions and patterns are around what is walked.
     level: u32,
+    /// Counted apart, so that `if (a) { .. }` is one level, as a reader counts.
+    blocks: u32,
 }
 
 impl<'a> ContextIdentifierVisitor<'a> {
@@ -237,10 +239,12 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
-        if !self.env.can_nest(self.level) {
+        if !self.env.can_nest(self.level.max(self.blocks)) {
             return;
         }
-        self.level += 1;
+        let is_block = u32::from(matches!(stmt.data, StmtData::SBlock(_)));
+        self.blocks += is_block;
+        self.level += 1 - is_block;
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -386,7 +390,8 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | StmtData::SExportFrom(_)
             | StmtData::SExportStar(_) => {}
         }
-        self.level -= 1;
+        self.blocks -= is_block;
+        self.level -= 1 - is_block;
     }
 
     #[allow(
@@ -684,6 +689,7 @@ pub(crate) fn find_context_identifiers(
         inner_reassignments: Vec::new(),
         error: None,
         level: 0,
+        blocks: 0,
     };
 
     // Walk params and body (like Babel's func.traverse())

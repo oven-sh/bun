@@ -150,8 +150,8 @@ fn build_reverse_graph(
     }
 
     // DFS from exit to compute RPO
-    let mut visited = HashSet::default();
-    let mut postorder = Vec::new();
+    let mut visited = HashSet::with_capacity_and_hasher(raw_nodes.len(), Default::default());
+    let mut postorder = Vec::with_capacity(raw_nodes.len());
     dfs_postorder(exit_id, &raw_nodes, &mut visited, &mut postorder);
 
     // Reverse postorder
@@ -185,7 +185,7 @@ fn dfs_postorder(
         return;
     }
     let successors_of = |id| nodes.get(id).map(|node| node.succs.iter());
-    let mut stack = super::AstAlloc::vec_with_capacity(8);
+    let mut stack = Vec::with_capacity(16);
     stack.push((id, successors_of(id)));
     while let Some((id, successors)) = stack.last_mut() {
         let id = *id;

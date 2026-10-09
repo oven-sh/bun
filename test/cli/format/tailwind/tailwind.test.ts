@@ -26,15 +26,15 @@ exports.__unstable__loadDesignSystem = async css => {
 };
 `,
 };
-/** Tailwind CSS 3. A configuration with `reversed` in it turns the order around. */
+/** Tailwind CSS 3. A configuration with `reversed` in it turns the order around, the classes in its `own` come last. */
 const version3 = {
   "node_modules/tailwindcss/package.json": JSON.stringify({ name: "tailwindcss", version: "3.0.0", main: "index.js" }),
   "node_modules/tailwindcss/index.js": "",
   "node_modules/tailwindcss/resolveConfig.js": "module.exports = config => config;\n",
   "node_modules/tailwindcss/lib/lib/generateRules.js": "exports.generateRules = () => [];\n",
-  "node_modules/tailwindcss/lib/lib/setupContextUtils.js": `const order = ${JSON.stringify(order)};
+  "node_modules/tailwindcss/lib/lib/setupContextUtils.js": `const known = ${JSON.stringify(order)};
 exports.createContext = config => {
-  const sign = config.reversed ? -1 : 1;
+  const [sign, order] = [config.reversed ? -1 : 1, [...known, ...(config.own ?? [])]];
   return { getClassOrder: ${getClassOrder} };
 };
 `,
@@ -199,6 +199,77 @@ describe.concurrent("sortTailwindcss", () => {
       stderr: "",
       files: ['<a className="p-4 m-1" />;\n', "xxx"],
     });
+  });
+
+  test("a Tailwind that cannot be asked takes only its own files with it, in the first run as in the next", async () => {
+    const files = {
+      ...version3,
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "one/tailwind.config.js": 'module.exports = { own: ["mine"] };\n',
+      "one/a.jsx": '<a className="mine p-4 flex" />;\n',
+      "two/tailwind.config.js": "module.exports = { reversed: true };\n",
+      "two/a.jsx": '<a className="flex mine p-4" />;\n',
+      "three/tailwind.config.js": 'throw new Error("It has no such plugin.");\n',
+      "three/a.jsx": '<a className="p-4 flex" />;\na  ;\n',
+      "four/a.jsx": '<a className="p-4 flex" />;\n',
+    };
+    const names = ["one/a.jsx", "two/a.jsx", "three/a.jsx", "four/a.jsx"];
+    const expected = [
+      '<a className="flex p-4 mine" />;\n',
+      '<a className="mine p-4 flex" />;\n',
+      files["three/a.jsx"],
+      '<a className="flex p-4" />;\n',
+    ];
+    for (const allows of [false, true]) {
+      using dir = tempDir("bun-format-tailwind", files);
+      // Nothing is kept that depends on a file that has just been written.
+      const time = new Date(Date.now() - 60_000);
+      for (const name of Object.keys(files)) utimesSync(join(String(dir), name), time, time);
+      const flags = allows ? ["--allow-unsupported", "."] : ["."];
+      const lists = [];
+      for (let run = 0; run < 3; run++) {
+        const { stdout, stderr, exitCode } = await formatIn(String(dir), [], ["--list-different", ...flags]);
+        lists.push({ files: stdout.trim().split("\n").sort(), stderr, exitCode });
+      }
+      expect(lists[0].files).toEqual(allows ? names.toSorted() : ["four/a.jsx", "one/a.jsx", "two/a.jsx"]);
+      expect(lists[0].stderr).toContain(
+        `[${allows ? "warn" : "error"}] sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
+      );
+      expect(lists[0].stderr).toContain(allows ? "The classes are not sorted in 1 file." : "Left as they are: 1 file.");
+      expect(lists[1]).toEqual(lists[0]);
+      expect(lists[2]).toEqual(lists[0]);
+      const written = await formatIn(String(dir), names, flags);
+      expect(written.files).toEqual(expected.with(2, allows ? '<a className="p-4 flex" />;\na;\n' : expected[2]));
+      expect(written.exitCode).toBe(allows ? 0 : 2);
+    }
+  });
+
+  test("before 0.7.0 the plugin of Prettier looked from the configuration file of Prettier, not from the file", async () => {
+    const files = {
+      ...version3,
+      ".prettierrc": '{ "plugins": ["prettier-plugin-tailwindcss"] }',
+      "docs/tailwind.config.js": "module.exports = { reversed: true };\n",
+      "docs/a.jsx": sorted,
+    };
+    const plugin = (version: string) => ({
+      "node_modules/prettier-plugin-tailwindcss/package.json": JSON.stringify({ version }),
+    });
+    for (const version of ["0.6.6", "0.6.14", "0.5.0"]) {
+      expect(await format({ ...files, ...plugin(version) }, ["docs/a.jsx"])).toMatchObject({
+        stderr: "",
+        files: [sorted],
+      });
+    }
+    for (const version of ["0.7.0", "0.8.1", "1.0.0"]) {
+      expect(await format({ ...files, ...plugin(version) }, ["docs/a.jsx"])).toMatchObject({
+        stderr: "",
+        files: [reversed],
+      });
+    }
+    expect(await format(files, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
+    // That of the directory of the configuration file counts, and so does its Tailwind.
+    const nearer = { "docs/.prettierrc": files[".prettierrc"], ...plugin("0.6.6") };
+    expect(await format({ ...files, ...nearer }, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
   });
 
   test("the options of the plugin of Prettier count if it is among the plugins", async () => {

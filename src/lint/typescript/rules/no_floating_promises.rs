@@ -199,7 +199,7 @@ impl NoFloatingPromises {
                     };
                 }
                 match parse_finally_call(node) {
-                    Some(call) => self.is_unhandled_promise(call.object, false, known),
+                    Some(call) => self.is_unhandled_promise(call.object, false, known).map(|(it, _)| (it, node)),
                     None => Some((Unhandled::Promise, node)),
                 }
             }

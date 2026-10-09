@@ -1472,7 +1472,7 @@ fn recursively_propagate_non_null(
     };
 
     // (node, its neighbors, how many of them were looked at)
-    let mut stack = AstAlloc::vec_with_capacity(8);
+    let mut stack = Vec::with_capacity(16);
     stack.push((node_id, neighbors_of(node_id), 0));
     let mut changed = false;
     while let Some((node_id, neighbors, next)) = stack.last_mut() {

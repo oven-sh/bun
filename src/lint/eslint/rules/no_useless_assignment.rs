@@ -2048,8 +2048,13 @@ impl NoUselessAssignment {
                     && uses.is_assignment_unused(index, next, &mut target.segments)
                     && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
                 {
-                    cx.report(identifier, UNNECESSARY_ASSIGNMENT)
-                        .data("name", variable.symbol.name());
+                    // For oxlint a name that is declared is without its type.
+                    let name = variable.symbol.name();
+                    let end = match cx.language().is_oxlint {
+                        true => identifier.end.min(identifier.start + name.bytes().len() as u32),
+                        false => identifier.end,
+                    };
+                    cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT).data("name", name);
                 }
             }
         }

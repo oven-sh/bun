@@ -19,6 +19,10 @@ impl NoThisAlias {
     fn check<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // What `this` is assigned to: where it is, and its name if it is an identifier.
         let (id, name) = match this.parent() {
+            // For oxlint without the type.
+            Node::VarDecl(declaration) if cx.language().is_oxlint => {
+                (declaration.pat().span(), declaration.pat().as_ident())
+            }
             Node::VarDecl(declaration) => (declaration.binding_span(), declaration.pat().as_ident()),
             Node::Expr(parent) => match parent.kind() {
                 ExprKind::Assign { target, value, .. }

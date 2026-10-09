@@ -309,7 +309,8 @@ describe.concurrent("an eslint.config.js", () => {
       .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
       .join("")
       .replaceAll('require("node:path")', 'require("node:path").win32');
-    const content = { extends: "./base.json", parser: "nowhere", plugins: ["nowhere"] };
+    // What `require.resolve(..)` returns is asked for with `/`.
+    const content = { extends: ["./base.json", String.raw`C:\t\other.json`], parser: "nowhere", plugins: ["nowhere"] };
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -328,9 +329,49 @@ describe.concurrent("an eslint.config.js", () => {
     const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
     expect({
       configs: Object.keys(config.configs),
+      extended: Object.keys(config.configs["C:/t/.eslintrc.json"] ?? {}),
       parsers: Object.keys(config.parsers),
       plugins: Object.keys(config.plugins),
-    }).toEqual({ configs: ["C:/t/.eslintrc.json"], parsers: ["C:/t/.eslintrc.json"], plugins: ["C:/t"] });
+    }).toEqual({
+      configs: ["C:/t/.eslintrc.json"],
+      extended: ["./base.json", "C:/t/other.json"],
+      parsers: ["C:/t/.eslintrc.json"],
+      plugins: ["C:/t"],
+    });
+  });
+
+  // `extends: [require.resolve("./base")]`
+  test("what the program for ESLint 8 answers about a path that is extended is under that path with `/`", async () => {
+    using dir = tempDir("bun-lint-config-files", {});
+    const parts = ["track", "describe", "eslintrc"];
+    const source = parts
+      .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
+      .join("")
+      .replaceAll('require("node:path")', 'require("node:path").win32');
+    const content = { extends: ["C:\\t\\base.json", ".\\near.json", "a-package"], parser: "C:\\t\\parser.js" };
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        source,
+        JSON.stringify({ pluginsFrom: "C:/t", content }),
+        "<marker>",
+        "C:/t/.eslintrc.json",
+      ],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = await proc.stdout.text();
+    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    expect(Object.keys(config.configs["C:/t/.eslintrc.json"])).toEqual([
+      "C:/t/base.json",
+      "./near.json",
+      "eslint-config-a-package",
+    ]);
+    // A parser is asked for as it is written: `_loadParser` in src/lint/linter/config/eslintrc.rs.
+    expect(Object.keys(config.parsers["C:/t/.eslintrc.json"])).toEqual(["C:\\t\\parser.js"]);
   });
 
   // The same for a file that it reads. `/./` is what `path.resolve` would take out, on every system.

@@ -9,7 +9,7 @@ use crate::types::tsutils::{
     is_conditional_type, is_intersection_type, is_object_type, is_property_readonly_in_type,
     is_union_type,
 };
-use crate::types::{IndexKind, SyntaxKind, TsNode, Type, TypeStructure};
+use crate::types::{CheckFlags, IndexKind, SyntaxKind, TsNode, Type, TypeStructure};
 use rustc_hash::FxHashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -129,6 +129,11 @@ impl<'a> Recurser<'_, 'a> {
                 continue;
             }
             if is_property_readonly_in_type(ty, property.escaped_name()) {
+                continue;
+            }
+            // For tsgolint 7.0 what a mapped type gives is readonly: it has no declaration of a value.
+            if ty.file().language().is_oxlint && property.check_flags().contains(CheckFlags::MAPPED)
+            {
                 continue;
             }
             let name = property

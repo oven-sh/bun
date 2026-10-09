@@ -1283,9 +1283,23 @@ impl Run<'_> {
         let mut classes_are_unknown = None;
         if !put_aside.is_empty() {
             classes_are_unknown = configs.classes.ask(self.environment).err();
-            leaves_classes.store(classes_are_unknown.is_some(), Ordering::Relaxed);
-            if classes_are_unknown.is_none() || options.allow_unsupported {
-                pool.for_each(put_aside.len(), 1, &|at| format_at(put_aside[at]));
+            // A Tailwind that cannot be asked takes only its own files with it, as in the next run, which knows the answers
+            // of the others.
+            pool.for_each(put_aside.len(), 1, &|at| format_at(put_aside[at]));
+            if let Some(error) = &mut classes_are_unknown {
+                let left: Vec<usize> = (put_aside.iter().copied())
+                    .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::PutAside)))
+                    .collect();
+                let files = if left.len() == 1 { "file" } else { "files" };
+                let what = match options.allow_unsupported {
+                    true => "The classes are not sorted in",
+                    false => "Left as they are:",
+                };
+                error.extend_from_slice(format!("\n{what} {} {files}.", left.len()).as_bytes());
+                if options.allow_unsupported {
+                    leaves_classes.store(true, Ordering::Relaxed);
+                    pool.for_each(left.len(), 1, &|at| format_at(left[at]));
+                }
             }
         }
         if let Some(bridge) = &bridge {

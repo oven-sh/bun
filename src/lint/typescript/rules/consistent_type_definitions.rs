@@ -91,6 +91,10 @@ impl Rule for ConsistentTypeDefinitions {
                     true if cx.language().is_oxlint => report.fix_dangerously(fix),
                     true => report,
                 };
+                // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
+                if cx.language().is_oxlint && statement.is_default_export() {
+                    cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+                }
             });
         } else {
             on.stmts([StmtTag::TypeAlias], |_, statement, cx| {

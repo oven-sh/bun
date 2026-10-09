@@ -82,6 +82,16 @@ impl Rule for NonNullableTypeAssertionStyle {
             }
             cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
                 let precedence = get_operator_precedence(ts_syntax_kind(expr), SyntaxKind::Unknown, false);
+                // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`.
+                if fixer.file().language().is_oxlint {
+                    let (outer, is_simple) = (expr.outer_span(), expr.is_parenthesized());
+                    let before = fixer.file().slice(Span::new(node.span().start, outer.start));
+                    let text = fixer.file().slice(outer);
+                    return fixer.replace(node, match is_simple || precedence > OperatorPrecedence::Unary {
+                        true => [before, text, b"!"].concat(),
+                        false => [before, b"(", text, b")!"].concat(),
+                    });
+                }
                 let text = match precedence > OperatorPrecedence::Unary {
                     true => [expr.text(), b"!"].concat(),
                     false => [&b"("[..], expr.text(), b")!"].concat(),

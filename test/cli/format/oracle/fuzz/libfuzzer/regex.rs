@@ -159,11 +159,13 @@ fn stress_in_pairs(seconds: u64, has_phases: bool) {
     let expected: Vec<String> = (0..SHARED.len()).map(|which| answer(&make(which), which)).collect();
     let (stops, answers, births) = (AtomicBool::new(false), AtomicUsize::new(0), AtomicUsize::new(0));
     let made_before = instances_made();
+    // FUZZ_GROUP=3: triples in the place of pairs: one more instance in flight than two threads can have.
+    let group: usize = std::env::var("FUZZ_GROUP").ok().and_then(|it| it.parse().ok()).unwrap_or(2).max(2);
     let pairs: Vec<(RwLock<Option<Arc<Regex>>>, Barrier)> =
-        (0..(threads / 2).max(1)).map(|_| (RwLock::new(None), Barrier::new(2))).collect();
+        (0..(threads / group).max(1)).map(|_| (RwLock::new(None), Barrier::new(group))).collect();
     std::thread::scope(|scope| {
         for (number, pair) in pairs.iter().enumerate() {
-            for is_first in [true, false] {
+            for is_first in (0..group).map(|member| member == 0) {
                 let (expected, stops, answers, births) = (&expected, &stops, &answers, &births);
                 scope.spawn(move || {
                     let (slot, barrier) = pair;
@@ -210,9 +212,9 @@ fn stress_in_pairs(seconds: u64, has_phases: bool) {
     });
     drop(pairs);
     eprintln!(
-        "STRESS in pairs, {}: {} threads, {} answers, all as expected; instances compiled meanwhile: {:?}; regular expressions made, each for one pair: {}",
+        "STRESS in groups of {group}, {}: {} threads, {} answers, all as expected; instances compiled meanwhile: {:?}; regular expressions made, each for one group: {}",
         if has_phases { "alone, shared, alone again" } else { "both from the first search on" },
-        (threads / 2).max(1) * 2,
+        (threads / group).max(1) * group,
         answers.into_inner(),
         made_before.zip(instances_made()).map(|(before, after)| after - before),
         births.into_inner()

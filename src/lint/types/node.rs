@@ -268,7 +268,9 @@ impl<'a> TsNode<'a> {
     /// `checker.getContextFreeTypeOfExpression(node)` as one gets it who asks before anything has resolved the call
     /// `node`: its type where nothing is expected of it. Nothing of it is kept: ask once.
     pub fn get_context_free_type_of_call_resolved_afresh(self) -> Type<'a> {
-        let id = self.file.query(|q| q.context_free_type_of_call_resolved_afresh(self.raw));
+        let id = self
+            .file
+            .query(|q| q.context_free_type_of_call_resolved_afresh(self.raw));
         Type::new(self.file, id)
     }
 

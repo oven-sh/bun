@@ -88,6 +88,26 @@ fn find(directory: &[u8]) -> Option<Found> {
     Some(Found { root, config })
 }
 
+/// Whether the `prettier-plugin-tailwindcss` that Prettier loads from `directory` is older than 0.7.0, which is when it
+/// started to look for Tailwind and its configuration from the file. Before, it looked from Prettier's configuration file.
+fn is_plugin_before_0_7(directory: &[u8]) -> bool {
+    let name = b"node_modules/prettier-plugin-tailwindcss/package.json";
+    let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, name)).ok());
+    let package = package.and_then(|text| bun_lint::json::parse(&text));
+    let Some(version) = package.as_ref().and_then(|it| it.get(b"version")?.as_str()) else {
+        return false;
+    };
+    let mut numbers = strings::split(version, b".").map(|it| {
+        std::str::from_utf8(it)
+            .ok()
+            .and_then(|it| it.parse::<u32>().ok())
+    });
+    matches!(
+        (numbers.next().flatten(), numbers.next().flatten()),
+        (Some(0), Some(0..=6))
+    )
+}
+
 /// The classes in files for which the same Tailwind is asked.
 #[derive(Default)]
 struct Group {
@@ -103,6 +123,8 @@ struct Group {
 struct Known {
     is_loaded: bool,
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
+    /// [`is_plugin_before_0_7`], by the directory.
+    is_plugin_old: FxHashMap<Vec<u8>, bool>,
     groups: FxHashMap<Which, Group>,
     /// A directory with files that have classes, from which there is no Tailwind to be found.
     without_package: Option<Vec<u8>>,
@@ -173,10 +195,10 @@ fn files(environment: &Environment) -> Option<[Vec<u8>; 2]> {
 }
 
 impl Known {
-    /// Takes in what the script has answered. Returns what it says about a Tailwind that cannot be asked, if there are
+    /// Takes in what the script has answered. Returns what it says about each Tailwind that cannot be asked, if there are
     /// classes that it has to be asked about.
-    fn take_in(&mut self, answer: &Json) -> Option<Vec<u8>> {
-        let mut failure = None;
+    fn take_in(&mut self, answer: &Json) -> Vec<Vec<u8>> {
+        let mut failures = Vec::new();
         for answer in (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
             let Some(which) = Which::of(answer) else {
                 continue;
@@ -185,7 +207,8 @@ impl Known {
                 // It is not asked again, unless there are files for it.
                 let group = self.groups.remove(&which);
                 if group.is_some_and(|it| !it.missing.is_empty()) {
-                    failure = Some(error.to_vec());
+                    let loaded = which.config.or(which.stylesheet).unwrap_or(which.root);
+                    failures.push([&loaded[..], b": ", error].concat());
                 }
                 continue;
             }
@@ -203,7 +226,7 @@ impl Known {
                 group.known.insert(class.clone(), rank);
             }
         }
-        failure
+        failures
     }
 
     /// Takes in what an earlier run has asked, the answer to which is of no use any more. It is asked again together with
@@ -220,14 +243,15 @@ impl Known {
     }
 }
 
-/// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `base`: the directory that its
-/// paths are relative to.
+/// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `of_config`: the directory of
+/// the configuration file, if there is one.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,
     value: &[u8],
-    (base, path): (&[u8], &[u8]),
+    (of_config, path): (Option<&[u8]>, &[u8]),
 ) -> Tailwind {
+    let base = of_config.unwrap_or(&environment.cwd);
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
     let get = |key: &[u8]| json.as_ref()?.get(key);
@@ -241,8 +265,16 @@ pub(crate) fn for_file(
         Some(paths::resolve(base, &paths::from_native(path)))
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
-    let directory = paths::dirname(path);
     let mut known = classes.known.lock();
+    let directory = match of_config.filter(|_| is_on(b"followsPlugin")) {
+        Some(of_config)
+            if *(known.is_plugin_old.entry(of_config.to_vec()))
+                .or_insert_with(|| is_plugin_before_0_7(of_config)) =>
+        {
+            of_config
+        }
+        _ => paths::dirname(path),
+    };
     // What earlier runs have found out.
     if !std::mem::replace(&mut known.is_loaded, true)
         && let Some([question, kept]) = files(environment)
@@ -326,22 +358,29 @@ impl Classes {
         }
     }
 
-    /// Asks Tailwind about the classes that are not known. `Err`: for the user.
+    /// Asks Tailwind about the classes that are not known. `Err`: for the user: there are files for which it cannot be
+    /// asked. What it says about the others is known all the same.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
         let name = self.name().as_bytes();
         let fail = |why: &[u8]| [name, b": ", why].concat();
-        let mut known = self.known.lock();
-        let (None, Some([question, kept])) = (&known.without_package, files(environment)) else {
-            let directory = known.without_package.as_deref();
-            return Err(fail(
+        let needs_package = |directory: &[u8]| {
+            fail(
                 &[
                     &b"It needs the package tailwindcss, which cannot be found from "[..],
-                    directory.unwrap_or(&environment.cwd),
+                    directory,
                     b". Install it.",
                 ]
                 .concat(),
-            ));
+            )
         };
+        let mut known = self.known.lock();
+        let without_package = known.without_package.as_deref().map(needs_package);
+        let Some([question, kept]) = files(environment) else {
+            return Err(without_package.unwrap_or_else(|| needs_package(&environment.cwd)));
+        };
+        if !known.groups.values().any(|it| !it.missing.is_empty()) {
+            return without_package.map_or(Ok(()), Err);
+        }
         // The ranks are among all classes that are asked about, so those that are known are asked about again.
         let groups = known.groups.iter().map(|(which, group)| {
             let mut classes: Vec<&[u8]> = (group.known.keys())
@@ -368,9 +407,12 @@ impl Classes {
         // The next run asks it again if Tailwind has changed.
         fs::rename_or_remove(&own, &question);
         let answer = answer.map_err(|Fatal(error)| error)?;
-        match known.take_in(&answer) {
-            Some(error) => Err(fail(&error)),
-            None => Ok(()),
+        let failures: Vec<Vec<u8>> = (without_package.into_iter())
+            .chain(known.take_in(&answer).iter().map(|it| fail(it)))
+            .collect();
+        match failures.is_empty() {
+            true => Ok(()),
+            false => Err(failures.join(&b"\n"[..])),
         }
     }
 }

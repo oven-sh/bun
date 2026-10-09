@@ -1158,6 +1158,7 @@ impl<'c> Legacy<'_, '_, 'c> {
                 None => Err(config_missing(name, &context.path)),
             };
         }
+        // What is asked for is spelled as `extend` in evaluate-eslintrc.js files it: who changes one side changes the other.
         let request = if is_file_path(name) {
             path::portable(&context.path, name)
         } else if name.starts_with(b".") {

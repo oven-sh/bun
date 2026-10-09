@@ -1362,30 +1362,21 @@ impl Unifier {
         {
             ty = sub;
         }
-        if matches!(ty, Type::Phi { .. } | Type::Function { .. }) && !self.has_stack() {
-            return ty.clone();
-        }
-
-        if let Type::Phi { operands } = ty {
-            return Type::Phi {
+        match ty {
+            Type::Phi { operands } if self.has_stack() => Type::Phi {
                 operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
-            };
-        }
-
-        if let Type::Function {
-            is_constructor,
-            shape_id,
-            return_type,
-        } = ty
-        {
-            return Type::Function {
+            },
+            Type::Function {
+                is_constructor,
+                shape_id,
+                return_type,
+            } if self.has_stack() => Type::Function {
                 is_constructor: *is_constructor,
                 shape_id: *shape_id,
                 return_type: Box::new(self.get(return_type)),
-            };
+            },
+            _ => ty.clone(),
         }
-
-        ty.clone()
     }
 }
 

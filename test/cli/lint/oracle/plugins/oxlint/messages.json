@@ -4445,6 +4445,42 @@
   "message": "Union type constituent is duplicated with  1."
  },
  {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type B = (X | Y | X)[];\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with X."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type C = Y &\n    X &\n    X;\n",
+  "options": [],
+  "typed": true,
+  "message": "Intersection type constituent is duplicated with \n    X."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type D = Y | /* c */ X | X;\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  /* c */ X."
+ },
+ {
+  "rule": "typescript/no-duplicate-type-constituents",
+  "id": "duplicate",
+  "file": "a.ts",
+  "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type H = Y | ( X ) | X;\n",
+  "options": [],
+  "typed": true,
+  "message": "Union type constituent is duplicated with  ( X )."
+ },
+ {
   "rule": "typescript/no-empty-interface",
   "id": "noEmpty",
   "file": "a.ts",

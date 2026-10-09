@@ -143,6 +143,12 @@ fn fix_add_type_specifier_to_named_exports<'a>(
     specifiers.map(|specifier| fixer.insert_before(specifier, "type ")).collect()
 }
 
+/// Where it says that all that is exported are types: oxlint points at the `export`.
+fn place_of_all(node: Stmt, cx: &Cx<'_, ConsistentTypeExports>) -> Span {
+    let Span { start, end } = node.span();
+    Span::new(start, if cx.language().is_oxlint { start + "export".len() as u32 } else { end })
+}
+
 impl ConsistentTypeExports {
     fn check_export_all<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::ExportStar {
@@ -169,7 +175,7 @@ impl ConsistentTypeExports {
         if is_there_any_exported_value {
             return;
         }
-        cx.report(node, TYPE_OVER_VALUE).fix(|fixer| {
+        cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| {
             let asterisk_token = fixer.file().tokens_in(node).find(|token| token.is_punctuator("*"))?;
             Some(fixer.insert_before(asterisk_token, "type "))
         });
@@ -208,7 +214,7 @@ impl ConsistentTypeExports {
         }
 
         if report.value_specifiers.is_empty() {
-            cx.report(node, TYPE_OVER_VALUE).fix(|fixer| fix_export_insert_type(fixer, export));
+            cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| fix_export_insert_type(fixer, export));
             return;
         }
 

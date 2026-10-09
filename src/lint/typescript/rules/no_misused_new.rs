@@ -30,6 +30,11 @@ fn is_key_named(key: Key, name: &str) -> bool {
     }
 }
 
+/// oxlint points at the name.
+fn place<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Span {
+    if cx.language().is_oxlint { key.inner_span(cx.file()) } else { member.span() }
+}
+
 impl NoMisusedNew {
     fn check<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let Some(func) = member.func() else {
@@ -41,7 +46,10 @@ impl NoMisusedNew {
                     && let StmtKind::Interface(interface) = parent.kind()
                     && is_matching_parent_type(Some(interface.name()), func)
                 {
-                    cx.report(member, ERROR_MESSAGE_INTERFACE);
+                    // oxlint points at the `new`.
+                    let Span { start, end } = member.span();
+                    let end = if cx.language().is_oxlint { start + "new".len() as u32 } else { end };
+                    cx.report(Span::new(start, end), ERROR_MESSAGE_INTERFACE);
                 }
             }
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
@@ -50,7 +58,7 @@ impl NoMisusedNew {
                 };
                 if member.is_signature() {
                     if is_key_named(key, "constructor") {
-                        cx.report(member, ERROR_MESSAGE_INTERFACE);
+                        cx.report(place(member, key, cx), ERROR_MESSAGE_INTERFACE);
                     }
                 } else if is_key_named(key, "new")
                     && !func.has_body()
@@ -58,7 +66,7 @@ impl NoMisusedNew {
                     && let Node::Class(class) = member.parent()
                     && is_matching_parent_type(class.name(), func)
                 {
-                    cx.report(member, ERROR_MESSAGE_CLASS);
+                    cx.report(place(member, key, cx), ERROR_MESSAGE_CLASS);
                 }
             }
             _ => {}

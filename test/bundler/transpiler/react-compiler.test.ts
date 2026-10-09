@@ -3354,7 +3354,10 @@ describe("react-compiler does not overflow the stack on a component that is nest
   const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
     isDebug ? debug : isASAN ? releaseWithASAN : release;
   const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
+  const within = "if statements with blocks, within the limit";
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
+    // Blocks are counted apart, so these are 200 levels and not 400.
+    [within, depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
     ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
     [
       "called arrow functions",
@@ -3450,7 +3453,8 @@ describe("react-compiler does not overflow the stack on a component that is nest
     const out = await Bun.file(join(String(dir), "out.js")).text();
     expect(out).toContain("useState(0)");
     // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
-    if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
+    if (name === within) expect(out).toContain("react/compiler-runtime");
+    else if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });
 });

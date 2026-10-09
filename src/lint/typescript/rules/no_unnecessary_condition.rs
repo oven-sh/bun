@@ -530,7 +530,10 @@ fn is_member_expression_nullable_origin_from_object<'a>(node: Expr<'a>, cx: &Con
         ExprKind::Dot { obj, name, .. } if !node.file().slice(name.span()).starts_with(b"#") => {
             (obj, Property::Name(name))
         }
-        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
+        // tsgolint 7.0 looks at every index: `a?.["b"]`.
+        ExprKind::Index { obj, index, .. }
+            if matches!(index.kind(), ExprKind::Ident(_)) || node.file().language().is_oxlint =>
+        {
             (obj, Property::Computed(index))
         }
         _ => return false,

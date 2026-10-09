@@ -30,13 +30,13 @@ pub fn get_reverse_postordered_blocks(
     let mut visited: IndexSet<BlockId> = IndexSet::new();
     let mut used: IndexSet<BlockId> = IndexSet::new();
     let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
-    let mut postorder: Vec<BlockId> = Vec::new();
+    let mut postorder: Vec<BlockId> = Vec::with_capacity(hir.blocks.len());
 
     enum Step {
         Enter(BlockId, bool),
         Exit(BlockId),
     }
-    let mut stack = super::AstAlloc::vec_with_capacity(32);
+    let mut stack = Vec::with_capacity(32);
     stack.push(Step::Enter(hir.entry, true));
     while let Some(step) = stack.pop() {
         let (block_id, is_used) = match step {
@@ -234,32 +234,22 @@ pub fn mark_predecessors(hir: &mut HIR) {
         block.preds.clear();
     }
 
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-
-    let mut stack = super::AstAlloc::vec_with_capacity(32);
+    let mut stack = Vec::with_capacity(32);
     stack.push((hir.entry, None));
     while let Some((block_id, prev_block_id)) = stack.pop() {
-        // Add predecessor
+        let Some(block) = hir.blocks.get_mut(&block_id) else {
+            continue;
+        };
         if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
+            // Each visit but the first of the entry leaves a predecessor.
+            let was_visited = block_id == hir.entry || !block.preds.is_empty();
+            block.preds.insert(prev_id);
+            if was_visited {
                 continue;
             }
         }
 
-        if visited.contains(&block_id) {
-            continue;
-        }
-        visited.insert(block_id);
-
-        // Get successors before mutating
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            continue;
-        };
-
+        let successors = each_terminal_successor(&block.terminal);
         for successor in successors.into_iter().rev() {
             stack.push((successor, Some(block_id)));
         }

@@ -196,6 +196,7 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         TypeKind::StringLit(value) if is_oxlint => return value.bytes().to_vec(),
         TypeKind::Template(_) if is_oxlint => return type_node.text().to_vec(),
         TypeKind::BoolLit(_) if is_oxlint => b"literal type",
+        TypeKind::Ref { .. } if is_oxlint => return type_node.text().to_vec(),
         TypeKind::Keyword(Keyword::Any) => b"any",
         TypeKind::Keyword(Keyword::Boolean) => b"boolean",
         TypeKind::Keyword(Keyword::Never) => b"never",
@@ -256,6 +257,18 @@ fn get_type_node_type_part_flags<'a>(
                 described: Described::Type(type_part),
             };
             let node_type = type_node.ty();
+            // tsgolint 7.0 names a type that does not resolve as it is written: `A.B<C>`.
+            if type_node.file().language().is_oxlint
+                && matches!(type_node.kind(), TypeKind::Ref { .. })
+                && node_type.is_error()
+                && node_type.alias_symbol().is_some()
+            {
+                parts.push(TypeFlagsWithName {
+                    type_flags: node_type.flags(),
+                    described: Described::TypeNode(type_node),
+                });
+                return;
+            }
             // `unionTypePartsUnlessBoolean`: `boolean` is the union `false | true`.
             match node_type.has_flags(TypeFlags::BOOLEAN) {
                 true => parts.push(of_type(node_type)),

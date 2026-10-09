@@ -343,8 +343,10 @@ impl StrictVoidReturn {
             if let StmtKind::Return(Some(argument)) = statement.kind()
                 && !self.is_allowed_return_type(argument.ty())
             {
-                let start = statement.span().start;
-                cx.report(Span::new(start, start + "return".len() as u32), NON_VOID_RETURN);
+                // oxlint points at the statement.
+                let Span { start, end } = statement.span();
+                let end = if cx.language().is_oxlint { end } else { start + "return".len() as u32 };
+                cx.report(Span::new(start, end), NON_VOID_RETURN);
             }
         }
     }

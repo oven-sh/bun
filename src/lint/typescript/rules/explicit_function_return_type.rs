@@ -156,7 +156,11 @@ impl ExplicitFunctionReturnType {
                 Node::Member(member) => member.span().start,
                 _ => func.span().start,
             };
-            Span::new(start, func.open_paren().filter(|&it| it >= start).unwrap_or(start))
+            let end = match (func.owner(), func.name()) {
+                (Node::Stmt(_), Some(name)) => Some(name.span().end),
+                _ => func.open_paren(),
+            };
+            Span::new(start, end.filter(|&it| it >= start).unwrap_or(start))
         };
         if is_only_declared && matches!(func.owner(), Node::Member(_)) {
             cx.report(head(), MISSING_RETURN_TYPE);
@@ -187,6 +191,10 @@ impl ExplicitFunctionReturnType {
             // oxlint points at the decorators of a member.
             if is_oxlint && let Some(member) = member_of(func) {
                 loc.start = member.span().start;
+            }
+            // And of a declaration up to the end of its name, without `<T>`.
+            if is_oxlint && func.kind() == FnKind::Decl && let Some(name) = func.name() {
+                loc.end = name.span().end;
             }
             cx.report(loc, MISSING_RETURN_TYPE);
         });

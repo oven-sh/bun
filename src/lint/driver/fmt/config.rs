@@ -1298,9 +1298,9 @@ impl<'c> Configs<'c> {
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            let base = config.map_or(&self.environment.cwd[..], |it| paths::dirname(&it.path));
+            let of_config = config.map(|it| paths::dirname(&it.path));
             let tailwind =
-                tailwind::for_file(&self.classes, self.environment, &value, (base, path));
+                tailwind::for_file(&self.classes, self.environment, &value, (of_config, path));
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

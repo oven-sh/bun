@@ -120,7 +120,8 @@ impl PreferLiteralEnumMember {
             return;
         };
         cx.report(
-            key.inner_span(cx.file()),
+            // oxlint points at the member.
+            if cx.language().is_oxlint { member.span() } else { key.inner_span(cx.file()) },
             match self.allow_bitwise_expressions {
                 true => NOT_LITERAL_OR_BITWISE_EXPRESSION,
                 false => NOT_LITERAL,

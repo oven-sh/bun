@@ -4371,5 +4371,45 @@
   "d.ts:7:31 typescript(no-unnecessary-condition)",
   "d.ts:9:43 typescript(no-unnecessary-condition)"
  ],
- "no-unnecessary-condition/a-key-that-is-a-symbol-from-another-file": []
+ "no-unnecessary-condition/a-key-that-is-a-symbol-from-another-file": [],
+ "no-redundant-type-constituents/a-union-in-parentheses": [
+  "a.ts:10:17 typescript(no-redundant-type-constituents)",
+  "a.ts:3:17 typescript(no-redundant-type-constituents)",
+  "a.ts:3:22 typescript(no-redundant-type-constituents)",
+  "a.ts:4:17 typescript(no-redundant-type-constituents)",
+  "a.ts:4:18 typescript(no-redundant-type-constituents)",
+  "a.ts:5:17 typescript(no-redundant-type-constituents)",
+  "a.ts:5:18 typescript(no-redundant-type-constituents)",
+  "a.ts:5:28 typescript(no-redundant-type-constituents)",
+  "a.ts:6:17 typescript(no-redundant-type-constituents)",
+  "a.ts:6:22 typescript(no-redundant-type-constituents)",
+  "a.ts:7:14 typescript(no-redundant-type-constituents)",
+  "a.ts:8:17 typescript(no-redundant-type-constituents)",
+  "a.ts:9:17 typescript(no-redundant-type-constituents)"
+ ],
+ "no-unnecessary-condition/after-an-index-with-a-question-mark": [
+  "a.ts:10:1 typescript(no-unnecessary-condition)",
+  "a.ts:10:1 typescript(no-unnecessary-condition)",
+  "a.ts:11:1 typescript(no-unnecessary-condition)",
+  "a.ts:11:1 typescript(no-unnecessary-condition)",
+  "a.ts:12:1 typescript(no-unnecessary-condition)",
+  "a.ts:13:1 typescript(no-unnecessary-condition)",
+  "a.ts:13:1 typescript(no-unnecessary-condition)",
+  "a.ts:13:1 typescript(no-unnecessary-condition)",
+  "a.ts:17:1 typescript(no-unnecessary-condition)",
+  "a.ts:17:1 typescript(no-unnecessary-condition)",
+  "a.ts:17:1 typescript(no-unnecessary-condition)",
+  "a.ts:18:1 typescript(no-unnecessary-condition)",
+  "a.ts:18:1 typescript(no-unnecessary-condition)",
+  "a.ts:19:1 typescript(no-unnecessary-condition)",
+  "a.ts:19:1 typescript(no-unnecessary-condition)",
+  "a.ts:20:1 typescript(no-unnecessary-condition)",
+  "a.ts:21:5 typescript(no-unnecessary-condition)",
+  "a.ts:22:5 typescript(no-unnecessary-condition)",
+  "a.ts:22:5 typescript(no-unnecessary-condition)",
+  "a.ts:3:1 typescript(no-unnecessary-condition)",
+  "a.ts:3:1 typescript(no-unnecessary-condition)",
+  "a.ts:7:1 typescript(no-unnecessary-condition)",
+  "a.ts:7:1 typescript(no-unnecessary-condition)"
+ ]
 }

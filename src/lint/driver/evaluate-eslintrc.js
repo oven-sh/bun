@@ -191,8 +191,9 @@ function extend(name, from) {
     visit(config, found.path);
     return;
   }
+  // A path is asked for with `/`, whatever the file has: `require.resolve(..)` has what the system writes.
   const request = isFilePath(name)
-    ? name
+    ? portable(name)
     : name.startsWith(".")
       ? `./${name}`
       : normalizePackageName(name, "eslint-config");

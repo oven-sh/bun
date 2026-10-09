@@ -61,7 +61,10 @@ impl Rule for NoUnsafeEnumComparison {
             if !cx.state.is_mismatched(left_type, right_type) {
                 return;
             }
-            cx.report(node, MISMATCHED_CONDITION).suggest(REPLACE_VALUE_WITH_ENUM, |fixer| {
+            // oxlint points at the left side.
+            let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+            let report = cx.report(place, MISMATCHED_CONDITION).comments_apply_at(node.span());
+            report.suggest(REPLACE_VALUE_WITH_ENUM, |fixer| {
                 // `Fruit.Apple === 'apple'` to `Fruit.Apple === Fruit.Apple`, or the same for the
                 // left side.
                 if let Some(left_enum_key) = enum_key_of_value(left_type, right) {

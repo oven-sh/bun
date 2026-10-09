@@ -135,10 +135,22 @@ fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOver
     );
 }
 
-fn check_members<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, AdjacentOverloadSignatures>) {
+/// What oxlint has for a member: its name, in a class from where the member starts; `new`; all of a call signature.
+fn oxlint_span_of(member: Member, is_in_class: bool) -> Span {
+    let span = member.span();
+    let name = match (member.kind(), member.key(), member.constructor_keyword()) {
+        (MemberKind::ConstructSignature, ..) => return Span::new(span.start, span.start + 3),
+        (_, Some(key), _) => key.inner_span(member.file()),
+        (_, None, Some(keyword)) => keyword.span(),
+        (_, None, None) => return span,
+    };
+    Span::new(if is_in_class { span.start } else { name.start }, name.end)
+}
+
+fn check_members<'a>(members: List<'a, Member<'a>>, is_in_class: bool, cx: &Cx<'a, AdjacentOverloadSignatures>) {
     check_body_for_overload_methods(members, get_member_method, |member, method, before| {
         let prefix: &[u8] = if method.is_static == Some(true) { b"static " } else { b"" };
-        cx.report(place(member.span(), before.span(), cx), ADJACENT_SIGNATURE)
+        cx.report(place(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
             .data("name", [prefix, &method.name.name[..]].concat());
     });
 }
@@ -168,15 +180,15 @@ impl Rule for AdjacentOverloadSignatures {
             });
             on.finish(|_, cx| check_statements(cx.file().body(), cx));
         }
-        on.classes(|_, class, cx| check_members(class.members(), cx));
+        on.classes(|_, class, cx| check_members(class.members(), true, cx));
         on.stmts([StmtTag::Interface], |_, statement, cx| {
             if let StmtKind::Interface(interface) = statement.kind() {
-                check_members(interface.members(), cx);
+                check_members(interface.members(), false, cx);
             }
         });
         on.types([TypeTag::Object], |_, ty, cx| {
             if let TypeKind::Object(members) = ty.kind() {
-                check_members(members, cx);
+                check_members(members, false, cx);
             }
         });
     }

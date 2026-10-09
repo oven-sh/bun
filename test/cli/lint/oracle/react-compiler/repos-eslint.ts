@@ -9,7 +9,7 @@
 // `../repos/run.ts --stages=clone`. Each command runs in its sandbox, in a copy of the clone, from its root.
 //
 // The output of the first form: a line {"repo", "files", "exit", "seconds", "cpu", "rssMb"} for each repository, then a line as of
-// eslint.ts for EACH file that was linted; the path starts with `owner__repo/`.
+// eslint.ts for EACH file that was linted; the path starts with `owner__repo/`, in the messages too.
 //
 // The second form gives the same files to another tool, as arguments after its own, and keeps the lines that it prints, which have
 // a "path": the name of the repository is put in front of it.
@@ -155,8 +155,8 @@ if (tool === null) {
       writer.write({
         path: `${nameOf(repo)}/${file.filePath.slice(clone.length + 1)}`,
         parse: isRefused ? "error" : "ok",
-        messages: file.messages.map(message => plain(message, clone)),
-        suppressed: file.suppressedMessages.map(message => plain(message, clone)),
+        messages: file.messages.map(message => plain(message, work)),
+        suppressed: file.suppressedMessages.map(message => plain(message, work)),
       } satisfies EslintRecord);
     }
     rows.push([repo, String(exit), report.length, refused, messages, seconds, cpu, rssMb]);

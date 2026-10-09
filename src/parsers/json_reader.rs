@@ -14,6 +14,8 @@ use bun_core::StackCheck;
 use bun_core::lexer as identifier;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
+use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use std::simd::u8x16;
 
 use crate::json::JSONOptions;
 use crate::json_index::{IndexError, is_ls_ps};
@@ -113,34 +115,30 @@ enum Before {
     Backslash,
 }
 
-const ONES: u64 = 0x0101_0101_0101_0101;
-const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
-
-/// A bit in each of `bytes` that is `quote`, a backslash or a control character, exact up to the first.
+/// A bit for each of `bytes` that is `quote`, a backslash or a control character.
 #[inline(always)]
-fn special_bytes(bytes: &[u8; 8], quote: u8) -> u64 {
-    let word = u64::from_le_bytes(*bytes);
-    // A byte that is zero, or less than 0x20, borrows. What is not ASCII is never meant.
-    let is_quote = (word ^ (ONES * u64::from(quote))).wrapping_sub(ONES);
-    let is_backslash = (word ^ (ONES * u64::from(b'\\'))).wrapping_sub(ONES);
-    let is_control = word.wrapping_sub(ONES * 0x20);
-    (is_quote | is_backslash | is_control) & !word & HIGH_BITS
+fn special_bytes(bytes: &[u8; 16], quote: u8) -> u32 {
+    let bytes = u8x16::from_array(*bytes);
+    let special = bytes.simd_eq(u8x16::splat(quote))
+        | bytes.simd_eq(u8x16::splat(b'\\'))
+        | bytes.simd_lt(u8x16::splat(0x20));
+    special.to_bitmask() as u32
+}
+
+/// The index of the lowest bit of `bits`, which are 16. 16 if there is none.
+#[inline(always)]
+fn first_of_16(bits: u32) -> usize {
+    (bits | (1 << 16)).trailing_zeros() as usize
 }
 
 /// How many of the first 16 bytes of `text` are before the first `quote`, backslash or control
 /// character. 0 if `text` is shorter.
 #[inline(always)]
 fn short_plain_len(text: &[u8], quote: u8) -> usize {
-    let Some((first, rest)) = text.split_first_chunk::<8>() else {
-        return 0;
-    };
-    let Some(second) = rest.first_chunk::<8>() else {
-        return 0;
-    };
-    // Without a branch: whether a string has 8 bytes is a coin toss. 64 zeros if there is none.
-    let in_first = special_bytes(first, quote).trailing_zeros() / 8;
-    let in_second = special_bytes(second, quote).trailing_zeros() / 8;
-    (in_first + if in_first == 8 { in_second } else { 0 }) as usize
+    match text.first_chunk::<16>() {
+        Some(bytes) => first_of_16(special_bytes(bytes, quote)),
+        None => 0,
+    }
 }
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. It can also
@@ -150,7 +148,7 @@ fn plain_len(text: &[u8], quote: u8) -> Option<usize> {
     if bun_core::env::IS_NATIVE {
         bun_highway::index_of_interesting_character_in_string_literal(text, quote)
     } else {
-        plain_len_by_words(text, quote)
+        plain_len_of_any_text(text, quote)
     }
 }
 
@@ -158,17 +156,18 @@ fn plain_len(text: &[u8], quote: u8) -> Option<usize> {
 #[inline]
 fn plain_ascii_len(text: &[u8]) -> usize {
     let is_plain = |b: &&u8| (0x20..0x80).contains(*b) && **b != b'\\';
-    let Some((first, rest)) = text.split_first_chunk::<8>() else {
+    let Some((first, rest)) = text.split_first_chunk::<16>() else {
         return text.iter().take_while(is_plain).count();
     };
-    if !bun_core::env::IS_NATIVE {
-        return text.iter().take_while(is_plain).count();
-    }
-    let found = special_bytes(first, b'\\') | (u64::from_le_bytes(*first) & HIGH_BITS);
+    let is_not_ascii = u8x16::from_array(*first).simd_ge(u8x16::splat(0x80));
+    let found = special_bytes(first, b'\\') | is_not_ascii.to_bitmask() as u32;
     if found != 0 {
-        return (found.trailing_zeros() / 8) as usize;
+        return first_of_16(found);
     }
-    8 + plain_len(rest, b'\\').unwrap_or(rest.len())
+    if !bun_core::env::IS_NATIVE {
+        return 16 + rest.iter().take_while(is_plain).count();
+    }
+    16 + plain_len(rest, b'\\').unwrap_or(rest.len())
 }
 
 #[inline(always)]
@@ -179,14 +178,14 @@ fn loc_at(p: usize) -> Loc {
 
 /// How many bytes of `text` are before the first `quote`, backslash or control character. For text
 /// that is not ASCII, at which the kernel stops.
-fn plain_len_by_words(text: &[u8], quote: u8) -> Option<usize> {
+fn plain_len_of_any_text(text: &[u8], quote: u8) -> Option<usize> {
     let mut i = 0;
-    while let Some(bytes) = text.get(i..).and_then(|rest| rest.first_chunk::<8>()) {
+    while let Some(bytes) = text.get(i..).and_then(|rest| rest.first_chunk::<16>()) {
         let found = special_bytes(bytes, quote);
         if found != 0 {
-            return Some(i + (found.trailing_zeros() / 8) as usize);
+            return Some(i + first_of_16(found));
         }
-        i += 8;
+        i += 16;
     }
     while let Some(&b) = text.get(i) {
         if b == quote || b == b'\\' || b < 0x20 {
@@ -272,10 +271,11 @@ impl<'a, 's> Parser<'a, 's> {
                 at = self.comment_end(at);
             } else if b == b'\n' {
                 at += 1;
-                // The indentation of the line, by words.
-                while let Some(bytes) = contents.get(at..).and_then(|it| it.first_chunk::<8>()) {
-                    let other = u64::from_le_bytes(*bytes) ^ (ONES * u64::from(b' '));
-                    at += (other.trailing_zeros() / 8) as usize;
+                // The indentation of the line, 16 blanks at a time.
+                while let Some(bytes) = contents.get(at..).and_then(|it| it.first_chunk::<16>()) {
+                    let other = u8x16::from_array(*bytes).simd_ne(u8x16::splat(b' '));
+                    let other = other.to_bitmask() as u32;
+                    at += first_of_16(other);
                     if other != 0 {
                         break;
                     }
@@ -440,7 +440,7 @@ impl<'a, 's> Parser<'a, 's> {
             let rest = contents.get(i..)?;
             i += match is_ascii {
                 true => plain_len(rest, quote)?,
-                false => plain_len_by_words(rest, quote)?,
+                false => plain_len_of_any_text(rest, quote)?,
             };
             let b = contents[i];
             if b == quote {
@@ -1918,7 +1918,7 @@ impl<'a, 's> Parser<'a, 's> {
         let mut copied_to = open + 1;
         let mut pos = open + 1;
         let end = loop {
-            let plain = plain_len_by_words(contents.get(pos..).unwrap_or_default(), quote);
+            let plain = plain_len_of_any_text(contents.get(pos..).unwrap_or_default(), quote);
             let Some(plain) = plain else {
                 break Err((Json5Error::UnterminatedString, contents.len()));
             };

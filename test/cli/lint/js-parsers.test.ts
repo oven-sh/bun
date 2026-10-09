@@ -359,6 +359,7 @@ const lines = {
     };`,
   "no-tabs.mjs": `
     export default {
+      meta: { schema: [{ type: "string" }] },
       create: context => ({
         Line({ lines, languageOptions }) {
           let start = 0;

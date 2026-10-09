@@ -250,7 +250,7 @@ export const cases: Case[] = [
     file: "a.jsx",
     text: () => wideShapes["rc-suppressions-and-components.jsx"](400),
     rules,
-    matches: /\[Error\/react\/rule-suppression\]$/m,
+    matches: /^a\.jsx:400:1: React rule suppression prevents optimization /m,
     exitCode: 1,
   },
 ];

@@ -801,8 +801,18 @@ const SQL = function SQL(
           // set before the wait: the callback can settle while close() waits
           state.connectionState |= ReservedConnectionState.closing;
           await waitForPendingWork([...transactionQueries, ...transactionSavepoints], timeout);
-          // a disconnect ended the transaction, or the runner already rolls it back
-          if (state.connectionState & ReservedConnectionState.closed || state.rollback) return;
+          // a disconnect or the runner ended the transaction
+          if (state.connectionState & ReservedConnectionState.closed) return;
+          const runnerRollback = state.rollback;
+          if (runnerRollback) {
+            try {
+              // the runner rolls the transaction back: close() settles when that ROLLBACK has settled
+              await runnerRollback;
+            } catch {
+              // begin() reports that failure
+            }
+            return;
+          }
         }
       }
       state.connectionState |= ReservedConnectionState.closing;

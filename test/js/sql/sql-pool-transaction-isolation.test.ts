@@ -27,8 +27,14 @@ import {
 type Received = { conn: number; sql: string };
 // `onReceived` runs after each statement is recorded. `secure` makes the server accept the
 // client's TLS request and speak the protocol over TLS from there on. `failOnce` is a
-// statement that the server answers with an error the first time it arrives.
-type MockOptions = { onReceived?: () => void; secure?: boolean; failOnce?: string };
+// statement that the server answers with an error the first time it arrives. `answerLater`
+// keeps the answer to the first statement that equals `sql` until `when` resolves.
+type MockOptions = {
+  onReceived?: (sql: string) => void;
+  secure?: boolean;
+  failOnce?: string;
+  answerLater?: { sql: string; when: Promise<void> };
+};
 type MockServer = (received: Received[], options?: MockOptions) => Promise<{ port: number; server: net.Server }>;
 
 function secureSocket(rawSocket: net.Socket): net.Socket {
@@ -49,12 +55,26 @@ function failureCheck(failOnce: string | undefined) {
   };
 }
 
+// Writes the answer to a statement, at once or after `answerLater.when`.
+function answerWriter(answerLater: MockOptions["answerLater"]) {
+  return (socket: net.Socket, sql: string, answer: Buffer) => {
+    if (sql !== answerLater?.sql) {
+      socket.write(answer);
+      return;
+    }
+    const { when } = answerLater;
+    answerLater = undefined;
+    when.then(() => socket.write(answer));
+  };
+}
+
 // Both mocks answer every statement at once, except for these markers in the query text:
 //   KILL destroys the socket without answering,
 //   FAIL answers with an error,
 //   HOLD never answers.
-const pgMockServer: MockServer = (received, { onReceived, secure, failOnce } = {}) => {
+const pgMockServer: MockServer = (received, { onReceived, secure, failOnce, answerLater } = {}) => {
   const fails = failureCheck(failOnce);
+  const answer = answerWriter(answerLater);
   let nextConn = 0;
   return listeningServer(rawSocket => {
     const connId = nextConn++;
@@ -91,27 +111,30 @@ const pgMockServer: MockServer = (received, { onReceived, secure, failOnce } = {
           if (type !== "Q") continue;
           const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
           received.push({ conn: connId, sql });
-          onReceived?.();
+          onReceived?.(sql);
           if (sql.includes("KILL")) {
             socket.destroy();
             return;
           }
           if (sql.includes("HOLD")) continue;
           if (fails(sql)) {
-            socket.write(
+            answer(
+              socket,
+              sql,
               Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: "mock failure" }), pgReadyForQuery()]),
             );
             continue;
           }
-          socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+          answer(socket, sql, Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
         }
       });
     }
   });
 };
 
-const mysqlMockServer: MockServer = (received, { onReceived, secure, failOnce } = {}) => {
+const mysqlMockServer: MockServer = (received, { onReceived, secure, failOnce, answerLater } = {}) => {
   const fails = failureCheck(failOnce);
+  const answer = answerWriter(answerLater);
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   let nextConn = 0;
@@ -152,17 +175,17 @@ const mysqlMockServer: MockServer = (received, { onReceived, secure, failOnce } 
           if (payload[0] === COM_QUERY) {
             const sql = payload.subarray(1).toString("utf8");
             received.push({ conn: connId, sql });
-            onReceived?.();
+            onReceived?.(sql);
             if (sql.includes("KILL")) {
               socket.destroy();
               return;
             }
             if (sql.includes("HOLD")) return;
             if (fails(sql)) {
-              socket.write(mysqlErrPacket(1, 1105, "HY000", "mock failure"));
+              answer(socket, sql, mysqlErrPacket(1, 1105, "HY000", "mock failure"));
               return;
             }
-            socket.write(mysqlOkPacket(1));
+            answer(socket, sql, mysqlOkPacket(1));
           } else if (payload[0] === COM_QUIT) {
             socket.end();
           }
@@ -866,6 +889,34 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
       expect(pool.received).toEqual([...onConn0(started, "SELECT 'pending'", ...rolledBack), ...afterTransaction(0)]);
     },
   );
+
+  // The callback returns while close({ timeout }) waits, so the runner sends the rollback. The
+  // pending query has its answer when the rollback reaches the server, so the wait of close()
+  // is over by then. close() resolves only when the rollback has its answer too.
+  test("transaction.close({ timeout }) resolves after the rollback that the runner sends for it", async () => {
+    const rollbackArrived = Promise.withResolvers<void>();
+    const rollbackAnswer = Promise.withResolvers<void>();
+    await using pool = await closeTestPool({
+      onReceived: sql => {
+        if (sql === "ROLLBACK") rollbackArrived.resolve();
+      },
+      answerLater: { sql: "ROLLBACK", when: rollbackAnswer.promise },
+    });
+    let closed: Promise<unknown> | undefined;
+    const outcome = settledCode(
+      pool.sql.begin(async tx => {
+        tx.unsafe("SELECT 'pending'").execute();
+        closed = tx.close({ timeout: 60 });
+      }),
+    );
+    await rollbackArrived.promise;
+    expect(Bun.peek.status(closed!)).toBe("pending");
+    rollbackAnswer.resolve();
+    expect(await outcome).toBe(connectionClosedCode);
+    await closed;
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'pending'", "ROLLBACK"), ...afterTransaction(0)]);
+  });
 
   test("transaction.close() that the callback does not await rolls back, and nothing commits after it", async () => {
     await using pool = await closeTestPool();

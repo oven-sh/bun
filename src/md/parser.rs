@@ -59,7 +59,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) emph_delims: Vec<EmphDelim>,
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
-    pub(crate) bracket_pairs: Vec<(OFF, OFF)>,
+    pub(crate) bracket_pairs: Vec<crate::links::Bracket>,
     // Label-frame stack recycled by process_inline_content (inlines.rs) so
     // blocks with links do not allocate a frame stack per block.
     pub(crate) label_frames: Vec<crate::inlines::LabelFrame>,
@@ -379,9 +379,8 @@ impl<'a> Parser<'a> {
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   compute_bracket_matches, match_bracket, scan_bracket_close,
-    //   enter_label_span, process_link, try_match_bracket_link,
-    //   label_contains_link, process_wiki_link, find_autolink,
+    //   compute_bracket_matches, enter_label_span, process_link,
+    //   link_end_behind, process_wiki_link, find_autolink,
     //   render_autolink
     //
     // line_analysis.rs — impl Parser:

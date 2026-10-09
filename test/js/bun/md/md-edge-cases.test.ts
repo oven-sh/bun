@@ -804,7 +804,8 @@ describe("pathological bracket inputs", () => {
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
           ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
-          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          // Only the innermost "[" starts a link: the others have a link in them, be it in the description of an image.
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out === "<p>" + fill(18000, "[![") + '[<img src="u" alt="' + fill(17998, "[") + fill(17998, "](u)") + '" />](u)</p>\\n'],
           ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
           ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
@@ -1873,5 +1874,29 @@ describe("email autolinks", () => {
 
   test.each(["a@-b.c", "a@b-.c"])("<%s> is not one", address => {
     expect(Markdown.html(`<${address}>\n`)).toBe(`<p>&lt;${address}&gt;</p>\n`);
+  });
+});
+
+describe("links in links", () => {
+  test("a link in brackets in the text of a link", () => {
+    expect(Markdown.html("[link [foo [bar]]](/uri)\n\n[bar]: /url\n")).toBe(
+      '<p>[link [foo <a href="/url">bar</a>]](/uri)</p>\n',
+    );
+  });
+
+  test("a link in the description of an image in the text of a link", () => {
+    expect(Markdown.html("[a ![b [c](d)](e)](f)\n")).toBe('<p>[a <img src="e" alt="b c" />](f)</p>\n');
+  });
+});
+
+describe("brackets behind the text of a link", () => {
+  test("one in a title does not open anything", () => {
+    expect(Markdown.html('[a ![b](c "[") d](e)\n')).toBe(
+      '<p><a href="e">a <img src="c" alt="b" title="[" /> d</a></p>\n',
+    );
+  });
+
+  test("one in a destination does not close anything", () => {
+    expect(Markdown.html("![a [b](c]) d](e)\n")).toBe('<p><img src="e" alt="a b d" /></p>\n');
   });
 });

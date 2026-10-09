@@ -730,20 +730,12 @@ impl Parser<'_> {
             if c == b'[' || (c == b'!' && i + 1 < content.len() && content[i + 1] == b'[') {
                 let is_img = c == b'!';
                 let bracket_start = if is_img { i + 1 } else { i };
-                let link_result =
-                    self.try_match_bracket_link(content, bracket_start, brackets, base);
-                if link_result.is_link {
-                    // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
-                    // Images CAN contain links in alt text, so only check for non-images
-                    if !is_img {
-                        let label = &content[bracket_start + 1..link_result.label_end];
-                        if self.label_contains_link(label, brackets, base + bracket_start + 1) {
-                            // Label contains inner links — this can't form a link
-                            i += 1;
-                            continue;
-                        }
-                    }
-                    i = link_result.link_end;
+                if let Some(link_end) = brackets
+                    .link(base + bracket_start, is_img)
+                    .and_then(|it| it.1.checked_sub(base))
+                    .filter(|&link_end| link_end <= content.len())
+                {
+                    i = link_end;
                     continue;
                 }
             }

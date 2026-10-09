@@ -144,17 +144,18 @@ pub fn oxlint_rule_key(id: &[u8]) -> Vec<u8> {
 
 /// The rules that `-A`, `-W` and `-D` of oxlint mean by `name`, as [`oxlint_rule_key`] writes them.
 /// Without a plugin it is every rule of that name. With one it is the rule that oxlint has in that
-/// plugin: there `typescript/no-unused-vars` is not a name of `no-unused-vars`, and nothing.
+/// plugin: there `typescript/no-unused-vars` is not a name of `no-unused-vars`, and nothing, as is
+/// `eslint/no-explicit-any`.
 pub fn oxlint_filter_keys(name: &[u8]) -> Vec<Vec<u8>> {
     let (prefix, rule) = match strings::index_of_char_usize(name, b'/') {
         Some(slash) => (&name[..slash], &name[slash + 1..]),
         None => (&b""[..], name),
     };
     if !prefix.is_empty() {
-        let plugin = plugin_of_oxlint(prefix);
-        return match plugin == b"typescript" && is_eslint_rule_adapted_to_typescript(rule) {
-            true => Vec::new(),
-            false => vec![oxlint_key_of(plugin, rule)],
+        let key = oxlint_key_of(plugin_of_oxlint(prefix), rule);
+        return match oxlint_rule_key(&key) == key {
+            true => vec![key],
+            false => Vec::new(),
         };
     }
     let keys: Vec<Vec<u8>> = (PLUGINS_OF_OXLINT.iter())
@@ -231,7 +232,13 @@ impl Registry {
         {
             return Some(extension);
         }
-        self.get(plugin, name)
+        self.get(plugin, name).or_else(|| match plugin {
+            // oxlint has rules in `node` that ESLint has given up: `no-sync`, `global-require`.
+            Plugin::Node if prefers_typescript && is_in_oxlint(plugin, name) => {
+                self.get(Plugin::Eslint, name)
+            }
+            _ => None,
+        })
     }
 
     /// The same as [`Registry::find`], with what [`Registry::get_preferring`] does.
@@ -240,12 +247,8 @@ impl Registry {
         id: &[u8],
         prefers_typescript: bool,
     ) -> Option<&'static RuleEntry> {
-        let entry = self.find(id)?;
-        self.get_preferring(
-            entry.meta.plugin,
-            entry.meta.name.as_bytes(),
-            prefers_typescript,
-        )
+        let (prefix, name) = parse_rule_id(id);
+        self.get_preferring(Plugin::of_prefix(prefix)?, name, prefers_typescript)
     }
 
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,

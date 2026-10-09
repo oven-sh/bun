@@ -812,6 +812,40 @@ describe.concurrent("bun lint", () => {
           rows.map(it => (it[3].some(it => it.endsWith("error")) ? 1 : 0)),
         );
       });
+
+      test("the rules that ESLint has given up and oxlint has in `node` run if that plugin is on", async () => {
+        const texts: Record<string, string> = {
+          "callback-return": "function f(err, callback) {\n  if (err) {\n    callback(err);\n  }\n  callback();\n}\n",
+          "global-require": 'function f() {\n  require("a");\n}\n',
+          "handle-callback-err": "function f(err) {}\n",
+          "no-mixed-requires": 'var a = require("a"),\n  b = 1;\n',
+          "no-new-require": 'new require("a");\n',
+          "no-path-concat": '__dirname + "/a";\n',
+          "no-process-env": "process.env.A;\n",
+          "no-sync": "fs.readFileSync();\n",
+        };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const [directory, prefix, plugins] of [
+          ["bare-on", "", ["node"]],
+          ["bare-off", "", []],
+          ["node-on", "node/", ["node"]],
+          ["node-off", "node/", []],
+        ] as const) {
+          const rules = Object.fromEntries(Object.keys(texts).map(it => [prefix + it, "warn"]));
+          files[`${directory}/.oxlintrc.json`] = rc({ plugins, rules });
+          for (const [name, text] of Object.entries(texts)) files[`${directory}/${name}.js`] = text;
+        }
+        const { raw, exitCode } = await lint(files, ["-f", "json"]);
+        // oxlint 1.80.0 calls them node(no-sync) and so on.
+        const found = places(raw).map((it: string) => it.replace(/ \w+\((.*)\) /, " $1 "));
+        const lines = { "callback-return": 3, "global-require": 2 };
+        expect(found).toEqual(
+          ["bare-on", "node-on"].flatMap(directory =>
+            Object.keys(texts).map(it => `${directory}/${it}.js:${lines[it as keyof typeof lines] ?? 1} ${it} warning`),
+          ),
+        );
+        expect(exitCode).toBe(0);
+      });
     });
 
     test(".eslintrc.json", async () => {

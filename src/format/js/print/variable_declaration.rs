@@ -1,5 +1,6 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::utils::assignment_like::AssignmentLike;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -25,6 +26,10 @@ pub(crate) fn write_variable_declaration<'a>(
     declarations: List<'a, VarDecl<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    // The keyword is a property of what is declared.
+    let Some(kind) = declarations.first().map(VarDecl::var_kind) else {
+        return write!(f, FormatSuppressedNode(statement.span()));
+    };
     // Whether it ends with a `;`, which it does not in the head of a loop, and whether it is in a loop.
     let (semicolon, is_in_for_loop) = match statement.parent() {
         _ if !statement.modifiers().is_empty() && statement.is_exported() => {
@@ -48,7 +53,6 @@ pub(crate) fn write_variable_declaration<'a>(
         write!(f, ["declare", space()]);
     }
 
-    let kind = declarations.first().map_or(VarKind::Var, VarDecl::var_kind);
     let content = format_args!(
         var_kind_text(kind),
         FormatVariableDeclarators {

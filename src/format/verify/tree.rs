@@ -821,6 +821,8 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             | (ExportAssign(x), ExportAssign(y)) => self.expr(x, y),
             (Var(x), Var(y)) => {
                 self.check(x.len() == y.len(), "the number of declarations")?;
+                // The keyword is a property of what is declared.
+                self.check(!x.is_empty(), "a declaration of nothing")?;
                 x.iter()
                     .zip(y.iter())
                     .try_for_each(|(x, y)| self.var_decl(x, y))?;

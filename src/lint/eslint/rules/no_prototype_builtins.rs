@@ -68,7 +68,9 @@ impl NoPrototypeBuiltins {
             ExprKind::Index { obj, index, .. } => (obj, index.span()),
             _ => return,
         };
-        cx.report(property, PROTOTYPE_BUILD_IN).data("prop", prop).suggest_with(
+        // oxlint points at what is called.
+        let place = if cx.language().is_oxlint { callee.span() } else { property };
+        cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).suggest_with(
             CALL_OBJECT_PROTOTYPE,
             &[("prop", prop.as_bytes())],
             |fixer| {

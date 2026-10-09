@@ -242,7 +242,9 @@ fn check_members<'a>(
     } else {
         FixOrSuggest::Fix
     };
-    get_fix_or_suggest(cx.report(at, PREFER_RECORD), fix_or_suggest, PREFER_RECORD_SUGGESTION, |fixer| {
+    // oxlint points at the index signature.
+    let place = if cx.language().is_oxlint { member.span() } else { at };
+    get_fix_or_suggest(cx.report(place, PREFER_RECORD), fix_or_suggest, PREFER_RECORD_SUGGESTION, |fixer| {
         let mut text = Vec::new();
         if let Some(interface) = interface {
             text.extend_from_slice(b"type ");

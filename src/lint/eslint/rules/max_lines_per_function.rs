@@ -78,7 +78,12 @@ impl MaxLinesPerFunction {
             }
         }
         let name = ast_utils::get_function_name_with_kind(func);
-        cx.report(ast_utils::get_function_head_loc(func), EXCEED)
+        // oxlint points at the function.
+        let place = match cx.language().is_oxlint {
+            true => func.estree_span(),
+            false => ast_utils::get_function_head_loc(func),
+        };
+        cx.report(place, EXCEED)
             .data("name", text::upper_case_first(&name).into_owned())
             .data("lineCount", line_count)
             .data("maxLines", self.max);

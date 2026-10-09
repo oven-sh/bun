@@ -27,14 +27,15 @@ impl Rule for NoNegatedCondition {
                 && no.tag() != StmtTag::If
                 && is_negated(test)
             {
-                cx.report(stmt, UNEXPECTED_NEGATED);
+                // oxlint points at the test.
+                cx.report(if cx.language().is_oxlint { test.span() } else { stmt.span() }, UNEXPECTED_NEGATED);
             }
         });
         on.exprs([ExprTag::Cond], |_, e, cx| {
             if let ExprKind::Cond { test, .. } = e.kind()
                 && is_negated(test)
             {
-                cx.report(e, UNEXPECTED_NEGATED);
+                cx.report(if cx.language().is_oxlint { test } else { e }, UNEXPECTED_NEGATED);
             }
         });
     }

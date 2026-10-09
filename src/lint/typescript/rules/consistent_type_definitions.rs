@@ -54,6 +54,15 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
     fixes
 }
 
+/// oxlint points at the keyword, which is before the name.
+fn place<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
+    if !cx.language().is_oxlint {
+        return name.span();
+    }
+    let end = cx.file().end_of_token_before(name.span().start);
+    Span::new(end.saturating_sub(keyword.len() as u32), end)
+}
+
 impl Rule for ConsistentTypeDefinitions {
     const META: Meta = Meta::typescript("consistent-type-definitions", Kind::Suggestion)
         .fixable(Fixable::Code)
@@ -72,7 +81,7 @@ impl Rule for ConsistentTypeDefinitions {
                 let StmtKind::Interface(interface) = statement.kind() else {
                     return;
                 };
-                let report = cx.report(interface.name(), TYPE_OVER_INTERFACE);
+                let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
                 if !is_within_declare_global(statement) {
                     report.fix(|fixer| fix_interface(fixer, statement, interface));
                 }
@@ -82,7 +91,7 @@ impl Rule for ConsistentTypeDefinitions {
                 if let StmtKind::TypeAlias(alias) = statement.kind()
                     && alias.ty().tag() == TypeTag::Object
                 {
-                    cx.report(alias.name(), INTERFACE_OVER_TYPE)
+                    cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
                         .fix(|fixer| fix_type_alias(fixer, statement, alias));
                 }
             });

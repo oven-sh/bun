@@ -99,7 +99,9 @@ fn check<'a>(
     let Some(name) = inferrable_type(annotation, init) else {
         return;
     };
-    cx.report(at(), NO_INFERRABLE_TYPE).data("type", name).fix(|fixer| {
+    // oxlint points at the annotation.
+    let place = if cx.language().is_oxlint { annotation.annotation_span() } else { at() };
+    cx.report(place, NO_INFERRABLE_TYPE).data("type", name).fix(|fixer| {
         let annotation = annotation.annotation_span();
         let mut fixes = vec![fixer.remove(annotation)];
         if removes_token_before && let Some(token) = fixer.file().token_before(annotation) {

@@ -84,7 +84,11 @@ impl Complexity {
                 }
                 Node::Func(func) => (
                     upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
-                    ast_utils::get_function_head_loc(func),
+                    // oxlint points at the function.
+                    match cx.language().is_oxlint {
+                        true => func.estree_span(),
+                        false => ast_utils::get_function_head_loc(func),
+                    },
                 ),
                 _ => continue,
             };

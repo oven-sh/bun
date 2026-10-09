@@ -36,8 +36,13 @@ impl NoEmptyInterface {
             return;
         }
         let extends = interface.extends();
+        // oxlint points at the declaration.
+        let place = match cx.language().is_oxlint {
+            true => statement.span_without_export(),
+            false => interface.name().span(),
+        };
         let Some(extended) = extends.first() else {
-            cx.report(interface.name(), NO_EMPTY);
+            cx.report(place, NO_EMPTY);
             return;
         };
         if extends.len() != 1 || self.allow_single_extends {
@@ -51,7 +56,7 @@ impl NoEmptyInterface {
                     .any(|it| matches!(it, Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_))))
             })
         });
-        let report = cx.report(interface.name(), NO_EMPTY_WITH_SUPER);
+        let report = cx.report(place, NO_EMPTY_WITH_SUPER);
         if is_merged_with_class_declaration {
             return;
         }

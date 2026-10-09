@@ -115,7 +115,9 @@ impl ConsistentGenericConstructors {
             if owner.ty().is_some() {
                 return;
             }
-            cx.report(owner.span(rhs), PREFER_TYPE_ANNOTATION).fix(|fixer| {
+            // oxlint points at the type arguments.
+            let place = if cx.language().is_oxlint { type_args } else { owner.span(rhs) };
+            cx.report(place, PREFER_TYPE_ANNOTATION).fix(|fixer| {
                 let file = fixer.file();
                 let mut annotation = b": ".to_vec();
                 annotation.extend_from_slice(callee.text());
@@ -146,7 +148,9 @@ impl ConsistentGenericConstructors {
         {
             return;
         }
-        cx.report(owner.span(rhs), PREFER_CONSTRUCTOR).fix(|fixer| {
+        // oxlint points at the annotation.
+        let place = if cx.language().is_oxlint { lhs.annotation_span() } else { owner.span(rhs) };
+        cx.report(place, PREFER_CONSTRUCTOR).fix(|fixer| {
             let file = fixer.file();
             let annotation = lhs.annotation_span();
             let mut text = Vec::new();

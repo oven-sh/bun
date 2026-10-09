@@ -34,7 +34,8 @@ impl Rule for NoDynamicDelete {
             if operand.is_in_optional_chain() || is_acceptable_index_expression(index) {
                 return;
             }
-            cx.report(index, DYNAMIC_DELETE);
+            // oxlint points at the `delete`.
+            cx.report(if cx.language().is_oxlint { expr } else { index }, DYNAMIC_DELETE);
         });
     }
 }

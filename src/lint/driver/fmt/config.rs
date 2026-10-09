@@ -22,6 +22,7 @@ use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The names of configuration files, by priority: oxfmt's, then Prettier's `CONFIG_FILES`.
@@ -401,6 +402,16 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
     settings
 }
 
+/// The options of Prettier in `json`, but for `plugins`, as the flags of the command line have them. `None`: one of its
+/// keys is no option that is known here.
+pub(super) fn as_flags(json: &Json) -> Option<Vec<(&'static [u8], Vec<u8>)>> {
+    settings(json, false)
+        .into_iter()
+        .filter(|it| it.0 != b"plugins")
+        .map(|(name, value)| Some((*OPTIONS.iter().find(|it| ***it == name[..])?, value)))
+        .collect()
+}
+
 impl Override {
     /// Prettier's `pathMatchesGlobs`. `relative`: from the directory of the configuration file.
     fn matches(&self, relative: &[u8]) -> bool {
@@ -615,7 +626,7 @@ struct Listed {
 }
 
 pub(crate) struct Configs<'c> {
-    options: &'c Options,
+    options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
     /// `--config`
@@ -639,6 +650,17 @@ pub(crate) struct Configs<'c> {
 
 impl<'c> Configs<'c> {
     pub(crate) fn new(options: &'c Options, environment: &'c Environment<'c>) -> Configs<'c> {
+        Configs::with(Cow::Borrowed(options), environment)
+    }
+
+    /// The same, for options that nobody else keeps.
+    pub(crate) fn owning(options: Options, environment: &'c Environment<'c>) -> Configs<'c> {
+        Configs::with(Cow::Owned(options), environment)
+    }
+
+    fn with(options: Cow<'c, Options>, environment: &'c Environment<'c>) -> Configs<'c> {
+        let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
+        let named = options.config.clone();
         let mut configs = Configs {
             options,
             environment,
@@ -657,7 +679,7 @@ impl<'c> Configs<'c> {
         let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
             Ok(scope) => match &scope.config {
                 Some(config) => config.is_oxfmt,
-                None => options.is_like_oxfmt.unwrap_or_else(|| {
+                None => is_like_oxfmt.unwrap_or_else(|| {
                     formatters = Formatters::depended_on(&environment.cwd);
                     let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
                     let has_prettier = formatters.prettier;
@@ -678,7 +700,7 @@ impl<'c> Configs<'c> {
                 })
                 .is_some_and(|at| at < NAMES_OF_OXFMT),
         };
-        if let Some(path) = &options.config {
+        if let Some(path) = &named {
             let path = paths::resolve(&environment.cwd, &paths::from_native(path));
             // A name that does not tell is of the tool that the project uses.
             let name = paths::basename(&path);
@@ -710,7 +732,7 @@ impl<'c> Configs<'c> {
             configs.flavor = Flavor::Oxfmt;
             // What was found on the way was found as Prettier finds it.
             configs.by_directory.get_mut().clear();
-            if options.editorconfig {
+            if reads_editorconfig {
                 configs.editorconfig_of_oxfmt = paths::ancestors(&environment.cwd)
                     .find_map(editorconfig::File::read)
                     .map(Arc::new);
@@ -1110,9 +1132,9 @@ impl<'c> Configs<'c> {
     }
 
     /// Whether a Svelte component that has `scope` is formatted here, and not by the Prettier of the project: its
-    /// configuration names `prettier-plugin-svelte`, and the one that is installed is 4.1.1, whose output this is byte for
-    /// byte. 4.1.0 prints 19 of 7,047 real components in another way, 3.x has another parser. One that is not installed is
-    /// the newest. Nothing here formats a range.
+    /// configuration names `prettier-plugin-svelte`, and the one that is installed is 4.1.1, whose output this is byte
+    /// for byte. 4.1.0 prints 19 of 7,047 real components in another way, 3.x has another parser. One that is not
+    /// installed is the newest. Nothing here formats a range.
     pub(crate) fn has_our_svelte(&self, scope: &Scope) -> bool {
         let is_about_part =
             |it: &(&[u8], Vec<u8>)| matches!(it.0, b"rangeStart" | b"rangeEnd" | b"cursorOffset");

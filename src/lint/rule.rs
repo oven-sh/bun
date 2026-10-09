@@ -181,6 +181,8 @@ plugins! {
     Bun: ["bun"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], Package, Whole;
+    /// `regexp/no-dupe-disjunctions`
+    Regexp: ["regexp"], Package, Part;
 }
 
 impl Plugin {

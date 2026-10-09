@@ -3,7 +3,7 @@
 use super::number::format_trimmed_number;
 use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
-    is_name_without_quotes, is_simple_number, push_with_normalized_newlines,
+    is_name_without_quotes, is_simple_number,
 };
 use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
@@ -84,7 +84,7 @@ fn with_normalized_newlines(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
         return text;
     }
     let mut normalized = Vec::with_capacity(text.len());
-    push_with_normalized_newlines(&mut normalized, &text);
+    bun_core::strings::push_crlf_as_lf(&mut normalized, &text);
     Cow::Owned(normalized)
 }
 

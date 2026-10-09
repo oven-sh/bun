@@ -490,8 +490,8 @@ describe.concurrent("an eslint.config.js", () => {
     );
     // Not `module`: what only the file has is not to be had without running it.
     expect(keys).toEqual([
-      ["config", "described", "index"],
-      ["config", "described", "index"],
+      ["config", "described", "else", "index"],
+      ["config", "described", "else", "index"],
     ]);
   });
 });

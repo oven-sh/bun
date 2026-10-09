@@ -205,11 +205,7 @@ fn write_pretty_problem<'r>(
         location: None,
     };
     let details = message.details.as_deref();
-    let texts = [
-        details.map_or("", |it| &*it.first_label),
-        message.help(),
-        details.map_or("", |it| &*it.note),
-    ];
+    let texts = [message.first_label(), message.help(), message.note()];
     notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
     if let Some(details) = details {
         for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
@@ -393,20 +389,17 @@ fn write_agent_problem<'r>(
             bun_sema_driver::format::write_agent_source(out, first, &shown, line, (from, to));
         }
     }
-    if let Some(details) = &message.details {
-        let first = ((message.line, message.column), &details.first_label);
-        let others = details.labels.iter().map(|it| (it.0, &it.2));
-        for ((line, column), text) in std::iter::once(first).chain(others) {
-            if !text.is_empty() {
-                let _ = writeln!(
-                    out,
-                    "<label line=\"{line}\" column=\"{column}\">{text}</label>"
-                );
-            }
+    let first = ((message.line, message.column), message.first_label());
+    let others = message.details.iter().flat_map(|it| &it.labels);
+    for ((line, column), text) in std::iter::once(first).chain(others.map(|it| (it.0, &*it.2))) {
+        if !text.is_empty() {
+            let _ = writeln!(
+                out,
+                "<label line=\"{line}\" column=\"{column}\">{text}</label>"
+            );
         }
     }
-    let note = message.details.as_deref().map_or("", |it| &*it.note);
-    for (tag, text) in [("help", message.help()), ("note", note)] {
+    for (tag, text) in [("help", message.help()), ("note", message.note())] {
         if !text.is_empty() {
             let _ = writeln!(out, "<{tag}>{text}</{tag}>");
         }

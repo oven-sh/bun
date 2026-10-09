@@ -65,6 +65,9 @@ const rules: Record<string, Case[]> = {
     `class A {\n  [key(«import("a")»)] = 1;\n}`,
     `@register(«import("a")»)\nclass A {}`,
     `class A extends mixin(«import("a")») {}`,
+    `other.mock(«import("a")»);`,
+    `vi.fn(«import("a")»);`,
+    `vi.mock("a", «import("b")»);`,
 
     `function load() {\n  return import("a");\n}`,
     `const load = () => import("a");`,
@@ -88,6 +91,11 @@ const rules: Record<string, Case[]> = {
     `type A = typeof import("a");`,
     `let a: import("a").B;`,
     `import a from "a";`,
+    `vi.mock(import("a"));`,
+    `vi.mock(import("a"), () => ({}));`,
+    `vi.doMock(import("a"));`,
+    `vi.unmock(import("a"));`,
+    `vi.doUnmock(import("a"));`,
   ],
 
   "no-eager-native-addon": [

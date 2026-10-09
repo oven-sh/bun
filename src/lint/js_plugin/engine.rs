@@ -89,8 +89,8 @@ impl Demand {
         }
     }
 
-    /// Whether to start another realm beside the `realms` that there are, all of which are in use: whether it still finds work
-    /// when it has started, the others going on meanwhile. Then the run ends earlier with it.
+    /// Whether to start another realm beside the `realms` that there are, all of which are in use: whether it is going to lint for
+    /// as long as it takes to start, the others going on meanwhile.
     pub fn is_worth_another(&self, realms: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
@@ -102,6 +102,6 @@ impl Demand {
             }
             _ => BYTES_IN_THE_COST,
         };
-        left.bytes as f64 / realms as f64 > cost
+        left.bytes as f64 / realms as f64 > 2.0 * cost
     }
 }

@@ -3,7 +3,7 @@
 
 use super::Meta;
 use super::info::{Info, Source};
-use super::oxlint::{is_error, number, plugin};
+use super::oxlint::{is_error, number, page_of, plugin};
 use super::oxlint_fixes::FIXES;
 use crate::paths;
 use crate::print_config::{object, text, write_indented};
@@ -137,14 +137,7 @@ fn rule_descriptor(code: &[u8]) -> Option<Json> {
         return None;
     }
     let category = oxlint_category(of, std::str::from_utf8(name).ok()?)?;
-    let url = [
-        b"https://oxc.rs/docs/guide/usage/linter/rules/",
-        scope,
-        b"/",
-        name,
-        b".html",
-    ]
-    .concat();
+    let url = page_of(of, name)?;
     Some(object(vec![
         (b"id", text(code)),
         (b"name", text(name)),

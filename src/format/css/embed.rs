@@ -325,7 +325,7 @@ fn print_embed_css<'a>(
         }
         text.extend_from_slice(template.raw(index));
     }
-    let text = super::normalize_end_of_line(&text);
+    let text = bun_core::strings::crlf_as_lf(&text);
     let mut memo = Default::default();
     let Ok(sink) = super::parse_and_print(
         &text,

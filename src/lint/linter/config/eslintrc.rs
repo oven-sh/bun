@@ -1400,7 +1400,8 @@ impl<'c> Legacy<'_, '_, 'c> {
                 value => severity_of(value),
             };
             let is_on = severity.is_some_and(|it| it != Severity::Off);
-            if is_on && self.reader.native_rule(id).is_none() {
+            // Also for a rule that can hand a file back to it.
+            if is_on && (self.reader.native_rule(id)).is_none_or(|it| it.meta.hands_back) {
                 self.reader.unknown_rules.push(id[..].into());
             }
         }

@@ -218,7 +218,74 @@
       "additionalProperties": false
     }
   ],
+  "bun/prefer-local-module": [
+    {
+      "type": "object",
+      "properties": {
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "package": {
+                "type": "string"
+              },
+              "use": {
+                "type": "string"
+              },
+              "default": {
+                "type": "string"
+              },
+              "names": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["package", "use"],
+            "additionalProperties": false
+          }
+        },
+        "exemptFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/prefer-timeout-signal": [
+    {
+      "type": "object",
+      "properties": {
+        "factories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/prefer-url-for-sibling-files": [],
   "bun/react-no-latest-value-ref": [],
+  "bun/react-no-local-render-helpers": [
+    {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
   "bun/react-no-namespace-hooks": [],
   "bun/react-prefer-updater-function": []
 }

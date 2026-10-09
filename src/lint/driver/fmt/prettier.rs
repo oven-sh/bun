@@ -1,8 +1,9 @@
 //! A bridge: files in a language that only a plugin of Prettier reads are handed to the project's own Prettier.
 //!
-//! `bun format` has no Astro, no PHP, and of Svelte what one version of the plugin prints. Where the configuration of Prettier names the plugin for such a language, and
-//! both are installed, the file goes whole to `prettier.format`, in the engines that run the plugins of `bun lint`. What comes
-//! back is checked or written like what the formatter prints. It is as exact as it is slow.
+//! `bun format` has no Astro, no PHP, and of Svelte what one version of the plugin prints. Where the configuration of
+//! Prettier names the plugin for such a language, and both are installed, the file goes whole to `prettier.format`,
+//! in the engines that run the plugins of `bun lint`. What comes back is checked or written like what the formatter
+//! prints. It is as exact as it is slow.
 
 use super::cli::{Options, Precedence};
 use crate::run::Environment;

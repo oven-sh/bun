@@ -52,8 +52,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => self.pos(),
         };
         let class = self.class((start.pos, unnamed_at), base, class_flags);
-        // In a namespace the other parser does not export what has no name. For acorn and Babel only
-        // a default export has none. In the list of the file `checkClassDeclaration` reports it.
+        // In a namespace what has no name is not exported. For acorn and Babel only a default export
+        // has none. In the list of the file `checkClassDeclaration` reports it.
         let is_ecmascript = self.is_ecmascript;
         let lacks_name = |it: &Class| {
             it.name.is_none()

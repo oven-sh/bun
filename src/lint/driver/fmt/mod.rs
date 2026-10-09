@@ -2,11 +2,13 @@
 //!
 //! - [`cli`]: the flags.
 //! - [`run`]: `bun format`, given the flags and an [`Environment`].
+//! - [`ForRules`]: `bun format` for the rules of `bun lint` that hold a file against its formatted text.
 
 pub mod cli;
 mod config;
 mod editorconfig;
 mod files;
+mod for_rules;
 mod prettier;
 mod tailwind;
 
@@ -36,6 +38,7 @@ use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 use config::{Configs, Flavor, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
+pub use for_rules::ForRules;
 use std::borrow::Cow;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};

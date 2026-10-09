@@ -241,7 +241,9 @@ pub fn format(
     let mut normalized = std::mem::take(&mut scratch.normalized);
     let has_carriage_return = bun_core::strings::contains_char(text, b'\r');
     if has_carriage_return {
-        normalize_line_breaks(text, &mut normalized);
+        normalized.clear();
+        normalized.reserve(text.len());
+        bun_core::strings::push_crlf_as_lf(&mut normalized, text);
     }
     let result = if options.range_start.is_some() || options.range_end.is_some() {
         range::format(
@@ -324,18 +326,4 @@ fn format_normalized(
     let printer_options = crate::ir::printer::PrinterOptions::new(&printer_options, text);
     crate::ir::printer::print(root, storage, text, printer_options, printer, out)
         .map_err(|_| FormatError::InvalidDocument)
-}
-
-/// `\r\n` and `\r` are `\n` in `out`.
-fn normalize_line_breaks(text: &[u8], out: &mut Vec<u8>) {
-    out.clear();
-    out.reserve(text.len());
-    let mut rest = text;
-    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
-        out.extend_from_slice(&rest[..at]);
-        out.push(b'\n');
-        rest = &rest[at + 1..];
-        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
-    }
-    out.extend_from_slice(rest);
 }

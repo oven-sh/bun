@@ -745,28 +745,11 @@ fn starts_with_assignment_operator(text: &[u8]) -> bool {
     matches!(text.get(operator.take(4).count()..), Some([b'=', after, ..]) if !matches!(after, b'=' | b'>'))
 }
 
-/// The lines of `text`, which end with `\n`, `\r\n` or `\r`.
-pub(crate) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut rest = Some(text);
-    std::iter::from_fn(move || {
-        let text = rest?;
-        let Some(at) = bun_core::strings::index_of_any(text, b"\n\r") else {
-            rest = None;
-            return Some(text);
-        };
-        let len = if text[at..].starts_with(b"\r\n") {
-            2
-        } else {
-            1
-        };
-        rest = Some(&text[at + len..]);
-        Some(&text[..at])
-    })
-}
-
 /// `content`: what is between `/*` and `*/`.
 fn is_indentable_text(content: &[u8]) -> bool {
-    let mut lines = lines(content).skip(1).peekable();
+    let mut lines = bun_core::strings::split_crlf_lines(content)
+        .skip(1)
+        .peekable();
     if lines.peek().is_none() {
         return false;
     }

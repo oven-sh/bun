@@ -440,7 +440,10 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
 }
 
 fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
-    let ty = get_constrained_type_at_location(node);
+    let ty = match tsgolint_is_undecided(node) {
+        true => node.ty(),
+        false => get_constrained_type_at_location(node),
+    };
     if is_type_flag_set(ty, ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG) {
         return;
     }

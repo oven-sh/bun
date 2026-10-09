@@ -31,7 +31,6 @@ pub(crate) mod verify;
 mod vue;
 pub(crate) mod writer;
 
-use crate::css::normalize_end_of_line;
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
@@ -153,7 +152,7 @@ fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t,
     let Offsets { start, end, .. } = Offsets::new(text, first, options);
     let [start, end] =
         [start, end].map(|offset| normalized_len(text.get(first..offset).unwrap_or_default()));
-    let text = normalize_end_of_line(&text[first..]);
+    let text = bun_core::strings::crlf_as_lf(&text[first..]);
     let has_format_pragma = (options.require_pragma || options.insert_pragma)
         && has_pragma(&text, [b"format", b"prettier"]);
     if (start >= end && !text.is_empty())
@@ -176,7 +175,7 @@ fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t,
 
 /// Whether `after`, which `before` has been formatted to with `options`, has all that is in `before` and nothing else.
 fn keeps_content(before: &[u8], after: &[u8], parser: Parser, options: &FormatOptions) -> bool {
-    let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
+    let after = bun_core::strings::crlf_as_lf(after.strip_prefix(BOM).unwrap_or(after));
     prepared_text(before, options).is_none_or(|(before, _)| {
         strings::trim_js_whitespace(&before).is_empty()
             || verify::has_same_content(&before, &after, parser)
@@ -277,7 +276,7 @@ fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> 
 /// be.
 pub fn syntax_error(text: &[u8], parser: Parser) -> Option<(Vec<u8>, u32)> {
     let original = text.strip_prefix(BOM).unwrap_or(text);
-    let text = normalize_end_of_line(original);
+    let text = bun_core::strings::crlf_as_lf(original);
     let (content, front_matter_len) = without_front_matter(&text);
     let mut tree = ast::Tree::default();
     let Err(parse::ParseError::Syntax(error)) =
@@ -423,7 +422,7 @@ fn format_angular_expression(
         }
         None => text,
     };
-    let text = normalize_end_of_line(text);
+    let text = bun_core::strings::crlf_as_lf(text);
     if strings::trim_js_whitespace(&text).is_empty() {
         return Ok(());
     }

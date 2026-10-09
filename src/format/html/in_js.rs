@@ -108,7 +108,7 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
         from = at + 1;
     }
     match strings::contains_char(&text, b'\r') {
-        true => crate::css::normalize_end_of_line(&text).into_owned(),
+        true => bun_core::strings::crlf_as_lf(&text).into_owned(),
         false => text,
     }
 }

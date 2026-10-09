@@ -292,9 +292,6 @@
     "src/format/css/memo.rs": {
       "hash": 1
     },
-    "src/format/css/mod.rs": {
-      "normalize_end_of_line": 1
-    },
     "src/format/cursor.rs": {
       "resolve": 1,
       "units_to_bytes": 1
@@ -303,8 +300,7 @@
       "lines": 1
     },
     "src/format/graphql/printer.rs": {
-      "leading_blanks": 1,
-      "lines": 1
+      "leading_blanks": 1
     },
     "src/format/handlebars/lexer.rs": {
       "white_space_run": 1
@@ -332,9 +328,6 @@
     },
     "src/format/ir/width.rs": {
       "string_width": 1
-    },
-    "src/format/js/comments.rs": {
-      "lines": 1
     },
     "src/format/js/jsdoc/imports.rs": {
       "cmp_ascii_case_insensitive": 1
@@ -371,14 +364,6 @@
       "white_space_len": 1,
       "white_space_len_back": 1
     },
-    "src/format/js/trivia.rs": {
-      "without_blanks": 1,
-      "without_line_break": 1
-    },
-    "src/format/js/utils/call_expression.rs": {
-      "skip_newline": 1,
-      "skip_spaces": 1
-    },
     "src/format/js/utils/jsx.rs": {
       "has_line_break": 1,
       "is_jsx_whitespace": 1
@@ -387,16 +372,12 @@
       "quoted": 1
     },
     "src/format/js/utils/string.rs": {
-      "is_es5_identifier_name": 1,
-      "push_with_normalized_newlines": 1
+      "is_es5_identifier_name": 1
     },
     "src/format/js/utils/tailwindcss.rs": {
       "ends_with_white_space": 1,
       "has_white_space": 1,
       "starts_with_white_space": 1
-    },
-    "src/format/json/mod.rs": {
-      "normalize_line_breaks": 1
     },
     "src/format/markdown/embed.rs": {
       "write_escaped": 1
@@ -717,9 +698,6 @@
       "escape": 1,
       "hex_value": 1,
       "unescape": 1
-    },
-    "src/lint/utils/eslint_utils/get_static_value.rs": {
-      "normalize_line_breaks": 1
     },
     "src/lint/utils/eslint_utils/js_number.rs": {
       "decimal_literal_len": 1,

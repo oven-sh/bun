@@ -3,7 +3,8 @@
 //! terminators that end a line of a source text. Unicode's: the property `White_Space`, which Rust's
 //! `str::trim` goes by. ASCII's is std's: `<[u8]>::trim_ascii`, `u8::is_ascii_whitespace`.
 
-use super::index_of_any;
+use super::{contains_char, index_of_any, index_of_char_usize};
+use std::borrow::Cow;
 
 /// ECMAScript's `LineTerminator`: LF, CR, U+2028 and U+2029.
 #[inline]
@@ -92,6 +93,17 @@ pub fn js_line_break_len(text: &[u8]) -> usize {
     }
 }
 
+/// The same for the line break that `text` ends with.
+#[inline]
+pub fn js_line_break_len_back(text: &[u8]) -> usize {
+    match text {
+        [.., b'\r', b'\n'] => 2,
+        [.., b'\r' | b'\n'] => 1,
+        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
+        _ => 0,
+    }
+}
+
 /// Where the first line break of `text` starts, and its length in bytes.
 pub fn find_js_line_break(text: &[u8]) -> Option<(usize, usize)> {
     let mut from = 0;
@@ -138,6 +150,47 @@ impl<'t> Iterator for JsLines<'t> {
             }
         }
     }
+}
+
+/// `text.split(/\r\n|\n|\r/)`: the lines without their line breaks. There is always at least one.
+pub fn split_crlf_lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
+    let mut rest = Some(text);
+    core::iter::from_fn(move || {
+        let text = rest?;
+        let Some(at) = index_of_any(text, b"\n\r") else {
+            rest = None;
+            return Some(text);
+        };
+        let len = if text[at..].starts_with(b"\r\n") {
+            2
+        } else {
+            1
+        };
+        rest = Some(&text[at + len..]);
+        Some(&text[..at])
+    })
+}
+
+/// `buf += text.replace(/\r\n?/g, "\n")`
+pub fn push_crlf_as_lf(buf: &mut Vec<u8>, text: &[u8]) {
+    let mut rest = text;
+    while let Some(at) = index_of_char_usize(rest, b'\r') {
+        buf.extend_from_slice(&rest[..at]);
+        buf.push(b'\n');
+        rest = &rest[at + 1..];
+        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
+    }
+    buf.extend_from_slice(rest);
+}
+
+/// `text.replace(/\r\n?/g, "\n")`
+pub fn crlf_as_lf(text: &[u8]) -> Cow<'_, [u8]> {
+    if !contains_char(text, b'\r') {
+        return Cow::Borrowed(text);
+    }
+    let mut normalized = Vec::with_capacity(text.len());
+    push_crlf_as_lf(&mut normalized, text);
+    Cow::Owned(normalized)
 }
 
 /// The length in bytes of the character that `text` starts with, if it has the property `White_Space`
@@ -249,6 +302,26 @@ mod tests {
             Some((3, 3))
         );
         assert!(!contains_js_line_break("\u{2027}".as_bytes()));
+    }
+
+    #[test]
+    fn carriage_returns_and_line_feeds() {
+        let text = b"a\r\nb\rc\n\r\n\xE2\x80\xA8d\r";
+        let lines: Vec<&[u8]> = split_crlf_lines(text).collect();
+        let expected: [&[u8]; 6] = [b"a", b"b", b"c", b"", b"\xE2\x80\xA8d", b""];
+        assert_eq!(lines, expected);
+        assert_eq!(&*crlf_as_lf(text), b"a\nb\nc\n\n\xE2\x80\xA8d\n");
+        assert!(matches!(crlf_as_lf(b"a\nb"), Cow::Borrowed(_)));
+        let ends: [(&[u8], usize); 5] = [
+            (b"a\r\n", 2),
+            (b"a\n\r", 1),
+            (b"\xE2\x80\xA9", 3),
+            (b"\xE2\x80\xAA", 0),
+            (b"", 0),
+        ];
+        for (text, len) in ends {
+            assert_eq!(js_line_break_len_back(text), len, "{text:x?}");
+        }
     }
 
     #[test]

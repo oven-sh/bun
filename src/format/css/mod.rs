@@ -231,23 +231,6 @@ fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// `normalizeEndOfLine`
-pub(crate) fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
-    if !bun_core::strings::contains_char(text, b'\r') {
-        return Cow::Borrowed(text);
-    }
-    let mut normalized = Vec::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
-        normalized.extend_from_slice(&rest[..at]);
-        normalized.push(b'\n');
-        rest = &rest[at + 1..];
-        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
-    }
-    normalized.extend_from_slice(rest);
-    Cow::Owned(normalized)
-}
-
 /// Parses `text`, whose line breaks are `\n`, and writes it to `sink`.
 fn parse_and_print<'o>(
     text: &[u8],
@@ -414,7 +397,7 @@ pub fn format(
     }
     // Nothing in a style sheet is something that Prettier formats on its own.
     let is_range = start > first || end < original.len();
-    let text = normalize_end_of_line(text);
+    let text = bun_core::strings::crlf_as_lf(text);
     let text = match crate::pragma::before_parsing_css(
         &text,
         front_matter::parse(&text).map_or(0, |it| it.end),

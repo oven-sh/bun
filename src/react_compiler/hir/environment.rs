@@ -49,8 +49,8 @@ pub struct Environment {
     next_mutable_range_id_counter: u32,
 
     // Arenas (use direct field access for sliced borrows)
-    pub identifiers: HirVec<Identifier>,
-    pub types: HirVec<Type>,
+    pub identifiers: Vec<Identifier>,
+    pub types: Vec<Type>,
     pub scopes: HirVec<ReactiveScope>,
     pub functions: HirVec<HirFunction>,
 
@@ -187,8 +187,8 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: AstAlloc::vec(),
-            types: AstAlloc::vec(),
+            identifiers: Vec::new(),
+            types: Vec::new(),
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),

@@ -28,7 +28,7 @@ pub struct Scratch {
 /// For the comparison with `svelte/compiler`: the snipped text, and the tree as JSON or what is thrown.
 pub fn tree_for_tests(text: &[u8], parse: crate::options::ParseJavaScript) -> (Vec<u8>, Vec<u8>) {
     let text = text.strip_prefix(crate::text::BOM).unwrap_or(text);
-    let text = crate::css::normalize_end_of_line(text);
+    let text = bun_core::strings::crlf_as_lf(text);
     let snipped = snip::snip(&text);
     let js = &mut js::FromParser {
         parse: Parse::Function(parse),
@@ -62,7 +62,7 @@ fn format_with_js(
         out.extend_from_slice(original);
         return Ok(());
     }
-    let text = crate::css::normalize_end_of_line(text);
+    let text = bun_core::strings::crlf_as_lf(text);
     let snipped = snip::snip(&text);
     let tree = parser::parse(&snipped.text, js).map_err(|error| match error.code {
         "nested_too_deeply" => FormatError::NestedTooDeeply,
@@ -140,7 +140,7 @@ pub fn format(
 }
 
 fn prepared(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    crate::css::normalize_end_of_line(text.strip_prefix(crate::text::BOM).unwrap_or(text))
+    bun_core::strings::crlf_as_lf(text.strip_prefix(crate::text::BOM).unwrap_or(text))
 }
 
 /// Whether `after`, which `before` has been formatted to, has all that is in `before` and nothing else. See `verify.rs`.

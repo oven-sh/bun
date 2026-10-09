@@ -106,7 +106,7 @@ pub fn format(
     // The offsets after `\r\n` has become `\n`.
     let [start, end] =
         [start, end].map(|offset| normalized_len(original.get(first..offset).unwrap_or_default()));
-    let text = crate::css::normalize_end_of_line(&original[first..]);
+    let text = bun_core::strings::crlf_as_lf(&original[first..]);
     let text = &text[..];
     if start >= end && !text.is_empty() {
         out.extend_from_slice(original);

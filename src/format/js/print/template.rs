@@ -9,7 +9,6 @@ use crate::cursor::around_node_at;
 use crate::ir::width::string_width_as;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::string::push_with_normalized_newlines;
 use crate::js::utils::tailwindcss::{
     InTailwindContext, context_of_function, has_white_space, sorted_template_text,
 };
@@ -286,7 +285,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
                 || self.content_span(i),
                 f,
                 |f| match bun_core::strings::contains_char(raw, b'\r') {
-                    true => f.write_built_text(|out| push_with_normalized_newlines(out, raw)),
+                    true => f.write_built_text(|out| bun_core::strings::push_crlf_as_lf(out, raw)),
                     false => write!(f, text(raw)),
                 },
             );

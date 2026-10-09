@@ -15,22 +15,7 @@ fn text_of<'a>(text: &'a [u8], comment: (u32, u32)) -> &'a [u8] {
 
 /// Allowed: the white space at the start and at the end of the lines of a comment.
 fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
-    // A `\r` ends a line too, and `\r\n` is one end.
-    let mut rest = Some(comment);
-    std::iter::from_fn(move || {
-        let text = rest?;
-        let Some(end) = strings::index_of_any(text, b"\r\n") else {
-            rest = None;
-            return Some(strings::trim_js_whitespace(text));
-        };
-        let after = if text.get(end..end + 2) == Some(b"\r\n") {
-            end + 2
-        } else {
-            end + 1
-        };
-        rest = text.get(after..);
-        text.get(..end).map(strings::trim_js_whitespace)
-    })
+    strings::split_crlf_lines(comment).map(strings::trim_js_whitespace)
 }
 
 fn is_same(before: &[u8], after: &[u8]) -> bool {

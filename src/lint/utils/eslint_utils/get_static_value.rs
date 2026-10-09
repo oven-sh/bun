@@ -425,29 +425,10 @@ impl<'a> Evaluator<'a> {
             return Err(Stop::NotStatic);
         }
         let raw: Vec<Cow<'a, [u8]>> = (0..template.quasi_count())
-            .map(|i| normalize_line_breaks(template.raw(i)))
+            .map(|i| strings::crlf_as_lf(template.raw(i)))
             .collect();
         string_raw(&raw, &values)
     }
-}
-
-/// The raw text of a template has `\n` for `\r\n` and for `\r`.
-fn normalize_line_breaks(raw: &[u8]) -> Cow<'_, [u8]> {
-    if !strings::contains_char(raw, b'\r') {
-        return Cow::Borrowed(raw);
-    }
-    let mut text = Vec::with_capacity(raw.len());
-    let mut rest = raw;
-    while let [byte, after @ ..] = rest {
-        rest = after;
-        if *byte == b'\r' {
-            text.push(b'\n');
-            rest = after.strip_prefix(b"\n").unwrap_or(after);
-        } else {
-            text.push(*byte);
-        }
-    }
-    Cow::Owned(text)
 }
 
 /// Upstream's `isEffectivelyConst`: the variable is only written by its initializer.

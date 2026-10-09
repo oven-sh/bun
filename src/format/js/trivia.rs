@@ -3,33 +3,25 @@
 //! [`Comments`](super::comments::Comments) tells which comments belong where. This writes them,
 //! with the spaces and line breaks around them, and marks them as printed.
 
-use super::comments::{Comment, CommentKind, lines};
+use super::comments::{Comment, CommentKind};
 use crate::prelude::*;
 use crate::write;
 
 /// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the line before is empty
 /// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
 fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
-    fn without_blanks(text: &[u8]) -> &[u8] {
-        let blanks = text
-            .iter()
-            .rev()
-            .take_while(|b| matches!(b, b' ' | b'\t'))
-            .count();
-        &text[..text.len() - blanks]
-    }
-    fn without_line_break(text: &[u8]) -> Option<&[u8]> {
-        match text {
-            [rest @ .., b'\r', b'\n']
-            | [rest @ .., b'\n' | b'\r']
-            | [rest @ .., 0xE2, 0x80, 0xA8 | 0xA9] => Some(rest),
-            _ => None,
+    /// Without the blanks at the end of `text` and the line break before them, if there is one.
+    fn without_last_line(text: &[u8]) -> Option<&[u8]> {
+        let text = bun_core::strings::trim_right(text, b" \t");
+        match bun_core::strings::js_line_break_len_back(text) {
+            0 => None,
+            len => Some(&text[..text.len() - len]),
         }
     }
     let before = f.source_text().text_for(&Span::before(0, comment.span));
-    match without_line_break(without_blanks(before)) {
+    match without_last_line(before) {
         None => 0,
-        Some(before) => 1 + usize::from(without_line_break(without_blanks(before)).is_some()),
+        Some(before) => 1 + usize::from(without_last_line(before).is_some()),
     }
 }
 
@@ -409,7 +401,7 @@ impl<'a> Format<'a> for Comment {
             let is_jsdoc = content.starts_with(b"/**")
                 && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt())
                 && !is_printed_by_prettier_for_oxfmt(f);
-            let mut lines = lines(content).peekable();
+            let mut lines = bun_core::strings::split_crlf_lines(content).peekable();
             let first = lines.next().unwrap_or_default();
             write!(f, text(bun_core::strings::trim_js_whitespace_end(first)));
             while let Some(line) = lines.next() {
@@ -425,7 +417,7 @@ impl<'a> Format<'a> for Comment {
             write!(f, text(content));
         } else {
             f.write_built_text(|out| {
-                for (index, line) in lines(content).enumerate() {
+                for (index, line) in bun_core::strings::split_crlf_lines(content).enumerate() {
                     if index > 0 {
                         out.push(b'\n');
                     }

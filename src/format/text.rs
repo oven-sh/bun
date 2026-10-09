@@ -83,24 +83,13 @@ pub(crate) fn skip_spaces_backwards(text: &[u8], end: usize) -> usize {
 /// `skipNewline`
 #[inline]
 pub(crate) fn skip_newline(text: &[u8], at: usize) -> usize {
-    match text.get(at..).unwrap_or_default() {
-        [b'\r', b'\n', ..] => at + 2,
-        [b'\n' | b'\r', ..] => at + 1,
-        // U+2028 and U+2029
-        [0xE2, 0x80, 0xA8 | 0xA9, ..] => at + 3,
-        _ => at,
-    }
+    at + strings::js_line_break_len(text.get(at..).unwrap_or_default())
 }
 
 /// `skipNewline(.., { backwards: true })`
 #[inline]
 pub(crate) fn skip_newline_backwards(text: &[u8], end: usize) -> usize {
-    match text.get(..end).unwrap_or_default() {
-        [.., b'\r', b'\n'] => end - 2,
-        [.., b'\n' | b'\r'] => end - 1,
-        [.., 0xE2, 0x80, 0xA8 | 0xA9] => end - 3,
-        _ => end,
-    }
+    end - strings::js_line_break_len_back(text.get(..end).unwrap_or_default())
 }
 
 /// `skipInlineComment`

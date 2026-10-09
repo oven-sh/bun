@@ -3,7 +3,7 @@
 
 use super::Meta;
 use super::info::{Position, Source};
-use super::oxlint::{code, is_error, plugin};
+use super::oxlint::{code, is_error, page_of};
 use crate::results::FileResult;
 use bun_core::printer::json_stringify;
 use bun_lint::linter::{LintMessage, RuleId};
@@ -14,16 +14,7 @@ fn url(message: &LintMessage) -> Option<Vec<u8>> {
     let Some(RuleId::Known(rule)) = &message.rule_id else {
         return None;
     };
-    Some(
-        [
-            b"https://oxc.rs/docs/guide/usage/linter/rules/",
-            plugin(rule.plugin.prefix().as_bytes()),
-            b"/",
-            rule.name.as_bytes(),
-            b".html",
-        ]
-        .concat(),
-    )
+    page_of(rule.plugin, rule.name.as_bytes())
 }
 
 /// A place that oxlint marks, from `start` to `end` in bytes, and what it says there. There is no end line and no end column.
@@ -60,8 +51,7 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
         json_stringify(&url, out);
     }
     let details = message.details.as_deref();
-    let note = details.map_or("", |it| &*it.note);
-    for (key, text) in [("help", message.help()), ("note", note)] {
+    for (key, text) in [("help", message.help()), ("note", message.note())] {
         if !text.is_empty() {
             let _ = write!(out, ",\"{key}\": ");
             json_stringify(text.as_bytes(), out);
@@ -71,8 +61,7 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
     json_stringify(&source.name, out);
     out.extend_from_slice(b",\"labels\": [");
     if let Some(first) = source.span(message) {
-        let text = details.map_or("", |it| &*it.first_label);
-        write_label(out, source, first, text);
+        write_label(out, source, first, message.first_label());
         for (start, end, text) in details.into_iter().flat_map(|it| &it.labels) {
             out.push(b',');
             write_label(out, source, source.label(*start, *end), text);

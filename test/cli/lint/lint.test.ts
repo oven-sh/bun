@@ -2433,7 +2433,8 @@ describe.concurrent("bun lint", () => {
       ]);
       const files = { "eslint.config.js": flat(), "a.js": code };
       const changed = await json(files, "--rule", 'no-restricted-syntax/no-env: ["error", "ImportDeclaration"]');
-      expect(changed.map((it: any) => `${it.line} ${it.severity} ${it.ruleId} ${it.message}`)).toEqual([
+      // Both are at 1:1.
+      expect(changed.map((it: any) => `${it.line} ${it.severity} ${it.ruleId} ${it.message}`).sort()).toEqual([
         "1 2 no-restricted-syntax/no-env Using 'ImportDeclaration' is not allowed.",
         "1 2 no-restricted-syntax/no-moment Use date-fns.",
       ]);

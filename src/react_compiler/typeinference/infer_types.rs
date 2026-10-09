@@ -80,7 +80,7 @@ fn get_type(id: IdentifierId, identifiers: &[Identifier]) -> Type {
 }
 
 /// Allocate a new TypeVar in the types arena (standalone, no &mut Environment needed).
-fn make_type(types: &mut HirVec<Type>) -> Type {
+fn make_type(types: &mut Vec<Type>) -> Type {
     let id = TypeId(types.len() as u32);
     types.push(Type::TypeVar { id });
     Type::TypeVar { id }
@@ -473,7 +473,7 @@ fn generate(
 fn generate_for_function_id(
     func_id: FunctionId,
     identifiers: &[Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     functions: &mut HirVec<HirFunction>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
@@ -574,7 +574,7 @@ fn generate_instruction_types(
     instr_id: InstructionId,
     function_key: u32,
     identifiers: &[Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     functions: &mut HirVec<HirFunction>,
     names: &mut IdMap<IdentifierId, StoreStr>,
     global_types: &HashMap<(u32, InstructionId), Type>,
@@ -996,7 +996,7 @@ fn apply_function(
     func: &HirFunction,
     functions: &[HirFunction],
     identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     unifier: &Unifier,
 ) {
     for (_block_id, block) in &func.body.blocks {
@@ -1051,7 +1051,7 @@ fn apply_function(
 fn resolve_identifier(
     id: IdentifierId,
     identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     unifier: &Unifier,
 ) {
     let type_id = identifiers[id.0 as usize].type_;

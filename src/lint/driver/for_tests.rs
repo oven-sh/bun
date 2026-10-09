@@ -65,6 +65,7 @@ impl Host for Tester<'_> {
             reads_suppressions: true,
             js_plugins: &self.js_plugins,
             modules: &Graph::new(&store),
+            formatter: &crate::fmt::ForRules::new(self.environment),
             timing: &timing,
             atoms: &Interner::new_in(&names),
             memory: &names,

@@ -899,6 +899,7 @@ impl Run<'_> {
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
+        let formatter = crate::fmt::ForRules::new(environment);
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
@@ -919,6 +920,7 @@ impl Run<'_> {
             reads_suppressions: format.reads_suppressions() && !options.silent,
             js_plugins: &js_plugins,
             modules: &modules,
+            formatter: &formatter,
             timing: &timing,
         };
         if let Some(file) = &options.print_config {

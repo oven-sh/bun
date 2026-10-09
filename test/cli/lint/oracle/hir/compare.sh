@@ -1,5 +1,6 @@
 #!/bin/bash
-# The parser that writes the HIR directly (src/sema/parser) against the pipeline that recovers from errors (src/js_parser/sema).
+# The two instances of the parser (src/sema/parser) against each other: the one that refuses a text at its first error ("direct")
+# and the one that recovers from errors as TypeScript's parser does ("the reference", "the other").
 #
 #   BUN_HIR=<bun-hir> compare.sh <file, directory or .jsonl>..
 #
@@ -11,7 +12,9 @@
 # 2. Every file is damaged in ROUNDS ways: what the direct parser then accepts has to be valid for the other, with the same HIR.
 #
 # It fails if anything is DIFFERENT, ACCEPTED (the other parser reports a syntax error and the direct one does not) or WRONG, or if
-# the process dies. Texts that are valid and REFUSED go through the other pipeline: they are counted, and the goal is 0.
+# the process dies. Texts that are valid and REFUSED are parsed by the other instance: they are counted, and the goal is 0.
+# ACCEPTED counts in tsc's dialect only: recovery follows TypeScript's parser, which rejects some of what acorn and Babel take, and
+# it is only asked for what the direct instance has refused.
 set -u
 ulimit -c 0
 ulimit -v "${MEMORY_KB:-8000000}"
@@ -25,7 +28,7 @@ for dialect in ${DIALECTS:-tsc estree espree babel}; do
     summary=$("$hir" compare "$@" --dialect="$dialect" $goal --jobs="$jobs" --show=5) || { echo "$dialect $goal: bun-hir died"; failed=1; continue; }
     line=$(grep "valid for the reference" <<< "$summary")
     echo "$dialect${goal:+ script}: $line"
-    grep -q " 0 different, " <<< "$line" && grep -q " 0 accepted" <<< "$line" || { grep -A1 -E "^(DIFFERENT|ACCEPTED)" <<< "$summary"; failed=1; }
+    grep -q " 0 different, " <<< "$line" && { [ "$dialect" != tsc ] || grep -q " 0 accepted" <<< "$line"; } || { grep -A1 -E "^(DIFFERENT|ACCEPTED)" <<< "$summary"; failed=1; }
   done
 done
 directories=()

@@ -56,21 +56,7 @@ pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> 
 }
 
 fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
-    fn skip_newline(text: &[u8]) -> Option<&[u8]> {
-        match text {
-            [b'\r', b'\n', rest @ ..]
-            | [b'\n' | b'\r', rest @ ..]
-            | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
-            _ => None,
-        }
-    }
-    fn skip_spaces(text: &[u8]) -> &[u8] {
-        let count = text
-            .iter()
-            .take_while(|b| matches!(b, b' ' | b'\t'))
-            .count();
-        text.get(count..).unwrap_or_default()
-    }
+    use bun_core::strings::{js_line_break_len, trim_left};
 
     loop {
         let count = rest
@@ -95,13 +81,13 @@ fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
         let mut end = 0;
         while let Some(tail) = rest.get(end..)
             && !tail.is_empty()
-            && skip_newline(tail).is_none()
+            && js_line_break_len(tail) == 0
         {
             end += 1;
         }
         rest = rest.get(end..).unwrap_or_default();
     }
-    skip_newline(skip_spaces(skip_newline(rest).unwrap_or(rest))).is_some()
+    js_line_break_len(trim_left(&rest[js_line_break_len(rest)..], b" \t")) > 0
 }
 
 /// Of the comments between the callee of `call`, which ends at `callee_end`, and the `<` or the `(`,

@@ -567,6 +567,80 @@ Reports text that matches a regular expression. It looks at text as it is writte
 | `message`    |         | What to say                                                                   |
 | `in`         | all     | `"strings"`, `"templates"`, `"jsxText"`, `"comments"`, `"regularExpressions"` |
 
+### `bun/prefer-timeout-signal`
+
+An `AbortController` that nothing but a timer aborts, and of which nothing but the signal is used, is what [`AbortSignal.timeout()`](https://developer.mozilla.org/docs/Web/API/AbortSignal/timeout_static) makes.
+
+```ts
+const controller = new AbortController(); // ✗
+setTimeout(() => controller.abort(), 2000);
+await fetch(address, { signal: controller.signal });
+
+await fetch(address, { signal: AbortSignal.timeout(2000) }); // ✓
+```
+
+| Option      | Default | Meaning                                   |
+| ----------- | ------- | ----------------------------------------- |
+| `factories` | `[]`    | Functions of yours that make a controller |
+
+### `bun/prefer-url-for-sibling-files`
+
+Bundlers follow `new URL("./file", import.meta.url)` to the file and copy it. They cannot follow a path that is joined onto `import.meta.dirname` or `__dirname`.
+
+```ts
+const schema = join(import.meta.dirname, "schema.sql"); // ✗
+
+const schema = new URL("./schema.sql", import.meta.url); // ✓
+```
+
+### `bun/react-no-local-render-helpers`
+
+A component that makes a function such as `renderCell` in its body, and uses it in its JSX, makes it anew on every render. React cannot tell what it renders from the component around it. It should be a component of its own.
+
+```tsx
+function Table({ rows }) {
+  const renderCell = row => <tr key={row.id} />; // ✗
+  return <table>{rows.map(renderCell)}</table>;
+}
+```
+
+| Option    | Default          | Meaning                                       |
+| --------- | ---------------- | --------------------------------------------- |
+| `pattern` | `"^render[A-Z]"` | A regular expression for the names of helpers |
+
+### `bun/prefer-local-module`
+
+For a project that wraps a package in a module of its own. `--fix` rewrites the import.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/prefer-local-module": [
+      "error",
+      {
+        "modules": [{ "package": "axios", "use": "@/http", "default": "http" }],
+        "exemptFiles": ["src/http.ts"]
+      }
+    ]
+  }
+}
+```
+
+```ts
+import axios from "axios"; // ✗
+
+import { http as axios } from "@/http"; // ✓
+```
+
+| Of a module | Meaning                                                                         |
+| ----------- | ------------------------------------------------------------------------------- |
+| `package`   | The package                                                                     |
+| `use`       | The specifier to import in its place, as it is to be written                    |
+| `default`   | The name under which your module exports the default export of the package      |
+| `names`     | `{ "theirName": "yourName" }` for exports that have another name in your module |
+
+`exemptFiles` are the ends of paths: `"src/http.ts"` is every file of that name in a directory `src`.
+
 ## What cannot be linted
 
 A configuration can ask for more than `bun lint` can do:

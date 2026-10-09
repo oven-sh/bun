@@ -88,7 +88,7 @@ fn is_json(path: &[u8], script_kind: Option<ScriptKind>) -> bool {
 }
 
 /// The file as the parser leaves it. Without `atoms`, the file has its own, which `scratch` knows.
-fn parse(
+fn file_of(
     scratch: &mut Scratch,
     how: Reading<'_>,
     text: &[u8],
@@ -117,12 +117,12 @@ fn parse(
         dialect,
         goal: Default::default(),
     };
-    let parse = |options, scratch: &mut Scratch| match atoms {
+    let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
         None => crate::parse_with_own_atoms(text, options, scratch),
     };
     let attempt = |mut options: Options, scratch: &mut Scratch| {
-        let first = parse(options, scratch).map_err(|it| (it.why, it.at))?;
+        let first = once(options, scratch).map_err(|it| (it.why, it.at))?;
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
         let parse_again = first.has_top_level_await
@@ -138,7 +138,7 @@ fn parse(
         }
         scratch.recycle(first.file);
         options.await_is_a_name = true;
-        let second = parse(options, scratch);
+        let second = once(options, scratch);
         second.map(|it| it.file).map_err(|it| (it.why, it.at))
     };
     let is_flow = dialect.flow && is_js;
@@ -194,7 +194,7 @@ fn parse(
     file
 }
 
-/// `parse`, with every list at its final size in the arena.
+/// `file_of`, with every list at its final size in the arena.
 fn parse_into_arena<'s>(
     scratch: &mut Scratch,
     how: Reading<'_>,
@@ -202,7 +202,7 @@ fn parse_into_arena<'s>(
     text: &[u8],
     atoms: &dyn Intern,
 ) -> File<'s> {
-    let mut file = parse(scratch, how, text, Some(atoms));
+    let mut file = file_of(scratch, how, text, Some(atoms));
     let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
     if in_arena.kind == FileKind::Json {
         bun_sema::json::validate_json(&mut in_arena, text);
@@ -381,7 +381,7 @@ pub fn with_summary_in_place<'s, R>(
         give_back_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);
     }
-    let mut file = parse(&mut scratch, how, text, None);
+    let mut file = file_of(&mut scratch, how, text, None);
     let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // A very large file would leave its capacity to every later file.
     if text.len() < 4 << 20 {

@@ -5,7 +5,7 @@ use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::js_plugin;
 use crate::options::Json;
-use crate::oxlint_help::Help;
+use crate::oxlint_help::{Help, Part};
 use crate::rule::{Meta, Plugin};
 use crate::span::Span;
 use bun_core::printer::json_stringify;
@@ -191,9 +191,23 @@ pub struct LintMessage {
 impl LintMessage {
     /// oxlint's `help`. Empty: there is none.
     pub fn help(&self) -> &str {
-        match (self.details.as_deref(), self.constant_help) {
-            (Some(details), _) if !details.help.is_empty() => &details.help,
-            (_, help) => help.map_or("", Help::text),
+        self.text(Part::Help, |it| &it.help)
+    }
+
+    /// What oxlint says at the place of the message. Empty: nothing.
+    pub fn first_label(&self) -> &str {
+        self.text(Part::FirstLabel, |it| &it.first_label)
+    }
+
+    /// oxlint's `note`. Empty: there is none.
+    pub fn note(&self) -> &str {
+        self.text(Part::Note, |it| &it.note)
+    }
+
+    fn text(&self, part: Part, said: fn(&Details) -> &str) -> &str {
+        match self.details.as_deref().map(said) {
+            Some(said) if !said.is_empty() => said,
+            _ => self.constant_help.map_or("", |it| it.constant(part)),
         }
     }
 }

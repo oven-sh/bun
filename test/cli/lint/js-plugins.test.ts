@@ -1280,7 +1280,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB, which are not heavy yet, are 6 MB: an engine that is started still finds work.
+      // 24 files of 250 KB, which are not heavy yet, are 6 MB: while nothing is measured that is work for three engines.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1840,7 +1840,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             .map(it => it[2]);
         return {
           heavy: [realmsOf("heavy").length, new Set(realmsOf("heavy")).size],
-          light: new Set(realmsOf("light")).size,
+          light: realmsOf("light").length,
         };
       };
       const more = availableParallelism() + 1;
@@ -1850,8 +1850,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         [more, 1],
         [9, 1],
       ]);
-      // 6 MB of the others.
-      for (const it of [one, many, typed]) expect(it.light).toBeGreaterThan(1);
+      expect([one.light, many.light, typed.light]).toEqual([24, 24, 24]);
     },
     timeout,
   );

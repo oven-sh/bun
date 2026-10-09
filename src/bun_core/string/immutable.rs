@@ -25,11 +25,12 @@ pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/whitespace.rs"]
 mod whitespace;
 pub use whitespace::{
-    JsLines, contains_js_line_break, find_js_line_break, is_all_js_whitespace,
+    JsLines, contains_js_line_break, crlf_as_lf, find_js_line_break, is_all_js_whitespace,
     is_all_unicode_whitespace, is_js_line_terminator, is_js_whitespace, js_line_break_len,
-    js_lines, js_whitespace_len, js_whitespace_len_back, split_unicode_whitespace,
-    trim_js_whitespace, trim_js_whitespace_end, trim_js_whitespace_start, trim_unicode_whitespace,
-    trim_unicode_whitespace_end, trim_unicode_whitespace_start,
+    js_line_break_len_back, js_lines, js_whitespace_len, js_whitespace_len_back, push_crlf_as_lf,
+    split_crlf_lines, split_unicode_whitespace, trim_js_whitespace, trim_js_whitespace_end,
+    trim_js_whitespace_start, trim_unicode_whitespace, trim_unicode_whitespace_end,
+    trim_unicode_whitespace_start,
 };
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;

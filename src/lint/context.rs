@@ -3,7 +3,7 @@
 
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
-use crate::oxlint_help::{self, Help};
+use crate::oxlint_help::{self, Found, Help, Part};
 use crate::rule::{Message, Meta, Rule};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
@@ -29,7 +29,8 @@ pub struct Diagnostic {
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
     pub details: Option<Box<Details>>,
-    /// The help of oxlint, if `details` has none. Once the report is complete it is one without values.
+    /// What oxlint says besides the message, where `details` does not say it. What of it has values is in `details` once the report
+    /// is complete.
     pub constant_help: Option<Help>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
@@ -391,8 +392,8 @@ impl<'a> Report<'a> {
 
     fn reads_fixes(&self) -> bool {
         self.diagnostic.as_ref().is_some_and(|it| {
-            let help = it.constant_help.map(Help::found);
-            let makes_help = matches!(help, Some(oxlint_help::Found::OfTheFix { .. }));
+            let help = it.constant_help.map(|it| it.found(Part::Help));
+            let makes_help = matches!(help, Some(Found::OfTheFix { .. }));
             makes_help || self.file.sink.wants_fixes.get()
         })
     }
@@ -401,7 +402,7 @@ impl<'a> Report<'a> {
     #[inline(never)]
     fn take_help_of(&mut self, first: Option<&Fix>) {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        let Some(oxlint_help::Found::OfTheFix { removes }) = help.map(Help::found) else {
+        let Some(Found::OfTheFix { removes }) = help.map(|it| it.found(Part::Help)) else {
             return;
         };
         let Some(fix) = first else {
@@ -423,9 +424,6 @@ impl<'a> Report<'a> {
             (false, true) => b"Delete this code.".to_vec(),
             (false, false) => [b"Replace `", &before[..], b"` with `", &after[..], b"`."].concat(),
         };
-        if let Some(diagnostic) = &mut self.diagnostic {
-            diagnostic.constant_help = None;
-        }
         if let (Ok(help), Some(details)) = (std::str::from_utf8(&help), self.details())
             && details.help.is_empty()
         {
@@ -510,24 +508,19 @@ impl Drop for Report<'_> {
         if let Some(mut diagnostic) = self.diagnostic.take() {
             let data = |name: &str| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
             diagnostic.message = interpolate(self.message, data);
-            let help = diagnostic.constant_help.map(Help::found);
-            // There was no fix.
-            if let Some(oxlint_help::Found::OfTheFix { .. }) = help {
-                diagnostic.constant_help = None;
-            }
-            if let Some(oxlint_help::Found::WithData(text)) = help {
-                diagnostic.constant_help = None;
-                let details = diagnostic.details.get_or_insert_default();
-                if details.help.is_empty() {
-                    let help = Message {
-                        id: "",
-                        text,
-                        may_have_placeholders: true,
-                        key: 0,
-                    };
-                    let help = interpolate(help, data);
-                    let help = std::str::from_utf8(&help).unwrap_or_default();
-                    details.help = Cow::Owned(help.to_owned());
+            if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
+                let details = &mut **diagnostic.details.get_or_insert_default();
+                let parts = [
+                    (Part::Help, &mut details.help),
+                    (Part::FirstLabel, &mut details.first_label),
+                    (Part::Note, &mut details.note),
+                ];
+                for (part, said) in parts {
+                    if let (Found::WithData(text), true) = (texts.found(part), said.is_empty()) {
+                        let text = interpolate_text(text, data);
+                        let text = std::str::from_utf8(&text).unwrap_or_default();
+                        *said = Cow::Owned(text.to_owned());
+                    }
                 }
             }
             for suggestion in &mut diagnostic.suggestions {

@@ -120,7 +120,7 @@ pub fn format(
     // Prettier's `normalizeInputAndOptions`: the offsets count UTF-16 code units of `original`.
     let first = original.len() - text.len();
     let range = Offsets::new(original, first, options);
-    let mut text: Cow<'_, [u8]> = crate::css::normalize_end_of_line(text);
+    let mut text: Cow<'_, [u8]> = bun_core::strings::crlf_as_lf(text);
     if (range.start >= range.end && !text.is_empty())
         || (options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]))
         || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))

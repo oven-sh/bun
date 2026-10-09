@@ -9,7 +9,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
 use bun_lint::options::Json;
-use bun_lint::rule::Fixable;
+use bun_lint::rule::{Fixable, Plugin};
 use std::io::Write;
 
 /// What oxlint says about a run.
@@ -328,6 +328,18 @@ pub(crate) fn plugin(prefix: &[u8]) -> &[u8] {
     }
 }
 
+/// The page of oxlint about a rule. None about one of Bun's own.
+pub(crate) fn page_of(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
+    let page = [
+        b"https://oxc.rs/docs/guide/usage/linter/rules/",
+        plugin(of.prefix().as_bytes()),
+        b"/",
+        name,
+        b".html",
+    ];
+    (of != Plugin::Bun).then(|| page.concat())
+}
+
 /// `--rules`. `as_json`: with `-f json`.
 pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool) {
     let mut all: Vec<_> = registry
@@ -351,14 +363,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
             (false, true) => b"fixable_suggestion",
             (false, false) => b"none",
         };
-        let url = [
-            b"https://oxc.rs/docs/guide/usage/linter/rules/",
-            scope,
-            b"/",
-            meta.name.as_bytes(),
-            b".html",
-        ]
-        .concat();
+        let url = page_of(meta.plugin, meta.name.as_bytes());
         object(vec![
             (b"scope", text(scope)),
             (b"value", text(meta.name.as_bytes())),
@@ -375,7 +380,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
                         && matches!(scope, b"eslint" | b"typescript" | b"oxc" | b"unicorn"),
                 ),
             ),
-            (b"docs_url", text(&url)),
+            (b"docs_url", url.map_or(Json::Null, |it| text(&it))),
         ])
     });
     write_indented(out, &Json::Array(rules.collect()), 0);

@@ -475,40 +475,23 @@ impl<'t> Builder<'t, '_, '_> {
                 .take_while(|byte| matches!(byte, b' ' | b'\t'))
                 .count()
         }
-        fn lines(content: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
-            // `\r\n`, `\n` and `\r` end a line.
-            let mut rest = Some(content);
-            std::iter::from_fn(move || {
-                let text = rest?;
-                let Some(at) = bun_core::strings::index_of_any(text, b"\n\r") else {
-                    rest = None;
-                    return Some(text);
-                };
-                let len = if text[at..].starts_with(b"\r\n") {
-                    2
-                } else {
-                    1
-                };
-                rest = Some(&text[at + len..]);
-                Some(&text[..at])
-            })
-        }
-
         // graphql-js's `dedentBlockStringLines`
         let is_blank = |line: &[u8]| leading_blanks(line) == line.len();
-        let common_indent = lines(content)
+        let common_indent = bun_core::strings::split_crlf_lines(content)
             .skip(1)
             .filter(|line| !is_blank(line))
             .map(leading_blanks)
             .min()
             .unwrap_or(usize::MAX);
-        let first = lines(content).position(|line| !is_blank(line)).unwrap_or(0);
-        let count = lines(content)
+        let first = bun_core::strings::split_crlf_lines(content)
+            .position(|line| !is_blank(line))
+            .unwrap_or(0);
+        let count = bun_core::strings::split_crlf_lines(content)
             .enumerate()
             .filter(|(_, line)| !is_blank(line))
             .last()
             .map_or(0, |(last, _)| last + 1 - first);
-        let dedented = lines(content)
+        let dedented = bun_core::strings::split_crlf_lines(content)
             .enumerate()
             .skip(first)
             .take(count)

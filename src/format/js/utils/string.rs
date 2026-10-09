@@ -27,9 +27,11 @@ pub(crate) struct FormatLiteralStringToken<'a> {
 mod es5_identifier_tables;
 
 /// ES5's `IdentifierName`, as the package `is-es5-identifier-name` has it, whose letters are those of
-/// an old version of Unicode. Prettier only removes the quotes of such a name.
+/// an old version of Unicode: Bun's tables of today, but for what `es5_identifier_tables` lists.
+/// Prettier only removes the quotes of such a name.
 pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
-    use es5_identifier_tables::{PART, START};
+    use bun_core::lexer::{is_identifier_start, is_type_script_identifier_part};
+    use es5_identifier_tables::{PART_LESS, PART_MORE, START_LESS, START_MORE};
     let is_in = |table: &[(u16, u16)], c: u32| {
         u16::try_from(c).is_ok_and(|c| {
             let index = table.partition_point(|&(_, end)| end < c);
@@ -43,7 +45,14 @@ pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
                     || matches!(b, b'$' | b'_')
                     || (at != 0 && b.is_ascii_digit())
             }
-            _ => is_in(if at == 0 { START } else { PART }, c),
+            _ if c > 0xFFFF => false,
+            _ if at == 0 => {
+                (is_identifier_start(c) && !is_in(START_LESS, c)) || is_in(START_MORE, c)
+            }
+            _ => {
+                (is_type_script_identifier_part(c as i32) && !is_in(PART_LESS, c))
+                    || is_in(PART_MORE, c)
+            }
         })
 }
 
@@ -179,7 +188,7 @@ impl<'a> FormatLiteralStringToken<'a> {
         }
         let mut text = Vec::with_capacity(self.string.len());
         text.push(quote.as_byte());
-        push_with_normalized_newlines(&mut text, content);
+        bun_core::strings::push_crlf_as_lf(&mut text, content);
         text.push(quote.as_byte());
         Cow::Owned(text)
     }
@@ -279,22 +288,10 @@ impl<'a> FormatLiteralStringToken<'a> {
         }
         let mut text = Vec::with_capacity(unescaped.len() + 2);
         text.push(chosen_quote.as_byte());
-        push_with_normalized_newlines(&mut text, &unescaped);
+        bun_core::strings::push_crlf_as_lf(&mut text, &unescaped);
         text.push(chosen_quote.as_byte());
         Cow::Owned(text)
     }
-}
-
-/// Appends `text` with `\r\n` and `\r` replaced by `\n`.
-pub(crate) fn push_with_normalized_newlines(out: &mut Vec<u8>, text: &[u8]) {
-    let mut rest = text;
-    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
-        out.extend_from_slice(&rest[..at]);
-        out.push(b'\n');
-        rest = &rest[at + 1..];
-        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
-    }
-    out.extend_from_slice(rest);
 }
 
 /// Whether `text` is printable ASCII without `quote`.

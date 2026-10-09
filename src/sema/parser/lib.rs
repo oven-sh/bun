@@ -5,9 +5,11 @@
 //! piece of code corresponds to. Where that parser looks ahead or parses speculatively, so does
 //! this one, so both decide every ambiguity the same way.
 //!
-//! It parses what is valid. It has no error recovery and reports no error: a text that it cannot
-//! vouch for is refused ([`Refusal`]), and the caller hands that text to the parser that recovers
-//! from errors as TypeScript does.
+//! It is compiled twice. The one instance parses what is valid: it has no error recovery and reports
+//! no error, and a text that it cannot vouch for is refused ([`Refusal`]). The other
+//! ([`Options::recovers`], [`Options::reads_jsdoc`]) goes on after an error as TypeScript's parser does,
+//! and reports what that reports. [`summarize`] and its kin ask the first, and the second for what the
+//! first has refused.
 
 #![forbid(unsafe_code)]
 #![feature(portable_simd)]
@@ -136,8 +138,7 @@ pub struct Options {
     pub is_json: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
-    /// Goes on after a syntax error as TypeScript's parser does, and reports it. Not finished: what
-    /// is not written yet is refused as without it.
+    /// Goes on after a syntax error as TypeScript's parser does, and reports it.
     pub recovers: bool,
     /// The tags of JSDoc comments are read as TypeScript's parser reads them: in a JavaScript file
     /// they become types, casts and declarations, in a TypeScript file they are only looked at for
@@ -207,7 +208,7 @@ pub struct Parsed {
 }
 
 /// `parser::run`. What follows a part of a text need not be a token: then the text ends before it.
-fn run(
+fn run_to_goal(
     text: &[u8],
     options: Options,
     atoms: Option<&dyn Intern>,
@@ -229,7 +230,7 @@ pub fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    let parsed = run(text, options, Some(atoms), scratch)?;
+    let parsed = run_to_goal(text, options, Some(atoms), scratch)?;
     if !options.reads_jsdoc || options.is_javascript {
         return Ok(parsed);
     }
@@ -242,7 +243,7 @@ pub fn parse(
     }
     scratch.recycle(parsed.file);
     scratch.jsdoc_wanted = wanted;
-    let parsed = run(text, options, Some(atoms), scratch);
+    let parsed = run_to_goal(text, options, Some(atoms), scratch);
     scratch.jsdoc_wanted = 0;
     parsed
 }
@@ -254,7 +255,7 @@ pub fn parse_with_own_atoms(
     options: Options,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    run(text, options, None, scratch)
+    run_to_goal(text, options, None, scratch)
 }
 
 /// The number of tokens of `text`, as far as that can be told without parsing. For benchmarks of

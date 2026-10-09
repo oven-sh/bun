@@ -35,8 +35,11 @@ impl<'m> Trace<'m> for FileSystem {
     }
 
     fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
-        if name == b"promises" {
-            return Some(("promises", &FileSystem));
+        // The default export is the module itself, which the tracker knows if it is not told otherwise.
+        match name {
+            b"default" => return None,
+            b"promises" => return Some(("promises", &FileSystem)),
+            _ => {}
         }
         let known = TWO_PATHS.iter().chain(&SYMLINK).find(|it| it.as_bytes() == name);
         Some((known.copied().unwrap_or_default(), &CALLED))

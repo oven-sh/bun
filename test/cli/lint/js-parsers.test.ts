@@ -569,7 +569,7 @@ describe.concurrent("bun lint with languages", () => {
         return [messages.length, new Set(messages).size];
       };
       expect(await realms("typed")).toEqual([24, 1]);
-      expect((await realms("plain"))[1]).toBeGreaterThan(1);
+      expect((await realms("plain"))[0]).toBe(24);
     },
     timeout,
   );

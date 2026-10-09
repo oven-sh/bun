@@ -985,7 +985,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 b"source" if self.options.dialect.babel => {}
                 _ => return self.other_meta_property_of_import(start),
             }
-            self.next();
+            // `parseIdentifierName`
+            self.next_after_name();
             is_deferred = true;
         }
         match self.token() {

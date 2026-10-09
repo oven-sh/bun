@@ -3125,6 +3125,7 @@ test("react-compiler memory does not grow with the square of the size of a compo
 
 // InferTypes copies the type of a phi into each phi that it is an operand of. Variables that are assigned from each
 // other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+// Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
 test("react-compiler leaves a component alone whose types are too complex to infer", async () => {
   using dir = tempDir("react-compiler-types", {
     "entry.jsx": `

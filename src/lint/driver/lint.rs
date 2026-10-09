@@ -12,7 +12,7 @@ use bun_core::strings;
 use bun_lint::ast::{File, VueScript};
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
-use bun_lint::formats::Reason;
+use bun_lint::formats::{Formats, Reason};
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
@@ -60,6 +60,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) invalid_tsconfigs: &'c Guarded<crate::typed::InvalidTsconfigs>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
+    /// `bun format`, for the rules that hold a file against its formatted text.
+    pub(crate) formatter: &'c dyn Formats,
     pub(crate) timing: &'c Timing,
     /// The names in all files that are linted without types. They are freed when the run ends: what
     /// they take is bounded by the distinct names and strings of the project.
@@ -405,6 +407,7 @@ impl Context<'_, '_> {
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
                 file.set_modules(self.modules);
+                file.set_formatter(self.formatter, as_what.physical_path_len);
                 file.set_vue_script(as_what.vue_script);
                 let options = self.lint_options();
                 let options = LintOptions {

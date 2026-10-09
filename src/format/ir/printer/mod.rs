@@ -233,7 +233,11 @@ pub(crate) fn print(
         variants: &storage.variants,
         source,
         text: &storage.text,
-        out: Out::new(out, source.len() + source.len() / 8 + 64),
+        // A document can be a small part of what is made of a large file.
+        out: Out::new(
+            out,
+            (source.len() + source.len() / 8).min(root.len as usize * 16) + 64,
+        ),
         pending_indent: Indention::default(),
         pending_space: false,
         measured_group_fits: true,

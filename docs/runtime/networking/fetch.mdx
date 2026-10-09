@@ -376,6 +376,7 @@ const response = await fetch(url);
 Bun's fetch implementation includes several specific error cases:
 
 - Using a request body with GET/HEAD methods throws an error (which is expected for the fetch API)
+- A `method` that is not an HTTP token (for example `"GET POST"`) rejects with a `TypeError`, and so does `"TRACK"`. An empty string is the same as no `method`
 - Using the `proxy` and `unix` options together throws an error
 - Connection failures reject with a `TypeError` whose `code` is the socket error (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, ...). The message starts with the code.
 - TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)

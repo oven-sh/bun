@@ -46,6 +46,11 @@ pub(crate) fn write_request(
     );
 
     let request = client.build_request(body_len);
+    // QPACK (lsxpack) holds a field length in 16 bits. The method can be the
+    // caller's own token, and a longer one would go out as its first bytes.
+    if request.method.len() > usize::from(u16::MAX) {
+        return Err(crate::Error::HTTP3HeaderEncodingError);
+    }
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(

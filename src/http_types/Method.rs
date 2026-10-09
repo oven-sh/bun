@@ -1,4 +1,7 @@
+use bun_core::StringPointer;
 use enumset::EnumSet;
+
+use crate::ETag::Headers;
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
@@ -221,6 +224,381 @@ impl Method {
     #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Request methods outside the table.
+//
+// `fetch`, `Request` and `server.fetch` take any RFC 9110 token as a method
+// (<https://fetch.spec.whatwg.org/#methods>). `Method` stays the closed set
+// that `Bun.serve` routes on. A token outside it is carried as bytes:
+// `OwnedMethod` where JS holds it, `MethodRef` in the HTTP client.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// RFC 9110 §5.6.2 `token`: one or more `tchar`.
+pub fn is_token(bytes: &[u8]) -> bool {
+    !bytes.is_empty()
+        && bytes.iter().all(|&c| {
+            c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+}
+
+/// What a method string that [`Method::which`] does not have names for
+/// `fetch` and `Request`. See [`Method::classify_miss`].
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Classified {
+    /// DELETE, GET, HEAD, OPTIONS, POST or PUT in mixed case.
+    Known(Method),
+    /// Any other token. It goes to the wire as written.
+    Token,
+    /// CONNECT, TRACE or TRACK. Fetch forbids these three in any case.
+    Forbidden,
+    /// Not a token, so not a method.
+    Invalid,
+}
+
+impl Method {
+    /// Reads a method string that [`which`] does not have, as `fetch` and
+    /// `Request` take it: DELETE, GET, HEAD, OPTIONS, POST and PUT match in
+    /// any case (<https://fetch.spec.whatwg.org/#concept-method-normalize>),
+    /// and every other token is kept as written.
+    ///
+    /// A caller asks [`which`] first. Its hits keep their verb, so a request
+    /// with a method of the table costs what it did before.
+    ///
+    /// [`which`]: Method::which
+    #[cold]
+    pub fn classify_miss(bytes: &[u8]) -> Classified {
+        const NORMALIZED: [Method; 6] = [
+            Method::DELETE,
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::POST,
+            Method::PUT,
+        ];
+        for method in NORMALIZED {
+            if bytes.eq_ignore_ascii_case(method.as_str().as_bytes()) {
+                return Classified::Known(method);
+            }
+        }
+        // <https://fetch.spec.whatwg.org/#forbidden-method>. The table holds
+        // CONNECT and TRACE in two spellings, and those stay accepted.
+        for forbidden in [&b"CONNECT"[..], b"TRACE", b"TRACK"] {
+            if bytes.eq_ignore_ascii_case(forbidden) {
+                return Classified::Forbidden;
+            }
+        }
+        if is_token(bytes) {
+            Classified::Token
+        } else {
+            Classified::Invalid
+        }
+    }
+}
+
+/// A request method as JS names it: a verb of the table, or any other token
+/// kept as written. [`MethodRef`] is the `Copy` form the HTTP client holds.
+#[derive(Clone)]
+pub enum OwnedMethod {
+    Known(Method),
+    /// [`Method::classify_miss`] answered [`Classified::Token`] for these bytes.
+    Token(Box<[u8]>),
+}
+
+impl From<Method> for OwnedMethod {
+    #[inline]
+    fn from(method: Method) -> Self {
+        OwnedMethod::Known(method)
+    }
+}
+
+impl OwnedMethod {
+    /// The verb, or `None` for a token.
+    #[inline]
+    pub fn known(&self) -> Option<Method> {
+        match self {
+            OwnedMethod::Known(method) => Some(*method),
+            OwnedMethod::Token(_) => None,
+        }
+    }
+
+    /// The method as it goes to the wire.
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            OwnedMethod::Known(method) => method.as_str().as_bytes(),
+            OwnedMethod::Token(token) => token,
+        }
+    }
+
+    /// This method for the HTTP client. A token is stored after the headers
+    /// in `headers.buf`, the buffer the client resolves every `StringPointer`
+    /// of the request against.
+    #[inline]
+    pub fn to_ref(&self, headers: &mut Headers) -> MethodRef {
+        match self {
+            OwnedMethod::Known(method) => MethodRef::Known(*method),
+            OwnedMethod::Token(token) => MethodRef::Token(store_token(token, headers)),
+        }
+    }
+}
+
+#[cold]
+fn store_token(token: &[u8], headers: &mut Headers) -> StringPointer {
+    // `StringPointer`s index `buf`, so its length fits one, as in `Headers::append`.
+    let offset = u32::try_from(headers.buf.len()).unwrap();
+    headers.buf.extend_from_slice(token);
+    StringPointer {
+        offset,
+        length: u32::try_from(token.len()).unwrap(),
+    }
+}
+
+impl core::fmt::Display for OwnedMethod {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // A verb and a token are ASCII.
+        f.write_str(core::str::from_utf8(self.as_bytes()).map_err(|_| core::fmt::Error)?)
+    }
+}
+
+/// The method of an outgoing request, as the HTTP client holds it. `Copy`: a
+/// method outside the table is a [`StringPointer`] into the request's header
+/// buffer, which the header names and values already point into.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MethodRef {
+    Known(Method),
+    Token(StringPointer),
+}
+
+impl From<Method> for MethodRef {
+    #[inline]
+    fn from(method: Method) -> Self {
+        MethodRef::Known(method)
+    }
+}
+
+/// A token is never equal to a verb: the table lookup comes first.
+impl PartialEq<Method> for MethodRef {
+    #[inline]
+    fn eq(&self, other: &Method) -> bool {
+        matches!(*self, MethodRef::Known(method) if method == *other)
+    }
+}
+
+impl MethodRef {
+    /// The verb, or `None` for a token.
+    #[inline]
+    pub fn known(self) -> Option<Method> {
+        match self {
+            MethodRef::Known(method) => Some(method),
+            MethodRef::Token(_) => None,
+        }
+    }
+
+    /// The method as it goes to the wire. `header_buf` is the buffer that a
+    /// token was stored in.
+    #[inline]
+    pub fn bytes(self, header_buf: &[u8]) -> &[u8] {
+        match self {
+            MethodRef::Known(method) => method.as_str().as_bytes(),
+            MethodRef::Token(ptr) => &header_buf[ptr.offset as usize..][..ptr.length as usize],
+        }
+    }
+
+    /// Whether `header_buf` holds this method. A verb needs no buffer.
+    #[inline]
+    pub fn is_in(self, header_buf: &[u8]) -> bool {
+        match self {
+            MethodRef::Known(_) => true,
+            MethodRef::Token(ptr) => header_buf
+                .get(ptr.offset as usize..)
+                .and_then(|rest| rest.get(..ptr.length as usize))
+                .is_some_and(is_token),
+        }
+    }
+
+    /// Whether the response has a body. The table names the methods whose
+    /// response has none.
+    #[inline]
+    pub fn has_body(self) -> bool {
+        self.known().is_none_or(Method::has_body)
+    }
+
+    /// Whether a request of this method may carry a body. A token may.
+    #[inline]
+    pub fn has_request_body(self) -> bool {
+        self.known().is_none_or(Method::has_request_body)
+    }
+
+    /// Whether a request that failed on a reused connection is sent again.
+    /// Nothing says that a token is idempotent.
+    #[inline]
+    pub fn is_idempotent(self) -> bool {
+        self.known().is_some_and(Method::is_idempotent)
+    }
+}
+
+#[cfg(test)]
+mod request_method_tests {
+    use super::*;
+
+    #[test]
+    fn is_token_is_the_rfc_9110_tchar_set() {
+        for c in 0..=u8::MAX {
+            let expected = c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c);
+            assert_eq!(is_token(&[c]), expected, "byte {c:#04x}");
+            assert_eq!(is_token(&[b'A', c, b'Z']), expected, "byte {c:#04x} inside");
+        }
+        assert!(!is_token(b""));
+    }
+
+    /// The table lookup, then the rest: what the JS bridge does.
+    fn classify(bytes: &[u8]) -> Classified {
+        match Method::which(bytes) {
+            Some(method) => Classified::Known(method),
+            None => Method::classify_miss(bytes),
+        }
+    }
+
+    #[test]
+    fn classify_reads_a_method_as_fetch_does() {
+        use Classified::{Forbidden, Invalid, Known, Token};
+        for m in enumset::EnumSet::<Method>::all() {
+            let upper = m.as_str();
+            assert_eq!(classify(upper.as_bytes()), Known(m), "upper {upper}");
+            let lower = upper.to_ascii_lowercase();
+            assert_eq!(classify(lower.as_bytes()), Known(m), "lower {lower}");
+        }
+        for (input, expected) in [
+            // Any case of the six that Fetch normalizes.
+            (&b"Delete"[..], Known(Method::DELETE)),
+            (b"gEt", Known(Method::GET)),
+            (b"hEaD", Known(Method::HEAD)),
+            (b"oPtIoNs", Known(Method::OPTIONS)),
+            (b"pOsT", Known(Method::POST)),
+            (b"Put", Known(Method::PUT)),
+            // Every other token is kept as written, a mixed-case table verb too.
+            (b"PatCh", Token),
+            (b"Propfind", Token),
+            (b"BREW", Token),
+            (b"LIST", Token),
+            (b"M-search", Token),
+            (b"GETS", Token),
+            (b"TRACKS", Token),
+            (b"0", Token),
+            // The three that Fetch forbids, in the spellings the table lacks.
+            (b"Connect", Forbidden),
+            (b"Trace", Forbidden),
+            (b"TRACK", Forbidden),
+            (b"track", Forbidden),
+            (b"tRaCk", Forbidden),
+            (b"", Invalid),
+            (b"GET POST", Invalid),
+            (b" GET", Invalid),
+            (b"GET\r\n", Invalid),
+            (b"G\0T", Invalid),
+            (b"caf\xc3\xa9", Invalid),
+            (b"(GET)", Invalid),
+        ] {
+            assert_eq!(classify(input), expected, "{:?}", bstr::BStr::new(input));
+        }
+    }
+
+    #[test]
+    fn owned_method_holds_a_verb_or_a_token() {
+        // `Request` holds one of these: with it the struct is 112 bytes.
+        assert_eq!(size_of::<OwnedMethod>(), 16);
+        for m in enumset::EnumSet::<Method>::all() {
+            let owned = OwnedMethod::from(m);
+            assert_eq!(owned.known(), Some(m));
+            assert_eq!(owned.as_bytes(), m.as_str().as_bytes());
+            assert_eq!(owned.clone().known(), Some(m));
+            let mut headers = Headers::default();
+            assert_eq!(owned.to_ref(&mut headers), MethodRef::Known(m));
+            assert!(headers.buf.is_empty());
+        }
+        let owned = OwnedMethod::Token(Box::from(&b"PatCh"[..]));
+        assert_eq!(owned.known(), None);
+        assert_eq!(owned.as_bytes(), b"PatCh");
+        assert_eq!(owned.to_string(), "PatCh");
+        assert_eq!(owned.clone().as_bytes(), b"PatCh");
+    }
+
+    #[test]
+    fn method_ref_token_points_after_the_headers() {
+        let mut headers = Headers::default();
+        headers.append(b"Accept", b"*/*");
+        let before = headers.buf.clone();
+
+        let method = OwnedMethod::Token(Box::from(&b"BREW"[..])).to_ref(&mut headers);
+        assert_eq!(
+            method,
+            MethodRef::Token(StringPointer {
+                offset: before.len() as u32,
+                length: 4
+            })
+        );
+        assert_eq!(method.known(), None);
+        assert_eq!(method.bytes(&headers.buf), b"BREW");
+        assert!(method.is_in(&headers.buf));
+        // The bytes of the headers do not move.
+        assert_eq!(&headers.buf[..before.len()], &before[..]);
+        assert_eq!(headers.get(b"accept"), Some(&b"*/*"[..]));
+
+        // A pointer that is not for this buffer, or that does not name a token.
+        assert!(!method.is_in(&before));
+        let not_a_token = MethodRef::Token(StringPointer {
+            offset: 0,
+            length: before.len() as u32,
+        });
+        assert!(!not_a_token.is_in(&headers.buf));
+        let overflows = MethodRef::Token(StringPointer {
+            offset: u32::MAX,
+            length: u32::MAX,
+        });
+        assert!(!overflows.is_in(&headers.buf));
+
+        assert_eq!(MethodRef::from(Method::PUT).bytes(b""), b"PUT");
+        assert!(MethodRef::from(Method::PUT).is_in(b""));
+    }
+
+    #[test]
+    fn method_ref_treats_a_token_as_an_unknown_method() {
+        let token = MethodRef::Token(StringPointer {
+            offset: 0,
+            length: 4,
+        });
+        // It may carry a body, its response has one, and it is not sent twice.
+        assert!(token.has_request_body());
+        assert!(token.has_body());
+        assert!(!token.is_idempotent());
+        for m in enumset::EnumSet::<Method>::all() {
+            let known = MethodRef::from(m);
+            assert_eq!(known.known(), Some(m));
+            assert_eq!(known.has_request_body(), m.has_request_body(), "{m:?}");
+            assert_eq!(known.has_body(), m.has_body(), "{m:?}");
+            assert_eq!(known.is_idempotent(), m.is_idempotent(), "{m:?}");
+            assert!(known == m);
+            assert!(token != m);
+        }
     }
 }
 

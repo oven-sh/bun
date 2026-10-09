@@ -390,3 +390,69 @@ describe("fetch() follows a redirect whose Location scheme is not lowercase", ()
     }
   });
 });
+
+// https://fetch.spec.whatwg.org/#http-redirect-fetch step 12: a 301 or 302 changes
+// POST to GET, and a 303 changes every method but GET and HEAD. A method outside
+// Bun's table is none of those verbs.
+describe("fetch() redirect of a method outside the table", () => {
+  // Answers /start with the redirect and everything else with 200. Returns what it received.
+  async function run(status: number, init: RequestInit) {
+    const requests: { line: string; body: string }[] = [];
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString("latin1");
+        const headEnd = received.indexOf("\r\n\r\n");
+        if (headEnd === -1) return;
+        const [line, ...headers] = received.slice(0, headEnd).split("\r\n");
+        const contentLength = headers.find(h => h.toLowerCase().startsWith("content-length:"))?.split(":")[1];
+        const body = received.slice(headEnd + 4);
+        if (body.length < Number(contentLength ?? 0)) return;
+        received = "";
+        requests.push({ line, body });
+        socket.end(
+          line.includes(" /start ")
+            ? `HTTP/1.1 ${status} Redirect\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+            : "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/start`, init);
+      await res.arrayBuffer();
+      return { status: res.status, redirected: res.redirected, requests };
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  }
+
+  it.concurrent.each([301, 302, 307, 308])("%d keeps the method and the body", async status => {
+    expect(await run(status, { method: "BREW", body: "coffee" })).toEqual({
+      status: 200,
+      redirected: true,
+      requests: [
+        { line: "BREW /start HTTP/1.1", body: "coffee" },
+        { line: "BREW /final HTTP/1.1", body: "coffee" },
+      ],
+    });
+  });
+
+  it("303 changes the method to GET and drops the body", async () => {
+    expect(await run(303, { method: "BREW", body: "coffee" })).toEqual({
+      status: 200,
+      redirected: true,
+      requests: [
+        { line: "BREW /start HTTP/1.1", body: "coffee" },
+        { line: "GET /final HTTP/1.1", body: "" },
+      ],
+    });
+  });
+});

@@ -44,11 +44,15 @@ function locateWrapped(plugin) {
   for (const [candidate, where] of located) {
     // It answers with what it has made of a plugin before.
     if (candidate.rules && Object.keys(candidate.rules).join() === names && fixupPluginRules(candidate) === plugin) {
+      wrapped.set(plugin, candidate);
       return where;
     }
   }
   return null;
 }
+
+// By what `fixupPluginRules` has made: what of.
+const wrapped = new Map();
 
 // JSON, or `undefined` for what is not.
 function asJson(value) {
@@ -73,14 +77,18 @@ function stringify(value) {
 }
 
 // What the linter has to know of a plugin before any of its rules runs, as JSON: `plugin_of` in `js_plugin/host.rs` reads it.
-// The rules are in the order in which a worker numbers them.
+// The rules are in the order in which a worker numbers them. `at`: the module that exports the very rule, if there is one. A worker
+// loads that, and not the plugin with all its other rules.
 function describe(name, plugin) {
+  locate(plugin);
+  const original = wrapped.get(plugin) ?? plugin;
   const rules = Object.keys(plugin.rules)
     .sort()
     .map(ruleName => {
       const meta = plugin.rules[ruleName]?.meta;
       return {
         name: ruleName,
+        at: locate(original.rules[ruleName]) ?? undefined,
         type: meta?.type,
         fixable: Boolean(meta?.fixable),
         hasSuggestions: meta?.hasSuggestions === true,
@@ -128,6 +136,8 @@ function serialize(value, ancestors = []) {
   if (ancestors.includes(value)) return unserializable("circular");
   const inner = [...ancestors, value];
   if (Array.isArray(value)) return value.map(item => serialize(item, inner) ?? null);
+  // Options of rules have them. A worker makes it again.
+  if (value instanceof RegExp) return { $regexp: [value.source, value.flags] };
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return unserializable(value.constructor?.name ?? "object");
   const entries = Object.entries(value).map(([key, item]) => [key, serialize(item, inner)]);
@@ -161,6 +171,8 @@ function serializeConfigObject(config, index) {
   if (config === null || typeof config !== "object") return serialize(config) ?? null;
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
+  // Which object this is of what the file exports: a worker takes from there what JSON cannot say.
+  if (rest.settings !== undefined) out.$source = { config: path, index };
   if (plugins && typeof plugins === "object") {
     const ids = Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]);
     out.plugins = Array.isArray(plugins) ? serialize(plugins) : Object.fromEntries(ids);

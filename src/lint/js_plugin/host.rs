@@ -74,8 +74,16 @@ pub struct Loading {
     pub bytes: u64,
     /// The time it took to load plugins and processors.
     pub milliseconds: f64,
-    /// The plugins that only the configuration file has, so that a realm has to run all of that to get at them.
+    /// What only the configuration file has, so that a realm has to run all of that to get at it.
     pub need_the_configuration: Vec<Box<[u8]>>,
+}
+
+impl Loading {
+    fn needs_the_configuration_for(&mut self, what: &[u8]) {
+        if !self.need_the_configuration.iter().any(|it| **it == *what) {
+            self.need_the_configuration.push(what.into());
+        }
+    }
 }
 
 /// A plugin that is loaded.
@@ -290,7 +298,8 @@ impl<'e> Host<'e> {
         if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
             return Arc::clone(&known.plugin);
         }
-        let plugin = Arc::new(plugin_of(described, state.rules, needs_the_configuration));
+        let place = (state.plugins.len() as u32, state.rules);
+        let plugin = Arc::new(plugin_of(described, place, needs_the_configuration));
         let first_rule = state.rules;
         state.rules += plugin.rules.len() as u32;
         state.plugins.push(Loaded {
@@ -404,17 +413,10 @@ impl<'e> Host<'e> {
             .collect()
     }
 
-    /// The positions of the plugins that have the rules `enabled`, in ascending order.
-    fn plugins_of(&self, enabled: &[&Configured]) -> Vec<u32> {
-        let state = self.state.lock();
-        let mut positions: Vec<u32> = enabled
-            .iter()
-            .map(|it| {
-                let after =
-                    (state.plugins).partition_point(|plugin| plugin.first_rule <= it.rule.index);
-                after.saturating_sub(1) as u32
-            })
-            .collect();
+    /// The positions of the plugins that a realm has to load for the rules `enabled`, in ascending order.
+    fn plugins_of(enabled: &[&Configured]) -> Vec<u32> {
+        let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
+        let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
         positions.sort_unstable();
         positions.dedup();
         positions
@@ -461,12 +463,14 @@ impl<'e> Host<'e> {
         let offsets = Offsets::new(text);
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
         let path = file.path();
-        let plugins = self.plugins_of(enabled);
+        let plugins = Self::plugins_of(enabled);
         let mut message =
             Vec::with_capacity(24 + (plugins.len() + enabled.len()) * 4 + path.len() + text.len());
         let is_espree = Dialect::of(file) == Dialect::Espree;
-        let flags =
-            u32::from(wants_fixes) | (u32::from(has_mark) << 1) | (u32::from(is_espree) << 2);
+        let flags = u32::from(wants_fixes)
+            | (u32::from(has_mark) << 1)
+            | (u32::from(is_espree) << 2)
+            | (u32::from(settings.sources.is_some()) << 3);
         wire::words(
             &mut message,
             &[
@@ -554,15 +558,36 @@ impl<'e> Host<'e> {
                             return Err(OUT_OF_STEP.to_vec().into());
                         };
                         let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
-                        let name =
-                            (plugin.needs_the_configuration).then(|| plugin.plugin.name.clone());
-                        let forced = &mut state.loading.need_the_configuration;
-                        if let Some(name) = name.filter(|name| !forced.contains(name)) {
-                            forced.push(name);
+                        if plugin.needs_the_configuration {
+                            let what = [b"the plugin \"", &plugin.plugin.name[..], b"\""].concat();
+                            state.loading.needs_the_configuration_for(&what);
                         }
                         drop(state);
                         self.load_in(vm, &location, Some((position as usize, first_rule)))?;
                     }
+                }
+                result::NEEDS_SETTINGS => {
+                    let Some(sources) = &settings.sources else {
+                        return Err(OUT_OF_STEP.to_vec().into());
+                    };
+                    let id = settings.id.to_string();
+                    let parts: [&[u8]; 7] = [
+                        b"[",
+                        id.as_bytes(),
+                        b",",
+                        &settings.json,
+                        b",",
+                        sources,
+                        b"]",
+                    ];
+                    let loaded = vm.call(call::LOAD_SETTINGS, &parts.concat(), &mut serve)?;
+                    match loaded.split_first() {
+                        Some((&result::DONE, _)) => {}
+                        Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
+                        _ => return Err(OUT_OF_STEP.to_vec().into()),
+                    }
+                    let loading = &mut self.state.lock().loading;
+                    loading.needs_the_configuration_for(b"what is in \"settings\"");
                 }
                 _ => return Err(OUT_OF_STEP.to_vec().into()),
             }
@@ -570,9 +595,13 @@ impl<'e> Host<'e> {
     }
 }
 
-/// `{ name, rules: [{ name, type, fixable, hasSuggestions, schema, defaultOptions }] }`. The rules are
-/// numbered from `first`, in that order. `needs_the_configuration`: see [`Rule`].
-fn plugin_of(described: &Json, first: u32, needs_the_configuration: bool) -> Plugin {
+/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions }] }`. The rules are
+/// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
+fn plugin_of(
+    described: &Json,
+    (position, first): (u32, u32),
+    needs_the_configuration: bool,
+) -> Plugin {
     let name = described
         .get(b"name")
         .and_then(Json::as_str)
@@ -608,7 +637,13 @@ fn plugin_of(described: &Json, first: u32, needs_the_configuration: bool) -> Plu
                 .and_then(Json::as_array)
                 .unwrap_or_default()
                 .to_vec(),
-            needs_the_configuration,
+            needs_the_configuration: needs_the_configuration && it.get(b"at").is_none(),
+            location: it.get(b"at").map(|at| {
+                let mut written = Vec::new();
+                write_json(&mut written, at);
+                written.into()
+            }),
+            plugin: position,
             index: first + i as u32,
         })
     };

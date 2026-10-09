@@ -153,6 +153,71 @@ class SourceCode extends TokenStore {
     return result;
   }
 
+  // Until ESLint 9.
+  getComments(node) {
+    const isComment = token => token.type === "Line" || token.type === "Block" || token.type === "Shebang";
+    const comments = { leading: [], trailing: [] };
+    if (node.type === "Program") {
+      if (node.body.length === 0) comments.leading = node.comments;
+      return comments;
+    }
+    if (
+      ((node.type === "BlockStatement" || node.type === "ClassBody") && node.body.length === 0) ||
+      (node.type === "ObjectExpression" && node.properties.length === 0) ||
+      (node.type === "ArrayExpression" && node.elements.length === 0) ||
+      (node.type === "SwitchStatement" && node.cases.length === 0)
+    ) {
+      comments.trailing = this.getTokens(node, { includeComments: true, filter: isComment });
+    }
+    const isInner = node.parent && node.parent.type !== "Program";
+    let token = this.getTokenBefore(node, { includeComments: true });
+    while (token && isComment(token) && !(isInner && token.start < node.parent.start)) {
+      comments.leading.push(token);
+      token = this.getTokenBefore(token, { includeComments: true });
+    }
+    comments.leading.reverse();
+    token = this.getTokenAfter(node, { includeComments: true });
+    while (token && isComment(token) && !(isInner && token.end > node.parent.end)) {
+      comments.trailing.push(token);
+      token = this.getTokenAfter(token, { includeComments: true });
+    }
+    return comments;
+  }
+
+  // Until ESLint 10.
+  getJSDocComment(node) {
+    const before = astNode => {
+      const token = this.getTokenBefore(astNode, { includeComments: true });
+      const isNear = token && astNode.loc.start.line - token.loc.end.line <= 1;
+      return isNear && token.type === "Block" && token.value.charAt(0) === "*" ? token : null;
+    };
+    let parent = node.parent;
+    switch (node.type) {
+      case "ClassDeclaration":
+      case "FunctionDeclaration":
+        return before(/^Export(?:(?:Default|Named|All)Declaration|Specifier)$/u.test(parent.type) ? parent : node);
+      case "ClassExpression":
+        return before(parent.parent);
+      case "ArrowFunctionExpression":
+      case "FunctionExpression":
+        if (parent.type !== "CallExpression" && parent.type !== "NewExpression") {
+          while (
+            parent &&
+            !this.getCommentsBefore(parent).length &&
+            !/Function/u.test(parent.type) &&
+            parent.type !== "MethodDefinition" &&
+            parent.type !== "Property"
+          ) {
+            parent = parent.parent;
+          }
+          if (parent && parent.type !== "FunctionDeclaration" && parent.type !== "Program") return before(parent);
+        }
+        return before(node);
+      default:
+        return null;
+    }
+  }
+
   getLocFromIndex(index) {
     if (typeof index !== "number") throw new TypeError("Expected `index` to be a number.");
     if (index < 0 || index > text.length) {

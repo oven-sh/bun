@@ -72,7 +72,7 @@ export default [
 ];
 ```
 
-Rules in JavaScript are slower than the built-in ones. A file costs nothing extra if no rule in JavaScript is on for it, and a plugin is only loaded where a file is linted that has one of its rules on. Use `--timing` to see how much JavaScript a run has loaded.
+Rules in JavaScript are slower than the built-in ones. A file costs nothing extra if no rule in JavaScript is on for it, and a plugin is only loaded where a file is linted that has one of its rules on. If a module of the plugin exports the rule, only that module is loaded, without the other rules. Use `--timing` to see how much JavaScript a run has loaded.
 
 Import plugins from a module. For a plugin that is written in `eslint.config.js` itself, Bun has to run that file again, with everything it imports, to get at the rules.
 

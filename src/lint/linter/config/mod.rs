@@ -30,6 +30,8 @@
 //!     "linterOptions": { "reportUnusedDisableDirectives": "error" },
 //!     // The name of the processor: the string, or `processor.meta.name`.
 //!     "processor": "markdown/markdown",
+//!     // With `settings`: the file, and which object this is of what it exports.
+//!     "$source": { "config": "/app/eslint.config.js", "index": 3 },
 //!     // Where it is: see `js_plugin::Processor::new`.
 //!     "$processor": { "plugin": { "module": "/app/node_modules/@eslint/markdown/dist/index.js", "export": ["default"] }, "prefix": "markdown", "name": "markdown" },
 //!     "rules": { "eqeqeq": ["error", "smart"] },
@@ -168,6 +170,9 @@ struct ConfigObject {
     processor: Option<Box<[u8]>>,
     /// `$processor`
     processor_location: Option<Arc<js_plugin::Processor>>,
+    /// `$source`: `{ config, index }`, the configuration file, and which object this is of what it exports. One with `settings`
+    /// has it.
+    source: Option<Json>,
 }
 
 impl Default for ConfigObject {
@@ -188,6 +193,7 @@ impl Default for ConfigObject {
             language: None,
             processor: None,
             processor_location: None,
+            source: None,
         }
     }
 }
@@ -708,7 +714,13 @@ impl Config {
                 self.accepts_all_plugins || plugins.contains(&&it.name[..])
             };
             config.js_plugins = self.js_plugins.iter().filter(has).cloned().collect();
-            config.js_settings = Some(js_plugin::FileSettings::new(&config.language));
+            let sources = indices
+                .iter()
+                .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref());
+            config.js_settings = Some(js_plugin::FileSettings::from_objects(
+                &config.language,
+                sources,
+            ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
         if !self.accepts_all_plugins {

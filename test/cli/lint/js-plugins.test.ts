@@ -799,6 +799,42 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  test(
+    "a rule is loaded from the module that exports it, without the plugin and its other rules",
+    async () => {
+      const rule = (name: string) => `
+        console.error("Loaded: the rule ${name}.");
+        export default { create: context => ({ "Identifier[name='${name}']"(node) { context.report({ node, message: "No ${name}." }); } }) };`;
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import many from "./many/index.mjs";
+          export default [{ plugins: { many }, rules: { "many/no-a": "error", "many/no-c": "error" } }];`,
+          "many/index.mjs": `
+          import a from "./no-a.mjs";
+          import b from "./no-b.mjs";
+          import c from "./no-c.mjs";
+          console.error("Loaded: the plugin.");
+          // The last is not what its module exports.
+          export default { rules: { "no-a": a, "no-b": b, "no-c": { ...c } } };`,
+          "many/no-a.mjs": rule("a"),
+          "many/no-b.mjs": rule("b"),
+          "many/no-c.mjs": rule("c"),
+          "only-a.js": "/* eslint many/no-c: off */ a; b; c;\n",
+        },
+        ["-f", "unix", "--threads", "1", "only-a.js"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/only-a.js:1:29: No a. [Error/many/no-a]
+
+        1 problem"
+      `);
+      expect(stderr.split("\n").filter(it => it.startsWith("Loaded"))).toEqual(["Loaded: the rule a."]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // What a process has one of, like the caches of the resolver, is made with its first VM, and not for several threads at a time.
   test.skipIf(!isDebug)(
     "no other engine starts before the first is there",
@@ -824,6 +860,53 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       // How many there are depends on the number of cores.
       expect(steps.filter(it => it === "begins").length).toBe(steps.filter(it => it === "is made").length);
       expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "what JSON cannot say: a RegExp in the options, a function in the settings. And rules can change their options",
+    async () => {
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import says from "./says.mjs";
+          export default [
+            { settings: { a: { one: 1, f() { return "f"; } }, list: [1] } },
+            { settings: { a: { two: 2 }, list: [2] } },
+            {
+              plugins: { says },
+              rules: { "says/options": ["error", { ignore: [/^a/u, /^b/giu], names: ["x"] }], "says/defaults": "error", "says/settings": "error" },
+            },
+          ];`,
+          "says.mjs": `
+          const rule = (meta, say) => ({ meta, create: context => ({ Program(node) { context.report({ node, message: say(context) }); } }) });
+          export default {
+            rules: {
+              options: rule(
+                { schema: [{ type: "object", properties: { ignore: { type: "array", uniqueItems: true }, names: { type: "array" } } }] },
+                ({ options: [{ ignore, names }] }) => (names.push("y"), ignore.map(it => (it instanceof RegExp) + " " + it) + "; " + names.length),
+              ),
+              defaults: rule(
+                { schema: [{ type: "object" }], defaultOptions: [{ names: ["a"] }] },
+                ({ options }) => ((options[0].extra = 1), options[0].names.push("b"), JSON.stringify(options[0].names.slice(0, 2))),
+              ),
+              settings: rule({}, ({ settings }) => settings.a.f() + " " + JSON.stringify(settings)),
+            },
+          };`,
+          "a.js": "",
+        },
+        ["-f", "unix", "--timing", "a.js"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: true /^a/u,true /^b/giu; 2 [Error/says/options]
+        <dir>/a.js:1:1: ["a","b"] [Error/says/defaults]
+        <dir>/a.js:1:1: f {"a":{"one":1,"two":2},"list":[2]} [Error/says/settings]
+
+        3 problems"
+      `);
+      expect(stderr).toContain(`with the whole configuration file, which alone has what is in "settings"`);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -883,6 +966,56 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       for (let i = 0; i < 64; i++) files[`src/${i}.js`] = "foo;\n";
       const { stdout, exitCode } = await lint(files, ["-f", "unix", "--threads", "2", "src"]);
       expect(stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]"))).toHaveLength(64);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    'a rule written for ESLint 8, and a plugin that is an ES module with an export "module.exports"',
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import old from "./old.mjs";
+          export default [{ plugins: { old }, rules: { "old/comments": "error" } }];`,
+          "old.mjs": `
+          const range = token => (token ? token.range.join("-") : "none");
+          const plugin = {
+            rules: {
+              comments: {
+                create: context => ({
+                  "FunctionDeclaration, BlockStatement"(node) {
+                    const { leading, trailing } = context.getComments(node);
+                    const parts = [
+                      leading.map(range),
+                      trailing.map(range),
+                      range(context.getJSDocComment(node)),
+                      context.getSource(node).length,
+                      context.getSourceLines().length,
+                      context.getAllComments().length,
+                      context.getFirstToken(node).value,
+                      context.getScope().type,
+                    ];
+                    context.report({ node, message: parts.join(" | ") });
+                  },
+                }),
+              },
+            },
+          };
+          // Not a rule by itself: the whole plugin is loaded.
+          plugin.rules = { ...plugin.rules };
+          export { plugin as default, plugin as "module.exports" };`,
+          "a.js": "/** a */\nexport function f() { /* b */ } // c\n",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:2:8:  |  | 0-8 | 24 | 3 | 3 | function | function [Error/old/comments]
+        <dir>/a.js:2:21:  | 31-38 | none | 11 | 3 | 3 | { | function [Error/old/comments]
+
+        2 problems"
+      `);
       expect(exitCode).toBe(1);
     },
     timeout,

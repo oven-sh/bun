@@ -33,8 +33,12 @@ pub struct Rule {
     pub schema: Schema,
     /// `meta.defaultOptions`
     pub default_options: Vec<Json>,
-    /// No module exports the plugin: a realm has to run the whole configuration file to get at the rule.
+    /// No module exports the rule or its plugin: a realm has to run the whole configuration file to get at it.
     pub needs_the_configuration: bool,
+    /// JSON: the module that exports the rule itself, if there is one. A realm loads that, and not the plugin.
+    pub(super) location: Option<Box<[u8]>>,
+    /// The position of its plugin among the plugins.
+    pub(super) plugin: u32,
     /// Its number among the rules of all plugins.
     pub(super) index: u32,
 }
@@ -66,7 +70,7 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 pub struct Configured {
     pub rule: Arc<Rule>,
     pub(super) id: u32,
-    /// `[rule, options]`
+    /// `[rule, options, id, location, plugin]`
     pub(super) json: Box<[u8]>,
 }
 
@@ -113,7 +117,11 @@ impl Configured {
             }
             write_option(&mut json, option);
         }
-        json.extend_from_slice(b"]]");
+        json.extend_from_slice(b"],");
+        write_json(&mut json, &Json::String(rule.id.to_vec()));
+        json.push(b',');
+        json.extend_from_slice(rule.location.as_deref().unwrap_or(b"null"));
+        json.extend_from_slice(format!(",{}]", rule.plugin).as_bytes());
         Arc::new(Configured {
             rule,
             id,
@@ -127,12 +135,39 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `{ settings, languageOptions, globals, libs }`
+    /// `{ settings, languageOptions, globals, libs, freezes }`
     pub(super) json: Box<[u8]>,
+    /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
+    /// something in them that JSON cannot say, like a function. A realm takes them from there.
+    pub(super) sources: Option<Box<[u8]>>,
+}
+
+/// Whether there is something in `json` that the configuration file has and JSON has not.
+fn has_what_json_lacks(json: &Json) -> bool {
+    match json {
+        Json::Array(items) => items.iter().any(has_what_json_lacks),
+        Json::Object(entries) => {
+            (entries.iter()).any(|it| it.0 == b"$unserializable" || has_what_json_lacks(&it.1))
+        }
+        _ => false,
+    }
 }
 
 impl FileSettings {
     pub fn new(language: &LanguageOptions) -> Arc<FileSettings> {
+        Self::from_objects(language, std::iter::empty())
+    }
+
+    /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order.
+    pub fn from_objects<'s>(
+        language: &LanguageOptions,
+        sources: impl Iterator<Item = &'s Json>,
+    ) -> Arc<FileSettings> {
+        let sources = has_what_json_lacks(&language.settings).then(|| {
+            let mut written = Vec::new();
+            write_json(&mut written, &Json::Array(sources.cloned().collect()));
+            written.into()
+        });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
         let globals = language.globals.iter().map(|(name, setting)| {
@@ -191,12 +226,14 @@ impl FileSettings {
             (b"languageOptions".to_vec(), language_options),
             (b"globals".to_vec(), Json::Object(all_globals)),
             (b"libs".to_vec(), Json::Object(libs.collect())),
+            (b"freezes".to_vec(), Json::Bool(language.is_oxlint)),
         ]);
         let mut json = Vec::new();
         write_json(&mut json, &all);
         Arc::new(FileSettings {
             id,
             json: json.into(),
+            sources,
         })
     }
 }

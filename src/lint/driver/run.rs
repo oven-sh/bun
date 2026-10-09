@@ -1053,10 +1053,10 @@ impl Run<'_> {
         );
         for (i, plugin) in loading.need_the_configuration.iter().enumerate() {
             let before = match i {
-                0 => "; with the whole configuration file, which alone has the plugin ",
+                0 => "; with the whole configuration file, which alone has ",
                 _ => ", ",
             };
-            let _ = write!(self.out.stderr, "{before}\"{}\"", BStr::new(plugin));
+            let _ = write!(self.out.stderr, "{before}{}", BStr::new(plugin));
         }
         self.out.stderr.push(b'\n');
         // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.

@@ -16,10 +16,12 @@ const { statSync } = require("node:fs");
 
 const LOAD = 1;
 const LINT = 2;
+const LOAD_SETTINGS = 3;
 
 const DONE = "0";
 const FAILED = "1";
 const NEEDS_PLUGINS = "2";
+const NEEDS_SETTINGS = "6";
 
 // The content of the message that is being handled.
 const MESSAGE = 0;
@@ -45,15 +47,19 @@ function ask(kind, details = "") {
   return length;
 }
 
+// What `evaluate-eslint.js` has written for a `RegExp`.
+const reviveRegExp = (_, value) => (Array.isArray(value?.$regexp) ? new RegExp(...value.$regexp) : value);
+
 function askForJson(kind, details) {
   const length = ask(kind, details);
-  return JSON.parse(decode(buffers[kind], 0, length));
+  const json = decode(buffers[kind], 0, length);
+  return json.includes('"$regexp"') ? JSON.parse(json, reviveRegExp) : JSON.parse(json);
 }
 
 // ───────────── plugins ─────────────
 
 let cwd = "";
-// The rules of the plugins that are loaded: `{ plugin, name, id }`, by the number that the other side knows them by.
+// The rules of the plugins that are loaded: `{ plugin, name }`, by the number that the other side knows them by.
 const rules = [];
 // The positions of the plugins whose rules are in `rules`.
 const loadedPlugins = new Set();
@@ -102,6 +108,17 @@ function stringify(value) {
 // What the configuration files that were needed to find a plugin export, by their paths.
 const configurations = new Map();
 
+// What is at `path` in what a module exports. Of an ES module that exports something as "module.exports", `require` returns only
+// that, which is also what it exports as `default`.
+function exportedAt(exported, path) {
+  let found = exported;
+  for (const name of path) {
+    const inner = found[name];
+    if (inner !== undefined || name !== "default") found = inner;
+  }
+  return found;
+}
+
 // The plugin that an `eslint.config.js` has under `prefix`, and that is where `evaluate-eslint.js` says.
 async function locatedPlugin(location, prefix) {
   if (location.module !== undefined) {
@@ -113,8 +130,7 @@ async function locatedPlugin(location, prefix) {
       // A module that awaits something.
       found = await load(pathToFileURL(location.module).href);
     }
-    for (const name of location.export) found = found[name];
-    return found;
+    return exportedAt(found, location.export);
   }
   let exported = configurations.get(location.config);
   if (exported === undefined) {
@@ -153,6 +169,34 @@ async function findPlugin([directory, specifier, alias]) {
   return { name, plugin };
 }
 
+// Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
+function exportedObjects() {
+  const exported = new Map();
+  for (const [module, { exports }] of Object.entries(require.cache)) {
+    const note = (value, path) => {
+      if (value !== null && typeof value === "object" && !exported.has(value))
+        exported.set(value, { module, export: path });
+    };
+    try {
+      note(exports, []);
+      for (const [name, value] of Object.entries(exports ?? {})) note(value, [name]);
+    } catch {}
+  }
+  return exported;
+}
+
+// The rule that is there. `undefined`: it cannot be had without its plugin.
+function ruleAt(location) {
+  const started = performance.now();
+  try {
+    return exportedAt(require(location.module), location.export);
+  } catch {
+    return undefined;
+  } finally {
+    loadingTime += performance.now() - started;
+  }
+}
+
 // `position`, `firstRule`: `null` as long as the other side does not know the plugin.
 async function loadPlugin([location, position, firstRule]) {
   const key = JSON.stringify(location);
@@ -164,15 +208,17 @@ async function loadPlugin([location, position, firstRule]) {
   }
   const { name, plugin } = found;
   const described = [];
+  const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
   const names = Object.keys(plugin.rules ?? {}).sort();
   names.forEach((ruleName, i) => {
     // A plugin can load a rule when it is asked for it.
-    if (position !== null) rules[firstRule + i] = { plugin, name: ruleName, id: `${name}/${ruleName}` };
+    if (position !== null) rules[firstRule + i] = { plugin, name: ruleName };
     else {
       const meta = plugin.rules[ruleName].meta;
       described.push({
         name: ruleName,
+        at: exported.get(plugin.rules[ruleName]),
         type: meta?.type,
         fixable: Boolean(meta?.fixable),
         hasSuggestions: meta?.hasSuggestions === true,
@@ -190,11 +236,37 @@ async function loadPlugin([location, position, firstRule]) {
 let filename = "";
 // The file on the disk, if `filename` is that of a block which a processor has found in it.
 let physicalFilename = "";
-// `{ settings, languageOptions }` of the file.
+// `{ settings, languageOptions, freezes }` of the file. `freezes`: rules cannot change these or their options, as in oxlint.
 let fileSettings = null;
 const allSettings = new Map();
 // By id: a rule with its options. `own`: what its contexts have of their own.
 const configured = new Map();
+
+const isNonArrayObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
+
+// ESLint's `deepMerge`.
+function deepMerge(first, second) {
+  const result = { ...first, ...second };
+  delete result.__proto__;
+  for (const key of Object.keys(second)) {
+    if (key === "__proto__" || !Object.prototype.propertyIsEnumerable.call(first, key)) continue;
+    if (!isNonArrayObject(first[key])) continue;
+    if (isNonArrayObject(second[key])) result[key] = deepMerge(first[key], second[key]);
+    else if (second[key] === undefined) result[key] = first[key];
+  }
+  return result;
+}
+
+// Settings with something in them that JSON cannot say, like a function: `settings.settings` is merged again, of the objects
+// `sources` of the configuration file.
+async function loadSettings([id, settings, sources]) {
+  const started = performance.now();
+  let merged = {};
+  for (const { config, index } of sources) merged = deepMerge(merged, (await configObjects(config))[index].settings);
+  loadingTime += performance.now() - started;
+  allSettings.set(id, { ...settings, settings: merged });
+  return DONE;
+}
 
 function deepFreeze(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
@@ -257,23 +329,55 @@ const fileContext = Object.freeze({
   markVariableAsUsed(name) {
     return sourceCode.markVariableAsUsed(name, currentNode);
   },
+  // ESLint 8's `DEPRECATED_SOURCECODE_PASSTHROUGHS`. With all of what ESLint 8 has, `@eslint/compat` adds nothing.
+  getSource: (...args) => sourceCode.getText(...args),
+  getSourceLines: () => sourceCode.getLines(),
+  ...Object.fromEntries(
+    [
+      "getAllComments",
+      "getNodeByRangeIndex",
+      "getComments",
+      "getCommentsBefore",
+      "getCommentsAfter",
+      "getCommentsInside",
+      "getJSDocComment",
+      "getFirstToken",
+      "getFirstTokens",
+      "getLastToken",
+      "getLastTokens",
+      "getTokenAfter",
+      "getTokenBefore",
+      "getTokenByRangeStart",
+      "getTokens",
+      "getTokensAfter",
+      "getTokensBefore",
+      "getTokensBetween",
+    ].map(name => [name, (...args) => sourceCode[name](...args)]),
+  ),
   extend(extension) {
     return Object.freeze(Object.assign(Object.create(this), extension));
   },
 });
 
-// The rule with its options that has `id`, and is at `position` among those that run on the file.
+// The rule with its options that has `id`, and is at `position` among those that run on the file. Or the position of its plugin,
+// which has to be loaded first.
 function configure(id, position) {
-  const [index, options] = askForJson(CONFIGURED, String(position));
-  const { plugin, name, id: ruleId } = rules[index];
+  const [index, options, ruleId, location, pluginPosition] = askForJson(CONFIGURED, String(position));
+  const ofPlugin = rules[index];
+  const found = ofPlugin !== undefined ? ofPlugin.plugin.rules[ofPlugin.name] : location && ruleAt(location);
+  if (found === undefined || found === null) {
+    if (loadedPlugins.has(pluginPosition)) throw new Error(`The plugin no longer has the rule '${ruleId}'.`);
+    return pluginPosition;
+  }
   // A function is a rule without `meta`, as for ESLint until version 8.
-  const rule = typeof plugin.rules[name] === "function" ? { create: plugin.rules[name] } : plugin.rules[name];
+  const rule = typeof found === "function" ? { create: found } : found;
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
   const entry = { rule, ruleId, own: null, position: 0, once: null };
   const meta = rule.meta;
   entry.own = {
     id: ruleId,
-    options: deepFreeze(options),
+    // ESLint leaves them as they are, and rules add to them.
+    options: fileSettings.freezes ? deepFreeze(options) : options,
     report(...args) {
       report(entry.position, meta, args);
     },
@@ -543,15 +647,24 @@ function reset() {
   resetScopes();
 }
 
-// Returns the positions of the plugins that are missing, if any are.
+// Returns the positions of the plugins that are missing, if any are, or `NEEDS_SETTINGS`.
 function lint() {
   const length = ask(MESSAGE);
   const buffer = buffers[MESSAGE];
   const [flags, plugins, settingsId, count, pathLength, physicalLength] = new Uint32Array(buffer, 0, 6);
-  // Only the plugins whose rules run on the file.
+  // Only the plugins that have a rule which runs on the file, and which no module exports.
   const missing = Array.from(new Uint32Array(buffer, 24, plugins)).filter(position => !loadedPlugins.has(position));
   if (missing.length > 0) return missing;
   const ids = new Uint32Array(buffer, 24 + 4 * plugins, count);
+  fileSettings = allSettings.get(settingsId);
+  if (fileSettings === undefined) {
+    if ((flags & 8) !== 0) return NEEDS_SETTINGS;
+    allSettings.set(settingsId, (fileSettings = askForJson(SETTINGS)));
+    if (fileSettings.freezes) deepFreeze(fileSettings);
+  }
+  const entries = Array.from(ids, (id, position) => configured.get(id) ?? configure(id, position));
+  const unloaded = new Set(entries.filter(it => typeof it === "number"));
+  if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
@@ -559,10 +672,8 @@ function lint() {
   filename = decode(buffer, pathStart, pathStart + pathLength);
   physicalFilename = physicalLength === pathLength ? filename : decode(buffer, pathStart, pathStart + physicalLength);
   text = decode(buffer, pathStart + pathLength, length);
-  fileSettings = allSettings.get(settingsId);
-  if (fileSettings === undefined) allSettings.set(settingsId, (fileSettings = deepFreeze(askForJson(SETTINGS))));
   for (let position = 0; position < count; position++) {
-    const entry = configured.get(ids[position]) ?? configure(ids[position], position);
+    const entry = entries[position];
     entry.position = position;
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
@@ -667,6 +778,9 @@ function handle(kind) {
 
 function respond(kind) {
   if (kind >= PREPROCESS) return handleForProcessor(kind);
+  if (kind === LOAD_SETTINGS) {
+    return loadSettings(askForJson(MESSAGE)).catch(error => FAILED + describeLoadError(error));
+  }
   if (kind === LOAD) {
     return loadPlugin(askForJson(MESSAGE)).then(
       described => DONE + stringify(described),
@@ -675,6 +789,7 @@ function respond(kind) {
   }
   try {
     const missing = lint();
+    if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
     return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);

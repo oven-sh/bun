@@ -1,3 +1,4 @@
+use crate::n::table::Part;
 use crate::n::{Builtins, data};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -10,7 +11,7 @@ impl Rule for EsBuiltins {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        EsBuiltins(Builtins::new(options, data::ES_GLOBALS, &[], &[]))
+        EsBuiltins(Builtins::new(options, data::ES_GLOBALS, Part::EMPTY, Part::EMPTY))
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {

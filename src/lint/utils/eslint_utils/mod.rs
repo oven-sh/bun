@@ -15,7 +15,7 @@
 //! | `isParenthesized(node, sourceCode)` | [`is_parenthesized`] |
 //! | `isParenthesized(times, node, sourceCode)` | [`is_parenthesized_times`] |
 //! | `PatternMatcher` | [`PatternMatcher`] |
-//! | `ReferenceTracker` | [`ReferenceTracker`], [`TraceMap`], [`TrackedReference`] |
+//! | `ReferenceTracker` | [`ReferenceTracker`], [`TraceMap`] or another [`Trace`], [`TrackedReference`] |
 //! | `READ`, `CALL`, `CONSTRUCT` as keys | [`TraceMap::read`], [`TraceMap::call`], [`TraceMap::construct`] |
 //! | `READ`, `CALL`, `CONSTRUCT` as `type` | [`ReferenceKind`] |
 //! | `ESM` | [`TraceMap::esm`] |
@@ -81,6 +81,8 @@ pub use get_string_if_constant::get_string_if_constant;
 pub use has_side_effect::{HasSideEffectOptions, has_side_effect};
 pub use is_parenthesized::{is_parenthesized, is_parenthesized_times};
 pub use pattern_matcher::PatternMatcher;
-pub use reference_tracker::{Mode, ReferenceKind, ReferenceTracker, TraceMap, TrackedReference};
+pub use reference_tracker::{
+    Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap, TrackedReference,
+};
 pub use static_value::{IteratorKind, PropertyKey, StaticSymbol, StaticValue};
 pub use token_predicate::*;

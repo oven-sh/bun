@@ -1354,6 +1354,11 @@ const CodePath = (() => {
       return this.internal.thrownForkContext;
     }
 
+    // Until ESLint 8.
+    get currentSegments() {
+      return this.internal.currentSegments;
+    }
+
     traverseSegments(optionsOrCallback, callback) {
       let resolvedOptions;
       let resolvedCallback;

@@ -1,8 +1,8 @@
 //! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
 //! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (116 KB of JSON for
-//! 259 rules, which is parsed for a rule when options for it are validated), not part of the rules.
+//! options that the schema of the rule does not allow. The schemas are data here (104 KB for 291 rules,
+//! of which that of a rule is parsed when options for it are validated), not part of the rules.
 //!
 //! The default options are merged into the options for validating and for comparing only. A rule
 //! is made from the options as they are written, and knows its defaults itself.
@@ -16,12 +16,53 @@ use crate::options::Json;
 use crate::rule::Meta;
 use validate::Validator;
 
+/// The strings of an entry of [`data::NAMES`].
+fn names(mut list: &[u8]) -> Json {
+    let mut all = Vec::new();
+    let mut name: Vec<u8> = Vec::new();
+    while let [shared, more, rest @ ..] = list
+        && let Some((added, rest)) = rest.split_at_checked(*more as usize)
+    {
+        name.truncate(*shared as usize);
+        name.extend_from_slice(added);
+        all.push(Json::String(name.clone()));
+        list = rest;
+    }
+    Json::Array(all)
+}
+
+/// Puts what `{"$":n}` and `{"$names":n}` stand for in their places.
+fn expand(json: &mut Json) {
+    let meant = match &*json {
+        Json::Object(entries) => match &entries[..] {
+            [(key, Json::Number(index))] if key == b"$" => {
+                (data::SHARED.get(*index as usize)).and_then(|it| crate::json::parse(it.as_bytes()))
+            }
+            [(key, Json::Number(index))] if key == b"$names" => {
+                data::NAMES.get(*index as usize).map(|it| names(it))
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(meant) = meant {
+        *json = meant;
+    }
+    match json {
+        Json::Object(entries) => entries.iter_mut().for_each(|it| expand(&mut it.1)),
+        Json::Array(items) => items.iter_mut().for_each(expand),
+        _ => {}
+    }
+}
+
 /// `[meta.schema]` or `[meta.schema, meta.defaultOptions]`. `None` if the rule takes no options.
 fn find(id: &[u8]) -> Option<Json> {
     let at = data::SCHEMAS
         .binary_search_by(|it| it.0.as_bytes().cmp(id))
         .ok()?;
-    crate::json::parse(data::SCHEMAS[at].1.as_bytes())
+    let mut found = crate::json::parse(data::SCHEMAS[at].1.as_bytes())?;
+    expand(&mut found);
+    Some(found)
 }
 
 /// `deepMergeObjects`
@@ -139,6 +180,10 @@ pub(crate) fn validate_known_properties(
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
+    // No rule needs options: `generate-schemas.mjs` sees to that.
+    if options.is_empty() {
+        return Ok(());
+    }
     let found = find(id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     validate_with(

@@ -641,7 +641,7 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
 
         let span = || AstNodes::FunctionBody(arrow).span();
         let content = format_with(|f| match arrow.body() {
-            FnBody::Expr(body) => write_expression_body(body, f),
+            FnBody::Expr(body) => write_expression_body(body, self.has_own_line_comment, f),
             _ => {
                 // Otherwise the block takes the block comments, and the others are moved into it.
                 if self.has_own_line_comment {
@@ -659,7 +659,8 @@ fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
+/// `is_on_its_own_line`: a comment has moved it off the line of the `=>` already.
+fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut Formatter<'a>) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
     if f.is_quiet() {
         return write!(
@@ -690,7 +691,8 @@ fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
             }
             write!(f, ")");
         });
-        return match sequence_behind_comments_is_on_its_own_line(f)
+        return match !is_on_its_own_line
+            && sequence_behind_comments_is_on_its_own_line(f)
             && f.comments().has_comment_before(leading.start)
         {
             true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),

@@ -42,11 +42,11 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
         hoistable_objects,
     } = collect_optional_chain_sidemap(func, env);
 
+    let (working, registry) =
+        collect_hoistable_and_propagate(func, env, &temporaries, &hoistable_objects);
     let hoistable_property_loads = {
-        let (working, registry) =
-            collect_hoistable_and_propagate(func, env, &temporaries, &hoistable_objects);
-        // Convert to scope-keyed map with full dependency paths
-        let mut keyed: IdMap<ScopeId, Vec<ReactiveScopeDependency>> = IdMap::new();
+        // Convert to scope-keyed map
+        let mut keyed: IdMap<ScopeId, &NodeSet> = IdMap::new();
         for (_block_id, block) in &func.body.blocks {
             if let Terminal::Scope {
                 scope,
@@ -55,11 +55,7 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
             } = &block.terminal
             {
                 if let Some(node_indices) = working.get(*inner_block) {
-                    let deps: Vec<ReactiveScopeDependency> = node_indices
-                        .iter()
-                        .map(|&idx| registry.nodes[idx].full_path.clone())
-                        .collect();
-                    keyed.insert(*scope, deps);
+                    keyed.insert(*scope, node_indices);
                 }
             }
         }
@@ -90,7 +86,8 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
             hoistables.expect("[PropagateScopeDependencies] Scope not found in tracked blocks");
 
         // Step 2: Calculate hoistable dependencies using the tree.
-        let mut tree = ReactiveScopeDependencyTreeHIR::new(hoistables.iter(), env);
+        let hoistables = hoistables.iter().map(|idx| &registry.nodes[idx].full_path);
+        let mut tree = ReactiveScopeDependencyTreeHIR::new(hoistables, env);
         for dep in deps {
             tree.add_dependency(dep.clone(), env);
         }
@@ -785,6 +782,8 @@ struct PropertyPathNode {
 struct PropertyPathRegistry {
     nodes: Vec<PropertyPathNode>,
     roots: IdMap<IdentifierId, usize>,
+    /// The nodes with `has_optional`.
+    optional_nodes: NodeSet,
 }
 
 impl PropertyPathRegistry {
@@ -792,6 +791,7 @@ impl PropertyPathRegistry {
         Self {
             nodes: Vec::new(),
             roots: IdMap::new(),
+            optional_nodes: NodeSet::default(),
         }
     }
 
@@ -853,6 +853,9 @@ impl PropertyPathRegistry {
             },
             has_optional: parent_has_optional || entry.optional,
         });
+        if parent_has_optional || entry.optional {
+            self.optional_nodes.insert(idx);
+        }
         if entry.optional {
             self.nodes[parent_idx]
                 .optional_properties
@@ -872,6 +875,76 @@ impl PropertyPathRegistry {
     }
 }
 
+/// Indices into `PropertyPathRegistry::nodes`, ascending. The last word is never 0: `==` compares sets.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NodeSet {
+    words: Vec<u64>,
+}
+
+impl NodeSet {
+    fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    fn contains(&self, index: usize) -> bool {
+        self.words
+            .get(index / 64)
+            .is_some_and(|word| word & (1u64 << (index % 64)) != 0)
+    }
+
+    fn insert(&mut self, index: usize) {
+        if index / 64 >= self.words.len() {
+            self.words.resize(index / 64 + 1, 0);
+        }
+        self.words[index / 64] |= 1u64 << (index % 64);
+    }
+
+    fn remove(&mut self, index: usize) {
+        if let Some(word) = self.words.get_mut(index / 64) {
+            *word &= !(1u64 << (index % 64));
+        }
+        self.trim();
+    }
+
+    fn trim(&mut self) {
+        while self.words.last() == Some(&0) {
+            self.words.pop();
+        }
+    }
+
+    fn union_with(&mut self, other: &NodeSet) {
+        if other.words.len() > self.words.len() {
+            self.words.resize(other.words.len(), 0);
+        }
+        for (word, theirs) in self.words.iter_mut().zip(&other.words) {
+            *word |= theirs;
+        }
+        debug_assert!(self.words.last() != Some(&0));
+    }
+
+    fn intersect_with(&mut self, other: &NodeSet) {
+        self.words.truncate(other.words.len());
+        for (word, theirs) in self.words.iter_mut().zip(&other.words) {
+            *word &= theirs;
+        }
+        self.trim();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(i, &word)| {
+            let mut rest = word;
+            std::iter::from_fn(move || {
+                if rest == 0 {
+                    return None;
+                }
+                let bit = rest.trailing_zeros() as usize;
+                rest &= rest - 1;
+                Some(i * 64 + bit)
+            })
+        })
+    }
+}
+
 /// Reduces optional chains in a set of property path nodes.
 ///
 /// Any two optional chains with different operations (`.` vs `?.`) but the same set
@@ -880,13 +953,10 @@ impl PropertyPathRegistry {
 /// `<base>.PROPERTY`.
 ///
 /// Port of `reduceMaybeOptionalChains` from CollectHoistablePropertyLoads.ts.
-fn reduce_maybe_optional_chains(nodes: &mut BTreeSet<usize>, registry: &mut PropertyPathRegistry) {
+fn reduce_maybe_optional_chains(nodes: &mut NodeSet, registry: &mut PropertyPathRegistry) {
     // Collect indices of nodes that have optional in their path
-    let mut optional_chain_nodes: BTreeSet<usize> = nodes
-        .iter()
-        .copied()
-        .filter(|&idx| registry.nodes[idx].has_optional)
-        .collect();
+    let mut optional_chain_nodes = nodes.clone();
+    optional_chain_nodes.intersect_with(&registry.optional_nodes);
 
     if optional_chain_nodes.is_empty() {
         return;
@@ -896,7 +966,7 @@ fn reduce_maybe_optional_chains(nodes: &mut BTreeSet<usize>, registry: &mut Prop
         let mut changed = false;
 
         // Collect the indices to process (snapshot to avoid borrow issues)
-        let to_process: Vec<usize> = optional_chain_nodes.iter().copied().collect();
+        let to_process: Vec<usize> = optional_chain_nodes.iter().collect();
 
         for original_idx in to_process {
             let full_path = registry.nodes[original_idx].full_path.clone();
@@ -909,7 +979,7 @@ fn reduce_maybe_optional_chains(nodes: &mut BTreeSet<usize>, registry: &mut Prop
 
             for entry in &full_path.path {
                 // If the base is known to be non-null (in the set), replace optional with non-optional
-                let next_entry = if entry.optional && nodes.contains(&curr_node) {
+                let next_entry = if entry.optional && nodes.contains(curr_node) {
                     DependencyPathEntry {
                         property: entry.property.clone(),
                         optional: false,
@@ -923,9 +993,9 @@ fn reduce_maybe_optional_chains(nodes: &mut BTreeSet<usize>, registry: &mut Prop
 
             if curr_node != original_idx {
                 changed = true;
-                optional_chain_nodes.remove(&original_idx);
+                optional_chain_nodes.remove(original_idx);
                 optional_chain_nodes.insert(curr_node);
-                nodes.remove(&original_idx);
+                nodes.remove(original_idx);
                 nodes.insert(curr_node);
             }
         }
@@ -938,7 +1008,7 @@ fn reduce_maybe_optional_chains(nodes: &mut BTreeSet<usize>, registry: &mut Prop
 
 #[derive(Debug, Clone)]
 struct BlockInfo {
-    assumed_non_null_objects: BTreeSet<usize>, // indices into PropertyPathRegistry
+    assumed_non_null_objects: NodeSet,
 }
 
 struct CollectHoistableContext<'a> {
@@ -1150,7 +1220,7 @@ fn collect_non_nulls_in_blocks(
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, BlockInfo> {
     // Known non-null identifiers (e.g. component props)
-    let mut known_non_null: BTreeSet<usize> = BTreeSet::new();
+    let mut known_non_null = NodeSet::default();
     if func.fn_type == ReactFunctionType::Component && !func.params.is_empty() {
         if let ParamPattern::Place(place) = &func.params[0] {
             let node_idx = registry.get_or_create_identifier(place.identifier, true, place.loc);
@@ -1245,9 +1315,7 @@ fn collect_non_nulls_in_blocks(
                     // Get hoistables from inner function's entry block (after propagation)
                     let inner_entry = inner_func.body.entry;
                     if let Some(inner_set) = inner_working.get(inner_entry) {
-                        for &node_idx in inner_set {
-                            assumed.insert(node_idx);
-                        }
+                        assumed.union_with(inner_set);
                     }
                 }
             }
@@ -1275,7 +1343,7 @@ fn propagate_non_null(
     func: &HirFunction,
     nodes: &IdMap<BlockId, BlockInfo>,
     registry: &mut PropertyPathRegistry,
-) -> IdMap<BlockId, BTreeSet<usize>> {
+) -> IdMap<BlockId, NodeSet> {
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
     // BlockIds are environment-wide; size dense vectors to this function's max id.
     let vec_len = block_ids
@@ -1296,7 +1364,7 @@ fn propagate_non_null(
     }
 
     // Clone nodes into mutable working set, indexed by BlockId.
-    let mut working: Vec<Option<BTreeSet<usize>>> = vec![None; vec_len];
+    let mut working: Vec<Option<NodeSet>> = vec![None; vec_len];
     for (k, v) in nodes.iter() {
         working[k.0 as usize] = Some(v.assumed_non_null_objects.clone());
     }
@@ -1373,7 +1441,7 @@ fn recursively_propagate_non_null(
     node_id: BlockId,
     direction: PropagationDirection,
     traversal_state: &mut [Option<TraversalState>],
-    working: &mut [Option<BTreeSet<usize>>],
+    working: &mut [Option<NodeSet>],
     func: &HirFunction,
     block_successors: &[BTreeSet<BlockId>],
     registry: &mut PropertyPathRegistry,
@@ -1414,25 +1482,26 @@ fn recursively_propagate_non_null(
     }
 
     // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
-    let done_neighbor_sets: Vec<BTreeSet<usize>> = neighbors
+    let done_neighbor_sets: Vec<NodeSet> = neighbors
         .iter()
         .filter(|n| traversal_state[n.0 as usize] == Some(TraversalState::Done))
         .filter_map(|n| working[n.0 as usize].clone())
         .collect();
 
     let neighbor_intersection = if done_neighbor_sets.is_empty() {
-        BTreeSet::new()
+        NodeSet::default()
     } else {
         let mut iter = done_neighbor_sets.into_iter();
         let first = iter.next().unwrap();
-        iter.fold(first, |acc, s| acc.intersection(&s).copied().collect())
+        iter.fold(first, |mut acc, s| {
+            acc.intersect_with(&s);
+            acc
+        })
     };
 
     let prev_objects = working[node_id.0 as usize].clone().unwrap_or_default();
-    let mut merged: BTreeSet<usize> = prev_objects
-        .union(&neighbor_intersection)
-        .copied()
-        .collect();
+    let mut merged = prev_objects.clone();
+    merged.union_with(&neighbor_intersection);
     reduce_maybe_optional_chains(&mut merged, registry);
 
     // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
@@ -1448,7 +1517,7 @@ fn collect_hoistable_and_propagate(
     env: &Environment,
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     hoistable_from_optionals: &IdMap<BlockId, ReactiveScopeDependency>,
-) -> (IdMap<BlockId, BTreeSet<usize>>, PropertyPathRegistry) {
+) -> (IdMap<BlockId, NodeSet>, PropertyPathRegistry) {
     let mut registry = PropertyPathRegistry::new();
     let assumed_invoked_fns = get_assumed_invoked_functions(func, env);
     let known_immutable_identifiers: HashSet<IdentifierId> = if func.fn_type

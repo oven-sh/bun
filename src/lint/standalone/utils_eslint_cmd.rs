@@ -270,7 +270,7 @@ impl<'a> Facts<'a> {
         node.for_each_child(|child| self.visit(child));
     }
 
-    fn track(&mut self, name: &str, references: Vec<TrackedReference<'a, '_, ()>>) {
+    fn track(&mut self, name: &str, references: Vec<TrackedReference<'a, '_>>) {
         let mut found: Vec<(String, Vec<String>)> = Vec::new();
         for reference in references {
             let kind = match reference.kind {

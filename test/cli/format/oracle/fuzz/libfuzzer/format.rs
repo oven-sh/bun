@@ -767,7 +767,8 @@ fn run(data: &[u8]) {
     }
     // The value that Bun's own parser reads is the same before and after.
     let wraps_prose = input.has(13) || input.has(14);
-    if matches!(target.name, "json" | "yaml") && plain.is_none() && input.flags >> 30 < 2 && !wraps_prose {
+    let is_text = str::from_utf8(text).is_ok();
+    if matches!(target.name, "json" | "yaml") && plain.is_none() && input.flags >> 30 < 2 && !wraps_prose && is_text {
         let values = run.guarded(|| (value_of(target.name, path, text), value_of(target.name, path, &once)));
         // Most are Prettier's own: one of each shape, for triage.ts to ask it.
         let key = format!("{variant}-{}", shape(&once));

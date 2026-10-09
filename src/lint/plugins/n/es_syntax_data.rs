@@ -2,7 +2,7 @@
 //! 7.8.0. Not edited by hand.
 
 use super::es_syntax::Feature;
-use bun_lint::utils::eslint_utils::TraceMap;
+use super::table::{Member, NONE, Part, Table};
 
 /// The positions in [`FEATURES`] of those that take more than a look at `globals` and `prototype`.
 pub(crate) const ACCESSOR_PROPERTIES: usize = 0;
@@ -71,1600 +71,615 @@ pub(crate) const TRAILING_COMMAS: usize = 192;
 pub(crate) const TRAILING_FUNCTION_COMMAS: usize = 193;
 pub(crate) const UNICODE_CODEPOINT_ESCAPES: usize = 195;
 
+const fn p(first: u16, count: u8) -> Part {
+    Part::new(first, count)
+}
+
+/// The name, `supported`, `strict_mode`, `aliases`, `globals`, `prototype`.
 #[rustfmt::skip]
 pub(crate) static FEATURES: [Feature; 199] = [
-    Feature {
-        name: "accessor-properties",
-        ignore_names: &["no-accessor-properties", "accessor-properties", "accessorProperties"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "arbitrary-module-namespace-names",
-        ignore_names: &["no-arbitrary-module-namespace-names", "arbitrary-module-namespace-names", "arbitraryModuleNamespaceNames"],
-        supported: Some(">=13.2.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "array-from",
-        ignore_names: &["no-array-from", "array-from", "arrayFrom"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Array", TraceMap::new(&[("from", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "array-isarray",
-        ignore_names: &["no-array-isarray", "array-isarray", "arrayIsarray"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Array", TraceMap::new(&[("isArray", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "array-of",
-        ignore_names: &["no-array-of", "array-of", "arrayOf"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Array", TraceMap::new(&[("of", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "array-prototype-copywithin",
-        ignore_names: &["no-array-prototype-copywithin", "array-prototype-copywithin", "arrayPrototypeCopywithin"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["copyWithin"])],
-    },
-    Feature {
-        name: "array-prototype-entries",
-        ignore_names: &["no-array-prototype-entries", "array-prototype-entries", "arrayPrototypeEntries"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["entries"])],
-    },
-    Feature {
-        name: "array-prototype-every",
-        ignore_names: &["no-array-prototype-every", "array-prototype-every", "arrayPrototypeEvery"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["every"])],
-    },
-    Feature {
-        name: "array-prototype-fill",
-        ignore_names: &["no-array-prototype-fill", "array-prototype-fill", "arrayPrototypeFill"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["fill"])],
-    },
-    Feature {
-        name: "array-prototype-filter",
-        ignore_names: &["no-array-prototype-filter", "array-prototype-filter", "arrayPrototypeFilter"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["filter"])],
-    },
-    Feature {
-        name: "array-prototype-find",
-        ignore_names: &["no-array-prototype-find", "array-prototype-find", "arrayPrototypeFind"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["find"])],
-    },
-    Feature {
-        name: "array-prototype-findindex",
-        ignore_names: &["no-array-prototype-findindex", "array-prototype-findindex", "arrayPrototypeFindindex"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["findIndex"])],
-    },
-    Feature {
-        name: "array-prototype-findlast-findlastindex",
-        ignore_names: &["no-array-prototype-findlast-findlastindex", "array-prototype-findlast-findlastindex", "arrayPrototypeFindlastFindlastindex"],
-        supported: Some(">=18.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["findLast", "findLastIndex"]), ("Int8Array", &["findLast", "findLastIndex"]), ("Uint8Array", &["findLast", "findLastIndex"]), ("Uint8ClampedArray", &["findLast", "findLastIndex"]), ("Int16Array", &["findLast", "findLastIndex"]), ("Uint16Array", &["findLast", "findLastIndex"]), ("Int32Array", &["findLast", "findLastIndex"]), ("Uint32Array", &["findLast", "findLastIndex"]), ("Float32Array", &["findLast", "findLastIndex"]), ("Float64Array", &["findLast", "findLastIndex"]), ("BigInt64Array", &["findLast", "findLastIndex"]), ("BigUint64Array", &["findLast", "findLastIndex"])],
-    },
-    Feature {
-        name: "array-prototype-flat",
-        ignore_names: &["no-array-prototype-flat", "array-prototype-flat", "arrayPrototypeFlat"],
-        supported: Some(">=11.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["flat", "flatMap"])],
-    },
-    Feature {
-        name: "array-prototype-foreach",
-        ignore_names: &["no-array-prototype-foreach", "array-prototype-foreach", "arrayPrototypeForeach"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["forEach"])],
-    },
-    Feature {
-        name: "array-prototype-includes",
-        ignore_names: &["no-array-prototype-includes", "array-prototype-includes", "arrayPrototypeIncludes"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["includes"]), ("Int8Array", &["includes"]), ("Uint8Array", &["includes"]), ("Uint8ClampedArray", &["includes"]), ("Int16Array", &["includes"]), ("Uint16Array", &["includes"]), ("Int32Array", &["includes"]), ("Uint32Array", &["includes"]), ("Float32Array", &["includes"]), ("Float64Array", &["includes"]), ("BigInt64Array", &["includes"]), ("BigUint64Array", &["includes"])],
-    },
-    Feature {
-        name: "array-prototype-indexof",
-        ignore_names: &["no-array-prototype-indexof", "array-prototype-indexof", "arrayPrototypeIndexof"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["indexOf"])],
-    },
-    Feature {
-        name: "array-prototype-keys",
-        ignore_names: &["no-array-prototype-keys", "array-prototype-keys", "arrayPrototypeKeys"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["keys"])],
-    },
-    Feature {
-        name: "array-prototype-lastindexof",
-        ignore_names: &["no-array-prototype-lastindexof", "array-prototype-lastindexof", "arrayPrototypeLastindexof"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["lastIndexOf"])],
-    },
-    Feature {
-        name: "array-prototype-map",
-        ignore_names: &["no-array-prototype-map", "array-prototype-map", "arrayPrototypeMap"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["map"])],
-    },
-    Feature {
-        name: "array-prototype-reduce",
-        ignore_names: &["no-array-prototype-reduce", "array-prototype-reduce", "arrayPrototypeReduce"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["reduce"])],
-    },
-    Feature {
-        name: "array-prototype-reduceright",
-        ignore_names: &["no-array-prototype-reduceright", "array-prototype-reduceright", "arrayPrototypeReduceright"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["reduceRight"])],
-    },
-    Feature {
-        name: "array-prototype-some",
-        ignore_names: &["no-array-prototype-some", "array-prototype-some", "arrayPrototypeSome"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["some"])],
-    },
-    Feature {
-        name: "array-prototype-toreversed",
-        ignore_names: &["no-array-prototype-toreversed", "array-prototype-toreversed", "arrayPrototypeToreversed"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["toReversed"]), ("Int8Array", &["toReversed"]), ("Uint8Array", &["toReversed"]), ("Uint8ClampedArray", &["toReversed"]), ("Int16Array", &["toReversed"]), ("Uint16Array", &["toReversed"]), ("Int32Array", &["toReversed"]), ("Uint32Array", &["toReversed"]), ("Float32Array", &["toReversed"]), ("Float64Array", &["toReversed"]), ("BigInt64Array", &["toReversed"]), ("BigUint64Array", &["toReversed"])],
-    },
-    Feature {
-        name: "array-prototype-tosorted",
-        ignore_names: &["no-array-prototype-tosorted", "array-prototype-tosorted", "arrayPrototypeTosorted"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["toSorted"]), ("Int8Array", &["toSorted"]), ("Uint8Array", &["toSorted"]), ("Uint8ClampedArray", &["toSorted"]), ("Int16Array", &["toSorted"]), ("Uint16Array", &["toSorted"]), ("Int32Array", &["toSorted"]), ("Uint32Array", &["toSorted"]), ("Float32Array", &["toSorted"]), ("Float64Array", &["toSorted"]), ("BigInt64Array", &["toSorted"]), ("BigUint64Array", &["toSorted"])],
-    },
-    Feature {
-        name: "array-prototype-tospliced",
-        ignore_names: &["no-array-prototype-tospliced", "array-prototype-tospliced", "arrayPrototypeTospliced"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["toSpliced"])],
-    },
-    Feature {
-        name: "array-prototype-values",
-        ignore_names: &["no-array-prototype-values", "array-prototype-values", "arrayPrototypeValues"],
-        supported: Some(">=10.9.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["values"])],
-    },
-    Feature {
-        name: "array-prototype-with",
-        ignore_names: &["no-array-prototype-with", "array-prototype-with", "arrayPrototypeWith"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["with"]), ("Int8Array", &["with"]), ("Uint8Array", &["with"]), ("Uint8ClampedArray", &["with"]), ("Int16Array", &["with"]), ("Uint16Array", &["with"]), ("Int32Array", &["with"]), ("Uint32Array", &["with"]), ("Float32Array", &["with"]), ("Float64Array", &["with"]), ("BigInt64Array", &["with"]), ("BigUint64Array", &["with"])],
-    },
-    Feature {
-        name: "array-string-prototype-at",
-        ignore_names: &["no-array-string-prototype-at", "array-string-prototype-at", "arrayStringPrototypeAt"],
-        supported: Some(">=16.6.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Array", &["at"]), ("String", &["at"]), ("Int8Array", &["at"]), ("Uint8Array", &["at"]), ("Uint8ClampedArray", &["at"]), ("Int16Array", &["at"]), ("Uint16Array", &["at"]), ("Int32Array", &["at"]), ("Uint32Array", &["at"]), ("Float32Array", &["at"]), ("Float64Array", &["at"]), ("BigInt64Array", &["at"]), ("BigUint64Array", &["at"])],
-    },
-    Feature {
-        name: "arrow-functions",
-        ignore_names: &["no-arrow-functions", "arrow-functions", "arrowFunctions"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "async-functions",
-        ignore_names: &["no-async-functions", "async-functions", "asyncFunctions"],
-        supported: Some(">=7.6.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "async-iteration",
-        ignore_names: &["no-async-iteration", "async-iteration", "asyncIteration"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "atomics-waitasync",
-        ignore_names: &["no-atomics-waitasync", "atomics-waitasync", "atomicsWaitasync"],
-        supported: Some(">=16.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Atomics", TraceMap::new(&[("waitAsync", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "atomics",
-        ignore_names: &["no-atomics", "atomics", "atomics"],
-        supported: Some(">=8.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Atomics", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "bigint",
-        ignore_names: &["no-bigint", "bigint", "bigint"],
-        supported: Some(">=10.4.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("BigInt", TraceMap::new(&[]).read(())), ("BigInt64Array", TraceMap::new(&[]).read(())), ("BigUint64Array", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "binary-numeric-literals",
-        ignore_names: &["no-binary-numeric-literals", "binary-numeric-literals", "binaryNumericLiterals"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "block-scoped-functions",
-        ignore_names: &["no-block-scoped-functions", "block-scoped-functions", "blockScopedFunctions"],
-        supported: Some(">=4.0.0"),
-        strict_mode: Some(">=6.0.0"),
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "block-scoped-variables",
-        ignore_names: &["no-block-scoped-variables", "block-scoped-variables", "blockScopedVariables"],
-        supported: Some(">=4.0.0"),
-        strict_mode: Some(">=6.0.0"),
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "class-fields",
-        ignore_names: &["no-class-fields", "class-fields", "classFields"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "class-static-block",
-        ignore_names: &["no-class-static-block", "class-static-block", "classStaticBlock"],
-        supported: Some(">=16.11.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "classes",
-        ignore_names: &["no-classes", "classes", "classes"],
-        supported: Some(">=4.0.0"),
-        strict_mode: Some(">=6.0.0"),
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "computed-properties",
-        ignore_names: &["no-computed-properties", "computed-properties", "computedProperties"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "date-now",
-        ignore_names: &["no-date-now", "date-now", "dateNow"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Date", TraceMap::new(&[("now", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "date-prototype-getyear-setyear",
-        ignore_names: &["no-date-prototype-getyear-setyear", "date-prototype-getyear-setyear", "datePrototypeGetyearSetyear"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Date", &["getYear", "setYear"])],
-    },
-    Feature {
-        name: "date-prototype-togmtstring",
-        ignore_names: &["no-date-prototype-togmtstring", "date-prototype-togmtstring", "datePrototypeTogmtstring"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Date", &["toGMTString"])],
-    },
-    Feature {
-        name: "default-parameters",
-        ignore_names: &["no-default-parameters", "default-parameters", "defaultParameters"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "destructuring",
-        ignore_names: &["no-destructuring", "destructuring", "destructuring"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "dynamic-import",
-        ignore_names: &["no-dynamic-import", "dynamic-import", "dynamicImport"],
-        supported: Some("^12.17.0 || >=13.2.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "error-cause",
-        ignore_names: &["no-error-cause", "error-cause", "errorCause"],
-        supported: Some(">=16.9.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "escape-unescape",
-        ignore_names: &["no-escape-unescape", "escape-unescape", "escapeUnescape"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("escape", TraceMap::new(&[]).read(())), ("unescape", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "exponential-operators",
-        ignore_names: &["no-exponential-operators", "exponential-operators", "exponentialOperators"],
-        supported: Some(">=7.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "export-ns-from",
-        ignore_names: &["no-export-ns-from", "export-ns-from", "exportNsFrom"],
-        supported: Some(">=13.2.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "for-of-loops",
-        ignore_names: &["no-for-of-loops", "for-of-loops", "forOfLoops"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "function-declarations-in-if-statement-clauses-without-block",
-        ignore_names: &["no-function-declarations-in-if-statement-clauses-without-block", "function-declarations-in-if-statement-clauses-without-block", "functionDeclarationsInIfStatementClausesWithoutBlock"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "function-prototype-bind",
-        ignore_names: &["no-function-prototype-bind", "function-prototype-bind", "functionPrototypeBind"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Function", &["bind"])],
-    },
-    Feature {
-        name: "generators",
-        ignore_names: &["no-generators", "generators", "generators"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "global-this",
-        ignore_names: &["no-global-this", "global-this", "globalThis"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("globalThis", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "hashbang",
-        ignore_names: &["no-hashbang", "hashbang", "hashbang"],
-        supported: Some(">=12.5.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "import-meta",
-        ignore_names: &["no-import-meta", "import-meta", "importMeta"],
-        supported: Some(">=10.4.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "initializers-in-for-in",
-        ignore_names: &["no-initializers-in-for-in", "initializers-in-for-in", "initializersInForIn"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-datetimeformat-prototype-formatrange",
-        ignore_names: &["no-intl-datetimeformat-prototype-formatrange", "intl-datetimeformat-prototype-formatrange", "intlDatetimeformatPrototypeFormatrange"],
-        supported: Some(">=12.9.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.DateTimeFormat", &["formatRange"])],
-    },
-    Feature {
-        name: "intl-datetimeformat-prototype-formattoparts",
-        ignore_names: &["no-intl-datetimeformat-prototype-formattoparts", "intl-datetimeformat-prototype-formattoparts", "intlDatetimeformatPrototypeFormattoparts"],
-        supported: Some(">=12.9.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.DateTimeFormat", &["formatToParts"])],
-    },
-    Feature {
-        name: "intl-displaynames",
-        ignore_names: &["no-intl-displaynames", "intl-displaynames", "intlDisplaynames"],
-        supported: Some(">=14.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("DisplayNames", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-getcanonicallocales",
-        ignore_names: &["no-intl-getcanonicallocales", "intl-getcanonicallocales", "intlGetcanonicallocales"],
-        supported: Some(">=7.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("getCanonicalLocales", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-listformat",
-        ignore_names: &["no-intl-listformat", "intl-listformat", "intlListformat"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("ListFormat", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-locale",
-        ignore_names: &["no-intl-locale", "intl-locale", "intlLocale"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("Locale", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-numberformat-prototype-formatrange",
-        ignore_names: &["no-intl-numberformat-prototype-formatrange", "intl-numberformat-prototype-formatrange", "intlNumberformatPrototypeFormatrange"],
-        supported: Some(">=19.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.NumberFormat", &["formatRange"])],
-    },
-    Feature {
-        name: "intl-numberformat-prototype-formatrangetoparts",
-        ignore_names: &["no-intl-numberformat-prototype-formatrangetoparts", "intl-numberformat-prototype-formatrangetoparts", "intlNumberformatPrototypeFormatrangetoparts"],
-        supported: Some(">=19.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.NumberFormat", &["formatRangeToParts"])],
-    },
-    Feature {
-        name: "intl-numberformat-prototype-formattoparts",
-        ignore_names: &["no-intl-numberformat-prototype-formattoparts", "intl-numberformat-prototype-formattoparts", "intlNumberformatPrototypeFormattoparts"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.NumberFormat", &["formatToParts"])],
-    },
-    Feature {
-        name: "intl-pluralrules-prototype-selectrange",
-        ignore_names: &["no-intl-pluralrules-prototype-selectrange", "intl-pluralrules-prototype-selectrange", "intlPluralrulesPrototypeSelectrange"],
-        supported: Some(">=19.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Intl.PluralRules", &["selectRange"])],
-    },
-    Feature {
-        name: "intl-pluralrules",
-        ignore_names: &["no-intl-pluralrules", "intl-pluralrules", "intlPluralrules"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("PluralRules", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-relativetimeformat",
-        ignore_names: &["no-intl-relativetimeformat", "intl-relativetimeformat", "intlRelativetimeformat"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("RelativeTimeFormat", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-segmenter",
-        ignore_names: &["no-intl-segmenter", "intl-segmenter", "intlSegmenter"],
-        supported: Some(">=16.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("Segmenter", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "intl-supportedvaluesof",
-        ignore_names: &["no-intl-supportedvaluesof", "intl-supportedvaluesof", "intlSupportedvaluesof"],
-        supported: Some(">=18.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Intl", TraceMap::new(&[("supportedValuesOf", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "json-superset",
-        ignore_names: &["no-json-superset", "json-superset", "jsonSuperset"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "json",
-        ignore_names: &["no-json", "json", "json"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("JSON", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "keyword-properties",
-        ignore_names: &["no-keyword-properties", "keyword-properties", "keywordProperties"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "labelled-function-declarations",
-        ignore_names: &["no-labelled-function-declarations", "labelled-function-declarations", "labelledFunctionDeclarations"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "legacy-object-prototype-accessor-methods",
-        ignore_names: &["no-legacy-object-prototype-accessor-methods", "legacy-object-prototype-accessor-methods", "legacyObjectPrototypeAccessorMethods"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "logical-assignment-operators",
-        ignore_names: &["no-logical-assignment-operators", "logical-assignment-operators", "logicalAssignmentOperators"],
-        supported: Some(">=15.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "malformed-template-literals",
-        ignore_names: &["no-malformed-template-literals", "malformed-template-literals", "malformedTemplateLiterals"],
-        supported: Some(">=8.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "map",
-        ignore_names: &["no-map", "map", "map"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Map", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-acosh",
-        ignore_names: &["no-math-acosh", "math-acosh", "mathAcosh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("acosh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-asinh",
-        ignore_names: &["no-math-asinh", "math-asinh", "mathAsinh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("asinh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-atanh",
-        ignore_names: &["no-math-atanh", "math-atanh", "mathAtanh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("atanh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-cbrt",
-        ignore_names: &["no-math-cbrt", "math-cbrt", "mathCbrt"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("cbrt", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-clz32",
-        ignore_names: &["no-math-clz32", "math-clz32", "mathClz32"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("clz32", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-cosh",
-        ignore_names: &["no-math-cosh", "math-cosh", "mathCosh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("cosh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-expm1",
-        ignore_names: &["no-math-expm1", "math-expm1", "mathExpm1"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("expm1", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-fround",
-        ignore_names: &["no-math-fround", "math-fround", "mathFround"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("fround", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-hypot",
-        ignore_names: &["no-math-hypot", "math-hypot", "mathHypot"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("hypot", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-imul",
-        ignore_names: &["no-math-imul", "math-imul", "mathImul"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("imul", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-log10",
-        ignore_names: &["no-math-log10", "math-log10", "mathLog10"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("log10", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-log1p",
-        ignore_names: &["no-math-log1p", "math-log1p", "mathLog1p"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("log1p", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-log2",
-        ignore_names: &["no-math-log2", "math-log2", "mathLog2"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("log2", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-sign",
-        ignore_names: &["no-math-sign", "math-sign", "mathSign"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("sign", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-sinh",
-        ignore_names: &["no-math-sinh", "math-sinh", "mathSinh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("sinh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-tanh",
-        ignore_names: &["no-math-tanh", "math-tanh", "mathTanh"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("tanh", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "math-trunc",
-        ignore_names: &["no-math-trunc", "math-trunc", "mathTrunc"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Math", TraceMap::new(&[("trunc", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "modules",
-        ignore_names: &["no-modules", "modules", "modules"],
-        supported: Some("^12.17.0 || >=13.2.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "new-target",
-        ignore_names: &["no-new-target", "new-target", "newTarget", "new.target"],
-        supported: Some(">=5.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "nullish-coalescing-operators",
-        ignore_names: &["no-nullish-coalescing-operators", "nullish-coalescing-operators", "nullishCoalescingOperators"],
-        supported: Some(">=14.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "number-epsilon",
-        ignore_names: &["no-number-epsilon", "number-epsilon", "numberEpsilon"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("EPSILON", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-isfinite",
-        ignore_names: &["no-number-isfinite", "number-isfinite", "numberIsfinite"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("isFinite", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-isinteger",
-        ignore_names: &["no-number-isinteger", "number-isinteger", "numberIsinteger"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("isInteger", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-isnan",
-        ignore_names: &["no-number-isnan", "number-isnan", "numberIsnan"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("isNaN", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-issafeinteger",
-        ignore_names: &["no-number-issafeinteger", "number-issafeinteger", "numberIssafeinteger"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("isSafeInteger", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-maxsafeinteger",
-        ignore_names: &["no-number-maxsafeinteger", "number-maxsafeinteger", "numberMaxsafeinteger"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("MAX_SAFE_INTEGER", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-minsafeinteger",
-        ignore_names: &["no-number-minsafeinteger", "number-minsafeinteger", "numberMinsafeinteger"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("MIN_SAFE_INTEGER", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-parsefloat",
-        ignore_names: &["no-number-parsefloat", "number-parsefloat", "numberParsefloat"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("parseFloat", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "number-parseint",
-        ignore_names: &["no-number-parseint", "number-parseint", "numberParseint"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Number", TraceMap::new(&[("parseInt", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "numeric-separators",
-        ignore_names: &["no-numeric-separators", "numeric-separators", "numericSeparators"],
-        supported: Some(">=12.5.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "object-assign",
-        ignore_names: &["no-object-assign", "object-assign", "objectAssign"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("assign", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-create",
-        ignore_names: &["no-object-create", "object-create", "objectCreate"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("create", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-defineproperties",
-        ignore_names: &["no-object-defineproperties", "object-defineproperties", "objectDefineproperties"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("defineProperties", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-defineproperty",
-        ignore_names: &["no-object-defineproperty", "object-defineproperty", "objectDefineproperty"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("defineProperty", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-entries",
-        ignore_names: &["no-object-entries", "object-entries", "objectEntries"],
-        supported: Some(">=7.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("entries", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-freeze",
-        ignore_names: &["no-object-freeze", "object-freeze", "objectFreeze"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("freeze", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-fromentries",
-        ignore_names: &["no-object-fromentries", "object-fromentries", "objectFromentries"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("fromEntries", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-getownpropertydescriptor",
-        ignore_names: &["no-object-getownpropertydescriptor", "object-getownpropertydescriptor", "objectGetownpropertydescriptor"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyDescriptor", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-getownpropertydescriptors",
-        ignore_names: &["no-object-getownpropertydescriptors", "object-getownpropertydescriptors", "objectGetownpropertydescriptors"],
-        supported: Some(">=7.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyDescriptors", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-getownpropertynames",
-        ignore_names: &["no-object-getownpropertynames", "object-getownpropertynames", "objectGetownpropertynames"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyNames", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-getownpropertysymbols",
-        ignore_names: &["no-object-getownpropertysymbols", "object-getownpropertysymbols", "objectGetownpropertysymbols"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertySymbols", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-getprototypeof",
-        ignore_names: &["no-object-getprototypeof", "object-getprototypeof", "objectGetprototypeof"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("getPrototypeOf", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-hasown",
-        ignore_names: &["no-object-hasown", "object-hasown", "objectHasown"],
-        supported: Some(">=16.9.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("hasOwn", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-is",
-        ignore_names: &["no-object-is", "object-is", "objectIs"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("is", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-isextensible",
-        ignore_names: &["no-object-isextensible", "object-isextensible", "objectIsextensible"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("isExtensible", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-isfrozen",
-        ignore_names: &["no-object-isfrozen", "object-isfrozen", "objectIsfrozen"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("isFrozen", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-issealed",
-        ignore_names: &["no-object-issealed", "object-issealed", "objectIssealed"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("isSealed", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-keys",
-        ignore_names: &["no-object-keys", "object-keys", "objectKeys"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("keys", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-map-groupby",
-        ignore_names: &["no-object-map-groupby", "object-map-groupby", "objectMapGroupby"],
-        supported: Some(">=21.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("groupBy", TraceMap::new(&[]).read(()))])), ("Map", TraceMap::new(&[("groupBy", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-preventextensions",
-        ignore_names: &["no-object-preventextensions", "object-preventextensions", "objectPreventextensions"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("preventExtensions", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-seal",
-        ignore_names: &["no-object-seal", "object-seal", "objectSeal"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("seal", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-setprototypeof",
-        ignore_names: &["no-object-setprototypeof", "object-setprototypeof", "objectSetprototypeof"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("setPrototypeOf", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "object-super-properties",
-        ignore_names: &["no-object-super-properties", "object-super-properties", "objectSuperProperties"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "object-values",
-        ignore_names: &["no-object-values", "object-values", "objectValues"],
-        supported: Some(">=7.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Object", TraceMap::new(&[("values", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "octal-numeric-literals",
-        ignore_names: &["no-octal-numeric-literals", "octal-numeric-literals", "octalNumericLiterals"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "optional-catch-binding",
-        ignore_names: &["no-optional-catch-binding", "optional-catch-binding", "optionalCatchBinding"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "optional-chaining",
-        ignore_names: &["no-optional-chaining", "optional-chaining", "optionalChaining"],
-        supported: Some(">=14.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "private-in",
-        ignore_names: &["no-private-in", "private-in", "privateIn"],
-        supported: Some(">=16.4.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "promise-all-settled",
-        ignore_names: &["no-promise-all-settled", "promise-all-settled", "promiseAllSettled"],
-        supported: Some(">=12.9.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Promise", TraceMap::new(&[("allSettled", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "promise-any",
-        ignore_names: &["no-promise-any", "promise-any", "promiseAny"],
-        supported: Some(">=15.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("AggregateError", TraceMap::new(&[]).read(())), ("Promise", TraceMap::new(&[("any", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "promise-prototype-finally",
-        ignore_names: &["no-promise-prototype-finally", "promise-prototype-finally", "promisePrototypeFinally"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Promise", &["finally"])],
-    },
-    Feature {
-        name: "promise-withresolvers",
-        ignore_names: &["no-promise-withresolvers", "promise-withresolvers", "promiseWithresolvers"],
-        supported: Some(">=22.11.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Promise", TraceMap::new(&[("withResolvers", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "promise",
-        ignore_names: &["no-promise", "promise", "promise"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Promise", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "property-shorthands",
-        ignore_names: &["no-property-shorthands", "property-shorthands", "propertyShorthands"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "proxy",
-        ignore_names: &["no-proxy", "proxy", "proxy"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Proxy", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "reflect",
-        ignore_names: &["no-reflect", "reflect", "reflect"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Reflect", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-d-flag",
-        ignore_names: &["no-regexp-d-flag", "regexp-d-flag", "regexpDFlag"],
-        supported: Some(">=16.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-lookbehind-assertions",
-        ignore_names: &["no-regexp-lookbehind-assertions", "regexp-lookbehind-assertions", "regexpLookbehindAssertions", "regexpLookbehind"],
-        supported: Some(">=8.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-named-capture-groups",
-        ignore_names: &["no-regexp-named-capture-groups", "regexp-named-capture-groups", "regexpNamedCaptureGroups"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-prototype-compile",
-        ignore_names: &["no-regexp-prototype-compile", "regexp-prototype-compile", "regexpPrototypeCompile"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("RegExp", &["compile"])],
-    },
-    Feature {
-        name: "regexp-prototype-flags",
-        ignore_names: &["no-regexp-prototype-flags", "regexp-prototype-flags", "regexpPrototypeFlags"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("RegExp", &["flags"])],
-    },
-    Feature {
-        name: "regexp-s-flag",
-        ignore_names: &["no-regexp-s-flag", "regexp-s-flag", "regexpSFlag", "regexpS"],
-        supported: Some(">=8.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-u-flag",
-        ignore_names: &["no-regexp-u-flag", "regexp-u-flag", "regexpUFlag", "regexpU"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes-2019",
-        ignore_names: &["no-regexp-unicode-property-escapes-2019", "regexp-unicode-property-escapes-2019", "regexpUnicodePropertyEscapes2019"],
-        supported: Some(">=12.1.0 || ^10.16.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes-2020",
-        ignore_names: &["no-regexp-unicode-property-escapes-2020", "regexp-unicode-property-escapes-2020", "regexpUnicodePropertyEscapes2020"],
-        supported: Some(">=13.12.0 || ^12.17.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes-2021",
-        ignore_names: &["no-regexp-unicode-property-escapes-2021", "regexp-unicode-property-escapes-2021", "regexpUnicodePropertyEscapes2021"],
-        supported: Some(">=17.2.0 || ^16.14.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes-2022",
-        ignore_names: &["no-regexp-unicode-property-escapes-2022", "regexp-unicode-property-escapes-2022", "regexpUnicodePropertyEscapes2022"],
-        supported: Some(">=19.1.0 || ^18.13.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes-2023",
-        ignore_names: &["no-regexp-unicode-property-escapes-2023", "regexp-unicode-property-escapes-2023", "regexpUnicodePropertyEscapes2023"],
-        supported: None,
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-unicode-property-escapes",
-        ignore_names: &["no-regexp-unicode-property-escapes", "regexp-unicode-property-escapes", "regexpUnicodePropertyEscapes", "regexpUnicodeProperties"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-v-flag",
-        ignore_names: &["no-regexp-v-flag", "regexp-v-flag", "regexpVFlag"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "regexp-y-flag",
-        ignore_names: &["no-regexp-y-flag", "regexp-y-flag", "regexpYFlag", "regexpY"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "resizable-and-growable-arraybuffers",
-        ignore_names: &["no-resizable-and-growable-arraybuffers", "resizable-and-growable-arraybuffers", "resizableAndGrowableArraybuffers"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("ArrayBuffer", &["maxByteLength", "resizable", "resize"]), ("SharedArrayBuffer", &["grow", "growable", "maxByteLength"])],
-    },
-    Feature {
-        name: "rest-parameters",
-        ignore_names: &["no-rest-parameters", "rest-parameters", "restParameters"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "rest-spread-properties",
-        ignore_names: &["no-rest-spread-properties", "rest-spread-properties", "restSpreadProperties"],
-        supported: Some(">=8.3.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "set",
-        ignore_names: &["no-set", "set", "set"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Set", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "shadow-catch-param",
-        ignore_names: &["no-shadow-catch-param", "shadow-catch-param", "shadowCatchParam"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "shared-array-buffer",
-        ignore_names: &["no-shared-array-buffer", "shared-array-buffer", "sharedArrayBuffer"],
-        supported: Some(">=8.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("SharedArrayBuffer", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "spread-elements",
-        ignore_names: &["no-spread-elements", "spread-elements", "spreadElements"],
-        supported: Some(">=5.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "string-create-html-methods",
-        ignore_names: &["no-string-create-html-methods", "string-create-html-methods", "stringCreateHtmlMethods"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["anchor", "big", "blink", "bold", "fixed", "fontcolor", "fontsize", "italics", "link", "small", "strike", "sub", "sup"])],
-    },
-    Feature {
-        name: "string-fromcodepoint",
-        ignore_names: &["no-string-fromcodepoint", "string-fromcodepoint", "stringFromcodepoint"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("String", TraceMap::new(&[("fromCodePoint", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "string-prototype-codepointat",
-        ignore_names: &["no-string-prototype-codepointat", "string-prototype-codepointat", "stringPrototypeCodepointat"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["codePointAt"])],
-    },
-    Feature {
-        name: "string-prototype-endswith",
-        ignore_names: &["no-string-prototype-endswith", "string-prototype-endswith", "stringPrototypeEndswith"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["endsWith"])],
-    },
-    Feature {
-        name: "string-prototype-includes",
-        ignore_names: &["no-string-prototype-includes", "string-prototype-includes", "stringPrototypeIncludes"],
-        supported: Some(">=6.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["includes"])],
-    },
-    Feature {
-        name: "string-prototype-iswellformed-towellformed",
-        ignore_names: &["no-string-prototype-iswellformed-towellformed", "string-prototype-iswellformed-towellformed", "stringPrototypeIswellformedTowellformed"],
-        supported: Some(">=20.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["isWellFormed", "toWellFormed"])],
-    },
-    Feature {
-        name: "string-prototype-matchall",
-        ignore_names: &["no-string-prototype-matchall", "string-prototype-matchall", "stringPrototypeMatchall"],
-        supported: Some(">=12.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["matchAll"])],
-    },
-    Feature {
-        name: "string-prototype-normalize",
-        ignore_names: &["no-string-prototype-normalize", "string-prototype-normalize", "stringPrototypeNormalize"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["normalize"])],
-    },
-    Feature {
-        name: "string-prototype-padstart-padend",
-        ignore_names: &["no-string-prototype-padstart-padend", "string-prototype-padstart-padend", "stringPrototypePadstartPadend"],
-        supported: Some(">=8.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["padEnd", "padStart"])],
-    },
-    Feature {
-        name: "string-prototype-repeat",
-        ignore_names: &["no-string-prototype-repeat", "string-prototype-repeat", "stringPrototypeRepeat"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["repeat"])],
-    },
-    Feature {
-        name: "string-prototype-replaceall",
-        ignore_names: &["no-string-prototype-replaceall", "string-prototype-replaceall", "stringPrototypeReplaceall"],
-        supported: Some(">=15.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["replaceAll"])],
-    },
-    Feature {
-        name: "string-prototype-startswith",
-        ignore_names: &["no-string-prototype-startswith", "string-prototype-startswith", "stringPrototypeStartswith"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["startsWith"])],
-    },
-    Feature {
-        name: "string-prototype-substr",
-        ignore_names: &["no-string-prototype-substr", "string-prototype-substr", "stringPrototypeSubstr"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["substr"])],
-    },
-    Feature {
-        name: "string-prototype-trim",
-        ignore_names: &["no-string-prototype-trim", "string-prototype-trim", "stringPrototypeTrim"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["trim"])],
-    },
-    Feature {
-        name: "string-prototype-trimleft-trimright",
-        ignore_names: &["no-string-prototype-trimleft-trimright", "string-prototype-trimleft-trimright", "stringPrototypeTrimleftTrimright"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["trimLeft", "trimRight"])],
-    },
-    Feature {
-        name: "string-prototype-trimstart-trimend",
-        ignore_names: &["no-string-prototype-trimstart-trimend", "string-prototype-trimstart-trimend", "stringPrototypeTrimstartTrimend"],
-        supported: Some(">=10.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("String", &["trimEnd", "trimStart"])],
-    },
-    Feature {
-        name: "string-raw",
-        ignore_names: &["no-string-raw", "string-raw", "stringRaw"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("String", TraceMap::new(&[("raw", TraceMap::new(&[]).read(()))]))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "subclassing-builtins",
-        ignore_names: &["no-subclassing-builtins", "subclassing-builtins", "subclassingBuiltins"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "symbol-prototype-description",
-        ignore_names: &["no-symbol-prototype-description", "symbol-prototype-description", "symbolPrototypeDescription"],
-        supported: Some(">=11.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[("Symbol", &["description"])],
-    },
-    Feature {
-        name: "symbol",
-        ignore_names: &["no-symbol", "symbol", "symbol"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Symbol", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "template-literals",
-        ignore_names: &["no-template-literals", "template-literals", "templateLiterals"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "top-level-await",
-        ignore_names: &["no-top-level-await", "top-level-await", "topLevelAwait"],
-        supported: Some(">=14.8.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "trailing-commas",
-        ignore_names: &["no-trailing-commas", "trailing-commas", "trailingCommas"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "trailing-function-commas",
-        ignore_names: &["no-trailing-function-commas", "trailing-function-commas", "trailingFunctionCommas", "trailingCommasInFunctions"],
-        supported: Some(">=8.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "typed-arrays",
-        ignore_names: &["no-typed-arrays", "typed-arrays", "typedArrays"],
-        supported: Some(">=0.10.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("Int8Array", TraceMap::new(&[]).read(())), ("Uint8Array", TraceMap::new(&[]).read(())), ("Uint8ClampedArray", TraceMap::new(&[]).read(())), ("Int16Array", TraceMap::new(&[]).read(())), ("Uint16Array", TraceMap::new(&[]).read(())), ("Int32Array", TraceMap::new(&[]).read(())), ("Uint32Array", TraceMap::new(&[]).read(())), ("Float32Array", TraceMap::new(&[]).read(())), ("Float64Array", TraceMap::new(&[]).read(())), ("DataView", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "unicode-codepoint-escapes",
-        ignore_names: &["no-unicode-codepoint-escapes", "unicode-codepoint-escapes", "unicodeCodepointEscapes", "unicodeCodePointEscapes"],
-        supported: Some(">=4.0.0"),
-        strict_mode: None,
-        globals: TraceMap::EMPTY,
-        prototype: &[],
-    },
-    Feature {
-        name: "weak-map",
-        ignore_names: &["no-weak-map", "weak-map", "weakMap"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("WeakMap", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "weak-set",
-        ignore_names: &["no-weak-set", "weak-set", "weakSet"],
-        supported: Some(">=0.12.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("WeakSet", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
-    Feature {
-        name: "weakrefs",
-        ignore_names: &["no-weakrefs", "weakrefs", "weakrefs"],
-        supported: Some(">=14.6.0"),
-        strict_mode: None,
-        globals: TraceMap::new(&[("FinalizationRegistry", TraceMap::new(&[]).read(())), ("WeakRef", TraceMap::new(&[]).read(()))]),
-        prototype: &[],
-    },
+    Feature::new([p(2693, 19), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // accessor-properties
+    Feature::new([p(672, 32), p(2506, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // arbitrary-module-namespace-names
+    Feature::new([p(4216, 10), p(4900, 7), p(0, 0)], [p(0, 0), p(1, 1), p(0, 0)]), // array-from
+    Feature::new([p(3623, 13), p(4588, 8), p(0, 0)], [p(0, 0), p(3, 1), p(0, 0)]), // array-isarray
+    Feature::new([p(4772, 8), p(4900, 7), p(0, 0)], [p(0, 0), p(5, 1), p(0, 0)]), // array-of
+    Feature::new([p(1158, 26), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(7, 1)]), // array-prototype-copywithin
+    Feature::new([p(1708, 23), p(4596, 8), p(0, 0)], [p(0, 0), p(0, 0), p(9, 1)]), // array-prototype-entries
+    Feature::new([p(2225, 21), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(11, 1)]), // array-prototype-every
+    Feature::new([p(2514, 20), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(13, 1)]), // array-prototype-fill
+    Feature::new([p(1984, 22), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(15, 1)]), // array-prototype-filter
+    Feature::new([p(312, 20), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(17, 1)]), // array-prototype-find
+    Feature::new([p(1314, 25), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(19, 1)]), // array-prototype-findindex
+    Feature::new([p(312, 38), p(4724, 8), p(0, 0)], [p(0, 0), p(0, 0), p(22, 12)]), // array-prototype-findlast-findlastindex
+    Feature::new([p(2534, 20), p(4628, 8), p(0, 0)], [p(0, 0), p(0, 0), p(36, 1)]), // array-prototype-flat
+    Feature::new([p(1731, 23), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(38, 1)]), // array-prototype-foreach
+    Feature::new([p(1564, 24), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(40, 12)]), // array-prototype-includes
+    Feature::new([p(1754, 23), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(53, 1)]), // array-prototype-indexof
+    Feature::new([p(2554, 20), p(4596, 8), p(0, 0)], [p(0, 0), p(0, 0), p(55, 1)]), // array-prototype-keys
+    Feature::new([p(996, 27), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(57, 1)]), // array-prototype-lastindexof
+    Feature::new([p(2712, 19), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(59, 1)]), // array-prototype-map
+    Feature::new([p(1023, 22), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(61, 1)]), // array-prototype-reduce
+    Feature::new([p(1023, 27), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(63, 1)]), // array-prototype-reduceright
+    Feature::new([p(2574, 20), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(65, 1)]), // array-prototype-some
+    Feature::new([p(1184, 26), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(67, 12)]), // array-prototype-toreversed
+    Feature::new([p(1588, 24), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(80, 12)]), // array-prototype-tosorted
+    Feature::new([p(1339, 25), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(93, 1)]), // array-prototype-tospliced
+    Feature::new([p(2006, 22), p(4620, 8), p(0, 0)], [p(0, 0), p(0, 0), p(95, 1)]), // array-prototype-values
+    Feature::new([p(2594, 20), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(97, 12)]), // array-prototype-with
+    Feature::new([p(1364, 25), p(4708, 8), p(0, 0)], [p(0, 0), p(0, 0), p(110, 13)]), // array-string-prototype-at
+    Feature::new([p(3275, 15), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // arrow-functions
+    Feature::new([p(3290, 15), p(4928, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // async-functions
+    Feature::new([p(3305, 15), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // async-iteration
+    Feature::new([p(3077, 17), p(4692, 8), p(0, 0)], [p(0, 0), p(124, 1), p(0, 0)]), // atomics-waitasync
+    Feature::new([p(3077, 7), p(4756, 8), p(0, 0)], [p(0, 0), p(125, 1), p(0, 0)]), // atomics
+    Feature::new([p(5114, 6), p(4612, 8), p(0, 0)], [p(0, 0), p(126, 3), p(0, 0)]), // bigint
+    Feature::new([p(1777, 23), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // binary-numeric-literals
+    Feature::new([p(2028, 22), p(4900, 7), p(4914, 7)], [p(0, 0), p(0, 0), p(0, 0)]), // block-scoped-functions
+    Feature::new([p(2050, 22), p(4900, 7), p(4914, 7)], [p(0, 0), p(0, 0), p(0, 0)]), // block-scoped-variables
+    Feature::new([p(3906, 12), p(4636, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // class-fields
+    Feature::new([p(2882, 18), p(4426, 9), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // class-static-block
+    Feature::new([p(4998, 7), p(4900, 7), p(4914, 7)], [p(0, 0), p(0, 0), p(0, 0)]), // classes
+    Feature::new([p(2731, 19), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // computed-properties
+    Feature::new([p(4780, 8), p(4588, 8), p(0, 0)], [p(0, 0), p(130, 1), p(0, 0)]), // date-now
+    Feature::new([p(768, 30), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(133, 1)]), // date-prototype-getyear-setyear
+    Feature::new([p(1210, 26), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(135, 1)]), // date-prototype-togmtstring
+    Feature::new([p(2900, 18), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // default-parameters
+    Feature::new([p(3636, 13), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // destructuring
+    Feature::new([p(3512, 14), p(2494, 20), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // dynamic-import
+    Feature::new([p(4023, 11), p(4716, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // error-cause
+    Feature::new([p(3320, 15), p(4588, 8), p(0, 0)], [p(0, 0), p(136, 2), p(0, 0)]), // escape-unescape
+    Feature::new([p(2246, 21), p(4921, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // exponential-operators
+    Feature::new([p(3526, 14), p(2506, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // export-ns-from
+    Feature::new([p(3918, 12), p(4596, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // for-of-loops
+    Feature::new([p(0, 59), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // function-declarations-in-if-statement-clauses-without-block
+    Feature::new([p(1800, 23), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(139, 1)]), // function-prototype-bind
+    Feature::new([p(4236, 10), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // generators
+    Feature::new([p(4045, 11), p(4636, 8), p(0, 0)], [p(0, 0), p(140, 1), p(0, 0)]), // global-this
+    Feature::new([p(4804, 8), p(4644, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // hashbang
+    Feature::new([p(4056, 11), p(4612, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // import-meta
+    Feature::new([p(2072, 22), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // initializers-in-for-in
+    Feature::new([p(190, 41), p(4652, 8), p(0, 0)], [p(0, 0), p(0, 0), p(142, 1)]), // intl-datetimeformat-prototype-formatrange
+    Feature::new([p(105, 43), p(4652, 8), p(0, 0)], [p(0, 0), p(0, 0), p(144, 1)]), // intl-datetimeformat-prototype-formattoparts
+    Feature::new([p(3094, 17), p(4660, 8), p(0, 0)], [p(0, 0), p(146, 1), p(0, 0)]), // intl-displaynames
+    Feature::new([p(1612, 24), p(4921, 7), p(0, 0)], [p(0, 0), p(148, 1), p(0, 0)]), // intl-getcanonicallocales
+    Feature::new([p(3335, 15), p(4636, 8), p(0, 0)], [p(0, 0), p(150, 1), p(0, 0)]), // intl-listformat
+    Feature::new([p(4067, 11), p(4636, 8), p(0, 0)], [p(0, 0), p(152, 1), p(0, 0)]), // intl-locale
+    Feature::new([p(59, 39), p(4732, 8), p(0, 0)], [p(0, 0), p(0, 0), p(153, 1)]), // intl-numberformat-prototype-formatrange
+    Feature::new([p(59, 46), p(4732, 8), p(0, 0)], [p(0, 0), p(0, 0), p(155, 1)]), // intl-numberformat-prototype-formatrangetoparts
+    Feature::new([p(231, 41), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(156, 1)]), // intl-numberformat-prototype-formattoparts
+    Feature::new([p(350, 38), p(4732, 8), p(0, 0)], [p(0, 0), p(0, 0), p(158, 1)]), // intl-pluralrules-prototype-selectrange
+    Feature::new([p(350, 16), p(4604, 8), p(0, 0)], [p(0, 0), p(160, 1), p(0, 0)]), // intl-pluralrules
+    Feature::new([p(1823, 23), p(4636, 8), p(0, 0)], [p(0, 0), p(162, 1), p(0, 0)]), // intl-relativetimeformat
+    Feature::new([p(3554, 14), p(4692, 8), p(0, 0)], [p(0, 0), p(164, 1), p(0, 0)]), // intl-segmenter
+    Feature::new([p(2094, 22), p(4724, 8), p(0, 0)], [p(0, 0), p(166, 1), p(0, 0)]), // intl-supportedvaluesof
+    Feature::new([p(3701, 13), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // json-superset
+    Feature::new([p(3701, 4), p(4588, 8), p(0, 0)], [p(0, 0), p(167, 1), p(0, 0)]), // json
+    Feature::new([p(2936, 18), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // keyword-properties
+    Feature::new([p(798, 30), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // labelled-function-declarations
+    Feature::new([p(272, 40), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // legacy-object-prototype-accessor-methods
+    Feature::new([p(828, 28), p(4684, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // logical-assignment-operators
+    Feature::new([p(1050, 27), p(4756, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // malformed-template-literals
+    Feature::new([p(2728, 3), p(4596, 8), p(0, 0)], [p(0, 0), p(168, 1), p(0, 0)]), // map
+    Feature::new([p(4256, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(170, 1), p(0, 0)]), // math-acosh
+    Feature::new([p(4266, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(172, 1), p(0, 0)]), // math-asinh
+    Feature::new([p(4276, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(174, 1), p(0, 0)]), // math-atanh
+    Feature::new([p(4489, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(176, 1), p(0, 0)]), // math-cbrt
+    Feature::new([p(4286, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(178, 1), p(0, 0)]), // math-clz32
+    Feature::new([p(4498, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(180, 1), p(0, 0)]), // math-cosh
+    Feature::new([p(4296, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(182, 1), p(0, 0)]), // math-expm1
+    Feature::new([p(4089, 11), p(4596, 8), p(0, 0)], [p(0, 0), p(184, 1), p(0, 0)]), // math-fround
+    Feature::new([p(4306, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(186, 1), p(0, 0)]), // math-hypot
+    Feature::new([p(4507, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(188, 1), p(0, 0)]), // math-imul
+    Feature::new([p(4316, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(190, 1), p(0, 0)]), // math-log10
+    Feature::new([p(4326, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(192, 1), p(0, 0)]), // math-log1p
+    Feature::new([p(4516, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(194, 1), p(0, 0)]), // math-log2
+    Feature::new([p(4525, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(196, 1), p(0, 0)]), // math-sign
+    Feature::new([p(4534, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(198, 1), p(0, 0)]), // math-sinh
+    Feature::new([p(4543, 9), p(4596, 8), p(0, 0)], [p(0, 0), p(200, 1), p(0, 0)]), // math-tanh
+    Feature::new([p(4336, 10), p(4596, 8), p(0, 0)], [p(0, 0), p(202, 1), p(0, 0)]), // math-trunc
+    Feature::new([p(5054, 7), p(2494, 20), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // modules
+    Feature::new([p(4346, 10), p(4907, 7), p(0, 0)], [p(203, 1), p(0, 0), p(0, 0)]), // new-target
+    Feature::new([p(856, 28), p(4660, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // nullish-coalescing-operators
+    Feature::new([p(3568, 14), p(4596, 8), p(0, 0)], [p(0, 0), p(205, 1), p(0, 0)]), // number-epsilon
+    Feature::new([p(3350, 15), p(4588, 8), p(0, 0)], [p(0, 0), p(207, 1), p(0, 0)]), // number-isfinite
+    Feature::new([p(3243, 16), p(4588, 8), p(0, 0)], [p(0, 0), p(209, 1), p(0, 0)]), // number-isinteger
+    Feature::new([p(3954, 12), p(4588, 8), p(0, 0)], [p(0, 0), p(211, 1), p(0, 0)]), // number-isnan
+    Feature::new([p(2614, 20), p(4596, 8), p(0, 0)], [p(0, 0), p(213, 1), p(0, 0)]), // number-issafeinteger
+    Feature::new([p(2288, 21), p(4596, 8), p(0, 0)], [p(0, 0), p(215, 1), p(0, 0)]), // number-maxsafeinteger
+    Feature::new([p(2309, 21), p(4596, 8), p(0, 0)], [p(0, 0), p(217, 1), p(0, 0)]), // number-minsafeinteger
+    Feature::new([p(3111, 17), p(4596, 8), p(0, 0)], [p(0, 0), p(219, 1), p(0, 0)]), // number-parsefloat
+    Feature::new([p(3365, 15), p(4596, 8), p(0, 0)], [p(0, 0), p(221, 1), p(0, 0)]), // number-parseint
+    Feature::new([p(2954, 18), p(4644, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // numeric-separators
+    Feature::new([p(3727, 13), p(4900, 7), p(0, 0)], [p(0, 0), p(223, 1), p(0, 0)]), // object-assign
+    Feature::new([p(3740, 13), p(4588, 8), p(0, 0)], [p(0, 0), p(225, 1), p(0, 0)]), // object-create
+    Feature::new([p(1846, 23), p(4588, 8), p(0, 0)], [p(0, 0), p(227, 1), p(0, 0)]), // object-defineproperties
+    Feature::new([p(2330, 21), p(4588, 8), p(0, 0)], [p(0, 0), p(229, 1), p(0, 0)]), // object-defineproperty
+    Feature::new([p(3582, 14), p(4921, 7), p(0, 0)], [p(0, 0), p(231, 1), p(0, 0)]), // object-entries
+    Feature::new([p(3753, 13), p(4588, 8), p(0, 0)], [p(0, 0), p(233, 1), p(0, 0)]), // object-freeze
+    Feature::new([p(2972, 18), p(4636, 8), p(0, 0)], [p(0, 0), p(235, 1), p(0, 0)]), // object-fromentries
+    Feature::new([p(704, 31), p(4588, 8), p(0, 0)], [p(0, 0), p(237, 1), p(0, 0)]), // object-getownpropertydescriptor
+    Feature::new([p(704, 32), p(4921, 7), p(0, 0)], [p(0, 0), p(239, 1), p(0, 0)]), // object-getownpropertydescriptors
+    Feature::new([p(1236, 26), p(4588, 8), p(0, 0)], [p(0, 0), p(241, 1), p(0, 0)]), // object-getownpropertynames
+    Feature::new([p(884, 28), p(4596, 8), p(0, 0)], [p(0, 0), p(243, 1), p(0, 0)]), // object-getownpropertysymbols
+    Feature::new([p(2351, 21), p(4588, 8), p(0, 0)], [p(0, 0), p(245, 1), p(0, 0)]), // object-getprototypeof
+    Feature::new([p(3766, 13), p(4716, 8), p(0, 0)], [p(0, 0), p(247, 1), p(0, 0)]), // object-hasown
+    Feature::new([p(2788, 9), p(4588, 8), p(0, 0)], [p(0, 0), p(249, 1), p(0, 0)]), // object-is
+    Feature::new([p(2788, 19), p(4588, 8), p(0, 0)], [p(0, 0), p(251, 1), p(0, 0)]), // object-isextensible
+    Feature::new([p(3380, 15), p(4588, 8), p(0, 0)], [p(0, 0), p(253, 1), p(0, 0)]), // object-isfrozen
+    Feature::new([p(3395, 15), p(4588, 8), p(0, 0)], [p(0, 0), p(255, 1), p(0, 0)]), // object-issealed
+    Feature::new([p(4100, 11), p(4588, 8), p(0, 0)], [p(0, 0), p(257, 1), p(0, 0)]), // object-keys
+    Feature::new([p(2990, 18), p(4748, 8), p(0, 0)], [p(0, 0), p(259, 2), p(0, 0)]), // object-map-groupby
+    Feature::new([p(1636, 24), p(4588, 8), p(0, 0)], [p(0, 0), p(262, 1), p(0, 0)]), // object-preventextensions
+    Feature::new([p(4111, 11), p(4588, 8), p(0, 0)], [p(0, 0), p(264, 1), p(0, 0)]), // object-seal
+    Feature::new([p(2372, 21), p(4596, 8), p(0, 0)], [p(0, 0), p(266, 1), p(0, 0)]), // object-setprototypeof
+    Feature::new([p(1869, 23), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // object-super-properties
+    Feature::new([p(3779, 13), p(4921, 7), p(0, 0)], [p(0, 0), p(268, 1), p(0, 0)]), // object-values
+    Feature::new([p(2116, 22), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // octal-numeric-literals
+    Feature::new([p(2138, 22), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // optional-catch-binding
+    Feature::new([p(3128, 17), p(4660, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // optional-chaining
+    Feature::new([p(4376, 10), p(4700, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // private-in
+    Feature::new([p(2807, 19), p(4652, 8), p(0, 0)], [p(0, 0), p(270, 1), p(0, 0)]), // promise-all-settled
+    Feature::new([p(4122, 11), p(4684, 8), p(0, 0)], [p(0, 0), p(272, 2), p(0, 0)]), // promise-any
+    Feature::new([p(1414, 25), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(275, 1)]), // promise-prototype-finally
+    Feature::new([p(2393, 21), p(4435, 9), p(0, 0)], [p(0, 0), p(277, 1), p(0, 0)]), // promise-withresolvers
+    Feature::new([p(1414, 7), p(4596, 8), p(0, 0)], [p(0, 0), p(278, 1), p(0, 0)]), // promise
+    Feature::new([p(2826, 19), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // property-shorthands
+    Feature::new([p(5164, 5), p(4914, 7), p(0, 0)], [p(0, 0), p(279, 1), p(0, 0)]), // proxy
+    Feature::new([p(5061, 7), p(4914, 7), p(0, 0)], [p(0, 0), p(280, 1), p(0, 0)]), // reflect
+    Feature::new([p(3792, 13), p(4692, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-d-flag
+    Feature::new([p(912, 28), p(4756, 8), p(0, 0)], [p(281, 1), p(0, 0), p(0, 0)]), // regexp-lookbehind-assertions
+    Feature::new([p(1077, 27), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-named-capture-groups
+    Feature::new([p(1660, 24), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(283, 1)]), // regexp-prototype-compile
+    Feature::new([p(2160, 22), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(285, 1)]), // regexp-prototype-flags
+    Feature::new([p(3805, 13), p(4756, 8), p(0, 0)], [p(286, 1), p(0, 0), p(0, 0)]), // regexp-s-flag
+    Feature::new([p(3818, 13), p(4914, 7), p(0, 0)], [p(287, 1), p(0, 0), p(0, 0)]), // regexp-u-flag
+    Feature::new([p(388, 36), p(2414, 20), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes-2019
+    Feature::new([p(424, 36), p(2204, 21), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes-2020
+    Feature::new([p(460, 36), p(2434, 20), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes-2021
+    Feature::new([p(496, 36), p(2454, 20), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes-2022
+    Feature::new([p(532, 36), p(0, 0), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes-2023
+    Feature::new([p(388, 31), p(4604, 8), p(0, 0)], [p(288, 1), p(0, 0), p(0, 0)]), // regexp-unicode-property-escapes
+    Feature::new([p(3831, 13), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // regexp-v-flag
+    Feature::new([p(3844, 13), p(4914, 7), p(0, 0)], [p(289, 1), p(0, 0), p(0, 0)]), // regexp-y-flag
+    Feature::new([p(568, 35), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(296, 2)]), // resizable-and-growable-arraybuffers
+    Feature::new([p(3410, 15), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // rest-parameters
+    Feature::new([p(2182, 22), p(4942, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // rest-spread-properties
+    Feature::new([p(791, 3), p(4596, 8), p(0, 0)], [p(0, 0), p(298, 1), p(0, 0)]), // set
+    Feature::new([p(3008, 18), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // shadow-catch-param
+    Feature::new([p(2845, 19), p(4756, 8), p(0, 0)], [p(0, 0), p(299, 1), p(0, 0)]), // shared-array-buffer
+    Feature::new([p(3425, 15), p(4907, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // spread-elements
+    Feature::new([p(1262, 26), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(313, 1)]), // string-create-html-methods
+    Feature::new([p(2634, 20), p(4900, 7), p(0, 0)], [p(0, 0), p(315, 1), p(0, 0)]), // string-fromcodepoint
+    Feature::new([p(940, 28), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(317, 1)]), // string-prototype-codepointat
+    Feature::new([p(1439, 25), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(319, 1)]), // string-prototype-endswith
+    Feature::new([p(1464, 25), p(4914, 7), p(0, 0)], [p(0, 0), p(0, 0), p(320, 1)]), // string-prototype-includes
+    Feature::new([p(148, 42), p(4740, 8), p(0, 0)], [p(0, 0), p(0, 0), p(323, 1)]), // string-prototype-iswellformed-towellformed
+    Feature::new([p(1489, 25), p(4636, 8), p(0, 0)], [p(0, 0), p(0, 0), p(325, 1)]), // string-prototype-matchall
+    Feature::new([p(1288, 26), p(4596, 8), p(0, 0)], [p(0, 0), p(0, 0), p(327, 1)]), // string-prototype-normalize
+    Feature::new([p(736, 32), p(4935, 7), p(0, 0)], [p(0, 0), p(0, 0), p(330, 1)]), // string-prototype-padstart-padend
+    Feature::new([p(1915, 23), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(332, 1)]), // string-prototype-repeat
+    Feature::new([p(1104, 27), p(4684, 8), p(0, 0)], [p(0, 0), p(0, 0), p(334, 1)]), // string-prototype-replaceall
+    Feature::new([p(1131, 27), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(336, 1)]), // string-prototype-startswith
+    Feature::new([p(1938, 23), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(338, 1)]), // string-prototype-substr
+    Feature::new([p(603, 21), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(340, 1)]), // string-prototype-trim
+    Feature::new([p(603, 35), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(343, 1)]), // string-prototype-trimleft-trimright
+    Feature::new([p(638, 34), p(4604, 8), p(0, 0)], [p(0, 0), p(0, 0), p(346, 1)]), // string-prototype-trimstart-trimend
+    Feature::new([p(4406, 10), p(4900, 7), p(0, 0)], [p(0, 0), p(348, 1), p(0, 0)]), // string-raw
+    Feature::new([p(2654, 20), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // subclassing-builtins
+    Feature::new([p(968, 28), p(4628, 8), p(0, 0)], [p(0, 0), p(0, 0), p(350, 1)]), // symbol-prototype-description
+    Feature::new([p(905, 6), p(4596, 8), p(0, 0)], [p(0, 0), p(351, 1), p(0, 0)]), // symbol
+    Feature::new([p(1060, 17), p(4900, 7), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // template-literals
+    Feature::new([p(3440, 15), p(4676, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // top-level-await
+    Feature::new([p(3455, 15), p(4588, 8), p(0, 0)], [p(0, 0), p(0, 0), p(0, 0)]), // trailing-commas
+    Feature::new([p(1684, 24), p(4935, 7), p(0, 0)], [p(352, 1), p(0, 0), p(0, 0)]), // trailing-function-commas
+    Feature::new([p(3978, 12), p(4588, 8), p(0, 0)], [p(0, 0), p(353, 10), p(0, 0)]), // typed-arrays
+    Feature::new([p(1539, 25), p(4900, 7), p(0, 0)], [p(363, 1), p(0, 0), p(0, 0)]), // unicode-codepoint-escapes
+    Feature::new([p(4876, 8), p(4596, 8), p(0, 0)], [p(0, 0), p(364, 1), p(0, 0)]), // weak-map
+    Feature::new([p(4884, 8), p(4596, 8), p(0, 0)], [p(0, 0), p(365, 1), p(0, 0)]), // weak-set
+    Feature::new([p(4892, 8), p(4668, 8), p(0, 0)], [p(0, 0), p(366, 2), p(0, 0)]), // weakrefs
+];
+
+/// The names in [`FEATURES`]. A global variable or a property that is a feature has 0 at `[READ]`.
+pub(crate) enum EsFeature {}
+
+impl Table for EsFeature {
+    fn names() -> &'static str {
+        NAMES
+    }
+
+    fn members() -> &'static [Member<Self>] {
+        &MEMBERS
+    }
+
+    fn kinds() -> &'static [[u16; 3]] {
+        &KINDS
+    }
+}
+
+const fn m(name: u16, name_len: u8, kinds: u16, first: u16, count: u8) -> Member<EsFeature> {
+    Member::new(Part::new(name, name_len), kinds, Part::new(first, count))
+}
+
+#[rustfmt::skip]
+static NAMES: &str = "function-declarations-in-if-statement-clauses-without-blockintl-numberformat-prototype-formatrangetopartsintl-datetimeformat-prototype-formattopartsstring-prototype-iswellformed-towellformedintl-datetimeformat-prototype-formatrangeintl-numberformat-prototype-formattopartslegacy-object-prototype-accessor-methodsarray-prototype-findlast-findlastindexintl-pluralrules-prototype-selectrangeregexp-unicode-property-escapes-2019regexp-unicode-property-escapes-2020regexp-unicode-property-escapes-2021regexp-unicode-property-escapes-2022regexp-unicode-property-escapes-2023resizable-and-growable-arraybuffersstring-prototype-trimleft-trimrightstring-prototype-trimstart-trimendarbitrary-module-namespace-namesobject-getownpropertydescriptorsstring-prototype-padstart-padenddate-prototype-getyear-setyearlabelled-function-declarationslogical-assignment-operatorsnullish-coalescing-operatorsobject-getownpropertysymbolsregexp-lookbehind-assertionsstring-prototype-codepointatsymbol-prototype-descriptionarray-prototype-lastindexofarray-prototype-reducerightmalformed-template-literalsregexp-named-capture-groupsstring-prototype-replaceallstring-prototype-startswitharray-prototype-copywithinarray-prototype-toreverseddate-prototype-togmtstringobject-getownpropertynamesstring-create-html-methodsstring-prototype-normalizearray-prototype-findindexarray-prototype-tosplicedarray-string-prototype-atgetOwnPropertyDescriptorspromise-prototype-finallystring-prototype-endswithstring-prototype-includesstring-prototype-matchalltrailingCommasInFunctionsunicode-codepoint-escapesarray-prototype-includesarray-prototype-tosortedintl-getcanonicallocalesobject-preventextensionsregexp-prototype-compiletrailing-function-commasarray-prototype-entriesarray-prototype-foreacharray-prototype-indexofbinary-numeric-literalsfunction-prototype-bindintl-relativetimeformatobject-definepropertiesobject-super-propertiesregexpUnicodePropertiesstring-prototype-repeatstring-prototype-substrunicodeCodePointEscapesarray-prototype-filterarray-prototype-valuesblock-scoped-functionsblock-scoped-variablesinitializers-in-for-inintl-supportedvaluesofoctal-numeric-literalsoptional-catch-bindingregexp-prototype-flagsrest-spread-properties>=13.12.0 || ^12.17.0array-prototype-everyexponential-operatorsgetOwnPropertySymbolsnumber-maxsafeintegernumber-minsafeintegerobject-definepropertyobject-getprototypeofobject-setprototypeofpromise-withresolvers>=12.1.0 || ^10.16.0>=17.2.0 || ^16.14.0>=19.1.0 || ^18.13.0FinalizationRegistry^12.17.0 || >=13.2.0array-prototype-fillarray-prototype-flatarray-prototype-keysarray-prototype-somearray-prototype-withnumber-issafeintegerstring-fromcodepointsubclassing-builtinsIntl.DateTimeFormataccessor-propertiesarray-prototype-mapcomputed-propertiesgetCanonicalLocalesgetOwnPropertyNamesobject-isextensiblepromise-all-settledproperty-shorthandsshared-array-bufferRelativeTimeFormatclass-static-blockdefault-parametersformatRangeToPartskeyword-propertiesnumeric-separatorsobject-fromentriesobject-map-groupbyshadow-catch-paramIntl.NumberFormatSharedArrayBufferUint8ClampedArrayatomics-waitasyncintl-displaynamesnumber-parsefloatoptional-chainingpreventExtensionssupportedValuesOfIntl.PluralRulesMAX_SAFE_INTEGERMIN_SAFE_INTEGERdefinePropertiesnumber-isintegerregexpLookbehindarrow-functionsasync-functionsasync-iterationescape-unescapeintl-listformatnumber-isfinitenumber-parseintobject-isfrozenobject-issealedrest-parametersspread-elementstop-level-awaittrailing-commasAggregateErrorBigUint64ArraydefinePropertydynamic-importexport-ns-fromgetPrototypeOfintl-segmenternumber-epsilonobject-entriessetPrototypeOfBigInt64Arrayarray-isarraydestructuringfindLastIndexformatToPartsfromCodePointisSafeIntegerjson-supersetmaxByteLengthobject-assignobject-createobject-freezeobject-hasownobject-valuesregexp-d-flagregexp-s-flagregexp-u-flagregexp-v-flagregexp-y-flagwithResolversDisplayNamesFloat32ArrayFloat64Arrayclass-fieldsfor-of-loopsisExtensibleisWellFormednumber-isnantoWellFormedtyped-arraysUint16ArrayUint32ArraycodePointAterror-causefromEntriesglobal-thisimport-metaintl-localelastIndexOfmath-froundobject-keysobject-sealpromise-anyreduceRightselectRangetoGMTStringInt16ArrayInt32ArrayListFormatUint8ArrayallSettledarray-fromcopyWithingeneratorsglobalThismath-acoshmath-asinhmath-atanhmath-clz32math-expm1math-hypotmath-log10math-log1pmath-truncnew-targetnew.targetparseFloatprivate-inreplaceAllstartsWithstring-rawtoReversed>=16.11.0>=22.11.0Int8ArraySegmenterfindIndexfontcolorisIntegermath-cbrtmath-coshmath-imulmath-log2math-signmath-sinhmath-tanhtoSplicedtrimRighttrimStartwaitAsync>=0.10.0>=0.12.0>=10.0.0>=10.4.0>=10.9.0>=11.0.0>=12.0.0>=12.5.0>=12.9.0>=14.0.0>=14.6.0>=14.8.0>=15.0.0>=16.0.0>=16.4.0>=16.6.0>=16.9.0>=18.0.0>=19.0.0>=20.0.0>=21.0.0>=8.10.0DataViewarray-ofdate-nowendsWithfontsizehashbangisFiniteisFrozenisSealedmatchAllpadStartparseInttoSortedtrimLeftweak-mapweak-setweakrefs>=4.0.0>=5.0.0>=6.0.0>=7.0.0>=7.6.0>=8.0.0>=8.3.0AtomicsEPSILONPromiseReflectWeakMapWeakRefWeakSetclassesflatMapforEachgetYeargroupByindexOfisArrayitalicsmodulesreflectregexpSregexpYsetYeartrimEndObjectRegExpanchorbiginthasOwnpadEndresizestrikeProxyblinkfixedisNaNproxysmallJSONMathbold";
+
+/// What is at `[READ]`, `[CALL]` and `[CONSTRUCT]`.
+#[rustfmt::skip]
+static KINDS: [[u16; 3]; 2] = [
+    [0, NONE, NONE],
+    [NONE, NONE, NONE],
+];
+
+#[rustfmt::skip]
+static MEMBERS: [Member<EsFeature>; 368] = [
+    m(2641, 4, 0, 0, 0), // from
+    m(3049, 5, 1, 0, 1), // Array
+    m(5040, 7, 0, 0, 0), // isArray
+    m(3049, 5, 1, 2, 1), // Array
+    m(1021, 2, 0, 0, 0), // of
+    m(3049, 5, 1, 4, 1), // Array
+    m(4226, 10, 1, 0, 0), // copyWithin
+    m(3049, 5, 1, 6, 1), // Array
+    m(1724, 7, 1, 0, 0), // entries
+    m(3049, 5, 1, 8, 1), // Array
+    m(2241, 5, 1, 0, 0), // every
+    m(3049, 5, 1, 10, 1), // Array
+    m(2530, 4, 1, 0, 0), // fill
+    m(3049, 5, 1, 12, 1), // Array
+    m(2000, 6, 1, 0, 0), // filter
+    m(3049, 5, 1, 14, 1), // Array
+    m(328, 4, 1, 0, 0), // find
+    m(3049, 5, 1, 16, 1), // Array
+    m(4462, 9, 1, 0, 0), // findIndex
+    m(3049, 5, 1, 18, 1), // Array
+    m(3649, 8, 1, 0, 0), // findLast
+    m(3649, 13, 1, 0, 0), // findLastIndex
+    m(3049, 5, 1, 20, 2), // Array
+    m(4444, 9, 1, 20, 2), // Int8Array
+    m(4196, 10, 1, 20, 2), // Uint8Array
+    m(3060, 17, 1, 20, 2), // Uint8ClampedArray
+    m(4166, 10, 1, 20, 2), // Int16Array
+    m(3990, 11, 1, 20, 2), // Uint16Array
+    m(4176, 10, 1, 20, 2), // Int32Array
+    m(4001, 11, 1, 20, 2), // Uint32Array
+    m(3882, 12, 1, 20, 2), // Float32Array
+    m(3894, 12, 1, 20, 2), // Float64Array
+    m(3610, 13, 1, 20, 2), // BigInt64Array
+    m(3484, 14, 1, 20, 2), // BigUint64Array
+    m(2550, 4, 1, 0, 0), // flat
+    m(5005, 7, 1, 0, 0), // flatMap
+    m(3049, 5, 1, 34, 2), // Array
+    m(5012, 7, 1, 0, 0), // forEach
+    m(3049, 5, 1, 37, 1), // Array
+    m(1481, 8, 1, 0, 0), // includes
+    m(3049, 5, 1, 39, 1), // Array
+    m(4444, 9, 1, 39, 1), // Int8Array
+    m(4196, 10, 1, 39, 1), // Uint8Array
+    m(3060, 17, 1, 39, 1), // Uint8ClampedArray
+    m(4166, 10, 1, 39, 1), // Int16Array
+    m(3990, 11, 1, 39, 1), // Uint16Array
+    m(4176, 10, 1, 39, 1), // Int32Array
+    m(4001, 11, 1, 39, 1), // Uint32Array
+    m(3882, 12, 1, 39, 1), // Float32Array
+    m(3894, 12, 1, 39, 1), // Float64Array
+    m(3610, 13, 1, 39, 1), // BigInt64Array
+    m(3484, 14, 1, 39, 1), // BigUint64Array
+    m(5033, 7, 1, 0, 0), // indexOf
+    m(3049, 5, 1, 52, 1), // Array
+    m(2570, 4, 1, 0, 0), // keys
+    m(3049, 5, 1, 54, 1), // Array
+    m(4078, 11, 1, 0, 0), // lastIndexOf
+    m(3049, 5, 1, 56, 1), // Array
+    m(2728, 3, 1, 0, 0), // map
+    m(3049, 5, 1, 58, 1), // Array
+    m(1039, 6, 1, 0, 0), // reduce
+    m(3049, 5, 1, 60, 1), // Array
+    m(4133, 11, 1, 0, 0), // reduceRight
+    m(3049, 5, 1, 62, 1), // Array
+    m(2590, 4, 1, 0, 0), // some
+    m(3049, 5, 1, 64, 1), // Array
+    m(4416, 10, 1, 0, 0), // toReversed
+    m(3049, 5, 1, 66, 1), // Array
+    m(4444, 9, 1, 66, 1), // Int8Array
+    m(4196, 10, 1, 66, 1), // Uint8Array
+    m(3060, 17, 1, 66, 1), // Uint8ClampedArray
+    m(4166, 10, 1, 66, 1), // Int16Array
+    m(3990, 11, 1, 66, 1), // Uint16Array
+    m(4176, 10, 1, 66, 1), // Int32Array
+    m(4001, 11, 1, 66, 1), // Uint32Array
+    m(3882, 12, 1, 66, 1), // Float32Array
+    m(3894, 12, 1, 66, 1), // Float64Array
+    m(3610, 13, 1, 66, 1), // BigInt64Array
+    m(3484, 14, 1, 66, 1), // BigUint64Array
+    m(4860, 8, 1, 0, 0), // toSorted
+    m(3049, 5, 1, 79, 1), // Array
+    m(4444, 9, 1, 79, 1), // Int8Array
+    m(4196, 10, 1, 79, 1), // Uint8Array
+    m(3060, 17, 1, 79, 1), // Uint8ClampedArray
+    m(4166, 10, 1, 79, 1), // Int16Array
+    m(3990, 11, 1, 79, 1), // Uint16Array
+    m(4176, 10, 1, 79, 1), // Int32Array
+    m(4001, 11, 1, 79, 1), // Uint32Array
+    m(3882, 12, 1, 79, 1), // Float32Array
+    m(3894, 12, 1, 79, 1), // Float64Array
+    m(3610, 13, 1, 79, 1), // BigInt64Array
+    m(3484, 14, 1, 79, 1), // BigUint64Array
+    m(4552, 9, 1, 0, 0), // toSpliced
+    m(3049, 5, 1, 92, 1), // Array
+    m(2022, 6, 1, 0, 0), // values
+    m(3049, 5, 1, 94, 1), // Array
+    m(46, 4, 1, 0, 0), // with
+    m(3049, 5, 1, 96, 1), // Array
+    m(4444, 9, 1, 96, 1), // Int8Array
+    m(4196, 10, 1, 96, 1), // Uint8Array
+    m(3060, 17, 1, 96, 1), // Uint8ClampedArray
+    m(4166, 10, 1, 96, 1), // Int16Array
+    m(3990, 11, 1, 96, 1), // Uint16Array
+    m(4176, 10, 1, 96, 1), // Int32Array
+    m(4001, 11, 1, 96, 1), // Uint32Array
+    m(3882, 12, 1, 96, 1), // Float32Array
+    m(3894, 12, 1, 96, 1), // Float64Array
+    m(3610, 13, 1, 96, 1), // BigInt64Array
+    m(3484, 14, 1, 96, 1), // BigUint64Array
+    m(15, 2, 1, 0, 0), // at
+    m(3049, 5, 1, 109, 1), // Array
+    m(4160, 6, 1, 109, 1), // String
+    m(4444, 9, 1, 109, 1), // Int8Array
+    m(4196, 10, 1, 109, 1), // Uint8Array
+    m(3060, 17, 1, 109, 1), // Uint8ClampedArray
+    m(4166, 10, 1, 109, 1), // Int16Array
+    m(3990, 11, 1, 109, 1), // Uint16Array
+    m(4176, 10, 1, 109, 1), // Int32Array
+    m(4001, 11, 1, 109, 1), // Uint32Array
+    m(3882, 12, 1, 109, 1), // Float32Array
+    m(3894, 12, 1, 109, 1), // Float64Array
+    m(3610, 13, 1, 109, 1), // BigInt64Array
+    m(3484, 14, 1, 109, 1), // BigUint64Array
+    m(4579, 9, 0, 0, 0), // waitAsync
+    m(4949, 7, 1, 123, 1), // Atomics
+    m(4949, 7, 0, 0, 0), // Atomics
+    m(3610, 6, 0, 0, 0), // BigInt
+    m(3610, 13, 0, 0, 0), // BigInt64Array
+    m(3484, 14, 0, 0, 0), // BigUint64Array
+    m(4785, 3, 0, 0, 0), // now
+    m(2679, 4, 1, 129, 1), // Date
+    m(5019, 7, 1, 0, 0), // getYear
+    m(5082, 7, 1, 0, 0), // setYear
+    m(2679, 4, 1, 131, 2), // Date
+    m(4155, 11, 1, 0, 0), // toGMTString
+    m(2679, 4, 1, 134, 1), // Date
+    m(412, 6, 0, 0, 0), // escape
+    m(3327, 8, 0, 0, 0), // unescape
+    m(1819, 4, 1, 0, 0), // bind
+    m(1530, 8, 1, 138, 1), // Function
+    m(4246, 10, 0, 0, 0), // globalThis
+    m(2918, 11, 1, 0, 0), // formatRange
+    m(2674, 19, 1, 141, 1), // Intl.DateTimeFormat
+    m(3662, 13, 1, 0, 0), // formatToParts
+    m(2674, 19, 1, 143, 1), // Intl.DateTimeFormat
+    m(3870, 12, 0, 0, 0), // DisplayNames
+    m(2674, 4, 1, 145, 1), // Intl
+    m(2750, 19, 0, 0, 0), // getCanonicalLocales
+    m(2674, 4, 1, 147, 1), // Intl
+    m(4186, 10, 0, 0, 0), // ListFormat
+    m(2674, 4, 1, 149, 1), // Intl
+    m(2762, 6, 0, 0, 0), // Locale
+    m(2674, 4, 1, 151, 1), // Intl
+    m(3026, 17, 1, 141, 1), // Intl.NumberFormat
+    m(2918, 18, 1, 0, 0), // formatRangeToParts
+    m(3026, 17, 1, 154, 1), // Intl.NumberFormat
+    m(3026, 17, 1, 143, 1), // Intl.NumberFormat
+    m(4144, 11, 1, 0, 0), // selectRange
+    m(3179, 16, 1, 157, 1), // Intl.PluralRules
+    m(3184, 11, 0, 0, 0), // PluralRules
+    m(2674, 4, 1, 159, 1), // Intl
+    m(2864, 18, 0, 0, 0), // RelativeTimeFormat
+    m(2674, 4, 1, 161, 1), // Intl
+    m(4453, 9, 0, 0, 0), // Segmenter
+    m(2674, 4, 1, 163, 1), // Intl
+    m(3162, 17, 0, 0, 0), // supportedValuesOf
+    m(2674, 4, 1, 165, 1), // Intl
+    m(5174, 4, 0, 0, 0), // JSON
+    m(4981, 3, 0, 0, 0), // Map
+    m(4261, 5, 0, 0, 0), // acosh
+    m(5178, 4, 1, 169, 1), // Math
+    m(4271, 5, 0, 0, 0), // asinh
+    m(5178, 4, 1, 171, 1), // Math
+    m(4281, 5, 0, 0, 0), // atanh
+    m(5178, 4, 1, 173, 1), // Math
+    m(4494, 4, 0, 0, 0), // cbrt
+    m(5178, 4, 1, 175, 1), // Math
+    m(4291, 5, 0, 0, 0), // clz32
+    m(5178, 4, 1, 177, 1), // Math
+    m(4262, 4, 0, 0, 0), // cosh
+    m(5178, 4, 1, 179, 1), // Math
+    m(4301, 5, 0, 0, 0), // expm1
+    m(5178, 4, 1, 181, 1), // Math
+    m(4094, 6, 0, 0, 0), // fround
+    m(5178, 4, 1, 183, 1), // Math
+    m(4311, 5, 0, 0, 0), // hypot
+    m(5178, 4, 1, 185, 1), // Math
+    m(4512, 4, 0, 0, 0), // imul
+    m(5178, 4, 1, 187, 1), // Math
+    m(4321, 5, 0, 0, 0), // log10
+    m(5178, 4, 1, 189, 1), // Math
+    m(4331, 5, 0, 0, 0), // log1p
+    m(5178, 4, 1, 191, 1), // Math
+    m(4521, 4, 0, 0, 0), // log2
+    m(5178, 4, 1, 193, 1), // Math
+    m(838, 4, 0, 0, 0), // sign
+    m(5178, 4, 1, 195, 1), // Math
+    m(4272, 4, 0, 0, 0), // sinh
+    m(5178, 4, 1, 197, 1), // Math
+    m(4282, 4, 0, 0, 0), // tanh
+    m(5178, 4, 1, 199, 1), // Math
+    m(4341, 5, 0, 0, 0), // trunc
+    m(5178, 4, 1, 201, 1), // Math
+    m(4356, 10, 1, 0, 0), // new.target
+    m(4956, 7, 0, 0, 0), // EPSILON
+    m(3031, 6, 1, 204, 1), // Number
+    m(4812, 8, 0, 0, 0), // isFinite
+    m(3031, 6, 1, 206, 1), // Number
+    m(4480, 9, 0, 0, 0), // isInteger
+    m(3031, 6, 1, 208, 1), // Number
+    m(5159, 5, 0, 0, 0), // isNaN
+    m(3031, 6, 1, 210, 1), // Number
+    m(3688, 13, 0, 0, 0), // isSafeInteger
+    m(3031, 6, 1, 212, 1), // Number
+    m(3195, 16, 0, 0, 0), // MAX_SAFE_INTEGER
+    m(3031, 6, 1, 214, 1), // Number
+    m(3211, 16, 0, 0, 0), // MIN_SAFE_INTEGER
+    m(3031, 6, 1, 216, 1), // Number
+    m(4366, 10, 0, 0, 0), // parseFloat
+    m(3031, 6, 1, 218, 1), // Number
+    m(4852, 8, 0, 0, 0), // parseInt
+    m(3031, 6, 1, 220, 1), // Number
+    m(836, 6, 0, 0, 0), // assign
+    m(5096, 6, 1, 222, 1), // Object
+    m(1269, 6, 0, 0, 0), // create
+    m(5096, 6, 1, 224, 1), // Object
+    m(3227, 16, 0, 0, 0), // defineProperties
+    m(5096, 6, 1, 226, 1), // Object
+    m(3498, 14, 0, 0, 0), // defineProperty
+    m(5096, 6, 1, 228, 1), // Object
+    m(1724, 7, 0, 0, 0), // entries
+    m(5096, 6, 1, 230, 1), // Object
+    m(3760, 6, 0, 0, 0), // freeze
+    m(5096, 6, 1, 232, 1), // Object
+    m(4034, 11, 0, 0, 0), // fromEntries
+    m(5096, 6, 1, 234, 1), // Object
+    m(1389, 24, 0, 0, 0), // getOwnPropertyDescriptor
+    m(5096, 6, 1, 236, 1), // Object
+    m(1389, 25, 0, 0, 0), // getOwnPropertyDescriptors
+    m(5096, 6, 1, 238, 1), // Object
+    m(2769, 19, 0, 0, 0), // getOwnPropertyNames
+    m(5096, 6, 1, 240, 1), // Object
+    m(2267, 21, 0, 0, 0), // getOwnPropertySymbols
+    m(5096, 6, 1, 242, 1), // Object
+    m(3540, 14, 0, 0, 0), // getPrototypeOf
+    m(5096, 6, 1, 244, 1), // Object
+    m(5120, 6, 0, 0, 0), // hasOwn
+    m(5096, 6, 1, 246, 1), // Object
+    m(165, 2, 0, 0, 0), // is
+    m(5096, 6, 1, 248, 1), // Object
+    m(3930, 12, 0, 0, 0), // isExtensible
+    m(5096, 6, 1, 250, 1), // Object
+    m(4820, 8, 0, 0, 0), // isFrozen
+    m(5096, 6, 1, 252, 1), // Object
+    m(4828, 8, 0, 0, 0), // isSealed
+    m(5096, 6, 1, 254, 1), // Object
+    m(2570, 4, 0, 0, 0), // keys
+    m(5096, 6, 1, 256, 1), // Object
+    m(5026, 7, 0, 0, 0), // groupBy
+    m(5096, 6, 1, 258, 1), // Object
+    m(4981, 3, 1, 258, 1), // Map
+    m(3145, 17, 0, 0, 0), // preventExtensions
+    m(5096, 6, 1, 261, 1), // Object
+    m(3404, 4, 0, 0, 0), // seal
+    m(5096, 6, 1, 263, 1), // Object
+    m(3596, 14, 0, 0, 0), // setPrototypeOf
+    m(5096, 6, 1, 265, 1), // Object
+    m(2022, 6, 0, 0, 0), // values
+    m(5096, 6, 1, 267, 1), // Object
+    m(4206, 10, 0, 0, 0), // allSettled
+    m(4963, 7, 1, 269, 1), // Promise
+    m(4130, 3, 0, 0, 0), // any
+    m(3470, 14, 0, 0, 0), // AggregateError
+    m(4963, 7, 1, 271, 1), // Promise
+    m(1432, 7, 1, 0, 0), // finally
+    m(4963, 7, 1, 274, 1), // Promise
+    m(3857, 13, 0, 0, 0), // withResolvers
+    m(4963, 7, 1, 276, 1), // Promise
+    m(4963, 7, 0, 0, 0), // Promise
+    m(5144, 5, 0, 0, 0), // Proxy
+    m(4970, 7, 0, 0, 0), // Reflect
+    m(3259, 16, 1, 0, 0), // regexpLookbehind
+    m(1677, 7, 1, 0, 0), // compile
+    m(5102, 6, 1, 282, 1), // RegExp
+    m(2177, 5, 1, 0, 0), // flags
+    m(5102, 6, 1, 284, 1), // RegExp
+    m(5068, 7, 1, 0, 0), // regexpS
+    m(1892, 7, 1, 0, 0), // regexpU
+    m(1892, 23, 1, 0, 0), // regexpUnicodeProperties
+    m(5075, 7, 1, 0, 0), // regexpY
+    m(3714, 13, 1, 0, 0), // maxByteLength
+    m(568, 9, 1, 0, 0), // resizable
+    m(5132, 6, 1, 0, 0), // resize
+    m(582, 4, 1, 0, 0), // grow
+    m(582, 8, 1, 0, 0), // growable
+    m(3714, 13, 1, 0, 0), // maxByteLength
+    m(3049, 11, 1, 290, 3), // ArrayBuffer
+    m(3043, 17, 1, 293, 3), // SharedArrayBuffer
+    m(4209, 3, 0, 0, 0), // Set
+    m(3043, 17, 0, 0, 0), // SharedArrayBuffer
+    m(5108, 6, 1, 0, 0), // anchor
+    m(5114, 3, 1, 0, 0), // big
+    m(5149, 5, 1, 0, 0), // blink
+    m(5182, 4, 1, 0, 0), // bold
+    m(5154, 5, 1, 0, 0), // fixed
+    m(4471, 9, 1, 0, 0), // fontcolor
+    m(4796, 8, 1, 0, 0), // fontsize
+    m(5047, 7, 1, 0, 0), // italics
+    m(5150, 4, 1, 0, 0), // link
+    m(5169, 5, 1, 0, 0), // small
+    m(5138, 6, 1, 0, 0), // strike
+    m(1955, 3, 1, 0, 0), // sub
+    m(1876, 3, 1, 0, 0), // sup
+    m(4160, 6, 1, 300, 13), // String
+    m(3675, 13, 0, 0, 0), // fromCodePoint
+    m(4160, 6, 1, 314, 1), // String
+    m(4012, 11, 1, 0, 0), // codePointAt
+    m(4160, 6, 1, 316, 1), // String
+    m(4788, 8, 1, 0, 0), // endsWith
+    m(4160, 6, 1, 318, 1), // String
+    m(4160, 6, 1, 39, 1), // String
+    m(3942, 12, 1, 0, 0), // isWellFormed
+    m(3966, 12, 1, 0, 0), // toWellFormed
+    m(4160, 6, 1, 321, 2), // String
+    m(4836, 8, 1, 0, 0), // matchAll
+    m(4160, 6, 1, 324, 1), // String
+    m(1305, 9, 1, 0, 0), // normalize
+    m(4160, 6, 1, 326, 1), // String
+    m(5126, 6, 1, 0, 0), // padEnd
+    m(4844, 8, 1, 0, 0), // padStart
+    m(4160, 6, 1, 328, 2), // String
+    m(1932, 6, 1, 0, 0), // repeat
+    m(4160, 6, 1, 331, 1), // String
+    m(4386, 10, 1, 0, 0), // replaceAll
+    m(4160, 6, 1, 333, 1), // String
+    m(4396, 10, 1, 0, 0), // startsWith
+    m(4160, 6, 1, 335, 1), // String
+    m(1955, 6, 1, 0, 0), // substr
+    m(4160, 6, 1, 337, 1), // String
+    m(620, 4, 1, 0, 0), // trim
+    m(4160, 6, 1, 339, 1), // String
+    m(4868, 8, 1, 0, 0), // trimLeft
+    m(4561, 9, 1, 0, 0), // trimRight
+    m(4160, 6, 1, 341, 2), // String
+    m(5089, 7, 1, 0, 0), // trimEnd
+    m(4570, 9, 1, 0, 0), // trimStart
+    m(4160, 6, 1, 344, 2), // String
+    m(4413, 3, 0, 0, 0), // raw
+    m(4160, 6, 1, 347, 1), // String
+    m(985, 11, 1, 0, 0), // description
+    m(2281, 6, 1, 349, 1), // Symbol
+    m(2281, 6, 0, 0, 0), // Symbol
+    m(1514, 25, 1, 0, 0), // trailingCommasInFunctions
+    m(4444, 9, 0, 0, 0), // Int8Array
+    m(4196, 10, 0, 0, 0), // Uint8Array
+    m(3060, 17, 0, 0, 0), // Uint8ClampedArray
+    m(4166, 10, 0, 0, 0), // Int16Array
+    m(3990, 11, 0, 0, 0), // Uint16Array
+    m(4176, 10, 0, 0, 0), // Int32Array
+    m(4001, 11, 0, 0, 0), // Uint32Array
+    m(3882, 12, 0, 0, 0), // Float32Array
+    m(3894, 12, 0, 0, 0), // Float64Array
+    m(4764, 8, 0, 0, 0), // DataView
+    m(1961, 23, 1, 0, 0), // unicodeCodePointEscapes
+    m(4977, 7, 0, 0, 0), // WeakMap
+    m(4991, 7, 0, 0, 0), // WeakSet
+    m(2474, 20, 0, 0, 0), // FinalizationRegistry
+    m(4984, 7, 0, 0, 0), // WeakRef
 ];
 
 /// For each year from 2019: the values of `Script` and the binary properties that `\p{..}` has had since then. Sorted.

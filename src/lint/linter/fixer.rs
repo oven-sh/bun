@@ -120,6 +120,11 @@ fn is_fatal(result: &LintResult) -> bool {
     matches!(&result.messages[..], [only] if only.is_fatal)
 }
 
+/// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.
+pub fn is_parse_error(message: &LintMessage) -> bool {
+    message.is_fatal && message.message.starts_with(b"Parsing error: ")
+}
+
 /// What is reported if the fixes of a pass are taken back. `before`: the text before that pass. `was_fixed`: it is not the first text.
 fn without_the_last_pass(
     before: Vec<u8>,
@@ -153,7 +158,10 @@ pub fn verify_and_fix(
         passes += 1;
         let mut result = lint(&current);
         let is_fatal = is_fatal(&result);
-        if is_fatal && let (Some(before), Some(pass)) = (previous.take(), last_pass.take()) {
+        if is_fatal
+            && result.messages.iter().all(is_parse_error)
+            && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
+        {
             return without_the_last_pass(before, pass, lint);
         }
         let fixed = apply_fixes(&current, std::mem::take(&mut result.messages), should_fix);
@@ -190,6 +198,7 @@ pub fn verify_and_fix(
             if fixed.is_fixed {
                 result = lint(&current);
                 if self::is_fatal(&result)
+                    && result.messages.iter().all(is_parse_error)
                     && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
                 {
                     return without_the_last_pass(before, pass, lint);

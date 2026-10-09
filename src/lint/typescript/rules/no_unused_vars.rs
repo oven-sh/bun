@@ -1,3 +1,4 @@
+use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
@@ -98,6 +99,52 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
             && !(is_variable && !is_const && !is_function_or_class && oxlint_is_discarded_read(variable, it, &mut walks))
             && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class, &mut walks))
     })
+}
+
+/// The variables that are named somewhere.
+#[derive(Default)]
+struct Named(SymbolSet, bool);
+
+impl<'a> Visitor<'a> for Named {
+    fn enter(&mut self, node: Node<'a>) {
+        if let Node::Expr(e) = node
+            && e.tag() == ExprTag::Ident
+            && let Some(symbol) = e.reference().and_then(Reference::symbol)
+        {
+            self.0.insert(symbol);
+            self.1 = true;
+        }
+    }
+
+    fn exit(&mut self, _: Node<'a>) {}
+}
+
+/// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
+/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. `None` if there are none, as in most
+/// files.
+fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>) -> Option<SymbolSet> {
+    let mut named = Named::default();
+    for e in file.exprs_of_kind(ExprTag::Assign) {
+        if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
+            named.enter(Node::Expr(target));
+        }
+    }
+    let mut discarded: Vec<Expr<'a>> = (file.exprs_of_kind(ExprTag::Binary))
+        .filter_map(|e| match e.kind() {
+            ExprKind::Binary { op: BinOp::Comma, left, .. } => Some(left),
+            _ => None,
+        })
+        .collect();
+    // Each is looked into once: not the `a` of `a, b, c`, which is in the `a, b`.
+    utils::sort::sort_unstable_by_key(&mut discarded, |it| (it.span().start, u32::MAX - it.span().end));
+    let mut end = 0;
+    for operand in discarded {
+        if operand.span().end > end {
+            end = operand.span().end;
+            walk_node(Node::Expr(operand), &mut named);
+        }
+    }
+    named.1.then_some(named.0)
 }
 
 /// typescript-eslint has what an `infer` declares in scope in all of the conditional type. For oxlint, as for
@@ -1022,7 +1069,7 @@ impl NoUnusedVars {
     fn is_unused_variable<'a>(
         &self,
         cx: &Cx<'a, Self>,
-        analysis: &VariableAnalysis<'a>,
+        (analysis, unused_for_oxlint): (&VariableAnalysis<'a>, &SymbolSet),
         (reported, last_used_args): (&mut SymbolSet, &mut FxHashMap<Func<'a>, u32>),
         (used, variable): (bool, Variable<'a>),
     ) -> bool {
@@ -1093,6 +1140,7 @@ impl NoUnusedVars {
                         < *(last_used_args.entry(function)).or_insert_with(|| {
                             // Upstream takes every reference for a use, also the default value. oxlint does not.
                             last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
+                                (true, it) if unused_for_oxlint.contains(it.symbol()) => false,
                                 (true, it) => {
                                     !analysis.is_unused(it.symbol())
                                         || oxlint_counts_as_used(it, self.reports_vars_only_used_as_types)
@@ -1184,12 +1232,30 @@ impl NoUnusedVars {
             true => analysis.used_variables(),
             false => &[],
         };
-        let variables = (analysis.unused_variables().iter().map(|it| (false, *it)))
-            .chain(used_variables.iter().map(|it| (true, *it)));
+        // What is unused for oxlint only.
+        let candidates = if file.language().is_oxlint { oxlint_may_be_unused_after_all(file) } else { None };
+        let is_added = |it: &Variable<'a>| {
+            candidates.as_ref().is_some_and(|candidates| candidates.contains(it.symbol()))
+                && it.class_scope().is_none()
+                && !analysis.is_eslint_used(*it)
+                && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types)
+        };
+        let added: Vec<Variable<'a>> = match &candidates {
+            Some(_) => analysis.used_variables().iter().copied().filter(is_added).collect(),
+            None => Vec::new(),
+        };
+        let mut unused_for_oxlint = SymbolSet::default();
+        for variable in &added {
+            unused_for_oxlint.insert(variable.symbol());
+        }
+        let used_variables = used_variables.iter().filter(|it| !unused_for_oxlint.contains(it.symbol()));
+        let variables = (analysis.unused_variables().iter().chain(&added).map(|it| (false, *it)))
+            .chain(used_variables.map(|it| (true, *it)));
         let mut unused_vars = Vec::new();
         let mut last_used_args = FxHashMap::default();
         for variable in variables {
-            if self.is_unused_variable(cx, &analysis, (&mut reported, &mut last_used_args), variable) {
+            let seen = (&analysis, &unused_for_oxlint);
+            if self.is_unused_variable(cx, seen, (&mut reported, &mut last_used_args), variable) {
                 unused_vars.push(variable.1);
             }
         }

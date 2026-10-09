@@ -5,6 +5,7 @@
 
 const { writeFileSync } = require("node:fs");
 const { join, resolve } = require("node:path");
+const { Table } = require("./generate-table.cjs");
 
 const root = resolve(process.env.ESLINT_PLUGIN_N_DIR);
 const esx = join(root, "node_modules/eslint-plugin-es-x");
@@ -40,10 +41,12 @@ const context = {
 
 /** Whether everything in the map is `[READ]: true`. */
 const isOnlyRead = map => Object.values(map).every(it => !it[CALL] && !it[CONSTRUCT] && isOnlyRead(it));
+const table = new Table();
+const names = list => table.add(list.map(name => ({ name })));
 const traceMap = map =>
-  `TraceMap::new(&[${Object.entries(map)
-    .map(([key, value]) => `(${JSON.stringify(key)}, ${traceMap(value)}${value[READ] ? ".read(())" : ""})`)
-    .join(", ")}])`;
+  table.add(
+    Object.entries(map).map(([name, value]) => ({ name, kinds: value[READ] ? [0] : [], members: traceMap(value) })),
+  );
 const strings = list => `&[${list.map(it => JSON.stringify(it)).join(", ")}]`;
 const constant = id => id.replace(/^no-/, "").replaceAll("-", "_").toUpperCase();
 
@@ -62,20 +65,18 @@ for (const [id, meta] of Object.entries(features)) {
     key => key !== "(prototype)" && !(key === "Program:exit" && isGeneric && traceMaps.length === 1),
   );
   if (others.length > 0) byHand.push([id, rows.length]);
-  const name = id.replace(/^no-/, "");
-  const camel = name.replace(/-(\w)/g, (_, first) => first.toUpperCase());
-  rows.push(`    Feature {
-        name: ${JSON.stringify(name)},
-        ignore_names: ${strings([id, name, camel, ...(meta.aliases ?? [])])},
-        supported: ${meta.supported ? `Some(${JSON.stringify(meta.supported)})` : "None"},
-        strict_mode: ${meta.strictMode ? `Some(${JSON.stringify(meta.strictMode)})` : "None"},
-        globals: ${isGeneric && traceMaps.length === 1 ? traceMap(traceMaps[0]) : "TraceMap::EMPTY"},
-        prototype: &[${prototypes
-          .flatMap(map => Object.entries(map))
-          .map(([name, methods]) => `(${JSON.stringify(name)}, ${strings(methods)})`)
-          .join(", ")}],
-    },`);
+  if (!id.startsWith("no-")) throw new Error(`${id}: \`Feature::is_called\` knows it as \`no-\` and the name`);
+  const classes = prototypes.flatMap(map => Object.entries(map));
+  rows.push({
+    name: table.text(id.slice("no-".length)),
+    supported: table.text(meta.supported ?? ""),
+    strictMode: table.text(meta.strictMode ?? ""),
+    aliases: names(meta.aliases ?? []),
+    globals: isGeneric && traceMaps.length === 1 ? traceMap(traceMaps[0]) : undefined,
+    prototype: table.add(classes.map(([name, methods]) => ({ name, members: names(methods) }))),
+  });
 }
+table.layOut();
 
 const { scValueSets, binPropertySets } = require(join(esx, "lib/util/unicode-properties"));
 const years = [2019, 2020, 2021, 2022, 2023];
@@ -87,15 +88,27 @@ writeFileSync(
 //! ${require(join(esx, "package.json")).version}. Not edited by hand.
 
 use super::es_syntax::Feature;
-use bun_lint::utils::eslint_utils::TraceMap;
+use super::table::{Member, NONE, Part, Table};
 
 /// The positions in [\`FEATURES\`] of those that take more than a look at \`globals\` and \`prototype\`.
 ${byHand.map(([id, index]) => `pub(crate) const ${constant(id)}: usize = ${index};`).join("\n")}
 
+const fn p(first: u16, count: u8) -> Part {
+    Part::new(first, count)
+}
+
+/// The name, \`supported\`, \`strict_mode\`, \`aliases\`, \`globals\`, \`prototype\`.
 #[rustfmt::skip]
 pub(crate) static FEATURES: [Feature; ${rows.length}] = [
-${rows.join("\n")}
+${rows
+  .map(
+    it =>
+      `    Feature::new([p(${table.textOf(it.name)}), p(${table.textOf(it.supported)}), p(${table.textOf(it.strictMode)})], [p(${table.runOf(it.aliases)}), p(${table.runOf(it.globals)}), p(${table.runOf(it.prototype)})]), // ${it.name}`,
+  )
+  .join("\n")}
 ];
+
+${table.statics("EsFeature", "The names in [`FEATURES`]. A global variable or a property that is a feature has 0 at `[READ]`.")}
 
 /// For each year from ${years[0]}: the values of \`Script\` and the binary properties that \`\\p{..}\` has had since then. Sorted.
 #[rustfmt::skip]
@@ -104,4 +117,6 @@ ${years.map(year => `    (${set(scValueSets, year)}, ${set(binPropertySets, year
 ];
 `,
 );
-console.log(`${rows.length} features, ${byHand.length} by hand`);
+console.log(
+  `${rows.length} features, ${byHand.length} by hand, ${table.rows.length} members, ${table.names.length} bytes of names`,
+);

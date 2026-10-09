@@ -15,7 +15,7 @@ use bun_lint::fix::SuggestionKind;
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
-    apply_fixes, grows_too_much, max_fixed_len,
+    apply_fixes, grows_too_much, is_parse_error, max_fixed_len,
 };
 use bun_lint::rule::Kind;
 use bun_lint_graph::Graph;
@@ -220,7 +220,7 @@ impl Context<'_, '_> {
             }
             None => self.verify_as(path, text, config, &how),
         };
-        !result.messages.iter().any(|it| it.is_fatal)
+        !result.messages.iter().any(is_parse_error)
     }
 
     /// The fixes of `rules` would have left the file at `path` with a syntax error.

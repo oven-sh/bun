@@ -33,6 +33,17 @@ fn own_line_comments_stay_above_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// ```ts
+/// } & // comment      } &
+/// {                     // comment
+///                       {
+/// ```
+///
+/// Prettier on the left: two object types are on the line of the `&` whatever is between them. oxfmt on the right.
+fn comment_above_an_object_type_moves_it_off_the_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printIntersectionType`: object types stay on the line of the `&`, other types go
 /// on a line of their own if it does not all fit.
 fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
@@ -60,7 +71,11 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
 
         if index == 0 {
             write!(f, content);
-        } else if is_prev_object_like && is_object_like {
+        } else if is_prev_object_like
+            && is_object_like
+            && !(comment_above_an_object_type_moves_it_off_the_line(f)
+                && f.comments().has_leading_own_line_comment(item.span().start))
+        {
             match is_chain_indented {
                 true => write!(f, [" & ", indent(&content)]),
                 false => write!(f, [" & ", content]),

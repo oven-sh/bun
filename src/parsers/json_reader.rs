@@ -168,23 +168,19 @@ fn short_plain_len(text: &[u8], quote: u8) -> usize {
 }
 
 /// The index of the first of `lanes` that is set. 32 if none is.
+#[cfg(not(target_arch = "aarch64"))]
 #[inline(always)]
 fn first_of_32(lanes: mask8x32) -> usize {
-    let first = (lanes.to_bitmask() | (1 << 32)).trailing_zeros() as usize;
-    // FOR ONE BUILD: the form for aarch64 gives the same.
-    assert_eq!(first, first_of_32_for_aarch64(lanes));
-    first
+    (lanes.to_bitmask() | (1 << 32)).trailing_zeros() as usize
 }
-
-#[used]
-static BUILD: [u8; 25] = *b"json_reader experiment 13";
 
 /// The index of the first of `lanes` that is set. 32 if none is.
 ///
 /// The least of the indices of the lanes that are set: `umin`, `uminv` and one `umov`. The bits of a mask
 /// in a general register take six `addp` and two `umov` there, in the one chain that everything waits for.
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
-fn first_of_32_for_aarch64(lanes: mask8x32) -> usize {
+fn first_of_32(lanes: mask8x32) -> usize {
     use std::simd::Select;
     use std::simd::num::SimdUint;
     const INDICES: u8x32 = u8x32::from_array([

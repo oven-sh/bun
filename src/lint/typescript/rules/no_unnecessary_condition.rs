@@ -451,8 +451,11 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     cx.report(node, message);
 }
 
-/// The operator after `left`.
-fn operator_span(left: Expr, operator: BinOp) -> Span {
+/// The operator after `left`. In `switch (left) { case node: }` there is none: `node`.
+fn operator_span<'a>(node: Expr<'a>, (left, right): (Expr<'a>, Expr<'a>), operator: BinOp) -> Span {
+    if node == right {
+        return node.outer_span();
+    }
     let start = skip_trivia(left.file().text(), left.outer_span().end);
     Span::new(start, start + bin_op_text(operator).len() as u32)
 }
@@ -474,8 +477,10 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         _ => big_int_comparison(left_type, operator, right_type),
     };
     if let Some(condition_is_true) = condition_is_true {
-        cx.report(node, COMPARISON_BETWEEN_LITERAL_TYPES)
-            .comments_apply_at(operator_span(left, operator))
+        // oxlint points at the left operand, which for a `case` is what the `switch` compares.
+        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        cx.report(place, COMPARISON_BETWEEN_LITERAL_TYPES)
+            .comments_apply_at(operator_span(node, (left, right), operator))
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))
             .data("right", right_type.to_text())
@@ -505,7 +510,8 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         let operand = left.outer_span();
         let start = cx.file().end_of_token_before(operand.start);
         let place = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
-        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION).comments_apply_at(operator_span(left, operator));
+        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION)
+            .comments_apply_at(operator_span(node, (left, right), operator));
     }
 }
 

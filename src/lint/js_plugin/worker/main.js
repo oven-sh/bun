@@ -280,11 +280,11 @@ async function loadSettings([id, settings, sources]) {
   return DONE;
 }
 
-// The parser of ESLint itself, of the `eslint` that is installed.
-function espree() {
+// Where the parser of ESLint itself is, of the `eslint` that is installed.
+function espreePath() {
   try {
     const eslint = createRequire(nodePath.join(cwd, "noop.js")).resolve("eslint/package.json");
-    return createRequire(eslint)("espree");
+    return createRequire(eslint).resolve("espree");
   } catch {
     return undefined;
   }
@@ -295,7 +295,8 @@ function espree() {
 function addParser({ languageOptions, parser: known }) {
   let loaded;
   if (known === null) {
-    const get = () => (loaded ??= espree() ?? null) ?? undefined;
+    const load = path => (path === undefined ? null : require(path));
+    const get = () => (loaded ??= load(espreePath())) ?? undefined;
     Object.defineProperty(languageOptions, "parser", { get, enumerable: true, configurable: true });
     return;
   }
@@ -336,8 +337,9 @@ const fileContext = Object.freeze({
   get parserOptions() {
     return fileSettings.languageOptions.parserOptions;
   },
+  // Only a configuration for ESLint 8 has it.
   get parserPath() {
-    return undefined;
+    return fileSettings.isLegacy ? (fileSettings.parser?.module ?? espreePath() ?? "espree") : undefined;
   },
   get parserServices() {
     return sourceCode.parserServices;

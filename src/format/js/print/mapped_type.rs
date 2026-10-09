@@ -4,6 +4,11 @@ use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+/// `K in // comment` for oxfmt, `K in  // comment` for Prettier, before a union that has each type on a line of its own.
+fn one_blank_before_line_comment_behind_in(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `{ readonly [K in T as N]?: V }`
 pub(crate) fn write_ts_mapped_type<'a>(
     ty: TypeNode<'a>,
@@ -43,11 +48,23 @@ pub(crate) fn write_ts_mapped_type<'a>(
 
         let format_key = format_with(|f| {
             // The blank after `in` stays if a comment that trails the key ends up behind it.
+            let comment_brings_its_blank = one_blank_before_line_comment_behind_in(f)
+                && !f.is_quiet()
+                && param.constraint().is_some_and(|constraint| {
+                    matches!(constraint.kind(), TypeKind::Union(_))
+                        && f.comments()
+                            .comments_before(constraint.span().start)
+                            .iter()
+                            .any(|comment| comment.followed_by_newline())
+                });
             write!(
                 f,
                 [
                     identifier(key, AstNodes::TSMappedType(ty)),
-                    " in ",
+                    match comment_brings_its_blank {
+                        true => " in",
+                        false => " in ",
+                    },
                     param.constraint()
                 ]
             );

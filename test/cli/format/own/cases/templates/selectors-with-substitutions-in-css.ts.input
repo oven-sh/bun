@@ -25,3 +25,12 @@ const b = (props) => css`
     opacity: 1;
   }
 `;
+
+const nested = css`
+  .grid-demo {
+    ${antCls}-row > div,
+      .code-box-demo ${antCls}-row > div {
+      min-height: 30px;
+    }
+  }
+`;

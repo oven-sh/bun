@@ -737,6 +737,7 @@ impl FileAtoms<'_> {
     }
 }
 
+// Called through `dyn Intern`. With `#[inline]` each crate that makes the table would have its copy.
 impl Intern for FileAtoms<'_> {
     fn intern(&self, text: &[u8]) -> Atom {
         match self.names.find(text, self.source) {
@@ -748,22 +749,18 @@ impl Intern for FileAtoms<'_> {
         }
     }
 
-    #[inline]
     fn find(&self, text: &[u8]) -> Option<Atom> {
         self.names.find(text, self.source)
     }
 
-    #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {
         self.names.bytes(atom, self.source)
     }
 
-    #[inline]
     fn number(&self) -> u64 {
         self.names.of
     }
 
-    #[inline]
     fn of_this_thread(&self) -> &dyn Intern {
         self
     }

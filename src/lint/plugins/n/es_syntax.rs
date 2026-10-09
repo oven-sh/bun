@@ -2,38 +2,96 @@
 
 pub(crate) use super::es_syntax_data::FEATURES;
 use super::es_syntax_data::{
-    REGEXP_D_FLAG, REGEXP_LOOKBEHIND_ASSERTIONS, REGEXP_NAMED_CAPTURE_GROUPS, REGEXP_S_FLAG,
-    REGEXP_U_FLAG, REGEXP_UNICODE_PROPERTY_ESCAPES, REGEXP_UNICODE_PROPERTY_ESCAPES_2019,
-    REGEXP_UNICODE_PROPERTY_ESCAPES_2020, REGEXP_UNICODE_PROPERTY_ESCAPES_2021,
-    REGEXP_UNICODE_PROPERTY_ESCAPES_2022, REGEXP_UNICODE_PROPERTY_ESCAPES_2023, REGEXP_V_FLAG,
-    REGEXP_Y_FLAG,
+    EsFeature, REGEXP_D_FLAG, REGEXP_LOOKBEHIND_ASSERTIONS, REGEXP_NAMED_CAPTURE_GROUPS,
+    REGEXP_S_FLAG, REGEXP_U_FLAG, REGEXP_UNICODE_PROPERTY_ESCAPES,
+    REGEXP_UNICODE_PROPERTY_ESCAPES_2019, REGEXP_UNICODE_PROPERTY_ESCAPES_2020,
+    REGEXP_UNICODE_PROPERTY_ESCAPES_2021, REGEXP_UNICODE_PROPERTY_ESCAPES_2022,
+    REGEXP_UNICODE_PROPERTY_ESCAPES_2023, REGEXP_V_FLAG, REGEXP_Y_FLAG,
 };
 use super::semver::Range;
+use super::table::{Member, Part};
 use bun_lint::ast::File;
 use bun_lint::source::mention_bit;
-use bun_lint::utils::eslint_utils::TraceMap;
 
-/// A rule of eslint-plugin-es-x.
+/// A rule of eslint-plugin-es-x. All are parts of the table [`EsFeature`].
 pub(crate) struct Feature {
-    /// The name of the rule without `no-`.
-    pub(crate) name: &'static str,
-    /// What the option `ignores` can call it.
-    pub(crate) ignore_names: &'static [&'static str],
-    /// The versions of Node.js that have it, if any has.
-    pub(crate) supported: Option<&'static str>,
-    /// The versions that have it outside strict mode too, if these are fewer.
-    pub(crate) strict_mode: Option<&'static str>,
-    /// The global variables and their properties that are the feature.
-    pub(crate) globals: TraceMap<'static, ()>,
-    /// The methods that are the feature, by class.
-    pub(crate) prototype: &'static [(&'static str, &'static [&'static str])],
+    name: Part,
+    supported: Part,
+    strict_mode: Part,
+    aliases: Part,
+    globals: Part,
+    prototype: Part,
 }
 
 impl Feature {
+    pub(crate) const fn new(
+        [name, supported, strict_mode]: [Part; 3],
+        [aliases, globals, prototype]: [Part; 3],
+    ) -> Feature {
+        Feature {
+            name,
+            supported,
+            strict_mode,
+            aliases,
+            globals,
+            prototype,
+        }
+    }
+
+    /// The name of the rule without `no-`.
+    pub(crate) fn name(&self) -> &'static str {
+        self.name.text::<EsFeature>()
+    }
+
+    /// The versions of Node.js that have it, if any has.
+    pub(crate) fn supported(&self) -> Option<&'static str> {
+        Some(self.supported.text::<EsFeature>()).filter(|it| !it.is_empty())
+    }
+
     /// `supported` as a range.
     pub(crate) fn supported_range(&self) -> &'static str {
-        self.supported.unwrap_or("<0")
+        self.supported().unwrap_or("<0")
     }
+
+    /// The versions that have it outside strict mode too, if these are fewer.
+    pub(crate) fn strict_mode(&self) -> Option<&'static str> {
+        Some(self.strict_mode.text::<EsFeature>()).filter(|it| !it.is_empty())
+    }
+
+    /// The global variables and their properties that are the feature.
+    pub(crate) fn globals(&self) -> &'static [Member<EsFeature>] {
+        self.globals.members::<EsFeature>()
+    }
+
+    /// The classes, with the methods that are the feature as their members.
+    fn prototype(&self) -> &'static [Member<EsFeature>] {
+        self.prototype.members::<EsFeature>()
+    }
+
+    /// Whether the option `ignores` can call it `ignored`: by the name of the rule, by its own name, by that in camel
+    /// case or by an alias.
+    fn is_called(&self, ignored: &[u8]) -> bool {
+        let name = self.name().as_bytes();
+        let mut aliases = self.aliases.members::<EsFeature>().iter();
+        ignored == name
+            || ignored.strip_prefix(b"no-") == Some(name)
+            || ignored == camel_case(name)
+            || aliases.any(|it| it.name().as_bytes() == ignored)
+    }
+}
+
+/// `name.replace(/-(\w)/g, (_, first) => first.toUpperCase())`
+fn camel_case(name: &[u8]) -> Vec<u8> {
+    let mut camel = Vec::with_capacity(name.len());
+    let mut rest = name.iter().copied().peekable();
+    while let Some(byte) = rest.next() {
+        let word = |it: &u8| it.is_ascii_alphanumeric() || *it == b'_';
+        match rest.next_if(|it| byte == b'-' && word(it)) {
+            Some(first) => camel.push(first.to_ascii_uppercase()),
+            None => camel.push(byte),
+        }
+    }
+    camel
 }
 
 const PATTERNS: [usize; 8] = [
@@ -75,31 +133,28 @@ impl Active {
             globals: Vec::new(),
         };
         for (index, feature) in FEATURES.iter().enumerate() {
-            let is_ignored = feature
-                .ignore_names
-                .iter()
-                .any(|name| ignores.iter().any(|it| **it == *name.as_bytes()));
+            let is_ignored = ignores.iter().any(|it| feature.is_called(it));
             let everywhere = feature
-                .strict_mode
+                .strict_mode()
                 .unwrap_or_else(|| feature.supported_range());
             let everywhere = Range::parse(everywhere.as_bytes());
             if is_ignored || everywhere.is_some_and(|it| active.version.is_subset_of(&it)) {
                 continue;
             }
             active.bits[index / 64] |= 1 << (index % 64);
-            if !feature.globals.members.is_empty() {
-                let bit = |name: &str| mention_bit(name.as_bytes());
+            if !feature.globals().is_empty() {
+                let bit = |it: &Member<EsFeature>| mention_bit(it.name().as_bytes());
                 let variables = feature
-                    .globals
-                    .members
+                    .globals()
                     .iter()
-                    .map(|it| (bit(it.0), it.1.members.iter().map(|it| bit(it.0)).collect()));
+                    .map(|it| (bit(it), it.members().iter().map(bit).collect()));
                 active.globals.push((index, variables.collect()));
             }
-            for (class, methods) in feature.prototype {
+            for class in feature.prototype() {
+                let methods = class.members().iter();
                 active
                     .methods
-                    .extend(methods.iter().map(|method| (*method, index, *class)));
+                    .extend(methods.map(|method| (method.name(), index, class.name())));
             }
         }
         active

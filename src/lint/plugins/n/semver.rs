@@ -13,7 +13,7 @@ pub(crate) struct Range {
     group: Group,
 }
 
-fn version_of([major, minor, patch]: [u16; 3]) -> Version {
+fn version_of([major, minor, patch]: [u8; 3]) -> Version {
     Version {
         major: u64::from(major),
         minor: u64::from(minor),
@@ -59,7 +59,7 @@ impl Range {
     }
 
     /// `>=version`
-    pub(crate) fn at_least(version: [u16; 3]) -> Range {
+    pub(crate) fn at_least(version: [u8; 3]) -> Range {
         Range {
             raw: format!(">={}.{}.{}", version[0], version[1], version[2]).into_bytes(),
             group: any_of(std::iter::once(gte(version_of(version)))),
@@ -67,7 +67,7 @@ impl Range {
     }
 
     /// `^a || ^b || >=latest`, for `versions` of which the first is the latest.
-    pub(crate) fn since(versions: &[[u16; 3]]) -> Option<Range> {
+    pub(crate) fn since(versions: &[[u8; 3]]) -> Option<Range> {
         let latest = gte(version_of(*versions.first()?));
         let carets = versions
             .iter()

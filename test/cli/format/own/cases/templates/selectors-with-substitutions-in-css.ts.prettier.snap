@@ -27,6 +27,15 @@ const b = (props) => css`
   }
 `;
 
+const nested = css`
+  .grid-demo {
+    ${antCls}-row > div,
+      .code-box-demo ${antCls}-row > div {
+      min-height: 30px;
+    }
+  }
+`;
+
 -------------------
 { printWidth: 100 }
 -------------------
@@ -53,6 +62,15 @@ const b = (props) => css`
   a,
   b ${A} {
     opacity: 1;
+  }
+`;
+
+const nested = css`
+  .grid-demo {
+    ${antCls}-row > div,
+      .code-box-demo ${antCls}-row > div {
+      min-height: 30px;
+    }
   }
 `;
 

@@ -9,10 +9,34 @@ use crate::span::Span;
 use crate::utils::estree_compat::{Target, TargetKind, is_sequence_root};
 use smallvec::SmallVec;
 
-/// eslint-utils' `TraceMap`: which uses of an object to report, and the same for its properties.
-///
-/// `T` is what upstream puts at `[READ]`, `[CALL]` and `[CONSTRUCT]`, and gets back as `info`.
-/// Where that is `true`, use `()`.
+/// What a [`ReferenceTracker`] follows: which uses of an object to report, and the same for its
+/// properties. A [`TraceMap`] is one. A table that is too large to be written as `TraceMap`s, or
+/// that has a map among its own members, can be another.
+pub trait Trace<'m> {
+    /// What is at `[READ]`, `[CALL]` or `[CONSTRUCT]`. It comes back as [`TrackedReference::info`].
+    fn info(&self, kind: ReferenceKind) -> Option<u16>;
+
+    /// `[ESM]: true`: the module is an ES module, whose `default` export is not the module itself.
+    fn is_esm(&self) -> bool {
+        false
+    }
+
+    /// The properties, by their position: the name, and what to report of the property.
+    fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)>;
+}
+
+impl<'m> dyn Trace<'m> + 'm {
+    fn members(&self) -> impl Iterator<Item = (&'m str, &'m dyn Trace<'m>)> {
+        (0..).map_while(move |index| self.member(index))
+    }
+
+    /// The property `name`, with the name as the map has it.
+    pub fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
+        self.members().find(|member| member.0.as_bytes() == name)
+    }
+}
+
+/// eslint-utils' `TraceMap`, where `true` is at `[READ]`, `[CALL]` and `[CONSTRUCT]`: `T` is `()`.
 ///
 /// It can be a constant:
 /// ```ignore
@@ -82,12 +106,24 @@ impl<'m, T: Copy> TraceMap<'m, T> {
     pub const fn esm(self) -> Self {
         TraceMap { esm: true, ..self }
     }
+}
 
-    fn get(&self, name: &[u8]) -> Option<(&'m str, &'m TraceMap<'m, T>)> {
-        let (name, map) = self
-            .members
-            .iter()
-            .find(|member| member.0.as_bytes() == name)?;
+impl<'m> Trace<'m> for TraceMap<'m, ()> {
+    fn info(&self, kind: ReferenceKind) -> Option<u16> {
+        let info = match kind {
+            ReferenceKind::Read => self.read,
+            ReferenceKind::Call => self.call,
+            ReferenceKind::Construct => self.construct,
+        };
+        info.map(|()| 0)
+    }
+
+    fn is_esm(&self) -> bool {
+        self.esm
+    }
+
+    fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)> {
+        let (name, map) = self.members.get(index)?;
         Some((*name, map))
     }
 }
@@ -102,7 +138,7 @@ pub enum ReferenceKind {
 
 /// eslint-utils' `TrackedReferences`: one use of something that a [`TraceMap`] asks for.
 #[derive(Clone, Debug)]
-pub struct TrackedReference<'a, 'm, T> {
+pub struct TrackedReference<'a, 'm> {
     /// - `Call`, `Construct`: the call or the `new` expression.
     /// - `Read`: the identifier or the member access. In a destructuring pattern the `PatProp` or
     ///   the `Prop`. Of a module the `require()` call, the `Stmt` of the import or the export, the
@@ -117,10 +153,11 @@ pub struct TrackedReference<'a, 'm, T> {
     /// The names in the trace map that lead here: `["Object", "assign"]`.
     pub path: SmallVec<[&'m str; 4]>,
     pub kind: ReferenceKind,
-    pub info: T,
+    /// [`Trace::info`]
+    pub info: u16,
 }
 
-impl<'a, T> TrackedReference<'a, '_, T> {
+impl<'a> TrackedReference<'a, '_> {
     /// `node`, if it is an expression.
     #[inline]
     pub fn expr(&self) -> Option<Expr<'a>> {
@@ -162,27 +199,27 @@ const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"
 
 /// A trace map, or what `import` makes of that of a CommonJS module.
 #[derive(Copy, Clone)]
-enum View<'m, T> {
-    Map(&'m TraceMap<'m, T>),
+enum View<'m> {
+    Map(&'m dyn Trace<'m>),
     /// `{ default: map }`
-    Default(&'m TraceMap<'m, T>),
+    Default(&'m dyn Trace<'m>),
     /// `{ default: map, ...map }`
-    DefaultAndMembers(&'m TraceMap<'m, T>),
+    DefaultAndMembers(&'m dyn Trace<'m>),
 }
 
-impl<'m, T: Copy> View<'m, T> {
-    /// What has the `[READ]`, `[CALL]` and `[CONSTRUCT]`.
-    fn own(self) -> Option<&'m TraceMap<'m, T>> {
+impl<'m> View<'m> {
+    /// What is at `[READ]`, `[CALL]` or `[CONSTRUCT]`.
+    fn info(self, kind: ReferenceKind) -> Option<u16> {
         match self {
-            View::Map(map) | View::DefaultAndMembers(map) => Some(map),
+            View::Map(map) | View::DefaultAndMembers(map) => map.info(kind),
             View::Default(_) => None,
         }
     }
 
-    fn get(self, name: &[u8]) -> Option<(&'m str, View<'m, T>)> {
+    fn get(self, name: &[u8]) -> Option<(&'m str, View<'m>)> {
         let default = |map| (name == b"default").then_some(("default", View::Map(map)));
         let member =
-            |map: &'m TraceMap<'m, T>| map.get(name).map(|(name, map)| (name, View::Map(map)));
+            |map: &'m dyn Trace<'m>| map.get(name).map(|(name, map)| (name, View::Map(map)));
         match self {
             View::Map(map) => member(map),
             View::Default(map) => default(map),
@@ -207,11 +244,11 @@ fn with<'m>(path: &Path<'m>, name: &'m str) -> Path<'m> {
     path
 }
 
-struct Walk<'a, 'm, T> {
+struct Walk<'a, 'm> {
     file: &'a File<'a>,
     /// The variables whose references are being followed.
     variables: SmallVec<[Variable<'a>; 4]>,
-    found: Vec<TrackedReference<'a, 'm, T>>,
+    found: Vec<TrackedReference<'a, 'm>>,
 }
 
 impl<'a> ReferenceTracker<'a> {
@@ -227,7 +264,7 @@ impl<'a> ReferenceTracker<'a> {
         ReferenceTracker { mode, ..self }
     }
 
-    fn walk<'m, T: Copy>(&self) -> Walk<'a, 'm, T> {
+    fn walk<'m>(&self) -> Walk<'a, 'm> {
         Walk {
             file: self.file,
             variables: SmallVec::new(),
@@ -238,16 +275,16 @@ impl<'a> ReferenceTracker<'a> {
     /// eslint-utils' `iterateGlobalReferences`: the uses of the global variables that are the
     /// members of `map`, as themselves or as properties of the global object. A variable that the
     /// file declares or assigns to is left out, and so is one that is not configured to exist.
-    pub fn iterate_global_references<'m, T: Copy>(
+    pub fn iterate_global_references<'m>(
         &self,
-        map: &'m TraceMap<'m, T>,
-    ) -> Vec<TrackedReference<'a, 'm, T>> {
+        map: &'m dyn Trace<'m>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
         let mut walk = self.walk();
-        for (name, member) in map.members {
+        for (name, member) in map.members() {
             if let Some(variable) = walk.unmodified_global(name.as_bytes()) {
                 walk.variable_references(
                     variable,
-                    &SmallVec::from_slice(&[*name]),
+                    &SmallVec::from_slice(&[name]),
                     View::Map(member),
                     true,
                 );
@@ -263,10 +300,10 @@ impl<'a> ReferenceTracker<'a> {
 
     /// eslint-utils' `iterateCjsReferences`: the uses of the modules that are the members of
     /// `map`, where they are loaded by `require()`.
-    pub fn iterate_cjs_references<'m, T: Copy>(
+    pub fn iterate_cjs_references<'m>(
         &self,
-        map: &'m TraceMap<'m, T>,
-    ) -> Vec<TrackedReference<'a, 'm, T>> {
+        map: &'m dyn Trace<'m>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
         const REQUIRE: TraceMap<'static, ()> =
             TraceMap::new(&[("require", TraceMap::EMPTY.call(()))]);
         let mut walk = self.walk();
@@ -285,7 +322,7 @@ impl<'a> ReferenceTracker<'a> {
                 continue;
             };
             let path: Path<'m> = SmallVec::from_slice(&[key]);
-            walk.report(node.into(), &path, ReferenceKind::Read, module.read);
+            walk.report(node.into(), &path, ReferenceKind::Read, View::Map(module));
             walk.property_references(node, &path, View::Map(module));
         }
         walk.found
@@ -293,10 +330,10 @@ impl<'a> ReferenceTracker<'a> {
 
     /// eslint-utils' `iterateEsmReferences`: the uses of the modules that are the members of
     /// `map`, where they are loaded by `import` or `export .. from`.
-    pub fn iterate_esm_references<'m, T: Copy>(
+    pub fn iterate_esm_references<'m>(
         &self,
-        map: &'m TraceMap<'m, T>,
-    ) -> Vec<TrackedReference<'a, 'm, T>> {
+        map: &'m dyn Trace<'m>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
         let mut walk = self.walk();
         for statement in self.file.body() {
             let specifier = match statement.kind() {
@@ -310,9 +347,14 @@ impl<'a> ReferenceTracker<'a> {
                 continue;
             };
             let path: Path<'m> = SmallVec::from_slice(&[key]);
-            walk.report(statement.into(), &path, ReferenceKind::Read, module.read);
+            walk.report(
+                statement.into(),
+                &path,
+                ReferenceKind::Read,
+                View::Map(module),
+            );
 
-            let view = match (module.esm, self.mode) {
+            let view = match (module.is_esm(), self.mode) {
                 (true, _) => View::Map(module),
                 (false, Mode::Legacy) => View::DefaultAndMembers(module),
                 (false, Mode::Strict) => View::Default(module),
@@ -320,12 +362,12 @@ impl<'a> ReferenceTracker<'a> {
             let first = walk.found.len();
             match statement.kind() {
                 StmtKind::ExportStar { .. } => {
-                    for (name, member) in module.members {
+                    for (name, member) in module.members() {
                         walk.report(
                             statement.into(),
                             &with(&path, name),
                             ReferenceKind::Read,
-                            member.read,
+                            View::Map(member),
                         );
                     }
                     continue;
@@ -337,12 +379,7 @@ impl<'a> ReferenceTracker<'a> {
                         && let Some((name, next)) = view.get(b"default")
                     {
                         let path = with(&path, name);
-                        walk.report_at(
-                            statement.into(),
-                            local.span(),
-                            &path,
-                            next.own().and_then(|map| map.read),
-                        );
+                        walk.report_at(statement.into(), local.span(), &path, next);
                         if let Some(variable) = variable(local.name()) {
                             walk.variable_references(variable, &path, next, false);
                         }
@@ -357,12 +394,7 @@ impl<'a> ReferenceTracker<'a> {
                             continue;
                         };
                         let path = with(&path, name);
-                        walk.report(
-                            named.into(),
-                            &path,
-                            ReferenceKind::Read,
-                            next.own().and_then(|map| map.read),
-                        );
+                        walk.report(named.into(), &path, ReferenceKind::Read, next);
                         if let Some(variable) = variable(named.local().name()) {
                             walk.variable_references(variable, &path, next, false);
                         }
@@ -371,14 +403,13 @@ impl<'a> ReferenceTracker<'a> {
                 StmtKind::ExportNamed(export) => {
                     for item in export.items() {
                         if let Some((name, next)) = view.get(item.local().bytes()) {
-                            let read = next.own().and_then(|map| map.read);
-                            walk.report(item.into(), &with(&path, name), ReferenceKind::Read, read);
+                            walk.report(item.into(), &with(&path, name), ReferenceKind::Read, next);
                         }
                     }
                 }
                 _ => {}
             }
-            if !module.esm {
+            if !module.is_esm() {
                 // The `default` that stands for the module itself is not part of the path.
                 let mut at = 0;
                 walk.found.retain_mut(|found| {
@@ -398,11 +429,11 @@ impl<'a> ReferenceTracker<'a> {
 
     /// eslint-utils' `iteratePropertyReferences`: the uses of the value of `expr` that `map` asks
     /// for.
-    pub fn iterate_property_references<'m, T: Copy>(
+    pub fn iterate_property_references<'m>(
         &self,
         expr: Expr<'a>,
-        map: &'m TraceMap<'m, T>,
-    ) -> Vec<TrackedReference<'a, 'm, T>> {
+        map: &'m dyn Trace<'m>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
         let mut walk = self.walk();
         walk.property_references(expr, &SmallVec::new(), View::Map(map));
         walk.found
@@ -453,9 +484,10 @@ fn is_member_expression(member: Expr<'_>) -> bool {
     }
 }
 
-impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
-    fn report_at(&mut self, node: Node<'a>, span: Span, path: &Path<'m>, read: Option<T>) {
-        if let Some(info) = read {
+impl<'a, 'm> Walk<'a, 'm> {
+    /// Reports that `node` reads what `map` is for, at `span`, if `map` asks for that.
+    fn report_at(&mut self, node: Node<'a>, span: Span, path: &Path<'m>, map: View<'m>) {
+        if let Some(info) = map.info(ReferenceKind::Read) {
             self.found.push(TrackedReference {
                 node,
                 span,
@@ -466,9 +498,9 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         }
     }
 
-    /// Reports `node`, if the trace map has an `info` for this kind of use.
-    fn report(&mut self, node: Node<'a>, path: &Path<'m>, kind: ReferenceKind, info: Option<T>) {
-        if let Some(info) = info {
+    /// Reports `node`, if `map` asks for this kind of use.
+    fn report(&mut self, node: Node<'a>, path: &Path<'m>, kind: ReferenceKind, map: View<'m>) {
+        if let Some(info) = map.info(kind) {
             self.found.push(TrackedReference {
                 node,
                 span: node.span(),
@@ -493,7 +525,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         &mut self,
         variable: Variable<'a>,
         path: &Path<'m>,
-        map: View<'m, T>,
+        map: View<'m>,
         should_report: bool,
     ) {
         if self.variables.contains(&variable) {
@@ -509,12 +541,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
             .filter(|reference| reference.is_read())
         {
             if should_report {
-                self.report_at(
-                    reference.node(),
-                    reference.span(),
-                    path,
-                    map.own().and_then(|map| map.read),
-                );
+                self.report_at(reference.node(), reference.span(), path, map);
             }
             if let Some(identifier) = reference.expr() {
                 self.property_references(identifier, path, map);
@@ -524,7 +551,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
     }
 
     /// Upstream's `_iteratePropertyReferences`.
-    fn property_references(&mut self, root: Expr<'a>, path: &Path<'m>, map: View<'m, T>) {
+    fn property_references(&mut self, root: Expr<'a>, path: &Path<'m>, map: View<'m>) {
         let mut node = root;
         while let Some(parent) = pass_through_parent(node) {
             node = parent;
@@ -540,29 +567,14 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
                         return;
                     };
                     let path = with(path, name);
-                    self.report(
-                        parent.into(),
-                        &path,
-                        ReferenceKind::Read,
-                        next.own().and_then(|map| map.read),
-                    );
+                    self.report(parent.into(), &path, ReferenceKind::Read, next);
                     self.property_references(parent, &path, next);
                 }
                 ExprKind::Call(call) if call.callee() == node => {
-                    self.report(
-                        parent.into(),
-                        path,
-                        ReferenceKind::Call,
-                        map.own().and_then(|map| map.call),
-                    );
+                    self.report(parent.into(), path, ReferenceKind::Call, map);
                 }
                 ExprKind::New(call) if call.callee() == node => {
-                    self.report(
-                        parent.into(),
-                        path,
-                        ReferenceKind::Construct,
-                        map.own().and_then(|map| map.construct),
-                    );
+                    self.report(parent.into(), path, ReferenceKind::Construct, map);
                 }
                 // Also the default value in a destructuring assignment, after which nothing follows.
                 ExprKind::Assign { target, value, .. } if value == node => {
@@ -590,7 +602,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
     }
 
     /// Upstream's `_iterateLhsReferences`.
-    fn lhs_references(&mut self, pattern: Target<'a>, path: &Path<'m>, map: View<'m, T>) {
+    fn lhs_references(&mut self, pattern: Target<'a>, path: &Path<'m>, map: View<'m>) {
         match pattern.kind() {
             TargetKind::Ident(name) => {
                 let symbol = match pattern {
@@ -613,12 +625,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
                         continue;
                     };
                     let path = with(path, name);
-                    self.report(
-                        property.node,
-                        &path,
-                        ReferenceKind::Read,
-                        next.own().and_then(|map| map.read),
-                    );
+                    self.report(property.node, &path, ReferenceKind::Read, next);
                     if let Some(target) = property.target {
                         self.lhs_references(target, &path, next);
                     }

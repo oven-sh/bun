@@ -144,7 +144,7 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `{ settings, languageOptions, globals, libs, freezes }`
+    /// `{ settings, languageOptions, globals, libs, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
     /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
     /// something in them that JSON cannot say, like a function. A realm takes them from there.
@@ -239,6 +239,10 @@ impl FileSettings {
             (b"globals".to_vec(), Json::Object(all_globals)),
             (b"libs".to_vec(), Json::Object(libs.collect())),
             (b"freezes".to_vec(), Json::Bool(language.is_oxlint)),
+            (
+                b"isLegacy".to_vec(),
+                Json::Bool(language.eslint_8.is_some()),
+            ),
             (b"parser".to_vec(), parser.cloned().unwrap_or(Json::Null)),
         ]);
         let mut json = Vec::new();

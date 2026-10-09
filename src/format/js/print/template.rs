@@ -6,7 +6,7 @@
 use super::type_parameters::type_arguments;
 use crate::css::embed;
 use crate::cursor::around_node_at;
-use crate::ir::width::string_width;
+use crate::ir::width::string_width_as;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::push_with_normalized_newlines;
@@ -468,8 +468,8 @@ struct EachTemplateColumn {
 }
 
 impl EachTemplateColumn {
-    fn new(text: Vec<u8>, will_break: bool) -> Self {
-        let width = string_width(&text) as usize;
+    fn new(text: Vec<u8>, will_break: bool, flavor: Flavor) -> Self {
+        let width = string_width_as(&text, flavor) as usize;
         Self {
             text,
             width,
@@ -534,6 +534,7 @@ impl EachTemplateTable {
             table.entry(EachTemplateElement::Column(EachTemplateColumn::new(
                 column.trim_ascii().to_vec(),
                 false,
+                f.options().flavor,
             )));
         }
         table.entry(EachTemplateElement::LineBreak);
@@ -545,7 +546,9 @@ impl EachTemplateTable {
             }));
             let will_break = bun_core::strings::contains_char(&text, b'\n');
             table.entry(EachTemplateElement::Column(EachTemplateColumn::new(
-                text, will_break,
+                text,
+                will_break,
+                f.options().flavor,
             )));
 
             if index + 1 < template.quasi_count()

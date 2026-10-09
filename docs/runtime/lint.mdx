@@ -164,13 +164,17 @@ Where there is no `eslint.config.js`, `bun lint` reads the configuration files o
 - `extends` of files, of packages such as `"next/core-web-vitals"`, and of `plugin:` configurations. `plugins`, their rules, environments and processors, and `--resolve-plugins-relative-to`.
 - The files of the parent directories count too, up to one with `root: true`.
 - `.eslintignore`, and `eslintIgnore` in `package.json`.
-- Of a directory, `.js` files are linted, and what `overrides` or `--ext` name.
+- Of a directory, `.js` files are linted, and what `overrides` or `--ext` name. A pattern such as `"src/**/*.ts"` lints every file that it matches.
 - `/* eslint-env */` comments, `--env`, `--rulesdir`, `--no-eslintrc`, `--ignore-path`, and `ESLINT_USE_FLAT_CONFIG`.
 - `eslint:recommended` and `eslint:all` are those of ESLint 8.57.
 - Without `parser`, the code is read as ESLint 8 reads it: as a script in ES5, unless `parserOptions` or `env` say otherwise. `let a` is then `Parsing error: Unexpected token a`.
 - A rule that ESLint 8 does not have is reported in every file: `Definition for rule 'x' was not found.`
 
 The rules are those of ESLint 10, with the default options, the option schemas, the fixes and the suggestions of ESLint 8.57.
+
+The rules of typescript-eslint are those of version 8. Where version 5, 6 or 7 is installed, they have the default options of that version, and a line on stderr says so.
+
+`--print-config` prints the configuration as a flat one.
 
 ## Replace oxlint
 

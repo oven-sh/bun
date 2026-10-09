@@ -1079,6 +1079,12 @@ impl<'a> Printer<'a, '_> {
                 {
                     self.sink.text(&adjust_strings(params, self.single_quote));
                 }
+                // `${a}-b > c,⏎ .d {` is a rule whose selectors start with a `${}`.
+                Params::Text(params) | Params::Unknown(params)
+                    if self.is_oxfmt && is_placeholder && node.has_block =>
+                {
+                    self.print_lines_of_selector(params);
+                }
                 // `prettier-plugin-tailwindcss` has them parsed like those of `@import`.
                 Params::Text(params) | Params::Unknown(params)
                     if !self.is_oxfmt
@@ -1609,6 +1615,16 @@ impl<'a> Printer<'a, '_> {
                     self.sink.line();
                 }
                 self.sink.end_group();
+            }
+            // `@import "a" source('b')`: oxfmt knows `url()`. A string in another function keeps its quotes.
+            ValueKind::String
+                if self.is_oxfmt
+                    && statement.inside_at_rule(&[b"import"])
+                    && self
+                        .value_function(values)
+                        .is_some_and(|name| !text::eq_lower_case(name, b"url")) =>
+            {
+                self.sink.text(values.raw_string(id));
             }
             ValueKind::String => {
                 self.scratch.clear();

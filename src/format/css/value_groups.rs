@@ -431,6 +431,10 @@ impl<'a> Printer<'a, '_> {
             if word(next_node).is_some_and(|it| it.starts_with(b"]")) {
                 continue;
             }
+            // `[ a ]` is `[a]` for oxfmt and `[ a]` for Prettier.
+            if self.is_oxfmt && word(i_node).is_some_and(|it| it.ends_with(b"[")) {
+                continue;
+            }
             // `~"escaped"` in Less.
             if i_node.value() == Some(b"~") {
                 continue;

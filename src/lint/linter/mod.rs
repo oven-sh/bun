@@ -47,8 +47,8 @@ pub use config::{
     LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, max_fixed_len,
-    verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, is_parse_error,
+    max_fixed_len, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;

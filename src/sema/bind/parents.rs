@@ -157,21 +157,22 @@ pub fn bind_for_format_in<'r>(
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    match try_bind_for_format_in(f, recycled).is_some() {
+    match fill_in::<_, false>(f, &mut recycled.room().b) {
         true => &recycled.room().b,
         false => leave_to_binder(f, options, atoms, recycled),
     }
 }
 
-/// [`bind_for_format_in`] for a file whose lists are stored anywhere, like those that the parser
-/// still has. It reads nothing that `File::finish_nodes` computes. `None`: the file takes the binder,
-/// which takes a [`File`].
-pub fn try_bind_for_format_in<'r, S: Storage>(
-    f: &FileIn<S>,
+/// [`bind_for_format_in`] for a file whose lists are where the parser has left them. It reads nothing
+/// that `File::finish_nodes` computes. `None`: the file takes the binder, which takes a [`File`].
+/// Not generic and never inlined: so `fill_in` is compiled for it in this crate, with the options of this crate.
+#[inline(never)]
+pub fn try_bind_for_format_in<'r>(
+    f: &FileBuilder,
     recycled: &'r mut Recycled,
 ) -> Option<&'r BoundBuilder> {
     let b = &mut recycled.room().b;
-    fill_in::<S, false>(f, b).then_some(&*b)
+    fill_in::<Growable, false>(f, b).then_some(&*b)
 }
 
 /// Makes `b` what [`bind_for_format`] says. With `LINT` also `expr_kinds` and `expr_kind_counts`, and

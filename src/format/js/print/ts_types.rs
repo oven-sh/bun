@@ -64,6 +64,7 @@ pub(crate) fn write_ts_type_reference<'a>(
     }
     let node = ty.as_ast_nodes();
     if name.len() > 2
+        && heritage_name_breaks_before_its_dots(f)
         && matches!(
             node,
             AstNodes::TSInterfaceHeritage(_) | AstNodes::TSClassImplements(_)
@@ -118,6 +119,11 @@ pub(crate) fn write_ts_type_reference<'a>(
             wrap.then_some(")")
         ]
     );
+}
+
+/// For oxfmt `A.B.C` after `extends` or `implements` is a name like any other, on one line.
+fn heritage_name_breaks_before_its_dots(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// `A.B.C` after `extends` or `implements`. There it is a member expression in ESTree, which can
@@ -596,6 +602,18 @@ impl<'a> Format<'a> for FormatModuleSpecifier<'a> {
     }
 }
 
+/// ```ts
+/// import("a", {          import(
+///   with: { b: "c" },      "a",
+/// })                       { with: { b: "c" } }
+///                        )
+/// ```
+///
+/// Prettier on the left: they are the last argument of a call. oxfmt on the right.
+fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `("a", { with: { type: "json" } })`. Prettier's `printCallArguments` for a string and an object.
 fn write_import_type_arguments<'a>(
     ty: TypeNode<'a>,
@@ -645,6 +663,15 @@ fn write_import_type_arguments<'a>(
     }
     if does_source_break {
         return write!(f, all_broken_out(true));
+    }
+    if !do_options_break && options_of_import_type_are_on_a_line_of_their_own(f) {
+        return write!(
+            f,
+            best_fitting!(
+                format_args!("(", head, format_options, ")"),
+                all_broken_out(true)
+            )
+        );
     }
     let expanded_options = format_with(|f| {
         write!(

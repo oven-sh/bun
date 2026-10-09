@@ -59,11 +59,20 @@ unsafe extern "C" {
     /// How many instances of the engine's regular expression have been compiled so far. Only an experiment has it.
     #[linkage = "extern_weak"]
     static bun_yarr_instances_made: Option<unsafe extern "C" fn() -> usize>;
+    /// How often, so far: 1: all places were taken and one more instance was compiled; 2: an instance found no place and was
+    /// freed; 3: a thread yielded because it got none. Only an experiment has it.
+    #[linkage = "extern_weak"]
+    static bun_yarr_count: Option<unsafe extern "C" fn(usize) -> usize>;
 }
 
 fn instances_made() -> Option<usize> {
     // SAFETY: null or that function, which takes nothing and reads a counter.
     unsafe { bun_yarr_instances_made.map(|it| it()) }
+}
+
+fn count(which: usize) -> Option<usize> {
+    // SAFETY: null or that function, which reads a counter.
+    unsafe { bun_yarr_count.map(|it| it(which)) }
 }
 
 /// More than a regular expression has places for the threads that search with it.
@@ -73,6 +82,9 @@ const THREADS_AT_MOST: usize = 96;
 fn stress(seconds: u64) {
     // FUZZ_THREADS: fewer, as a control.
     let threads = std::env::var("FUZZ_THREADS").ok().and_then(|it| it.parse().ok()).unwrap_or(THREADS_AT_MOST);
+    // FUZZ_PATTERNS: only the first so many, so that more threads search with the same one at a time.
+    let patterns = std::env::var("FUZZ_PATTERNS").ok().and_then(|it| it.parse().ok()).unwrap_or(SHARED.len());
+    let patterns = patterns.clamp(1, SHARED.len());
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, RwLock};
     let make = |which: usize| Regex::new(SHARED[which].0, SHARED[which].1).expect("the pattern is valid");
@@ -91,7 +103,7 @@ fn stress(seconds: u64) {
             scope.spawn(move || {
                 let mut turn = thread;
                 while !stops.load(Ordering::Relaxed) {
-                    let which = turn % SHARED.len();
+                    let which = turn % patterns;
                     // Not under the lock: the last to drop it may be this thread, after it has been replaced.
                     let regex = Arc::clone(&shared[which].read().expect("nobody panics with the lock"));
                     assert_eq!(answer(&regex, which), expected[which], "a shared /{}/", SHARED[which].0);
@@ -108,7 +120,7 @@ fn stress(seconds: u64) {
         let began = std::time::Instant::now();
         while began.elapsed().as_secs() < seconds {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            let which = replaced % SHARED.len();
+            let which = replaced % patterns;
             *shared[which].write().expect("nobody panics with the lock") = Arc::new(make(which));
             replaced += 1;
         }
@@ -116,10 +128,16 @@ fn stress(seconds: u64) {
     });
     drop(shared);
     eprintln!(
-        "STRESS: {threads} threads, {} answers, all as expected; {} regular expressions of a thread's own; {replaced} times a shared one was replaced; instances compiled meanwhile: {:?}",
+        "STRESS: {threads} threads, {patterns} patterns, {} answers, all as expected; {} regular expressions of a thread's own; {replaced} times a shared one was replaced; instances compiled meanwhile: {:?}",
         answers.into_inner(),
         owns.into_inner(),
         made_before.zip(instances_made()).map(|(before, after)| after - before)
+    );
+    eprintln!(
+        "STRESS: all places taken, one more compiled: {:?}; no place, freed: {:?}; yielded: {:?}",
+        count(1),
+        count(2),
+        count(3)
     );
 }
 

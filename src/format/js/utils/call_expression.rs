@@ -115,6 +115,9 @@ pub(crate) fn callee_trailing_comments<'a>(
     callee_end: u32,
     f: &Formatter<'a>,
 ) -> &'a [Comment] {
+    if let Some(comments) = comments_trailing_computed_callee(call, f) {
+        return comments;
+    }
     if comments_stay_between_head_and_body(f) {
         let opener = match (call.is_optional(), call.type_args().is_empty()) {
             (true, _) => b'?',
@@ -129,12 +132,38 @@ pub(crate) fn callee_trailing_comments<'a>(
     }
 }
 
+/// `a["b"]( // comment⏎c)` is `a["b"](c); // comment` for oxfmt: to a callee like `a[b]` the `(` is nothing, and what is
+/// between it and the first argument is its own or the argument's as between any two nodes.
+fn comments_trailing_computed_callee<'a>(
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> Option<&'a [Comment]> {
+    if !f.options().flavor.is_oxfmt() {
+        return None;
+    }
+    let callee = call.callee();
+    let (ExprKind::Index { .. }, AstNodes::CallExpression(parent)) =
+        (callee.kind(), callee.ast_parent())
+    else {
+        return None;
+    };
+    let following = (call.type_args().angle_brackets_span())
+        .or_else(|| call.args().first().map(|first| first.span()))?;
+    Some(
+        f.comments()
+            .get_trailing_comments(parent.span(), callee.span(), following.start),
+    )
+}
+
 /// Writes [`callee_trailing_comments`].
 pub(crate) fn write_callee_trailing_comments<'a>(
     call: Call<'a>,
     callee_end: u32,
     f: &mut Formatter<'a>,
 ) {
+    if let Some(comments) = comments_trailing_computed_callee(call, f) {
+        return FormatTrailingComments::Comments(comments).fmt(f);
+    }
     let comments = callee_trailing_comments(call, callee_end, f);
     match comments_stay_between_head_and_body(f) {
         true => {

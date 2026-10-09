@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+a {
+  --color: [ "red", "green", "blue"];
+  --c2: [ "red"];
+  --c3: [ a b];
+  grid-template-columns: [ a] 1fr [ b];
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a {
+  --color: [ "red", "green", "blue"];
+  --c2: [ "red"];
+  --c3: [ a b];
+  grid-template-columns: [ a] 1fr [ b];
+}
+
+===================== End =====================

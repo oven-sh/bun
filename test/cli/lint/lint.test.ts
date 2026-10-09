@@ -1607,6 +1607,12 @@ describe.concurrent("bun lint", () => {
           "no-single-promise-in-promise-methods",
         ],
         ["c.ts", "declare module 'a\\\\b' {}\n", "prefer-string-raw"],
+        ["d.js", "new Foo(...[a, , b,],)\n", "no-useless-spread"],
+        [
+          "e.js",
+          "async function * foo() {await Promise.race([yield promise])}\n",
+          "no-single-promise-in-promise-methods",
+        ],
       ])("%s, with an .oxlintrc.json", async (name, text, rule) => {
         const rules = { [`unicorn/${rule}`]: "error" };
         const oxlintrc = JSON.stringify({ plugins: ["unicorn"], categories: { correctness: "off" }, rules });
@@ -1633,7 +1639,7 @@ describe.concurrent("bun lint", () => {
         }];`;
 
       test("of a plugin in JavaScript: none of the fixes of that pass", async () => {
-        const all = { "eslint.config.mjs": plugin, "a.js": "var a = two;\nexport { a };\n" };
+        const all = { "eslint.config.mjs": plugin, "a.js": "var a = 1;\nexport { a };\ntwo;\n" };
         const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
         expect(result.files).toEqual({ "a.js": all["a.js"] });
         expect(result.stderr).toContain(warning("no-var, p/breaks", "a.js"));
@@ -1646,6 +1652,16 @@ describe.concurrent("bun lint", () => {
           "no-var",
           "p/breaks",
         ]);
+      });
+
+      test("a comment that cannot be read is not a text that cannot be parsed", async () => {
+        const all = {
+          "eslint.config.mjs": `export default [{ linterOptions: { reportUnusedDisableDirectives: "error" } }];`,
+          "a.js": "/* eslint no-var: [ */\nfoo(); // eslint-disable-line no-var\n",
+        };
+        const result = await lint(all, ["--fix", "a.js"], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": "/* eslint no-var: [ */\nfoo(); \n" });
+        expect(result.stderr).not.toContain("syntax error");
       });
 
       test("the fixes of the passes before it stay", async () => {

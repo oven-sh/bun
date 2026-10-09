@@ -11,6 +11,8 @@
 //! creation, aliasing, mutation, freezing, and error conditions for each
 //! instruction and terminal in the HIR.
 
+use std::rc::Rc;
+
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::CompilerDiagnostic;
@@ -317,81 +319,47 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
 /// 16-byte points-to set for an identifier.
 ///
 /// Typical cardinality is 1; phis with N predecessors merge N sets. The inline
-/// storage holds up to 3 `ValueId`s in 12 bytes; the 4th byte word is the
-/// length. Past 3 entries the inline words are repurposed as a heap pointer +
-/// capacity. The dense `Variables::Dense` Vec is mostly inline cells, so its
-/// `clone()` is one allocation + a memcpy.
-///
-/// Layout (64-bit only):
-///   - inline (`len <= INLINE_CAP`): `words[..len]` are `ValueId`s.
-///   - heap (`len > INLINE_CAP`): `words[0..2]` is `*mut ValueId`, `words[2]`
-///     is capacity, `len` is the element count.
-struct ValueIdSet {
-    words: [u32; 3],
-    len: u32,
+/// storage holds up to 3 `ValueId`s; states share a larger set until one inserts into it.
+#[derive(Clone)]
+enum ValueIdSet {
+    Inline { len: u8, items: [ValueId; 3] },
+    Spilled(Rc<Vec<ValueId>>),
 }
 
 const _: () = assert!(std::mem::size_of::<ValueIdSet>() == 16);
-const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
 impl ValueIdSet {
-    const INLINE_CAP: u32 = 3;
-
     #[inline]
     const fn new() -> Self {
-        ValueIdSet {
-            words: [0; 3],
+        ValueIdSet::Inline {
             len: 0,
+            items: [ValueId(0); 3],
         }
     }
 
     #[inline]
     fn singleton(v: ValueId) -> Self {
-        ValueIdSet {
-            words: [v.0, 0, 0],
+        ValueIdSet::Inline {
             len: 1,
+            items: [v, ValueId(0), ValueId(0)],
         }
     }
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.len == 0
+        matches!(self, ValueIdSet::Inline { len: 0, .. })
     }
 
     #[inline]
     fn is_heap(&self) -> bool {
-        self.len > Self::INLINE_CAP
-    }
-
-    #[inline]
-    fn heap_ptr(&self) -> *mut ValueId {
-        debug_assert!(self.is_heap());
-        let raw = (self.words[0] as u64) | ((self.words[1] as u64) << 32);
-        raw as usize as *mut ValueId
-    }
-
-    #[inline]
-    fn set_heap_ptr(&mut self, ptr: *mut ValueId, cap: u32) {
-        let raw = ptr as usize as u64;
-        self.words[0] = raw as u32;
-        self.words[1] = (raw >> 32) as u32;
-        self.words[2] = cap;
+        matches!(self, ValueIdSet::Spilled(_))
     }
 
     #[inline]
     fn as_slice(&self) -> &[ValueId] {
-        if self.is_heap() {
-            // SAFETY: heap layout invariant — `heap_ptr()` points at a live
-            // `Vec<ValueId>` allocation of `len` initialized elements (see
-            // `push`/`clone`/`Drop`).
-            unsafe { std::slice::from_raw_parts(self.heap_ptr(), self.len as usize) }
-        } else {
-            // SAFETY: `ValueId` is `#[repr(transparent)]` over `u32`, so the
-            // inline `[u32; 3]` is layout-identical to `[ValueId; 3]`; `len <=
-            // INLINE_CAP` in this branch.
-            unsafe {
-                std::slice::from_raw_parts(self.words.as_ptr().cast::<ValueId>(), self.len as usize)
-            }
+        match self {
+            ValueIdSet::Inline { len, items } => &items[..usize::from(*len)],
+            ValueIdSet::Spilled(values) => values,
         }
     }
 
@@ -401,37 +369,20 @@ impl ValueIdSet {
     }
 
     fn push(&mut self, v: ValueId) {
-        if self.is_heap() {
-            let cap = self.words[2];
-            if self.len == cap {
-                let new_cap = cap * 2;
-                // SAFETY: heap layout invariant — `heap_ptr()/len/cap` are the
-                // exact `(ptr, len, cap)` triple stored by the previous
-                // `push`/`clone`, originating from a `Vec<ValueId>` allocation.
-                let mut vec = std::mem::ManuallyDrop::new(unsafe {
-                    Vec::from_raw_parts(self.heap_ptr(), self.len as usize, cap as usize)
-                });
-                vec.reserve_exact((new_cap - cap) as usize);
-                vec.push(v);
-                self.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-                self.len = vec.len() as u32;
-            } else {
-                // SAFETY: `len < cap`, so `heap_ptr().add(len)` lies within the
-                // owned allocation; `ValueId` is `Copy` so no drop is skipped.
-                unsafe { *self.heap_ptr().add(self.len as usize) = v };
-                self.len += 1;
-            }
-        } else if self.len < Self::INLINE_CAP {
-            self.words[self.len as usize] = v.0;
-            self.len += 1;
-        } else {
-            let mut vec = std::mem::ManuallyDrop::new(Vec::<ValueId>::with_capacity(8));
-            vec.push(ValueId(self.words[0]));
-            vec.push(ValueId(self.words[1]));
-            vec.push(ValueId(self.words[2]));
-            vec.push(v);
-            self.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-            self.len = vec.len() as u32;
+        match self {
+            ValueIdSet::Inline { len, items } => match items.get_mut(usize::from(*len)) {
+                Some(item) => {
+                    *item = v;
+                    *len += 1;
+                }
+                None => {
+                    let mut values = Vec::with_capacity(8);
+                    values.extend_from_slice(items.as_slice());
+                    values.push(v);
+                    *self = ValueIdSet::Spilled(Rc::new(values));
+                }
+            },
+            ValueIdSet::Spilled(values) => Rc::make_mut(values).push(v),
         }
     }
 
@@ -450,9 +401,19 @@ impl ValueIdSet {
     ///
     /// The set of a phi at the end of n branches has n values, and is merged n times.
     fn union_with(&mut self, other: &ValueIdSet) -> bool {
-        const FEW: u32 = 16;
+        const FEW: usize = 16;
+        if self.is_empty() {
+            *self = other.clone();
+            return !other.is_empty();
+        }
+        if let (ValueIdSet::Spilled(this), ValueIdSet::Spilled(that)) = (&*self, other)
+            && Rc::ptr_eq(this, that)
+        {
+            return false;
+        }
         let mut changed = false;
-        if self.len <= FEW || other.len <= 1 {
+        let few = self.as_slice().len() <= FEW && other.as_slice().len() <= FEW;
+        if few || other.as_slice().len() <= 1 {
             for v in other {
                 changed |= self.insert(*v);
             }
@@ -475,41 +436,6 @@ impl ValueIdSet {
     #[inline]
     fn iter(&self) -> std::slice::Iter<'_, ValueId> {
         self.as_slice().iter()
-    }
-}
-
-impl Clone for ValueIdSet {
-    #[inline]
-    fn clone(&self) -> Self {
-        if self.is_heap() {
-            let mut vec = std::mem::ManuallyDrop::new(self.as_slice().to_vec());
-            let mut out = ValueIdSet {
-                words: [0; 3],
-                len: vec.len() as u32,
-            };
-            out.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-            out
-        } else {
-            ValueIdSet {
-                words: self.words,
-                len: self.len,
-            }
-        }
-    }
-}
-
-impl Drop for ValueIdSet {
-    #[inline]
-    fn drop(&mut self) {
-        if self.is_heap() {
-            let cap = self.words[2] as usize;
-            // SAFETY: heap layout invariant — exactly the `(ptr, len, cap)`
-            // produced by `push`/`clone` from a `Vec<ValueId>` allocation, and
-            // `ValueIdSet` is not `Copy`, so this is the unique owner.
-            unsafe {
-                drop(Vec::from_raw_parts(self.heap_ptr(), self.len as usize, cap));
-            }
-        }
     }
 }
 
@@ -542,7 +468,7 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 /// those keep a `HashMap`.
 ///
 /// `any_heap` records whether any `Dense` slot has spilled past
-/// [`ValueIdSet::INLINE_CAP`]. While it stays `false` (the overwhelming
+/// the inline capacity. While it stays `false` (the overwhelming
 /// common case) the slab is plain data — `Clone` is one `memcpy` and `Drop` is
 /// one deallocation, with no per-element loop.
 enum Variables {
@@ -562,7 +488,7 @@ impl Clone for Variables {
                 let dst = out.as_mut_ptr();
                 // SAFETY: `dst` has `len` uninitialized slots. Inline cells are
                 // valid as bitcopies; heap cells are overwritten with a fresh
-                // allocation via `ptr::write` (no drop of the bit-aliased
+                // reference via `ptr::write` (no drop of the bit-aliased
                 // pointer) before `set_len` makes `dst` droppable.
                 unsafe {
                     std::ptr::copy_nonoverlapping(vec.as_ptr(), dst, len);

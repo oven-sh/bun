@@ -1696,11 +1696,6 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
                 None => continue,
             },
         };
-        let out = out.get_or_insert_with(|| Vec::with_capacity(text.len()));
-        out.extend_from_slice(text.get(copied..span.start as usize).unwrap_or_default());
-        out.extend_from_slice(code);
-        copied = span.end as usize;
-        // For Prettier no empty line follows what ends before a `*/`.
         // The length of the line that `rest` starts with, if there are only blanks on it.
         let blank_line = |rest: &[u8]| {
             let blanks = rest
@@ -1713,11 +1708,29 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
                 _ => None,
             }
         };
+        let out = out.get_or_insert_with(|| Vec::with_capacity(text.len()));
+        out.extend_from_slice(text.get(copied..span.start as usize).unwrap_or_default());
+        // A `/*::` that is alone on its line leaves no line behind.
+        let blanks_before = out.get(out.trim_ascii_end().len()..).unwrap_or_default();
+        let is_at_start_of_line = blanks_before.len() == out.len()
+            || bun_core::strings::index_of_any(blanks_before, b"\r\n").is_some();
+        let code = match blank_line(code).filter(|_| is_at_start_of_line) {
+            Some(line) => code.get(line..).unwrap_or_default(),
+            None => code,
+        };
+        out.extend_from_slice(code);
+        copied = span.end as usize;
+        // For Prettier no empty line follows what ends before a `*/`.
         let rest = text.get(copied..).unwrap_or_default();
         let Some(line) = blank_line(rest) else {
             continue;
         };
-        out.extend_from_slice(rest.get(..line).unwrap_or_default());
+        // A `*/` that starts its line leaves no line behind.
+        let blanks_at_the_end = code.get(code.trim_ascii_end().len()..).unwrap_or_default();
+        let starts_line = bun_core::strings::index_of_any(blanks_at_the_end, b"\r\n").is_some();
+        if !starts_line {
+            out.extend_from_slice(rest.get(..line).unwrap_or_default());
+        }
         copied += line;
         while let Some(line) = blank_line(text.get(copied..).unwrap_or_default()) {
             copied += line;

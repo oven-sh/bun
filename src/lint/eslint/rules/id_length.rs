@@ -220,8 +220,13 @@ impl IdLength {
         };
         let file = cx.file();
         self.check(cx, name, || {
+            // For oxlint the options of `import("a", { with: { type: "json" } })` are an object like another.
+            let is_attribute = match file.language().is_oxlint {
+                true => prop.is_import_attribute(),
+                false => is_import_attribute_key(prop),
+            };
             let is_supported = !prop.is_jsx_attribute()
-                && !is_import_attribute_key(prop)
+                && !is_attribute
                 && matches!(prop.parent(), Node::Expr(object) if !is_assignment_target(object));
             is_supported.then(|| key.span(file))
         });

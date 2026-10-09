@@ -197,6 +197,26 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
     })
 }
 
+/// Each of `params` is a name, with or without a default, there are at most eight, and no two are the same.
+#[inline]
+fn are_different_names<'a>(file: &'a File<'a>, params: &[bun_sema::hir::Param]) -> bool {
+    let mut seen = [Atom::NONE; 8];
+    if params.len() > seen.len() {
+        return false;
+    }
+    for (param, index) in params.iter().zip(0..) {
+        let Some(PatKind::Ident(name)) = file.hir.pats.get(param.pat.idx()).map(|it| it.kind)
+        else {
+            return false;
+        };
+        if seen[..index].contains(&name) {
+            return false;
+        }
+        seen[index] = name;
+    }
+    true
+}
+
 /// A name that two parameters of a function or of a signature bind. Only a function that is a declaration or an expression can
 /// have that, where the code is not strict, if each of its parameters is a name and nothing else. The error is at the first.
 fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
@@ -205,6 +225,10 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let mut names: SmallVec<[(Atom, u32); 8]> = SmallVec::new();
     for (i, raw) in hir.fns.iter().enumerate() {
         let params = hir.params.get(raw.params.range()).unwrap_or_default();
+        // Nearly every function has a few names, all different.
+        if params.is_empty() || are_different_names(file, params) {
+            continue;
+        }
         names.clear();
         let mut are_simple = true;
         for (param, id) in params.iter().zip(raw.params.iter()) {

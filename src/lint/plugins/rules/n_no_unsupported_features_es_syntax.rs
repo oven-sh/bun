@@ -1,7 +1,8 @@
-use crate::n::es_syntax::{Active, FEATURES};
+use crate::n::es_syntax::{Active, FEATURES, Feature};
 use crate::n::es_syntax_data::*;
 use crate::n::object_type::ExpressionTypes;
 use crate::n::semver::Range;
+use crate::n::table::Roots;
 use crate::n::{configured_node_version, version_range};
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -390,7 +391,7 @@ impl EsSyntax {
             return;
         };
         let mut supported = data.supported_range();
-        if let (Some(strict_mode), Some(node)) = (data.strict_mode, node) {
+        if let (Some(strict_mode), Some(node)) = (data.strict_mode(), node) {
             // `normalizeScope`
             let mut scope = node.scope();
             while let Some(upper) = scope.parent().filter(|_| scope.node() == node) {
@@ -402,9 +403,9 @@ impl EsSyntax {
                 return;
             }
         }
-        let message = if data.supported.is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
+        let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
         let report = if is_position { cx.report_at(at.start, message) } else { cx.report(at, message) };
-        report.data("featureName", data.name).data("supported", supported).data("version", active.version.raw.clone());
+        report.data("featureName", data.name()).data("supported", supported).data("version", active.version.raw.clone());
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Context<'a>) {
@@ -814,7 +815,8 @@ impl EsSyntax {
         };
         let tracker = ReferenceTracker::new(file);
         for feature in active.globals_in(file) {
-            for reference in tracker.iterate_global_references(&FEATURES[feature].globals) {
+            let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
+            for reference in tracker.iterate_global_references(&Roots(globals.iter().collect())) {
                 self.report(cx, feature, reference.span);
             }
         }

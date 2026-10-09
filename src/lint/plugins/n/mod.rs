@@ -5,27 +5,41 @@ pub(crate) mod es_syntax;
 pub(crate) mod es_syntax_data;
 pub(crate) mod object_type;
 pub(crate) mod semver;
+pub(crate) mod table;
 
 use bun_lint::prelude::*;
 use bun_lint::source::mention_bit;
 use bun_lint::utils::eslint_utils::{
-    Mode, ReferenceKind, ReferenceTracker, TraceMap, TrackedReference, get_string_if_constant,
+    Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap, TrackedReference,
+    get_string_if_constant,
 };
 use semver::Range;
 use std::sync::OnceLock;
+use table::{Part, Roots};
 
-/// Since which versions of Node.js something is there, the latest first.
+/// Since which versions of Node.js something is there: parts of [`data::VERSIONS`], the latest first.
 pub(crate) struct Info {
-    pub(crate) supported: &'static [[u16; 3]],
-    /// `versionsToString(supported)`
-    pub(crate) supported_text: &'static str,
-    pub(crate) experimental: &'static [[u16; 3]],
-    pub(crate) experimental_text: &'static str,
+    pub(crate) supported: Part,
+    pub(crate) experimental: Part,
+}
+
+fn versions(part: Part) -> &'static [[u8; 3]] {
+    data::VERSIONS.get(part.range()).unwrap_or_default()
+}
+
+/// `versionsToString`
+fn versions_to_string(versions: &[[u8; 3]]) -> String {
+    let mut versions = versions.iter().map(|[a, b, c]| format!("{a}.{b}.{c}"));
+    let latest = versions.next().unwrap_or_default();
+    let backported: Vec<String> = versions.map(|it| format!("^{it}")).collect();
+    match backported.is_empty() {
+        true => latest,
+        false => format!("{latest} (backported: {})", backported.join(", ")),
+    }
 }
 
 /// With indices into [`data::INFOS`].
-pub(crate) type Map = TraceMap<'static, u16>;
-type Members = &'static [(&'static str, Map)];
+type Member = table::Member<data::Builtin>;
 
 pub(crate) const NOT_EXPERIMENTAL_TILL: Message = Message::new(
     "not-experimental-till",
@@ -76,7 +90,7 @@ pub(crate) fn configured_node_version(file: &File) -> Range {
 }
 
 /// `isInRange`
-fn is_in_range(feature: &[[u16; 3]], requested: &Range) -> bool {
+fn is_in_range(feature: &[[u8; 3]], requested: &Range) -> bool {
     Range::since(feature).is_some_and(|range| requested.is_subset_of(&range))
 }
 
@@ -90,18 +104,19 @@ pub(crate) struct Unsupported {
 impl Unsupported {
     fn new(version: Range, allows_experimental: bool) -> Unsupported {
         let message = data::INFOS.iter().map(|info| {
+            let (supported, experimental) = (versions(info.supported), versions(info.experimental));
             if allows_experimental {
-                if is_in_range(info.experimental, &version) {
+                if is_in_range(experimental, &version) {
                     return None;
                 }
-                if !info.experimental.is_empty() {
+                if !experimental.is_empty() {
                     return Some(NOT_EXPERIMENTAL_TILL);
                 }
             }
-            if is_in_range(info.supported, &version) {
+            if is_in_range(supported, &version) {
                 return None;
             }
-            Some(if info.supported.is_empty() {
+            Some(if supported.is_empty() {
                 NOT_SUPPORTED_YET
             } else {
                 NOT_SUPPORTED_TILL
@@ -113,43 +128,51 @@ impl Unsupported {
         }
     }
 
-    fn is_reported(&self, map: &Map) -> bool {
-        [map.read, map.call, map.construct]
-            .into_iter()
-            .flatten()
-            .any(|info| self.message[info as usize].is_some())
+    /// What is said about a use with this info.
+    fn message_of(&self, info: u16) -> Option<Message> {
+        self.message.get(usize::from(info)).copied().flatten()
     }
 
-    /// Adds the names of the members of `map`, and of theirs, that are reported.
+    fn is_reported(&self, member: &Member) -> bool {
+        const KINDS: [ReferenceKind; 3] = [
+            ReferenceKind::Read,
+            ReferenceKind::Call,
+            ReferenceKind::Construct,
+        ];
+        let mut infos = KINDS.into_iter().filter_map(|kind| member.info(kind));
+        infos.any(|info| self.message_of(info).is_some())
+    }
+
+    /// Adds the names of the members of `member`, and of theirs, that are reported.
     fn add_reported(
         &self,
-        map: &Map,
-        seen: &mut Vec<*const (&'static str, Map)>,
+        member: &Member,
+        seen: &mut Vec<*const Member>,
         names: &mut Vec<&'static str>,
     ) {
+        let members = member.members();
         // Some refer to themselves.
-        if map.members.is_empty() || seen.contains(&map.members.as_ptr()) {
+        if members.is_empty() || seen.contains(&members.as_ptr()) {
             return;
         }
-        seen.push(map.members.as_ptr());
-        for (name, member) in map.members {
-            if self.is_reported(member) && !names.contains(name) {
-                names.push(name);
+        seen.push(members.as_ptr());
+        for member in members {
+            if self.is_reported(member) && !names.contains(&member.name()) {
+                names.push(member.name());
             }
             self.add_reported(member, seen, names);
         }
     }
 
     /// Those of `members` in which something is reported.
-    fn filter(&self, members: Members) -> Vec<Entry> {
-        let entries = members.iter().map(|&(name, map)| {
+    fn filter(&self, members: Part) -> Vec<Entry> {
+        let entries = members.members::<data::Builtin>().iter().map(|member| {
             let mut reported = Vec::new();
-            self.add_reported(&map, &mut Vec::new(), &mut reported);
+            self.add_reported(member, &mut Vec::new(), &mut reported);
             Entry {
-                name,
-                map,
-                bit: mention_bit(name.as_bytes()),
-                is_reported: self.is_reported(&map),
+                member,
+                bit: mention_bit(member.name().as_bytes()),
+                is_reported: self.is_reported(member),
                 reported: reported
                     .iter()
                     .map(|it| mention_bit(it.as_bytes()))
@@ -164,8 +187,7 @@ impl Unsupported {
 
 /// A global variable or a module.
 struct Entry {
-    name: &'static str,
-    map: Map,
+    member: &'static Member,
     /// [`mention_bit`] of the name.
     bit: u32,
     /// To refer to it is reported.
@@ -176,12 +198,9 @@ struct Entry {
 
 /// Those that the file mentions, with something in them that is reported. References, which cost far more, are only looked at for
 /// these.
-fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Vec<(&'static str, Map)> {
-    entries
-        .iter()
-        .filter(|it| is_named_in(file, it))
-        .map(|it| (it.name, it.map))
-        .collect()
+fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
+    let named = entries.iter().filter(|it| is_named_in(file, it));
+    Roots(named.map(|it| it.member).collect())
 }
 
 fn is_named_in(file: &File, entry: &Entry) -> bool {
@@ -191,9 +210,9 @@ fn is_named_in(file: &File, entry: &Entry) -> bool {
 
 /// The options of a rule, and what follows from them.
 pub(crate) struct Builtins {
-    globals: Members,
-    modules: Members,
-    import_meta: Members,
+    globals: Part,
+    modules: Part,
+    import_meta: Part,
     version: Option<Range>,
     ignores: Vec<Box<[u8]>>,
     allows_experimental: bool,
@@ -211,9 +230,9 @@ struct Tables {
 impl Builtins {
     pub(crate) fn new(
         options: &Options,
-        globals: Members,
-        modules: Members,
-        import_meta: Members,
+        globals: Part,
+        modules: Part,
+        import_meta: Part,
     ) -> Builtins {
         Builtins {
             globals,
@@ -278,17 +297,14 @@ impl Builtins {
         &self,
         tables: &Tables,
         prefix: &[&'m str],
-        references: &[TrackedReference<'a, 'm, u16>],
+        references: &[TrackedReference<'a, 'm>],
         cx: &Cx<'a, R>,
     ) {
         for reference in references {
-            let Some(message) = tables
-                .unsupported
-                .message
-                .get(reference.info as usize)
-                .copied()
-                .flatten()
-            else {
+            let (Some(message), Some(info)) = (
+                tables.unsupported.message_of(reference.info),
+                data::INFOS.get(usize::from(reference.info)),
+            ) else {
                 continue;
             };
             let path: Vec<&str> = prefix.iter().chain(&reference.path).copied().collect();
@@ -297,11 +313,18 @@ impl Builtins {
             if self.ignores.iter().any(|it| **it == *name.as_bytes()) {
                 continue;
             }
-            let info = &data::INFOS[reference.info as usize];
+            let mut written_otherwise = data::WRITTEN_OTHERWISE.iter();
+            let supported = match written_otherwise.find(|it| it.0 == reference.info) {
+                Some(found) => found.1.to_owned(),
+                None => versions_to_string(versions(info.supported)),
+            };
             cx.report(reference.span, message)
                 .data("name", name.to_owned())
-                .data("experimental", info.experimental_text)
-                .data("supported", info.supported_text)
+                .data(
+                    "experimental",
+                    versions_to_string(versions(info.experimental)),
+                )
+                .data("supported", supported)
                 .data("version", tables.unsupported.version.raw.clone());
         }
     }
@@ -316,10 +339,10 @@ impl Builtins {
         self.with_tables(file, |tables| {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
             let modules = named_in(file, &tables.modules);
-            if !modules.is_empty() {
-                let modules = TraceMap::new(&modules);
+            if !modules.0.is_empty() {
+                let modules: &dyn Trace<'_> = &modules;
                 if file.mentions("require") {
-                    self.report(tables, &[], &tracker.iterate_cjs_references(&modules), cx);
+                    self.report(tables, &[], &tracker.iterate_cjs_references(modules), cx);
                 }
                 let get_builtin_module = match file.mentions("getBuiltinModule") {
                     true => tracker.iterate_global_references(&GET_BUILTIN_MODULE),
@@ -336,14 +359,10 @@ impl Builtins {
                     else {
                         continue;
                     };
-                    let Some((key, next)) = modules
-                        .members
-                        .iter()
-                        .find(|it| it.0.as_bytes() == &key[..])
-                    else {
+                    let Some((key, next)) = modules.get(&key) else {
                         continue;
                     };
-                    if let Some(info) = next.read {
+                    if let Some(info) = next.info(ReferenceKind::Read) {
                         let read = TrackedReference {
                             node: found.node,
                             span: found.span,
@@ -360,29 +379,29 @@ impl Builtins {
                         cx,
                     );
                 }
-                self.report(tables, &[], &tracker.iterate_esm_references(&modules), cx);
+                self.report(tables, &[], &tracker.iterate_esm_references(modules), cx);
             }
             let globals = named_in(file, &tables.globals);
-            if !globals.is_empty() {
+            if !globals.0.is_empty() {
                 self.report(
                     tables,
                     &[],
-                    &tracker.iterate_global_references(&TraceMap::new(&globals)),
+                    &tracker.iterate_global_references(&globals),
                     cx,
                 );
             }
             let import_meta = if file.mentions("meta") {
                 named_in(file, &tables.import_meta)
             } else {
-                Vec::new()
+                Roots(Vec::new())
             };
-            if !import_meta.is_empty() {
-                let (tracker, map) = (ReferenceTracker::new(file), TraceMap::new(&import_meta));
+            if !import_meta.0.is_empty() {
+                let tracker = ReferenceTracker::new(file);
                 for e in file.exprs_of_kind(ExprTag::ImportMeta) {
                     self.report(
                         tables,
                         &["import.meta"],
-                        &tracker.iterate_property_references(e, &map),
+                        &tracker.iterate_property_references(e, &import_meta),
                         cx,
                     );
                 }

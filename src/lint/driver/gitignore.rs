@@ -319,6 +319,11 @@ pub(crate) fn is_ignored_in_search(chain: &Chain, path: &[u8], is_directory: boo
     decide(chain, path, is_directory, is_in_search)
 }
 
+/// Whether `below` is `above`, or inside of it.
+fn is_at_or_above(above: &[u8], below: &[u8]) -> bool {
+    above == below || paths::inside(above, below).is_some()
+}
+
 fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) -> bool {
     let mut next = chain.as_ref();
     while let Some(ignores) = next {
@@ -327,7 +332,7 @@ fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) ->
         let inside = match paths::inside(directory, path) {
             Some(inside) => Some(inside),
             // No pattern is about the directory of the file, or about one that it is in.
-            None if path == directory || paths::inside(path, directory).is_some() => None,
+            None if is_at_or_above(path, directory) => None,
             // Prettier asks the package `ignore` about `../src/a.js`, in which a pattern without a `/` finds the name.
             None if ignores.ignores_case => {
                 from_outside = paths::relative(directory, path);

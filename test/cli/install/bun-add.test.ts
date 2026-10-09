@@ -1,7 +1,7 @@
 import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { readdirSync } from "fs";
+import { lstatSync, readdirSync, symlinkSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -3033,4 +3033,28 @@ it.skipIf(isWindows)("bun add keeps the old package.json when the write fails", 
   expect(exitCode).toBe(1);
   expect(await file(join(String(dir), "package.json")).text()).toBe(original);
   expect(readdirSync(String(dir)).filter(name => name.endsWith(".tmp"))).toEqual([]);
+});
+
+// package.json can be a symlink to a file that does not exist yet. Both the first write (the
+// file is created) and the edit must go through the link.
+it.skipIf(isWindows)("bun add writes through a package.json symlink whose target does not exist yet", async () => {
+  using dir = tempDir("bun-add-symlink-without-target", {
+    "project/README.md": "",
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  const project = join(String(dir), "project");
+  symlinkSync("../real.json", join(project, "package.json"));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "../dep"],
+    cwd: project,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(lstatSync(join(project, "package.json")).isSymbolicLink()).toBe(true);
+  expect(await file(join(String(dir), "real.json")).json()).toEqual({ dependencies: { dep: "../dep" } });
 });

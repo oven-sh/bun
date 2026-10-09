@@ -1148,6 +1148,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
+    const FIRST_CONTENTS: &[u8] = b"{\"dependencies\": {}}";
     let open_flags = sys::O::RDWR | sys::O::CLOEXEC;
     let opened = match File::openat(
         Fd::cwd(),
@@ -1156,13 +1157,23 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
         0o666,
     ) {
         Ok(package_json_file) => {
-            package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
+            package_json_file.pwrite_all(FIRST_CONTENTS, 0)?;
             return Ok(package_json_file);
         }
-        // Another process created it first and writes the contents; an empty file parses as `{}`.
-        Err(err) if err.get_errno() == sys::E::EEXIST => {
-            File::openat(Fd::cwd(), b"package.json", open_flags, 0)
-        }
+        // Another process created it first, or the name is a symlink whose target does not exist
+        // yet (`O_EXCL` does not follow one). Whoever finds the file empty writes the same bytes.
+        Err(err) if err.get_errno() == sys::E::EEXIST => File::openat(
+            Fd::cwd(),
+            b"package.json",
+            open_flags | sys::O::CREAT,
+            0o666,
+        )
+        .and_then(|package_json_file| {
+            if package_json_file.get_end_pos()? == 0 {
+                package_json_file.pwrite_all(FIRST_CONTENTS, 0)?;
+            }
+            Ok(package_json_file)
+        }),
         Err(err) => Err(err),
     };
 

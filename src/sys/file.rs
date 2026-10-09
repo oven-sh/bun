@@ -381,26 +381,39 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
-    /// [`File::write_file`] through a temporary file and a rename. Keeps the file's mode and owner.
+    /// [`File::write_file`] through a temporary file and a rename. Keeps the file's mode, owner and
+    /// (on Linux) extended attributes; writes in place where the new file cannot take the old one's place.
     pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
-        // Best effort (on Windows it opens the file to read); the open for writing below decides.
-        let mut realpath_buf = bun_paths::path_buffer_pool::get();
-        let mut target: Vec<u8> = match realpath(path, &mut realpath_buf) {
-            Ok(resolved) => resolved.to_vec(),
-            Err(_) => path.as_bytes().to_vec(),
-        };
-        target.push(0);
-        let target = ZStr::from_slice_with_nul(&target);
+        // A symlink in the last component is the one case to resolve: the rename would replace
+        // the link, not the file behind it.
+        let mut resolved: Vec<u8>;
+        let mut target = path;
+        let mut st = lstat(path);
+        if st.as_ref().is_ok_and(|st| S::ISLNK(st.st_mode as Mode)) {
+            let mut resolved_buf = bun_paths::path_buffer_pool::get();
+            resolved = match realpath(path, &mut resolved_buf) {
+                Ok(resolved) => resolved.to_vec(),
+                // Its target does not exist yet: the write creates it.
+                Err(_) => return Self::write_file_in_place(path, data, mode),
+            };
+            resolved.push(0);
+            target = ZStr::from_slice_with_nul(&resolved);
+            st = stat(target);
+        }
 
-        let existing = match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
+        let existing = match st {
             // The rename below only needs the directory; this open reports an unwritable file.
-            Ok(existing) => Some(existing.stat()?),
+            Ok(st) => match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
+                Ok(existing) => Some((existing, st)),
+                Err(err) if err.get_errno() == E::ENOENT => None,
+                Err(err) => return Err(err),
+            },
             Err(err) if err.get_errno() == E::ENOENT => None,
             Err(err) => return Err(err),
         };
         let create_mode = existing
             .as_ref()
-            .map_or(mode, |st| st.st_mode as Mode & 0o7777);
+            .map_or(mode, |(_, st)| st.st_mode as Mode & 0o7777);
 
         let target_bytes = target.as_bytes();
         let dir_len = target_bytes.len() - bun_paths::basename(target_bytes).len();
@@ -417,25 +430,55 @@ impl File {
         let cwd = Fd::cwd();
         let mut tmpfile = match Tmpfile::create_with_mode(cwd, tmp_path, create_mode) {
             Ok(tmpfile) => tmpfile,
-            // The directory refuses new files from this user. The file itself opened above.
-            Err(err) if matches!(err.get_errno(), E::EACCES | E::EPERM) => {
+            // The directory takes no new file (no permission, a read-only mount around a writable
+            // file, a path at the length limit). The file itself opened above.
+            Err(err)
+                if matches!(
+                    err.get_errno(),
+                    E::EACCES | E::EPERM | E::EROFS | E::ENAMETOOLONG
+                ) =>
+            {
                 return Self::write_file_in_place(target, data, mode);
             }
             Err(err) => return Err(err),
         };
         // Closes the descriptor on every path below. `Tmpfile` does not own it.
         let file = File::from_fd(tmpfile.fd);
+        #[cfg(unix)]
+        if let Some((old, st)) = &existing {
+            // The new inode belongs to this process, has the mode the umask left, and has no
+            // extended attributes. Where it cannot get the owner, the group and the attributes
+            // of the old one, the old inode stays: its owner must not lose the file.
+            let old_mode = st.st_mode as Mode & 0o7777;
+            let created = file.stat().ok();
+            let same_owner = created
+                .as_ref()
+                .is_some_and(|created| created.st_uid == st.st_uid && created.st_gid == st.st_gid);
+            let copied = if same_owner || fchown(file.handle, st.st_uid, st.st_gid).is_ok() {
+                copy_xattrs(old.handle, file.handle)
+            } else {
+                None
+            };
+            let Some(copied) = copied else {
+                drop(file);
+                let _ = unlinkat(cwd, tmp_path);
+                return Self::write_file_in_place(target, data, mode);
+            };
+            // chown clears the setuid and setgid bits, and an ACL sets the group bits.
+            if !same_owner
+                || copied > 0
+                || created.is_none_or(|created| created.st_mode as Mode & 0o7777 != old_mode)
+            {
+                let _ = fchmod(file.handle, old_mode);
+            }
+        }
+        // Windows does not rename over a file that is open.
+        drop(existing);
         if let Err(err) = file.write_all(data) {
             // Disk full, and the like: the old file is intact, and writing in place would empty it.
             drop(file);
             let _ = unlinkat(cwd, tmp_path);
             return Err(err);
-        }
-        #[cfg(unix)]
-        if let Some(st) = &existing {
-            // The new inode belongs to this process, and the create applied the umask.
-            let _ = fchown(file.handle, st.st_uid, st.st_gid);
-            let _ = fchmod(file.handle, st.st_mode as Mode & 0o7777);
         }
         let renamed = tmpfile.finish(target);
         drop(file);
@@ -477,6 +520,85 @@ impl File {
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))
     }
+}
+
+/// Copies the extended attributes of `from` to `to`, POSIX ACLs among them, and returns how many.
+/// `security.*` is the kernel's and its policy's: the new file has its own. `None` where one
+/// cannot be copied.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn copy_xattrs(from: Fd, to: Fd) -> Option<usize> {
+    let mut names: Vec<u8> = Vec::new();
+    loop {
+        // SAFETY: a null buffer of size 0 asks for the size of the list.
+        let size = unsafe { libc::flistxattr(from.native(), core::ptr::null_mut(), 0) };
+        if size == 0 {
+            return Some(0);
+        }
+        if size < 0 {
+            // A file system without extended attributes has none to lose.
+            return matches!(last_errno(), libc::ENOTSUP | libc::ENOSYS).then_some(0);
+        }
+        names.resize(size as usize, 0);
+        // SAFETY: `names` is writable for `names.len()` bytes.
+        let len =
+            unsafe { libc::flistxattr(from.native(), names.as_mut_ptr().cast(), names.len()) };
+        if len >= 0 {
+            names.truncate(len as usize);
+            break;
+        }
+        if last_errno() != libc::ERANGE {
+            return None;
+        }
+    }
+
+    let mut copied = 0;
+    let mut value: Vec<u8> = Vec::new();
+    let mut rest: &[u8] = &names;
+    while let Ok(name) = core::ffi::CStr::from_bytes_until_nul(rest) {
+        rest = &rest[name.to_bytes_with_nul().len()..];
+        if name.to_bytes().starts_with(b"security.") {
+            continue;
+        }
+        // SAFETY: `name` is NUL-terminated; a null buffer of size 0 asks for the size.
+        let size =
+            unsafe { libc::fgetxattr(from.native(), name.as_ptr(), core::ptr::null_mut(), 0) };
+        if size < 0 {
+            return None;
+        }
+        value.resize(size as usize, 0);
+        // SAFETY: `value` is writable for `value.len()` bytes.
+        let len = unsafe {
+            libc::fgetxattr(
+                from.native(),
+                name.as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+            )
+        };
+        if len < 0 {
+            return None;
+        }
+        // SAFETY: `name` is NUL-terminated; `value` is readable for `len` bytes, which
+        // `fgetxattr` wrote.
+        let set = unsafe {
+            libc::fsetxattr(
+                to.native(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                len as usize,
+                0,
+            )
+        };
+        if set != 0 {
+            return None;
+        }
+        copied += 1;
+    }
+    Some(copied)
+}
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+fn copy_xattrs(_from: Fd, _to: Fd) -> Option<usize> {
+    Some(0)
 }
 
 #[cfg(test)]

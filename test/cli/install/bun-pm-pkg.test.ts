@@ -1,10 +1,46 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, withFileSizeLimit } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir, withFileSizeLimit } from "harness";
 import { join } from "path";
 
 const isRoot = !isWindows && process.getuid?.() === 0;
+// Root can start bun as a user that owns nothing, where that user may run this build of bun.
+const asNobody =
+  isRoot &&
+  Bun.which("runuser") !== null &&
+  Bun.spawnSync({ cmd: ["runuser", "-u", "nobody", "--", bunExe(), "--revision"], env: bunEnv }).exitCode === 0
+    ? ["runuser", "-u", "nobody", "--"]
+    : undefined;
+
+// setxattr(2) and getxattr(2). Undefined where libc does not load or the file system of the
+// temporary directory has no extended attributes.
+const xattr = (() => {
+  if (!isLinux) return undefined;
+  try {
+    const { symbols: libc } = dlopen(libcPathForDlopen(), {
+      setxattr: { args: ["ptr", "ptr", "ptr", "u64", "i32"], returns: "i32" },
+      getxattr: { args: ["ptr", "ptr", "ptr", "u64"], returns: "i64" },
+    });
+    const name = Buffer.from("user.bun-test\0");
+    const api = {
+      set(file: string, value: string) {
+        const bytes = Buffer.from(value);
+        return libc.setxattr(Buffer.from(file + "\0"), name, bytes, bytes.length, 0) === 0;
+      },
+      get(file: string) {
+        const bytes = Buffer.alloc(64);
+        const length = Number(libc.getxattr(Buffer.from(file + "\0"), name, bytes, bytes.length));
+        return length < 0 ? undefined : bytes.toString("utf8", 0, length);
+      },
+    };
+    using probe = tempDir("pm-pkg-xattr-probe", { "file": "" });
+    return api.set(join(String(probe), "file"), "1") ? api : undefined;
+  } catch {
+    return undefined;
+  }
+})();
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
   await using proc = spawn({
@@ -242,6 +278,65 @@ describe.concurrent("bun pm pkg", () => {
         gid: 1,
         description: "Updated",
       });
+    });
+
+    // A user who may write the file but cannot give the new one to its owner edits it in place:
+    // a replacement would belong to the writer, and could lock the owner out.
+    it.skipIf(!asNobody)("keeps the owner of a package.json that another user edits", async () => {
+      using dir = makeTestDir();
+      const packageJson = join(String(dir), "package.json");
+      chmodSync(String(dir), 0o777);
+      chmodSync(packageJson, 0o666);
+      chownSync(packageJson, 1, 1);
+      await using proc = spawn({
+        cmd: [...asNobody!, bunExe(), "pm", "pkg", "set", "description=Updated"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const { uid, gid } = statSync(packageJson);
+      expect({ uid, gid, description: (await readPkg(dir)).description }).toEqual({
+        uid: 1,
+        gid: 1,
+        description: "Updated",
+      });
+      expect(readdirSync(String(dir))).toEqual(["package.json"]);
+    });
+
+    // The new file is another inode, so what the old one carried has to be copied to it.
+    it.skipIf(!xattr)("keeps the extended attributes of package.json", async () => {
+      using dir = makeTestDir();
+      const packageJson = join(String(dir), "package.json");
+      expect(xattr!.set(packageJson, "kept")).toBe(true);
+      const { ino } = statSync(packageJson);
+      const { code } = await runPmPkg(["set", "description=Updated"], dir);
+      expect(code).toBe(0);
+      expect({
+        xattr: xattr!.get(packageJson),
+        replaced: statSync(packageJson).ino !== ino,
+        description: (await readPkg(dir)).description,
+      }).toEqual({ xattr: "kept", replaced: true, description: "Updated" });
+    });
+
+    // PATH_MAX is 4096 on Linux. The name of the temporary file is longer than "package.json",
+    // so a path can have room for the file and none for its replacement.
+    it.skipIf(!isLinux)("writes a package.json whose path leaves no room for a temporary file", async () => {
+      using dir = tempDir("pm-pkg-long-path", {});
+      let project = String(dir);
+      const projectLength = 4096 - 1 - "/package.json".length - 8;
+      while (project.length < projectLength) {
+        project += "/" + Buffer.alloc(Math.min(200, projectLength - project.length - 1), "d").toString();
+      }
+      mkdirSync(project, { recursive: true });
+      writeFileSync(join(project, "package.json"), JSON.stringify({ name: "long-path" }));
+      const { error, code } = await runPmPkg(["set", "description=Updated"], project, false);
+      expect(error).toBe("");
+      expect(code).toBe(0);
+      expect(await readPkg(project)).toEqual({ name: "long-path", description: "Updated" });
     });
 
     it("should set multiple properties", async () => {

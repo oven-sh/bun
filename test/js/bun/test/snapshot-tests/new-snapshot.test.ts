@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync, withFileSizeLimit } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tmpdirSync, withFileSizeLimit } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -299,5 +299,84 @@ describe.concurrent("a run that cannot write its snapshots leaves the old files"
     expect(exitCode).toBe(1);
     expect(fs.readFileSync(join(String(dir), "a.test.ts"), "utf8")).toBe(source);
     expect(fs.readdirSync(String(dir))).toEqual(["a.test.ts"]);
+  });
+});
+
+// Where the new file cannot take the place of the old one, the file is written in place, as it
+// always was: the write must not fail, and a symlink must stay a symlink.
+describe.concurrent("a .snap file that cannot be replaced by a rename", () => {
+  const TEST_FILE = `
+    import { test, expect } from "bun:test";
+    test("a", () => expect(process.env.V).toMatchSnapshot());
+  `;
+  const snapWith = (value: string) =>
+    '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`a 1`] = `"' + value + '"`;\n';
+
+  test.skipIf(isWindows)("a symlink whose target does not exist yet is written through", async () => {
+    using dir = tempDir("snap-symlink-without-target", {
+      "project/a.test.ts": TEST_FILE,
+      "project/__snapshots__/README.md": "",
+    });
+    const project = join(String(dir), "project");
+    const snap = join(project, "__snapshots__", "a.test.ts.snap");
+    fs.symlinkSync("../../real.snap", snap);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-snapshots", "./a.test.ts"],
+      cwd: project,
+      env: { ...bunEnv, CI: "false", V: "new" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("snapshots: +1 added");
+    expect(exitCode).toBe(0);
+    expect(fs.lstatSync(snap).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(join(String(dir), "real.snap"), "utf8")).toBe(snapWith("new"));
+  });
+
+  // A container that mounts the project read-only and the .snap file read-write. The mounts
+  // need a mount namespace, which not every machine gives to a test.
+  const MOUNT_SCRIPT = `
+    mount --bind "$P" "$P" && mount --bind "$W" "$P/__snapshots__/a.test.ts.snap" && mount -o remount,bind,ro "$P" || exit 99
+    cd "$P" && exec "$B" test --update-snapshots ./a.test.ts
+  `;
+  function mountNamespace(): string[] | undefined {
+    if (!isLinux || !Bun.which("unshare") || !Bun.which("mount")) return undefined;
+    using probe = tempDir("snap-mount-probe", { "p/__snapshots__/a.test.ts.snap": "", "w.snap": "" });
+    const env = { ...bunEnv, P: join(String(probe), "p"), W: join(String(probe), "w.snap"), B: "true" };
+    for (const flags of [["-U", "-r", "-m"], ["-m"]]) {
+      const cmd = [
+        "unshare",
+        ...flags,
+        "sh",
+        "-c",
+        MOUNT_SCRIPT.replace('exec "$B" test --update-snapshots ./a.test.ts', "true"),
+      ];
+      if (Bun.spawnSync({ cmd, env, stdout: "ignore", stderr: "ignore" }).exitCode === 0) return ["unshare", ...flags];
+    }
+    return undefined;
+  }
+  const unshare = mountNamespace();
+
+  test.skipIf(!unshare)("a writable file in a read-only folder is written in place", async () => {
+    using dir = tempDir("snap-read-only-folder", {
+      "project/a.test.ts": TEST_FILE,
+      "project/__snapshots__/a.test.ts.snap": snapWith("old"),
+      "writable.snap": snapWith("old"),
+    });
+    const writable = join(String(dir), "writable.snap");
+    await using proc = Bun.spawn({
+      cmd: [...unshare!, "sh", "-c", MOUNT_SCRIPT],
+      env: { ...bunEnv, CI: "false", V: "new", P: join(String(dir), "project"), W: writable, B: bunExe() },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EROFS");
+    expect(exitCode).toBe(0);
+    expect(fs.readFileSync(writable, "utf8")).toBe(snapWith("new"));
   });
 });

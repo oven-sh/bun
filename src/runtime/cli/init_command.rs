@@ -796,6 +796,7 @@ impl InitCommand {
 
         // The handle was only needed to read the file. Close it before the file is replaced.
         let mut had_package_json_file = package_json_file.take().is_some();
+        let mut failed_to_write_package_json = false;
         'write_package_json: {
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
@@ -820,6 +821,7 @@ impl InitCommand {
                     err.name(),
                 );
                 had_package_json_file = false;
+                failed_to_write_package_json = true;
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
@@ -833,6 +835,7 @@ impl InitCommand {
                     bstr::BStr::new(err.name()),
                 );
                 had_package_json_file = false;
+                failed_to_write_package_json = true;
                 break 'write_package_json;
             }
         }
@@ -931,6 +934,9 @@ impl InitCommand {
             _ => {}
         }
 
+        if failed_to_write_package_json {
+            Global::exit(1);
+        }
         Ok(())
     }
 }

@@ -208,10 +208,11 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("package.json failed to write due to error EFBIG");
-    // bun init reports the failed write and still creates the other files.
-    expect(exitCode).toBe(0);
     expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(original);
+    // bun init still creates the other files, and exits 1 for the one it could not write.
     expect(readdirSync(temp).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    expect(readdirSync(temp)).toContain("README.md");
+    expect(exitCode).toBe(1);
   });
 
   test("bun init utf-8", async () => {

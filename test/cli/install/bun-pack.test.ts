@@ -1368,6 +1368,68 @@ describe.concurrent("bundledDependencies", () => {
 
     expect(tarballEntries(join(dir, "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
   });
+
+  // Each key names a directory that is there. None of them is `name` or `@scope/name`.
+  test.each(["../../outside", "other/lib", "", ".", "..", "@scope", ".bin", "@scope/.hidden"])(
+    "a dependency key of a bundled dependency that is not a package name is not looked up: %j",
+    async key => {
+      using dir = tempDir("pack-bundled-dep-key", {
+        "outside/secret.txt": "not in the package",
+        "pkg/package.json": JSON.stringify({
+          name: "pack-bundled-dep-key",
+          version: "1.0.0",
+          bundledDependencies: ["dep1"],
+        }),
+        "pkg/node_modules/dep1/package.json": JSON.stringify({
+          name: "dep1",
+          version: "1.0.0",
+          dependencies: { [key]: "1.0.0" },
+        }),
+        "pkg/node_modules/other/lib/index.js": indexJs,
+        "pkg/node_modules/@scope/.hidden/index.js": indexJs,
+        "pkg/node_modules/.bin/tool": "#!/usr/bin/env bun\n",
+      });
+      const pkg = join(dir, "pkg");
+
+      const { out, err, exitCode } = await runPack(pkg);
+      expect(err).toBe("");
+      expect(out.split("\n").filter(line => line.startsWith("bundled "))).toEqual(["bundled dep1"]);
+      expect(exitCode).toBe(0);
+
+      expect(tarballEntries(join(pkg, "pack-bundled-dep-key-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/node_modules/dep1/package.json",
+      ]);
+    },
+  );
+
+  test("a dependency key of a bundled dependency can have capital letters", async () => {
+    using dir = tempDir("pack-bundled-dep-capitals", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-capitals",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: { JSONStream: "1.3.5", "@Scope/Name": "1.0.0" },
+      }),
+      "node_modules/JSONStream/package.json": JSON.stringify({ name: "JSONStream", version: "1.3.5" }),
+      "node_modules/@Scope/Name/package.json": JSON.stringify({ name: "@Scope/Name", version: "1.0.0" }),
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-capitals-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/@Scope/Name/package.json",
+      "package/node_modules/JSONStream/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
 });
 
 describe.concurrent("files", () => {

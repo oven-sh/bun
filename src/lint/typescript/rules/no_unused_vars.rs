@@ -79,9 +79,18 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
     let is_function_or_class = variable.defs().any(|it| matches!(it, Declaration::Fn(_) | Declaration::Class(_)));
     let is_const = variable.defs().any(|it| matches!(it.node(), Some(Node::VarDecl(it)) if it.var_kind() == VarKind::Const));
     let is_callable = (is_variable || is_function_or_class) && !variable.defs().any(Declaration::is_catch_parameter);
+    // A value and a type of one name are one symbol: `const A = 0; export type A = typeof A;`
+    if matches!(variable.scope().kind(), ScopeKind::Global | ScopeKind::Module)
+        && variable.defs().any(|it| matches!(it.node(), Some(Node::Stmt(it)) if it.is_exported()))
+    {
+        return true;
+    }
     let mut walks = OxlintWalks::default();
     variable.references().any(|it| {
-        if is_type_only_reference(variable.symbol(), it) || !it.is_value() {
+        if !it.is_value() {
+            return !variable.defs().filter_map(Declaration::node).any(|node| node.span().contains(it.span()));
+        }
+        if is_type_only_reference(variable.symbol(), it) {
             return !reports_vars_only_used_as_types && oxlint_counts_type_query_as_use(variable, it);
         }
         it.is_read()
@@ -95,7 +104,73 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
 fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> bool {
     is_type_only_reference(variable.symbol(), reference)
         && reference.expr().is_some()
-        && !variable.defs().filter_map(Declaration::node).any(|it| !matches!(it, Node::Func(_)) && it.span().contains(reference.span()))
+        && !oxlint_is_in_what_declares(variable, reference)
+}
+
+/// Whether `reference` is in the first declaration of `variable`, which for a parameter is the parameter.
+fn oxlint_is_in_what_declares(variable: Variable, reference: Reference) -> bool {
+    let declaration = match variable.defs().next() {
+        Some(Declaration::Param(pat)) => Node::Pat(pat).ancestors().find(|it| matches!(it, Node::Param(_))),
+        Some(def) => def.node(),
+        None => None,
+    };
+    declaration.is_some_and(|it| it.span().contains(reference.span()))
+}
+
+/// What oxlint 1.80 says nothing about because of how it is declared: `should_skip_symbol`, `is_ignored` and
+/// `is_allowed_*` of its rule, as far as typescript-eslint reports it. The first declaration counts.
+fn oxlint_leaves_alone(variable: Variable) -> bool {
+    let has_declare = |owner: Node| matches!(owner, Node::Stmt(it) if it.flags().contains(Flags::AMBIENT));
+    let is_left_alone = match variable.defs().next() {
+        Some(Declaration::Class(class)) => has_declare(class.owner()),
+        Some(Declaration::Fn(function)) => !function.has_body() && has_declare(function.owner()),
+        Some(Declaration::Module(module)) => has_declare(Node::Stmt(module.stmt())),
+        // What JSX can stand for, in a file that can have JSX.
+        Some(
+            Declaration::ImportDefault(_)
+            | Declaration::ImportNamespace(_)
+            | Declaration::ImportSpec(_)
+            | Declaration::ImportEquals(_),
+        ) => {
+            let file = variable.symbol().file();
+            variable.name().is_any(&["React", "h"]) && (file.is_javascript() || file.path().ends_with(b".tsx"))
+        }
+        // The declarations of an interface that merge have to have the same type parameters.
+        Some(Declaration::TypeParam(parameter)) => match parameter.parent() {
+            Node::Stmt(interface) => interface.tag() == StmtTag::Interface && is_declared_module(interface.parent()),
+            _ => false,
+        },
+        Some(Declaration::Param(pat)) => {
+            let parameter = Node::Pat(pat).ancestors().find_map(|it| match it {
+                Node::Param(parameter) => Some(parameter),
+                _ => None,
+            });
+            parameter.filter(|it| !it.is_rest()).and_then(Param::func).is_some_and(|method| {
+                matches!(method.owner(), Node::Member(it) if it.flags().contains(Flags::OVERRIDE))
+            })
+        }
+        _ => false,
+    };
+    let is_global = |it: Scope| match it.node() {
+        Node::Stmt(it) => matches!(it.kind(), StmtKind::Module(it) if matches!(it.name(), ModuleName::Global)),
+        _ => false,
+    };
+    is_left_alone || variable.scope().chain().any(is_global)
+}
+
+/// For oxlint a property with a default value has siblings too: `const { a = 1, ...rest } = b`.
+fn oxlint_has_rest_sibling(def: Declaration) -> bool {
+    let (Declaration::Var(pat) | Declaration::Param(pat)) = def else {
+        return false;
+    };
+    let Node::PatProp(property) = pat.parent() else {
+        return false;
+    };
+    property.default().is_some()
+        && matches!(property.parent(), Node::Pat(object) if matches!(
+            object.kind(),
+            PatKind::Object(properties) if properties.last().is_some_and(PatProp::is_rest)
+        ))
 }
 
 fn is_member_expression(e: Expr) -> bool {
@@ -470,15 +545,16 @@ fn is_named_by_identifier(def: Declaration) -> bool {
     }
 }
 
-/// The function, if `isFunction(def.name.parent)`: the name is all of one of its parameters.
-fn function_of_plain_parameter(def: Declaration<'_>) -> Option<Func<'_>> {
+/// The function, if `isFunction(def.name.parent)`: the name is all of one of its parameters. For oxlint it can have a
+/// default value.
+fn function_of_plain_parameter(def: Declaration<'_>, is_oxlint: bool) -> Option<Func<'_>> {
     let Declaration::Param(pat) = def else {
         return None;
     };
     let Node::Param(param) = pat.parent() else {
         return None;
     };
-    if param.is_rest() || param.default().is_some() || param.is_parameter_property() {
+    if param.is_rest() || param.default().is_some() && !is_oxlint || param.is_parameter_property() {
         return None;
     }
     param.func().filter(|function| function.has_body())
@@ -493,10 +569,11 @@ fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     first == Some(pat)
 }
 
-/// Where the last parameter of `function` that is used starts. 0 if none is used.
-fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>) -> u32 {
+/// Where the last parameter of `function` that is used starts. 0 if none is used. oxlint does not look at a rest
+/// parameter.
+fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>, is_oxlint: bool) -> u32 {
     let mut last = 0;
-    for param in function.params() {
+    for param in function.params().iter().filter(|it| !(is_oxlint && it.is_rest())) {
         param.pat().for_each_binding(&mut |pat| {
             if let Some(it) = pat.symbol()
                 && (it.references().next().is_some() || analysis.is_eslint_used(Variable::new(it)))
@@ -750,7 +827,8 @@ impl NoUnusedVars {
         let Some(def) = variable.defs().next() else {
             return false;
         };
-        let is_global = match cx.file().language().is_oxlint {
+        let is_oxlint = cx.file().language().is_oxlint;
+        let is_global = match is_oxlint {
             true => oxlint_takes_for_global(variable, def),
             false => variable.scope().kind() == ScopeKind::Global,
         };
@@ -807,10 +885,11 @@ impl NoUnusedVars {
                 }
                 // Upstream's `isAfterLastUsedArg`.
                 if self.args == Args::AfterUsed
-                    && let Some(function) = function_of_plain_parameter(def)
+                    && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
-                        < *last_used_args.entry(function).or_insert_with(|| last_used_arg(function, analysis))
+                        < *(last_used_args.entry(function))
+                            .or_insert_with(|| last_used_arg(function, analysis, is_oxlint))
                 {
                     return false;
                 }
@@ -836,7 +915,10 @@ impl NoUnusedVars {
             return false;
         }
 
-        !used && !self.has_rest_spread_sibling(variable) && !analysis.is_eslint_used(variable)
+        !used
+            && !self.has_rest_spread_sibling(variable)
+            && !(is_oxlint && self.ignore_rest_siblings && variable.defs().any(oxlint_has_rest_sibling))
+            && !analysis.is_eslint_used(variable)
     }
 
     fn check_module<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -903,7 +985,10 @@ impl NoUnusedVars {
         }
 
         for unused_var in unused_vars {
-            if file.language().is_oxlint && oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types) {
+            if file.language().is_oxlint
+                && (oxlint_leaves_alone(unused_var)
+                    || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types))
+            {
                 continue;
             }
             let used_only_as_type =

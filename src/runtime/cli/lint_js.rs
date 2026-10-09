@@ -13,6 +13,8 @@ use bun_jsc::{
 };
 use bun_lint_driver::js_plugin::{Engine, PROGRAM, Serve, Vm};
 
+bun_core::declare_scope!(lint_js, hidden);
+
 /// The message that the program is called with, and what answers its questions meanwhile.
 struct Call<'c, 's> {
     content: &'c [u8],
@@ -151,17 +153,21 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
         JSFunction::create(global, "decode", __jsc_host_decode, 3, Default::default()),
     ];
     match program.call(global, JSValue::UNDEFINED, &functions) {
-        Ok(handle) => Ok(LintVm {
-            handle: Strong::create(handle, global),
-            call: Cell::new(None),
-            answer: RefCell::new(Vec::new()),
-        }),
+        Ok(handle) => {
+            bun_core::scoped_log!(lint_js, "a VM is made");
+            Ok(LintVm {
+                handle: Strong::create(handle, global),
+                call: Cell::new(None),
+                answer: RefCell::new(Vec::new()),
+            })
+        }
         Err(error) => Err(message_of(global, global.take_exception(error))),
     }
 }
 
 /// Makes a VM for this thread.
 fn start_vm() -> Result<(), Vec<u8>> {
+    bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
             b"Could not start JavaScript for the plugins: ",
@@ -191,6 +197,18 @@ fn start_vm() -> Result<(), Vec<u8>> {
     Ok(())
 }
 
+/// What `vm`, which is that of this thread and whose lock is held, has for `bun lint`. The first time the program runs.
+fn program_of(vm: &VirtualMachine) -> Result<&'static LintVm, Vec<u8>> {
+    let slot = crate::jsc_hooks::lint_vm();
+    match slot.get() {
+        Some(state) => Ok(&**state),
+        None => {
+            let started = Box::new(start_program(vm)?);
+            Ok(&**slot.get_or_init(|| started))
+        }
+    }
+}
+
 /// The VM of this thread.
 struct ThreadVm;
 
@@ -199,14 +217,7 @@ impl Vm for ThreadVm {
         let vm = VirtualMachine::get();
         vm.run_with_api_lock(|| {
             let global = vm.global();
-            let slot = crate::jsc_hooks::lint_vm();
-            let state = match slot.get() {
-                Some(state) => state,
-                None => {
-                    let started = Box::new(start_program(vm)?);
-                    slot.get_or_init(|| started)
-                }
-            };
+            let state = program_of(vm)?;
             let mut call = Call { content, serve };
             state.call.set(Some(NonNull::from(&mut call).cast()));
             let _lent = Lent(state);
@@ -289,14 +300,21 @@ impl ThreadVms {
 impl Engine for ThreadVms {
     fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         if !VirtualMachine::is_loaded() {
+            let mut first = None;
             self.initialize.call_once(|| {
                 let expected = self.expected.load(core::sync::atomic::Ordering::Relaxed);
                 jsc::initialize(jsc::InitializeOptions {
                     vm_per_thread: expected == 0 || expected > FEW_VMS,
                     ..Default::default()
                 });
+                // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
+                // several threads at a time.
+                first = Some(start_vm().and_then(|()| {
+                    let vm = VirtualMachine::get();
+                    vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
+                }));
             });
-            start_vm()?;
+            first.unwrap_or_else(start_vm)?;
         }
         then(&mut ThreadVm);
         Ok(())
@@ -305,10 +323,19 @@ impl Engine for ThreadVms {
     fn expect(&self, realms: usize) {
         self.expected
             .store(realms, core::sync::atomic::Ordering::Relaxed);
+        // See `most_realms`. The pool takes a thread that lints for an idle one, so it would not start another by itself.
+        bun_threading::WorkPool::get().warm(u16::try_from(realms + 1).unwrap_or(u16::MAX));
     }
 
-    /// Half of the memory is for them.
+    /// Half of the memory is for them. And one thread of the pool is without: a plugin can wait, on the thread that lints, for a
+    /// `Worker` of its own, which loads its modules and reads files on the threads of the pool.
     fn most_realms(&self) -> usize {
-        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
+        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM)
+            .min(
+                bun_threading::WorkPool::get()
+                    .max_threads()
+                    .saturating_sub(1),
+            )
+            .max(1)
     }
 }

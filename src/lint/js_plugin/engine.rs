@@ -19,7 +19,7 @@ pub trait Engine: Sync {
     /// Says how many realms are going to be used at a time, at most. Nobody says so if a realm is needed to find out.
     fn expect(&self, _realms: usize) {}
 
-    /// How many realms there is memory for.
+    /// How many realms there can be at a time.
     fn most_realms(&self) -> usize {
         usize::MAX
     }

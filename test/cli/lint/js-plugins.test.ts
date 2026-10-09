@@ -799,6 +799,94 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // What a process has one of, like the caches of the resolver, is made with its first VM, and not for several threads at a time.
+  test.skipIf(!isDebug)(
+    "no other engine starts before the first is there",
+    async () => {
+      const files: Record<string, string> = {
+        "eslint.config.mjs": `
+          import demo from "./plugin.mjs";
+          export default [{ plugins: { demo }, rules: { "demo/no-foo": "error" } }];`,
+        "plugin.mjs": noFoo,
+      };
+      for (let i = 0; i < 128; i++) files[`src/${i}.js`] = "foo;\n";
+      using dir = tempDir("bun-lint-js-plugins", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "--threads", "4", "src"],
+        env: { ...env, BUN_DEBUG_lint_js: "1" },
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const steps = [...stderr.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
+      expect(steps.filter(it => it === "begins")).toHaveLength(4);
+      expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // As `synckit` does it, which `eslint-plugin-prettier` is made with.
+  test(
+    "a rule waits for a worker of its own on every thread that lints",
+    async () => {
+      const files: Record<string, string> = {
+        "eslint.config.mjs": `
+          import demo from "./plugin.mjs";
+          export default [{ plugins: { demo }, rules: { "demo/length": "error" } }];`,
+        "plugin.mjs": `
+          import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
+          let state = null;
+          function lengthOf(text) {
+            if (state === null) {
+              const shared = new SharedArrayBuffer(4);
+              const { port1, port2 } = new MessageChannel();
+              const options = { workerData: { port: port2, shared }, transferList: [port2] };
+              const worker = new Worker(new URL("./worker.mjs", import.meta.url), options);
+              worker.unref();
+              state = { worker, port: port1, flag: new Int32Array(shared) };
+            }
+            const before = Atomics.load(state.flag, 0);
+            state.worker.postMessage(text);
+            Atomics.wait(state.flag, 0, before);
+            return receiveMessageOnPort(state.port).message;
+          }
+          export default {
+            rules: {
+              length: {
+                create: context => ({
+                  Program(node) {
+                    context.report({ node, message: String(lengthOf(context.sourceCode.text)) });
+                  },
+                }),
+              },
+            },
+          };`,
+        "worker.mjs": `
+          import { parentPort, workerData } from "node:worker_threads";
+          import { a } from "./a.mjs";
+          import { b } from "./b.mjs";
+          const flag = new Int32Array(workerData.shared);
+          parentPort.on("message", async text => {
+            const { c } = await import("./c.mjs");
+            workerData.port.postMessage(text.length + a + b + c);
+            Atomics.add(flag, 0, 1);
+            Atomics.notify(flag, 0);
+          });`,
+        "a.mjs": "export const a = 0;",
+        "b.mjs": "export const b = 0;",
+        "c.mjs": "export const c = 0;",
+      };
+      for (let i = 0; i < 64; i++) files[`src/${i}.js`] = "foo;\n";
+      const { stdout, exitCode } = await lint(files, ["-f", "unix", "--threads", "2", "src"]);
+      expect(stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]"))).toHaveLength(64);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test("without rules in JavaScript there is no engine", async () => {
     const { stderr, exitCode } = await lint(
       { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },

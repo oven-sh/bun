@@ -6,7 +6,6 @@
 
 use crate::program::FileId;
 use crate::session::Arena;
-use crate::util::SharedSort;
 
 pub struct Component<'s> {
     /// In program order.
@@ -46,7 +45,7 @@ impl<'s> Components<'s> {
             let imports = imports(file).into_iter();
             let nodes = imports.filter_map(|imported| node_of.get(imported.idx()).copied());
             let mut edges: Vec<u32> = nodes.filter(|&node| node != u32::MAX).collect();
-            edges.shared_sort_unstable();
+            edges.sort_unstable();
             edges.dedup();
             edges
         };
@@ -63,7 +62,7 @@ impl<'s> Components<'s> {
             }
         }
         let mut in_program_order: Vec<usize> = (0..numbered.len()).collect();
-        in_program_order.shared_sort_unstable_by_key(|&number| numbered[number][0]);
+        in_program_order.sort_unstable_by_key(|&number| numbered[number][0]);
         let mut index_of = vec![0u32; numbered.len()];
         for (index, &number) in in_program_order.iter().enumerate() {
             index_of[number] = index as u32;
@@ -147,7 +146,7 @@ fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize
                     nodes[member].is_on_stack = false;
                     component_of[member] = components.len() as u32;
                 }
-                component.shared_sort_unstable();
+                component.sort_unstable();
                 components.push(component);
             }
         }

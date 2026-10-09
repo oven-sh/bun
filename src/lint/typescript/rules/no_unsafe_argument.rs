@@ -20,25 +20,30 @@ const UNSAFE_TUPLE_SPREAD: Message = Message::new(
     "Unsafe spread of a tuple type. The argument is {{sender}} and is assigned to a parameter of type {{receiver}}.",
 );
 
-fn describe_type(ty: Type) -> Vec<u8> {
+/// What is around a type in a message. oxlint has nothing there.
+fn quote(cx: &Cx<NoUnsafeArgument>) -> &'static [u8] {
+    if cx.language().is_oxlint { b"" } else { b"`" }
+}
+
+fn describe_type(ty: Type, cx: &Cx<NoUnsafeArgument>) -> Vec<u8> {
     if is_intrinsic_error_type(ty) {
         return b"error typed".to_vec();
     }
-    [&b"`"[..], ty.to_text().as_slice(), b"`"].concat()
+    [quote(cx), ty.to_text().as_slice(), quote(cx)].concat()
 }
 
-fn describe_type_for_spread(ty: Type) -> Vec<u8> {
+fn describe_type_for_spread(ty: Type, cx: &Cx<NoUnsafeArgument>) -> Vec<u8> {
     if ty.is_array_type() && ty.get_type_arguments().first().is_some_and(is_intrinsic_error_type) {
         return b"error".to_vec();
     }
-    describe_type(ty)
+    describe_type(ty, cx)
 }
 
-fn describe_type_for_tuple(ty: Type) -> Vec<u8> {
+fn describe_type_for_tuple(ty: Type, cx: &Cx<NoUnsafeArgument>) -> Vec<u8> {
     if is_intrinsic_error_type(ty) {
         return b"error typed".to_vec();
     }
-    [&b"of type `"[..], ty.to_text().as_slice(), b"`"].concat()
+    [&b"of type "[..], quote(cx), ty.to_text().as_slice(), quote(cx)].concat()
 }
 
 /// `node`: a call, a `new` or a tagged template, whose substitutions are the arguments.
@@ -69,17 +74,17 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
             let argument_type = argument.ty();
             if is_unsafe_assignment(argument_type, parameter_type, argument).is_some() {
                 cx.report(argument, UNSAFE_ARGUMENT)
-                    .data("receiver", describe_type(parameter_type))
-                    .data("sender", describe_type(argument_type));
+                    .data("receiver", describe_type(parameter_type, cx))
+                    .data("sender", describe_type(argument_type, cx));
             }
             continue;
         };
 
         let spread_arg_type = spread_argument.ty();
         if is_type_any_type(spread_arg_type) {
-            cx.report(argument, UNSAFE_SPREAD).data("sender", describe_type(spread_arg_type));
+            cx.report(argument, UNSAFE_SPREAD).data("sender", describe_type(spread_arg_type, cx));
         } else if is_type_any_array_type(spread_arg_type) {
-            cx.report(argument, UNSAFE_ARRAY_SPREAD).data("sender", describe_type_for_spread(spread_arg_type));
+            cx.report(argument, UNSAFE_ARRAY_SPREAD).data("sender", describe_type_for_spread(spread_arg_type, cx));
         } else if spread_arg_type.is_tuple_type() {
             for tuple_type in spread_arg_type.get_type_arguments() {
                 let Some(parameter_type) = signature.get_next_parameter_type() else {
@@ -88,8 +93,8 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
                 // What is spread is most likely a variable, so there is no node for the element.
                 if is_unsafe_assignment(tuple_type, parameter_type, None::<Expr<'a>>).is_some() {
                     cx.report(argument, UNSAFE_TUPLE_SPREAD)
-                        .data("receiver", describe_type(parameter_type))
-                        .data("sender", describe_type_for_tuple(tuple_type));
+                        .data("receiver", describe_type(parameter_type, cx))
+                        .data("sender", describe_type_for_tuple(tuple_type, cx));
                 }
             }
             // After a rest element, what follows is compared with the rest parameter, if there is one.

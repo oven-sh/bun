@@ -239,7 +239,7 @@ pub(crate) fn for_file(
     let config = path_at(b"config").filter(|it| !it.ends_with(b".css"));
     let which = found.map(|found| Which {
         root: found.root,
-        config: config.or(found.config.filter(|_| stylesheet.is_none())),
+        config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
         stylesheet,
     });
     Tailwind {

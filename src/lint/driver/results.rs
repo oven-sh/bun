@@ -67,6 +67,8 @@ pub(crate) struct FileResult {
     /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
     /// why.
     pub(crate) linted: Option<Linted>,
+    /// JSON: ESLint's `usedDeprecatedRules`, if ESLint itself has linted the file.
+    pub(crate) deprecated: Option<Vec<u8>>,
 }
 
 impl FileResult {
@@ -97,6 +99,7 @@ impl FileResult {
             is_fixed: false,
             fixed_text: None,
             linted: None,
+            deprecated: None,
         }
     }
 

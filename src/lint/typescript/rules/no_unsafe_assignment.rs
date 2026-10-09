@@ -44,10 +44,11 @@ const UNSAFE_OBJECT_PATTERN: Message = Message::new(
 type Context<'a> = Cx<'a, NoUnsafeAssignment>;
 
 /// `createData(senderType).sender`
-fn describe_sender(sender_type: Type) -> &'static str {
-    match is_intrinsic_error_type(sender_type) {
-        true => "error typed",
-        false => "`any`",
+fn describe_sender(sender_type: Type, cx: &Context) -> &'static str {
+    match (is_intrinsic_error_type(sender_type), cx.language().is_oxlint) {
+        (true, _) => "error typed",
+        (false, false) => "`any`",
+        (false, true) => "any",
     }
 }
 
@@ -144,7 +145,7 @@ fn check_destructure<'a>(
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
             cx.report(place(part.span), part.message)
-                .data("sender", describe_sender(sender_type));
+                .data("sender", describe_sender(sender_type, cx));
         } else if !part.has_default {
             check_pattern(cx, part.target, place(part.target.span()), sender_type, &mut parts);
         }
@@ -182,7 +183,7 @@ fn check_array_destructure<'a>(
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
         cx.report(receiver_span, UNSAFE_ARRAY_PATTERN)
-            .data("sender", describe_sender(sender_type));
+            .data("sender", describe_sender(sender_type, cx));
         return;
     }
     if !sender_type.is_tuple_type() {
@@ -270,13 +271,13 @@ fn report_any_assignment<'a>(
         false => reporting_node,
     };
     cx.report(place, message)
-        .data("sender", describe_sender(sender_type));
+        .data("sender", describe_sender(sender_type, cx));
 }
 
 /// Whether it is reported. `compares`: upstream's `comparisonType !== ComparisonType.None`.
 fn check_assignment_of_type<'a>(
     cx: &Context<'a>,
-    receiver_type: impl FnOnce() -> Type<'a>,
+    receiver_type: &dyn Fn() -> Type<'a>,
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
@@ -290,10 +291,18 @@ fn check_assignment_of_type<'a>(
         report_any_assignment(cx, sender_node, sender_type, reporting_node);
         return true;
     }
-    if !compares {
-        return false;
-    }
-    let Some(result) = is_unsafe_assignment(sender_type, receiver_type(), sender_node) else {
+    compares && report_unsafe_assignment(cx, receiver_type(), sender_node, sender_type, reporting_node)
+}
+
+/// Whether it is reported.
+fn report_unsafe_assignment<'a>(
+    cx: &Context<'a>,
+    receiver_type: Type<'a>,
+    sender_node: Expr<'a>,
+    sender_type: Type<'a>,
+    reporting_node: Span,
+) -> bool {
+    let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
     let place = if cx.language().is_oxlint { sender_node.outer_span() } else { reporting_node };
@@ -305,7 +314,7 @@ fn check_assignment_of_type<'a>(
 
 fn check_assignment<'a>(
     cx: &Context<'a>,
-    receiver_type: impl FnOnce() -> Type<'a>,
+    receiver_type: &dyn Fn() -> Type<'a>,
     sender_node: Expr<'a>,
     reporting_node: Span,
     compares: bool,
@@ -346,7 +355,7 @@ fn check_assignment_to_target<'a>(
         Target::Pat(it) => it.ty(),
         Target::Expr(it) => it.ty(),
     };
-    if !check_assignment(cx, receiver_type, right, node, compares)
+    if !check_assignment(cx, &receiver_type, right, node, compares)
         && matches!(left.kind(), TargetKind::Array | TargetKind::Object)
     {
         check_destructure(cx, left, left_span, right.ty(), right);
@@ -376,14 +385,14 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
                 };
                 contextual_type.unwrap_or_else(type_of_name)
             };
-            check_assignment(cx, receiver_type, value, node.span(), true);
+            check_assignment(cx, &receiver_type, value, node.span(), true);
         }
         PropKind::Method | PropKind::Getter | PropKind::Setter => {
             if node.func().is_some_and(Func::has_body) {
                 // TypeScript's node for the function is the method or the accessor.
                 check_assignment_of_type(
                     cx,
-                    type_of_name,
+                    &type_of_name,
                     value,
                     node.type_at_location(),
                     node.span(),
@@ -418,7 +427,7 @@ impl Rule for NoUnsafeAssignment {
             }
             let file = cx.file();
             let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
-            check_assignment(cx, receiver_type, value, node.span(), node.ty().is_some());
+            check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
         });
 
         // `AssignmentExpression[operator = "="]`, and an `AssignmentPattern` in an assignment.
@@ -518,7 +527,7 @@ impl Rule for NoUnsafeAssignment {
                 && value.jsx_container_span().is_some()
                 && !value.is_missing()
             {
-                check_assignment(cx, || NameOf(node).ty(), value, value.span(), true);
+                check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), true);
             }
         });
 
@@ -534,7 +543,7 @@ impl Rule for NoUnsafeAssignment {
             let rest_type = argument.ty();
             if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
                 let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
-                cx.report(place, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type));
+                cx.report(place, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type, cx));
             }
         });
     }

@@ -428,6 +428,14 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
 }
 
 impl LintMessage {
+    /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
+    pub fn sort(messages: &mut [LintMessage]) {
+        let place = |it: &LintMessage| (it.line, it.column);
+        if !messages.is_sorted_by_key(place) {
+            crate::utils::sort::sort_by_key(messages, place);
+        }
+    }
+
     /// As ESLint's `json` formatter prints it.
     pub fn write_json(&self, out: &mut Vec<u8>, offsets: &mut Utf16Offsets) {
         use std::io::Write;

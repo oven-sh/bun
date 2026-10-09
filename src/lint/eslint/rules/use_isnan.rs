@@ -9,6 +9,12 @@ pub struct UseIsnan {
 
 const COMPARISON_WITH_NAN: Message =
     Message::new("comparisonWithNaN", "Use the isNaN function to compare with NaN.");
+/// What oxlint says instead.
+const INEQUALITY_WITH_NAN: Message =
+    Message::new("comparisonWithNaN", "Checking inequality with NaN will always return true");
+const EQUALITY_WITH_NAN: Message =
+    Message::new("comparisonWithNaN", "Checking equality with NaN will always return false");
+const ORDER_WITH_NAN: Message = Message::new("comparisonWithNaN", "Comparison with NaN will always return false");
 const SWITCH_NAN: Message = Message::new(
     "switchNaN",
     "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.",
@@ -77,7 +83,12 @@ impl UseIsnan {
             return;
         };
         // oxlint points at the `NaN`, with its parentheses.
-        let report = cx.report(if cx.language().is_oxlint { nan.outer_span() } else { e.span() }, COMPARISON_WITH_NAN);
+        let report = match (cx.language().is_oxlint, op) {
+            (false, _) => cx.report(e, COMPARISON_WITH_NAN),
+            (true, BinOp::NotEq | BinOp::NotEqEq) => cx.report(nan.outer_span(), INEQUALITY_WITH_NAN),
+            (true, BinOp::EqEq | BinOp::EqEqEq) => cx.report(nan.outer_span(), EQUALITY_WITH_NAN),
+            (true, _) => cx.report(nan.outer_span(), ORDER_WITH_NAN),
+        };
         let is_fixable = matches!(op, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq);
         if !is_fixable || is_sequence(nan) {
             return;

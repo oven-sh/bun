@@ -2,6 +2,7 @@
 
 use super::ast::{Attribute, Id, Kind, Node, Span, StartTagComment, Tree};
 use super::data::{self, TagDefinition};
+use super::error::{ErrorKind, SyntaxError};
 use super::lexer::{self, ContentType, GetTagContentType, LexedAttribute, Parts, Token, TokenType};
 use std::borrow::Cow;
 
@@ -17,11 +18,10 @@ pub(crate) struct Options<'f> {
         Option<&'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool>,
 }
 
-pub(crate) struct ParseResult {
+pub(crate) struct ParseResult<'a> {
     /// Its children are the `rootNodes`.
     pub(crate) root: Id,
-    /// Where the spans of the errors start.
-    pub(crate) errors: Vec<u32>,
+    pub(crate) errors: Vec<SyntaxError<'a>>,
     pub(crate) is_nested_too_deeply: bool,
 }
 
@@ -36,7 +36,7 @@ struct TreeBuilder<'a, 't, 'k> {
     container_stack: Vec<Id>,
     /// What is in no container goes here.
     root: Id,
-    errors: Vec<u32>,
+    errors: Vec<SyntaxError<'a>>,
     can_self_close: bool,
     allow_htm_component_closing_tags: bool,
     is_tag_name_case_sensitive: bool,
@@ -98,6 +98,19 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
     }
 
+    /// `this.errors.push(TreeError.create(..))`
+    fn error(&mut self, at: u32, kind: ErrorKind, name: &'a [u8]) {
+        self.errors.push(SyntaxError::new(at, kind, name));
+    }
+
+    /// The same for a message with the name of an element in it.
+    fn error_about(&mut self, at: u32, kind: ErrorKind, name: FullName<'a>) {
+        self.errors.push(SyntaxError {
+            prefix: name.prefix,
+            ..SyntaxError::new(at, kind, name.name)
+        });
+    }
+
     fn build(&mut self) {
         use TokenType::*;
         while self.peek().kind != Eof && !self.is_nested_too_deeply {
@@ -131,14 +144,25 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 IncompleteBlockOpen => self.consume_incomplete_block(token),
                 LetStart => self.consume_let(token),
                 DocTypeStart => self.consume_doc_type(token),
-                IncompleteLet => self.errors.push(token.span.start),
+                IncompleteLet => {
+                    let name = match token.parts {
+                        Parts::Value(name) => name.of(self.text),
+                        _ => b"",
+                    };
+                    self.error(token.span.start, ErrorKind::IncompleteLet, name);
+                }
                 _ => {}
             }
         }
-        for &container in &self.container_stack {
-            let container = &self.tree[container];
-            if container.kind == Kind::AngularControlFlowBlock {
-                self.errors.push(container.span.start);
+        for index in 0..self.container_stack.len() {
+            let container = self.container_stack[index];
+            if self.tree[container].kind == Kind::AngularControlFlowBlock {
+                let name = self.full_name_of(container).name;
+                self.error(
+                    self.tree[container].span.start,
+                    ErrorKind::UnclosedBlock,
+                    name,
+                );
             }
         }
     }
@@ -228,7 +252,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             }
         }
         if self.peek().kind != TokenType::ExpansionFormEnd {
-            self.errors.push(self.peek().span.start);
+            self.error(
+                self.peek().span.start,
+                ErrorKind::IcuWithoutClosingBrace,
+                b"",
+            );
             return;
         }
         let end = self.advance().span.end;
@@ -243,7 +271,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     fn parse_expansion_case(&mut self) -> Option<Id> {
         let value = self.advance();
         if self.peek().kind != TokenType::ExpansionCaseExpStart {
-            self.errors.push(self.peek().span.start);
+            self.error(
+                self.peek().span.start,
+                ErrorKind::IcuWithoutOpeningBrace,
+                b"",
+            );
             return None;
         }
         let start = self.advance();
@@ -306,7 +338,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             }
             if kind == ExpansionCaseExpEnd {
                 if stack.last() != Some(&ExpansionCaseExpStart) {
-                    self.errors.push(start.span.start);
+                    self.error(start.span.start, ErrorKind::IcuWithoutClosingBrace, b"");
                     return None;
                 }
                 stack.pop();
@@ -316,13 +348,13 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             }
             if kind == ExpansionFormEnd {
                 if stack.last() != Some(&ExpansionFormStart) {
-                    self.errors.push(start.span.start);
+                    self.error(start.span.start, ErrorKind::IcuWithoutClosingBrace, b"");
                     return None;
                 }
                 stack.pop();
             }
             if kind == Eof {
-                self.errors.push(start.span.start);
+                self.error(start.span.start, ErrorKind::IcuWithoutClosingBrace, b"");
                 return None;
             }
             self.advance();
@@ -426,7 +458,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 || !full_name.prefix.is_empty()
                 || definition.is_void)
             {
-                self.errors.push(start_tag_token.span.start);
+                self.error(
+                    start_tag_token.span.start,
+                    ErrorKind::SelfClosed,
+                    full_name.name,
+                );
             }
         } else if self.peek().kind == TokenType::TagOpenEnd {
             self.advance();
@@ -452,7 +488,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             self.pop_container(Some(full_name), Kind::Element, Some(span));
         } else if start_tag_token.kind == TokenType::IncompleteTagOpen {
             self.pop_container(Some(full_name), Kind::Element, None);
-            self.errors.push(span.start);
+            self.error_about(span.start, ErrorKind::OpeningTagNotTerminated, full_name);
         }
     }
 
@@ -473,14 +509,14 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 true => None,
                 false => Some(self.full_name(end_tag_token, self.closest_element_like_parent())),
             };
-        if full_name.is_some_and(|(_, definition)| definition.is_void)
-            || !self.pop_container(
-                full_name.map(|(name, _)| name),
-                Kind::Element,
-                Some(end_tag_token.span),
-            )
-        {
-            self.errors.push(end_tag_token.span.start);
+        let at = end_tag_token.span.start;
+        let name = full_name.map(|(name, _)| name);
+        if let Some((name, _)) = full_name.filter(|(_, definition)| definition.is_void) {
+            self.error(at, ErrorKind::EndTagOfVoidElement, name.name);
+        } else if !self.pop_container(name, Kind::Element, Some(end_tag_token.span)) {
+            let (prefix, name) = (&b""[..], &b"null"[..]);
+            let name = full_name.map_or(FullName { prefix, name }, |(name, _)| name);
+            self.error_about(at, ErrorKind::UnexpectedClosingTag, name);
         }
     }
 
@@ -604,8 +640,13 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 
     fn consume_block_close(&mut self, token: Token) {
+        let (depth, top) = (self.container_stack.len(), self.container());
         if !self.pop_container(None, Kind::AngularControlFlowBlock, Some(token.span)) {
-            self.errors.push(token.span.start);
+            // An element that was open has been closed on the way.
+            let (prefix, name) = (&b""[..], &b""[..]);
+            let name = (top.filter(|_| self.container_stack.len() < depth))
+                .map_or(FullName { prefix, name }, |top| self.full_name_of(top));
+            self.error_about(token.span.start, ErrorKind::UnexpectedClosingBlock, name);
         }
     }
 
@@ -614,16 +655,17 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let start = block.0.span.start;
         self.push_block(block);
         self.pop_container(None, Kind::AngularControlFlowBlock, None);
-        self.errors.push(start);
+        self.error(start, ErrorKind::IncompleteBlock, self.value_of(token));
     }
 
     fn consume_let(&mut self, start_token: Token) {
+        let (at, name) = (start_token.span.start, self.value_of(start_token));
         let Some(value_token) = self.advance_if(TokenType::LetValue) else {
-            self.errors.push(start_token.span.start);
+            self.error(at, ErrorKind::LetWithoutValue, name);
             return;
         };
         let Some(end_token) = self.advance_if(TokenType::LetEnd) else {
-            self.errors.push(start_token.span.start);
+            self.error(at, ErrorKind::LetNotTerminated, name);
             return;
         };
         // Prettier's `normalizeAngularLetDeclaration`.
@@ -644,7 +686,7 @@ pub(crate) fn parse<'a>(
     text: &'a [u8],
     start: usize,
     options: Options<'_>,
-) -> ParseResult {
+) -> ParseResult<'a> {
     let is_case_sensitive = options.is_tag_name_case_sensitive;
     let get_tag_content_type = |name: &[u8], has_parent: bool, attrs: &[LexedAttribute<'_>]| {
         let is_raw =

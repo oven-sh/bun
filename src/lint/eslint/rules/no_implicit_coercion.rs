@@ -129,8 +129,20 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, recommendation: &[u8]) -> Fix {
     }
 }
 
+/// What `node` makes of its operand, which is what oxlint says.
+fn type_of_coercion(node: Expr) -> &'static str {
+    match (node.unary_op(), node.binary_op()) {
+        (Some(UnOp::Not | UnOp::BitNot), _) => "boolean",
+        (Some(_), _) | (_, Some(BinOp::Mul | BinOp::Sub)) => "number",
+        _ => "string",
+    }
+}
+
 fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a, NoImplicitCoercion>) {
-    let report = cx.report(node, IMPLICIT_COERCION).data("recommendation", recommendation.to_vec());
+    let mut report = cx.report(node, IMPLICIT_COERCION).data("recommendation", recommendation.to_vec());
+    if cx.language().is_oxlint {
+        report = report.data("type", type_of_coercion(node));
+    }
     match remedy {
         Remedy::Nothing => report,
         Remedy::Suggestion => report.suggest_with(

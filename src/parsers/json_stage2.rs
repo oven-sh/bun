@@ -1273,7 +1273,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 }
 
 #[inline]
-pub(crate) fn ident_len(t: &[u8]) -> usize {
+fn ident_len(t: &[u8]) -> usize {
     t.iter()
         .take_while(|&&c| is_identifier_continue(c))
         .count()
@@ -1281,7 +1281,7 @@ pub(crate) fn ident_len(t: &[u8]) -> usize {
 }
 
 #[inline]
-pub(crate) fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
+fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     if cp < 0 {
         return;
     }
@@ -1290,7 +1290,7 @@ pub(crate) fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     buf.extend_from_slice(&tmp[..n]);
 }
 
-pub(crate) fn read_trail_surrogate_escape(
+fn read_trail_surrogate_escape(
     iterator: &strings::CodepointIterator<'_>,
     iter: &mut strings::Cursor,
 ) -> Option<u16> {

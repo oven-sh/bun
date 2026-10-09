@@ -5,6 +5,10 @@ pub struct NoSparseArrays;
 
 const UNEXPECTED_SPARSE_ARRAY: Message =
     Message::new("unexpectedSparseArray", "Unexpected comma in middle of array.");
+/// What oxlint says instead.
+const UNEXPECTED_COMMA: Message = Message::new("unexpectedSparseArray", "Unexpected comma in middle of array");
+const UNEXPECTED_COMMAS: Message =
+    Message::new("unexpectedSparseArray", "{{count}} unexpected commas in middle of array");
 
 impl Rule for NoSparseArrays {
     const META: Meta = Meta::eslint("no-sparse-arrays", Kind::Problem).recommended();
@@ -25,9 +29,11 @@ impl Rule for NoSparseArrays {
             // oxlint says one thing about an array: before the first of the commas, or at the array if there are ten, before it
             // if it is long.
             let is_oxlint = cx.language().is_oxlint;
-            if is_oxlint && elements.iter().filter(|it| it.is_missing()).count() >= 10 {
+            let count = elements.iter().filter(|it| it.is_missing()).count();
+            if is_oxlint && count >= 10 {
                 let span = array.span();
-                cx.report(if span.len() < 50 { span } else { Span::empty(span.start) }, UNEXPECTED_SPARSE_ARRAY);
+                cx.report(if span.len() < 50 { span } else { Span::empty(span.start) }, UNEXPECTED_COMMAS)
+                    .data("count", count);
                 return;
             }
             let text = cx.text();
@@ -38,7 +44,7 @@ impl Rule for NoSparseArrays {
                 let comma = skip_trivia(text, if is_hole { at } else { element.outer_span().end });
                 if is_hole {
                     if is_oxlint {
-                        cx.report(Span::empty(comma), UNEXPECTED_SPARSE_ARRAY);
+                        cx.report(Span::empty(comma), UNEXPECTED_COMMA);
                         return;
                     }
                     cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY);

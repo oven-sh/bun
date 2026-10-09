@@ -804,6 +804,7 @@ function handle(kind) {
 }
 
 function respond(kind) {
+  if (kind >= LINT_WITH_ESLINT) return handleForEslint(kind);
   if (kind >= PREPROCESS) return handleForProcessor(kind);
   if (kind === LOAD_SETTINGS) {
     return loadSettings(askForJson(MESSAGE)).catch(error => FAILED + describeLoadError(error));

@@ -50,11 +50,11 @@ impl Target {
         self.loaded.framework(&self.path)
     }
 
-    /// Whether a processor is to take the code out of it.
-    pub(crate) fn has_processor(&self) -> bool {
+    /// How it is linted.
+    pub(crate) fn route(&self) -> Route {
         match &self.status {
-            Status::Matched(config) => self.loaded.routes(config, &self.path) == Route::Processor,
-            _ => false,
+            Status::Matched(config) => self.loaded.routes(config, &self.path),
+            _ => Route::Native,
         }
     }
 }

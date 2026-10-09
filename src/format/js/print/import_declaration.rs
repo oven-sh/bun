@@ -247,6 +247,11 @@ impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'
     }
 }
 
+/// `import {⏎⏎// comment⏎a } from "b"`: oxfmt keeps the empty line, also behind the `{`.
+fn empty_line_before_comments_of_specifier_stays(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 struct FormatSpecifier<'a, T> {
     specifier: T,
     /// The import or export.
@@ -284,6 +289,12 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
             )
         });
         let previous_limit = limit.map(|limit| f.comments_mut().limit_comments_up_to(limit));
+        if empty_line_before_comments_of_specifier_stays(f)
+            && f.comments().has_comment_before(self.specifier.span().start)
+            && f.lines_before(self.specifier.span()) > 1
+        {
+            write!(f, empty_line());
+        }
         write!(f, self.specifier);
         if let Some(previous_limit) = previous_limit {
             f.comments_mut().restore_view_limit(previous_limit);

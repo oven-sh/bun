@@ -54,7 +54,7 @@ impl Rule for NoSequences {
             let after_first = first.outer_span().end;
             // oxlint points at all that is between the first two.
             let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
-                Some(second) => Span::new(after_first, second.outer_span().start),
+                Some(second) => first.outer_span().between(second.outer_span()),
                 None => {
                     let comma = skip_trivia(cx.text(), after_first);
                     Span::new(comma, comma + 1)

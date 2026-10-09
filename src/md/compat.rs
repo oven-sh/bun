@@ -1,6 +1,7 @@
 //! Where micromark, which Prettier parses Markdown with, does not do what
 //! CommonMark says, and what `bun format` prints for real documents depends on
-//! it. Each is behind `Options::micromark`, which only the formatter sets. And
+//! it. Each is behind `Options::micromark`, which only the formatter sets (one
+//! behind `Options::code_units`: a parser that follows micromark need not). And
 //! what Prettier makes of MDX, with remark-parse 8: `Options::mdx`.
 
 use crate::types::Flags;
@@ -36,7 +37,7 @@ pub(crate) fn marker_next_to_marker_flanks(flags: &Flags) -> bool {
 /// 😀_a_
 /// ```
 pub(crate) fn astral_is_a_letter(flags: &Flags) -> bool {
-    flags.micromark
+    flags.code_units
 }
 
 /// Two blanks at the end of a line are a hard break. To micromark they are not

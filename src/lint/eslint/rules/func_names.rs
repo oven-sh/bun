@@ -78,9 +78,11 @@ impl FuncNames {
         };
         let head = ast_utils::get_function_head_loc(func);
         // For oxlint it starts with the function, not with the member that the function is the value of.
-        let start = if cx.language().is_oxlint { func.estree_span().start } else { head.start };
-        cx.report(Span::new(start, head.end), message)
-            .data("name", ast_utils::get_function_name_with_kind(func));
+        let (start, name) = match cx.language().is_oxlint {
+            true => (func.estree_span().start, utils::oxlint::get_function_name_with_kind(func)),
+            false => (head.start, ast_utils::get_function_name_with_kind(func)),
+        };
+        cx.report(Span::new(start, head.end), message).data("name", name);
     }
 }
 

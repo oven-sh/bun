@@ -77,7 +77,13 @@ impl Config {
         let has_uncounted_rest = is_oxlint && func.params().last().is_some_and(Param::is_rest);
         let count = func.params().len() + usize::from(counts_this) - usize::from(has_uncounted_rest);
         if count > max {
-            let name = ast_utils::get_function_name_with_kind(func);
+            // oxlint knows the name that the function itself has.
+            let name = match (is_oxlint, func.name()) {
+                (false, _) => text::upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
+                (true, _) if func.is_arrow() => b"Arrow function".to_vec(),
+                (true, Some(name)) => [&b"Function '"[..], name.bytes(), b"'"].concat(),
+                (true, None) => b"Function".to_vec(),
+            };
             let mut head = ast_utils::get_function_head_loc(func);
             // In the copy, the parameter that is left looks like the one of `a => {}`.
             if self.removes_void_this
@@ -92,7 +98,7 @@ impl Config {
             // oxlint points at the parameters.
             let params = func.params_span().filter(|_| is_oxlint);
             cx.report(params.unwrap_or(head), EXCEED)
-                .data("name", text::upper_case_first(&name).into_owned())
+                .data("name", name)
                 .data("count", count)
                 .data("max", max);
         }

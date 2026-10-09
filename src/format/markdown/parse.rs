@@ -473,6 +473,7 @@ struct Builder<'t> {
     /// Where what the parser is given starts in it.
     base: u32,
     is_mdx: bool,
+    is_for_oxfmt: bool,
     has_nul: bool,
     tree: &'t mut Tree,
     /// The containers that are open, the root first.
@@ -1687,12 +1688,15 @@ impl RendererImpl for Builder<'_> {
         };
         if matches!(kind, Kind::Image | Kind::ImageReference) {
             let mut alt = std::mem::take(&mut self.alt);
-            // remark-parse 8: what is written between the brackets, whatever it is.
-            if self.is_mdx {
+            // remark-parse 8: what is written between the brackets, whatever it is. oxfmt prints that.
+            if self.is_mdx || self.is_for_oxfmt {
                 let mut written = Vec::new();
                 self.push_content_between(marker_end, closing_start, &mut written);
                 alt.clear();
-                unescape(&written, &mut alt);
+                match self.is_mdx {
+                    true => unescape(&written, &mut alt),
+                    false => alt = written,
+                }
             }
             let value = self.tree.owned(|out| out.extend_from_slice(&alt));
             self.alt = alt;
@@ -1878,6 +1882,8 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
+    // oxfmt's parser follows micromark, but is written in Rust.
+    options.code_units = syntax != Syntax::WithDirectives;
     let leaf_memo = Cell::new(LeafMemo::default());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
         true => es_syntax_end(start),
@@ -1900,6 +1906,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         text,
         base: first_line as u32,
         is_mdx,
+        is_for_oxfmt: syntax == Syntax::WithDirectives,
         has_nul: bun_core::strings::contains_char(text, 0),
         tree,
         open: vec![Open {

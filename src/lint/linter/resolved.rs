@@ -168,6 +168,10 @@ pub struct ResolvedConfig {
     pub processor: Option<Box<[u8]>>,
     /// Where it is, if the configuration is an `eslint.config.js`.
     pub processor_location: Option<Arc<js_plugin::Processor>>,
+    /// The name of `languageOptions.parser`, if one is configured.
+    pub parser_name: Option<Box<[u8]>>,
+    /// All of this for ESLint's own `Linter`, if that is what lints such a file ([`Route::Eslint`]) and if JSON can say it.
+    pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
 }
@@ -261,15 +265,39 @@ impl ResolvedConfig {
         (self.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
     }
 
-    /// How the file at `path` is linted. With a processor the language does not read the file itself.
-    pub fn route(&self, path: &[u8]) -> Route {
+    /// Whether there are files that [`Route::Eslint`] is the way of.
+    pub(crate) fn is_for_eslint(&self) -> bool {
+        !self.is_javascript() || (self.language.parser == Parser::Other && !self.has_scripts())
+    }
+
+    /// Whether the parser is one that finds JavaScript in a file of another language, and has it parsed by another parser.
+    fn has_scripts(&self) -> bool {
+        let name = self.parser_name.as_deref().unwrap_or_default();
+        let version = bun_core::strings::last_index_of_char(name, b'@').filter(|at| *at > 0);
+        matches!(
+            &name[..version.unwrap_or(name.len())],
+            b"vue-eslint-parser" | b"svelte-eslint-parser" | b"astro-eslint-parser" | b"eslint-mdx"
+        )
+    }
+
+    /// How the file at `path` is linted after a processor, or if there is none.
+    pub fn route_as_it_is(&self, path: &[u8]) -> Route {
         let is_read_here = self.language.parser != Parser::Other
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
-        match &self.processor {
-            _ if !is_read_here => Route::Unsupported,
-            Some(_) => Route::Processor,
-            None if !self.is_javascript() => Route::Unsupported,
-            None => Route::Native,
+        if self.is_javascript() && is_read_here {
+            Route::Native
+        } else if self.is_for_eslint() {
+            Route::Eslint
+        } else {
+            Route::Unsupported
+        }
+    }
+
+    /// How the file at `path` is linted. With a processor neither the language nor the parser reads the file itself.
+    pub fn route(&self, path: &[u8]) -> Route {
+        match (self.route_as_it_is(path), &self.processor) {
+            (Route::Native | Route::Eslint, Some(_)) => Route::Processor,
+            (route, _) => route,
         }
     }
 }

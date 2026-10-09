@@ -52,6 +52,7 @@ mod cache;
 mod eslintrc;
 mod fast_glob;
 mod flat;
+mod for_eslint;
 mod glob_part;
 mod merge;
 mod minimatch;
@@ -340,6 +341,8 @@ pub struct Config {
     notes: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
+    /// `$jsPlugins`: where the plugin with a prefix is.
+    js_locations: Vec<(Box<[u8]>, Json)>,
     heads: Heads,
     cache: Cache,
 }
@@ -726,7 +729,26 @@ impl Config {
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
         config.language.reads_env_comments = self.is_legacy;
+        let parser_location = (indices.iter().rev())
+            .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         config.linter = linter;
+        config.parser_name = (language_options.get(b"parser"))
+            .and_then(Json::as_str)
+            .map(Box::from);
+        if config.is_for_eslint() {
+            config.for_eslint = for_eslint::build(&for_eslint::Parts {
+                language: config.language_name.as_deref(),
+                language_options: &language_options,
+                settings: &settings,
+                linter,
+                rules: &rules,
+                parser: parser_location.filter(|it| it.get(b"module").is_some()),
+                plugins: &plugins,
+                locations: &self.js_locations,
+                js_plugins: &self.js_plugins,
+            })
+            .map(Arc::new);
+        }
         for setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.
             if setting.severity != Severity::Off
@@ -823,12 +845,10 @@ impl Config {
                 .iter()
                 .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref())
                 .collect();
-            let parser = (indices.iter().rev())
-                .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
             config.js_settings = Some(js_plugin::FileSettings::from_objects(
                 &config.language,
                 &sources,
-                parser,
+                parser_location,
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.

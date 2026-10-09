@@ -164,7 +164,7 @@ function serializeConfigObject(given, index) {
     const ids = Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]);
     out.plugins = Array.isArray(plugins) ? serialize(plugins) : Object.fromEntries(ids);
     const withRules = Object.entries(plugins).filter(
-      ([, plugin]) => plugin?.rules && Object.keys(plugin.rules).length > 0,
+      ([, plugin]) => Object.keys(plugin?.rules ?? {}).length > 0 || Object.keys(plugin?.languages ?? {}).length > 0,
     );
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(

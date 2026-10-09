@@ -122,17 +122,19 @@ fn needs(target: &Target) -> Needs {
         return Needs::Nothing;
     };
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
+    let route = target.route();
     let processor = config
         .processor_location
         .as_ref()
-        .filter(|_| target.has_processor());
+        .filter(|_| route == Route::Processor);
     if processor.is_some_and(|it| it.needs_the_configuration)
+        || (route == Route::Eslint && config.for_eslint.is_none())
         || on
             .clone()
             .any(|it| it.configured.rule.needs_the_configuration)
     {
         Needs::Configuration
-    } else if on.next().is_some() || target.has_processor() {
+    } else if on.next().is_some() || route != Route::Native {
         Needs::Engine
     } else {
         Needs::Nothing
@@ -383,7 +385,9 @@ impl Run<'_> {
                 listed: None,
             });
         };
-        if let Some(error) = &config.error {
+        let route = loaded.routes(config, &path);
+        // ESLint says itself what is wrong with a configuration for what it lints.
+        if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
             return Err(Fatal(error.clone()));
         }
         let shown = if path.ends_with(b"__placeholder__.js") {
@@ -407,7 +411,7 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        if loaded.routes(config, &path) == Route::Processor {
+        if matches!(route, Route::Processor | Route::Eslint) {
             let result = context.verify_processed_text(
                 &loaded,
                 shown,
@@ -510,7 +514,7 @@ impl Run<'_> {
         }
         // ESLint finds out when it comes to the file.
         let invalid = targets.iter().find_map(|target| match &target.status {
-            Status::Matched(config) => config.error.clone(),
+            Status::Matched(config) if target.route() != Route::Eslint => config.error.clone(),
             _ => None,
         });
         if let Some(error) = invalid {
@@ -574,7 +578,7 @@ impl Run<'_> {
                 without_types.push(target);
                 continue;
             };
-            if target.has_processor() || target.framework().is_some() {
+            if target.route() != Route::Native || target.framework().is_some() {
                 without_types.push(target);
                 continue;
             }

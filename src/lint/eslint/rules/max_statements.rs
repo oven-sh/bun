@@ -86,14 +86,17 @@ fn count_statements(func: Func) -> usize {
 
 impl MaxStatements {
     fn report<'a>(func: Func<'a>, count: usize, max: usize, cx: &Cx<'a, Self>) {
-        let name = ast_utils::get_function_name_with_kind(func);
-        // oxlint points at the function.
-        let place = match cx.language().is_oxlint {
-            true => func.estree_span(),
-            false => ast_utils::get_function_head_loc(func),
+        // oxlint points at the function, and knows the name that the function itself has.
+        let (name, place) = match (cx.language().is_oxlint, func.name()) {
+            (true, Some(name)) => ([&b"function `"[..], name.bytes(), b"`"].concat(), func.estree_span()),
+            (true, None) => (b"function".to_vec(), func.estree_span()),
+            (false, _) => {
+                let name = ast_utils::get_function_name_with_kind(func);
+                (text::upper_case_first(&name).into_owned(), ast_utils::get_function_head_loc(func))
+            }
         };
         cx.report(place, EXCEED)
-            .data("name", text::upper_case_first(&name).into_owned())
+            .data("name", name)
             .data("count", count)
             .data("max", max);
     }

@@ -1,6 +1,5 @@
 use super::*;
 use crate::atom::known;
-use crate::util::SharedSort;
 use crate::util::number_repeated;
 
 /// A label while the file is being bound.
@@ -1830,10 +1829,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.expando_declarations.push(e);
         }
         self.expando_assignments = assignments;
-        self.b
-            .expando_declarations
-            .as_mut_slice()
-            .shared_sort_unstable();
+        self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
     /// `Resolve` for the value `name`, among what the file declares, once everything is declared.
@@ -2125,25 +2121,17 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         self.assigned = assigned;
-        self.b
-            .assignments
-            .shared_sort_unstable_by_key(|a| (a.0.0, a.1.0));
+        self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         let (expr_symbol, arguments_objects) = (&self.b.expr_symbol, &self.b.arguments_objects);
         self.b.unchecked_assignment_targets.retain(|target| {
             expr_symbol[target.idx()].is_none() && !arguments_objects.contains(target)
         });
-        self.b
-            .type_query_operands
-            .as_mut_slice()
-            .shared_sort_unstable();
-        self.b.unchecked_exprs.as_mut_slice().shared_sort_unstable();
-        self.b.unchecked_types.as_mut_slice().shared_sort_unstable();
-        self.b.free_idents.shared_sort_unstable_by_key(|f| f.0);
-        self.b.alias_idents.shared_sort_unstable_by_key(|a| a.0);
-        self.b
-            .arguments_objects
-            .as_mut_slice()
-            .shared_sort_unstable();
+        self.b.type_query_operands.as_mut_slice().sort_unstable();
+        self.b.unchecked_exprs.as_mut_slice().sort_unstable();
+        self.b.unchecked_types.as_mut_slice().sort_unstable();
+        self.b.free_idents.sort_unstable_by_key(|f| f.0);
+        self.b.alias_idents.sort_unstable_by_key(|a| a.0);
+        self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.
         let f = self.f;
@@ -2163,7 +2151,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b
             .infer_positions
             .as_mut_slice()
-            .shared_sort_unstable_by_key(|p| p.0);
+            .sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
         // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
@@ -2175,7 +2163,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b
                 .entries
                 .extend(table.iter().map(|(&name, &symbol)| (name, symbol)));
-            self.b.entries[start..].shared_sort_unstable_by_key(|e| e.1);
+            self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             self.b.tables.push((start as u32, table.len() as u32));
             if table.len() > BoundBuilder::SCANNED {
                 let places = (start as u32..).zip(&self.b.entries[start..]);
@@ -2219,7 +2207,7 @@ impl<'f, 's> Binder<'f, 's> {
         let uses = self.f.specifier_uses.iter();
         let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
         let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|u| (u.pos, u.spec)).collect();
-        dynamic.shared_sort_by_key(|dynamic| dynamic.0);
+        dynamic.sort_by_key(|dynamic| dynamic.0);
         let dynamic = dynamic.iter().map(|dynamic| dynamic.1);
         self.b.specifiers.extend(dynamic);
         let mut seen = crate::util::FxHashSet::default();

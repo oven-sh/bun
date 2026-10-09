@@ -11,6 +11,7 @@
 //! - JSX is a call as the classic runtime has it, `createElement(tag, props, ...children)`, which
 //!   keeps the attributes in their order. The lowering makes a `JsxExpression` of it again.
 
+use crate::compile::Flavor;
 use bun_alloc::{Arena, AstAlloc, AstVec};
 use bun_ast::base::RefTag;
 use bun_ast::{
@@ -84,6 +85,8 @@ pub(crate) enum Refusal {
     TooManyDeclarations,
     TooManyFunctions,
     TooManyArguments,
+    /// Upstream's lowering throws an error without a place for one, which the plugin for ESLint drops.
+    ThisParameter,
     /// `using`, which oxlint's compiler leaves alone without a word.
     Using,
 }
@@ -104,10 +107,18 @@ pub(crate) struct Converted {
     pub(crate) import_bindings: Vec<(Ref, VariableBinding)>,
     /// The tag of `<>`.
     pub(crate) fragment: Ref,
-    /// Where the `arguments` of a function is read, which oxlint's lowering refuses and Bun's does not.
-    pub(crate) implicit_arguments: Vec<Span>,
+    pub(crate) recorded: Vec<Recorded>,
     /// Each `new Date()` and `Date()`, which is in the tree as `Date.now()`. In the order of the source.
     pub(crate) clock_reads: Vec<Span>,
+}
+
+/// What the lowering that the flavor has records, and Bun's does not.
+#[derive(Copy, Clone)]
+pub(crate) enum Recorded {
+    /// The `arguments` of a function is read.
+    ImplicitArguments(Span),
+    /// The `import` of `import(..)`.
+    DynamicImport(Span),
 }
 
 impl Converted {
@@ -127,6 +138,7 @@ enum Named {
 pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
+    flavor: Flavor,
     /// The range of the function that is compiled.
     root: Span,
     spans: Vec<Span>,
@@ -137,7 +149,7 @@ pub(crate) struct Converter<'a, 'x> {
     by_name: FxHashMap<(Named, Name<'a>), Ref>,
     create_element: Ref,
     fragment: Ref,
-    implicit_arguments: Vec<Span>,
+    recorded: Vec<Recorded>,
     clock_reads: Vec<Span>,
     /// Of the function that is being converted.
     here: Counts,
@@ -155,12 +167,14 @@ pub(crate) fn convert<'a>(
     file: &'a File<'a>,
     arena: &Arena,
     func: Func<'a>,
+    flavor: Flavor,
 ) -> Converts<Converted> {
     let stack = bun_core::StackCheck::init();
     let max_depth = (stack.remaining() / STACK_FOR_A_LEVEL).min(MAX_DEPTH as usize) as u32;
     let mut converter = Converter {
         file,
         arena,
+        flavor,
         root: func.estree_span(),
         spans: Vec::with_capacity(256),
         symbols: Vec::with_capacity(32),
@@ -170,7 +184,7 @@ pub(crate) fn convert<'a>(
         by_name: FxHashMap::default(),
         create_element: Ref::NONE,
         fragment: Ref::NONE,
-        implicit_arguments: Vec::new(),
+        recorded: Vec::new(),
         clock_reads: Vec::new(),
         here: Counts::default(),
         squares: Counts::default(),
@@ -192,7 +206,7 @@ pub(crate) fn convert<'a>(
         is_outside: converter.is_outside,
         import_bindings: converter.import_bindings,
         fragment: converter.fragment,
-        implicit_arguments: converter.implicit_arguments,
+        recorded: converter.recorded,
         clock_reads: converter.clock_reads,
     })
 }
@@ -338,8 +352,8 @@ impl<'a> Converter<'a, '_> {
         match expr.symbol() {
             Some(symbol) => self.ref_of_symbol(symbol),
             None => {
-                if name.is("arguments") {
-                    self.implicit_arguments.push(expr.span());
+                if name.is("arguments") && self.flavor == Flavor::Oxlint {
+                    self.recorded.push(Recorded::ImplicitArguments(expr.span()));
                 }
                 self.ref_of_name(Named::Global, name)
             }
@@ -356,21 +370,46 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
-    fn args(&mut self, func: Func<'a>) -> Converts<(StoreSlice<G::Arg>, bool)> {
+    /// The parameters, whether the last is a rest parameter, and what the body is to start with.
+    fn args(&mut self, func: Func<'a>) -> Converts<(StoreSlice<G::Arg>, bool, AstVec<JsStmt>)> {
+        // A `this` parameter is a type. oxc's lowering does not see it either.
+        if self.flavor == Flavor::Eslint && func.this_param().is_some() {
+            return Err(Refusal::ThisParameter);
+        }
         let params = func.params();
-        // Without a `this` parameter, which is a type: oxc's lowering does not see it either.
         let mut args: AstVec<G::Arg> = AstAlloc::vec_with_capacity(params.len());
         let mut has_rest = false;
+        let mut first: AstVec<JsStmt> = AstAlloc::vec();
         for param in params {
             has_rest = param.is_rest();
-            args.push(self.arg(param)?);
+            args.push(self.arg(param, &mut first)?);
         }
-        Ok((leak(args), has_rest))
+        Ok((leak(args), has_rest, first))
     }
 
-    fn arg(&mut self, param: Param<'a>) -> Converts<G::Arg> {
-        let binding = self.binding(param.pat())?;
+    fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
+        let mut binding = self.binding(param.pat())?;
         let default = self.default(param.default())?;
+        if self.flavor == Flavor::Oxlint && !param.is_rest() && is_assigned_pattern(param.pat()) {
+            // oxc's lowering takes a parameter apart as a declaration does, which can have a variable
+            // that a function in it assigns. `({ a }) => ..` is `(t) => { let { a } = t; .. }`.
+            let loc = binding.loc;
+            let r#ref = self.new_symbol(b"t", SymbolKind::Hoisted, false);
+            let mut decls: G::DeclList = AstAlloc::vec_with_capacity(1);
+            decls.push(G::Decl {
+                binding,
+                value: Some(JsExpr::init_identifier(r#ref, loc)),
+            });
+            first.push(JsStmt::alloc(
+                S::Local {
+                    kind: S::Kind::KLet,
+                    decls,
+                    ..S::Local::default()
+                },
+                loc,
+            ));
+            binding = Binding::alloc(self.arena, B::Identifier { r#ref }, loc);
+        }
         Ok(G::Arg {
             binding,
             default,
@@ -378,36 +417,31 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    /// The `Loc` of the body is what the lowering takes for that of the function.
-    fn body(&mut self, func: Func<'a>, loc: Loc) -> Converts<(G::FnBody, bool)> {
-        Ok(match func.body() {
-            FnBody::None => (
-                G::FnBody {
-                    loc,
-                    stmts: StoreSlice::EMPTY,
-                },
-                false,
-            ),
-            FnBody::Block(statements) => (
-                G::FnBody {
-                    loc,
-                    stmts: self.stmts(statements)?,
-                },
-                false,
-            ),
+    /// The body, after `first`, and whether it is an expression. The `Loc` of the body is what the
+    /// lowering takes for that of the function.
+    fn body(
+        &mut self,
+        func: Func<'a>,
+        loc: Loc,
+        first: AstVec<JsStmt>,
+    ) -> Converts<(G::FnBody, bool)> {
+        let mut stmts = first;
+        let is_expression = stmts.is_empty() && matches!(func.body(), FnBody::Expr(_));
+        match func.body() {
+            FnBody::None => {}
+            FnBody::Block(statements) => {
+                stmts.reserve(statements.len());
+                for statement in statements {
+                    stmts.push(self.stmt(statement)?);
+                }
+            }
             FnBody::Expr(value) => {
                 let value = self.expr(value)?;
-                let mut stmts: AstVec<JsStmt> = AstAlloc::vec_with_capacity(1);
                 stmts.push(JsStmt::alloc(S::Return { value: Some(value) }, value.loc));
-                (
-                    G::FnBody {
-                        loc,
-                        stmts: leak(stmts),
-                    },
-                    true,
-                )
             }
-        })
+        }
+        let stmts = leak(stmts);
+        Ok((G::FnBody { loc, stmts }, is_expression))
     }
 
     /// Calls `then`, which converts a function, one level further down.
@@ -436,8 +470,8 @@ impl<'a> Converter<'a, '_> {
                 }),
                 None => None,
             };
-            let (args, has_rest) = this.args(func)?;
-            let (body, _) = this.body(func, loc)?;
+            let (args, has_rest, first) = this.args(func)?;
+            let (body, _) = this.body(func, loc, first)?;
             let mut flags = flags::FUNCTION_NONE;
             if func.is_async() {
                 flags |= flags::Function::IsAsync;
@@ -462,8 +496,8 @@ impl<'a> Converter<'a, '_> {
     fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
         self.in_function(|this| {
             let loc = this.loc(func.estree_span())?;
-            let (args, has_rest_arg) = this.args(func)?;
-            let (body, prefer_expr) = this.body(func, loc)?;
+            let (args, has_rest_arg, first) = this.args(func)?;
+            let (body, prefer_expr) = this.body(func, loc, first)?;
             Ok(E::Arrow {
                 args,
                 body,
@@ -816,6 +850,10 @@ impl<'a> Converter<'a, '_> {
             ExprKind::False => JsExpr::init(E::Boolean { value: false }, loc),
             ExprKind::Number(value) => JsExpr::init(E::Number::new(value), loc),
             ExprKind::String(value) => JsExpr::init(E::EString::init(value.bytes()), loc),
+            // oxc's lowering has them. To the compiler one primitive is as good as another.
+            ExprKind::BigInt(_) if self.flavor == Flavor::Oxlint => {
+                JsExpr::init(E::Number::new(0.0), loc)
+            }
             ExprKind::BigInt(value) => JsExpr::init(
                 E::BigInt {
                     value: StoreStr::new(value.bytes()),
@@ -839,6 +877,22 @@ impl<'a> Converter<'a, '_> {
             ExprKind::TaggedTemplate(call) => {
                 let tag = self.expr(call.callee())?;
                 match call.template().map(Expr::kind) {
+                    // oxc's lowering has the tag and the substitutions as operands, as a call has.
+                    Some(ExprKind::Template(template))
+                        if self.flavor == Flavor::Oxlint && !template.exprs().is_empty() =>
+                    {
+                        if template.exprs().len() > MAX_ARGUMENTS {
+                            return Err(Refusal::TooManyArguments);
+                        }
+                        JsExpr::init(
+                            E::Call {
+                                target: tag,
+                                args: self.exprs(template.exprs())?,
+                                ..E::Call::default()
+                            },
+                            loc,
+                        )
+                    }
                     Some(ExprKind::Template(template)) => {
                         JsExpr::init(self.template(template, Some(tag))?, loc)
                     }
@@ -870,7 +924,9 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            ExprKind::Call(call) | ExprKind::New(call) if is_clock_read(call) => {
+            ExprKind::Call(call) | ExprKind::New(call)
+                if self.flavor == Flavor::Oxlint && is_clock_read(call) =>
+            {
                 self.clock_reads.push(span);
                 let target = self.expr(call.callee())?;
                 let now = E::Dot {
@@ -970,6 +1026,8 @@ impl<'a> Converter<'a, '_> {
             ),
             ExprKind::Jsx(jsx) => self.jsx(jsx, loc)?,
             ExprKind::ImportCall { args } => {
+                let keyword = Span::new(span.start, span.start + "import".len() as u32);
+                self.recorded.push(Recorded::DynamicImport(keyword));
                 let missing = JsExpr::init(E::Missing {}, loc);
                 JsExpr::init(
                     E::Import {
@@ -1025,9 +1083,10 @@ impl<'a> Converter<'a, '_> {
     /// refuses the template then, by the `\`, and oxc's does not. The text, which is left out, plays
     /// no part in the analysis.
     fn template(&mut self, template: Template<'a>, tag: Option<JsExpr>) -> Converts<E::Template> {
+        let is_oxlint = self.flavor == Flavor::Oxlint;
         let contents = |i: usize| match (tag.is_some(), template.cooked(i)) {
             (false, Some(cooked)) => E::TemplateContents::Cooked(E::EString::init(cooked.bytes())),
-            (true, _) if bun_core::strings::contains_char(template.raw(i), b'\\') => {
+            (true, _) if is_oxlint && bun_core::strings::contains_char(template.raw(i), b'\\') => {
                 E::TemplateContents::Raw(StoreStr::new(b""))
             }
             _ => E::TemplateContents::Raw(StoreStr::new(template.raw(i))),
@@ -1416,6 +1475,19 @@ impl<'a> Converter<'a, '_> {
             | StmtKind::ExportAsNamespace(_) => JsStmt::alloc(S::ExportClause::default(), loc),
         })
     }
+}
+
+/// An object or an array pattern with a variable that is assigned somewhere.
+fn is_assigned_pattern(pat: Pat<'_>) -> bool {
+    let mut is_assigned = false;
+    if matches!(pat.kind(), PatKind::Object(_) | PatKind::Array(_)) {
+        pat.for_each_binding(&mut |name| {
+            is_assigned |= (name.symbol().into_iter())
+                .flat_map(Symbol::references)
+                .any(|it| it.is_write() && !it.is_init());
+        });
+    }
+    is_assigned
 }
 
 /// `new Date()`, `Date()`. To oxlint's compiler it is as impure as `Date.now()`, which is the one that Bun's knows.

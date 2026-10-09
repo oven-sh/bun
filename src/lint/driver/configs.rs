@@ -17,7 +17,7 @@ use crate::run::{Environment, Fatal};
 use crate::{eslintrc, evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Host, Route};
+use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::linter::{
     Config, LegacyFile, LegacyOptions, Linter, RcFlavor, ResolvedConfig, oxlint_category_of_key,
     oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
@@ -144,6 +144,16 @@ pub(crate) struct Loaded {
     pub(crate) respects_eslint_comments: bool,
     /// `options.typeCheck`
     pub(crate) checks_types: bool,
+    /// With an `eslint.config.js`: what ESLint's own `Linter` is told.
+    pub(crate) for_eslint: Option<ForEslint>,
+}
+
+/// What ESLint's own `Linter` is told that is the same for all files of a configuration file.
+pub(crate) struct ForEslint {
+    /// JSON: see `Host::lint_with_eslint`.
+    pub(crate) run: Vec<u8>,
+    /// For a file whose configuration has what JSON cannot say.
+    pub(crate) whole: Configuration,
 }
 
 impl Loaded {
@@ -155,7 +165,7 @@ impl Loaded {
     /// How the file at `path`, which has `config`, is linted. Only an `eslint.config.js` has processors.
     pub(crate) fn routes(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
         match config.route(path) {
-            Route::Processor if self.flavor != Flavor::Eslint => Route::Unsupported,
+            Route::Processor | Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
             route => route,
         }
     }
@@ -453,16 +463,47 @@ impl<'l> Loader<'l> {
         all
     }
 
-    /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports.
-    fn flat(&self, base_path: &[u8], file_config: Json) -> Result<Config, Fatal> {
-        let mut all = vec![file_config];
+    /// What ESLint's `calculateConfigArray` adds to what a configuration file exports.
+    fn added(&self) -> Vec<Json> {
+        let mut added = Vec::new();
         if !self.options.ignore_pattern.is_empty() {
-            all.push(object(vec![
+            added.push(object(vec![
                 (b"basePath", Json::String(self.cwd().to_vec())),
                 (b"ignores", strings_of(&self.options.ignore_pattern)),
             ]));
         }
-        all.extend(self.override_config());
+        added.extend(self.override_config());
+        added
+    }
+
+    /// `file`: the configuration file, if there is one.
+    fn for_eslint(&self, file: Option<&[u8]>, base_path: &[u8]) -> ForEslint {
+        let options = self.options;
+        let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
+        let only_errors = options.quiet && options.max_warnings == -1;
+        let mut run = Vec::new();
+        bun_lint::linter::write_json(
+            &mut run,
+            &object(vec![
+                (b"from", native(file.map_or(self.cwd(), paths::dirname))),
+                (b"basePath", native(base_path)),
+                (b"allowInlineConfig", Json::Bool(options.inline_config)),
+                (b"onlyErrors", Json::Bool(only_errors)),
+                (b"file", file.map_or(Json::Null, native)),
+                (b"ignores", Json::Bool(options.ignore)),
+                (b"added", Json::Array(self.added())),
+            ]),
+        );
+        ForEslint {
+            run,
+            whole: Configuration::whole(),
+        }
+    }
+
+    /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports.
+    fn flat(&self, base_path: &[u8], file_config: Json) -> Result<Config, Fatal> {
+        let mut all = vec![file_config];
+        all.extend(self.added());
         let mut all = Json::Array(all);
         if !self.options.ignore {
             all = without_global_ignores(all, 0);
@@ -643,6 +684,7 @@ impl<'l> Loader<'l> {
                 max_warnings: None,
                 respects_eslint_comments: true,
                 checks_types: false,
+                for_eslint: None,
             }));
         }
         let preset: &[u8] = match self.options.type_aware {
@@ -659,6 +701,7 @@ impl<'l> Loader<'l> {
             max_warnings: None,
             respects_eslint_comments: true,
             checks_types: false,
+            for_eslint: None,
         }))
     }
 
@@ -792,6 +835,7 @@ impl<'l> Loader<'l> {
             max_warnings,
             respects_eslint_comments,
             checks_types,
+            for_eslint: (flavor == Flavor::Eslint).then(|| self.for_eslint(Some(path), base_path)),
         }))
     }
 
@@ -841,6 +885,7 @@ impl<'l> Loader<'l> {
                 max_warnings: None,
                 respects_eslint_comments: true,
                 checks_types: false,
+                for_eslint: Some(self.for_eslint(None, base_path)),
             })),
             b"" => self.built_in(),
             path => self.read(path, base_path),
@@ -1094,6 +1139,7 @@ impl<'l> Loader<'l> {
             max_warnings: None,
             respects_eslint_comments: true,
             checks_types: false,
+            for_eslint: None,
         }))
     }
 

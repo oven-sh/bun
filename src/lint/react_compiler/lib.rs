@@ -21,6 +21,7 @@ pub mod rule;
 mod suppression;
 
 pub use bun_react_compiler::diagnostics::ErrorCategory;
+pub use compile::Flavor;
 pub use finding::{Detail, Finding, Suggestion};
 pub use oxlint::{Label, Rendered, render_all};
 
@@ -29,30 +30,44 @@ use compile::Depth;
 use std::cell::{Cell, OnceCell};
 
 #[derive(Default)]
-struct PerFile {
+struct PerFlavor {
     wants_everything: Cell<bool>,
     findings: OnceCell<Vec<Finding>>,
 }
 
+#[derive(Default)]
+struct PerFile {
+    oxlint: PerFlavor,
+    eslint: PerFlavor,
+}
+
+fn per_flavor<'a>(file: &'a File<'a>, flavor: Flavor) -> Option<&'a PerFlavor> {
+    let per_file = file.extension(PerFile::default)?;
+    Some(match flavor {
+        Flavor::Oxlint => &per_file.oxlint,
+        Flavor::Eslint => &per_file.eslint,
+    })
+}
+
 /// [`findings`] is also to have what only the passes after the validations say, which is of the
 /// categories `Todo` and `Invariant`. It counts if it is called before.
-pub fn want_everything<'a>(file: &'a File<'a>) {
-    if let Some(per_file) = file.extension(PerFile::default) {
-        per_file.wants_everything.set(true);
+pub fn want_everything<'a>(file: &'a File<'a>, flavor: Flavor) {
+    if let Some(per_flavor) = per_flavor(file, flavor) {
+        per_flavor.wants_everything.set(true);
     }
 }
 
 /// What the compiler says of the file, in its order. It runs the first time this is asked.
-pub fn findings<'a>(file: &'a File<'a>) -> &'a [Finding] {
-    let Some(per_file) = file.extension(PerFile::default) else {
+pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Finding] {
+    let Some(per_flavor) = per_flavor(file, flavor) else {
         debug_assert!(false, "the file has no room for what the compiler says");
         return &[];
     };
-    per_file.findings.get_or_init(|| {
-        let depth = match per_file.wants_everything.get() {
+    per_flavor.findings.get_or_init(|| {
+        let depth = match per_flavor.wants_everything.get() {
             true => Depth::Everything,
             false => Depth::Validations,
         };
-        program::compile_program(file, depth)
+        program::compile_program(file, flavor, depth)
     })
 }

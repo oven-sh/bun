@@ -1,4 +1,4 @@
-//! `react/exhaustive-deps` of oxlint 1.80, which is a rule of its own more than a port of `react-hooks/exhaustive-deps`: it has other
+//! `react/exhaustive-deps` of oxlint 1.87, which is a rule of its own more than a port of `react-hooks/exhaustive-deps`: it has other
 //! messages, reports each dependency that is not needed by itself, and has its own notion of what a dependency is.
 //!
 //! oxlint walks the callback. Here the references in it are looked at, each with what is around it.

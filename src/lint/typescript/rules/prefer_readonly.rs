@@ -350,7 +350,11 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
     let member = match violating.node {
         ParameterOrPropertyDeclaration::Parameter(param) => {
             // The `?` and the type annotation are part of the `Identifier`.
-            cx.report(get_parameter_property_head_loc(param, violating.name), PREFER_READONLY)
+            let mut loc = get_parameter_property_head_loc(param, violating.name);
+            if cx.language().is_oxlint {
+                loc.start = param.span().start;
+            }
+            cx.report(loc, PREFER_READONLY)
                 .data("name", file.slice(param.binding_span()))
                 .fix(|fixer| fixer.insert_before(param.pat(), "readonly "));
             return;
@@ -362,10 +366,14 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
     };
     let name_node = key.inner_span(file);
     let is_property_definition = !member.flags().contains(Flags::ABSTRACT);
-    let loc = match is_property_definition {
+    let mut loc = match is_property_definition {
         true => get_member_head_loc(member),
         false => member.span(),
     };
+    // oxlint points at the decorators.
+    if cx.language().is_oxlint {
+        loc.start = member.span().start;
+    }
     let has_constructor_modifications = violating.has_constructor_modifications;
     cx.report(loc, PREFER_READONLY).data("name", file.slice(name_node)).fix(|fixer| {
         let readonly_insertion_target = match is_property_definition && key.is_computed() {

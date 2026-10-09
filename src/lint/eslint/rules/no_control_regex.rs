@@ -9,6 +9,9 @@ const UNEXPECTED: Message = Message::new(
     "unexpected",
     "Unexpected control character(s) in regular expression: {{controlChars}}.",
 );
+/// What oxlint says instead.
+const CONTROL_CHARACTER: Message = Message::new("unexpected", "Unexpected control character");
+const CONTROL_CHARACTERS: Message = Message::new("unexpected", "Unexpected control characters");
 
 struct Collector<'s> {
     source: &'s [u8],
@@ -61,6 +64,11 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
     if collector.control_chars.is_empty() {
         return;
     }
+    let message = match (is_oxlint, collector.control_chars.len()) {
+        (false, _) => UNEXPECTED,
+        (true, 1) => CONTROL_CHARACTER,
+        (true, _) => CONTROL_CHARACTERS,
+    };
     let mut control_chars = String::new();
     for c in collector.control_chars {
         if !control_chars.is_empty() {
@@ -75,7 +83,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
         }
         _ => node.span(),
     };
-    cx.report(place, UNEXPECTED).data("controlChars", control_chars);
+    cx.report(place, message).data("controlChars", control_chars);
 }
 
 impl Rule for NoControlRegex {

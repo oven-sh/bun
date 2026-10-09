@@ -15,6 +15,7 @@ mod ast;
 mod cursor;
 mod data;
 mod embed;
+mod error;
 pub(crate) mod in_js;
 mod js;
 mod lexer;
@@ -269,6 +270,17 @@ fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> 
     })
 }
 
+/// Why `text` cannot be parsed, as Prettier says it: `SyntaxError: Unexpected character "a" (1:2)`. `None`: it can be.
+pub fn syntax_error(text: &[u8], parser: Parser) -> Option<Vec<u8>> {
+    let text = normalize_end_of_line(text.strip_prefix(BOM).unwrap_or(text));
+    let (content, front_matter_len) = without_front_matter(&text);
+    let mut tree = ast::Tree::default();
+    match parse::parse(&content, front_matter_len, parser, &mut tree) {
+        Err(parse::ParseError::Syntax(error)) => Some(error.describe(&content)),
+        _ => None,
+    }
+}
+
 /// Whether `text`, in which every line break is `\n`, has no syntax error.
 pub(crate) fn can_be_parsed(text: &[u8], parser: Parser) -> bool {
     let (content, front_matter_len) = without_front_matter(text);
@@ -332,7 +344,7 @@ fn write_document_with_cursor(
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
     parse::parse(&content, front_matter_len, parser, &mut tree).map_err(|error| match error {
-        parse::ParseError::Syntax => FormatError::SyntaxError,
+        parse::ParseError::Syntax(_) => FormatError::SyntaxError,
         parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
     })?;
     let cursor = cursor_offset.map_or(Cursor::Nowhere, |offset| cursor::locate(&tree, offset));

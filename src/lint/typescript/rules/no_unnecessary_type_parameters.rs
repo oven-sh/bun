@@ -411,7 +411,13 @@ fn check_node<'a>(
             Some(2) => "used only once",
             _ => continue,
         };
-        cx.report(type_parameter, SOLE)
+        // oxlint points at where it is used.
+        let place = match variable.references().next().filter(|_| cx.language().is_oxlint) {
+            Some(reference) => reference.span(),
+            None if cx.language().is_oxlint => type_parameter.name().span(),
+            None => type_parameter.span(),
+        };
+        cx.report(place, SOLE)
             .data("name", type_parameter.name())
             .data("descriptor", descriptor)
             .data("uses", uses)

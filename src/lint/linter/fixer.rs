@@ -85,7 +85,7 @@ pub fn apply_fixes(
         last = Some(end);
     }
     output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..]);
-    crate::utils::sort::sort_by_key(&mut remaining, |it| (it.line, it.column));
+    LintMessage::sort(&mut remaining);
     Fixed {
         is_fixed,
         output,

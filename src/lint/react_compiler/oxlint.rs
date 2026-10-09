@@ -1083,7 +1083,9 @@ fn invariant(finding: &Finding, out: &mut Rendered) {
         out.labels.clear();
     }
     // `invariant_build_hir_lower_assignment_could_not_find_binding_declaration`
-    if finding.reason == "(BuildHIR::lowerAssignment) Could not find binding for declaration." {
+    if finding.reason == "(BuildHIR::lowerAssignment) Could not find binding for declaration."
+        || finding.reason == "[PruneHoistedContexts] Unexpected hoisted function"
+    {
         out.relabel("");
     }
 }
@@ -1172,6 +1174,21 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     {
         let func = place.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
+    } else if reason
+        == "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
+    {
+        // To oxc, a variable of a function around the one that is compiled is captured.
+        let variable = place.and_then(|at| {
+            find(file, at, |node| match node.as_expr()?.kind() {
+                ExprKind::Unary { operand, .. } => operand.symbol(),
+                _ => None,
+            })
+        });
+        if variable.is_some_and(|it| it.scope().variable_scope().node().as_func().is_some()) {
+            out.message = Cow::Borrowed(
+                "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.",
+            );
+        }
     } else if reason == LOCAL_FBT {
         // `local_fbt_variable`, which is told where the variable is declared.
         out.relabel("Local variables named `fbt` are not supported");

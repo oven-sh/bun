@@ -374,7 +374,12 @@ fn report<'a>(
         removed.push(token.span());
     }
 
-    let mut report = cx.report(Span::new(constituent_node.span().start, end), message);
+    // oxlint points at the first of the two.
+    let place = match previous.filter(|_| cx.language().is_oxlint) {
+        Some((_, previous)) => previous.span(),
+        None => Span::new(constituent_node.span().start, end),
+    };
+    let mut report = cx.report(place, message);
     if let Some((union_or_intersection, previous)) = previous {
         report = report.data("type", union_or_intersection).data("previous", previous.text());
     }

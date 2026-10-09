@@ -229,7 +229,7 @@ fn check_and_lint_in(
             }
         }
         for (result, _) in results.iter_mut().flatten() {
-            bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| (it.line, it.column));
+            LintMessage::sort(&mut result.messages);
         }
     }
     results

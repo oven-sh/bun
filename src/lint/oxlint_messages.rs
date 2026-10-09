@@ -58,6 +58,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unexpectedLowercaseComment", "Comments should not begin with a lowercase letter"),
         m("unexpectedUppercaseComment", "Comments should not begin with an uppercase letter"),
     ]),
+    ("eslint", "class-methods-use-this", &[
+        m("missingThis", "Expected method{{name}} to have this."),
+    ]),
     ("eslint", "constructor-super", &[
         m("missingSome", "Lacked a call of `super()` in some code paths."),
         m("missingAll", "Expected to call `super()`."),
@@ -184,6 +187,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("eslint", "no-empty-character-class", &[
         m("unexpected", "Empty character class will not match anything"),
     ]),
+    ("eslint", "no-empty-function", &[
+        m("unexpected", "Unexpected empty {{name}}"),
+    ]),
     ("eslint", "no-empty-pattern", &[
         m("unexpected", "Empty {{type}} binding pattern"),
     ]),
@@ -209,6 +215,9 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("eslint", "no-fallthrough", &[
         m("case", "Expected a `break` statement before `case`."),
         m("default", "Expected a `break` statement before `default`."),
+    ]),
+    ("eslint", "no-implicit-coercion", &[
+        m("implicitCoercion", "Unexpected implicit coercion to {{type}}"),
     ]),
     ("eslint", "no-import-assign", &[
         m("readonly", "Do not assign to imported bindings"),
@@ -601,7 +610,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("unsafeSpread", "Unsafe spread of an any type."),
     ]),
     ("typescript", "no-unsafe-assignment", &[
-        m("anyAssignmentThis", "Unsafe assignment of an any value. `this` is typed as {{sender}}.\n"),
+        m("anyAssignmentThis", "Unsafe assignment of an any value. `this` is typed as `any`.\n"),
         m("unsafeArrayPattern", "Unsafe array destructuring of an any array value."),
         m("unsafeArrayPatternFromTuple", "Unsafe array destructuring of a tuple element with an any value."),
         m("unsafeArraySpread", "Unsafe spread of an any value in an array."),

@@ -214,6 +214,14 @@ impl Parser<'_> {
         if self.is_flow {
             return self.flow_return_type_of_function();
         }
+        // `parseReturnType`: `T extends () => A extends B ? 1 : 0 ? C : D`
+        let saved = self.enter_context(0, ctx::DISALLOW_CONDITIONAL_TYPES);
+        let ty = self.type_or_type_predicate_in_context();
+        self.context = saved;
+        ty
+    }
+
+    fn type_or_type_predicate_in_context(&mut self) -> TypeNodeId {
         if self.is_identifier() {
             // `parseTypePredicatePrefix`
             let is_predicate = self.look_ahead(|p| {

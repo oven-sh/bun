@@ -2,6 +2,7 @@
 //!
 //! The text has `\n` only. What a token says is a part of the text, so a token has ranges of it.
 
+use super::error::{ErrorKind, SyntaxError};
 use bun_core::strings;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -245,7 +246,9 @@ struct Tokenizer<'a, 'f> {
     /// Of the start tag that is being read.
     attributes: Vec<LexedAttribute<'a>>,
     tokens: Vec<Token>,
-    errors: Vec<u32>,
+    errors: Vec<SyntaxError<'a>>,
+    /// What the last `Fail::Parse` is about: its kind, where what it names is, `_isInExpansionForm()`.
+    thrown: (ErrorKind, Span, bool),
 }
 
 impl<'a> Tokenizer<'a, '_> {
@@ -284,7 +287,9 @@ impl<'a> Tokenizer<'a, '_> {
 
     /// Returns the index of the token.
     fn end_token_at(&mut self, parts: Parts, end: usize) -> Result<usize> {
-        let (start, kind) = self.current.take().ok_or(Fail::Parse(end as u32))?;
+        let Some((start, kind)) = self.current.take() else {
+            return Err(self.error_of(ErrorKind::Other, end, Span::new(0, 0)));
+        };
         self.tokens.push(Token {
             kind,
             span: Span::new(start, end as u32),
@@ -297,10 +302,29 @@ impl<'a> Tokenizer<'a, '_> {
         self.end_token_at(parts, self.pos)
     }
 
-    /// `_createError`
+    /// `_createError(_unexpectedCharacterErrorMsg(this._cursor.peek()), this._cursor.getSpan(start))`
     fn error(&mut self, start: usize) -> Fail {
+        let rest = Span::new(self.pos as u32, self.text.len() as u32);
+        self.error_of(ErrorKind::UnexpectedCharacter, start, rest)
+    }
+
+    /// `_createError`. `named`: where what the message names is.
+    fn error_of(&mut self, kind: ErrorKind, start: usize, named: Span) -> Fail {
         self.current = None;
+        self.thrown = (kind, named, self.is_in_expansion_form());
         Fail::Parse(start as u32)
+    }
+
+    /// `handleError`
+    fn handle_error(
+        &mut self,
+        at: u32,
+        (kind, named, is_in_expansion_form): (ErrorKind, Span, bool),
+    ) {
+        self.errors.push(SyntaxError {
+            is_in_expansion_form,
+            ..SyntaxError::new(at, kind, named.of(self.text))
+        });
     }
 
     fn attempt_char_code(&mut self, code: u32) -> bool {
@@ -470,14 +494,19 @@ impl<'a> Tokenizer<'a, '_> {
             match self.tokenize_one() {
                 // Nothing goes on from here.
                 Ok(()) if self.pos == start => {
-                    self.errors.push(start as u32);
+                    self.handle_error(start as u32, (ErrorKind::Other, Span::new(0, 0), false));
                     break;
                 }
                 Ok(()) => {}
-                Err(Fail::Parse(at)) => self.errors.push(at),
+                Err(Fail::Parse(at)) => self.handle_error(at, self.thrown),
                 Err(Fail::Cursor(at)) => {
                     self.current = None;
-                    self.errors.push(at);
+                    let end = Span::new(self.text.len() as u32, self.text.len() as u32);
+                    let is_in_expansion_form = self.is_in_expansion_form();
+                    self.handle_error(
+                        at,
+                        (ErrorKind::UnexpectedCharacter, end, is_in_expansion_form),
+                    );
                 }
             }
         }
@@ -766,7 +795,11 @@ impl<'a> Tokenizer<'a, '_> {
             self.attempt_char_code_until(is_digit_entity_end)?;
             if self.peek() != 59 {
                 self.advance()?;
-                return Err(self.error(self.pos));
+                let kind = match is_hex {
+                    true => ErrorKind::HexadecimalEntityWithoutSemicolon,
+                    false => ErrorKind::DecimalEntityWithoutSemicolon,
+                };
+                return Err(self.error_of(kind, self.pos, self.span_from(start)));
             }
             let digits = &self.text[code_start..self.pos];
             self.advance()?;
@@ -784,7 +817,11 @@ impl<'a> Tokenizer<'a, '_> {
                 );
             }
             if code.is_none_or(|code| code > 0x10FFFF) {
-                return Err(self.error(self.pos));
+                return Err(self.error_of(
+                    ErrorKind::UnknownEntity,
+                    self.pos,
+                    self.span_from(start),
+                ));
             }
             self.end_token(Parts::None)?;
             return Ok(());
@@ -802,7 +839,8 @@ impl<'a> Tokenizer<'a, '_> {
         if entity != b"&ngsp;"
             && bun_md::helpers::decode_entity_to_utf8(entity, &mut [0; 8]).is_none()
         {
-            return Err(self.error(start));
+            let name = Span::new(name_start as u32, self.pos as u32 - 1);
+            return Err(self.error_of(ErrorKind::UnknownEntity, start, name));
         }
         self.end_token(Parts::None)?;
         Ok(())
@@ -1222,13 +1260,13 @@ fn trimmed(text: &[u8], span: Span) -> Span {
     )
 }
 
-/// `tokenize`, from `start` on. Returns the tokens and where the errors are.
-pub(crate) fn tokenize(
-    text: &[u8],
+/// `tokenize`, from `start` on. Returns the tokens and the errors.
+pub(crate) fn tokenize<'a>(
+    text: &'a [u8],
     start: usize,
     get_tag_content_type: GetTagContentType<'_>,
     options: Options,
-) -> (Vec<Token>, Vec<u32>) {
+) -> (Vec<Token>, Vec<SyntaxError<'a>>) {
     let mut tokenizer = Tokenizer {
         text,
         pos: start,
@@ -1241,6 +1279,7 @@ pub(crate) fn tokenize(
         // As a rule a token is ten bytes or so.
         tokens: Vec::with_capacity(text.len().saturating_sub(start) / 8),
         errors: Vec::new(),
+        thrown: (ErrorKind::Other, Span::new(0, 0), false),
     };
     tokenizer.tokenize();
     // `mergeTextTokens`

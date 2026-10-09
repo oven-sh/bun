@@ -546,6 +546,24 @@ impl<'a> Printer<'a, '_> {
             || is_liquid_without_blank_line)
     }
 
+    /// oxfmt: HTML right behind a paragraph of a list item, on a line that is not indented as the item is, is in the
+    /// item only as long as that line is not. See `compat::complete_tag_ends_lazy_paragraph` of `bun_md`.
+    fn is_lazy_html_in_tight_item(&self, node: &Node) -> bool {
+        if !self.options.flavor.is_oxfmt() || node.kind != Kind::Html {
+            return false;
+        }
+        let (Some(previous), Some(item)) = (self.node(node.previous), self.node(node.parent))
+        else {
+            return false;
+        };
+        item.kind == Kind::ListItem
+            && previous.kind == Kind::Paragraph
+            && self.end_line(previous) + 1 == self.start_line(node)
+            && self
+                .node(item.first_child)
+                .is_some_and(|first| self.column(node.start) < self.column(first.start))
+    }
+
     // ───────────────────────────── children ─────────────────────────────
 
     /// Prettier's `printChildren`. `processor` writes a child, or says that it is left out.
@@ -558,7 +576,9 @@ impl<'a> Printer<'a, '_> {
         let mut child = self.node(parent).map_or(NONE, |node| node.first_child);
         while let Some(node) = self.node(child) {
             if let Some(result) = processor(self, child) {
-                if !parts.is_empty() && self.should_pre_print_hardline(node) {
+                if !parts.is_empty() && self.is_lazy_html_in_tight_item(node) {
+                    parts.push(Doc::Dedent(Box::new(hardline())));
+                } else if !parts.is_empty() && self.should_pre_print_hardline(node) {
                     parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
                     if self.should_pre_print_double_hardline(node) {
                         parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
@@ -1245,6 +1265,9 @@ impl<'a> Printer<'a, '_> {
     }
 
     fn print_image_alt(&self, node: &Node) -> Doc<'a> {
+        if self.options.flavor.is_oxfmt() {
+            return replace_end_of_line(self.str(node.third), verbatim_line);
+        }
         match self
             .bracket_content(node)
             .filter(|it| !it.is_empty() && !self.is_mdx)
@@ -1465,12 +1488,21 @@ impl<'a> Printer<'a, '_> {
                     false => hardline(),
                 };
                 let opening_line = self.start_line(node);
-                let mut parts = vec![Doc::from(self.str(node.value))];
+                let opening = self.str(node.value);
+                let mut parts = vec![Doc::from(opening)];
                 let mut last_line = opening_line;
                 if let (Some(first), Some(last)) =
                     (self.node(node.first_child), self.node(node.last_child))
                 {
-                    parts.push(gap(self.start_line(first) > opening_line + 1));
+                    let is_empty_line = self.start_line(first) > opening_line + 1;
+                    // The blanks at its end stay.
+                    match opening.ends_with(b" ") || opening.ends_with(b"\t") {
+                        true if is_empty_line => {
+                            parts.push(docs![mark_as_root(literalline()), hardline()]);
+                        }
+                        true => parts.push(mark_as_root(literalline())),
+                        false => parts.push(gap(is_empty_line)),
+                    }
                     last_line = self.end_line(last);
                     parts.push(self.print_children(id));
                 }

@@ -62,7 +62,8 @@ fn check_call<'a>(node: Expr<'a>, reporting_node: Expr<'a>, how: Use, cx: &Cx<'a
             (false, true) => UNSAFE_CALL_THIS,
             (false, false) => unsafe_message,
         };
-        cx.report(reporting_node, message).data("type", "an `any`");
+        let described = if cx.language().is_oxlint { "a(n) `any`" } else { "an `any`" };
+        cx.report(reporting_node, message).data("type", described);
         return;
     }
 
@@ -81,7 +82,8 @@ fn check_call<'a>(node: Expr<'a>, reporting_node: Expr<'a>, how: Use, cx: &Cx<'a
             Use::Call | Use::TemplateTag => !call_signatures.is_empty(),
         };
         if !is_safe {
-            cx.report(reporting_node, unsafe_message).data("type", "a `Function`");
+            let described = if cx.language().is_oxlint { "a(n) `Function`" } else { "a `Function`" };
+            cx.report(reporting_node, unsafe_message).data("type", described);
         }
     }
 }

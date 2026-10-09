@@ -127,6 +127,7 @@ fn parse_impl_in(
 }
 
 /// [`parse_impl_in`] in one pass over the text, without the index.
+#[cfg(bun_sema_mimalloc)]
 fn parse_impl_in_one_pass(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -514,7 +515,8 @@ fn parse_to_rows(
 }
 
 /// For who compares the two parsers, as long as there are two: the rows for `opts`, with the index
-/// or in one pass.
+/// or in one pass. In the test harness only.
+#[cfg(bun_sema_mimalloc)]
 pub fn parse_rows_for_comparison(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

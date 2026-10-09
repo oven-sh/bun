@@ -48,8 +48,12 @@ impl Rule for ClassMethodsUseThis {
                     };
                     let head = || ts_utils::get_function_head_loc(func);
                     let place = key.map_or_else(head, |it| it.inner_span(cx.file()));
-                    cx.report(place, MISSING_THIS)
-                        .data("name", eslint_utils::get_function_name_with_kind(func, false));
+                    let name = match (cx.language().is_oxlint, key.and_then(utils::oxlint::property_key_name)) {
+                        (false, _) => eslint_utils::get_function_name_with_kind(func, false),
+                        (true, Some(name)) => [&b" `"[..], name, b"`"].concat(),
+                        (true, None) => Vec::new(),
+                    };
+                    cx.report(place, MISSING_THIS).data("name", name);
                 }
             });
         }

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::{FunctionParent, member_key_name};
 
 /// Disallow empty functions.
 pub struct NoEmptyFunction {
@@ -148,6 +149,35 @@ fn is_allowed_empty_function(func: Func, kind: u16, allow: Allow) -> bool {
         || allow.includes(OVERRIDE_METHODS) && flags.contains(Flags::OVERRIDE)
 }
 
+/// How oxlint calls the function.
+fn name_for_oxlint(func: Func) -> Vec<u8> {
+    const FUNCTION: &[u8] = b"function";
+    let (kind, name) = match (func.name(), FunctionParent::of(func)) {
+        (Some(name), _) if func.is_async() => (&b"async function"[..], Some(name.bytes())),
+        (Some(name), _) if func.is_generator() => (&b"generator function"[..], Some(name.bytes())),
+        (Some(name), _) => (FUNCTION, Some(name.bytes())),
+        (None, FunctionParent::MethodDefinition(member)) => {
+            let kind: &[u8] = match member.kind() {
+                _ if member.is_constructor() => b"constructor",
+                MemberKind::Getter => b"getter",
+                MemberKind::Setter => b"setter",
+                _ if member.is_static() => b"static method",
+                _ => b"method",
+            };
+            (kind, member_key_name(member))
+        }
+        (None, FunctionParent::PropertyDefinition(member)) => (FUNCTION, member_key_name(member)),
+        (None, FunctionParent::VariableDeclarator(declarator)) => {
+            (FUNCTION, declarator.pat().as_ident().map(Name::bytes))
+        }
+        (None, FunctionParent::ObjectProperty(_) | FunctionParent::Other) => (FUNCTION, None),
+    };
+    match name {
+        Some(name) => [kind, b" `", name, b"`"].concat(),
+        None => FUNCTION.to_vec(),
+    }
+}
+
 /// The whole rule, for a function, and typescript-eslint's rule of the same name.
 pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     if !func.body_statements().is_some_and(|body| body.is_empty()) {
@@ -164,7 +194,7 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     }
     let name = ast_utils::get_function_name_with_kind(func);
     cx.report(body, UNEXPECTED)
-        .data("name", name.clone())
+        .data("name", if cx.language().is_oxlint { name_for_oxlint(func) } else { name.clone() })
         .suggest_with(SUGGEST_COMMENT, &[("name", &name[..])], |fixer| {
             fixer.replace(inside, " /* empty */ ")
         });

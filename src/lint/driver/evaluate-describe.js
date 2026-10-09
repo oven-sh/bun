@@ -121,7 +121,7 @@ function stringify(value) {
 // The rules are in the order in which a worker numbers them. `at`: the module that exports the very rule, if there is one. A worker
 // loads that, and not the plugin with all its other rules.
 function describe(name, plugin) {
-  const names = Object.keys(plugin.rules).sort();
+  const names = Object.keys(plugin.rules ?? {}).sort();
   locateDeep(plugin);
   scan();
   const original = wrapped.get(plugin) ?? plugin;

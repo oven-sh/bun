@@ -21,6 +21,7 @@ mod conformance;
 mod cursor;
 mod letters;
 mod markdown;
+#[cfg(bun_sema_mimalloc)]
 mod readers;
 mod sort_imports;
 mod value;
@@ -547,6 +548,7 @@ pub(crate) fn run(args: &[String]) {
         Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),
+        #[cfg(bun_sema_mimalloc)]
         Some("readers") => readers::run(&args),
         Some("markdown") => markdown::run(&args),
         Some("sort-imports") => sort_imports::run(&args),

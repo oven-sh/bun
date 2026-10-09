@@ -94,6 +94,13 @@ describe.concurrent("bun format", () => {
     `);
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
+    // In a project of oxfmt that is not what the files have.
+    const asOxfmt = await format({ "a.js": formatted, ".oxfmtrc.json": "{}\n" }, ["--check"]);
+    expect(asOxfmt.stdout).toMatchInlineSnapshot(`
+      "Checking formatting...
+      All matched files use the correct format."
+    `);
+    expect(asOxfmt.exitCode).toBe(0);
   });
 
   test("--list-different", async () => {

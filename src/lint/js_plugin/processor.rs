@@ -43,8 +43,10 @@ pub enum Route {
     Native,
     /// A processor takes blocks out of it, each of which goes its own way.
     Processor,
-    /// Not at all: it has a `language` other than JavaScript, or a parser that is not known here is to read what is not called
-    /// like JavaScript.
+    /// By the `Linter` of the `eslint` that the project has installed: it has a `language` other than JavaScript, or a parser that
+    /// is not known here is to read what is not called like JavaScript.
+    Eslint,
+    /// Not at all: its parser finds JavaScript in it, for which it has another parser.
     Unsupported,
 }
 

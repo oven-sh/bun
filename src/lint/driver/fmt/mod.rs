@@ -449,6 +449,11 @@ fn format(
                     "formatting it the way Prettier does would change what is in it",
                 ));
             }
+            if matches!(done, Err(FormatError::SyntaxError))
+                && let Some(error) = bun_format::html::syntax_error(text, parser)
+            {
+                return Err(Failure::Syntax(error));
+            }
             let cursor = done.as_ref().ok().copied().flatten();
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
         }
@@ -1086,7 +1091,10 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else if different == 0 {
-                self.log(b"All matched files use Prettier code style!");
+                self.log(match configs.flavor {
+                    Flavor::Prettier => &b"All matched files use Prettier code style!"[..],
+                    Flavor::Oxfmt => b"All matched files use the correct format.",
+                });
             } else if only_looks {
                 self.warn(
                     format!(
@@ -1153,7 +1161,7 @@ impl Run<'_> {
         let mut unsorted = std::mem::take(unsorted.get_mut());
         if !unsorted.is_empty() {
             sort_slice_by(&mut unsorted[..], |a, b| {
-                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0))
             });
             let kinds: Vec<Vec<u8>> = unsorted
                 .iter()
@@ -1190,7 +1198,7 @@ impl Run<'_> {
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             sort_slice_by(&mut others[..], |a, b| {
-                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0))
             });
             let count: usize = others.iter().map(|it| it.1).sum();
             let noun = if count == 1 { "file is" } else { "files are" };

@@ -17,9 +17,7 @@ use bun_highway::index_of_interesting_character_in_string_literal as plain_len;
 
 use crate::json::JSONOptions;
 use crate::json_index::{IndexError, is_ls_ps};
-use crate::json_stage2::{
-    ident_len, is_exotic_whitespace, push_codepoint, read_trail_surrogate_escape,
-};
+use crate::json_stage2::is_exotic_whitespace;
 
 type PResult<T = ()> = crate::Result<T>;
 
@@ -99,6 +97,17 @@ fn is_identifier_continue(c: u8) -> bool {
 #[inline(always)]
 fn is_rare(c: u8) -> bool {
     c >= 0x80 || c == 0x0B || c == 0x0C
+}
+
+/// What is before the place from which a token is looked for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Before {
+    /// A token that is complete.
+    Token,
+    /// A byte of a run, which can go on.
+    Run,
+    /// The same, and it is a backslash that is not escaped itself: a quote that follows opens no string.
+    Backslash,
 }
 
 const ONES: u64 = 0x0101_0101_0101_0101;
@@ -333,11 +342,12 @@ impl<'a, 's> Parser<'a, 's> {
         end
     }
 
-    /// The start of the first token at `i` or behind it. `is_in_run`: `i` is behind a byte of a run.
-    /// `is_escaped`: that byte is a backslash which is not escaped itself.
+    /// The start of the first token at `i` or behind it.
     #[cold]
-    fn token_from(&mut self, mut i: usize, mut is_in_run: bool, mut is_escaped: bool) -> usize {
+    fn token_from(&mut self, mut i: usize, before: Before) -> usize {
         let contents = self.contents;
+        let mut is_in_run = before != Before::Token;
+        let mut is_escaped = before == Before::Backslash;
         while let Some(&c) = contents.get(i) {
             let was_escaped = core::mem::take(&mut is_escaped);
             match c {
@@ -368,8 +378,9 @@ impl<'a, 's> Parser<'a, 's> {
     fn next_token(&mut self, p: usize) -> usize {
         match self.contents.get(p) {
             None => self.contents.len(),
-            Some(b'{' | b'}' | b'[' | b']' | b':' | b',') => self.token_from(p + 1, false, false),
-            Some(&c) => self.token_from(p + 1, true, c == b'\\'),
+            Some(b'{' | b'}' | b'[' | b']' | b':' | b',') => self.token_from(p + 1, Before::Token),
+            Some(b'\\') => self.token_from(p + 1, Before::Backslash),
+            Some(_) => self.token_from(p + 1, Before::Run),
         }
     }
 
@@ -442,7 +453,7 @@ impl<'a, 's> Parser<'a, 's> {
         while let Some(&c) = self.contents.get(p) {
             p = match c {
                 b'"' | b'\'' => match self.string_close(p) {
-                    Some(close) => self.token_from(close + 1, false, false),
+                    Some(close) => self.token_from(close + 1, Before::Token),
                     None => break,
                 },
                 _ => self.next_token(p),
@@ -1526,6 +1537,49 @@ impl<'a, 's> Parser<'a, 's> {
         self.pass_run(next);
         Ok(value)
     }
+}
+
+#[inline]
+fn ident_len(t: &[u8]) -> usize {
+    t.iter()
+        .take_while(|&&c| is_identifier_continue(c))
+        .count()
+        .max(1)
+}
+
+#[inline]
+fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
+    if cp < 0 {
+        return;
+    }
+    let mut tmp = [0u8; 4];
+    let n = strings::encode_wtf8_rune(&mut tmp, cp as u32);
+    buf.extend_from_slice(&tmp[..n]);
+}
+
+fn read_trail_surrogate_escape(
+    iterator: &strings::CodepointIterator<'_>,
+    iter: &mut strings::Cursor,
+) -> Option<u16> {
+    let mut probe = *iter;
+    if !iterator.next(&mut probe) || probe.c != '\\' as CodePoint {
+        return None;
+    }
+    if !iterator.next(&mut probe) || probe.c != 'u' as CodePoint {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for _ in 0..4 {
+        if !iterator.next(&mut probe) {
+            return None;
+        }
+        value = value * 16 + bun_core::fmt::hex_digit_value_u32(probe.c as u32)? as u32;
+    }
+    if !strings::u16_is_trail(value as u16) {
+        return None;
+    }
+    *iter = probe;
+    Some(value as u16)
 }
 
 /// Appends the value of `body`, which is what is between the quotes of a string, to `buf`.

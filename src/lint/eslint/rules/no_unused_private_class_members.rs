@@ -177,7 +177,8 @@ impl NoUnusedPrivateClassMembers {
                 continue;
             };
             cx.report(key.span(cx.file()), UNUSED_PRIVATE_CLASS_MEMBER)
-                .data("classMemberName", *name)
+                // oxlint has the name without the `#`.
+                .data("classMemberName", name.bytes().get(usize::from(cx.language().is_oxlint)..).unwrap_or_default())
                 .suggest_with(
                     REMOVE_UNUSED_PRIVATE_CLASS_MEMBER,
                     &[("classMemberName", name.bytes())],

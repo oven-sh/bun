@@ -1,7 +1,11 @@
 //! Comments that switch the rules of React off, which make the compiler leave a function alone: oxc's
 //! `react_compiler/entrypoint/suppression.rs`, without the suppressions of Flow (`flow_suppressions: false`).
+//!
+//! `eslint-plugin-react-hooks` has the compiler look for none of these. It looks for comments of Flow itself, and drops single
+//! diagnostics for them: [`remove_what_flow_suppresses`].
 
 use crate::finding::{Detail, Finding, Suggestion};
+use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::tokens::{Token, TokenKind};
 use bun_react_compiler::diagnostics::{CompilerSuggestionOperation, ErrorCategory};
@@ -15,6 +19,7 @@ pub(crate) struct SuppressionRange<'a> {
 }
 
 /// The suppressions of a file. Each list is in the order of the file.
+#[derive(Default)]
 pub(crate) struct ProgramSuppressions<'a> {
     /// Those of `eslint-disable-next-line`.
     next_line: Vec<SuppressionRange<'a>>,
@@ -162,4 +167,40 @@ pub(crate) fn suppressions_to_diagnostics(suppressions: &[SuppressionRange]) -> 
         }
     };
     suppressions.iter().map(diagnostic).collect()
+}
+
+/// The plugin's `getFlowSuppressions` and `hasFlowSuppression`: a diagnostic that starts on the line after the one on which a
+/// comment with `$FlowFixMe[react-rule-hook]` or `$FlowFixMe[react-rule-unsafe-ref]` ends is not reported. In any file, of Flow or
+/// not.
+pub(crate) fn remove_what_flow_suppresses<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
+    const SUPPRESSIONS: [&[u8]; 2] = [
+        b"$FlowFixMe[react-rule-hook]",
+        b"$FlowFixMe[react-rule-unsafe-ref]",
+    ];
+    if diagnostics.is_empty() || !strings::contains(file.text(), b"$FlowFixMe[react-rule-") {
+        return;
+    }
+    let suppresses = |comment: &Token<'a>| {
+        SUPPRESSIONS
+            .iter()
+            .any(|it| strings::contains(comment.text(), it))
+    };
+    // In the order of the file.
+    let lines: Vec<u32> = (file.comments().filter(suppresses))
+        .map(|comment| file.line_of(comment.end()))
+        .collect();
+    // The compiler's `primaryLocation()`
+    let primary_location = |diagnostic: &Finding| {
+        let first = diagnostic.details.iter().find_map(|detail| match detail {
+            Detail::Error { span, .. } => Some(*span),
+            Detail::Hint { .. } => None,
+        });
+        first.flatten()
+    };
+    diagnostics.retain(|diagnostic| {
+        primary_location(diagnostic).is_none_or(|span| {
+            let line_before = file.line_of(span.start).saturating_sub(1);
+            lines.binary_search(&line_before).is_err()
+        })
+    });
 }

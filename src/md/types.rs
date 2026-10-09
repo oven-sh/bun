@@ -323,6 +323,7 @@ pub struct Flags {
     pub(crate) directives: bool,
     pub(crate) no_single_tilde: bool,
     pub(crate) micromark: bool,
+    pub(crate) code_units: bool,
     pub(crate) mdx: bool,
 }
 

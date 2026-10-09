@@ -77,14 +77,16 @@ impl MaxLinesPerFunction {
                 return;
             }
         }
-        let name = ast_utils::get_function_name_with_kind(func);
         // oxlint points at the function.
-        let place = match cx.language().is_oxlint {
-            true => func.estree_span(),
-            false => ast_utils::get_function_head_loc(func),
+        let (name, place) = match cx.language().is_oxlint {
+            true => ([&b"The "[..], &utils::oxlint::get_function_name_with_kind(func)].concat(), func.estree_span()),
+            false => {
+                let name = ast_utils::get_function_name_with_kind(func);
+                (text::upper_case_first(&name).into_owned(), ast_utils::get_function_head_loc(func))
+            }
         };
         cx.report(place, EXCEED)
-            .data("name", text::upper_case_first(&name).into_owned())
+            .data("name", name)
             .data("lineCount", line_count)
             .data("maxLines", self.max);
     }

@@ -3,6 +3,7 @@
 use super::Parser;
 use super::ast::{Flags, Id, Kind, Node, Span, Tree};
 use super::data;
+use super::error::SyntaxError;
 use super::lexer::{self, LexedAttribute};
 use super::parser;
 use super::utilities::is_unknown_namespace;
@@ -10,13 +11,13 @@ use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ParseError {
-    Syntax,
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum ParseError<'a> {
+    Syntax(SyntaxError<'a>),
     NestedTooDeeply,
 }
 
-type Result<T> = std::result::Result<T, ParseError>;
+type Result<'a, T> = std::result::Result<T, ParseError<'a>>;
 
 /// `ParseOptions`
 #[derive(Copy, Clone)]
@@ -118,7 +119,7 @@ impl<'a> Context<'a, '_> {
         range: Span,
         options: &ParseOptions,
         decides_on_raw_text: bool,
-    ) -> Result<parser::ParseResult> {
+    ) -> Result<'a, parser::ParseResult<'a>> {
         let should_parse_as_raw_text: Option<&dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool> =
             match options.name {
                 _ if !decides_on_raw_text => None,
@@ -143,16 +144,16 @@ impl<'a> Context<'a, '_> {
     }
 
     /// `parseHtml`. Returns what has the `rootNodes` as its children.
-    fn parse_html(&mut self, range: Span, options: ParseOptions) -> Result<(ParseOptions, Id)> {
+    fn parse_html(&mut self, range: Span, options: ParseOptions) -> Result<'a, (ParseOptions, Id)> {
         let result = self.angular_html_parser_parse(range, &options, true)?;
-        match result.errors.is_empty() {
-            true => Ok((options, result.root)),
-            false => Err(ParseError::Syntax),
+        match result.errors.first() {
+            None => Ok((options, result.root)),
+            Some(&error) => Err(ParseError::Syntax(error)),
         }
     }
 
     /// `parseVue`
-    fn parse_vue(&mut self, range: Span, options: ParseOptions) -> Result<(ParseOptions, Id)> {
+    fn parse_vue(&mut self, range: Span, options: ParseOptions) -> Result<'a, (ParseOptions, Id)> {
         let parser::ParseResult { root, errors, .. } =
             self.angular_html_parser_parse(range, &options, true)?;
         // A void element at the top makes the errors those of the second result.
@@ -170,7 +171,9 @@ impl<'a> Context<'a, '_> {
         if is_html {
             return self.parse_html(range, parse_options(Parser::Html));
         }
-        let mut second: Option<parser::ParseResult> = None;
+        let mut second: Option<parser::ParseResult<'a>> = None;
+        // The first error of the second result, before they are sorted.
+        let mut first_of_second = None;
         // The first of what the second result has at the top that does not start before the element that is looked at.
         let mut candidate = None;
         let mut next = self.tree.first_child(root);
@@ -208,20 +211,25 @@ impl<'a> Context<'a, '_> {
                 None => {
                     let second =
                         second.insert(self.angular_html_parser_parse(range, &options, false)?);
-                    crate::sort::sort(&mut second.errors[..]);
+                    first_of_second = second.errors.first().copied();
+                    crate::sort::sort_by_key(&mut second.errors[..], |it| it.at);
                     candidate = self.tree.first_child(second.root);
                     &*second
                 }
             };
             if is_void {
                 has_errors_of_second = true;
-            } else if second
+            } else if let Some(&error) = second
                 .errors
-                .get(second.errors.partition_point(|&at| at <= start_span.start))
-                .is_some_and(|&at| end_span.is_none_or(|span| at < span.end))
+                .get(
+                    second
+                        .errors
+                        .partition_point(|it| it.at <= start_span.start),
+                )
+                .filter(|it| end_span.is_none_or(|span| it.at < span.end))
             {
                 // Without an end tag, Prettier fails when it asks where that ends.
-                return Err(ParseError::Syntax);
+                return Err(ParseError::Syntax(error));
             }
             // `getElementWithSameLocation`. Both lists are in the order of the text.
             while let Some(other) =
@@ -238,18 +246,18 @@ impl<'a> Context<'a, '_> {
                 self.tree.replace(id, same);
             }
         }
-        let has_errors = match (has_errors_of_second, &second) {
-            (true, Some(second)) => !second.errors.is_empty(),
-            _ => !errors.is_empty(),
+        let error = match has_errors_of_second {
+            true => first_of_second,
+            false => errors.first().copied(),
         };
-        match has_errors {
-            false => Ok((options, root)),
-            true => Err(ParseError::Syntax),
+        match error {
+            None => Ok((options, root)),
+            Some(error) => Err(ParseError::Syntax(error)),
         }
     }
 
     /// `parse`, without the front matter. Returns what has the children of the root as its children.
-    fn parse(&mut self, range: Span, options: ParseOptions) -> Result<Id> {
+    fn parse(&mut self, range: Span, options: ParseOptions) -> Result<'a, Id> {
         let (actual_options, root) = match self.is_vue {
             true => self.parse_vue(range, options)?,
             false => self.parse_html(range, options)?,
@@ -259,7 +267,7 @@ impl<'a> Context<'a, '_> {
     }
 
     /// What `postprocess` does with `id` itself.
-    fn postprocess_node(&mut self, id: Id, options: ParseOptions) -> Result<()> {
+    fn postprocess_node(&mut self, id: Id, options: ParseOptions) -> Result<'a, ()> {
         let text = self.text;
         match self.tree[id].kind {
             Kind::Element => self.postprocess_element(id, options),
@@ -364,7 +372,7 @@ impl<'a> Context<'a, '_> {
     }
 
     /// `postprocess`, for everything in `root`.
-    fn postprocess(&mut self, root: Id, options: ParseOptions) -> Result<()> {
+    fn postprocess(&mut self, root: Id, options: ParseOptions) -> Result<'a, ()> {
         // What is in a node comes behind it, and no node is looked at before its parent.
         let mut next = self.tree.first_child(root);
         while let Some(id) = next {
@@ -388,7 +396,7 @@ impl<'a> Context<'a, '_> {
     }
 
     /// `parseIeConditionalComment`: the comment becomes what it is.
-    fn parse_ie_conditional_comment(&mut self, id: Id, options: ParseOptions) -> Result<()> {
+    fn parse_ie_conditional_comment(&mut self, id: Id, options: ParseOptions) -> Result<'a, ()> {
         let text = self.text;
         let span = self.tree[id].span;
         let value: &'a [u8] = match &self.tree[id].value {
@@ -454,7 +462,7 @@ impl<'a> Context<'a, '_> {
                 true
             }
             Err(ParseError::NestedTooDeeply) => return Err(ParseError::NestedTooDeeply),
-            Err(ParseError::Syntax) => {
+            Err(ParseError::Syntax(_)) => {
                 let only = self
                     .tree
                     .add(Node::text(Cow::Borrowed(content.of(text)), content));
@@ -500,7 +508,7 @@ pub(crate) fn parse<'a>(
     front_matter_len: Option<usize>,
     parser: Parser,
     tree: &mut Tree<'a>,
-) -> Result<()> {
+) -> Result<'a, ()> {
     let all = Span::new(0, text.len() as u32);
     let mut context = Context {
         text,

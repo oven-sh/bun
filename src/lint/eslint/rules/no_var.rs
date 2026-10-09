@@ -3,6 +3,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
 use bun_lint::utils::oxlint::AmbientAncestors;
 use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 use std::cell::RefCell;
 
 /// Require `let` or `const` instead of `var`.
@@ -216,6 +217,67 @@ fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
     source.get(start as usize..)?.starts_with(b"var").then(|| Span::new(start, start + 3))
 }
 
+/// oxlint's `is_written_to`: something is assigned to one of the variables after the declaration. A default value
+/// counts as that, and the rest element of an array pattern is not looked at.
+fn oxlint_is_written_to(pat: Pat) -> bool {
+    let mut pending: SmallVec<[Pat; 8]> = smallvec![pat];
+    while let Some(pat) = pending.pop() {
+        match pat.kind() {
+            PatKind::Missing => {}
+            PatKind::Ident(_) => {
+                if pat.symbol().is_some_and(|it| it.references().any(|it| it.is_write() && !it.is_init())) {
+                    return true;
+                }
+            }
+            PatKind::Object(props) => {
+                if props.iter().any(|it| it.default().is_some()) {
+                    return true;
+                }
+                pending.extend(props.iter().map(PatProp::value));
+            }
+            PatKind::Array(elems) => {
+                if elems.iter().any(|it| it.default().is_some()) {
+                    return true;
+                }
+                pending.extend(elems.iter().filter(|it| !it.is_rest()).filter_map(PatElem::pat));
+            }
+        }
+    }
+    false
+}
+
+/// The fix of oxlint 1.87. There is none if a variable is referred to outside of what the declaration is in. It is
+/// `const` if nothing is assigned later and all have a value. All of the declaration is replaced, so that no other fix
+/// changes it in the same pass.
+fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> Option<Fix> {
+    let var = var_keyword(statement)?;
+    // A variable does not leave the function or the file.
+    let around = match statement.parent() {
+        _ if statement.is_exported() => Some(statement.span()),
+        Node::Stmt(parent) => Some(parent.span()),
+        Node::Case(case) => Some(case.span()),
+        _ => None,
+    };
+    if let Some(around) = around {
+        let mut leaves = false;
+        for declaration in declarations {
+            declaration.pat().for_each_binding(&mut |pat| {
+                leaves |= pat.symbol().is_some_and(|it| it.references().any(|it| !around.contains(it.span())));
+            });
+        }
+        if leaves {
+            return None;
+        }
+    }
+    let is_let = statement.flags().contains(Flags::AMBIENT)
+        || declarations.iter().any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+    let (file, span) = (fixer.file(), statement.span_without_export());
+    let before = file.slice(Span::before(span.start, var));
+    let after = file.slice(Span::after(var, span.end));
+    let keyword: &[u8] = if is_let { b"let" } else { b"const" };
+    Some(fixer.replace(span, [before, keyword, after].concat()))
+}
+
 impl NoVar {
     fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = statement.kind() else {
@@ -239,6 +301,9 @@ impl NoVar {
         }
         let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
         cx.report(place, UNEXPECTED_VAR).fix(|fixer| {
+            if is_oxlint {
+                return fix_as_oxlint(fixer, statement, declarations);
+            }
             let var = var_keyword(statement)?;
             (cx.state.can_fix(statement, declarations))
                 .then(|| FixTracker::new(fixer).retain_range(span).replace_text_range(var, "let"))

@@ -552,6 +552,43 @@ impl Pattern {
     fn test(&self, name: Name) -> bool {
         self.regex.test(name.bytes())
     }
+
+    /// As it is in the configuration.
+    fn source(&self) -> &str {
+        self.text.strip_prefix('/').and_then(|it| it.strip_suffix("/u")).unwrap_or(&self.text)
+    }
+}
+
+/// `pronoun_for_symbol` of oxlint: what it calls a variable, and several of them.
+fn oxlint_pronoun_for_symbol(variable: Variable) -> (&'static str, &'static str) {
+    static PRONOUNS: [(&str, &str); 9] = [
+        ("Function", "functions"),
+        ("Class", "classes"),
+        ("Interface", "interfaces"),
+        ("Type alias", "type aliases"),
+        ("Enum", "enums"),
+        ("Enum member", "enum members"),
+        ("Type", "types"),
+        ("Identifier", "identifiers"),
+        ("Catch parameter", "caught errors"),
+    ];
+    let first = variable.defs().map(|def| match def {
+        Declaration::Fn(_) => 0,
+        Declaration::Class(_) => 1,
+        Declaration::Interface(_) => 2,
+        Declaration::TypeAlias(_) => 3,
+        Declaration::Enum(_) => 4,
+        Declaration::EnumMember(_) => 5,
+        Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) if import.is_type_only() => 6,
+        Declaration::ImportSpec(specifier) if specifier.is_type_only() || specifier.import().is_type_only() => 6,
+        Declaration::ImportDefault(_)
+        | Declaration::ImportNamespace(_)
+        | Declaration::ImportSpec(_)
+        | Declaration::ImportEquals(_) => 7,
+        _ if def.is_catch_parameter() => 8,
+        _ => PRONOUNS.len(),
+    });
+    first.min().and_then(|it| PRONOUNS.get(it)).copied().unwrap_or(("Variable", "variables"))
 }
 
 /// What a message calls a variable, which decides the pattern that it names.
@@ -831,6 +868,57 @@ impl NoUnusedVars {
         }
     }
 
+    /// How a message of oxlint ends: what unused `plural` are to be called. `has_default`: without options it is `^_`.
+    fn oxlint_hint(&self, pattern: Option<&Pattern>, has_default: bool, plural: &str) -> String {
+        match pattern.map(Pattern::source) {
+            None if !has_default || self.has_options_object => String::new(),
+            None | Some("^_") => format!(" Unused {plural} should start with a '_'."),
+            Some(source) => format!(" Unused {plural} should match /{source}/."),
+        }
+    }
+
+    /// What oxlint says about `variable` where typescript-eslint says `message`.
+    fn oxlint_text(&self, variable: Variable, message: Message) -> Vec<u8> {
+        let name = variable.name().bytes();
+        let (pronoun, plural) = oxlint_pronoun_for_symbol(variable);
+        let says = |what: &str, hint: &str| {
+            [pronoun.as_bytes(), b" '", name, b"' is ", what.as_bytes(), b".", hint.as_bytes()].concat()
+        };
+        if message.id == USED_IGNORED_VAR.id {
+            return says("marked as ignored but is used", "");
+        }
+        let is_only_used_as_type = message.id == USED_ONLY_AS_TYPE.id;
+        let hint_for_vars = || self.oxlint_hint(self.vars_ignore_pattern.as_ref(), true, plural);
+        match variable.defs().next() {
+            Some(Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) | Declaration::ImportSpec(_)) => {
+                says("imported but never used", "")
+            }
+            Some(Declaration::Param(_)) => {
+                let is_default = self.args_ignore_pattern.is_none() && !self.has_options_object;
+                let hint = match is_default && name == b"_" {
+                    true => String::new(),
+                    false => self.oxlint_hint(self.args_ignore_pattern.as_ref(), true, "parameters"),
+                };
+                let what: &[u8] = match is_only_used_as_type {
+                    true => b"' is declared but only used as a type.",
+                    false => b"' is declared but never used.",
+                };
+                [&b"Parameter '"[..], name, what, hint.as_bytes()].concat()
+            }
+            Some(def @ Declaration::Var(_)) if def.is_catch_parameter() => {
+                says("caught but never used", &self.oxlint_hint(self.caught_errors_ignore_pattern.as_ref(), false, plural))
+            }
+            Some(Declaration::Var(_)) if variable.references().any(|it| it.is_write() && !it.is_init()) => {
+                says("assigned a value but never used", &hint_for_vars())
+            }
+            Some(Declaration::Var(_)) if is_only_used_as_type => {
+                [pronoun.as_bytes(), b" is declared but only used as a type.", hint_for_vars().as_bytes()].concat()
+            }
+            Some(Declaration::Var(_) | Declaration::TypeParam(_)) => says("declared but never used", &hint_for_vars()),
+            _ => says("declared but never used", ""),
+        }
+    }
+
     fn report<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -862,12 +950,16 @@ impl NoUnusedVars {
             line: start.line,
             column: start.column + text::utf16_len(name.bytes()),
         };
-        let report = cx
-            .report(id, message)
+        let is_oxlint = cx.language().is_oxlint;
+        let mut report = cx
+            .report(id, if is_oxlint { Message::new(message.id, "{{text}}") } else { message })
             .end_at(end)
             .data("varName", name)
             .data("action", action)
             .data("additional", additional);
+        if is_oxlint {
+            report = report.data("text", self.oxlint_text(unused_var, message));
+        }
         let Some(fix) = get_import_fixer(unused_var, reported) else {
             return;
         };

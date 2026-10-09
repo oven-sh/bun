@@ -51,6 +51,8 @@ pub struct Options {
     pub no_single_tilde: bool,
     /// See `compat.rs`.
     pub micromark: bool,
+    /// See `compat::astral_is_a_letter`.
+    pub code_units: bool,
     pub mdx: bool,
 }
 
@@ -81,6 +83,7 @@ impl Default for Options {
             directives: false,
             no_single_tilde: false,
             micromark: false,
+            code_units: false,
             mdx: false,
         }
     }
@@ -113,6 +116,7 @@ impl Options {
         directives: false,
         no_single_tilde: false,
         micromark: false,
+        code_units: false,
         mdx: false,
     };
 
@@ -150,6 +154,7 @@ impl Options {
             directives: self.directives,
             no_single_tilde: self.no_single_tilde,
             micromark: self.micromark,
+            code_units: self.code_units,
             mdx: self.mdx,
         }
     }

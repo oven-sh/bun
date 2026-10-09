@@ -5,6 +5,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 pub mod json_index;
+#[cfg(bun_sema_mimalloc)]
 mod json_reader;
 mod json_stage2;
 pub mod xml_index;

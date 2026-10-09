@@ -484,12 +484,16 @@ impl ConsistentTypeImports {
             };
             let statement = report.import.stmt();
             if report.has_value_or_unused_specifiers {
-                let names: Vec<Vec<u8>> = (report.type_specifiers.iter())
-                    .filter_map(|specifier| specifier.local())
-                    .map(|local| concat(&[b"\"", local.bytes(), b"\""]))
-                    .collect();
+                let locals = report.type_specifiers.iter().filter_map(|specifier| specifier.local());
+                let type_imports = match cx.language().is_oxlint {
+                    true => utils::oxlint::format_word_list(&locals.map(|local| local.bytes()).collect::<Vec<_>>()),
+                    false => {
+                        let in_quotes = locals.map(|local| concat(&[b"\"", local.bytes(), b"\""]));
+                        format_word_list(&in_quotes.collect::<Vec<_>>())
+                    }
+                };
                 cx.report(statement, SOME_IMPORTS_ARE_ONLY_TYPES)
-                    .data("typeImports", format_word_list(&names))
+                    .data("typeImports", type_imports)
                     .fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
             } else if !has_attributes(report.import) {
                 cx.report(statement, TYPE_OVER_VALUE)

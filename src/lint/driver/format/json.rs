@@ -67,7 +67,10 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
         }
     }
     out.extend_from_slice(b",\"usedDeprecatedRules\":");
-    crate::deprecated::write_used(out, result.linted.as_ref().map(|it| &*it.config));
+    match &result.deprecated {
+        Some(deprecated) => out.extend_from_slice(deprecated),
+        None => crate::deprecated::write_used(out, result.linted.as_ref().map(|it| &*it.config)),
+    }
     out.push(b'}');
 }
 

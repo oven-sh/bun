@@ -19,6 +19,7 @@
 
 mod ast;
 mod engine;
+mod eslint;
 mod host;
 mod offsets;
 mod processor;
@@ -29,8 +30,10 @@ mod tokens;
 mod wire;
 
 pub use engine::{Demand, Engine, Serve, Vm};
+pub use eslint::{Configuration, Linted, Refusal, Text};
 pub use host::{Failure, Host, Loading, Report, Suggested};
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
+pub(crate) use rules::has_what_json_lacks;
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::PROGRAM;

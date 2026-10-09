@@ -33,6 +33,10 @@ impl PreferReadonlyParameterTypes {
         if matches!(func.kind(), FnKind::ConstructorType | FnKind::IndexSignature | FnKind::StaticBlock) {
             return;
         }
+        // tsgolint does not look at setters.
+        if func.kind() == FnKind::Setter && cx.language().is_oxlint {
+            return;
+        }
         for param in func.params_with_this() {
             if !self.check_parameter_properties && param.is_parameter_property() {
                 continue;
@@ -43,7 +47,12 @@ impl PreferReadonlyParameterTypes {
             let ty = get_parameter_type(param);
             let is_mutable = || !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
             if *cx.state.entry(ty).or_insert_with(is_mutable) {
-                cx.report(param.span_without_modifiers(), SHOULD_BE_READONLY);
+                // oxlint points at the decorators of what is no parameter property.
+                let place = match cx.language().is_oxlint && !param.is_parameter_property() {
+                    true => param.span(),
+                    false => param.span_without_modifiers(),
+                };
+                cx.report(place, SHOULD_BE_READONLY);
             }
         }
     }

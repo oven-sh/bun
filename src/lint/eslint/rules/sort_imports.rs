@@ -48,6 +48,16 @@ impl Syntax {
             Syntax::Single => "single",
         }
     }
+
+    /// As oxlint writes it.
+    fn capitalized_name(self) -> &'static str {
+        match self {
+            Syntax::None => "None",
+            Syntax::All => "All",
+            Syntax::Multiple => "Multiple",
+            Syntax::Single => "Single",
+        }
+    }
 }
 
 /// ESLint's `usedMemberSyntax`
@@ -116,9 +126,13 @@ impl SortImports {
         let (syntax, previous_syntax) = (used_member_syntax(import), used_member_syntax(previous));
         if syntax != previous_syntax {
             if self.rank[syntax as usize] < self.rank[previous_syntax as usize] {
+                let name: fn(Syntax) -> &'static str = match cx.language().is_oxlint {
+                    true => Syntax::capitalized_name,
+                    false => Syntax::name,
+                };
                 cx.report(node, UNEXPECTED_SYNTAX_ORDER)
-                    .data("syntaxA", syntax.name())
-                    .data("syntaxB", previous_syntax.name());
+                    .data("syntaxA", name(syntax))
+                    .data("syntaxB", name(previous_syntax));
             }
         } else if let Some(name) = get_first_local_member_name(import)
             && let Some(previous_name) = get_first_local_member_name(previous)

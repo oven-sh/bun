@@ -1,6 +1,6 @@
 //! One function through the compiler.
 
-use crate::convert::{Converted, Refusal, Root, convert};
+use crate::convert::{Converted, Recorded, Refusal, Root, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
@@ -15,6 +15,15 @@ use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
 use bun_react_compiler::lowering::FunctionNode;
 use bun_react_compiler::{EnvironmentConfig, LatePasses};
 
+/// Whose rules the compiler runs for. The two have their own forks of it, and look for other functions.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Flavor {
+    /// `react/*` of oxlint
+    Oxlint,
+    /// `react-hooks/*` of eslint-plugin-react-hooks
+    Eslint,
+}
+
 /// How much of the compiler runs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Depth {
@@ -27,15 +36,17 @@ pub(crate) enum Depth {
 /// The state for one file.
 pub(crate) struct Compiler<'a> {
     file: &'a File<'a>,
+    flavor: Flavor,
     depth: Depth,
     config: EnvironmentConfig,
 }
 
-/// oxlint's `react_compiler_plugin_options`
-fn config_of_oxlint() -> EnvironmentConfig {
+/// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`
+fn config_of(flavor: Flavor) -> EnvironmentConfig {
+    let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
         validate_ref_access_during_render: true,
-        joined_ref_values_keep_their_place: true,
+        joined_ref_values_keep_their_place: is_oxlint,
         captured_refs_are_known_in_functions: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
@@ -44,22 +55,29 @@ fn config_of_oxlint() -> EnvironmentConfig {
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,
-        // Globals that oxc's compiler knows and Bun's does not.
-        validate_no_capitalized_calls: Some(vec!["BigInt".to_owned(), "Symbol".to_owned()]),
+        validate_no_capitalized_calls: Some(match flavor {
+            // Globals that oxc's compiler knows and Bun's does not.
+            Flavor::Oxlint => vec!["BigInt".to_owned(), "Symbol".to_owned()],
+            Flavor::Eslint => Vec::new(),
+        }),
         validate_hooks_usage: true,
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,
-        validate_exhaustive_effect_dependencies: ExhaustiveEffectDepsMode::All,
+        validate_exhaustive_effect_dependencies: match flavor {
+            Flavor::Oxlint => ExhaustiveEffectDepsMode::All,
+            Flavor::Eslint => ExhaustiveEffectDepsMode::Off,
+        },
         ..EnvironmentConfig::default()
     }
 }
 
 impl<'a> Compiler<'a> {
-    pub(crate) fn new(file: &'a File<'a>, depth: Depth) -> Compiler<'a> {
+    pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, depth: Depth) -> Compiler<'a> {
         Compiler {
             file,
+            flavor,
             depth,
-            config: config_of_oxlint(),
+            config: config_of(flavor),
         }
     }
 
@@ -75,9 +93,10 @@ impl<'a> Compiler<'a> {
         let arena = bun_alloc::Arena::new();
         let mut allocator = ASTMemoryAllocator::borrowing(&arena);
         let _scope = allocator.enter();
-        let converted = match convert(self.file, &arena, func) {
+        let converted = match convert(self.file, &arena, func, self.flavor) {
             Ok(converted) => converted,
             Err(Refusal::Using) => return Ok(()),
+            Err(Refusal::ThisParameter) => return Err(Vec::new()),
             Err(refusal) => return Err(vec![refused(refusal)]),
         };
         let host = LintHost::new(&converted, &arena, self.file.text());
@@ -93,18 +112,18 @@ impl<'a> Compiler<'a> {
             &converted.import_bindings,
             match self.depth {
                 // An error that a late pass throws drops what is recorded, which these are.
-                _ if !converted.implicit_arguments.is_empty() => LatePasses::Always,
+                _ if !converted.recorded.is_empty() => LatePasses::Always,
                 Depth::Validations => LatePasses::WhereTheyCount,
                 Depth::Everything => LatePasses::AlsoForTodos,
             },
         );
         logged.extend(findings(&converted, linted.logged));
-        let recorded = converted
-            .implicit_arguments
-            .iter()
-            .map(|it| implicit_arguments(*it));
+        let recorded = converted.recorded.iter().map(|it| match *it {
+            Recorded::ImplicitArguments(span) => implicit_arguments(span),
+            Recorded::DynamicImport(span) => dynamic_import(span),
+        });
         match linted.result {
-            Ok(()) if converted.implicit_arguments.is_empty() => Ok(()),
+            Ok(()) if converted.recorded.is_empty() => Ok(()),
             Ok(()) => Err(recorded.collect()),
             Err(error) if error.is_thrown => Err(findings(&converted, error).collect()),
             Err(error) => Err(recorded.chain(findings(&converted, error)).collect()),
@@ -131,10 +150,26 @@ fn implicit_arguments(span: Span) -> Finding {
     }
 }
 
+/// What upstream's lowering says of the callee of `import(..)`
+fn dynamic_import(span: Span) -> Finding {
+    Finding {
+        category: ErrorCategory::Todo,
+        reason: "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
+        description: None,
+        details: vec![Detail::Error {
+            span: Some(span),
+            message: None,
+        }],
+        suggestions: Vec::new(),
+        is_error_detail: true,
+        function_span: None,
+    }
+}
+
 fn refused(refusal: Refusal) -> Finding {
     let description = match refusal {
         Refusal::TooDeep => "What is in it is nested too deeply",
-        Refusal::TooManyNodes | Refusal::Using => "It is too long",
+        Refusal::TooManyNodes | Refusal::Using | Refusal::ThisParameter => "It is too long",
         Refusal::TooManyBranches => "It has too many branches",
         Refusal::TooManyCalls => "It has too many calls",
         Refusal::TooManyDeclarations => "It declares too many variables",

@@ -1,5 +1,6 @@
 //! What the rules have in common. Each reports the diagnostics of one category.
 
+use crate::Flavor;
 use crate::oxlint::{Rendered, render_all};
 use bun_core::strings;
 use bun_lint::ast::File;
@@ -13,7 +14,7 @@ const MESSAGE: Message = Message::new("", "{{message}}");
 /// oxlint's `run_react_compiler_rule`: reports what the compiler says of the file in `category`.
 pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
     let file = cx.file();
-    let findings = crate::findings(file)
+    let findings = crate::findings(file, Flavor::Oxlint)
         .iter()
         .filter(|finding| finding.category == category);
     for (_, rendered) in render_all(file, findings) {
@@ -49,9 +50,9 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
 
 /// Whether the rule for `category` has anything to do in the file. For [`Rule::register`].
 pub fn starts<'a>(file: &'a File<'a>, category: ErrorCategory) -> bool {
-    let starts = crate::program::may_have_react_code(file) && should_run(file);
+    let starts = crate::program::may_have_react_code(file, Flavor::Oxlint) && should_run(file);
     if starts && matches!(category, ErrorCategory::Todo | ErrorCategory::Invariant) {
-        crate::want_everything(file);
+        crate::want_everything(file, Flavor::Oxlint);
     }
     starts
 }

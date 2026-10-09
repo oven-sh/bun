@@ -310,13 +310,15 @@ impl StrictVoidReturn {
             },
         };
 
+        // oxlint points at the function.
+        let head = if cx.language().is_oxlint { func.span() } else { get_function_head_loc(func) };
         if func.is_generator() {
-            cx.report(get_function_head_loc(func), NON_VOID_FUNC);
+            cx.report(head, NON_VOID_FUNC);
             return;
         }
 
         if func.is_async() {
-            let report = cx.report(get_function_head_loc(func), ASYNC_FUNC);
+            let report = cx.report(head, ASYNC_FUNC);
             match func.body() {
                 FnBody::Expr(body) => report.suggest(SUGGEST_ADD_VOID_OP, |fixer| add_void_to_arrow_fix(fixer, func, body)),
                 _ => report.suggest(SUGGEST_WRAP_IN_ASYNC_IIFE, |fixer| wrap_in_async_iife_fix(fixer, func)),
@@ -325,7 +327,7 @@ impl StrictVoidReturn {
         }
 
         if let FnBody::Expr(body) = func.body() {
-            cx.report(body, NON_VOID_RETURN)
+            cx.report(if cx.language().is_oxlint { body.outer_span() } else { body.span() }, NON_VOID_RETURN)
                 .suggest(SUGGEST_ADD_VOID_OP, |fixer| add_void_to_arrow_fix(fixer, func, body));
             return;
         }

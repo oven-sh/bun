@@ -7,7 +7,7 @@ use crate::configs::Loaded;
 use crate::lint::Context;
 use crate::paths;
 use crate::results::FileResult;
-use bun_lint::js_plugin::{Block, Processor, Route, read_messages, write_messages};
+use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages, write_messages};
 use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
@@ -42,6 +42,24 @@ fn extname(path: &[u8]) -> &[u8] {
         Some(at) if at > 0 => &name[at..],
         _ => b"",
     }
+}
+
+/// What is said about the file at `path`, which only ESLint can lint, if there is no ESLint.
+fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
+    let (what, name): (&[u8], _) = match config.is_javascript() {
+        true => (b"the parser", &config.parser_name),
+        false => (b"the language", &config.language_name),
+    };
+    [
+        b"Cannot lint ",
+        path,
+        b": ",
+        what,
+        b" \"",
+        name.as_deref().unwrap_or_default(),
+        b"\" runs in ESLint, and the package \"eslint\" is not installed. Run `bun add -d eslint`.",
+    ]
+    .concat()
 }
 
 /// What ESLint says about a `processor` that is not there.
@@ -112,7 +130,7 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let (path, text) = match block {
             Block::Unnamed(text) => {
-                return self.verify_natively(file, file.path, text, config);
+                return self.verify_as_it_is(loaded, Text { text, ..file }, config);
             }
             Block::Named { path, text } => (paths::from_native(path), text),
         };
@@ -121,7 +139,8 @@ impl Context<'_, '_> {
             return LintResult::default();
         };
         if text == file.text && extname(&path) == extname(file.path) {
-            return self.verify_natively(file, &path, text, config);
+            let path = &path;
+            return self.verify_as_it_is(loaded, Text { path, text, ..file }, config);
         }
         let block = Text {
             path: &path,
@@ -130,6 +149,14 @@ impl Context<'_, '_> {
             ..file
         };
         self.verify_routed(loaded, block, &own)
+    }
+
+    /// ESLint's `_verifyWithFlatConfigArrayAndWithoutProcessors`.
+    fn verify_as_it_is(&self, loaded: &Loaded, it: Text, config: &ResolvedConfig) -> LintResult {
+        match config.route_as_it_is(it.path) {
+            Route::Eslint => self.verify_with_eslint(loaded, it, config).0,
+            _ => self.verify_natively(it, it.path, it.text, config),
+        }
     }
 
     fn verify_with_processor(
@@ -177,12 +204,50 @@ impl Context<'_, '_> {
         }
     }
 
+    /// By ESLint's own `Linter`. Also returns JSON: ESLint's `usedDeprecatedRules`.
+    fn verify_with_eslint(
+        &self,
+        loaded: &Loaded,
+        it: Text,
+        config: &ResolvedConfig,
+    ) -> (LintResult, Option<Vec<u8>>) {
+        let Some(for_eslint) = &loaded.for_eslint else {
+            return (LintResult::default(), None);
+        };
+        let path = paths::to_native(it.path.to_vec());
+        let text = js_plugin::Text {
+            path: &path,
+            physical_path_len: it.physical_path_len,
+            text: it.text,
+            without_fixes: it.without_fixes,
+        };
+        let configuration = config.for_eslint.as_deref().unwrap_or(&for_eslint.whole);
+        match (self.js_plugins).lint_with_eslint(configuration, &for_eslint.run, text, &|id| {
+            self.find_rule(config, id)
+        }) {
+            Ok(linted) => (
+                LintResult {
+                    messages: linted.messages,
+                    suppressed: linted.suppressed,
+                    ..LintResult::default()
+                },
+                Some(linted.deprecated),
+            ),
+            Err(Refusal::NotInstalled) => (thrown(not_installed(it.path, config)), None),
+            Err(Refusal::Thrown(message)) => (thrown(message), None),
+        }
+    }
+
     /// ESLint's `_verifyWithFlatConfigArray`.
     fn verify_routed(&self, loaded: &Loaded, it: Text, config: &ResolvedConfig) -> LintResult {
+        let route = loaded.routes(config, it.path);
+        if route == Route::Eslint {
+            return self.verify_with_eslint(loaded, it, config).0;
+        }
         if let Some(error) = &config.error {
             return thrown(error.clone());
         }
-        match (config.route(it.path), &config.processor_location) {
+        match (route, &config.processor_location) {
             (Route::Native, _) => self.verify_natively(it, it.path, it.text, config),
             (Route::Processor, _) if it.depth >= MAX_DEPTH => LintResult::default(),
             (Route::Processor, Some(processor)) => {
@@ -190,7 +255,7 @@ impl Context<'_, '_> {
             }
             (Route::Processor, None) => thrown(no_such_processor(config)),
             // As a file of that kind.
-            (Route::Unsupported, _) => LintResult::default(),
+            (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }
     }
 
@@ -205,6 +270,7 @@ impl Context<'_, '_> {
         on_circular_fixes: &dyn Fn(&[u8]),
     ) -> FileResult {
         let without_fixes = !self.lint_options().wants_fixes;
+        let mut deprecated = None;
         let mut verify = |text: &[u8]| {
             let it = Text {
                 path: path_to_verify,
@@ -213,15 +279,22 @@ impl Context<'_, '_> {
                 without_fixes,
                 depth: 0,
             };
-            self.verify_routed(loaded, it, config)
+            if loaded.routes(config, path_to_verify) != Route::Eslint {
+                return self.verify_routed(loaded, it, config);
+            }
+            let (result, used) = self.verify_with_eslint(loaded, it, config);
+            deprecated = used;
+            result
         };
-        self.verify_text_by(
+        let mut result = self.verify_text_by(
             path,
             path_to_verify,
             text,
             config,
             on_circular_fixes,
             &mut verify,
-        )
+        );
+        result.deprecated = deprecated;
+        result
     }
 }

@@ -234,6 +234,131 @@
   "suggestions": "export function x(a) {\n  if (a) { return 1; } else { b }\n  [c]\n}\n",
   "dangerously": "export function x(a) {\n  if (a) { return 1; } b \n  [c]\n}\n"
  },
+ "56-no-var": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "var a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "57-no-var": {
+  "fix": "const [a, ...b] = c; b = 1; a;\n",
+  "suggestions": "var [a, ...b] = c; b = 1; a;\n",
+  "dangerously": "const [a, ...b] = c; b = 1; a;\n"
+ },
+ "58-no-var": {
+  "fix": "let { a, ...b } = c; b = 1; a;\n",
+  "suggestions": "var { a, ...b } = c; b = 1; a;\n",
+  "dangerously": "let { a, ...b } = c; b = 1; a;\n"
+ },
+ "59-no-var": {
+  "fix": "let { a, b = 1 } = c; a; b;\n",
+  "suggestions": "var { a, b = 1 } = c; a; b;\n",
+  "dangerously": "let { a, b = 1 } = c; a; b;\n"
+ },
+ "60-no-var": {
+  "fix": "let a = 1, b; a; b;\n",
+  "suggestions": "var a = 1, b; a; b;\n",
+  "dangerously": "let a = 1, b; a; b;\n"
+ },
+ "61-no-var": {
+  "fix": "if (x) { var a = 1; } a;\n",
+  "suggestions": "if (x) { var a = 1; } a;\n",
+  "dangerously": "if (x) { var a = 1; } a;\n"
+ },
+ "62-no-var": {
+  "fix": "if (x) { const a = 1; a; }\n",
+  "suggestions": "if (x) { var a = 1; a; }\n",
+  "dangerously": "if (x) { const a = 1; a; }\n"
+ },
+ "63-no-var": {
+  "fix": "for (let i = 0; i < 1; i++) {}\n",
+  "suggestions": "for (var i = 0; i < 1; i++) {}\n",
+  "dangerously": "for (let i = 0; i < 1; i++) {}\n"
+ },
+ "64-no-var": {
+  "fix": "for (const i = 0; i < 1; ) {}\n",
+  "suggestions": "for (var i = 0; i < 1; ) {}\n",
+  "dangerously": "for (const i = 0; i < 1; ) {}\n"
+ },
+ "65-no-var": {
+  "fix": "for (let i of x) { i; }\n",
+  "suggestions": "for (var i of x) { i; }\n",
+  "dangerously": "for (let i of x) { i; }\n"
+ },
+ "66-no-var": {
+  "fix": "export var a = 1;\na;\n",
+  "suggestions": "export var a = 1;\na;\n",
+  "dangerously": "export var a = 1;\na;\n"
+ },
+ "67-no-var": {
+  "fix": "export const a = 1;\n",
+  "suggestions": "export var a = 1;\n",
+  "dangerously": "export const a = 1;\n"
+ },
+ "68-no-var": {
+  "fix": "a; const a = 1;\n",
+  "suggestions": "a; var a = 1;\n",
+  "dangerously": "a; const a = 1;\n"
+ },
+ "69-no-var": {
+  "fix": "const a = 1; const a = 2;\n",
+  "suggestions": "var a = 1; var a = 2;\n",
+  "dangerously": "const a = 1; const a = 2;\n"
+ },
+ "70-no-var": {
+  "fix": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n",
+  "suggestions": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n",
+  "dangerously": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n"
+ },
+ "71-no-var": {
+  "fix": "switch (x) { case 1: const a = 1; a; }\n",
+  "suggestions": "switch (x) { case 1: var a = 1; a; }\n",
+  "dangerously": "switch (x) { case 1: const a = 1; a; }\n"
+ },
+ "72-no-var": {
+  "fix": "const a = 1, /* c */ b = 2 // d\n;a; b;\n",
+  "suggestions": "var a = 1, /* c */ b = 2 // d\n;a; b;\n",
+  "dangerously": "const a = 1, /* c */ b = 2 // d\n;a; b;\n"
+ },
+ "73-no-var": {
+  "fix": "const a = a;\n",
+  "suggestions": "var a = a;\n",
+  "dangerously": "const a = a;\n"
+ },
+ "74-no-var": {
+  "fix": "let a = function () { a = 1; };\n",
+  "suggestions": "var a = function () { a = 1; };\n",
+  "dangerously": "let a = function () { a = 1; };\n"
+ },
+ "75-no-var": {
+  "fix": "let a = 1; a++;\n",
+  "suggestions": "var a = 1; a++;\n",
+  "dangerously": "let a = 1; a++;\n"
+ },
+ "76-no-var": {
+  "fix": "declare let a: number;\nexport {};\n",
+  "suggestions": "declare var a: number;\nexport {};\n",
+  "dangerously": "declare let a: number;\nexport {};\n"
+ },
+ "77-no-var": {
+  "fix": "namespace N { const a = 1; a; }\n",
+  "suggestions": "namespace N { var a = 1; a; }\n",
+  "dangerously": "namespace N { const a = 1; a; }\n"
+ },
+ "78-no-var": {
+  "fix": "namespace N { export const a = 1; }\nN.a;\n",
+  "suggestions": "namespace N { export var a = 1; }\nN.a;\n",
+  "dangerously": "namespace N { export const a = 1; }\nN.a;\n"
+ },
+ "79-no-var": {
+  "fix": "const a: number = 1; type B = typeof a;\n",
+  "suggestions": "var a: number = 1; type B = typeof a;\n",
+  "dangerously": "const a: number = 1; type B = typeof a;\n"
+ },
+ "80-no-var": {
+  "fix": "class C { static { const a = 1; a; } }\n",
+  "suggestions": "class C { static { var a = 1; a; } }\n",
+  "dangerously": "class C { static { const a = 1; a; } }\n"
+ },
  "9-non-nullable-type-assertion-style": {
   "fix": "declare const a: string | null; export const b = a as string;\n",
   "suggestions": "declare const a: string | null; export const b = a!;\n",

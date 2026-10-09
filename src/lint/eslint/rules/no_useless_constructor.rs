@@ -4,6 +4,9 @@ use bun_lint::prelude::*;
 pub struct NoUselessConstructor;
 
 const NO_USELESS_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Useless constructor.");
+/// What oxlint says instead.
+const EMPTY_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Empty constructors are unnecessary");
+const REDUNDANT_SUPER_CALL: Message = Message::new("noUselessConstructor", "Redundant super call in constructor");
 const REMOVE_CONSTRUCTOR: Message = Message::new("removeConstructor", "Remove the constructor.");
 
 /// The arguments, if `body` is a single call of `super`.
@@ -94,7 +97,12 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         (true, _) => member.span(),
         (false, _) => Span::new(member.span().start, name_end),
     };
-    cx.report(place, NO_USELESS_CONSTRUCTOR)
+    let message = match (cx.language().is_oxlint, has_super_class) {
+        (false, _) => NO_USELESS_CONSTRUCTOR,
+        (true, false) => EMPTY_CONSTRUCTOR,
+        (true, true) => REDUNDANT_SUPER_CALL,
+    };
+    cx.report(place, message)
         .suggest(REMOVE_CONSTRUCTOR, |fixer| {
             let next = fixer.file().token_after(member);
             let adds_semicolon = next.is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))

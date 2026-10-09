@@ -597,15 +597,17 @@ impl Reader<'_> {
         &mut self,
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
-        for (prefix, location) in std::mem::take(&mut self.js_locations) {
+        for (prefix, location) in &mut self.js_locations {
             let mut unknown = self.unknown_rules.iter();
-            if !unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
-                continue;
-            }
-            self.js_plugins
-                .push(load(&location, &prefix).map_err(|why| {
-                    ConfigError::new(&[b"Failed to load the plugin \"", &prefix, b"\": ", &why])
+            if unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
+                self.js_plugins.push(load(location, prefix).map_err(|why| {
+                    ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])
                 })?);
+            }
+            // Only where it is is of any more use.
+            if let Json::Object(entries) = location {
+                entries.retain(|it| it.0 != b"described");
+            }
         }
         let plugins = &self.js_plugins;
         self.unknown_rules
@@ -627,6 +629,7 @@ impl Reader<'_> {
             notes: self.notes,
             unknown_rules: self.unknown_rules,
             js_plugins: self.js_plugins,
+            js_locations: self.js_locations,
             cache: Default::default(),
         }
     }

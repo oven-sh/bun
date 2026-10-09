@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::string_utils::upper_case_first;
-use bun_lint::utils::{ast_utils, is_assignment_target};
+use bun_lint::utils::{ast_utils, is_assignment_target, oxlint};
 use rustc_hash::FxHashMap;
 
 /// Enforce a maximum cyclomatic complexity allowed in a program.
@@ -70,24 +70,28 @@ impl Complexity {
             if complexity <= threshold {
                 continue;
             }
+            let is_oxlint = cx.language().is_oxlint;
             let (name, loc) = match owner {
                 Node::Member(member) => (
-                    b"Class field initializer".to_vec(),
+                    if is_oxlint { b"class field initializer".to_vec() } else { b"Class field initializer".to_vec() },
                     member.init().map_or_else(|| member.span(), Expr::span),
                 ),
                 Node::Func(func) if func.kind() == FnKind::StaticBlock => {
                     let whole = func.span();
                     // oxlint points at the whole block.
-                    let end = if cx.language().is_oxlint { whole.end } else { whole.start + "static".len() as u32 };
-                    (b"Class static block".to_vec(), Span::new(whole.start, end))
+                    match is_oxlint {
+                        true => (b"class static block".to_vec(), whole),
+                        false => {
+                            let keyword = Span::new(whole.start, whole.start + "static".len() as u32);
+                            (b"Class static block".to_vec(), keyword)
+                        }
+                    }
                 }
+                // oxlint points at the function.
+                Node::Func(func) if is_oxlint => (oxlint::get_function_name_with_kind(func), func.estree_span()),
                 Node::Func(func) => (
                     upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
-                    // oxlint points at the function.
-                    match cx.language().is_oxlint {
-                        true => func.estree_span(),
-                        false => ast_utils::get_function_head_loc(func),
-                    },
+                    ast_utils::get_function_head_loc(func),
                 ),
                 _ => continue,
             };

@@ -382,7 +382,8 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
             },
             ..Default::default()
         });
-        self.stop_after_syntax_error();
+        let logged = self.log().msgs.len();
+        self.stop_after_syntax_error_since(logged - 1);
         Ok(())
     }
 }
@@ -391,6 +392,13 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
 /// and escapes, `\8`, `08`, `a?.#b`, `assert { type: "json" }`.
 fn is_accepted_by_other_parsers(code: u32) -> bool {
     matches!(code, 1121 | 1487 | 1488 | 1489 | 18030 | 2880)
+}
+
+/// Whether `msg` makes a file one that the formatter leaves as it is. Much of what Bun's parser logs
+/// is no error of TypeScript's parser (`sema::early_error`): the file is formatted, all of it.
+fn is_syntax_error_for_babel(msg: &bun_ast::Msg) -> bool {
+    crate::sema::is_parse_error(msg)
+        && !matches!(msg.metadata, bun_ast::Metadata::TypeScript { code, .. } if is_accepted_by_other_parsers(code))
 }
 
 /// FOR SPEED, in tolerant mode: the type checker reads the offset and the length of a location
@@ -1329,16 +1337,11 @@ impl<'a> Lexer<'a> {
     /// from the index `first` on.
     #[cold]
     pub(crate) fn stop_after_syntax_error_since(&mut self, first: usize) {
-        let is_syntax_error = |msg: &bun_ast::Msg| {
-            msg.kind == bun_ast::Kind::Err
-                && match msg.metadata {
-                    bun_ast::Metadata::TypeScript { kind, code } => {
-                        kind == TypeScriptKind::Parse && !is_accepted_by_other_parsers(code)
-                    }
-                    _ => true,
-                }
-        };
-        if self.log().msgs.iter().skip(first).any(is_syntax_error) {
+        if !self.is_babel {
+            return;
+        }
+        let mut logged = self.log().msgs.iter().skip(first);
+        if logged.any(is_syntax_error_for_babel) {
             self.stop_after_syntax_error();
         }
     }

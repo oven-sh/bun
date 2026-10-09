@@ -52,6 +52,13 @@ pub struct Plugin {
     pub rules: Vec<Arc<Rule>>,
 }
 
+impl Rule {
+    /// JSON: the module that exports the rule itself, if there is one.
+    pub(crate) fn location(&self) -> Option<&[u8]> {
+        self.location.as_deref()
+    }
+}
+
 impl Plugin {
     /// The rule that the plugin calls `name`.
     pub fn rule(&self, name: &[u8]) -> Option<&Arc<Rule>> {
@@ -143,7 +150,7 @@ pub struct FileSettings {
 }
 
 /// Whether there is something in `json` that the configuration file has and JSON has not.
-fn has_what_json_lacks(json: &Json) -> bool {
+pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
     match json {
         Json::Array(items) => items.iter().any(has_what_json_lacks),
         Json::Object(entries) => {

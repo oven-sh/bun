@@ -425,6 +425,6 @@ pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMes
     input.apply(&lines, messages, &mut unused);
     if !unused.is_empty() {
         messages.append(&mut unused);
-        crate::utils::sort::sort_by_key(messages, |it| (it.line, it.column));
+        LintMessage::sort(messages);
     }
 }

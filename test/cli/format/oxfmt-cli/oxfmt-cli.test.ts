@@ -3,7 +3,7 @@
 // `cases.json` is written by `test/cli/lint/oracle/driver/oxfmt-fixtures.mjs --record`.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cases, fixtures } from "./cases.json";
 
@@ -34,8 +34,10 @@ describe.concurrent("bun format does what oxfmt does", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const changed = texts.flatMap(([name, text]) => {
-        const after = readFileSync(join(root, name), "utf8");
+      // Also what `--init` makes.
+      const made = Object.keys(it.changed).filter(name => !(name in files) && existsSync(join(root, name)));
+      const changed = [...texts, ...made.map(name => [name, undefined])].flatMap(([name, text]) => {
+        const after = readFileSync(join(root, name as string), "utf8");
         return after === text ? [] : [[name, after]];
       });
       const named = (stdout + stderr)

@@ -12,7 +12,7 @@ use bun_core::strings;
 use bun_lint::ast::{File, VueScript};
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
-use bun_lint::js_plugin::Host;
+use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
     apply_fixes,
@@ -406,6 +406,7 @@ impl Context<'_, '_> {
                 config: Arc::clone(config),
                 has_source: !is_fixed && counts.errors + counts.warnings > 0,
             }),
+            deprecated: None,
         }
     }
 
@@ -453,7 +454,7 @@ impl Context<'_, '_> {
                 &mut |text| self.verify_scripts(framework, &target.path, text, config),
             )));
         }
-        if target.has_processor() {
+        if target.route() != Route::Native {
             return Ok(Some(self.verify_processed_text(
                 &target.loaded,
                 shown,

@@ -13,6 +13,15 @@ pub const PREFER_DESTRUCTURING: Message =
 
 const PRECEDENCE_OF_ASSIGNMENT_EXPR: i32 = 1;
 
+/// `kind` as the message has it: oxlint writes it with a capital.
+fn type_in_message<R: Rule>(kind: &'static str, cx: &Cx<'_, R>) -> &'static str {
+    match (cx.language().is_oxlint, kind) {
+        (false, _) => kind,
+        (true, "object") => "Object",
+        (true, _) => "Array",
+    }
+}
+
 /// Which kinds of destructuring are enforced for a kind of node.
 #[derive(Copy, Clone, Default)]
 pub struct Enabled {
@@ -119,7 +128,7 @@ impl Config {
             Some(init) if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint => init.outer_span(),
             _ => declaration.span(),
         };
-        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", kind);
+        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
         // Only `let x = a.x` is fixed.
         if can_fix
             && kind == "object"
@@ -152,7 +161,7 @@ impl Config {
             // A default value in a pattern is not an assignment.
             && !utils::is_assignment_target(e)
         {
-            cx.report(e, PREFER_DESTRUCTURING).data("type", kind);
+            cx.report(e, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
         }
     }
 }

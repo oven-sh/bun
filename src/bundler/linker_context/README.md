@@ -745,19 +745,6 @@ The renamed symbols are then used during final code generation to produce output
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 
-#### `splitChunksByEvaluationOrder.rs`
-
-**Purpose**: Keeps files out of one chunk when the entry points that load them run them in different orders. A chunk prints its files in one order, and each chunk imports the other chunks in its own order. Runs after `mergeSmallChunks.rs`, on the entry bits that it leaves.
-
-**Key functions**:
-
-- Groups the files by chunk key (`File.entry_bits`). Only the entry points that can be the first to load a group count (`EntryLoadGraph::load_class`)
-- Only a file that runs something when it loads has an order that can be observed (`loading_file_has_no_side_effects`), and a file of the group that imports such a file
-- A group with such a file in an import cycle stays as it is: chunks import each other for the bindings that they use, which in a cycle is not the order in which the files run. So does a group with such a file that reaches a top-level await: a chunk does not wait for a chunk that it does not import. And a group with such a file that imports a wrapped file: the call of the wrapper prints where the `import` is, between the files that the other imports run
-- A group that a split `require()` loads stays as it is: the imports of a chunk are not ranked by what the call runs
-- Walks the imports of each such entry point (`for_each_edge`), in parallel, for the order in which it evaluates those files
-- Files that every order has back to back, in the same order, are a run. `computeChunks()` adds the number of the run to the chunk key when a group has several. The other files of the group keep the key as it is
-
 #### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.

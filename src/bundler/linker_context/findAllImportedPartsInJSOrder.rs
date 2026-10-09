@@ -266,14 +266,6 @@ impl WalkPlan {
                     plan.chunk_of_file[file] = chunk_index;
                 }
             }
-            // Several chunks can have one key (`split_chunks_by_evaluation_order`).
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
-                if matches!(chunk.content, chunk::Content::Javascript(_)) {
-                    for &file in chunk.files_with_parts_in_chunk.keys() {
-                        plan.chunk_of_file[file as usize] = chunk_index as u32;
-                    }
-                }
-            }
         }
 
         // The entry point that loads first among the chunk's entry points owns the chunk.
@@ -331,7 +323,7 @@ impl WalkPlan {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Edge {
+enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
@@ -342,7 +334,7 @@ pub(crate) enum Edge {
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
 /// A file runs where it is imported, not where its bindings are used: `part.dependencies` does not order what runs.
-pub(crate) fn for_each_edge(
+fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
@@ -856,13 +848,6 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
-    // The load enters at the file of the entry point, which is in another chunk.
-    if chunk
-        .flags
-        .contains(chunk::Flags::RANKS_IMPORTS_FROM_ENTRY_POINT_FILE)
-    {
-        roots.insert(0, chunk.entry_point.source_index());
-    }
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
@@ -896,9 +881,7 @@ fn reached_chunks_in_order(
             visited.set(source_index as usize);
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
-                // Several chunks can have one key (`split_chunks_by_evaluation_order`).
                 entry_bits.eql(&file_entry_bits[source_index as usize])
-                    && matches!(chunk_of_file[source_index as usize], other if other == chunk_index || other == u32::MAX)
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

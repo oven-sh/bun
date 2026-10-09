@@ -138,7 +138,7 @@ import { a, b } from "./util";
 Every option of the four works as it does there. Comments move with their imports the same way, and the comments that turn sorting off work too: `// sort-imports-ignore`, `// prettier-ignore` before an import, `// organize-imports-ignore`.
 
 - Without its plugin in `plugins` or `--plugin`, an option like `importOrder` is ignored with a warning, as in Prettier.
-- `prettier-plugin-organize-imports` leaves code blocks in Markdown alone. The other three sort them.
+- `prettier-plugin-organize-imports` leaves code blocks in Markdown and the scripts of Vue and HTML files alone. The other three sort code blocks and the scripts of Vue files. In HTML, the two `sort-imports` plugins sort scripts and oxfmt does not.
 - `importOrderParserPlugins` is accepted and not needed: `bun format` reads TypeScript, JSX, and decorators in every file.
 - `<BUILTIN_MODULES>` are the modules of Node.js 26, whatever runs `bun format`.
 

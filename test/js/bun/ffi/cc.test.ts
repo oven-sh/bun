@@ -75,10 +75,9 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
       expect(() => res.symbols.add("1", "2")).toThrow();
     });
 
-    // looks like `b` defaults to `0`, is this U.B. or expected?
-    it.skip("when passed too few arguments, throws an error", () => {
+    it("when passed too few arguments, the missing ones are undefined", () => {
       // @ts-expect-error
-      expect(() => res.symbols.add(1)).toThrow();
+      expect(res.symbols.add(1)).toBe(res.symbols.add(1, undefined));
     });
 
     it("when passed too many arguments, still works", () => {
@@ -100,6 +99,165 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// A call frame holds only the arguments the call passed, and every cc() symbol reads its arguments from it.
+// Spawned: a slot past the passed arguments, read as a pointer or a napi_value, can crash the process.
+describe("calling a symbol with fewer arguments than it declares", () => {
+  it("gives C undefined for each missing argument", async () => {
+    using dir = tempDir("bun-ffi-cc-short-call", {
+      "short-call.c": /* c */ `
+        typedef long long bits;
+        union caster { bits i; double d; float f; };
+        bits i32_bits(int x) { return x; }
+        bits u8_bits(unsigned char x) { return x; }
+        bits bool_bits(_Bool x) { return x; }
+        bits f64_bits(double x) { union caster c; c.d = x; return c.i; }
+        bits f32_bits(float x) { union caster c; c.i = 0; c.f = x; return c.i; }
+        bits ptr_bits(void* x) { return (bits)x; }
+        bits cstring_bits(const char* x) { return (bits)x; }
+        bits function_bits(void (*x)(void)) { return (bits)x; }
+        int first_byte(const unsigned char* p) { return p ? p[0] : -1; }
+
+        /* Eight hex digits per int: the text is what C received, whatever the return conversion does. */
+        static char text[96];
+        static const char* hex(const int* values, int count) {
+          char* out = text;
+          for (int i = 0; i < count; i++) {
+            for (int shift = 28; shift >= 0; shift -= 4) *out++ = "0123456789abcdef"[((unsigned)values[i] >> shift) & 15];
+            *out++ = ' ';
+          }
+          out[-1] = 0;
+          return text;
+        }
+        static int seen[10];
+        void record10(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j) {
+          seen[0] = a; seen[1] = b; seen[2] = c; seen[3] = d; seen[4] = e;
+          seen[5] = f; seen[6] = g; seen[7] = h; seen[8] = i; seen[9] = j;
+        }
+        const char* recorded(void) { return hex(seen, 10); }
+        const char* hex2(int a, int b) { seen[0] = a; seen[1] = b; return hex(seen, 2); }
+        const char* hex10(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j) {
+          record10(a, b, c, d, e, f, g, h, i, j);
+          return hex(seen, 10);
+        }
+
+        typedef struct test_env* env_t;
+        typedef struct test_value* value_t;
+        value_t echo_napi_value(env_t env, value_t value) { return value; }
+      `,
+      "short-call-fixture.js": /* js */ `
+        import { cc, CString } from "bun:ffi";
+        import path from "path";
+
+        // No buffer, i64 or u64: an explicit undefined is not a value they take (a buffer must be a view, a 64-bit integer a number).
+        const types = ["i32", "u8", "bool", "f64", "f32", "ptr", "cstring", "function"];
+        const ten = Array(10).fill("i32");
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "short-call.c"),
+          symbols: {
+            ...Object.fromEntries(types.map(type => [type + "_bits", { args: [type], returns: "i64" }])),
+            first_byte: { args: ["ptr"], returns: "i32" },
+            // No "cstring" return, so this one is the compiled function itself, with no JS wrapper around it.
+            record10: { args: ten, returns: "void" },
+            recorded: { args: [], returns: "cstring" },
+            hex2: { args: ["i32", "i32"], returns: "cstring" },
+            hex10: { args: ten, returns: "cstring" },
+            echo_napi_value: { args: ["napi_env", "napi_value"], returns: "napi_value" },
+          },
+        });
+        const { record10, recorded, hex2, hex10, echo_napi_value } = symbols;
+        const U = undefined;
+        const rest = Array(8).fill(U);
+        const seen = call => {
+          record10(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+          call();
+          return String(recorded());
+        };
+
+        // What C received from a short call, and from the same call with undefined passed for each missing argument.
+        const short = {};
+        const padded = {};
+        for (const type of types) {
+          const bits = symbols[type + "_bits"];
+          short[type] = String(bits());
+          padded[type] = String(bits(U));
+        }
+
+        const fromTimer = Promise.withResolvers();
+        setTimeout(() => fromTimer.resolve(String(symbols.ptr_bits())), 0);
+        short["ptr, from a timer callback"] = await fromTimer.promise;
+        padded["ptr, from a timer callback"] = String(symbols.ptr_bits(U));
+
+        const protocols = {
+          "direct": [() => record10(1, 2), () => record10(1, 2, ...rest)],
+          "call": [() => record10.call(null, 1, 2), () => record10.call(null, 1, 2, ...rest)],
+          "apply": [() => record10.apply(null, [1, 2]), () => record10.apply(null, [1, 2, ...rest])],
+          "Reflect.apply": [() => Reflect.apply(record10, null, [1, 2]), () => Reflect.apply(record10, null, [1, 2, ...rest])],
+          "bind": [() => record10.bind(null, 1, 2)(), () => record10.bind(null, 1, 2, ...rest)()],
+          "spread": [() => record10(...[1, 2]), () => record10(...[1, 2, ...rest])],
+          "new": [() => new record10(1, 2), () => new record10(1, 2, ...rest)],
+          // Array.from calls it as record10(1, 0).
+          "a built-in's callback": [() => Array.from([1], record10), () => record10(1, 0, ...rest)],
+        };
+        for (const [name, [shortCall, paddedCall]] of Object.entries(protocols)) {
+          short["no wrapper, " + name] = seen(shortCall);
+          padded["no wrapper, " + name] = seen(paddedCall);
+        }
+
+        short["cstring, 2 parameters"] = String(hex2(1));
+        padded["cstring, 2 parameters"] = String(hex2(1, U));
+        short["cstring, 2 parameters, .native"] = String(new CString(hex2.native(1)));
+        padded["cstring, 2 parameters, .native"] = String(new CString(hex2.native(1, U)));
+        short["cstring, 10 parameters"] = String(hex10(1, 2));
+        padded["cstring, 10 parameters"] = String(hex10(1, 2, ...rest));
+        short["cstring, 10 parameters, .native"] = String(new CString(hex10.native(1, 2)));
+        padded["cstring, 10 parameters, .native"] = String(new CString(hex10.native(1, 2, ...rest)));
+
+        // The wrapper fills in napi_env itself: its position in the argument list is a placeholder.
+        short["napi_value"] = typeof echo_napi_value();
+        padded["napi_value"] = typeof echo_napi_value(U, U);
+        short["napi_value, after the placeholder"] = typeof echo_napi_value(null);
+        padded["napi_value, after the placeholder"] = typeof echo_napi_value(null, U);
+
+        const controls = {
+          "every argument": seen(() => record10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+          "one argument too many": seen(() => record10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
+          "napi_value": echo_napi_value(U, 42),
+          // A missing pointer is NULL, so C that checks for NULL does not read through it.
+          "missing pointers": ["ptr", "cstring", "function"].map(type => String(symbols[type + "_bits"]())),
+          "first_byte": [symbols.first_byte(), symbols.first_byte(U), symbols.first_byte(new Uint8Array([7]))],
+        };
+        console.log(JSON.stringify({ short, padded, controls }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "short-call-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is in the received object so that a failure shows it. It is not asserted: debug builds print warnings there.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    const oneToTen = "00000001 00000002 00000003 00000004 00000005 00000006 00000007 00000008 00000009 0000000a";
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        short: results.padded,
+        controls: {
+          "every argument": oneToTen,
+          "one argument too many": oneToTen,
+          "napi_value": 42,
+          "missing pointers": ["0", "0", "0"],
+          "first_byte": [-1, -1, 7],
+        },
+      },
+      exitCode: 0,
+    });
+  });
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

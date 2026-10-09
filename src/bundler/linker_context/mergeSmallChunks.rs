@@ -1025,7 +1025,7 @@ pub(crate) fn merge_small_chunks(
         this.graph.files_live.is_set(source_index as usize)
             && css_asts[source_index as usize].is_none()
     };
-    let mut load_classes = EntryLoadGraph::new(this)?;
+    let mut load_graph = EntryLoadGraph::new(this)?;
 
     // Group the live JS files by their chunk key, and the groups by their
     // load-condition class (the key with redundant dynamic entries removed).
@@ -1097,7 +1097,7 @@ pub(crate) fn merge_small_chunks(
         let group = match entry {
             MapEntry::Occupied(entry) => entry.into_mut(),
             MapEntry::Vacant(entry) => {
-                let class = load_classes.load_class(bits)?;
+                let class = load_graph.load_class(bits)?;
                 match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
                     MapEntry::Occupied(e) => e.into_mut().1.push(group_index),
                     MapEntry::Vacant(e) => {
@@ -1150,8 +1150,8 @@ pub(crate) fn merge_small_chunks(
 
     for (group, loads) in entries_loaded_mid_evaluation(
         this,
-        &load_classes.sync_calls,
-        &load_classes.required_sync,
+        &load_graph.sync_calls,
+        &load_graph.required_sync,
         file_entry_bits,
         group_of_file,
         groups.count(),
@@ -1265,10 +1265,10 @@ pub(crate) fn merge_small_chunks(
             dominated.push(AutoBitSet::init_empty(entry_points_len)?);
         }
         for entry_id in 0..entry_points_len {
-            let mut up = load_classes.idom[entry_id];
+            let mut up = load_graph.idom[entry_id];
             while up != UNREACHED && up as usize != entry_points_len {
                 dominated[up as usize].set(entry_id);
-                up = load_classes.idom[up as usize];
+                up = load_graph.idom[up as usize];
             }
         }
         for group in groups.values_mut() {

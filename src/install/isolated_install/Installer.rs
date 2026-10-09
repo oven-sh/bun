@@ -118,8 +118,27 @@ pub struct Installer<'a> {
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
 
-    /// The directories that the tasks moved away from a link of the root or of a workspace.
-    pub(crate) displaced: symlinker::DisplacedList,
+    /// Tasks on any thread add to it. The main thread reports it.
+    pub(crate) occupied_links: bun_threading::Guarded<Vec<OccupiedLink>>,
+}
+
+/// A directory that was where the root or a workspace links a dependency.
+pub(crate) enum OccupiedLink {
+    /// It is at `aside` now, and the link is written.
+    Moved { link: Box<[u8]>, aside: Box<[u8]> },
+    /// It could not move. It stays, and no link is written.
+    Kept {
+        link: Box<[u8]>,
+        err: Box<sys::Error>,
+    },
+}
+
+impl OccupiedLink {
+    fn link(&self) -> &[u8] {
+        match self {
+            OccupiedLink::Moved { link, .. } | OccupiedLink::Kept { link, .. } => link,
+        }
+    }
 }
 
 impl<'a> Installer<'a> {
@@ -363,14 +382,12 @@ impl<'a> Installer<'a> {
                     ),
                 );
                 if !symlink_err.dest.is_empty() {
-                    // Only `Symlinker::replace_directory` names two paths.
+                    // Only `Symlinker::move_aside` names two paths.
                     bun_core::note!(
-                        "{} is where this link belongs, and it did not move to {}. Remove it, then install again",
+                        "The folder that was at {} is at {} now",
                         bun_core::fmt::quote(&symlink_err.path),
                         bun_core::fmt::quote(&symlink_err.dest),
                     );
-                } else if !symlink_err.path.is_empty() {
-                    bun_core::pretty_errorln!("  <d>{}<r>", bstr::BStr::new(&symlink_err.path));
                 }
             }
             TaskError::Patching(patch_log) => {
@@ -447,6 +464,7 @@ impl<'a> Installer<'a> {
         }
 
         if self.manager().options.enable.fail_early() {
+            self.report_occupied_links();
             Global::exit(1);
         }
 
@@ -2135,31 +2153,69 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    /// Main thread, after the tasks.
-    pub(crate) fn report_displaced_folders(&self) {
-        let displaced = core::mem::take(&mut *self.displaced.lock());
-        // The tasks add in any order, and the example has to be the same in each run.
-        let Some(first) = displaced.iter().min_by(|a, b| a.link.cmp(&b.link)) else {
-            return;
-        };
-        if self.manager().options.log_level.is_silent() {
+    /// Main thread, when the tasks are done or the install stops.
+    pub(crate) fn report_occupied_links(&self) {
+        let mut occupied = core::mem::take(&mut *self.occupied_links.lock());
+        if occupied.is_empty() || self.manager().options.log_level.is_silent() {
             return;
         }
-        if displaced.len() == 1 {
-            bun_core::note!(
-                "{} was a folder, not a link. Moved it to {}",
-                bun_core::fmt::quote(&first.link),
-                bun_core::fmt::quote(&first.moved_to),
-            );
-        } else {
-            bun_core::note!(
-                "{} folders were where dependency links belong. Moved each to <b>.old_\\<name\\><r> beside its link, for example {} to {}",
-                displaced.len(),
-                bun_core::fmt::quote(&first.link),
-                bun_core::fmt::quote(&first.moved_to),
-            );
+        // The tasks add in any order, and the example has to be the same in each run.
+        occupied.sort_unstable_by(|a, b| a.link().cmp(b.link()));
+
+        let mut moved = occupied.iter().filter_map(|occupied| match occupied {
+            OccupiedLink::Moved { link, aside } => Some((link, aside)),
+            OccupiedLink::Kept { .. } => None,
+        });
+        if let Some((link, aside)) = moved.next() {
+            match moved.count() {
+                0 => bun_core::note!(
+                    "{} was a folder, not a link. Moved it to {}",
+                    bun_core::fmt::quote(link),
+                    bun_core::fmt::quote(aside),
+                ),
+                more => bun_core::note!(
+                    "{} folders were where dependency links belong. Moved each to a new <b>{}\\<name\\>-\\<id\\><r> folder beside its link, for example {} to {}",
+                    more + 1,
+                    bstr::BStr::new(symlinker::DISPLACED_PREFIX),
+                    bun_core::fmt::quote(link),
+                    bun_core::fmt::quote(aside),
+                ),
+            }
+        }
+
+        let mut kept = occupied.iter().filter_map(|occupied| match occupied {
+            OccupiedLink::Kept { link, err } => Some((link, err)),
+            OccupiedLink::Moved { .. } => None,
+        });
+        if let Some((link, err)) = kept.next() {
+            let name = bstr::BStr::new(err.name());
+            let message = bstr::BStr::new(err.msg().unwrap_or(b"unknown error"));
+            let syscall = <&'static str>::from(err.syscall);
+            match kept.count() {
+                0 => bun_core::warn!(
+                    "{} is a folder where a dependency link belongs, and bun install cannot move it: {}: {} <d>({})<r>",
+                    bun_core::fmt::quote(link),
+                    name,
+                    message,
+                    syscall,
+                ),
+                more => bun_core::warn!(
+                    "{} folders are where dependency links belong, and bun install cannot move them, for example {}: {}: {} <d>({})<r>",
+                    more + 1,
+                    bun_core::fmt::quote(link),
+                    name,
+                    message,
+                    syscall,
+                ),
+            }
+            bun_core::note!("Remove or rename each folder, then run <cyan>bun install<r> again");
         }
         Output::flush();
+    }
+
+    #[cold]
+    fn record_occupied_link(&self, occupied: OccupiedLink) {
+        self.occupied_links.lock().push(occupied);
     }
 
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
@@ -2218,7 +2274,7 @@ impl<'a> Installer<'a> {
             symlinker::Strategy::ExpectExistingKeepDirectory
         };
 
-        let _ = symlinker.ensure_symlink(link_strategy, &self.displaced);
+        let _ = symlinker.ensure_symlink(link_strategy);
     }
 
     fn maybe_replace_node_modules_path(
@@ -2330,9 +2386,23 @@ impl<'a> Installer<'a> {
                 #[cfg(windows)]
                 fallback_junction_target: dep_store_path.into_sep::<{ PathSeparators::ANY }>(),
             };
-            let result = symlinker.ensure_symlink(strategy, &self.displaced);
+            let result = symlinker.ensure_symlink(strategy);
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
-            changed |= result?;
+            match result? {
+                symlinker::Link::Unchanged => {}
+                symlinker::Link::Written => changed = true,
+                symlinker::Link::Moved(aside) => {
+                    changed = true;
+                    self.record_occupied_link(OccupiedLink::Moved {
+                        link: Box::from(dest.slice()),
+                        aside,
+                    });
+                }
+                symlinker::Link::Kept(err) => self.record_occupied_link(OccupiedLink::Kept {
+                    link: Box::from(dest.slice()),
+                    err,
+                }),
+            }
         }
 
         Ok(changed)

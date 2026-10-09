@@ -2066,7 +2066,7 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
-            displaced: bun_core::Mutex::new(Vec::new()),
+            occupied_links: bun_threading::Guarded::new(Vec::new()),
         };
         // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
         // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
@@ -2616,6 +2616,7 @@ pub(crate) fn install_isolated_packages(
             unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {
+                installer.report_occupied_links();
                 Output::err(err, "failed to install packages", format_args!(""));
                 Global::exit(1);
             }
@@ -2625,7 +2626,7 @@ pub(crate) fn install_isolated_packages(
             progress.root.end();
             *progress = Progress::default();
         }
-        installer.report_displaced_folders();
+        installer.report_occupied_links();
         // Defensive: clear the stack-local progress-node pointers so the
         // accessors can't observe dangling pointers after this frame returns.
         installer.manager_mut().scripts_node = None;

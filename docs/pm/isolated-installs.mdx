@@ -204,7 +204,7 @@ rm -rf node_modules package-lock.json yarn.lock
 bun install --linker isolated
 ```
 
-In a workspace, npm and Yarn also install packages into `packages/*/node_modules`. If such a folder is where Bun links a dependency of the root or of a workspace, `bun install` moves it to `.old_<name>` beside the link and writes the link. You can delete `.old_<name>`.
+In a workspace, npm and Yarn also install packages into `packages/*/node_modules`. If such a folder is where Bun links a dependency of the root or of a workspace, `bun install` moves it to `.old_<name>-<id>` beside the link, writes the link, and prints a note. You can delete the `.old_*` folders. If Bun cannot move a folder (for example, `node_modules` is read-only, or the folder is a mount point), the folder stays, and `bun install` prints a warning that names it.
 
 ### From pnpm
 

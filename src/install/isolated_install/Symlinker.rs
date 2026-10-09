@@ -3,7 +3,7 @@ use bun_paths;
 use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
-use crate::package_manager_real::patch_package::PATCH_COPY_MARKER;
+use crate::package_manager_real::patch_package::is_patch_copy_link;
 
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
@@ -12,28 +12,20 @@ pub(crate) struct Symlinker {
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
 
-/// What stands at `dest` when it is not a link.
-enum Occupant {
-    /// A directory that the strategy keeps.
-    KeptDirectory,
-    Directory,
-    File,
+/// What `ensure_symlink` did.
+pub(crate) enum Link {
+    /// The link was correct, or what is at `dest` stays as it is.
+    Unchanged,
+    Written,
+    /// A directory was at `dest`. It is at this path now, and the link is written.
+    Moved(Box<[u8]>),
+    /// A directory is at `dest` and could not move. No link is written.
+    Kept(Box<bun_sys::Error>),
 }
 
-/// A directory that was where a link belongs, and where it is now.
-pub(crate) struct Displaced {
-    pub(crate) link: Box<[u8]>,
-    pub(crate) moved_to: Box<[u8]>,
-}
-
-/// Tasks on any thread add to it. The main thread reports it.
-pub(crate) type DisplacedList = bun_core::Mutex<Vec<Displaced>>;
-
-/// The name beside a link for the directory that was in its place. It has no random part, so
-/// one link keeps one directory at most: the last one.
-pub(crate) fn displaced_name(link_name: &[u8]) -> Vec<u8> {
-    [b".old_", link_name].concat()
-}
+/// The start of the name that a directory gets when it moves away from a link. A random part
+/// follows, so a move replaces nothing.
+pub(crate) const DISPLACED_PREFIX: &[u8] = b".old_";
 
 impl Symlinker {
     // `&mut self` because `Path::slice_z()` writes
@@ -57,16 +49,11 @@ impl Symlinker {
         }
     }
 
-    // Ok(true) when a link was written.
-    pub(crate) fn ensure_symlink(
-        &mut self,
-        strategy: Strategy,
-        displaced: &DisplacedList,
-    ) -> bun_sys::Result<bool> {
+    pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<Link> {
         match strategy {
             Strategy::ExpectMissing => {
                 return match self.symlink() {
-                    Ok(()) => Ok(true),
+                    Ok(()) => Ok(Link::Written),
                     Err(symlink_err1) => match symlink_err1.get_errno() {
                         Errno::ENOENT => {
                             let Some(dest_parent) = self.dest.dirname() else {
@@ -74,11 +61,11 @@ impl Symlinker {
                             };
 
                             let _ = Fd::cwd().make_path(dest_parent);
-                            return self.symlink().map(|()| true);
+                            return self.symlink().map(|()| Link::Written);
                         }
                         Errno::EEXIST => {
                             let _ = Fd::cwd().delete_tree(self.dest.slice_z());
-                            return self.symlink().map(|()| true);
+                            return self.symlink().map(|()| Link::Written);
                         }
                         _ => Err(symlink_err1),
                     },
@@ -92,7 +79,7 @@ impl Symlinker {
                         Err(readlink_err) => {
                             return match readlink_err.get_errno() {
                                 Errno::ENOENT => match self.symlink() {
-                                    Ok(()) => Ok(true),
+                                    Ok(()) => Ok(Link::Written),
                                     Err(symlink_err) => match symlink_err.get_errno() {
                                         Errno::ENOENT => {
                                             let Some(dest_parent) = self.dest.dirname() else {
@@ -100,12 +87,15 @@ impl Symlinker {
                                             };
 
                                             let _ = Fd::cwd().make_path(dest_parent);
-                                            return self.symlink().map(|()| true);
+                                            return self.symlink().map(|()| Link::Written);
                                         }
                                         _ => Err(symlink_err),
                                     },
                                 },
-                                _ => self.replace_occupant(strategy, displaced),
+                                _ => match strategy {
+                                    Strategy::ExpectExisting => self.replace_occupant(),
+                                    _ => self.replace_file_keep_directory(),
+                                },
                             };
                         }
                     };
@@ -115,16 +105,22 @@ impl Symlinker {
                 current_link = strings::without_trailing_slash(current_link);
 
                 if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
-                    return Ok(false);
+                    return Ok(Link::Unchanged);
+                }
+
+                #[cfg(windows)]
+                if strings::eql_long(current_link, self.fallback_junction_target.slice(), true) {
+                    return Ok(Link::Unchanged);
+                }
+
+                if matches!(strategy, Strategy::ExpectExisting)
+                    && self.is_link_to_patch_copy(current_link)
+                {
+                    return Ok(Link::Unchanged);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
-                        return Ok(false);
-                    }
-
                     // this existing link is pointing to the wrong package.
                     // on windows rmdir must be used for symlinks created to point
                     // at directories, even if the target no longer exists
@@ -144,119 +140,144 @@ impl Symlinker {
                     let _ = bun_sys::unlink(self.dest.slice_z());
                 }
 
-                return self.symlink().map(|()| true);
+                return self.symlink().map(|()| Link::Written);
             }
         }
     }
 
-    /// `dest` exists and is not a link. Only a directory that `bun patch` marked stays
-    /// (the user edits it until `bun patch --commit`), and with
-    /// `ExpectExistingKeepDirectory` every directory stays.
+    /// `bun patch` points the link of a dependency at its copy until `bun patch --commit`. A
+    /// link to a copy that is gone is a link with a wrong target.
     #[cold]
-    fn replace_occupant(
-        &mut self,
-        strategy: Strategy,
-        displaced: &DisplacedList,
-    ) -> bun_sys::Result<bool> {
-        let removed = match self.occupant(strategy)? {
-            Occupant::KeptDirectory => return Ok(false),
-            Occupant::File => bun_sys::unlink(self.dest.slice_z()),
-            Occupant::Directory => bun_sys::rmdir(self.dest.slice_z()),
-        };
-        match removed {
-            Ok(()) => {}
-            Err(err) => match err.get_errno() {
-                Errno::ENOENT => {}
-                // A directory that is not empty.
-                Errno::ENOTEMPTY | Errno::EEXIST => {
-                    return self.replace_directory(displaced).map(|()| true);
-                }
-                _ => return Err(err),
-            },
-        }
-        self.symlink().map(|()| true)
+    fn is_link_to_patch_copy(&mut self, current_link: &[u8]) -> bool {
+        is_patch_copy_link(current_link)
+            && !matches!(
+                bun_sys::stat(self.dest.slice_z()).map_err(|err| err.get_errno()),
+                Err(Errno::ENOENT | Errno::ENOTDIR)
+            )
     }
 
-    fn occupant(&mut self, strategy: Strategy) -> bun_sys::Result<Occupant> {
-        let keep_every_directory = matches!(strategy, Strategy::ExpectExistingKeepDirectory);
-
+    fn dest_is_directory(&mut self) -> bool {
         #[cfg(windows)]
         {
-            let is_directory = bun_sys::get_file_attributes(self.dest.slice_z())
-                .is_some_and(|a| a.is_directory && !a.is_reparse_point);
-            if !is_directory {
-                return Ok(Occupant::File);
-            }
-            if keep_every_directory {
-                return Ok(Occupant::KeptDirectory);
-            }
-            let mut marker = self.dest.save();
-            let _ = marker.append(PATCH_COPY_MARKER);
-            if bun_sys::get_file_attributes(marker.slice_z()).is_some_and(|a| a.is_directory) {
-                return Ok(Occupant::KeptDirectory);
-            }
-            Ok(Occupant::Directory)
+            bun_sys::get_file_attributes(self.dest.slice_z())
+                .is_some_and(|a| a.is_directory && !a.is_reparse_point)
         }
         #[cfg(not(windows))]
         {
             // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
-            if keep_every_directory {
-                return Ok(match bun_sys::lstat(self.dest.slice_z()) {
-                    Ok(st) if bun_sys::posix::s_isdir(st.st_mode as u32) => Occupant::KeptDirectory,
-                    _ => Occupant::File,
-                });
-            }
-            let mut marker = self.dest.save();
-            let _ = marker.append(PATCH_COPY_MARKER);
-            match bun_sys::lstat(marker.slice_z()) {
-                Ok(st) if bun_sys::posix::s_isdir(st.st_mode as u32) => Ok(Occupant::KeptDirectory),
-                // A file with the name of the marker is a file of the package.
-                Ok(_) => Ok(Occupant::Directory),
-                Err(err) => match err.get_errno() {
-                    Errno::ENOENT => Ok(Occupant::Directory),
-                    // `dest` is not a directory.
-                    Errno::ENOTDIR => Ok(Occupant::File),
-                    _ => Err(err),
-                },
-            }
+            bun_sys::lstat(self.dest.slice_z())
+                .is_ok_and(|st| bun_sys::posix::s_isdir(st.st_mode as u32))
         }
     }
 
-    /// Moves the directory at `dest` to `displaced_name` beside it, then writes the link. The
-    /// directory can hold files that exist nowhere else, so it is not deleted.
-    fn replace_directory(&mut self, displaced: &DisplacedList) -> bun_sys::Result<()> {
-        let name = displaced_name(self.dest.basename());
-        let mut aside = bun_paths::Path::<u8>::from(&*match self.dest.dirname() {
-            Some(parent) => [parent, &[bun_paths::SEP], &name].concat(),
-            None => name,
-        })
-        .assume_ok();
+    fn replace_file(&mut self) -> bun_sys::Result<Link> {
+        let _ = bun_sys::unlink(self.dest.slice_z());
+        self.symlink().map(|()| Link::Written)
+    }
 
-        if let Err(err) = Fd::cwd().delete_tree(aside.slice()).and_then(|()| {
-            bun_sys::renameat(Fd::cwd(), self.dest.slice_z(), Fd::cwd(), aside.slice_z())
-        }) {
-            return Err(err.with_path_dest(self.dest.slice(), aside.slice()));
+    /// `dest` exists and is not a link. A directory stays and a file is replaced.
+    #[cold]
+    fn replace_file_keep_directory(&mut self) -> bun_sys::Result<Link> {
+        if self.dest_is_directory() {
+            return Ok(Link::Unchanged);
+        }
+        self.replace_file()
+    }
+
+    /// `dest` is where the root or a workspace links a dependency, and it is not a link. No
+    /// directory there is from bun (`bun patch` keeps the link), so a directory moves aside.
+    /// Nothing is deleted, and a directory that cannot move stays and is not an error.
+    #[cold]
+    fn replace_occupant(&mut self) -> bun_sys::Result<Link> {
+        // `.bun`, `.bin` and `.cache` are directories of node_modules itself.
+        if self.dest.basename().first() == Some(&b'.') {
+            return self.replace_file_keep_directory();
+        }
+        #[cfg(windows)]
+        if !self.dest_is_directory() {
+            return self.replace_file();
+        }
+
+        let err = match bun_sys::rmdir(self.dest.slice_z()) {
+            Ok(()) => return self.symlink().map(|()| Link::Written),
+            Err(err) => err,
+        };
+        match err.get_errno() {
+            Errno::ENOENT => self.symlink().map(|()| Link::Written),
+            Errno::ENOTDIR => self.replace_file(),
+            // A directory that is not empty.
+            Errno::ENOTEMPTY | Errno::EEXIST => self.move_aside(),
+            // A mount point, or a directory in a read-only node_modules. `bun_sys::rmdir` names
+            // its syscall `unlink`.
+            _ if self.dest_is_directory() => Ok(Link::Kept(Box::new(
+                err.with_path_and_syscall(self.dest.slice(), bun_sys::Tag::rmdir),
+            ))),
+            _ => self.replace_file(),
+        }
+    }
+
+    /// Moves the directory at `dest` to a new name beside it, then writes the link.
+    fn move_aside(&mut self) -> bun_sys::Result<Link> {
+        let mut aside = [
+            self.dest.dirname().unwrap_or(b"."),
+            &[bun_paths::SEP],
+            DISPLACED_PREFIX,
+            self.dest.basename(),
+        ]
+        .concat();
+        {
+            use std::io::Write as _;
+            let random = bun_core::fast_random();
+            let _ = write!(
+                aside,
+                "-{}",
+                bun_core::fmt::hex_lower(bun_core::bytes_of(&random))
+            );
+        }
+        // `Path::from` does not check the length.
+        if aside.len() >= bun_paths::MAX_PATH_BYTES {
+            return Ok(Link::Kept(Box::new(
+                bun_sys::Error::from_code(Errno::ENAMETOOLONG, bun_sys::Tag::rename)
+                    .with_path_dest(self.dest.slice(), &aside),
+            )));
+        }
+        let mut aside_path = bun_paths::Path::<u8>::from(&*aside).assume_ok();
+
+        if let Err(err) = bun_sys::renameat(
+            Fd::cwd(),
+            self.dest.slice_z(),
+            Fd::cwd(),
+            aside_path.slice_z(),
+        ) {
+            return Ok(Link::Kept(Box::new(
+                err.with_path_dest(self.dest.slice(), &aside),
+            )));
         }
         if let Err(err) = self.symlink() {
-            // When the directory cannot move back, this error names where it is.
-            bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z())?;
-            return Err(err);
+            return Err(
+                match bun_sys::renameat(
+                    Fd::cwd(),
+                    aside_path.slice_z(),
+                    Fd::cwd(),
+                    self.dest.slice_z(),
+                ) {
+                    Ok(()) => err,
+                    // The directory is not where it was. This error names where it is.
+                    Err(_) => err.with_path_dest(self.dest.slice(), &aside),
+                },
+            );
         }
-
-        displaced.lock().push(Displaced {
-            link: Box::from(self.dest.slice()),
-            moved_to: Box::from(aside.slice()),
-        });
-        Ok(())
+        Ok(Link::Moved(aside.into_boxed_slice()))
     }
 }
 
 #[derive(Clone, Copy)]
 pub enum Strategy {
-    /// A link with another target is written again. A file is replaced. A directory that
-    /// `bun patch` did not mark moves aside.
+    /// A link with another target is written again, unless it is the link of `bun patch` to
+    /// its copy. A file is replaced. A directory moves aside.
     ExpectExisting,
-    /// `ExpectExisting`, but every directory stays where it is.
+    /// `ExpectExisting`, but every link with another target is written again, and every
+    /// directory stays where it is.
     ExpectExistingKeepDirectory,
     ExpectMissing,
 }

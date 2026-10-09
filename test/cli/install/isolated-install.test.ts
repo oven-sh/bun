@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { chmodSync, cpSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink, unlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -1726,9 +1726,17 @@ describe("a real directory where a dependency link belongs", () => {
     return { stdout, stderr, exitCode };
   }
 
-  // Where an install puts the folder that was in place of the link `slot`.
-  const displaced = (slot: string) => join(dirname(slot), `.old_${basename(slot)}`);
-  const movedNote = (slot: string) => `note: "${slot}" was a folder, not a link. Moved it to "${displaced(slot)}"\n`;
+  // An install moves the folder that was in place of the link `slot` to `.old_<name>-<id>` beside the link.
+  async function displaced(slot: string) {
+    const prefix = `.old_${basename(slot)}-`;
+    const names = (await readdirSorted(dirname(slot))).filter(name => name.startsWith(prefix));
+    return names.map(name => join(dirname(slot), name));
+  }
+  const movedNote = (slot: string, aside: string) =>
+    `note: "${slot}" was a folder, not a link. Moved it to "${aside}"\n`;
+  const keptWarning = (slot: string, cause: string) =>
+    `warn: "${slot}" is a folder where a dependency link belongs, and bun install cannot move it: ${cause}\n` +
+    `note: Remove or rename each folder, then run bun install again\n`;
 
   async function version(folder: string) {
     return (await file(join(folder, "package.json")).json()).version;
@@ -1781,16 +1789,17 @@ describe("a real directory where a dependency link belongs", () => {
     await registry.writeBunfig(packageDir, { linker: "isolated" });
 
     const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
     expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("no-deps", "1.0.1")));
     expect(await version(slot)).toBe("1.0.1");
-    expect(await version(displaced(slot))).toBe("2.0.0");
+    expect(await version(aside)).toBe("2.0.0");
     expect(install.exitCode).toBe(0);
 
     const again = await run(packageDir, ["install"]);
     expect(again.stderr).not.toContain("note:");
     expect(again.stdout).toContain("(no changes)");
-    expect(await readdirSorted(join(member, "node_modules"))).toEqual([".old_no-deps", "no-deps"]);
+    expect(await readdirSorted(join(member, "node_modules"))).toEqual([basename(aside), "no-deps"]);
     expect(again.exitCode).toBe(0);
   });
 
@@ -1822,7 +1831,8 @@ describe("a real directory where a dependency link belongs", () => {
     await registry.writeBunfig(packageDir, { linker: "isolated" });
 
     const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
     expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("has-bin-entries", "2.0.0")));
     expect(install.exitCode).toBe(0);
 
@@ -1849,9 +1859,10 @@ describe("a real directory where a dependency link belongs", () => {
     const slot = join(packageDir, "packages", "m", "node_modules", "lib");
 
     const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
     expect(readlinkSync(slot)).toBe(join("..", "..", "lib"));
-    expect(await version(displaced(slot))).toBe("0.0.0-stale");
+    expect(await version(aside)).toBe("0.0.0-stale");
     expect(install.exitCode).toBe(0);
 
     const again = await run(packageDir, ["install"]);
@@ -1882,9 +1893,10 @@ describe("a real directory where a dependency link belongs", () => {
     await write(join(slot, "package.json"), JSON.stringify({ name: "no-deps", version: "0.0.0-stale" }));
 
     const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
     expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("no-deps", "1.0.1")));
-    expect(await version(displaced(slot))).toBe("0.0.0-stale");
+    expect(await version(aside)).toBe("0.0.0-stale");
     expect(install.exitCode).toBe(0);
   });
 
@@ -1897,7 +1909,7 @@ describe("a real directory where a dependency link belongs", () => {
           dependencies: {
             "no-deps": "1.0.0",
             "a-dep": "1.0.1",
-            "basic-1": "1.0.0",
+            "@types/is-number": "1.0.0",
             "is-number": "1.0.0",
             "left-pad": "1.0.0",
           },
@@ -1906,14 +1918,13 @@ describe("a real directory where a dependency link belongs", () => {
     });
     const nodeModules = join(packageDir, "node_modules");
     const hiddenLink = join(nodeModules, ".bun", "node_modules", "no-deps");
+    const scoped = join(nodeModules, "@types", "is-number");
     expect((await run(packageDir, ["install"])).exitCode).toBe(0);
 
-    // A directory. A file with the name of the marker does not mark it.
+    // Directories with files, one of them at a scoped name.
     await replaceWithDirectory(join(nodeModules, "no-deps"), "no-deps", { "lib/mine.js": "mine" });
-    await replaceWithDirectory(join(nodeModules, "a-dep"), "a-dep", { ".bun-patch-tag": "a file" });
-    // A directory with the marker of bun patch.
-    await replaceWithDirectory(join(nodeModules, "basic-1"), "basic-1");
-    await mkdir(join(nodeModules, "basic-1", ".bun-patch-tag"));
+    await replaceWithDirectory(join(nodeModules, "a-dep"), "a-dep");
+    await replaceWithDirectory(scoped, "@types/is-number");
     // An empty directory, and a file.
     await unlink(join(nodeModules, "is-number"));
     await mkdir(join(nodeModules, "is-number"));
@@ -1923,35 +1934,39 @@ describe("a real directory where a dependency link belongs", () => {
     await replaceWithDirectory(hiddenLink, "no-deps");
 
     const install = await run(packageDir, ["install"]);
+    const [scopedAside] = await displaced(scoped);
+    const [aDepAside] = await displaced(join(nodeModules, "a-dep"));
+    const [noDepsAside] = await displaced(join(nodeModules, "no-deps"));
     // One line, with the first of the folders as the example.
-    const aDep = join(nodeModules, "a-dep");
     expect(install.stderr).toContain(
-      `note: 2 folders were where dependency links belong. Moved each to .old_<name> beside its link, for example "${aDep}" to "${displaced(aDep)}"\n`,
+      `note: 3 folders were where dependency links belong. Moved each to a new .old_<name>-<id> folder beside its link, for example "${scoped}" to "${scopedAside}"\n`,
     );
     expect(install.stderr.match(/^note: /gm)).toHaveLength(1);
+    expect(install.stderr).not.toContain("warn:");
 
+    // The empty directory and the file leave nothing behind.
     expect(await readdirSorted(nodeModules)).toEqual([
       ".bun",
-      ".old_a-dep",
-      ".old_no-deps",
+      basename(aDepAside),
+      basename(noDepsAside),
+      "@types",
       "a-dep",
-      "basic-1",
       "is-number",
       "left-pad",
       "no-deps",
     ]);
+    expect(await readdirSorted(dirname(scoped))).toEqual([basename(scopedAside), "is-number"]);
     expect(readlinkSync(join(nodeModules, "no-deps"))).toBe(storeLink("no-deps", "1.0.0"));
     expect(readlinkSync(join(nodeModules, "a-dep"))).toBe(storeLink("a-dep", "1.0.1"));
     expect(readlinkSync(join(nodeModules, "is-number"))).toBe(storeLink("is-number", "1.0.0"));
     expect(readlinkSync(join(nodeModules, "left-pad"))).toBe(storeLink("left-pad", "1.0.0"));
-    // The directory with the marker is where it was.
-    expect(lstatSync(join(nodeModules, "basic-1")).isSymbolicLink()).toBe(false);
-    expect(await version(join(nodeModules, "basic-1"))).toBe("0.0.0-stale");
-    // So is the one in the hidden hoist folder.
+    expect(await version(scoped)).toBe("1.0.0");
+    // The directory in the hidden hoist folder is where it was.
     expect(lstatSync(hiddenLink).isSymbolicLink()).toBe(false);
     // Nothing in a directory that moved is lost.
-    expect(await file(join(nodeModules, ".old_no-deps", "lib", "mine.js")).text()).toBe("mine");
-    expect(await version(join(nodeModules, ".old_a-dep"))).toBe("0.0.0-stale");
+    expect(await file(join(noDepsAside, "lib", "mine.js")).text()).toBe("mine");
+    expect(await version(aDepAside)).toBe("0.0.0-stale");
+    expect(await version(scopedAside)).toBe("0.0.0-stale");
     expect(install.exitCode).toBe(0);
   });
 
@@ -1968,9 +1983,10 @@ describe("a real directory where a dependency link belongs", () => {
       await replaceWithDirectory(slot, "no-deps");
 
       const install = await run(packageDir, command.split(" "));
-      expect(install.stderr).toContain(movedNote(slot));
+      const [aside] = await displaced(slot);
+      expect(install.stderr).toContain(movedNote(slot, aside));
       expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
-      expect(await version(displaced(slot))).toBe("0.0.0-stale");
+      expect(await version(aside)).toBe("0.0.0-stale");
       expect(install.exitCode).toBe(0);
     },
   );
@@ -1983,176 +1999,477 @@ describe("a real directory where a dependency link belongs", () => {
     await replaceWithDirectory(slot, "no-deps");
 
     const install = await run(packageDir, ["install", "--silent"]);
+    const [aside] = await displaced(slot);
     expect(install.stderr).toBe("");
     expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
-    expect(await version(displaced(slot))).toBe("0.0.0-stale");
+    expect(await version(aside)).toBe("0.0.0-stale");
     expect(install.exitCode).toBe(0);
   });
 
-  test("a link keeps only the last directory that was in its place", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
-    const slot = join(packageDir, "node_modules", "no-deps");
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-
-    await replaceWithDirectory(slot, "no-deps", { "first.js": "" });
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    await replaceWithDirectory(slot, "no-deps", { "second.js": "" });
-
-    const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
-    expect(await readdirSorted(displaced(slot))).toEqual(["package.json", "second.js"]);
-    expect(await readdirSorted(dirname(slot))).toEqual([".bun", ".old_no-deps", "no-deps"]);
-    expect(install.exitCode).toBe(0);
-  });
-
-  // The name of the moved directory is 5 bytes longer than the name of the link. A name of 251 bytes is valid,
-  // and the longer one is not. Windows limits the whole path, so the install stops before that.
-  test.skipIf(isWindows)("a directory that cannot move stops the install, and the error names it", async () => {
-    const alias = Buffer.alloc(251, "a").toString();
+  test("a move replaces nothing: what has the name .old_<name>, and each folder that moved before, stays", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
-        "package.json": JSON.stringify({ name: "app", dependencies: { [alias]: "npm:no-deps@1.0.0" } }),
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1", "is-number": "1.0.0" },
+        }),
+        "outside/kept.txt": "outside",
       },
     });
-    const slot = join(packageDir, "node_modules", alias);
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // A folder, a file and a link.
+    await write(join(nodeModules, ".old_no-deps", "mine.txt"), "a folder");
+    await write(join(nodeModules, ".old_a-dep"), "a file");
+    await symlink(join(packageDir, "outside"), join(nodeModules, ".old_is-number"));
+    await replaceWithDirectory(slot, "no-deps", { "first.js": "" });
+    await replaceWithDirectory(join(nodeModules, "a-dep"), "a-dep");
+    await replaceWithDirectory(join(nodeModules, "is-number"), "is-number");
+
+    const first = await run(packageDir, ["install"]);
+    expect(first.stderr).toContain("note: 3 folders were where dependency links belong.");
+    const [firstAside] = await displaced(slot);
+    expect(await readdirSorted(firstAside)).toEqual(["first.js", "package.json"]);
+    expect(first.exitCode).toBe(0);
+
+    await replaceWithDirectory(slot, "no-deps", { "second.js": "" });
+    const second = await run(packageDir, ["install"]);
+    const asides = await displaced(slot);
+    expect(asides).toHaveLength(2);
+    const secondAside = asides.find(aside => aside !== firstAside)!;
+    expect(second.stderr).toContain(movedNote(slot, secondAside));
+    expect(second.exitCode).toBe(0);
+
+    expect(await readdirSorted(firstAside)).toEqual(["first.js", "package.json"]);
+    expect(await readdirSorted(secondAside)).toEqual(["package.json", "second.js"]);
+    expect(await file(join(nodeModules, ".old_no-deps", "mine.txt")).text()).toBe("a folder");
+    expect(await file(join(nodeModules, ".old_a-dep")).text()).toBe("a file");
+    expect(lstatSync(join(nodeModules, ".old_is-number")).isSymbolicLink()).toBe(true);
+    expect(await file(join(packageDir, "outside", "kept.txt")).text()).toBe("outside");
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+  });
+
+  // The name of the moved directory is 22 bytes longer than the name of the link, and a name has 255 bytes at most.
+  // Windows limits the whole path, so the install stops before that.
+  test.skipIf(isWindows)(
+    "a directory that cannot move stays, and the install warns and writes the other links",
+    async () => {
+      const moves = Buffer.alloc(233, "a").toString();
+      const stays = Buffer.alloc(234, "b").toString();
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { [moves]: "npm:no-deps@1.0.0", [stays]: "npm:no-deps@1.0.0", "no-deps": "1.0.0" },
+          }),
+        },
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      await replaceWithDirectory(join(nodeModules, moves), "no-deps");
+      await replaceWithDirectory(join(nodeModules, stays), "no-deps", { "mine.txt": "mine" });
+      // `no-deps` is after both in the order of the links of the root.
+      await unlink(join(nodeModules, "no-deps"));
+
+      const install = await run(packageDir, ["install"]);
+      const [aside] = await displaced(join(nodeModules, moves));
+      expect(install.stderr).toContain(movedNote(join(nodeModules, moves), aside));
+      expect(install.stderr).toContain(
+        keptWarning(join(nodeModules, stays), "ENAMETOOLONG: File name too long (rename)"),
+      );
+      expect(install.stderr).not.toContain("error:");
+      expect(readlinkSync(join(nodeModules, moves))).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await file(join(nodeModules, stays, "mine.txt")).text()).toBe("mine");
+      expect(await displaced(join(nodeModules, stays))).toEqual([]);
+      expect(readlinkSync(join(nodeModules, "no-deps"))).toBe(storeLink("no-deps", "1.0.0"));
+      expect(install.exitCode).toBe(0);
+
+      // The folder is named again in each install, until the user removes it.
+      const again = await run(packageDir, ["install"]);
+      expect(again.stderr).toContain(
+        keptWarning(join(nodeModules, stays), "ENAMETOOLONG: File name too long (rename)"),
+      );
+      expect(again.exitCode).toBe(0);
+    },
+  );
+
+  // root can move a directory in a node_modules that has no write permission.
+  test.skipIf(isWindows || process.getuid?.() === 0)(
+    "a directory in a node_modules that is read-only stays, and the install exits 0",
+    async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      await replaceWithDirectory(slot, "no-deps", { "mine.txt": "mine" });
+      chmodSync(nodeModules, 0o555);
+      try {
+        const install = await run(packageDir, ["install"]);
+        expect(install.stderr).toContain(keptWarning(slot, "EACCES: Permission denied (rmdir)"));
+        expect(install.stderr).not.toContain("error:");
+        expect(await file(join(slot, "mine.txt")).text()).toBe("mine");
+        expect(install.exitCode).toBe(0);
+      } finally {
+        chmodSync(nodeModules, 0o755);
+      }
+    },
+  );
+
+  test.skipIf(isWindows)("a directory that has no permissions moves", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
+    const slot = join(packageDir, "node_modules", "no-deps");
     expect((await run(packageDir, ["install"])).exitCode).toBe(0);
 
     await replaceWithDirectory(slot, "no-deps");
+    chmodSync(slot, 0o000);
 
     const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain("ENAMETOOLONG: ");
-    expect(install.stderr).toContain("failed to symlink dependencies for package: app@");
-    expect(install.stderr).toContain(
-      `note: "${slot}" is where this link belongs, and it did not move to "${displaced(slot)}". Remove it, then install again\n`,
-    );
-    expect(await version(slot)).toBe("0.0.0-stale");
-    expect(install.exitCode).toBe(1);
+    const [aside] = await displaced(slot);
+    chmodSync(aside, 0o755);
+    expect(install.stderr).toContain(movedNote(slot, aside));
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+    expect(await version(aside)).toBe("0.0.0-stale");
+    expect(install.exitCode).toBe(0);
   });
 
-  test("a bun patch copy in a workspace stays when an install runs", async () => {
+  // A path has 4095 bytes at most on Linux, and the path of the moved directory is 22 bytes longer than the path of
+  // the link. The limit is 1023 bytes on macOS, and the temporary directory takes too much of it there.
+  test.skipIf(!isLinux)(
+    "a link path at the limit: the directory moves when the new path fits, and stays when not",
+    async () => {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+      // A workspace for which the path of the link `<workspace>/node_modules/no-deps` has `length` bytes.
+      const workspace = (first: string, length: number) => {
+        const tail = join("node_modules", "no-deps");
+        let path = first;
+        for (let rest; (rest = length - join(packageDir, path, tail).length) > 0; ) {
+          // One byte is the separator.
+          path = join(path, Buffer.alloc(Math.min(rest - 1, 200) || 1, "d").toString());
+        }
+        expect(join(packageDir, path, tail)).toHaveLength(length);
+        return path;
+      };
+      const fits = workspace("fits", 4073);
+      const tooLong = workspace("too-long", 4074);
+      await write(join(packageDir, "package.json"), JSON.stringify({ name: "app", workspaces: [fits, tooLong] }));
+      for (const [name, path] of [
+        ["fits", fits],
+        ["too-long", tooLong],
+      ]) {
+        await write(
+          join(packageDir, path, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+        );
+      }
+      const fitsSlot = join(packageDir, fits, "node_modules", "no-deps");
+      const tooLongSlot = join(packageDir, tooLong, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect(lstatSync(fitsSlot).isSymbolicLink()).toBe(true);
+      expect(lstatSync(tooLongSlot).isSymbolicLink()).toBe(true);
+
+      await replaceWithDirectory(fitsSlot, "no-deps");
+      await replaceWithDirectory(tooLongSlot, "no-deps");
+
+      const install = await run(packageDir, ["install"]);
+      const [aside] = await displaced(fitsSlot);
+      expect(aside).toHaveLength(4095);
+      expect(install.stderr).toContain(movedNote(fitsSlot, aside));
+      expect(install.stderr).toContain(keptWarning(tooLongSlot, "ENAMETOOLONG: File name too long (rename)"));
+      expect(lstatSync(fitsSlot).isSymbolicLink()).toBe(true);
+      expect(await readdirSorted(aside)).toEqual(["package.json"]);
+      expect(await version(tooLongSlot)).toBe("0.0.0-stale");
+      expect(install.exitCode).toBe(0);
+    },
+  );
+
+  test("a dependency with the name of the store: the store stays where it is", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
-        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
-        "packages/m/package.json": JSON.stringify({
-          name: "m",
-          version: "1.0.0",
-          dependencies: { "no-deps": "1.0.0" },
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { ".bun": "npm:no-deps@1.0.0", "a-dep": "1.0.1" },
         }),
       },
     });
-    const slot = join(packageDir, "packages", "m", "node_modules", "no-deps");
+    const nodeModules = join(packageDir, "node_modules");
 
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    const patch = await run(packageDir, ["patch", "packages/m/node_modules/no-deps"]);
-    expect(patch.stderr).not.toContain("error:");
-    expect(patch.exitCode).toBe(0);
-    expect(await readdirSorted(slot)).toEqual([".bun-patch-tag", "index.js", "package.json"]);
-    await write(join(slot, "index.js"), edit);
-
-    const forced = await run(packageDir, ["install", "--force"]);
-    expect(forced.stderr).not.toContain("note:");
-    expect(await file(join(slot, "index.js")).text()).toBe(edit);
-    expect(forced.exitCode).toBe(0);
-
-    // An install that makes a new store keeps the copy too.
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    const install = await run(packageDir, ["install"]);
-    expect(install.stderr).not.toContain("note:");
-    expect(await readdirSorted(slot)).toEqual([".bun-patch-tag", "index.js", "package.json"]);
-    expect(await file(join(slot, "index.js")).text()).toBe(edit);
-    expect(install.exitCode).toBe(0);
+    for (const args of [["install"], ["install"], ["install", "--force"]]) {
+      const install = await run(packageDir, args);
+      expect(install.stderr).not.toContain("note:");
+      expect(install.stderr).not.toContain("warn:");
+      expect(install.stderr).not.toContain("error:");
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", "a-dep"]);
+      expect(readlinkSync(join(nodeModules, "a-dep"))).toBe(storeLink("a-dep", "1.0.1"));
+      expect(install.exitCode).toBe(0);
+    }
   });
 
-  test("bun patch --commit writes a patch that does not have the marker", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
-    const slot = join(packageDir, "node_modules", "no-deps");
+  describe("bun patch keeps the link of a dependency", () => {
+    // `bun patch` prints the folder to edit and the command that commits it.
+    function printed(stdout: string) {
+      const folder = stdout.match(/edit the following folder:\n\n  (.+)\n/)?.[1];
+      const commit = stdout.match(/bun patch --commit '([^']+)'/)?.[1];
+      expect(commit).toBe(folder);
+      return folder!;
+    }
+    const copyOf = (nodeModules: string, key: string) => join(nodeModules, ".bun-patches", key);
 
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
-    await write(join(slot, "index.js"), edit);
+    test("the link points at the copy until --commit, and installs keep it", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
 
-    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
-    expect(commit.stderr).not.toContain("error:");
-    expect(commit.stderr).not.toContain("note:");
-    expect(commit.exitCode).toBe(0);
+      const patch = await run(packageDir, ["patch", "no-deps"]);
+      expect(patch.stderr).not.toContain("error:");
+      expect(printed(patch.stdout)).toBe("node_modules/no-deps");
+      expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+      expect(await readdirSorted(copyOf(nodeModules, "no-deps@1.0.0"))).toEqual(["index.js", "package.json"]);
+      expect(patch.exitCode).toBe(0);
 
-    const patchFile = await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text();
-    expect(patchFile).toContain("+module.exports = 'EDITED';");
-    expect(patchFile).not.toContain(".bun-patch-tag");
-  });
+      // The user edits the package through the link.
+      await write(join(slot, "index.js"), edit);
+      // The copy is not the store entry.
+      expect(await file(join(nodeModules, storeLink("no-deps", "1.0.0"), "index.js")).text()).not.toBe(edit);
 
-  test("a copy that bun patch did not mark moves aside with its edits", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
-    const slot = join(packageDir, "node_modules", "no-deps");
+      for (const args of [["install"], ["install", "--force"], ["add", "a-dep@1.0.1"]]) {
+        const install = await run(packageDir, args);
+        expect(install.stderr).not.toContain("note:");
+        expect(install.stderr).not.toContain("warn:");
+        expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+        expect(await file(join(slot, "index.js")).text()).toBe(edit);
+        expect(install.exitCode).toBe(0);
+      }
+      const loaded = await run(packageDir, ["-p", "require('no-deps')"]);
+      expect(loaded.stdout).toBe("EDITED\n");
 
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
-    await write(join(slot, "index.js"), edit);
-    // A bun that has no marker prepared such a copy.
-    await rm(join(slot, ".bun-patch-tag"), { recursive: true, force: true });
-
-    const install = await run(packageDir, ["install"]);
-    expect(install.stderr).toContain(movedNote(slot));
-    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
-    expect(await file(join(displaced(slot), "index.js")).text()).toBe(edit);
-    expect(install.exitCode).toBe(0);
-  });
-
-  test("bun patch --commit refuses a link, and the command that it prints commits the moved folder", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
-    const slot = join(packageDir, "node_modules", "no-deps");
-
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    // What the test above leaves: a link, and beside it the copy with the edits.
-    cpSync(realpathSync(slot), displaced(slot), { recursive: true });
-    await write(join(displaced(slot), "index.js"), edit);
-
-    // A diff of a link is a patch that deletes every file of the package.
-    const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
-    expect(refused.stderr).toContain(
-      `error: "node_modules/no-deps" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n`,
-    );
-    expect(existsSync(join(packageDir, "patches"))).toBe(false);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
-      name: "app",
-      dependencies: { "no-deps": "1.0.0" },
+      // A second `bun patch` makes a new copy.
+      expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+      expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+      expect(await file(join(slot, "index.js")).text()).not.toBe(edit);
     });
-    expect(refused.exitCode).toBe(1);
 
-    const printed = refused.stderr.match(/To commit that folder, run bun patch --commit '([^']+)'\n/);
-    expect(printed?.[1]).toBe("node_modules/.old_no-deps");
-    const commit = await run(packageDir, ["patch", "--commit", printed![1]]);
-    expect(commit.stderr).not.toContain("error:");
-    expect(commit.exitCode).toBe(0);
-    expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
-      "+module.exports = 'EDITED';",
+    test.each([
+      "node_modules/no-deps",
+      "node_modules/no-deps/",
+      "no-deps",
+      "no-deps@1.0.0",
+      "node_modules/.bun-patches/no-deps@1.0.0",
+    ])(
+      "--commit %s writes the patch, removes the copy, and the link is the link to the patched package",
+      async argument => {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: rootWithNoDeps,
+        });
+        const nodeModules = join(packageDir, "node_modules");
+        const slot = join(nodeModules, "no-deps");
+        expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+        expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+        await write(join(slot, "index.js"), edit);
+
+        const commit = await run(packageDir, ["patch", "--commit", argument]);
+        expect(commit.stderr).not.toContain("error:");
+        expect(commit.stderr).not.toContain("note:");
+        expect(commit.exitCode).toBe(0);
+
+        const patchFile = await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text();
+        expect(patchFile).toContain("+module.exports = 'EDITED';");
+        expect(patchFile).not.toContain("new file mode 120000");
+        // The link is a link into the store again, and the store has the patched package.
+        expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps"]);
+        expect(readlinkSync(slot)).toStartWith(join(".bun", "no-deps@1.0.0"));
+        expect(await file(join(slot, "index.js")).text()).toBe(edit);
+
+        // The link follows the lockfile after the commit.
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1" } }),
+        );
+        const install = await run(packageDir, ["install"]);
+        expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.1"));
+        expect(await version(slot)).toBe("1.0.1");
+        expect(install.exitCode).toBe(0);
+      },
     );
-    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
-    expect(await file(join(slot, "index.js")).text()).toBe(edit);
-  });
 
-  test("bun patch --commit refuses a moved folder that has another version", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
-    const slot = join(packageDir, "node_modules", "no-deps");
+    test("a workspace and a scoped name: the copy is in the node_modules of the link", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+          "packages/m/package.json": JSON.stringify({
+            name: "m",
+            version: "1.0.0",
+            dependencies: { "@types/is-number": "1.0.0" },
+          }),
+        },
+      });
+      const nodeModules = join(packageDir, "packages", "m", "node_modules");
+      const slot = join(nodeModules, "@types", "is-number");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
 
-    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
-    // The folder of another linker: the same package, but not the version that bun.lock has.
-    await write(join(displaced(slot), "package.json"), JSON.stringify({ name: "no-deps", version: "2.0.0" }));
-    await write(join(displaced(slot), "index.js"), "module.exports = require(`./package.json`);\n");
+      const patch = await run(packageDir, ["patch", "packages/m/node_modules/@types/is-number"]);
+      expect(patch.stderr).not.toContain("error:");
+      expect(printed(patch.stdout)).toBe("packages/m/node_modules/@types/is-number");
+      expect(readlinkSync(slot)).toBe(join("..", ".bun-patches", "@types%2Fis-number@1.0.0"));
+      expect(patch.exitCode).toBe(0);
+      await write(join(slot, "index.js"), edit);
 
-    const commit = await run(packageDir, ["patch", "--commit", "node_modules/.old_no-deps"]);
-    expect(commit.stderr).toContain(
-      `error: "node_modules/.old_no-deps" is not a copy of the installed no-deps@1.0.0: its package.json has version "2.0.0", and the installed package has "1.0.0"\n` +
-        `note: To patch the installed package, run bun patch 'no-deps@1.0.0'\n`,
-    );
-    expect(existsSync(join(packageDir, "patches"))).toBe(false);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
-      name: "app",
-      dependencies: { "no-deps": "1.0.0" },
+      // An install that makes a new store keeps the copy too.
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const install = await run(packageDir, ["install"]);
+      expect(install.stderr).not.toContain("note:");
+      expect(readlinkSync(slot)).toBe(join("..", ".bun-patches", "@types%2Fis-number@1.0.0"));
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+      expect(install.exitCode).toBe(0);
+
+      const commit = await run(packageDir, ["patch", "--commit", "packages/m/node_modules/@types/is-number"]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect(await file(join(packageDir, "patches", "@types%2Fis-number@1.0.0.patch")).text()).toContain(
+        "+module.exports = 'EDITED';",
+      );
+      expect(await readdirSorted(nodeModules)).toEqual(["@types"]);
+      expect(readlinkSync(slot)).toStartWith(
+        join("..", "..", "..", "..", "node_modules", ".bun", "@types+is-number@1.0.0"),
+      );
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
     });
-    expect(commit.exitCode).toBe(1);
+
+    test.each(["node_modules/.bun-patches/no-deps@1.1.0", "no-deps@1.1.0"])(
+      "a package that is nested in a dependency: the link of the dependency stays as it is, --commit %s",
+      async argument => {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: {
+            // one-range-dep depends on no-deps@^1.0.0, which is 1.1.0.
+            "package.json": JSON.stringify({
+              name: "app",
+              dependencies: { "no-deps": "2.0.0", "one-range-dep": "1.0.0" },
+            }),
+          },
+        });
+        const nodeModules = join(packageDir, "node_modules");
+        const parent = join(nodeModules, "one-range-dep");
+        expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+        for (const round of [1, 2]) {
+          const patch = await run(packageDir, ["patch", "no-deps@1.1.0"]);
+          expect(patch.stderr).not.toContain("error:");
+          expect(printed(patch.stdout)).toBe("node_modules/.bun-patches/no-deps@1.1.0");
+          expect(readlinkSync(parent)).toBe(storeLink("one-range-dep", "1.0.0"));
+          expect(await version(copyOf(nodeModules, "no-deps@1.1.0"))).toBe("1.1.0");
+          expect(patch.exitCode).toBe(0);
+        }
+        await write(join(copyOf(nodeModules, "no-deps@1.1.0"), "index.js"), edit);
+
+        const install = await run(packageDir, ["install"]);
+        expect(install.stderr).not.toContain("note:");
+        expect(await file(join(copyOf(nodeModules, "no-deps@1.1.0"), "index.js")).text()).toBe(edit);
+        expect(install.exitCode).toBe(0);
+
+        const commit = await run(packageDir, ["patch", "--commit", argument]);
+        expect(commit.stderr).not.toContain("error:");
+        expect(commit.exitCode).toBe(0);
+        expect(await file(join(packageDir, "patches", "no-deps@1.1.0.patch")).text()).toContain(
+          "+module.exports = 'EDITED';",
+        );
+        expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps", "one-range-dep"]);
+        // one-range-dep loads the patched package.
+        expect(await file(join(realpathSync(parent), "..", "no-deps", "index.js")).text()).toBe(edit);
+        expect(await version(join(nodeModules, "no-deps"))).toBe("2.0.0");
+      },
+    );
+
+    test("a copy that an earlier bun made in place of the link moves aside, and --commit of that folder works", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const slot = join(packageDir, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      // bun 1.3.14 to 1.4.x replaced the link with the copy.
+      const store = realpathSync(slot);
+      await unlink(slot);
+      cpSync(store, slot, { recursive: true });
+      await write(join(slot, "index.js"), edit);
+
+      const install = await run(packageDir, ["install"]);
+      const [aside] = await displaced(slot);
+      expect(install.stderr).toContain(movedNote(slot, aside));
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await file(join(aside, "index.js")).text()).toBe(edit);
+      expect(install.exitCode).toBe(0);
+
+      // A diff of a link is a patch that deletes every file of the package.
+      const moved = `node_modules/${basename(aside)}`;
+      const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps/"]);
+      expect(refused.stderr).toContain(
+        `error: "node_modules/no-deps" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
+          `note: An install moved a folder that was there. To commit that folder, run bun patch --commit '${moved}'\n` +
+          `note: To prepare a new copy, run bun patch 'node_modules/no-deps/'\n`,
+      );
+      expect(existsSync(join(packageDir, "patches"))).toBe(false);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "app",
+        dependencies: { "no-deps": "1.0.0" },
+      });
+      expect(refused.exitCode).toBe(1);
+
+      const commit = await run(packageDir, ["patch", "--commit", moved]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+        "+module.exports = 'EDITED';",
+      );
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+      // The folder is the user's, so it stays.
+      expect(await file(join(aside, "index.js")).text()).toBe(edit);
+    });
+
+    test("--commit refuses a moved folder that has another version", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const slot = join(packageDir, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      // The folder of another linker: the same package, but not the version that bun.lock has.
+      await unlink(slot);
+      await write(join(slot, "package.json"), JSON.stringify({ name: "no-deps", version: "2.0.0" }));
+      await write(join(slot, "index.js"), "module.exports = require(`./package.json`);\n");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      const [aside] = await displaced(slot);
+      const moved = `node_modules/${basename(aside)}`;
+
+      const commit = await run(packageDir, ["patch", "--commit", moved]);
+      expect(commit.stderr).toContain(
+        `error: "${moved}" is not a copy of the installed no-deps@1.0.0: its package.json has version "2.0.0", and the installed package has "1.0.0"\n` +
+          `note: To patch the installed package, run bun patch 'no-deps@1.0.0'\n`,
+      );
+      expect(existsSync(join(packageDir, "patches"))).toBe(false);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "app",
+        dependencies: { "no-deps": "1.0.0" },
+      });
+      expect(commit.exitCode).toBe(1);
+    });
   });
 });
 
@@ -3963,11 +4280,10 @@ describe("global virtual store", () => {
   });
 
   test("preserves bun patch workspace when install runs before --commit", async () => {
-    // Regression: `bun patch <pkg>` detaches the project store entry from the
-    // global virtual store (symlink → real directory) so the user can edit it.
-    // A subsequent `bun install` (e.g. to add another dep) before `--commit`
-    // must not see that real directory as a stale pre-GVS layout and
-    // `deleteTree` the user's in-progress edits.
+    // Regression: `bun patch <pkg>` gives the user a copy of the package to
+    // edit, which is not the entry in the global virtual store. A subsequent
+    // `bun install` (e.g. to add another dep) before `--commit` must keep the
+    // copy and the user's in-progress edits.
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
@@ -3994,20 +4310,22 @@ describe("global virtual store", () => {
     expect(stdout).toContain("To patch");
     expect(exitCode).toBe(0);
 
-    // `bun patch` detached the top-level dep symlink into a real directory
-    // for the user to edit. The `.bun/<storepath>` GVS symlink is untouched.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
-    expect(lstatSync(workspace).isDirectory()).toBe(true);
+    // `bun patch` pointed the top-level dep symlink at a copy for the user to
+    // edit. The `.bun/<storepath>` GVS symlink is untouched.
+    const copy = join(".bun-patches", "no-deps@1.0.0");
+    expect(readlinkSync(workspace)).toBe(copy);
+    expect(lstatSync(join(packageDir, "node_modules", copy)).isDirectory()).toBe(true);
 
     const edited = join(workspace, "index.js");
     await write(edited, "module.exports = 'USER_EDITS';\n");
+    const globalEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(await file(join(globalEntry, "index.js")).text()).not.toContain("USER_EDITS");
 
     await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
 
-    // The real-directory workspace is preserved across the install; before
-    // this fix `.expect_existing` would `deleteTree` it on readlink EINVAL
-    // and re-symlink, wiping the edits.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    // The link to the copy is preserved across the install, and the copy has
+    // the edits.
+    expect(readlinkSync(workspace)).toBe(copy);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
 });

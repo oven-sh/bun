@@ -876,11 +876,15 @@ pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
 /// scan) so introspection APIs like `require.resolve.paths` agree with
 /// `require` about what is a builtin.
 pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
-    (name == b"stream/iter"
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+/// A stream/iter specifier: a builtin only with `--experimental-stream-iter`.
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
         || name == b"node:stream/iter"
         || name == b"zlib/iter"
-        || name == b"node:zlib/iter")
-        && !stream_iter_enabled()
+        || name == b"node:zlib/iter"
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
@@ -946,10 +950,13 @@ impl Alias {
         Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
     }
 
-    // Not `Self::get`: the answer goes into cached output, and the cache key has no flag or mode.
+    // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
     #[cold]
     #[inline(never)]
     fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
-        (!name.starts_with(b"node:") && lookup(&NODE_ALIAS_MAP, name).is_some()).then_some(name)
+        (!name.starts_with(b"node:")
+            && !is_stream_iter_alias(name)
+            && lookup(&NODE_ALIAS_MAP, name).is_some())
+        .then_some(name)
     }
 }

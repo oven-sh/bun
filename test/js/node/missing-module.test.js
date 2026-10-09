@@ -106,6 +106,8 @@ const literalSpecifiers = {
       "bun:bundle": await outcome(() => import("bun:bundle")),
       // "ws" is a builtin, but not a Node.js one.
       "bun:ws": await outcome(() => import("bun:ws")),
+      // "stream/iter" is a Node.js builtin only with --experimental-stream-iter.
+      "bun:stream/iter": await outcome(() => import("bun:stream/iter")),
     }));
   `,
   "dependency.mjs": `import "bun:missing";`,
@@ -117,6 +119,7 @@ const notFound = {
   "import statement": "ERR_MODULE_NOT_FOUND",
   "bun:bundle": "ERR_MODULE_NOT_FOUND",
   "bun:ws": "ERR_MODULE_NOT_FOUND",
+  "bun:stream/iter": "ERR_MODULE_NOT_FOUND",
 };
 
 test.concurrent(
@@ -126,6 +129,8 @@ test.concurrent(
       ...packageNamed("missing"),
       ...packageNamed("bundle"),
       ...packageNamed("ws"),
+      ...packageNamed("stream"),
+      "node_modules/stream/iter.js": `module.exports = "a file of the package named like the suffix";`,
       ...literalSpecifiers,
     });
     await using proc = Bun.spawn({

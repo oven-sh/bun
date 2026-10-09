@@ -190,6 +190,8 @@ error: Hello World`,
     "bun:node:fs",
     "bun:bun:test",
     "bun:ws",
+    // A Node.js builtin only with --experimental-stream-iter.
+    "bun:stream/iter",
   ];
   for (const backend of ["cli", "api"] as const) {
     for (const format of ["esm", "cjs"] as const) {
@@ -209,7 +211,8 @@ error: Hello World`,
             const dynamic = import("bun:not-a-builtin/dynamic");
             const relative = import("bun:./not-a-builtin.js");
             const builtins = [import("bun:node:fs"), import("bun:bun:test"), import("bun:ws")];
-            console.log(real, star, required, resolved, dynamic, relative, builtins);
+            const flagged = import("bun:stream/iter");
+            console.log(real, star, required, resolved, dynamic, relative, builtins, flagged);
           `,
         },
         onAfterBundle(api) {

@@ -18,6 +18,7 @@ use crate::js::utils::string::{
 };
 use crate::options::{QuoteProperties, QuoteStyle};
 use crate::text::{is_next_line_empty, make_string};
+use bun_highway::index_of_interesting_character_in_string_literal;
 use bun_lint::utils::text::{
     code_point_at, is_identifier_part, is_identifier_start, is_js_whitespace,
 };
@@ -262,26 +263,47 @@ impl Reader<'_, '_> {
     }
 
     /// White space and comments. `enclosing`, `preceding`: see [`Comment`].
-    #[inline]
+    #[inline(always)]
     fn skip_trivia(&mut self, enclosing: Owner, preceding: Owner) -> Result<()> {
+        let mut at = self.at;
         loop {
-            match self.peek() {
-                Some(b' ' | b'\t' | 0x0B | 0x0C) => self.at += 1,
+            match self.text.get(at) {
+                Some(b' ' | b'\t') => at += 1,
                 Some(b'\n') => {
-                    self.at += 1;
+                    at += 1;
                     self.line_breaks += 1;
                 }
-                Some(b'/') => self.comment(enclosing, preceding)?,
-                Some(0x80..) => {
-                    let (c, len) = code_point_at(self.text, self.at);
-                    if !is_js_whitespace(c) {
+                Some(0x0B | 0x0C | b'/' | 0x80..) => {
+                    self.at = at;
+                    if !self.rare_trivia(enclosing, preceding)? {
                         return Ok(());
                     }
-                    self.at += len;
+                    at = self.at;
                 }
-                _ => return Ok(()),
+                _ => {
+                    self.at = at;
+                    return Ok(());
+                }
             }
         }
+    }
+
+    /// A comment, or white space other than a blank, a tab and a line break. Returns whether there
+    /// is one.
+    #[cold]
+    fn rare_trivia(&mut self, enclosing: Owner, preceding: Owner) -> Result<bool> {
+        match self.peek() {
+            Some(b'/') => self.comment(enclosing, preceding)?,
+            Some(0x80..) => {
+                let (c, len) = code_point_at(self.text, self.at);
+                if !is_js_whitespace(c) {
+                    return Ok(false);
+                }
+                self.at += len;
+            }
+            _ => self.at += 1,
+        }
+        Ok(true)
     }
 
     #[cold]
@@ -452,8 +474,27 @@ impl Reader<'_, '_> {
         Ok(State::Value)
     }
 
-    /// Prettier's `printKey`, except for what depends on the other names: see [`Reader::close`].
+    /// `index` is the name of a property.
+    #[inline]
     fn name(&mut self, index: u32) {
+        let node = &self.tree.nodes[index as usize];
+        let (width, requires_quotes) =
+            if node.kind == Kind::String && self.config.parser != Parser::Json5 {
+                (node.width, false)
+            } else {
+                self.print_name(index)
+            };
+        if let Some(open) = self.tree.open.last_mut() {
+            open.name = index;
+            open.width = open.width.saturating_add(width);
+            open.requires_quotes |= requires_quotes;
+        }
+    }
+
+    /// Prettier's `printKey`, except for what depends on the other names: see [`Reader::close`]. A
+    /// string is only looked at in `json5`: elsewhere it stays as it is. Returns how wide the name is,
+    /// and whether it is a string that cannot do without its quotes.
+    fn print_name(&mut self, index: u32) -> (u32, bool) {
         let config = self.config;
         let node = self.tree.nodes[index as usize];
         let source = &self.text[node.start as usize..node.end as usize];
@@ -461,7 +502,6 @@ impl Reader<'_, '_> {
         let mut requires_quotes = false;
         let always_quotes = config.parser != Parser::Json5;
         match node.kind {
-            Kind::String if always_quotes => {}
             Kind::String => {
                 let content = &source[1..source.len() - 1];
                 if !is_es5_identifier_name(content) {
@@ -495,11 +535,7 @@ impl Reader<'_, '_> {
         let node = &mut self.tree.nodes[index as usize];
         node.width = width;
         node.flags = flags;
-        if let Some(open) = self.tree.open.last_mut() {
-            open.name = index;
-            open.width = open.width.saturating_add(width);
-            open.requires_quotes |= requires_quotes;
-        }
+        (width, requires_quotes)
     }
 
     fn element_or_end(&mut self) -> Result<State> {
@@ -699,9 +735,26 @@ impl Reader<'_, '_> {
         sum
     }
 
+    #[inline(always)]
     fn string(&mut self, quote: u8) -> Result<u32> {
         let start = self.at;
-        let mut at = start + 1;
+        let rest = self.text.get(start + 1..).unwrap_or_default();
+        let len =
+            index_of_interesting_character_in_string_literal(rest, quote).ok_or(SyntaxError)?;
+        // Nothing but printable ASCII, in the quotes that it is written in: as many columns as bytes.
+        if rest.get(len) == Some(&quote)
+            && self.config.string_quote.map(QuoteStyle::as_byte) == Some(quote)
+        {
+            self.at = start + len + 2;
+            return Ok(self.push(Kind::String, start, len as u32 + 2, 0));
+        }
+        self.string_from(start + 1 + len, quote)
+    }
+
+    /// The string that starts at the cursor, and is nothing but printable ASCII up to `at`.
+    #[inline(never)]
+    fn string_from(&mut self, mut at: usize, quote: u8) -> Result<u32> {
+        let start = self.at;
         // Nothing but printable ASCII: as many columns as bytes.
         let mut is_plain = true;
         let mut has_line_break = false;
@@ -718,7 +771,13 @@ impl Reader<'_, '_> {
                     continue;
                 }
                 b'\n' => return Err(SyntaxError),
-                0x20..=0x7E => {}
+                0x20..=0x7E => {
+                    at += index_of_interesting_character_in_string_literal(
+                        self.text.get(at + 1..).unwrap_or_default(),
+                        quote,
+                    )
+                    .ok_or(SyntaxError)?;
+                }
                 _ => is_plain = false,
             }
             at += 1;

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isLinux, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -784,17 +784,19 @@ describe.each(["isolated", "hoisted"] as const)("failed script of an optional de
     },
   );
 
-  // With SIGCHLD ignored the kernel reaps the script itself and bun cannot wait for it. Bun then
+  // With SIGCHLD ignored, Linux reaps the script itself and bun cannot wait for it. Bun then
   // treats a script that exited 0 as failed, through a second exit path.
-  test.concurrent.skipIf(isWindows)("workspace: the folder stays when bun cannot wait for the script", async () => {
+  test.concurrent.skipIf(!isLinux)("workspace: the folder stays when bun cannot wait for the script", async () => {
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles() });
+    const verb = linker === "hoisted" ? "deleting" : "skipping";
 
     const { stderr, exitCode } = await installCounted(packageDir, {
       argv0: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"'],
-      args: ["--filter", "y"],
+      args: ["--filter", "y", "--verbose"],
       pass: true,
     });
     expect(stderr).not.toContain("error:");
+    expect(stderr).toContain(`${verb} optional dependency 'x' due to failed 'postinstall' script`);
     expect(await workspaceState(packageDir)).toEqual({ runs: ["x"], ...kept });
     expect(exitCode).toBe(0);
   });

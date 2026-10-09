@@ -181,6 +181,10 @@ impl Response {
     pub(crate) fn is_closed(&self) -> bool {
         false
     }
+    /// A stream is not a socket uWS adopts.
+    pub(crate) fn is_shutdown(&self) -> bool {
+        false
+    }
     pub(crate) fn is_corked(&self) -> bool {
         false
     }

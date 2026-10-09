@@ -947,9 +947,11 @@ function abortHandshake(socket, code, message, headers) {
     ...headers,
   };
 
-  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  const gone = socket.writableEnded || socket.destroyed;
+
+  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse.
   const response = socket._httpMessage;
-  if (response) {
+  if (response && !response.headersSent && !gone) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -958,6 +960,12 @@ function abortHandshake(socket, code, message, headers) {
 
   // Another WebSocketServer on the same http.Server has already taken this connection.
   if (socket[kBunInternals]?.upgraded) return;
+
+  // Nothing can go out on an ended socket, and end() on one raises an 'error' instead.
+  if (gone) {
+    socket.destroy();
+    return;
+  }
 
   socket.once("finish", socket.destroy);
 
@@ -1580,6 +1588,9 @@ class WebSocketServer extends EventEmitter {
         });
       }
       cb(ws, request);
+    } else if (socket._httpMessage?.headersSent) {
+      // A 500 has no framing of its own behind a response that is already on the wire.
+      socket.destroy();
     } else {
       abortHandshake(socket, 500);
     }

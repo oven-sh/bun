@@ -2276,52 +2276,56 @@ Socket.prototype.connect = function connect(...args) {
                 connection.destroy();
                 return;
               }
-              const socket = connection._handle;
-              if (!upgradeDuplex && socket) {
-                // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-                upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
-              }
-              if (upgradeDuplex) {
-                this[kupgraded] = connection;
-                const [result, events] = upgradeDuplexToTLS(connection, {
-                  data: { self: this, req: { oncomplete: afterConnect } },
-                  tls,
-                  socket: this[khandlers],
-                });
-                destroyWhenUpgradedCloses(this, connection);
-                connection.on("data", events[0]);
-                connection.on("end", events[1]);
-                connection.on("drain", events[2]);
-                connection.on("close", events[3]);
-                forwardUpgradedError(this, connection);
-                this._handle = result;
-              } else {
-                this[kupgraded] = connection;
-                const result = upgradeTLSDeferred(socket, {
-                  data: { self: this, req: { oncomplete: afterConnect } },
-                  tls,
-                  socket: this[khandlers],
-                  isServer: false,
-                });
-                if (result) {
-                  const [raw, tls] = result;
-                  // replace socket
-                  connection._handle = raw;
-                  raw[kAdoptedTLSRaw] = this;
-                  destroyWhenUpgradedCloses(this, connection);
-                  this.once("end", this[kCloseRawConnection]);
-                  raw.connecting = false;
-                  this._handle = tls;
-                } else {
-                  this._handle = null;
-                  throw new Error("Invalid socket");
+              try {
+                const socket = connection._handle;
+                if (!upgradeDuplex && socket) {
+                  // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+                  upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
                 }
+                if (upgradeDuplex) {
+                  this[kupgraded] = connection;
+                  const [result, events] = upgradeDuplexToTLS(connection, {
+                    data: { self: this, req: { oncomplete: afterConnect } },
+                    tls,
+                    socket: this[khandlers],
+                  });
+                  destroyWhenUpgradedCloses(this, connection);
+                  connection.on("data", events[0]);
+                  connection.on("end", events[1]);
+                  connection.on("drain", events[2]);
+                  connection.on("close", events[3]);
+                  forwardUpgradedError(this, connection);
+                  this._handle = result;
+                } else {
+                  this[kupgraded] = connection;
+                  const result = upgradeTLSDeferred(socket, {
+                    data: { self: this, req: { oncomplete: afterConnect } },
+                    tls,
+                    socket: this[khandlers],
+                    isServer: false,
+                  });
+                  if (result) {
+                    const [raw, tls] = result;
+                    // replace socket
+                    connection._handle = raw;
+                    raw[kAdoptedTLSRaw] = this;
+                    destroyWhenUpgradedCloses(this, connection);
+                    this.once("end", this[kCloseRawConnection]);
+                    raw.connecting = false;
+                    this._handle = tls;
+                  } else {
+                    this._handle = null;
+                    throw new Error("Invalid socket");
+                  }
+                }
+              } catch (error) {
+                destroyAfterFailedUpgrade(this, error);
               }
             });
           }
         }
       } catch (error) {
-        process.nextTick(emitErrorAndCloseNextTick, this, error);
+        process.nextTick(destroyAfterFailedUpgrade, this, error);
       }
       return this;
     }
@@ -2643,13 +2647,21 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     // the connection's readable buffer; hand them to the TLS engine so the
     // handshake doesn't stall.
     const pending = connection.read();
-    const result = handle.upgradeTLS({
-      data: this,
-      tls,
-      socket: serverHandlersFor(this),
-      isServer: true,
-      initialData: pending || undefined,
-    });
+    let result;
+    try {
+      result = handle.upgradeTLS({
+        data: this,
+        tls,
+        socket: serverHandlersFor(this),
+        isServer: true,
+        initialData: pending || undefined,
+      });
+    } catch (error) {
+      // upgradeTLS throws for a connection that was ended or closed after the wrap.
+      this._handle = null;
+      this.destroy(error);
+      return;
+    }
     if (!result) {
       this._handle = null;
       this.destroy(new Error("Invalid socket"));
@@ -4232,9 +4244,10 @@ function emitErrorNextTick(self, error) {
   self.emit("error", error);
 }
 
-function emitErrorAndCloseNextTick(self, error) {
-  self.emit("error", error);
-  self.emit("close", true);
+// The upgrade attached nothing, so the transport is not this socket's to tear down.
+function destroyAfterFailedUpgrade(self, error) {
+  self[kupgraded] = null;
+  self.destroy(error);
 }
 
 function emitListeningNextTick(self) {

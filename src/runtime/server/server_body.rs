@@ -1970,6 +1970,10 @@ where
         if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
             return Ok(JSValue::FALSE);
         }
+        // Not aborted, so the test above misses it. Decide before the writes below.
+        if resp.is_closed() || resp.is_shutdown() {
+            return Ok(JSValue::FALSE);
+        }
 
         // `CookieMapRef` releases the moved-out ref on every exit path of this
         // scope (including the `?` below) once `cookies_to_write` drops.
@@ -2045,7 +2049,7 @@ where
         upgrader.reclaim_promise_cell();
         upgrader.deref();
 
-        resp.upgrade(
+        let upgraded = resp.upgrade(
             ws,
             sec_websocket_key.slice(),
             sec_websocket_protocol.slice(),
@@ -2054,6 +2058,14 @@ where
             // deref; `UpgradeState::Pending` documents who keeps it alive.
             Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
         );
+        if upgraded.is_null() {
+            // uWS refuses a socket that is closed or shut down (see
+            // HttpResponse::upgrade), so `ws` never became a WebSocket.
+            // SAFETY: `ws` is the live allocation `init` returned; its JS
+            // wrapper owns it and nothing else has a pointer to it yet.
+            unsafe { &*ws }.discard_unopened();
+            return Ok(JSValue::FALSE);
+        }
 
         Ok(JSValue::TRUE)
     }

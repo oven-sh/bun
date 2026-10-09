@@ -2,6 +2,9 @@
 // oxlint: generated files are linted by both, in one run. Compared: which rule reports with which severity at which line and
 // column, and what is said about comments that do nothing, with its place.
 //
+// The last 400 files start with comments that configure ESLint. oxlint takes these for ordinary comments, even where ESLint
+// reports them.
+//
 //   OXLINT=<the oxlint executable> node oxlint-directives.mjs [<how many differences to show>]
 
 import { spawnSync } from "node:child_process";
@@ -85,10 +88,29 @@ function source() {
   return text;
 }
 
+const configuring = () =>
+  rng.pick([
+    '/* eslint no-debugger: "off" */',
+    "/* eslint no-debugger: 0, no-var: 0 */",
+    '/* eslint no-var: "error" */',
+    '/* eslint no-debugger: "warn", @typescript-eslint/no-non-null-assertion: "off" */',
+    '/* eslint no-empty: "error" */ {}',
+    "/* eslint no-such-rule: 2 */",
+    "/* eslint no-var: [ */",
+    '/* eslint no-var: "loud" */',
+    "/* eslint-env node */",
+    "/* eslint-env */",
+    "/* global a */",
+    "/* globals a: nonsense */",
+    "/* exported a */",
+    "// eslint no-var: 0",
+  ]);
+
 const basePath = mkdtempSync(join(tmpdir(), "oxlint-directives-"));
 try {
   const sources = {};
   for (let i = 0; i < 6000; i++) sources[join(basePath, `${i}.ts`)] = source();
+  for (let i = 6000; i < 6400; i++) sources[join(basePath, `${i}.ts`)] = list(configuring, 1, 2).join("\n") + "\n" + source();
   writeFileSync(join(basePath, ".oxlintrc.json"), JSON.stringify(config));
   for (const [path, text] of Object.entries(sources)) writeFileSync(path, text);
   const { stdout } = spawnSync(oxlint, ["--format", "json", "."], { cwd: basePath, maxBuffer: 1 << 28 });

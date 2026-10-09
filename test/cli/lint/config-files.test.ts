@@ -79,9 +79,36 @@ describe.concurrent("an eslint.config.js", () => {
     expect(stderr).toContain("<dir>/eslint.config.mjs exports nothing.");
     expect(exitCode).toBe(2);
   });
+
+  test('`type: "any"` in the schema of a rule allows everything', async () => {
+    const { problems, stderr, exitCode } = await lint({
+      "plugin.mjs": `export default { rules: { r: { meta: { schema: [{ type: "array", items: { type: "any" } }] }, create: context => ({ DebuggerStatement: node => context.report({ node, message: "found" }) }) } } };`,
+      "eslint.config.mjs": `import p from "./plugin.mjs";\nexport default [{ ignores: ["plugin.mjs"] }, { plugins: { p }, rules: { "p/r": ["error", [{ a: 1 }, 1, "a"]] } }];`,
+      "a.js": code,
+    });
+    expect(stderr).not.toContain("should be");
+    expect(problems).toEqual(["a.js:2:13 p/r"]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("an .oxlintrc.json", () => {
+  test("only comments that disable rules configure anything", async () => {
+    const { problems, exitCode } = await lint({
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: { "no-var": "error", "no-undef": "error" },
+      }),
+      "env.js": "/* eslint-env mocha */\n",
+      "rules.js": '/* eslint no-var: "off", no-debugger: "error" */\nvar a = 1;\ndebugger;\n',
+      "global.js": "/* global b */\nb;\n",
+      "broken.js": "/* eslint no-var: [ */\n/* globals c: nonsense */\n",
+      "disabled.js": "// eslint-disable-next-line no-var\nvar d = 1;\n",
+    });
+    expect(problems).toEqual(["global.js:2:1 no-undef", "rules.js:2:1 no-var"]);
+    expect(exitCode).toBe(1);
+  });
+
   test.each([
     ["base.json", "base.json"],
     ["configs/base.json", "configs/base.json"],

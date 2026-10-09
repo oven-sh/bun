@@ -40,6 +40,10 @@ fn is_integer(value: f64) -> bool {
     !value.is_nan() && (rest == 0.0 || rest.is_nan())
 }
 
+const TYPES: [&[u8]; 7] = [
+    b"number", b"integer", b"string", b"array", b"object", b"boolean", b"null",
+];
+
 fn has_type(data: &Json, name: &[u8]) -> bool {
     match (name, data) {
         (b"null", Json::Null) | (b"boolean", Json::Bool(_)) | (b"string", Json::String(_)) => true,
@@ -214,6 +218,8 @@ impl<'s> Validator<'s> {
             return self.check(target, data, Context { is_composite, ..cx });
         }
         let types: Vec<&[u8]> = match schema.get(b"type") {
+            // ajv has no code for a type that it does not know: `"any"`. Among several it is one that nothing has.
+            Some(Json::String(name)) if !TYPES.contains(&&name[..]) => Vec::new(),
             Some(Json::String(name)) => vec![name],
             Some(Json::Array(names)) => names.iter().filter_map(Json::as_str).collect(),
             _ => Vec::new(),

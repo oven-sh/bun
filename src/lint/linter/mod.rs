@@ -313,7 +313,11 @@ impl Linter {
             })
             .collect();
 
-        if !options.allow_inline_config || config.linter.no_inline_config {
+        // oxlint takes all but `eslint-disable` and the like for ordinary comments: `/* eslint eqeqeq: 0 */`, `/* global a */`,
+        // `/* eslint-env node */`.
+        let configures_in_comments = !config.understands_oxlint_comments;
+        if !options.allow_inline_config || config.linter.no_inline_config || !configures_in_comments
+        {
             file.ignore_config_comments();
         }
         let comments = match options.allow_inline_config {
@@ -335,7 +339,7 @@ impl Linter {
                 ]);
                 problems.push(locator.problem(comment.span, Severity::Warn, None, message));
             }
-        } else if !comments.is_empty() {
+        } else if !comments.is_empty() && configures_in_comments {
             let mut inline = Inline {
                 linter: self,
                 file,
@@ -348,10 +352,8 @@ impl Linter {
             for comment in comments.iter().filter(is_understood) {
                 inline.apply(comment, &mut running, &mut running_js);
             }
-            if !config.understands_oxlint_comments {
-                for comment in comments.iter().filter(is_understood) {
-                    inline.disable_directives(comment, &mut parents, &mut disable_directives);
-                }
+            for comment in comments.iter().filter(is_understood) {
+                inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
         }
 

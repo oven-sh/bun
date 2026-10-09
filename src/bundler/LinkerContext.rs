@@ -2400,37 +2400,6 @@ impl<'a> LinkerContext<'a> {
         ));
     }
 
-    /// The async wrappers that a file waits for: the ones that its `import` statements call, in order.
-    /// And for one in an import cycle that the file is not in, the files where the cycle can start:
-    /// the one where it did start ends last.
-    pub(crate) fn async_wrappers_awaited_by(
-        &self,
-        source_index: crate::IndexInt,
-    ) -> Vec<crate::IndexInt> {
-        let mut wrappers: Vec<crate::IndexInt> = Vec::new();
-        self.for_each_async_wrapper_call(source_index, |wrapper| {
-            if !wrappers.contains(&wrapper) {
-                wrappers.push(wrapper);
-            }
-        });
-        let cycle_of_file = self.graph.async_cycle_of_file.as_slice();
-        if cycle_of_file.is_empty() {
-            return wrappers;
-        }
-        for i in 0..wrappers.len() {
-            let cycle = cycle_of_file[wrappers[i] as usize];
-            if cycle == u32::MAX || cycle == cycle_of_file[source_index as usize] {
-                continue;
-            }
-            for &entrance in self.graph.async_cycle_entrances[cycle as usize].iter() {
-                if self.runs_with(source_index, entrance) && !wrappers.contains(&entrance) {
-                    wrappers.push(entrance);
-                }
-            }
-        }
-        wrappers
-    }
-
     /// `each(file)` for every call of an async wrapper that the file prints for an `import`.
     pub(crate) fn for_each_async_wrapper_call(
         &self,

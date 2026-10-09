@@ -261,10 +261,8 @@ pub struct LinkerGraph<'a> {
     /// (file, import record) to the wrapped files that the `import` runs in place of a target that does not run.
     pub(crate) wrappers_behind_import:
         bun_collections::HashMap<(index::Int, u32), Box<[index::Int]>>,
-    /// Per file: its import cycle, or `u32::MAX`. Empty when no cycle has an async wrapper.
-    pub(crate) async_cycle_of_file: Vec<u32>,
-    /// Per import cycle: the async wrappers that something outside of the cycle imports.
-    pub(crate) async_cycle_entrances: Vec<Box<[index::Int]>>,
+    /// Per file: the async wrappers that its one `await` waits for (`find_wrappers_behind_imports`).
+    pub(crate) awaited_wrappers: bun_collections::HashMap<index::Int, Box<[index::Int]>>,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -327,8 +325,7 @@ impl Default for LinkerGraph<'_> {
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
             wrappers_behind_import: Default::default(),
-            async_cycle_of_file: Vec::new(),
-            async_cycle_entrances: Vec::new(),
+            awaited_wrappers: Default::default(),
         }
     }
 }

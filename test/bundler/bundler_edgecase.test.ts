@@ -3777,6 +3777,21 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "member\nroot function\nuser 1\nx\nentry" },
   });
+  // w.js leads back to itself only through an import(), which starts nothing until it runs. So that is
+  // no cycle, and main.js does not wait for page.js.
+  itBundled("edgecase/EsmWrapperAsyncImportCycleThroughImportCall", {
+    files: {
+      "/main.js": /* js */ `
+        import { w } from "./w.js";
+        console.log("main", w);
+        export const later = () => [import("./w.js"), import("./page.js")];
+      `,
+      "/w.js": `export const w = await Promise.resolve(1); export const open = () => import("./page.js");`,
+      "/page.js": `import { w } from "./w.js"; console.log("page", w);`,
+    },
+    format: "esm",
+    run: { stdout: "main 1" },
+  });
   // Tree shaking drops the import in c.js, and t.js is in the bundle for another reason. A __commonJS
   // wrapper cannot wait, so the import stays dropped.
   itBundled("edgecase/EsmWrapperDroppedAsyncImportInCommonJS", {

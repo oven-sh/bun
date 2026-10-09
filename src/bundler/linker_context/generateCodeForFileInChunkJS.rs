@@ -520,29 +520,26 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    if flags.is_async_or_has_async_dependency {
+    if let Some(wrappers) = c.graph.awaited_wrappers.get(&(source_index as u32)) {
         let wrapper_refs = c.graph.ast.items_wrapper_ref();
-        let wrappers: Vec<Ref> = c
-            .async_wrappers_awaited_by(source_index as u32)
+        let wrappers: Vec<Ref> = wrappers
             .iter()
             .map(|&wrapper| wrapper_refs[wrapper as usize])
             .collect();
         // The ranges of a file outside of a wrapper have other files between them.
         let is_after_imports =
             flags.wrap != WrapKind::None || is_range_after_imports(c, chunk, part_range);
-        if !wrappers.is_empty() {
-            append_await_of_wrappers(
-                c,
-                &mut stmts.inside_wrapper_prefix.stmts,
-                &wrappers,
-                is_after_imports,
-            );
-            if is_after_imports
-                && flags.wrap == WrapKind::None
-                && let Some(module_info) = module_info.as_deref_mut()
-            {
-                module_info.flags.has_tla = true;
-            }
+        append_await_of_wrappers(
+            c,
+            &mut stmts.inside_wrapper_prefix.stmts,
+            &wrappers,
+            is_after_imports,
+        );
+        if is_after_imports
+            && flags.wrap == WrapKind::None
+            && let Some(module_info) = module_info.as_deref_mut()
+        {
+            module_info.flags.has_tla = true;
         }
     }
     stmts

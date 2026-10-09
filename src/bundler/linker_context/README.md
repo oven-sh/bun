@@ -733,7 +733,7 @@ The renamed symbols are then used during final code generation to produce output
 - An `import` of a chunk runs ahead of the code that makes those calls. So a group becomes lazy too when an entry point that can be the first to load it evaluates one of its files after a file of a lazy group
 - `compute_entry_bits` runs again afterwards: the wrappers use `__esm` from the runtime. An `import` of a `"sideEffects": false` file loaded nothing and the call of its wrapper does, so when such a file was wrapped, who loads what has changed and the pass looks again
 - The `await` of an unwrapped file holds up the calls that print after it. So a file that reaches a top-level await becomes lazy when a lazy file comes after it, also in the chunk of the one entry point that loads it
-- A file that calls a split `require()` at load has started by then: it is listed ahead of what it requires
+- A file that calls a split `require()` at load has started by then: it is listed ahead of what it requires. When what it requires is lazy, it becomes lazy: its chunk can run ahead of the chunk that has the wrapper
 - A file that an HTML file names in a `<script src>` stays unwrapped, with what comes ahead of it: an HTML file prints nothing for the tag, so nothing would call the wrapper. So does a file with no symbol for a wrapper (`AstBuilder`)
 
 #### `findWrappersBehindImports.rs`
@@ -746,8 +746,8 @@ The renamed symbols are then used during final code generation to produce output
 - An unwrapped file runs when its chunk loads, so it does not need a call. A wrapper does. It has none when tree shaking dropped the `"sideEffects": false` barrel that re-exports it, or dropped the `import` statement
 - Records those wrappers per import record (`LinkerGraph.wrappers_behind_import`), makes the part depend on their symbols, and marks it live
 - A `__commonJS` wrapper cannot wait, so an `import` that tree shaking dropped from one does not call an async wrapper
-- A file prints `init_x()` where each `import` is, and one `await` of the async wrappers after the last (`async_wrappers_awaited_by`). Records what the `await` adds to the file: `__promiseAll` when it waits for several
-- An async wrapper in an import cycle ends before the file where the cycle started. So a file outside of the cycle also waits for the files where the cycle can start (`LinkerGraph.async_cycle_entrances`)
+- A file prints `init_x()` where each `import` is, and one `await` of the async wrappers after the last. Records those wrappers per file (`LinkerGraph.awaited_wrappers`), which is what the file prints, and what the `await` adds to the file: `__promiseAll` when it waits for several
+- An async wrapper in a cycle of such calls ends before the wrapper where the cycle started. So a file outside of the cycle also waits for the wrappers where the cycle can start. An `import()` is not such a call: it starts nothing until it runs
 
 #### `computeChunks.rs`
 

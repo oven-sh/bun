@@ -2755,6 +2755,25 @@ describe("bundler", () => {
     ],
   });
 
+  // main.js, t.js and mid.js are a cycle that main.js and the require() enter at different files, so they
+  // are wrappers. r.cjs comes before them, in a chunk that runs first. It calls one of them at load, so it is one too.
+  itBundled("splitting/SharedChunkOrderConflictRequireAtLoadOfLaterChunk", {
+    files: {
+      "/page.js": `const r = await import("./r.cjs"); console.log("page", r.default.r);`,
+      "/main.js": `import { t } from "./t.js"; export const main = "main"; console.log("main", t);`,
+      "/t.js": `import { mid } from "./mid.js"; export const t = "t " + mid;`,
+      "/mid.js": `export { low } from "./low.js"; import { main } from "./main.js"; export const mid = "mid";`,
+      "/low.js": `import "./r.cjs"; export const low = { n: 1 };`,
+      "/r.cjs": `console.log("r starts"); const t = require("./t.js"); console.log("r ends"); exports.r = typeof t;`,
+    },
+    entryPoints: ["/page.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    run: { file: "/out/main.js", stdout: "r starts\nr ends\nmain t mid" },
+  });
+
   // page.js waits for a.js and b.js at once. a.js has started when b.js throws, and ends after that.
   itBundled("splitting/SharedChunkOrderConflictAsyncImportThrows", {
     files: {

@@ -3,7 +3,7 @@ use bun_alloc::AllocError;
 use bun_ast::ImportKind;
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
-use crate::linker_context::resolve_chunk_order_conflicts::{NO_CYCLE, find_import_cycles};
+use crate::linker_context::resolve_chunk_order_conflicts::{NO_CYCLE, find_cycles};
 use crate::linker_context_mod::TreeShakeWork;
 use crate::options::{Format, Loader};
 use crate::{Index, IndexInt, LinkerContext, WrapKind};
@@ -162,61 +162,71 @@ pub(crate) fn find_wrappers_behind_imports(c: &mut LinkerContext) -> Result<(), 
     let has_new_calls = !worklist.is_empty();
     c.mark_live(worklist);
     let has_new_awaits = record_awaited_wrappers(c)?;
-
     if has_new_calls || has_new_awaits {
         c.compute_entry_bits()?;
     }
     Ok(())
 }
 
-/// A file prints one `await` of the async wrappers that it waits for (`async_wrappers_awaited_by`).
-/// Finds the import cycles that this goes by, and records the symbols that the `await` adds to the file.
+/// A file prints one `await` of the async wrappers that its `import` statements call. Records them per file
+/// (`LinkerGraph.awaited_wrappers`), with the symbols that the `await` adds. Returns whether it adds any.
+///
+/// A wrapper in a cycle of such calls ends before the one where the cycle started, which ends last. So a file
+/// outside of the cycle also waits for the wrappers where the cycle can start. The call has started them all.
 fn record_awaited_wrappers(c: &mut LinkerContext) -> Result<bool, AllocError> {
     let flags = c.graph.meta.items_flags();
-    let wrapper_refs = c.graph.ast.items_wrapper_ref();
-    let is_async_wrapper = |id: usize| {
+    if !c.graph.reachable_files.iter().any(|source_index| {
+        let id = source_index.get() as usize;
         flags[id].wrap == WrapKind::Esm
             && flags[id].is_async_or_has_async_dependency
             && c.graph.files_live.is_set(id)
-            && wrapper_refs[id].is_valid()
-    };
-    if !c
-        .graph
-        .reachable_files
-        .iter()
-        .any(|source_index| is_async_wrapper(source_index.get() as usize))
-    {
+    }) {
         return Ok(false);
     }
 
-    let (cycle_of_file, cycles_len) = find_import_cycles(c);
-    let mut entrances: Vec<Vec<IndexInt>> = vec![Vec::new(); cycles_len];
-    let mut is_entrance: Vec<bool> = vec![false; c.graph.files.len()];
-    let mut add_entrance = |source_index: IndexInt| {
-        let id = source_index as usize;
-        if is_async_wrapper(id) && !core::mem::replace(&mut is_entrance[id], true) {
-            entrances[cycle_of_file[id] as usize].push(source_index);
-        }
+    let is_live_and_async = |source_index: IndexInt| {
+        flags[source_index as usize].is_async_or_has_async_dependency
+            && c.graph.files_live.is_set(source_index as usize)
     };
-    let entry_point_kinds = c.graph.files.items_entry_point_kind();
-    for source_index in c.graph.reachable_files.iter() {
-        let id = source_index.get() as usize;
-        if cycle_of_file[id] != NO_CYCLE && entry_point_kinds[id].is_entry_point() {
-            add_entrance(source_index.get());
+    let (cycle_of_file, cycles_len) = find_cycles(c, |source_index, edges| {
+        if is_live_and_async(source_index) {
+            c.for_each_async_wrapper_call(source_index, |wrapper| edges.push(wrapper));
         }
-        for record in c.graph.ast.items_import_records()[id].as_slice() {
-            if record.source_index.is_valid()
-                && let cycle = cycle_of_file[record.source_index.get() as usize]
-                && cycle != NO_CYCLE
-                && cycle != cycle_of_file[id]
+    });
+    // Per cycle: the wrappers that something outside of it calls, in an `import` statement or otherwise.
+    let mut entrances: Vec<Vec<IndexInt>> = vec![Vec::new(); cycles_len];
+    if cycles_len > 0 {
+        let mut is_entrance: Vec<bool> = vec![false; c.graph.files.len()];
+        let mut add_entrance = |importer: Option<IndexInt>, wrapper: IndexInt| {
+            let cycle = cycle_of_file[wrapper as usize];
+            if cycle != NO_CYCLE
+                && importer.is_none_or(|importer| cycle_of_file[importer as usize] != cycle)
+                && !core::mem::replace(&mut is_entrance[wrapper as usize], true)
             {
-                add_entrance(record.source_index.get());
+                entrances[cycle as usize].push(wrapper);
+            }
+        };
+        let entry_point_kinds = c.graph.files.items_entry_point_kind();
+        for source_index in c.graph.reachable_files.iter() {
+            let source_index = source_index.get();
+            let id = source_index as usize;
+            if !c.graph.files_live.is_set(id) {
+                continue;
+            }
+            if entry_point_kinds[id].is_entry_point() {
+                add_entrance(None, source_index);
+            }
+            if is_live_and_async(source_index) {
+                c.for_each_async_wrapper_call(source_index, |wrapper| {
+                    add_entrance(Some(source_index), wrapper)
+                });
+            }
+            for record in c.graph.ast.items_import_records()[id].as_slice() {
+                if record.kind != ImportKind::Stmt && record.source_index.is_valid() {
+                    add_entrance(Some(source_index), record.source_index.get());
+                }
             }
         }
-    }
-    if entrances.iter().any(|entrances| !entrances.is_empty()) {
-        c.graph.async_cycle_of_file = cycle_of_file;
-        c.graph.async_cycle_entrances = entrances.into_iter().map(Into::into).collect();
     }
 
     let mut worklist: Vec<TreeShakeWork> = Vec::new();
@@ -229,16 +239,37 @@ fn record_awaited_wrappers(c: &mut LinkerContext) -> Result<bool, AllocError> {
         {
             continue;
         }
-        let awaited = c.async_wrappers_awaited_by(source_index);
+        called.clear();
+        c.for_each_async_wrapper_call(source_index, |wrapper| {
+            if !called.contains(&wrapper) {
+                called.push(wrapper);
+            }
+        });
+        let mut awaited = called.clone();
+        for &wrapper in &called {
+            let cycle = cycle_of_file[wrapper as usize];
+            if cycle == NO_CYCLE || cycle == cycle_of_file[id] {
+                continue;
+            }
+            for &entrance in &entrances[cycle as usize] {
+                if c.runs_with(source_index, entrance) && !awaited.contains(&entrance) {
+                    awaited.push(entrance);
+                }
+            }
+        }
+        if awaited.is_empty() {
+            continue;
+        }
+        c.graph
+            .awaited_wrappers
+            .insert(source_index, awaited.as_slice().into());
         if awaited.len() < 2 {
             continue;
         }
         let part_index = c.graph.parts_live[id]
             .find_first_set()
             .expect("a live file has a live part") as u32;
-        called.clear();
-        c.for_each_async_wrapper_call(source_index, |wrapper| called.push(wrapper));
-        for &wrapper in awaited.iter().filter(|wrapper| !called.contains(wrapper)) {
+        for &wrapper in &awaited[called.len()..] {
             c.graph.generate_symbol_import_and_use(
                 source_index,
                 part_index,

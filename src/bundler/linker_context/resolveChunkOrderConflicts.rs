@@ -138,7 +138,13 @@ fn group_files(c: &LinkerContext, already_wrapped: &AutoBitSet) -> crate::Result
     // A file comes after what it imports whoever loads it, so an initializer without side effects
     // is in place for its readers. Not in an import cycle, where the file entered first runs last.
     if groups.iter().any(|group| group.loader_count >= 2) {
-        let (cycle_of_file, _) = find_import_cycles(c);
+        let (cycle_of_file, _) = find_cycles(c, |source_index, edges| {
+            let is_live = c.graph.files_live.is_set(source_index as usize);
+            for_each_edge(c, source_index, is_live, |_, edge| match edge {
+                Edge::Import(other) | Edge::LoadNow(other) => edges.push(other),
+                Edge::LoadLater(_) => {}
+            });
+        });
         for (id, &group) in group_of_file.iter().enumerate() {
             if group != NO_GROUP
                 && cycle_of_file[id] != NO_CYCLE
@@ -237,9 +243,22 @@ fn find_order_conflicts(load_groups: &LoadGroups, orders: &EvaluationOrders) -> 
 
 /// What comes after a wrapper, from another chunk, has to be one: the `import` of a chunk runs ahead
 /// of the calls. What is async and comes before a wrapper has to be one: its `await` holds them up.
-fn spread_lazy_groups(groups: &mut [LoadGroup], group_orders: &[Vec<u32>]) {
+/// What requires a wrapper at load has to be one: its chunk can run ahead of the chunk of the wrapper.
+fn spread_lazy_groups(
+    groups: &mut [LoadGroup],
+    group_orders: &[Vec<u32>],
+    requires_at_load: &[(u32, u32)],
+) {
     loop {
         let mut changed = false;
+        for &(requirer, required) in requires_at_load {
+            let is_required_lazy = groups[required as usize].is_lazy;
+            let requirer = &mut groups[requirer as usize];
+            if is_required_lazy && !requirer.is_lazy && !requirer.is_pinned {
+                requirer.is_lazy = true;
+                changed = true;
+            }
+        }
         for group_order in group_orders {
             let mut is_after_lazy = false;
             for &group in group_order {
@@ -266,11 +285,21 @@ fn spread_lazy_groups(groups: &mut [LoadGroup], group_orders: &[Vec<u32>]) {
     }
 }
 
-/// The reverse of `spread_lazy_groups`: what comes before a pinned file is pinned, and what comes
-/// after a pinned async file.
-fn spread_pinned_groups(groups: &mut [LoadGroup], group_orders: &[Vec<u32>]) {
+/// The reverse of `spread_lazy_groups`: what comes before a pinned file is pinned, what comes
+/// after a pinned async file, and what a pinned file requires at load.
+fn spread_pinned_groups(
+    groups: &mut [LoadGroup],
+    group_orders: &[Vec<u32>],
+    requires_at_load: &[(u32, u32)],
+) {
     loop {
         let mut changed = false;
+        for &(requirer, required) in requires_at_load {
+            let is_requirer_pinned = groups[requirer as usize].is_pinned;
+            let required = &mut groups[required as usize];
+            changed |= is_requirer_pinned && !required.is_pinned;
+            required.is_pinned |= is_requirer_pinned;
+        }
         for group_order in group_orders {
             let mut is_pinned = false;
             for &group in group_order.iter().rev() {
@@ -360,11 +389,30 @@ fn find_files_to_wrap(
             }
         }
     }
-    spread_pinned_groups(groups, &group_orders);
+    // (group, group): a file of the first calls a split `require()` of a file of the second at load.
+    let mut requires_at_load: Vec<(u32, u32)> = Vec::new();
+    for (id, &group) in group_of_file.iter().enumerate() {
+        if group == NO_GROUP {
+            continue;
+        }
+        for_each_edge(c, id as IndexInt, true, |_, edge| {
+            if let Edge::LoadNow(other) = edge
+                && let required = group_of_file[other as usize]
+                && required != NO_GROUP
+                && required != group
+            {
+                requires_at_load.push((group, required));
+            }
+        });
+    }
+    requires_at_load.sort_unstable();
+    requires_at_load.dedup();
+
+    spread_pinned_groups(groups, &group_orders, &requires_at_load);
     for (group, has_conflict) in groups.iter_mut().zip(has_conflict) {
         group.is_lazy |= has_conflict && !group.is_pinned;
     }
-    spread_lazy_groups(groups, &group_orders);
+    spread_lazy_groups(groups, &group_orders, &requires_at_load);
 
     let mut files = AutoBitSet::init_empty(group_of_file.len())?;
     for (id, &group) in group_of_file.iter().enumerate() {
@@ -568,8 +616,11 @@ fn has_top_level_initializer(c: &LinkerContext, source_index: IndexInt) -> bool 
 pub(crate) const NO_CYCLE: u32 = u32::MAX;
 
 /// Per file: the strongly connected component of several files that it is in, or `NO_CYCLE`. And how
-/// many there are (Tarjan's algorithm).
-pub(crate) fn find_import_cycles(c: &LinkerContext) -> (Vec<u32>, usize) {
+/// many there are (Tarjan's algorithm). `push_edges(file, edges)` adds what the file leads to.
+pub(crate) fn find_cycles(
+    c: &LinkerContext,
+    mut push_edges: impl FnMut(IndexInt, &mut Vec<IndexInt>),
+) -> (Vec<u32>, usize) {
     const UNVISITED: u32 = u32::MAX;
     struct Frame {
         source_index: IndexInt,
@@ -602,11 +653,7 @@ pub(crate) fn find_import_cycles(c: &LinkerContext) -> (Vec<u32>, usize) {
                 scc_stack.push(source_index);
                 on_scc_stack[source_index as usize] = true;
                 let first_edge = edges.len();
-                let is_live = c.graph.files_live.is_set(source_index as usize);
-                for_each_edge(c, source_index, is_live, |_, edge| match edge {
-                    Edge::Import(other) | Edge::LoadNow(other) => edges.push(other),
-                    Edge::LoadLater(_) => {}
-                });
+                push_edges(source_index, &mut edges);
                 stack.push(Frame {
                     source_index,
                     first_edge,

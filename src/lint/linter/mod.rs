@@ -69,6 +69,7 @@ pub use syntax::{
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
+use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::Meta;
@@ -486,11 +487,25 @@ impl Linter {
             .collect();
         let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         problems.reserve(diagnostics.len());
+        // What the fixes of the last rule and `messageId` that had one count as.
+        let mut fix_kind = (None, None);
         for diagnostic in diagnostics {
             let Some(rule) = running.get(diagnostic.rule as usize) else {
                 continue;
             };
-            problems.push(to_message(diagnostic, rule.reported_as, &locator));
+            let is_fixed = diagnostic.fix.is_some() && file.language().is_oxlint;
+            let key = Some((diagnostic.rule, diagnostic.message_id));
+            if is_fixed && fix_kind.0 != key {
+                fix_kind = (
+                    key,
+                    config::oxlint_fix_kind(rule.reported_as, diagnostic.message_id),
+                );
+            }
+            let mut message = to_message(diagnostic, rule.reported_as, &locator);
+            if let Some(kind) = fix_kind.1.filter(|_| is_fixed) {
+                demote_fix(&mut message, kind);
+            }
+            problems.push(message);
         }
         problems.sort_by_key(|it| (it.line, it.column));
 
@@ -674,6 +689,20 @@ fn suppress_closing_like_the_rest(
         .filter(|it| it.rule_id.as_ref() == Some(rule) && is_closing(it))
     {
         closing.suppressions.clone_from(&suppressions);
+    }
+}
+
+/// Makes a suggestion of the fix, which says what the report says.
+fn demote_fix(message: &mut LintMessage, kind: SuggestionKind) {
+    if let Some(fix) = message.fix.take() {
+        let suggestion = Suggestion {
+            message_id: Cow::Borrowed(""),
+            message: message.message.clone(),
+            data: Vec::new(),
+            fix,
+            kind,
+        };
+        message.suggestions.insert(0, suggestion);
     }
 }
 

@@ -382,6 +382,60 @@ pub(super) static NOT_DECLARATIONS: &[(&str, &str)] = &[
     ("vue", "prefer-import-from-vue"),
 ];
 
+/// The rules that have neither a fix nor a suggestion: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
+#[rustfmt::skip]
+pub(super) static WITHOUT_FIX: &[(&str, &str)] = &[
+    ("eslint", concat!(
+        "accessor-pairs array-callback-return block-scoped-var class-methods-use-this complexity ",
+        "constructor-super default-case default-case-last default-param-last func-name-matching func-style ",
+        "getter-return grouped-accessor-pairs guard-for-in id-denylist id-length id-match init-declarations ",
+        "logical-assignment-operators max-classes-per-file max-depth max-lines max-lines-per-function ",
+        "max-nested-callbacks max-params max-statements new-cap no-alert no-async-promise-executor ",
+        "no-await-in-loop no-bitwise no-caller no-class-assign no-cond-assign no-const-assign ",
+        "no-constant-binary-expression no-constant-condition no-constructor-return no-continue ",
+        "no-control-regex no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case ",
+        "no-duplicate-imports no-empty-character-class no-empty-pattern no-eval no-ex-assign no-extend-native ",
+        "no-extra-bind no-fallthrough no-func-assign no-global-assign no-implicit-globals no-implied-eval ",
+        "no-import-assign no-inline-comments no-inner-declarations no-invalid-regexp no-irregular-whitespace ",
+        "no-label-var no-labels no-lone-blocks no-lonely-if no-loop-func no-loss-of-precision ",
+        "no-magic-numbers no-multi-assign no-multi-str no-nested-ternary no-new no-new-func ",
+        "no-new-native-nonconstructor no-obj-calls no-object-constructor no-param-reassign ",
+        "no-promise-executor-return no-proto no-prototype-builtins no-redeclare no-restricted-exports ",
+        "no-restricted-globals no-restricted-imports no-restricted-properties no-return-assign no-script-url ",
+        "no-self-assign no-self-compare no-sequences no-setter-return no-shadow no-shadow-restricted-names ",
+        "no-sparse-arrays no-template-curly-in-string no-ternary no-this-before-super no-unassigned-vars ",
+        "no-undef no-undefined no-underscore-dangle no-unmodified-loop-condition no-unreachable ",
+        "no-unreachable-loop no-unsafe-finally no-unsafe-optional-chaining no-unused-expressions ",
+        "no-unused-private-class-members no-use-before-define no-useless-assignment no-useless-backreference ",
+        "no-useless-call no-useless-catch no-useless-concat no-useless-return no-warning-comments no-with ",
+        "prefer-named-capture-group prefer-promise-reject-errors prefer-regex-literals prefer-rest-params ",
+        "prefer-spread require-unicode-regexp require-yield symbol-description vars-on-top",
+    )),
+    ("typescript", concat!(
+        "adjacent-overload-signatures ban-types explicit-function-return-type explicit-module-boundary-types ",
+        "method-signature-style no-duplicate-enum-values no-dynamic-delete no-empty-interface ",
+        "no-invalid-void-type no-misused-new no-namespace no-non-null-assertion no-require-imports ",
+        "no-this-alias no-unsafe-declaration-merging no-unsafe-function-type no-var-requires ",
+        "parameter-properties prefer-for-of prefer-literal-enum-member triple-slash-reference ",
+        "unified-signatures",
+    )),
+];
+
+/// The rules that have suggestions and no fix: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
+#[rustfmt::skip]
+pub(super) static ONLY_SUGGESTIONS: &[(&str, &str)] = &[
+    ("eslint", concat!(
+        "no-case-declarations no-console no-debugger no-empty no-empty-function no-empty-static-block ",
+        "no-iterator no-misleading-character-class no-nonoctal-decimal-escape no-plusplus no-throw-literal ",
+        "no-useless-constructor no-void",
+    )),
+    ("typescript", concat!(
+        "class-literal-property-style no-confusing-non-null-assertion no-empty-object-type ",
+        "no-inferrable-types no-non-null-asserted-nullish-coalescing no-non-null-asserted-optional-chain ",
+        "no-unnecessary-parameter-property-assignment no-unnecessary-type-constraint prefer-enum-initializers",
+    )),
+];
+
 /// The names of all rules of oxlint, without their plugins, sorted and separated by spaces.
 #[rustfmt::skip]
 pub(super) static RULE_NAMES: &str = concat!(

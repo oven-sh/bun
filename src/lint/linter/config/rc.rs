@@ -8,6 +8,7 @@ use super::flat::{ConfigError, Reader, Semantics};
 use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
+use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
 use crate::linter::resolved::find_js_rule;
@@ -61,6 +62,52 @@ pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
     !(lists.iter())
         .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()).is_some_and(is_of))
         .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
+}
+
+/// Fixes of rules for which the lists say nothing, or not enough: the plugin, the rule, the `messageId` of the report or nothing
+/// for all of them, and what `--fix` of oxlint 1.80 makes of the fix. Each was tried.
+const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 3] = [
+    // `a ? true : false`, `a ? a : b`
+    (
+        Plugin::Eslint,
+        "no-unneeded-ternary",
+        "",
+        SuggestionKind::DangerousFix,
+    ),
+    // `if (!!a)`. `if (Boolean(a))` is fixed.
+    (
+        Plugin::Eslint,
+        "no-extra-boolean-cast",
+        "unexpectedNegation",
+        SuggestionKind::Suggestion,
+    ),
+    // `a as string`, by tsgolint 7.0
+    (
+        Plugin::TypeScript,
+        "non-nullable-type-assertion-style",
+        "",
+        SuggestionKind::Suggestion,
+    ),
+];
+
+/// What the fix of a rule for ESLint counts as with a configuration of oxlint, so that `--fix` changes what `oxlint --fix`
+/// changes: a suggestion if the rule of oxlint has no fix. `None`: a fix. `meta`: what the rule is reported as.
+pub(crate) fn oxlint_fix_kind(meta: &Meta, message_id: &str) -> Option<SuggestionKind> {
+    if meta.follows_oxlint {
+        return None;
+    }
+    let probed = (PROBED_FIXES.iter()).find(|it| {
+        it.0 == meta.plugin && it.1 == meta.name && (it.2.is_empty() || it.2 == message_id)
+    });
+    if let Some(probed) = probed {
+        return Some(probed.3);
+    }
+    [categories::WITHOUT_FIX, categories::ONLY_SUGGESTIONS]
+        .iter()
+        .flat_map(|it| it.iter())
+        .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(meta.plugin))
+        .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
+        .then_some(SuggestionKind::Suggestion)
 }
 
 /// Whether oxlint has a rule that is called `name`, in whatever plugin.

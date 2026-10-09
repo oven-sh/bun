@@ -70,6 +70,7 @@ pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
 use minimatch::{How, Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
+pub(crate) use rc::oxlint_fix_kind;
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category, oxlint_runs_on};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;

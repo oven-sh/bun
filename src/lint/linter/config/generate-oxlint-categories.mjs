@@ -40,7 +40,7 @@ const corrections = {
 };
 const table = {};
 const runsOn = {};
-for (const { scope: plugin, value: name, category } of rules) {
+for (const { scope: plugin, value: name, category, fix, type_aware: needsTypes } of rules) {
   if (!plugins.includes(plugin)) continue;
   if (!categories.includes(category)) throw new Error(`${plugin}/${name}: ${category}`);
   ((table[plugin] ??= {})[category] ??= []).push(name);
@@ -64,6 +64,16 @@ for (const { scope: plugin, value: name, category } of rules) {
           : undefined;
   const kind = `${plugin}/${name}` in corrections ? corrections[`${plugin}/${name}`] : read;
   if (kind) ((runsOn[kind] ??= {})[plugin] ??= []).push(name);
+  // What `--fix` can do. For a rule with fixes of several kinds the executable prints the most dangerous one, which says nothing
+  // about a report: only these two classes are certain. Not for the rules that need types: those are tsgolint's, which fixes
+  // what the executable says has no fix (dot-notation, prefer-readonly). Of the plugins whose rules are ports of the rules for
+  // ESLint here.
+  const fixes = /^(none|pending)$/.test(fix)
+    ? "WITHOUT_FIX"
+    : /^(fixable|conditional)_suggestion$/.test(fix)
+      ? "ONLY_SUGGESTIONS"
+      : undefined;
+  if (fixes && !needsTypes && ["eslint", "typescript"].includes(plugin)) ((runsOn[fixes] ??= {})[plugin] ??= []).push(name);
 }
 // The names of all rules, whatever the plugin.
 const allNames = new Set(rules.map(it => it.value));
@@ -113,6 +123,8 @@ ${[
   ["TYPESCRIPT_ONLY", "The rules that only run on TypeScript files"],
   ["NOT_TYPESCRIPT", "The rules that do not run on TypeScript files"],
   ["NOT_DECLARATIONS", "The rules that do not run on declaration files"],
+  ["WITHOUT_FIX", "The rules that have neither a fix nor a suggestion"],
+  ["ONLY_SUGGESTIONS", "The rules that have suggestions and no fix"],
 ]
   .map(
     ([

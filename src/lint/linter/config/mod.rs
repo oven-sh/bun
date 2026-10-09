@@ -39,7 +39,7 @@
 //! ```
 //!
 //! What JSON cannot express is written as `{ "$unserializable": "function" }`. In `files` and
-//! `ignores` such a matcher never matches, and is noted in [`Config::notes`]. ESLint's own default
+//! `ignores` such a matcher is an error: which files it is for cannot be told. ESLint's own default
 //! objects are not part of the array.
 
 mod brace_expansion;
@@ -610,7 +610,10 @@ impl Config {
                 (config.processor_location).clone_from(&object.processor_location);
             }
         }
-        config.validate_language_options(&language_options);
+        // Another language validates its own.
+        if (config.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js")) {
+            config.validate_language_options(&language_options);
+        }
         config.language = LanguageOptions::from_json(&language_options, &settings);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;

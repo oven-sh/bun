@@ -481,16 +481,10 @@ impl<'l> Loader<'l> {
         let mut moved: Vec<(Vec<u8>, Vec<u8>)> =
             vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
         let mut load = |directory: &[u8], name: &[u8]| {
-            // A package, which would have to be run.
-            if !name.starts_with(b".") && !paths::is_absolute(name) {
-                self.warn(&[
-                    b"\"",
-                    name,
-                    b"\", which ",
-                    path,
-                    b" extends, is not supported and was skipped",
-                ]);
-                return Some(Json::Object(Vec::new()));
+            // For oxlint it is a path if it looks like one: it has an extension. It does not know the names of packages.
+            let has_extension = strings::last_index_of_char(paths::basename(name), b'.') > Some(0);
+            if !name.starts_with(b".") && !paths::is_absolute(name) && !has_extension {
+                return None;
             }
             // Where the reader takes a file to be, and where it is.
             let real = moved
@@ -617,8 +611,13 @@ impl<'l> Loader<'l> {
         };
         let config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn => {
+                // ESLint throws.
+                if json == Json::Null {
+                    return Err(Fatal(
+                        [b"The configuration file ", path, b" exports nothing."].concat(),
+                    ));
+                }
                 let is_empty = match &json {
-                    Json::Null => true,
                     Json::Array(items) => items.is_empty(),
                     Json::Object(entries) => entries.is_empty(),
                     _ => false,

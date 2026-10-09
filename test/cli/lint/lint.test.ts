@@ -643,9 +643,9 @@ describe.concurrent("bun lint", () => {
     });
 
     test(".eslintrc.json", async () => {
-      const { stdout, stderr } = await lint(
+      const { stdout } = await lint(
         {
-          ".eslintrc.json": `{ "root": true, "extends": ["some-package"], "env": { "node": true }, "rules": { "no-undef": "error" }, "overrides": [{ "files": ["*.test.js"], "globals": { "test": "readonly" } }] }`,
+          ".eslintrc.json": `{ "root": true, "env": { "node": true }, "rules": { "no-undef": "error" }, "overrides": [{ "files": ["*.test.js"], "globals": { "test": "readonly" } }] }`,
           "a.js": "process.exit(test);\n",
           "a.test.js": "process.exit(test);\n",
         },
@@ -656,7 +656,6 @@ describe.concurrent("bun lint", () => {
 
         1 problem"
       `);
-      expect(stderr).toContain('"some-package"');
     });
   });
 

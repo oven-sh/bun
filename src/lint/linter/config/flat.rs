@@ -157,24 +157,29 @@ impl Reader<'_> {
         }
     }
 
-    /// The patterns in `items`, which are validated already.
-    fn patterns(&mut self, key: &str, items: &[Json]) -> Vec<Pattern> {
-        let mut patterns = Vec::with_capacity(items.len());
-        for item in items {
-            match item {
-                Json::String(pattern) => patterns.push(Pattern::new(pattern)),
-                _ => {
-                    self.note(&[
-                        b"A function in \"",
-                        key.as_bytes(),
-                        b"\" is not supported. It never matches.",
-                    ]);
-                    // An empty pattern matches the empty path only.
-                    patterns.push(Pattern::new(b""));
-                }
+    /// The patterns in `items`, which are validated already. `json`: the object that has them.
+    fn patterns(
+        &self,
+        json: &Json,
+        key: &str,
+        items: &[Json],
+    ) -> Result<Vec<Pattern>, ConfigError> {
+        let patterns = items.iter().map(|item| match item {
+            Json::String(pattern) => Ok(Pattern::new(pattern)),
+            // Which files it is for cannot be told. To lint fewer files than ESLint and find no problems is worse than not to lint.
+            _ => {
+                let index = self.objects.len().saturating_sub(self.defaults).to_string();
+                Err(ConfigError::new(&[
+                    &config_name(json),
+                    b"Key \"",
+                    key.as_bytes(),
+                    b"\": A function is not supported, at user-defined index ",
+                    index.as_bytes(),
+                    b".\n`FlatCompat` of @eslint/eslintrc makes one of each of the `overrides`, and of the `ignorePatterns`, of what it is given.",
+                ]))
             }
-        }
-        patterns
+        });
+        patterns.collect()
     }
 
     /// The rules of an object. `typescript_prefixes`: other names under which the plugin of
@@ -306,14 +311,14 @@ impl Reader<'_> {
             let mut alternatives = Vec::with_capacity(files.len());
             for item in files {
                 alternatives.push(match item {
-                    Json::Array(all) => self.patterns("files", all),
-                    item => self.patterns("files", std::slice::from_ref(item)),
+                    Json::Array(all) => self.patterns(json, "files", all)?,
+                    item => self.patterns(json, "files", std::slice::from_ref(item))?,
                 });
             }
             object.files = Some(alternatives);
         }
         if let Some(ignores) = json.get(b"ignores").and_then(Json::as_array) {
-            object.ignores = Some(self.patterns("ignores", ignores));
+            object.ignores = Some(self.patterns(json, "ignores", ignores)?);
             object.is_global_ignores = entries
                 .iter()
                 .filter(|it| !META_KEYS.contains(&&it.0[..]))

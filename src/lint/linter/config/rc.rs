@@ -304,6 +304,14 @@ impl Rc<'_, '_> {
                 }
                 continue;
             }
+            let is_path = matches!(name, [b'.' | b'/', ..] | [_, b':', b'/' | b'\\', ..]);
+            if self.flavor == RcFlavor::Eslint && !is_path {
+                return Err(ConfigError::new(&[
+                    b"It extends \"",
+                    name,
+                    b"\". A configuration that is a package is not supported yet.",
+                ]));
+            }
             let Some(extended) = (self.load)(directory, name) else {
                 return Err(ConfigError::new(&[
                     b"Failed to load config \"",
@@ -433,7 +441,7 @@ impl Rc<'_, '_> {
         Ok(())
     }
 
-    /// `plugins` of `json`. oxlint refuses a name that it does not know.
+    /// `plugins` of `json`. oxlint refuses a name that it does not know. For ESLint it is a package, with rules that are not here.
     fn plugin_names(&self, json: &Json) -> Result<Option<Vec<Vec<u8>>>, ConfigError> {
         let Some(plugins) = json.get(b"plugins").and_then(Json::as_array) else {
             return Ok(None);
@@ -448,6 +456,14 @@ impl Rc<'_, '_> {
                     b"Failed to parse config with error Error(\"Unknown plugin: '",
                     written,
                     b"'.\", line: 0, column: 0)",
+                ]));
+            }
+            let scope = name.strip_suffix(b"/eslint-plugin").unwrap_or(name);
+            if self.flavor == RcFlavor::Eslint && Plugin::of_prefix(scope).is_none() {
+                return Err(ConfigError::new(&[
+                    b"It uses the plugin \"",
+                    written,
+                    b"\". In a configuration of ESLint 8 a plugin that is not built in is not supported yet.",
                 ]));
             }
             names.push(name.to_vec());

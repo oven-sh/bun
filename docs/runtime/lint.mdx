@@ -107,7 +107,7 @@ Only the processor runs in JavaScript. The built-in rules lint the blocks as nat
 
 ### `.eslintrc.json`
 
-`bun lint` reads `.eslintrc.json` and `.eslintrc`, if they are JSON. It skips what they extend from a package, such as `"next/core-web-vitals"`. `.eslintrc.js` and `.eslintrc.yml` are not supported: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).
+`bun lint` reads `.eslintrc.json` and `.eslintrc`, if they are JSON. What they extend from a package, such as `"next/core-web-vitals"`, and a plugin that is not built in are errors. `.eslintrc.js` and `.eslintrc.yml` are not supported: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).
 
 ## Replace oxlint
 

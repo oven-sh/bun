@@ -37,7 +37,8 @@ impl<'m> Trace<'m> for FileSystem {
     fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
         // The default export is the module itself, which the tracker knows if it is not told otherwise.
         match name {
-            b"default" => return None,
+            // And a pattern is no path.
+            b"default" | b"glob" | b"globSync" => return None,
             b"promises" => return Some(("promises", &FileSystem)),
             _ => {}
         }

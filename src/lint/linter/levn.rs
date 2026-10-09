@@ -175,72 +175,6 @@ impl<'t> Tokens<'t> {
     }
 }
 
-/// `Number(text)`
-pub(crate) fn to_number(text: &[u8]) -> f64 {
-    let text = bun_core::strings::trim_js_whitespace(text);
-    if text.is_empty() {
-        return 0.0;
-    }
-    if let [
-        b'0',
-        radix @ (b'x' | b'X' | b'o' | b'O' | b'b' | b'B'),
-        digits @ ..,
-    ] = text
-    {
-        let radix = match radix.to_ascii_lowercase() {
-            b'x' => 16,
-            b'o' => 8,
-            _ => 2,
-        };
-        let mut value = 0.0;
-        for &digit in digits {
-            let Some(digit) = (digit as char).to_digit(radix) else {
-                return f64::NAN;
-            };
-            value = value * f64::from(radix) + f64::from(digit);
-        }
-        return if digits.is_empty() { f64::NAN } else { value };
-    }
-    let unsigned = match text {
-        [b'+' | b'-', rest @ ..] => rest,
-        _ => text,
-    };
-    if unsigned == b"Infinity" {
-        return if text[0] == b'-' {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    let digits = |text: &[u8]| text.iter().take_while(|b| b.is_ascii_digit()).count();
-    let whole = digits(unsigned);
-    let mut at = whole;
-    let mut fraction = 0;
-    if unsigned.get(at) == Some(&b'.') {
-        fraction = digits(&unsigned[at + 1..]);
-        at += 1 + fraction;
-    }
-    if whole + fraction == 0 {
-        return f64::NAN;
-    }
-    if matches!(unsigned.get(at), Some(b'e' | b'E')) {
-        at += 1;
-        at += usize::from(matches!(unsigned.get(at), Some(b'+' | b'-')));
-        let exponent = digits(&unsigned[at..]);
-        if exponent == 0 {
-            return f64::NAN;
-        }
-        at += exponent;
-    }
-    if at != unsigned.len() {
-        return f64::NAN;
-    }
-    std::str::from_utf8(text)
-        .ok()
-        .and_then(|it| it.parse().ok())
-        .unwrap_or(f64::NAN)
-}
-
 /// The `String` cast: without its quotes, and with its escapes replaced.
 fn unquote(text: &[u8]) -> Vec<u8> {
     let (quote, inner) = match text {
@@ -305,7 +239,7 @@ fn cast(node: Node) -> Option<Json> {
             {
                 return None;
             }
-            _ => match to_number(&text) {
+            _ => match bun_core::fmt::js_string_to_number(&text) {
                 number if number.is_nan() => Json::String(unquote(&text)),
                 number => Json::Number(number),
             },

@@ -65,7 +65,7 @@ pub fn is_absolute(path: &[u8]) -> bool {
     is_absolute_as(if cfg!(windows) { Style::Windows } else { Style::Posix }, path)
 }
 
-pub fn is_absolute_as(style: Style, path: &[u8]) -> bool {
+pub(crate) fn is_absolute_as(style: Style, path: &[u8]) -> bool {
     match style {
         Style::Posix => node::is_absolute_posix_t(path),
         Style::Windows => node::is_absolute_windows_t(path),
@@ -90,16 +90,14 @@ pub fn resolve_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
     of_node(style, resolved.unwrap_or(path))
 }
 
-/// `path.relative(base, path)` of two absolute paths. Empty if they are the same.
+/// `path.relative(base, path)` of two resolved paths. Empty if they are the same.
 pub fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
     relative_as(Style::of(base), base, path)
 }
 
 pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
-    // What follows the base is the answer if there is nothing in it to resolve: so it is for nearly every file.
-    if let Some(rest) = inside_as(style, base, path)
-        && strings::split(rest, b"/").all(|name| !matches!(name, b"" | b"." | b".."))
-    {
+    // So it is for nearly every file.
+    if let Some(rest) = inside_as(style, base, path) {
         return rest.to_vec();
     }
     let len = node::relative_buf_len::<u8>(base, path);
@@ -139,7 +137,7 @@ fn names(path: &[u8]) -> Vec<&[u8]> {
 /// `toRelativePath` of `@eslint/config-array`: the way from the directory `base` to `path`. Empty if they are the same. It
 /// starts with `..` if `path` is outside of `base`, also on another drive: it is not `path.relative` of the two, but of what
 /// `path.toNamespacedPath` makes of them, which all begins with `\\?\`.
-pub fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
+pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
     // What follows the base as it is written is the answer if there is nothing in it to resolve.
     if let Some([b'/', rest @ ..]) = path.strip_prefix(base)
         && strings::split(rest, b"/").all(|name| !matches!(name, b"" | b"." | b".."))
@@ -227,7 +225,7 @@ pub fn namespaced(path: &[u8]) -> Vec<u8> {
 }
 
 /// `path` resolved. One that is not absolute is in `/`.
-pub fn absolute(path: &[u8]) -> Vec<u8> {
+pub(crate) fn absolute(path: &[u8]) -> Vec<u8> {
     match path {
         // The root of the drive, not the working directory on it.
         [drive, b':'] if drive.is_ascii_alphabetic() => [path, b"/"].concat(),
@@ -236,7 +234,7 @@ pub fn absolute(path: &[u8]) -> Vec<u8> {
 }
 
 /// `path`, which is absolute, resolved, with a `/` at its start, also before the name of a drive: no relative path starts so.
-pub fn rooted(path: &[u8]) -> Vec<u8> {
+pub(crate) fn rooted(path: &[u8]) -> Vec<u8> {
     let resolved = absolute(path);
     match resolved.starts_with(b"/") {
         true => resolved,
@@ -253,6 +251,30 @@ pub fn join(directory: &[u8], name: &[u8]) -> Vec<u8> {
     }
     out.extend_from_slice(name);
     out
+}
+
+/// `path.join(a, b)`
+pub fn join_normalized(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let (style, paths) = (Style::of(a), [a, b]);
+    let len = node::join_buf_len(style == Style::Windows, &paths);
+    let mut buffers = vec![0; 2 * len];
+    let (buf, buf2) = buffers.split_at_mut(len);
+    let joined = match style {
+        Style::Posix => node::join_posix_t(&paths, buf, buf2),
+        Style::Windows => node::join_windows_t(&paths, buf, buf2),
+    };
+    of_node(style, joined)
+}
+
+/// `path.normalize(path)`
+pub fn normalize(path: &[u8]) -> Vec<u8> {
+    let style = Style::of(path);
+    let mut buf = vec![0; node::normalize_buf_len(path)];
+    let normalized = match style {
+        Style::Posix => node::normalize_posix_t(path, &mut buf),
+        Style::Windows => node::normalize_windows_t(path, &mut buf),
+    };
+    of_node(style, normalized)
 }
 
 /// `directory` and the directories that it is in, up to the root.

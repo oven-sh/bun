@@ -8,9 +8,12 @@ afterAll(endChildren);
 
 /**
  * `«` and `»` are around what is reported. They are not part of the code. A string is a case with nothing else to say.
+ * `file`: where the file lies, below a directory of its own. By default it is `case-N.tsx`.
  * `output`: the code after one pass of the fixes. `suggestions`: the code with each suggestion alone, in the order of the reports.
  */
-type Case = string | { code: string; options?: unknown[]; ids?: string[]; output?: string; suggestions?: string[] };
+type Case =
+  | string
+  | { code: string; file?: string; options?: unknown[]; ids?: string[]; output?: string; suggestions?: string[] };
 
 const count = `import { count } from "./count";\n`;
 const countFunction = [{ countFunction: "count" }];
@@ -32,6 +35,20 @@ const mapped = [
   { modules: [{ package: "axios", use: "@/http", default: "http", names: { isCancel: "wasCancelled" } }] },
 ];
 const insideTable = (body: string) => `function Table({ rows }) {\n${body}\n}`;
+
+const axios = `import axios from "axios";\n`;
+const ownClient = [{ clients: [{ module: "./http", names: ["http"] }] }];
+const processes = `import { fork, spawn } from "node:child_process";\n`;
+const files = `import { createReadStream, createWriteStream, watch } from "node:fs";\n`;
+const observer = [{ factories: [{ module: "./observer", names: ["observe"] }] }];
+
+const userId = [{ branded: [{ module: "src/ids", type: "UserId", mint: ["toUserId"], mintedIn: ["src/session.ts"] }] }];
+const ids = `import type { UserId } from "../ids";\n`;
+const inPage = (it: Case): Case => ({
+  options: userId,
+  file: "src/views/page.ts",
+  ...(typeof it === "string" ? { code: it } : it),
+});
 
 const rules: Record<string, Case[]> = {
   "no-eager-dynamic-import": [
@@ -684,6 +701,8 @@ const rules: Record<string, Case[]> = {
       `fs.readFileSync(new URL("./a.txt", import.meta.url));`,
       "fs.readFileSync(`${root}/a.txt`);",
       `fs.writeSync(fd, "a");`,
+      `fs.globSync("a/*.txt");`,
+      `fs.promises.glob("a/*.txt");`,
       `fs.symlinkSync("a", "/b");`,
       `fs.renameSync("/a", "/b");`,
       `fs.readFileSync("/a", "utf8");`,
@@ -771,9 +790,26 @@ const rules: Record<string, Case[]> = {
     `const module = {};\n«module.exports = 1»;`,
     { code: `«other()»;`, options: [{ allow: ["start"] }] },
     { code: `«a.start()»;`, options: [{ allow: ["start"] }] },
+    { code: `«a.b.c()»;`, options: [{ allow: ["a.b"] }] },
+    { code: `«describe("a", f)»;`, options: [{ allow: [] }] },
+    { code: `«describe("a", f)»;`, options: [{ allow: ["start"] }] },
 
     { code: `start();`, options: [{ allow: ["start"] }] },
     { code: `console.log(1);`, options: [{ allow: ["console.log"] }] },
+    { code: `console.log(1);`, options: [{ allow: ["console"] }] },
+    `describe("a", () => {});`,
+    `describe.skip("a", () => {});`,
+    `test("a", () => {});`,
+    `test.each([1])("a", () => {});`,
+    `it.only("a", () => {});`,
+    `suite("a", () => {});`,
+    `before(() => {});\nafter(() => {});`,
+    `beforeAll(() => {});\nafterAll(() => {});`,
+    `beforeEach(() => {});\nafterEach(() => {});`,
+    `expect.extend({});`,
+    `vi.mock("a");`,
+    `jest.mock("a");`,
+    `mock.module("a", () => ({}));`,
     `const a = start();`,
     `export const a = start();`,
     `export default start();`,
@@ -1063,6 +1099,12 @@ const rules: Record<string, Case[]> = {
       `const a = join(import.meta.dirname, name);`,
       `const a = join(import.meta.dirname, "a", name);`,
       `const a = join(import.meta.dirname);`,
+      `const a = join(import.meta.dirname, "..");`,
+      `const a = join(import.meta.dirname, "..", "..");`,
+      `const a = join(import.meta.dirname, "../..");`,
+      `const a = join(import.meta.dirname, ".");`,
+      `const a = join(import.meta.dirname, "a/");`,
+      `const a = join(import.meta.dirname, "");`,
       `const a = join(root, "a.txt");`,
       `const a = join("a", import.meta.dirname);`,
       `const a = join(process.cwd(), "a.txt");`,
@@ -1079,6 +1121,9 @@ const rules: Record<string, Case[]> = {
     "const a = `${root}/a.txt`;",
     `const a = import.meta.dirname + name;`,
     `const a = import.meta.dirname + "a.txt";`,
+    `const a = import.meta.dirname + "/..";`,
+    `const a = import.meta.dirname + "/";`,
+    "const a = `${import.meta.dirname}/../..`;",
     `const a = "/a.txt" + import.meta.dirname;`,
   ],
 
@@ -1167,6 +1212,341 @@ const rules: Record<string, Case[]> = {
     { code: `import axios from "axios";`, options: [{ modules: [] }] },
     `import axios from "axios";`,
   ],
+
+  "no-unbounded-requests": [
+    `${axios}«axios.get»("/a");`,
+    `${axios}await «axios.get»("/a");`,
+    `${axios}«axios.get»("/a", {});`,
+    `${axios}«axios.get»("/a", { params: { page: 2 } });`,
+    `${axios}«axios.delete»("/a");`,
+    `${axios}«axios.head»("/a");`,
+    `${axios}«axios.options»("/a");`,
+    `${axios}«axios.post»("/a");`,
+    `${axios}«axios.post»("/a", body);`,
+    `${axios}«axios.post»("/a", body, { headers });`,
+    // The second argument of `post()` is what is sent.
+    `${axios}«axios.post»("/a", { timeout: 3000 });`,
+    `${axios}«axios.put»("/a", body);`,
+    `${axios}«axios.patch»("/a", body);`,
+    `${axios}«axios.postForm»("/a", body);`,
+    `${axios}«axios.putForm»("/a", body);`,
+    `${axios}«axios.patchForm»("/a", body);`,
+    `${axios}«axios.request»({ url: "/a" });`,
+    `${axios}«axios»("/a");`,
+    `${axios}«axios»(\`/a/\${id}\`);`,
+    `${axios}«axios»("/a", { method: "post" });`,
+    `${axios}«axios»({ url: "/a" });`,
+    `${axios}«axios»(address, { method: "post" });`,
+    `${axios}const api = «axios.create»();`,
+    `${axios}const api = «axios.create»({ baseURL: "https://example.com" });`,
+    `${axios}«axios.get»<Row[]>("/a");`,
+    `${axios}«axios.get»("/a", { params } as const);`,
+    `${axios}«axios.get»("/a", { params } satisfies Config);`,
+    `${axios}«axios.get»("/a", { "time-out": 3000 });`,
+    `${axios}const { get } = axios;\n«get»("/a");`,
+    `${axios}const client = axios;\n«client.get»("/a");`,
+    `import * as axios from "axios";\n«axios.get»("/a");`,
+    `import client from "axios";\n«client.get»("/a");`,
+    `import { default as client } from "axios";\n«client.get»("/a");`,
+    `const axios = require("axios");\n«axios.get»("/a");`,
+    `const { get } = require("axios");\n«get»("/a");`,
+    `«require("axios").get»("/a");`,
+    `${axios}function load() {\n  return «axios.get»("/a");\n}`,
+    `${axios}«axios.get»("/a");\n«axios.get»("/b");`,
+    { code: `${axios}axios.get("/a", { timeout: «0» });`, ids: ["noLimit"] },
+    { code: `${axios}axios.get("/a", { timeout: «Infinity» });`, ids: ["noLimit"] },
+    { code: `${axios}axios.get("/a", { timeout: «1e999» });`, ids: ["noLimit"] },
+    { code: `${axios}axios.get("/a", { "timeout": «0» });`, ids: ["noLimit"] },
+    { code: `${axios}axios.create({ timeout: «0» });`, ids: ["noLimit"] },
+    { code: `${axios}axios({ url: "/a", timeout: «0» });`, ids: ["noLimit"] },
+    { code: `import { http } from "./http";\n«http.get»("/a");`, options: ownClient },
+    { code: `import { http } from "./http";\n«http»("/a");`, options: ownClient },
+    { code: `import { http as client } from "./http";\n«client.post»("/a", body);`, options: ownClient },
+    { code: `const { http } = require("./http");\n«http.get»("/a");`, options: ownClient },
+    { code: `import http from "./http";\n«http.get»("/a");`, options: [{ clients: [{ module: "./http" }] }] },
+    { code: `${axios}import { http } from "./http";\n«axios.get»("/a");\n«http.get»("/b");`, options: ownClient },
+
+    `${axios}axios.get("/a", { timeout: 3000 });`,
+    `${axios}axios.get("/a", { timeout: 0.5 });`,
+    `${axios}axios.get("/a", { timeout });`,
+    `${axios}axios.get("/a", { timeout: limit });`,
+    `${axios}axios.get("/a", { timeout: seconds * 3000 });`,
+    `${axios}axios.get("/a", { "timeout": 3000 });`,
+    `${axios}axios.get("/a", { signal });`,
+    `${axios}axios.get("/a", { signal: controller.signal });`,
+    `${axios}axios.get("/a", { signal: AbortSignal.timeout(limit) });`,
+    `${axios}axios.get("/a", { signal, timeout: 0 });`,
+    `${axios}axios.get("/a", { cancelToken });`,
+    `${axios}axios.post("/a", body, { timeout: 3000 });`,
+    `${axios}axios.request({ url: "/a", timeout: 3000 });`,
+    `${axios}axios({ url: "/a", timeout: 3000 });`,
+    `${axios}axios("/a", { timeout: 3000 });`,
+    `${axios}const api = axios.create({ timeout: 3000 });`,
+    `${axios}function f(Infinity) {\n  axios.get("/a", { timeout: Infinity });\n}`,
+    // What the configuration has is not to be seen.
+    `${axios}axios.get("/a", config);`,
+    `${axios}axios.get("/a", { ...config });`,
+    `${axios}axios.get("/a", { params, ...config });`,
+    `${axios}axios.get("/a", makeConfig());`,
+    `${axios}axios.get(...parameters);`,
+    `${axios}axios.get("/a", ...rest);`,
+    `${axios}axios.request(config);`,
+    `${axios}axios(config);`,
+    `${axios}axios.create(config);`,
+    // "Config Defaults"
+    `${axios}axios.defaults.timeout = 3000;\naxios.get("/a");`,
+    `${axios}const api = axios.create();\napi.defaults.timeout = 3000;`,
+    // What takes no configuration, or makes no request.
+    `${axios}axios.isAxiosError(error);`,
+    `${axios}axios.isCancel(error);`,
+    `${axios}axios.all([a, b]);`,
+    `${axios}axios.interceptors.request.use(log);`,
+    `${axios}new axios.Axios({});`,
+    // Another `axios`.
+    `axios.get("/a");`,
+    `import axios from "./axios";\naxios.get("/a");`,
+    `${axios}function f(axios) {\n  axios.get("/a");\n}`,
+    `import type axios from "axios";`,
+    `import { http } from "./http";\nhttp.get("/a");`,
+    { code: `import { other } from "./http";\nother.get("/a");`, options: ownClient },
+    { code: `import { http } from "./other";\nhttp.get("/a");`, options: ownClient },
+    { code: `import { http } from "./http";\nhttp.get("/a", { timeout: 3000 });`, options: ownClient },
+    // An instance: what it was made with is checked where it is made.
+    `${axios}const api = axios.create({ timeout: 3000 });\napi.get("/a");`,
+  ],
+
+  "no-unhandled-emitter-errors": [
+    // Nothing is done with it.
+    `${processes}«spawn»("a");`,
+    `${processes}«fork»("./a.js");`,
+    `${files}«createReadStream»("a");`,
+    `${files}«createWriteStream»("a");`,
+    `${files}«watch»("a", listener);`,
+    `import cluster from "node:cluster";\n«cluster.fork»();`,
+    `import http from "node:http";\n«http.get»(address, use);`,
+    `import http from "node:http";\n«http.request»(address, use).end();`,
+    `import https from "node:https";\n«https.get»(address, use);`,
+    `import { connect } from "node:http2";\n«connect»(address);`,
+    `import net from "node:net";\n«net.connect»(80);`,
+    `import net from "node:net";\n«net.createConnection»(80);`,
+    `import tls from "node:tls";\n«tls.connect»(443);`,
+    `import { spawn } from "child_process";\n«spawn»("a");`,
+    `import fs from "fs";\n«fs.watch»("a");`,
+    `import * as fs from "node:fs";\n«fs.createReadStream»("a");`,
+    `import { spawn as start } from "node:child_process";\n«start»("a");`,
+    `const { spawn } = require("node:child_process");\n«spawn»("a");`,
+    `const fs = require("fs");\n«fs.createWriteStream»("a");`,
+    `«require("node:net").connect»(80);`,
+    // Other events, other methods, properties.
+    `${processes}«spawn»("a").on("exit", done);`,
+    `${processes}«spawn»("a").on("exit", done).once("spawn", go);`,
+    `${processes}«spawn»("a").on(name, done);`,
+    `${processes}«spawn»("a").on("errors", fail);`,
+    `${processes}«spawn»("a").emit("error", problem);`,
+    `${processes}«spawn»("a").off("error", fail);`,
+    `${processes}«spawn»("a").unref();`,
+    `${processes}«spawn»("a").stdout.on("data", use);`,
+    `${processes}«spawn»("a").stdout.on("error", fail);`,
+    `${processes}const id = «spawn»("a").pid;`,
+    `${processes}const { stdout } = «spawn»("a");`,
+    `${processes}«spawn»("a")!.on("exit", done);`,
+    // The listener is on the other stream.
+    `${files}«createReadStream»("a").pipe(target);`,
+    `${files}«createReadStream»("a").pipe(target).on("error", fail);`,
+    // A variable.
+    `${processes}const child = «spawn»("a");`,
+    `${processes}const child = «spawn»("a");\nchild.on("exit", done);`,
+    `${processes}const child = «spawn»("a");\nchild.stdout.on("data", use);\nchild.kill();`,
+    `${processes}const child = «spawn»("a").on("exit", done);\nchild.unref();`,
+    `${processes}let child;\nchild = «spawn»("a");\nchild.on("exit", done);`,
+    `${processes}const child = «spawn»("a") as ChildProcess;\nchild.on("exit", done);`,
+    `${processes}const child = «spawn»("a");\nchild;`,
+    `${processes}const child = «spawn»("a");\nfunction f(child) {\n  child.on("error", fail);\n}`,
+    `${files}const source = «createReadStream»("a");\nsource.pipe(target);`,
+    `${processes}function run() {\n  const child = «spawn»("a");\n  child.on("exit", done);\n}`,
+    `${processes}«spawn»("a");\n«spawn»("b");`,
+    { code: `import { observe } from "./observer";\n«observe»("a");`, options: observer },
+    { code: `import observer from "./observer";\n«observer.observe»("a").on("change", use);`, options: observer },
+    { code: `import open from "./open";\n«open»("a");`, options: [{ factories: [{ module: "./open" }] }] },
+
+    `${processes}spawn("a").on("error", fail);`,
+    `${processes}spawn("a").once("error", fail);`,
+    `${processes}spawn("a").addListener("error", fail);`,
+    `${processes}spawn("a").prependListener("error", fail);`,
+    `${processes}spawn("a").prependOnceListener("error", fail);`,
+    `${processes}spawn("a").on(\`error\`, fail);`,
+    `${processes}spawn("a").on("exit", done).on("error", fail);`,
+    `${processes}spawn("a").on("error", fail).on("exit", done);`,
+    `${processes}spawn("a")!.on("error", fail);`,
+    `${processes}(spawn("a") as ChildProcess).on("error", fail);`,
+    `${processes}(spawn("a")).on("error", fail);`,
+    `${files}createReadStream("a").setEncoding("utf8").on("error", fail);`,
+    `${files}createReadStream("a").on("error", fail).pipe(target);`,
+    `import http from "node:http";\nhttp.get(address, use).on("error", fail);`,
+    `${processes}const child = spawn("a");\nchild.on("error", fail);`,
+    `${processes}const child = spawn("a");\nchild.on("exit", done);\nchild.once("error", fail);`,
+    `${processes}const child = spawn("a");\nchild.on("exit", done).on("error", fail);`,
+    `${processes}const child = spawn("a").on("exit", done);\nchild.on("error", fail);`,
+    `${processes}let child;\nchild = spawn("a");\nchild.on("error", fail);`,
+    `${processes}const child = spawn("a");\nfunction watch() {\n  child.on("error", fail);\n}`,
+    `${processes}const child = spawn("a") as ChildProcess;\nchild.on("error", fail);`,
+    // It goes where it cannot be followed.
+    `${processes}function run() {\n  return spawn("a");\n}`,
+    `${processes}const run = () => spawn("a");`,
+    `${processes}track(spawn("a"));`,
+    `${processes}new Task(spawn("a"));`,
+    `${processes}const all = [spawn("a")];`,
+    `${processes}const task = { child: spawn("a") };`,
+    `${processes}this.child = spawn("a");`,
+    `${processes}class Task {\n  child = spawn("a");\n}`,
+    `${processes}const child = flag ? spawn("a") : null;`,
+    `${processes}function* f() {\n  yield spawn("a");\n}`,
+    `${processes}const child = spawn("a");\ntrack(child);`,
+    `${processes}const child = spawn("a");\nawait once(child, "exit");`,
+    `${processes}function run() {\n  const child = spawn("a");\n  return child;\n}`,
+    `${processes}const child = spawn("a");\nconst task = { child };`,
+    `${processes}const child = spawn("a");\nconst other = child;`,
+    `${processes}const child = spawn("a");\nthis.child = child;`,
+    `${processes}const child = spawn("a");\nexport { child };`,
+    `${files}await pipeline(createReadStream("a"), createWriteStream("b"));`,
+    `${files}const source = createReadStream("a");\nfinished(source, done);`,
+    `${files}const source = createReadStream("a");\nfor await (const piece of source) use(piece);`,
+    `${files}for await (const piece of createReadStream("a")) use(piece);`,
+    `${files}other.pipe(createWriteStream("a"));`,
+    `${files}createReadStream("a").on("error", fail).pipe(createWriteStream("b"));`,
+    // What a method returns that is not known to return the emitter.
+    `${files}const source = createReadStream("a").setEncoding("utf8");`,
+    // They take the error themselves and hand it to the callback.
+    `import { exec, execFile } from "node:child_process";\nexec("a");\nexecFile("a");`,
+    // They begin nothing yet.
+    `import net from "node:net";\nnet.createServer(use).listen(80);`,
+    `import dgram from "node:dgram";\ndgram.createSocket("udp4");`,
+    // No emitters.
+    `import { spawnSync } from "node:child_process";\nspawnSync("a");`,
+    `import { watch } from "node:fs/promises";\nwatch("a");`,
+    `import fs from "node:fs";\nfs.promises.watch("a");`,
+    `import fs from "node:fs";\nfs.readFile("a", use);`,
+    `Bun.spawn(["a"]);`,
+    // Others of the same name.
+    `spawn("a");`,
+    `import { spawn } from "./spawn";\nspawn("a");`,
+    `${processes}function f(spawn) {\n  spawn("a");\n}`,
+    `import { observe } from "./observer";\nobserve("a");`,
+    { code: `import { observe } from "./observer";\nobserve("a").on("error", fail);`, options: observer },
+    { code: `import { other } from "./observer";\nother("a");`, options: observer },
+  ],
+
+  "no-cast-to-brand": [
+    `${ids}const a = text as «UserId»;`,
+    `${ids}const a = <«UserId»>text;`,
+    `${ids}const a = text as unknown as «UserId»;`,
+    `${ids}const a = text as any as «UserId»;`,
+    `${ids}use(text as «UserId»);`,
+    `${ids}const a = (text as «UserId»).length;`,
+    `${ids}function f() {\n  return text as «UserId»;\n}`,
+    `import { UserId } from "../ids";\nconst a = text as «UserId»;`,
+    `import { type UserId } from "../ids";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "../ids.js";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "../ids.ts";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "./../ids";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "../../src/ids";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "@app/src/ids";\nconst a = text as «UserId»;`,
+    `import type { UserId } from "src/ids";\nconst a = text as «UserId»;`,
+    // What has it as an element.
+    `${ids}const a = texts as «UserId[]»;`,
+    `${ids}const a = texts as «UserId[][]»;`,
+    `${ids}const a = texts as «readonly UserId[]»;`,
+    `${ids}const a = texts as «Array<UserId>»;`,
+    `${ids}const a = texts as «ReadonlyArray<UserId>»;`,
+    `${ids}const a = texts as «Array<Array<UserId>>»;`,
+    `${ids}const a = pair as «[UserId, number]»;`,
+    `${ids}const a = pair as «[number, UserId]»;`,
+    `${ids}const a = pair as «readonly [UserId]»;`,
+    `${ids}const a = pair as «[id: UserId, n?: number]»;`,
+    `${ids}const a = pair as «[number, ...UserId[]]»;`,
+    `${ids}const a = text as «UserId | undefined»;`,
+    `${ids}const a = text as «null | UserId»;`,
+    // Under another name.
+    `import type { UserId as Id } from "../ids";\nconst a = text as «Id»;`,
+    `import type * as ids from "../ids";\nconst a = text as «ids.UserId»;`,
+    `import * as ids from "../ids";\nconst a = texts as «ids.UserId[]»;`,
+    `${ids}type Id = UserId;\nconst a = text as «Id»;`,
+    `${ids}type Id = UserId;\ntype Key = Id;\nconst a = text as «Key»;`,
+    `${ids}type Ids = UserId[];\nconst a = texts as «Ids»;`,
+    `${ids}type Ids = readonly UserId[];\nconst a = [texts] as «Ids[]»;`,
+    `${ids}const a = text as «Id»;\ntype Id = UserId;`,
+    `${ids}function f() {\n  type Id = UserId;\n  return text as «Id»;\n}`,
+    `${ids}const a = text as «UserId»;\nconst b = text as «UserId»;`,
+    // What mints it.
+    { code: `import { «toUserId» } from "../ids";`, ids: ["mint"] },
+    { code: `import { «toUserId as mint» } from "../ids";`, ids: ["mint"] },
+    { code: `import { other, «toUserId» } from "../ids";`, ids: ["mint"] },
+    { code: `import { «toUserId» } from "../ids.js";`, ids: ["mint"] },
+    { code: `import * as ids from "../ids";\n«ids.toUserId»(text);`, ids: ["mint"] },
+    { code: `import * as ids from "../ids";\nconst mint = «ids.toUserId»;`, ids: ["mint"] },
+    { code: `export { «toUserId» } from "../ids";`, ids: ["mint"] },
+    { code: `export { «toUserId as mint» } from "../ids";`, ids: ["mint"] },
+    { code: `import { type UserId, «toUserId» } from "../ids";\nconst a = text as «UserId»;`, ids: ["mint", "cast"] },
+    { code: `import type { UserId } from "./ids";\nconst a = text as «UserId»;`, file: "src/session.ts" },
+    { code: `import type { UserId } from "./ids";\nconst a = text as «UserId»;`, file: "src/ids.test.ts" },
+    { code: `import type { UserId } from "../ids";\nconst a = text as «UserId»;`, file: "src/ids/page.ts" },
+
+    `${ids}const a: UserId = make(text);`,
+    `${ids}function f(a: UserId): UserId {\n  return a;\n}`,
+    `${ids}const a = value satisfies UserId;`,
+    `${ids}const a = text as string;`,
+    `${ids}const a = id as string;\nlet b: UserId;`,
+    `${ids}const a = [] as const;`,
+    `${ids}const a = text!;`,
+    // What only mentions it.
+    `${ids}const a = map as Map<UserId, string>;`,
+    `${ids}const a = set as Set<UserId>;`,
+    `${ids}const a = row as { id: UserId };`,
+    `${ids}const a = f as (id: UserId) => void;`,
+    `${ids}const a = key as keyof UserId;`,
+    `${ids}const a = promise as Promise<UserId>;`,
+    // Others of that name.
+    `const a = text as UserId;`,
+    `type UserId = string;\nconst a = text as UserId;`,
+    `interface UserId {}\nconst a = value as UserId;`,
+    `import type { UserId } from "../other";\nconst a = text as UserId;`,
+    `import type { UserId } from "../my-ids";\nconst a = text as UserId;`,
+    `import type { UserId } from "./ids";\nconst a = text as UserId;`,
+    `import type { UserId } from "ids";\nconst a = text as UserId;`,
+    `import type { Other as UserId } from "../ids";\nconst a = text as UserId;`,
+    `import type { Other } from "../ids";\nconst a = text as Other;`,
+    `import type * as ids from "../ids";\nconst a = text as ids.Other;`,
+    `import type * as ids from "../ids";\nconst a = text as ids.inner.UserId;`,
+    `${ids}function f<UserId>(a: unknown) {\n  return a as UserId;\n}`,
+    `${ids}class Array<T> {}\nconst a = texts as Array<UserId>;`,
+    `type A = B;\ntype B = A;\nconst a = text as A;`,
+    `type A = A[];\nconst a = text as A;`,
+    // The module itself.
+    {
+      code: `export type UserId = string & { readonly brand: unique symbol };\nexport const toUserId = (text: string) => text as UserId;`,
+      file: "src/ids.ts",
+    },
+    { code: `import type { UserId } from "./ids";\nconst a = text as UserId;`, file: "src/ids.ts" },
+    {
+      code: `export type UserId = string & { readonly brand: unique symbol };\nconst a = text as UserId;`,
+      file: "src/ids/index.ts",
+    },
+    // Where it may be minted.
+    { code: `import { toUserId } from "./ids";`, file: "src/session.ts" },
+    { code: `import * as ids from "./ids";\nids.toUserId(text);`, file: "src/session.ts" },
+    { code: `export { toUserId } from "./ids";`, file: "src/session.ts" },
+    `import { other } from "../ids";`,
+    `import { toUserId } from "../other";`,
+    `import type { toUserId } from "../ids";`,
+    `import { type toUserId } from "../ids";`,
+    `import * as ids from "../ids";\nids.other(text);`,
+    `import * as ids from "../other";\nids.toUserId(text);`,
+    `export { other } from "../ids";`,
+    `export type { toUserId } from "../ids";`,
+    `const toUserId = 1;\nexport { toUserId };`,
+    { code: `import type { UserId } from "../ids";\nconst a = text as UserId;`, options: [] },
+    { code: `import { toUserId } from "../ids";`, options: [{ branded: [] }] },
+  ].map(inPage),
 };
 
 type Message = {
@@ -1221,7 +1601,7 @@ describe.concurrent("bun/", () => {
   for (const [rule, table] of Object.entries(rules)) {
     test(rule, async () => {
       const cases = table.map(it => (typeof it === "string" ? { code: it } : it));
-      const name = (index: number) => `case-${index}.tsx`;
+      const name = (index: number) => (cases[index].file ? `case-${index}/${cases[index].file}` : `case-${index}.tsx`);
       const code = (index: number) => cases[index].code.replace(/[«»]/g, "");
       const objects = cases.map((it, index) => ({
         files: [name(index)],
@@ -1230,7 +1610,7 @@ describe.concurrent("bun/", () => {
       using dir = tempDir("bun-rules", {
         "eslint.config.mjs": `export default [
           {
-            files: ["**/*.tsx"],
+            files: ["**/*.tsx", "**/*.ts"],
             languageOptions: {
               parser: { meta: { name: "typescript-eslint/parser" } },
               parserOptions: { ecmaFeatures: { jsx: true } },
@@ -1252,7 +1632,8 @@ describe.concurrent("bun/", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       if (exitCode !== 1) console.error(stderr);
       const results: { filePath: string; messages: Message[] }[] = JSON.parse(stdout);
-      const messagesOf = (index: number) => results.find(it => basename(it.filePath) === name(index))?.messages ?? [];
+      const messagesOf = (index: number) =>
+        results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${name(index)}`))?.messages ?? [];
       const found = cases.map((it, index) => {
         const messages = messagesOf(index);
         const fixes = messages.flatMap(it => it.fix ?? []);
@@ -1401,11 +1782,12 @@ describe.concurrent("the plugin bun", () => {
   });
 
   test("an .oxlintrc.json cannot name it among its plugins", async () => {
-    const { stderr, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify({ plugins: ["bun"] }), "a.js": eager }, [
+    const { stdout, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify({ plugins: ["bun"] }), "a.js": eager }, [
       "a.js",
     ]);
-    expect(stderr).toContain("Unknown plugin: 'bun'.");
-    expect(exitCode).not.toBe(0);
+    // On stdout, where oxlint says it.
+    expect(stdout).toContain("Unknown plugin: 'bun'.");
+    expect(exitCode).toBe(1);
   });
 
   test("--rules lists them, without a category and without a page", async () => {

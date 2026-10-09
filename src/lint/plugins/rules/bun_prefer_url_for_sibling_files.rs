@@ -1,4 +1,5 @@
 use crate::bun::{CALLED, Each, calls_of_modules};
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::{callee_name, is_global_reference, static_string};
@@ -51,8 +52,15 @@ fn is_own_directory(e: Expr) -> bool {
     is_written_own_directory(e) || declared().is_some_and(is_written_own_directory)
 }
 
-fn starts_with_slash(text: Option<Name>) -> bool {
-    text.is_some_and(|it| it.bytes().starts_with(b"/"))
+/// Whether a path that ends with `end` can be that of a file: not `..`, `a/.`, `a/`.
+fn can_name_a_file(end: &[u8]) -> bool {
+    let name = end.get(strings::last_index_of_char(end, b'/').map_or(0, |it| it + 1)..);
+    !matches!(name, None | Some(b"" | b"." | b".."))
+}
+
+/// `/a.txt`, to be put behind a directory.
+fn is_rest_of_path(written: Option<Name>) -> bool {
+    written.is_some_and(|it| it.bytes().starts_with(b"/") && can_name_a_file(it.bytes()))
 }
 
 impl Rule for PreferUrlForSiblingFiles {
@@ -72,7 +80,7 @@ impl Rule for PreferUrlForSiblingFiles {
             if let ExprKind::Template(template) = e.kind()
                 && template.exprs().len() == 1
                 && template.cooked(0).is_some_and(|it| it.bytes().is_empty())
-                && starts_with_slash(template.cooked(1))
+                && is_rest_of_path(template.cooked(1))
                 && template.exprs().first().is_some_and(is_own_directory)
             {
                 cx.report(e, JOINED_PATH);
@@ -80,7 +88,7 @@ impl Rule for PreferUrlForSiblingFiles {
         });
         on.binaries([BinOp::Add], |_, e, cx| {
             if let ExprKind::Binary { left, right, .. } = e.kind()
-                && starts_with_slash(static_string(right))
+                && is_rest_of_path(static_string(right))
                 && is_own_directory(left)
             {
                 cx.report(e, JOINED_PATH);
@@ -93,6 +101,7 @@ impl Rule for PreferUrlForSiblingFiles {
                         && arguments.len() > 1
                         && arguments.first().is_some_and(is_own_directory)
                         && arguments.iter().skip(1).all(|it| static_string(it).is_some())
+                        && arguments.last().and_then(static_string).is_some_and(|it| can_name_a_file(it.bytes()))
                     {
                         cx.report(e, JOINED_PATH);
                     }

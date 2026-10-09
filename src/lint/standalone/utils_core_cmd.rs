@@ -353,7 +353,7 @@ fn dump(case: Object<'_>) -> String {
 /// What `utils::text` says about `a`, and about `a` and `b`.
 fn text_facts(a: &[u8], b: &[u8]) -> String {
     use utils::text;
-    let number = text::string_to_number(a);
+    let number = bun_core::fmt::js_string_to_number(a);
     let fields: [Vec<u8>; 18] = [
         bun_core::strings::wtf8_len_utf16(a).to_string().into(),
         bun_core::strings::wtf8_codepoint_count(a).to_string().into(),

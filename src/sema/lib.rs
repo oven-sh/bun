@@ -18,7 +18,6 @@ pub mod json;
 pub mod local;
 pub mod messages;
 pub mod node;
-#[cfg(any(debug_assertions, feature = "baselines"))]
 pub mod portable;
 pub mod program;
 pub mod resolve;

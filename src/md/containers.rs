@@ -3,10 +3,58 @@ use core::mem::{align_of, size_of};
 use bun_alloc::AllocError;
 
 use crate::autolinks::is_list_bullet;
+use crate::compat;
 use crate::parser::{self, BlockHeader, Parser};
-use crate::types::{self, BlockType, Container, OFF, VerbatimLine};
+use crate::types::{self, BlockType, Container, ContainerEnds, OFF, VerbatimLine};
 
 impl Parser<'_> {
+    pub(crate) fn keeps_quotes(&self) -> bool {
+        self.track || compat::tag_does_not_end_a_list(&self.flags)
+    }
+
+    /// How many containers are open up to the innermost `>`, with it.
+    pub(crate) fn containers_up_to_quote(&self) -> u32 {
+        self.quotes.last().map_or(0, |it| it + 1)
+    }
+
+    /// A line ends at `end` that is in the first `count` of the open containers. Their counts fall from the front to the back.
+    pub(crate) fn set_container_ends(&mut self, count: u32, end: OFF) {
+        while self
+            .container_ends
+            .pop_back_if(|it| it.count <= count)
+            .is_some()
+        {}
+        if count > 0 {
+            self.container_ends.push_back(ContainerEnds { count, end });
+        }
+    }
+
+    /// Where the last line ends that is in the container at `index`. See `RendererImpl::container_source`.
+    pub(crate) fn container_end(&self, index: u32) -> OFF {
+        let said = self.container_ends.iter().take_while(|it| it.count > index);
+        said.last().map_or(0, |it| it.end)
+    }
+
+    /// The same for the innermost container, which is left.
+    fn take_container_end(&mut self, index: u32) -> OFF {
+        let mut end = None;
+        while let Some(said) = self.container_ends.pop_front_if(|it| it.count > index) {
+            end = Some(said.end);
+        }
+        // It still holds for those further out of which nothing later is said.
+        if let Some(end) = end
+            && self
+                .container_ends
+                .front()
+                .is_none_or(|it| it.count < index)
+            && index > 0
+        {
+            self.container_ends
+                .push_front(ContainerEnds { count: index, end });
+        }
+        end.unwrap_or(0)
+    }
+
     pub(crate) fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
@@ -18,6 +66,12 @@ impl Parser<'_> {
         // In range: every `block_bytes` grower enforces `check_block_bytes_len`.
         let block_off: u32 = u32::try_from(self.block_bytes.len()).expect("int cast");
         self.containers[self.n_containers as usize].block_byte_off = block_off;
+        if c.ch == b':' {
+            self.directives.push(self.n_containers);
+        }
+        if c.ch == b'>' && self.keeps_quotes() {
+            self.quotes.push(self.n_containers);
+        }
 
         self.n_containers += 1;
         Ok(())
@@ -136,6 +190,9 @@ impl Parser<'_> {
     pub(crate) fn leave_child_containers(&mut self, keep: u32) -> Result<(), parser::Error> {
         while self.n_containers > keep {
             self.n_containers -= 1;
+            self.directives.pop_if(|it| *it == self.n_containers);
+            self.quotes.pop_if(|it| *it == self.n_containers);
+            let container_end = self.take_container_end(self.n_containers);
             // Capture the container fields before calling &mut self methods.
             let idx = self.n_containers as usize;
             let ch = self.containers[idx].ch;
@@ -146,11 +203,7 @@ impl Parser<'_> {
             let block_byte_off = self.containers[idx].block_byte_off;
             let loose_flag: u32 = if is_loose { types::BLOCK_LOOSE_LIST } else { 0 };
             let is_ended_by_colons = self.is_directive_end && self.n_containers == keep;
-            let end = (
-                self.line_beg,
-                self.containers[idx].end,
-                u32::from(is_ended_by_colons),
-            );
+            let end = (self.line_beg, container_end, u32::from(is_ended_by_colons));
 
             // Emit container closer blocks
             if ch == b'>' || ch == b'^' || ch == b':' {

@@ -21,7 +21,7 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
-    Declaration, Flavor, Import, Lookup, MakeRecord, ModuleId, Modules, Record, Request,
+    Declaration, Flavor, Import, Lookup, MakeRecord, ModuleId, Modules, Reader, Record, Request,
     RequestKind, Resolved, requests_of,
 };
 use bun_sema::atom::Interner;
@@ -35,6 +35,7 @@ use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
+use std::any::Any;
 use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -89,6 +90,8 @@ struct ProjectResolver<'h> {
     resolver: Resolver<'h>,
     /// `baseUrl`, which TypeScript 7 no longer has, and which the resolvers of ESLint and oxlint know.
     base_url: Option<Vec<u8>>,
+    /// As it is written.
+    es_module_interop: bool,
 }
 
 /// What is found once and asked for often.
@@ -106,6 +109,8 @@ struct Known<'h> {
     packages: ShardedMap<Vec<u8>, Option<Json>>,
     /// [`Modules::record_exports`]: by the path, with symbolic links followed. `None`: it cannot be parsed.
     records: ShardedMap<Vec<u8>, Option<Record>>,
+    /// [`Modules::facts`]: by the path and how it is parsed.
+    facts: ShardedMap<Vec<u8>, Option<Box<dyn Any + Send + Sync>>>,
 }
 
 pub struct Graph<'h> {
@@ -261,18 +266,25 @@ impl<'h> Graph<'h> {
         }
         let store: &'h Store = self.store;
         let mut project = self.load_project(config, directory);
-        let base_url = project
-            .raw_compiler_options
-            .iter()
-            .find(|it| it.0 == b"baseUrl")
-            .and_then(|it| it.1.as_str())
+        let written = |name: &[u8]| {
+            let mut options = project.raw_compiler_options.iter();
+            options.find(|it| it.0 == name).map(|it| &it.1)
+        };
+        let base_url = written(b"baseUrl")
+            .and_then(Json::as_str)
             .map(<[u8]>::to_vec);
+        let es_module_interop = written(b"esModuleInterop") == Some(&Json::Bool(true));
         if let Some(base_url) = &base_url {
             project.options.paths_base_dir.clone_from(base_url);
         }
         let project = store.session.keep(project);
         let resolver = Resolver::new(&store.session, store.disk(), &project.options);
-        (known.resolvers).insert_ref(config.to_vec(), ProjectResolver { resolver, base_url })
+        let resolver = ProjectResolver {
+            resolver,
+            base_url,
+            es_module_interop,
+        };
+        known.resolvers.insert_ref(config.to_vec(), resolver)
     }
 
     fn flavor(&self) -> Flavor {
@@ -395,7 +407,9 @@ impl<'h> Graph<'h> {
         } else {
             ResolutionMode::Import
         };
-        let ProjectResolver { resolver, base_url } = self.resolver(directory_of(from));
+        let ProjectResolver {
+            resolver, base_url, ..
+        } = self.resolver(directory_of(from));
         let from_base_url = || {
             let base_url = base_url
                 .as_ref()
@@ -769,6 +783,41 @@ impl Modules for Graph<'_> {
     fn exists(&self, path: &[u8]) -> bool {
         let (path, disk) = (from_native(path), self.store.disk());
         disk.is_file(&path) || disk.is_dir(&path)
+    }
+
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        self.store.disk().read(&from_native(path))
+    }
+
+    fn facts(
+        &self,
+        path: &[u8],
+        language: &LanguageOptions,
+        reader: &Reader,
+    ) -> Option<&(dyn Any + Send + Sync)> {
+        let how = [
+            language.parser as u8,
+            language.scope_source_type() as u8,
+            u8::from(language.jsx),
+            u8::from(language.experimental_decorators),
+            u8::from(language.eslint_8.is_some()),
+        ];
+        let edition = language.ecma_version.to_le_bytes();
+        let key = [path, &how, &edition].concat();
+        let known = match self.known().facts.get_ref(&key[..]) {
+            Some(known) => known,
+            None => {
+                let text = self.store.disk().read(&from_native(path));
+                let text = text.filter(|it| (reader.wants)(it));
+                let made = text.and_then(|it| with_file(path, &it, language, None, reader.read));
+                self.known().facts.insert_ref(key, made)
+            }
+        };
+        known.as_deref()
+    }
+
+    fn es_module_interop(&self, directory: &[u8]) -> bool {
+        self.resolver(&from_native(directory)).es_module_interop
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {

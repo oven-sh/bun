@@ -1,3 +1,5 @@
+use crate::util_variable::get_variable_from_context;
+use crate::util_version::get_react_version_from_context;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -82,7 +84,8 @@ fn check_logical_expression<'a>(rule: &JsxNoLeakedRender, e: Expr<'a>, cx: &mut 
     };
     let is_valid = (rule.allows_coerce
         && (is_coerce_valid_nested_logical_expression(left) || is_declared_as_boolean(left)))
-        || (left.as_string().is_some_and(|it| it.bytes().is_empty()) && is_react_18_or_later(cx.file()));
+        || (left.as_string().is_some_and(|it| it.bytes().is_empty())
+            && get_react_version_from_context(cx.file()) >= (18, 0, 0));
     if !is_valid {
         cx.report(e, NO_POTENTIAL_LEAKED_RENDER).fix(|fixer| rule.fix(fixer, e, left, right));
     }
@@ -147,23 +150,9 @@ fn extract_expression_between_logical_ands<'a>(mut e: Expr<'a>, all: &mut Vec<Ex
     }
 }
 
-/// `getVariableFromContext`: it also looks into the first scope in each scope, and into the first in that.
-fn get_variable_from_context<'a>(e: Expr<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
-    Node::Expr(e).scope().chain().find_map(|scope| {
-        scope.get_name(name).or_else(|| {
-            // For ESLint what the configuration defines is a variable of the global scope.
-            if scope.parent().is_none() && e.file().global_named(name).is_some() {
-                return None;
-            }
-            let child = scope.children().next()?;
-            child.get_name(name).or_else(|| child.children().next()?.get_name(name))
-        })
-    })
-}
-
 /// It is a variable whose first declaration has `true` or `false` as its `init`.
 fn is_declared_as_boolean(e: Expr) -> bool {
-    let init = || match get_variable_from_context(e, e.as_ident()?)?.declarations().next()?.node()? {
+    let init = || match get_variable_from_context(Node::Expr(e), e.as_ident()?)?.declarations().next()?.node()? {
         Node::VarDecl(declaration) => declaration.init(),
         _ => None,
     };
@@ -220,43 +209,4 @@ fn coerced<'a>(reported: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Ve
         return Some([&out[..], b" && (\n", &start, right_text, b"\n", &close, b")"].concat());
     }
     Some([&out[..], b" && ", right_text].concat())
-}
-
-/// The major version that `convertConfVerToSemver` makes of a setting. `None`: it falls back to the default.
-fn major_of(version: &Json) -> Option<u64> {
-    let number_of = |part: &[u8]| match part.trim_ascii() {
-        b"" => Some(0),
-        digits => std::str::from_utf8(digits.strip_prefix(b"-").unwrap_or(digits)).ok()?.parse::<u64>().ok(),
-    };
-    match version {
-        Json::String(text) if !text.is_empty() => strings::split(text, b".").find_map(number_of),
-        Json::Number(number) if *number != 0.0 => Some(number.abs() as u64),
-        _ => None,
-    }
-}
-
-/// `detectReactVersion`: of the `react` that is installed for a file in the directory of `file`.
-fn detected_major<'a>(file: &'a File<'a>) -> Option<u64> {
-    let modules = file.modules()?;
-    let mut directory = file.path();
-    loop {
-        let end = strings::last_index_of_char(directory, b'/').max(strings::last_index_of_char(directory, b'\\'))?;
-        directory = directory.get(..end)?;
-        // The closest `package.json`, which is that of the project if there is no such package.
-        if let Some(package) = modules.package_json(&[directory, b"/node_modules/react/package.json"].concat())
-            && package.get(b"name").and_then(Json::as_str).is_some_and(|name| name == b"react")
-        {
-            return major_of(package.get(b"version")?);
-        }
-    }
-}
-
-/// `testReactVersion(context, ">= 18")`
-fn is_react_18_or_later<'a>(file: &'a File<'a>) -> bool {
-    let setting = |key: &[u8]| file.settings().get(b"react")?.get(key);
-    let major = match setting(b"version") {
-        Some(Json::String(version)) if version == b"detect" => detected_major(file),
-        version => version.and_then(major_of),
-    };
-    major.or_else(|| major_of(setting(b"defaultVersion")?)).is_none_or(|it| it >= 18)
 }

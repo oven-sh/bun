@@ -180,7 +180,7 @@ impl<'a> Value<'a> {
 
     fn to_number(self) -> Option<f64> {
         match self {
-            Value::String(text) => Some(text::string_to_number(text)),
+            Value::String(text) => Some(bun_core::fmt::js_string_to_number(text)),
             Value::Number(value) => Some(value),
             Value::BigInt(_) => None,
         }

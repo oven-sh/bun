@@ -1984,3 +1984,35 @@ test.each([
   },
   90_000,
 );
+
+// The same weighing for what is opened many times on one line, with many lines behind it that do not close it.
+test("a line does not look through the block quotes that are open", async () => {
+  const script = `
+    const count = ${isDebug || isASAN ? 4_000 : 40_000};
+    const lines = ${JSON.stringify(["a\n", "a b\n", "*a*\n", "[a]\n", "<a>\n", "<!-- a\n", "&amp;\n", "\\\n", ":::\n", "a |\n"])};
+    const texts = [">", "> "].flatMap(mark => lines.map(line => mark.repeat(count) + "a\\n" + line.repeat(count)));
+    const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+    const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+    const plain = prose.repeat(Math.ceil(length / prose.length));
+    const time = texts => {
+      const before = process.cpuUsage();
+      for (const text of texts) Bun.markdown.html(text);
+      const { user, system } = process.cpuUsage(before);
+      return user + system;
+    };
+    time([plain]);
+    console.log(time(texts) / time(texts.map(() => plain)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(Number(stdout)).toBeLessThan(6);
+  expect(exitCode).toBe(0);
+}, 90_000);

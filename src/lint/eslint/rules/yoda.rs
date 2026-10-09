@@ -58,9 +58,9 @@ impl Value<'_> {
     fn to_number(&self) -> f64 {
         match self {
             Value::Number(n) => *n,
-            Value::String(value) => text::string_to_number(value),
+            Value::String(value) => bun_core::fmt::js_string_to_number(value),
             Value::BigInt { is_negative, digits } => {
-                let magnitude = text::string_to_number(digits);
+                let magnitude = bun_core::fmt::js_string_to_number(digits);
                 if *is_negative { -magnitude } else { magnitude }
             }
         }

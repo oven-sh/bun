@@ -26,32 +26,14 @@ fn not_base_ten_loses_precision(digits: &[u8], bits_per_digit: u32) -> bool {
     first.is_some_and(|first| last - first >= f64::MANTISSA_DIGITS || at - first > f64::MAX_EXP as u32)
 }
 
-/// `value.toPrecision(precision)` of a finite `value > 0`: the digits, and the exponent of the
-/// first.
-// TODO(api): replace by utils::eslint_utils::js_number::to_precision
+/// `value.toPrecision(precision)` of a finite `value > 0`, for a precision from 1 to 100: the digits, and the exponent
+/// of the first.
 fn to_precision(value: f64, precision: usize) -> (Vec<u8>, i64) {
-    // All the digits, of which a double has at most 767: `format!` rounds half to even,
-    // JavaScript half up.
-    let text = format!("{value:.800e}").into_bytes();
-    let e = strings::index_of_char_usize(&text, b'e').unwrap_or(text.len());
-    let exponent = text.get(e + 1..).and_then(|it| std::str::from_utf8(it).ok());
-    let mut exponent = exponent.and_then(|it| it.parse::<i64>().ok()).unwrap_or(0);
-    let mut digits: Vec<u8> = text.iter().take(e).copied().filter(u8::is_ascii_digit).collect();
-    let rounds_up = digits.get(precision).is_some_and(|next| *next >= b'5');
-    digits.truncate(precision);
-    if rounds_up {
-        let nines = digits.iter().rev().take_while(|digit| **digit == b'9').count();
-        let kept = digits.len() - nines;
-        digits[kept..].fill(b'0');
-        match kept.checked_sub(1) {
-            Some(last) => digits[last] += 1,
-            None => {
-                digits[0] = b'1';
-                exponent += 1;
-            }
-        }
-    }
-    (digits, exponent)
+    let mut buffer = [0; 124];
+    let text = bun_core::fmt::FormatDouble::to_exponential(&mut buffer, value, Some(precision as u32 - 1));
+    let (digits, exponent) = strings::split_once_char(text, b'e').unwrap_or((text, b"0"));
+    let exponent = std::str::from_utf8(exponent).ok().and_then(|it| it.parse().ok());
+    (digits.iter().copied().filter(u8::is_ascii_digit).collect(), exponent.unwrap_or(0))
 }
 
 fn base_ten_loses_precision(raw: &[u8]) -> bool {

@@ -193,8 +193,6 @@ struct Printer<'d> {
     measured_group_fits: bool,
     has_empty_line: bool,
     line_width: usize,
-    /// The length of `out` where this line starts.
-    line_start: usize,
     /// What is being printed.
     elements: Elements<'d>,
     /// That of the last of `buffers.frames`.
@@ -245,7 +243,6 @@ pub(crate) fn print(
         measured_group_fits: true,
         has_empty_line: false,
         line_width: 0,
-        line_start: start,
         elements: Elements::new(Run::of(root), &storage.pool),
         mode: PrintMode::Expanded,
         is_mark_pending: [false; 2],
@@ -982,14 +979,20 @@ impl<'d> Printer<'d> {
             line_ending => self.out.bytes(line_ending.as_bytes()),
         }
         self.line_width = 0;
-        self.line_start = self.out.len();
     }
 
     /// Something has been printed on this line. Its width says so, unless all of it is text without a width: control
     /// characters, combining marks.
     #[inline(always)]
     fn is_in_line(&self) -> bool {
-        self.line_width > 0 || self.out.len() > self.line_start
+        self.line_width > 0 || self.has_text_without_width()
+    }
+
+    /// The byte order mark is not on the first line: Prettier takes it off before it formats.
+    #[inline(never)]
+    fn has_text_without_width(&self) -> bool {
+        let written = self.out.since(self.start);
+        !matches!(written.last(), None | Some(b'\n' | b'\r')) && written != b"\xEF\xBB\xBF"
     }
 }
 

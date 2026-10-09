@@ -182,6 +182,7 @@ fn check_and_lint_in(
             &config.language,
             Some(&read_library),
             Some(context.modules),
+            Some(context.formatter),
             |file| {
                 let mut result = context.linter.lint(file, config, &options);
                 if file.is_too_large_for_flow_analysis() {
@@ -241,6 +242,7 @@ fn check_and_lint_in(
             reports_nothing_about_files: !context.checks_types,
             only_in_a_project_that_includes: matches!(project, Project::Including),
             memory: environment.memory,
+            shares_every_file: true,
             refuses_broken_configurations: matches!(project, Project::Including),
             // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
             prefers_the_library_of_the_project: matches!(project, Project::Nearest),

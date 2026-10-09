@@ -538,9 +538,6 @@
     "src/lint/linter/json_v8.rs": {
       "push_utf16": 1
     },
-    "src/lint/linter/levn.rs": {
-      "to_number": 1
-    },
     "src/lint/linter/syntax/espree.rs": {
       "is_identifier_byte": 1
     },
@@ -550,18 +547,6 @@
     "src/lint/oxlint/text.rs": {
       "file_extension": 1,
       "file_name": 1
-    },
-    "src/lint/paths.rs": {
-      "ancestors": 1,
-      "basename": 1,
-      "dirname": 1,
-      "extname": 1,
-      "file_name": 1,
-      "from_native": 1,
-      "is_absolute": 1,
-      "join": 1,
-      "relative": 1,
-      "resolve": 1
     },
     "src/lint/plugins/n/es_syntax.rs": {
       "camel_case": 1
@@ -702,8 +687,7 @@
     "src/lint/utils/eslint_utils/js_number.rs": {
       "decimal_literal_len": 1,
       "parse_float": 1,
-      "parse_int": 1,
-      "string_to_number": 1
+      "parse_int": 1
     },
     "src/lint/utils/eslint_utils/js_string.rs": {
       "code_points_of": 1,
@@ -716,7 +700,6 @@
       "is_lower_case": 1,
       "is_upper_case": 1,
       "natural_compare": 1,
-      "string_to_number": 1,
       "to_lower_case": 1,
       "to_upper_case": 1
     },
@@ -811,9 +794,6 @@
     "src/sema/parser/lexer.rs": {
       "decimal_digits": 1,
       "decode_last": 1,
-      "is_identifier_part": 1,
-      "is_identifier_start": 1,
-      "is_line_break": 1,
       "is_name_byte": 1,
       "is_unicode_blank": 1,
       "is_white_space_like": 1
@@ -822,11 +802,7 @@
       "hash_of": 1
     },
     "src/sema/parser/parser/jsdoc.rs": {
-      "has_line_break": 1,
       "is_blank": 1
-    },
-    "src/sema/parser/parser/reparse.rs": {
-      "is_valid_identifier": 1
     },
     "src/sema/parser/pragmas.rs": {
       "skip_blanks": 1

@@ -222,7 +222,10 @@ impl Codegen {
                     KeyKind::Number(name) | KeyKind::ComputedNumber(name)
                         if !written.ends_with(b"n") =>
                     {
-                        print_number(&mut self.code, text::string_to_number(name.bytes()));
+                        print_number(
+                            &mut self.code,
+                            bun_core::fmt::js_string_to_number(name.bytes()),
+                        );
                     }
                     _ => self.code.extend_from_slice(written),
                 }

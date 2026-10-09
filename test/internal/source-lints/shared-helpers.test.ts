@@ -36,6 +36,8 @@ const SHARED = [
   "src/bun_alloc/",
   "src/node_path/",
   "src/text_diff/",
+  // `bun_node_path` for the paths of the linter and the formatter, which have `/` on every system.
+  "src/lint/paths.rs",
 ];
 
 /** The names, and what to use in their place: functions of the shared crates, and a word on what they lack. */

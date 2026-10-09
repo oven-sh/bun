@@ -10,7 +10,11 @@ use smallvec::SmallVec;
 const EXTENSIONS: [&[u8]; 4] = [b".mjs", b".js", b".json", b".node"];
 
 /// The resolvers of a file, in their order.
-pub(crate) struct Resolvers<'s>(SmallVec<[Lookup<'s>; 2]>);
+pub(crate) struct Resolvers<'s> {
+    lookups: SmallVec<[Lookup<'s>; 2]>,
+    /// `settings["import/core-modules"]`
+    core_modules: &'s [Json],
+}
 
 /// What `resolve` returns.
 pub(crate) enum Resolved {
@@ -51,11 +55,11 @@ impl<'s> Resolvers<'s> {
                 flat.try_for_each(|it| self.add(it))
             }
             Json::Object(entries) => entries.iter().try_for_each(|(name, config)| {
-                self.0.push(lookup_of(name, Some(config))?);
+                self.lookups.push(lookup_of(name, Some(config))?);
                 Some(())
             }),
             written => {
-                self.0.push(lookup_of(written.as_str()?, None)?);
+                self.lookups.push(lookup_of(written.as_str()?, None)?);
                 Some(())
             }
         }
@@ -63,10 +67,20 @@ impl<'s> Resolvers<'s> {
 
     /// `None`: one of them is not known here, so that nothing can be said about what a name means.
     pub(crate) fn of(settings: &'s Json) -> Option<Resolvers<'s>> {
-        let mut resolvers = Resolvers(SmallVec::new());
-        match settings.get(b"import/resolver") {
+        let core_modules = settings.get(b"import/core-modules");
+        let mut resolvers = Resolvers {
+            lookups: SmallVec::new(),
+            core_modules: core_modules.and_then(Json::as_array).unwrap_or_default(),
+        };
+        let is_falsy = |it: &Json| match it {
+            Json::Null | Json::Bool(false) => true,
+            Json::Number(number) => *number == 0.0 || number.is_nan(),
+            it => it.as_str().is_some_and(<[u8]>::is_empty),
+        };
+        match (settings.get(b"import/resolver")).filter(|it| !is_falsy(it)) {
             Some(written) => resolvers.add(written)?,
-            None => resolvers.0.extend(lookup_of(b"node", None)),
+            // "backward compatibility"
+            None => (resolvers.lookups).extend(lookup_of(b"node", settings.get(b"import/resolve"))),
         }
         Some(resolvers)
     }
@@ -75,11 +89,12 @@ impl<'s> Resolvers<'s> {
         let Some(modules) = file.modules() else {
             return Resolved::Nothing;
         };
-        if is_builtin_module(specifier) {
+        let is_core = |it: &Json| it.as_str() == Some(specifier);
+        if self.core_modules.iter().any(is_core) || is_builtin_module(specifier) {
             return Resolved::Builtin;
         }
         let found = self
-            .0
+            .lookups
             .iter()
             .find_map(|it| modules.resolve_file(file.path(), specifier, is_require, it));
         found.map_or(Resolved::Nothing, Resolved::File)

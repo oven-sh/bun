@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{number_to_string, string_to_number};
+use bun_lint::utils::text::number_to_string;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -57,7 +57,7 @@ fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
     }
     let number = match value {
         Value::Number(value) => value,
-        Value::String(value) => string_to_number(value.bytes()),
+        Value::String(value) => bun_core::fmt::js_string_to_number(value.bytes()),
     };
     (!number.is_nan()).then_some(Value::Number(if is_negated { -number } else { number }))
 }

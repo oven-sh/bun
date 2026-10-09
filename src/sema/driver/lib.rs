@@ -311,6 +311,11 @@ pub struct PlanOptions {
     /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
     /// And what its configuration file does not say is what that compiler takes for it: `resolve::AS_BEFORE_6`.
     pub prefers_the_library_of_the_project: bool,
+    /// THE SEAM BETWEEN TWO WAYS TO LOAD A FILE ONCE FOR SEVERAL PROGRAMS. Off, `bun check`: a declaration file is kept in a form
+    /// that every program copies (`portable::SharedFile`): each has its own names, and what is kept is freed when the last is
+    /// loaded. On, `bun lint`: every file, sources too, by reference (`program::Run`): a run with types over a monorepo loads
+    /// the same sources for a hundred programs. It keeps all of them to the end, and programs that overlap copy the names.
+    pub shares_every_file: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
     pub memory: usize,
@@ -342,6 +347,7 @@ impl Default for PlanOptions {
             only_in_a_project_that_includes: false,
             refuses_broken_configurations: false,
             prefers_the_library_of_the_project: false,
+            shares_every_file: false,
             memory: 0,
         }
     }
@@ -1111,9 +1117,9 @@ impl Report {
 /// many of them are shown.
 const LINES_BEFORE: u32 = 3;
 const LINES_AFTER: u32 = 2;
-/// A line with more bytes is not hand-written. No layout shows it, and only one byte more of it is stored: a bundle on
-/// one line can have thousands of errors.
-const MAX_SHOWN_LINE: usize = 1000;
+/// A line with more bytes is not hand-written. No layout shows it, and only one character more of it is stored
+/// (`Diagnostic::source`): a bundle on one line can have thousands of errors.
+pub const MAX_SHOWN_LINE: usize = 1000;
 
 /// The options used when there is no configuration file: those `bun init` writes, without the
 /// purely stylistic rules.
@@ -1297,7 +1303,9 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
         .get(line as usize + 1)
         .map_or(text.len(), |&s| s as usize);
     let line = text[from..to].trim_end_with(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'));
-    line[..line.len().min(MAX_SHOWN_LINE + 1)].to_vec()
+    let is_inside_a_character = |&at: &usize| line.get(at).is_some_and(|it| it & 0xC0 == 0x80);
+    let end = (MAX_SHOWN_LINE + 1..).find(|at| !is_inside_a_character(at));
+    line[..line.len().min(end.unwrap_or(line.len()))].to_vec()
 }
 
 /// Runs the check that `request` describes. Each program is freed with its `Session` as soon as it
@@ -1818,7 +1826,6 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     named: None,
                     elsewhere: None,
                     run: None,
-                    builds: None,
                     place: None,
                 };
                 let projects = Guarded::new(projects);
@@ -1953,26 +1960,30 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         .map(Vec::as_slice)
         .collect();
     // Declared before the session of any program, so it is dropped after them.
-    let (of_run, of_builds) = (Session::new(), Session::new());
+    let of_run = Session::new();
     let at_once = match request.plan_options.memory {
         0 => 1,
         _ => disk.threads().min(by_project.len()),
     };
-    let run = (!is_one).then(|| {
+    let shares_every_file = request.plan_options.shares_every_file;
+    if !is_one && !shares_every_file {
+        let mut options = Vec::new();
+        for (config, ..) in &by_project {
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            options.extend(project.map(|it| it.options.clone()));
+        }
+        // Each of them may load more, for its references.
+        disk.share_declaration_files(variants_of_several(options.iter()), usize::MAX / 2);
+    }
+    let run = (!is_one && shares_every_file).then(|| {
         let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
         match at_once > 1 {
             true => run.overlapping(),
             false => run,
         }
     });
-    let builds = (!is_one).then(|| Run::of_build(&of_builds));
     let projects = Guarded::new(projects);
-    let in_common = || {
-        [&run, &builds]
-            .map(|it| it.as_ref().map_or(0, Run::bytes))
-            .iter()
-            .sum::<usize>()
-    };
+    let in_common = || run.as_ref().map_or(0, Run::bytes);
     let room = Room::new(request.plan_options.memory, &in_common);
     if at_once > 1 {
         disk.take_turns();
@@ -1997,7 +2008,6 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 named: Some((*extent, files.as_slice())),
                 elsewhere: (!is_one).then_some(&elsewhere),
                 run: run.as_ref(),
-                builds: builds.as_ref(),
                 place: (at_once > 1).then_some(&place),
             };
             let (so_far, began) = (Report::default(), Instant::now());
@@ -2027,11 +2037,21 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
-    report.files_parsed_for_all += builds.as_ref().map_or(0, Run::parses);
     if !is_one {
         sort_as_one_project(&mut report);
     }
     report
+}
+
+/// `Host::share_declaration_files`
+fn variants_of_several<'a>(options: impl Iterator<Item = &'a Options>) -> u32 {
+    let (mut of_one, mut of_several) = (0u32, 0u32);
+    for it in options {
+        let variant = 1 << bun_sema::program::variant_of_files(it.for_parsing());
+        of_several |= of_one & variant;
+        of_one |= variant;
+    }
+    of_several
 }
 
 /// Where the files are that a check is limited to.
@@ -2056,8 +2076,6 @@ struct OfProject<'a, 'u> {
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
     /// Of the request, if it has more than one project.
     run: Option<&'a Run<'u>>,
-    /// The same for those of its projects that are builds: `Run::of_build`.
-    builds: Option<&'a Run<'u>>,
     /// Among the programs that run at the same time.
     place: Option<&'a Place<'a>>,
 }
@@ -2112,15 +2130,19 @@ impl<'a> Room<'a> {
         }
     }
 
-    fn for_programs(&self) -> usize {
-        self.bytes.saturating_sub((self.in_common)())
+    /// What is left of `bytes`, and no more than lets the request take half as much again as with one program after the other,
+    /// which is what they have in common and the largest.
+    fn for_programs(&self, taken: &Taken) -> usize {
+        let in_common = (self.in_common)();
+        let left = self.bytes.saturating_sub(in_common);
+        left.min(taken.largest + (in_common + taken.largest) / 2)
     }
 
     /// Waits until there is room for one more, or nothing else runs.
     fn enter(&self) -> Place<'_> {
         let mut taken = self.taken.lock();
         loop {
-            let room = self.for_programs();
+            let room = self.for_programs(&taken);
             let fits =
                 taken.has_one_ended && !taken.is_one_unknown && taken.bytes + taken.largest <= room;
             if taken.programs == 0 || fits {
@@ -2163,7 +2185,7 @@ impl Place<'_> {
         self.counts_for(&mut taken, expected);
         taken.is_one_unknown = false;
         self.room.has_changed.notify_all();
-        while taken.going_on > 0 && taken.bytes > self.room.for_programs() {
+        while taken.going_on > 0 && taken.bytes > self.room.for_programs(&taken) {
             self.room.has_changed.wait_guarded(&mut taken);
         }
         taken.going_on += 1;
@@ -2173,9 +2195,10 @@ impl Place<'_> {
     /// It has taken `bytes` in the end.
     fn has_taken(&self, bytes: usize) {
         let mut taken = self.room.taken.lock();
+        let found = self.found.load(Ordering::Relaxed);
         taken.has_one_ended = true;
-        taken.largest = taken.largest.max(bytes);
-        let added = bytes.saturating_sub(self.found.load(Ordering::Relaxed));
+        taken.largest = taken.largest.max(bytes).max(found);
+        let added = bytes.saturating_sub(found);
         taken.most_added = taken.most_added.max(added);
         self.counts_for(&mut taken, bytes);
     }
@@ -2286,7 +2309,6 @@ fn check_project_of(
             named,
             of.elsewhere,
             of.run,
-            of.builds,
             of.place,
         )
     } else {
@@ -2592,8 +2614,19 @@ impl Host for WithOutputs<'_> {
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
     }
-    fn is_emitted(&self, path: &[u8]) -> bool {
-        self.written(path).is_some()
+    fn share_declaration_files(&self, variants: u32, programs: usize) {
+        self.disk.share_declaration_files(variants, programs);
+    }
+    fn stays_loaded(&self) {
+        self.disk.stays_loaded();
+    }
+    fn shared_file(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        variant: u8,
+    ) -> Option<Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        self.disk.shared_file(path, text, variant)
     }
     fn is_file(&self, path: &[u8]) -> bool {
         self.disk.is_file(path) || self.written(path).is_some()
@@ -2670,7 +2703,6 @@ fn check_with_references(
     named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
     run: Option<&Run<'_>>,
-    builds: Option<&Run<'_>>,
     place: Option<&Place<'_>>,
 ) -> Report {
     let is_case_sensitive = host.is_case_sensitive();
@@ -2754,8 +2786,6 @@ fn check_with_references(
     // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
     // another reads, and several run at the same time.
     let is_one_program = reads_sources && !reports_references;
-    let of_build = Session::new();
-    let of_build = (!is_one_program && builds.is_none()).then(|| Run::of_build(&of_build));
     // Nothing waits for what is not emitted.
     let up_stream: Vec<Vec<usize>> = (projects.iter())
         .map(|p| match reads_sources {
@@ -2800,6 +2830,14 @@ fn check_with_references(
     while let Some(index) = pending.pop() {
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
+    }
+    // As `build` below.
+    let is_solution =
+        |index: usize| roots[index].is_empty() && projects[index].project.has_references;
+    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
+    if !request.plan_options.shares_every_file {
+        let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
+        host.share_declaration_files(variants, loaded().count());
     }
     let is_read_by_a_program = |index: usize| {
         (0..count)
@@ -2978,10 +3016,9 @@ fn check_with_references(
                 place,
             )
         };
-        let mut checked = match (is_one_program, builds) {
-            (true, _) => check(run, place),
-            (false, Some(builds)) => check(Some(builds), None),
-            (false, None) => check(of_build.as_ref(), None),
+        let mut checked = match is_one_program {
+            true => check(run, place),
+            false => check(None, None),
         };
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
@@ -3103,7 +3140,6 @@ fn check_with_references(
     }
     report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
-    report.files_parsed_for_all += of_build.as_ref().map_or(0, Run::parses);
     report
 }
 
@@ -3329,9 +3365,9 @@ fn check_named_files(
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
     let session = Session::new();
-    let files_are_found = || {
+    let files_are_found = |until_it_is_loaded: usize| {
         if let Some(place) = in_room {
-            place.has_found_its_files(session.allocated_bytes());
+            place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);
         }
     };
     let files = Files::load(
@@ -3346,6 +3382,7 @@ fn check_named_files(
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
     }
+    host.stays_loaded();
     if refuses {
         let problems = files.program_problems();
         let problems = (problems.iter())

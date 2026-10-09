@@ -45,6 +45,44 @@
       "additionalProperties": false
     }
   ],
+  "bun/no-cast-to-brand": [
+    {
+      "type": "object",
+      "properties": {
+        "branded": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "mint": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "mintedIn": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": ["module", "type"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
   "bun/no-console-window-flash": [],
   "bun/no-cwd-dependent-path": [
     {
@@ -139,6 +177,62 @@
             "type": "string"
           },
           "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-unbounded-requests": [
+    {
+      "type": "object",
+      "properties": {
+        "clients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": ["module"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "bun/no-unhandled-emitter-errors": [
+    {
+      "type": "object",
+      "properties": {
+        "factories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": ["module"],
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

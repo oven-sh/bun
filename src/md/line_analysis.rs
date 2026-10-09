@@ -903,11 +903,7 @@ impl Parser<'_> {
                     || char::from_u32(helpers::decode_utf8(self.text, name as usize).codepoint)
                         .is_some_and(char::is_alphanumeric));
             // Every line is asked about each of them, however short it is
-            let open = self.containers[..self.n_containers as usize]
-                .iter()
-                .filter(|it| it.ch == b':')
-                .count();
-            if fence_len >= 3 && starts_name && open < 32 {
+            if fence_len >= 3 && starts_name && self.directives.len() < 32 {
                 let rest = &self.text[name as usize..];
                 let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
                 return ContainerMarkResult {

@@ -1,4 +1,4 @@
-use crate::bun::list_option;
+use crate::bun::{is_end_of_path, list_option};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::static_string;
@@ -100,11 +100,7 @@ impl Rule for PreferLocalModule {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // A path in `exemptFiles` is the end of the path of the file, from a `/` on.
-        let is_left_alone = |end: &[u8]| {
-            file.path().strip_suffix(end).is_some_and(|before| matches!(before.last(), None | Some(b'/' | b'\\')))
-        };
-        if self.exempt_files.iter().any(|it| is_left_alone(it)) {
+        if self.exempt_files.iter().any(|it| is_end_of_path(file.path(), it)) {
             return;
         }
         on.stmts([StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar], |rule, statement, cx| {

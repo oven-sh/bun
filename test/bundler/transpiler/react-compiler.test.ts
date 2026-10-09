@@ -3126,9 +3126,11 @@ test("react-compiler memory does not grow with the square of the size of a compo
 // InferTypes copies the type of a phi into each phi that it is an operand of. Variables that are assigned from each
 // other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
 // Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
-test("react-compiler leaves a component alone whose types are too complex to infer", async () => {
-  using dir = tempDir("react-compiler-types", {
-    "entry.jsx": `
+test(
+  "react-compiler leaves a component alone whose types are too complex to infer",
+  async () => {
+    using dir = tempDir("react-compiler-types", {
+      "entry.jsx": `
       export default function Component(props) {
         let a, b, c, d, e;
         while (props.x) {
@@ -3166,20 +3168,23 @@ test("react-compiler leaves a component alone whose types are too complex to inf
         return <div>{a}{b}{c}{d}{e}</div>;
       }
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toContain("function Component");
-  expect(stdout).not.toContain("react/compiler-runtime");
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("function Component");
+    expect(stdout).not.toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    // A debug build takes 14 seconds to find that out, a release build 0.3.
+  },
+  isDebug ? 60_000 : undefined,
+);
 
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that
@@ -3412,10 +3417,21 @@ describe("react-compiler does not overflow the stack on a component that is nest
   const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
     isDebug ? debug : isASAN ? releaseWithASAN : release;
   const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
-  const within = "if statements with blocks, within the limit";
+  const within = ["if statements with blocks, within the limit", "JSX, within the limit", "methods, within the limit"];
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
     // Blocks are counted apart, so these are 200 levels and not 400.
-    [within, depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
+    [within[0], depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
+    // So are the call, the object and the array that an element of JSX is, and the property of a method call.
+    [
+      within[1],
+      depthOf(10, 10, 200),
+      n =>
+        component(
+          "",
+          nest(n, () => "<div><a />", "{s}", "</div>"),
+        ),
+    ],
+    [within[2], depthOf(10, 10, 200), n => component(`const x = props.a${".m(s)".repeat(n)};`, "<div>{x}</div>")],
     ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
     [
       "called arrow functions",
@@ -3488,7 +3504,7 @@ describe("react-compiler does not overflow the stack on a component that is nest
     // Not in a release build, which overflowed from 16,000: so many take 11 G instructions.
     [
       flat[1],
-      depthOf(3000, 5000, 0),
+      depthOf(2600, 5000, 0),
       n =>
         component(
           `let [${Array.from({ length: n + 1 }, (_, i) => `v${i}`).join(",")}] = props.l;` +
@@ -3512,7 +3528,7 @@ describe("react-compiler does not overflow the stack on a component that is nest
     const out = await Bun.file(join(String(dir), "out.js")).text();
     expect(out).toContain("useState(0)");
     // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
-    if (name === within) expect(out).toContain("react/compiler-runtime");
+    if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
     else if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });

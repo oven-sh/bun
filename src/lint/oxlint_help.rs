@@ -101,166 +101,165 @@ struct Row {
 /// Sorted by the key, which is made of `Meta::key` and `Message::key`. Then where the help starts in [`TEXT`], and its length.
 #[rustfmt::skip]
 static INDEX: &[(u32, u32)] = &[
-    (0x0060F26E, at(46552, 67)), // no-unsafe-function-type bannedFunctionType
+    (0x0060F26E, at(46600, 67)), // no-unsafe-function-type bannedFunctionType
     (0x0080189E, at(13949, 76)), // func-name-matching matchProperty
-    (0x009D1FB0, at(47924, 71)), // no-useless-computed-key unnecessarilyComputedProperty
+    (0x009D1FB0, at(47972, 71)), // no-useless-computed-key unnecessarilyComputedProperty
     (0x00B328BB, more(0)), // prefer-at
     (0x00D239E9, at(23142, 71)), // no-commonjs
     (0x00F6B325, WITH_DATA | more(1)), // no-func-assign isAFunction
     (0x0118BF96, more(2)), // no-dynamic-delete dynamicDelete
     (0x0123C577, more(3)), // default-case-last notLast
-    (0x01B12D02, WITH_DATA | at(50286, 62)), // padding-around-test-blocks
+    (0x01B12D02, WITH_DATA | at(50354, 62)), // padding-around-test-blocks
     (0x01D7F018, at(19299, 55)), // next-script-for-ga
-    (0x01DC3163, WITH_DATA | at(42413, 57)), // no-shadow-restricted-names shadowingRestrictedName
-    (0x01E6B38E, at(59435, 42)), // require-returns-description
-    (0x02275BCC, WITH_DATA | at(42345, 68)), // no-shadow noShadowGlobal
+    (0x01DC3163, WITH_DATA | at(42461, 57)), // no-shadow-restricted-names shadowingRestrictedName
+    (0x01E6B38E, at(59633, 42)), // require-returns-description
+    (0x02275BCC, WITH_DATA | at(42393, 68)), // no-shadow noShadowGlobal
     (0x02FE0566, at(11608, 83)), // error-message
-    (0x040964C8, at(61725, 36)), // unicode-bom expected
-    (0x053BAE70, at(32714, 28)), // no-implied-eval noImpliedEvalError
-    (0x058AAB56, at(56985, 54)), // prefer-template unexpectedStringConcatenation
-    (0x05C2ED19, at(29253, 126)), // no-extend-native unexpected
-    (0x061995FF, at(45946, 121)), // no-unsafe-assignment anyAssignmentThis
-    (0x0687884C, at(32176, 46)), // no-immediate-mutation
+    (0x040964C8, at(61923, 36)), // unicode-bom expected
+    (0x053BAE70, at(32762, 28)), // no-implied-eval noImpliedEvalError
+    (0x058AAB56, at(57183, 54)), // prefer-template unexpectedStringConcatenation
+    (0x05C2ED19, at(29301, 126)), // no-extend-native unexpected
+    (0x061995FF, at(45994, 121)), // no-unsafe-assignment anyAssignmentThis
+    (0x0687884C, at(32224, 46)), // no-immediate-mutation
     (0x06EAECE6, at(23378, 113)), // no-conditional-in-test
-    (0x071D498B, at(40519, 76)), // no-promise-in-callback
-    (0x07C91B4B, at(32924, 193)), // no-importing-vitest-globals
+    (0x071D498B, at(40567, 76)), // no-promise-in-callback
+    (0x07C91B4B, at(32972, 193)), // no-importing-vitest-globals
     (0x07D3DAF0, at(25070, 111)), // no-control-regex unexpected
-    (0x0811C395, at(36514, 54)), // no-misused-spread noMapSpreadInObject
-    (0x0858A4B1, at(44325, 74)), // no-unassigned-import
+    (0x0811C395, at(36562, 54)), // no-misused-spread noMapSpreadInObject
+    (0x0858A4B1, at(44373, 74)), // no-unassigned-import
     (0x0872DEF5, at(7069, 46)), // consistent-existence-index-check
-    (0x08A9ECAE, at(48968, 54)), // no-useless-undefined
+    (0x08A9ECAE, at(49036, 54)), // no-useless-undefined
     (0x08D1BD39, at(0, 33)), // accessor-pairs missingGetterInPropertyDescriptor
-    (0x0905D05C, at(41895, 61)), // no-self-assign selfAssignment
-    (0x091A0342, OF_THE_FIX), // prefer-dom-node-text-content
-    (0x092B0E10, at(50348, 75)), // parameter-properties preferClassProperty
-    (0x0947BAC4, at(39658, 60)), // no-nonoctal-decimal-escape decimalEscape
-    (0x09DA5F90, WITH_DATA | at(60430, 57)), // restrict-plus-operands mismatched
+    (0x0905D05C, at(41943, 61)), // no-self-assign selfAssignment
+    (0x091A0342, at(52628, 41)), // prefer-dom-node-text-content
+    (0x092B0E10, at(50416, 75)), // parameter-properties preferClassProperty
+    (0x0947BAC4, at(39706, 60)), // no-nonoctal-decimal-escape decimalEscape
+    (0x09DA5F90, WITH_DATA | at(60628, 57)), // restrict-plus-operands mismatched
     (0x0A513778, more(4)), // no-anonymous-default-export
     (0x0AAD4A16, OF_THE_FIX), // sort-keys sortKeys
-    (0x0AB65693, at(40407, 30)), // no-process-env
+    (0x0AB65693, at(40455, 30)), // no-process-env
     (0x0B3AFDA4, OF_THE_FIX), // prefer-string-starts-ends-with
-    (0x0B4075BA, at(30134, 101)), // no-fallthrough default
+    (0x0B4075BA, at(30182, 101)), // no-fallthrough default
     (0x0BA721AE, at(13949, 76)), // func-name-matching matchVariable
-    (0x0C0D2A86, at(51484, 87)), // prefer-bigint-literals
+    (0x0C0D2A86, at(51552, 87)), // prefer-bigint-literals
     (0x0C2B5AB6, WITH_DATA | at(18652, 30)), // misrefactored-assign-op
     (0x0C79C256, at(17358, 53)), // jsx-no-target-blank
-    (0x0C91E0A2, at(61761, 40)), // unicode-bom unexpected
-    (0x0CAEE6D8, at(42080, 91)), // no-sequences unexpectedCommaExpression
+    (0x0C91E0A2, at(61959, 40)), // unicode-bom unexpected
+    (0x0CAEE6D8, at(42128, 91)), // no-sequences unexpectedCommaExpression
     (0x0CC03201, WITH_DATA | more(5)), // prefer-enum-initializers defineInitializer
     (0x0CFAB60A, OF_THE_FIX), // prefer-includes
     (0x0D14EA50, at(16764, 65)), // jsx-no-duplicate-props
     (0x0D7DC07F, at(16131, 59)), // jsx-fragments
-    (0x0D8D8E11, at(57646, 130)), // promise-function-async missingAsyncHybridReturn
+    (0x0D8D8E11, at(57844, 130)), // promise-function-async missingAsyncHybridReturn
     (0x0E0355F8, WITH_DATA | at(6344, 58)), // check-property-names
-    (0x0E05869C, at(61983, 47)), // use-isnan switchNaN
-    (0x0E386427, at(28346, 171)), // no-eval unexpected
-    (0x0E538FD3, WITH_DATA | at(33953, 35)), // no-jasmine-globals
+    (0x0E05869C, at(62181, 47)), // use-isnan switchNaN
+    (0x0E386427, at(28394, 171)), // no-eval unexpected
+    (0x0E538FD3, WITH_DATA | at(34001, 35)), // no-jasmine-globals
     (0x0E83665F, at(17557, 226)), // label-has-associated-control
-    (0x0E927D39, at(30134, 101)), // no-fallthrough case
-    (0x0F2D3BB6, at(60312, 41)), // require-yields-description
-    (0x0F38A7FF, at(29379, 24)), // no-extra-bind unexpected
-    (0x0F58F8C1, at(45946, 121)), // no-unsafe-call unsafeCallThis
-    (0x0FD049B8, at(37960, 83)), // no-nested-ternary noNestedTernary
-    (0x0FF43A4D, at(41091, 87)), // no-relative-parent-imports
-    (0x10142F89, at(57494, 82)), // preserve-caught-error partiallyLostError
+    (0x0E927D39, at(30182, 101)), // no-fallthrough case
+    (0x0F2D3BB6, at(60510, 41)), // require-yields-description
+    (0x0F38A7FF, at(29427, 24)), // no-extra-bind unexpected
+    (0x0F58F8C1, at(45994, 121)), // no-unsafe-call unsafeCallThis
+    (0x0FD049B8, at(38008, 83)), // no-nested-ternary noNestedTernary
+    (0x0FF43A4D, at(41139, 87)), // no-relative-parent-imports
+    (0x10142F89, at(57692, 82)), // preserve-caught-error partiallyLostError
     (0x101D918F, WITH_DATA | more(6)), // no-class-assign class
     (0x105BB692, at(25516, 48)), // no-default-export
     (0x106D3C17, at(13104, 90)), // explicit-member-accessibility unwantedPublicAccessibility
-    (0x108B4503, at(32576, 51)), // no-implicit-globals globalVariableLeak
+    (0x108B4503, at(32624, 51)), // no-implicit-globals globalVariableLeak
     (0x10EC629D, OF_THE_FIX), // prefer-to-be
     (0x10FCE172, more(7)), // prefer-function-component
-    (0x1140A6BB, at(53494, 60)), // prefer-expect-assertions
+    (0x1140A6BB, at(53653, 60)), // prefer-expect-assertions
     (0x116D0C7B, OF_THE_FIX), // prefer-to-be
-    (0x11DDDB46, at(33913, 40)), // no-iterator noIterator
+    (0x11DDDB46, at(33961, 40)), // no-iterator noIterator
     (0x1237F276, at(759, 110)), // alt-text
     (0x12425C48, at(11112, 46)), // display-name
     (0x124AB7BF, at(14577, 61)), // grouped-accessor-pairs notGrouped
     (0x12D3E40B, at(20848, 72)), // no-arrow-functions-in-watch
     (0x12D67E80, OF_THE_FIX), // prefer-string-slice
     (0x131E6446, at(573, 92)), // alt-text
-    (0x1331A7D3, at(48489, 134)), // no-useless-promise-resolve-reject
+    (0x1331A7D3, at(48557, 134)), // no-useless-promise-resolve-reject
     (0x13B134F0, more(8)), // constructor-super duplicate
     (0x144B9C52, at(0, 33)), // accessor-pairs missingGetterInClass
     (0x1481816A, WITH_DATA | at(10188, 86)), // const-comparisons
-    (0x14BA2452, at(32742, 30)), // no-import-assign readonlyMember
-    (0x14C236C5, at(50522, 166)), // prefer-add-event-listener
+    (0x14BA2452, at(32790, 30)), // no-import-assign readonlyMember
+    (0x14C236C5, at(50590, 166)), // prefer-add-event-listener
     (0x153734AE, at(14299, 56)), // google-font-display
-    (0x155E8E4F, at(59649, 47)), // require-test-timeout
-    (0x1582E15B, at(31681, 63)), // no-head-import-in-document
+    (0x155E8E4F, at(59847, 47)), // require-test-timeout
+    (0x1582E15B, at(31729, 63)), // no-head-import-in-document
     (0x15F11F3B, at(13276, 51)), // explicit-module-boundary-types missingArgTypeUnnamed
-    (0x1600E77C, at(47499, 140)), // no-useless-backreference backward
+    (0x1600E77C, at(47547, 140)), // no-useless-backreference backward
     (0x162D2C2C, WITH_DATA | at(6402, 71)), // check-property-names
     (0x162E6ADB, at(13586, 29)), // exports-style
     (0x16A58B57, at(19419, 38)), // no-abusive-eslint-disable
     (0x16C210C0, at(18032, 45)), // max-statements exceed
     (0x16FCD447, at(17323, 35)), // jsx-no-target-blank
-    (0x1716694C, at(51257, 122)), // prefer-await-to-callbacks
-    (0x17DA8860, at(33220, 132)), // no-instanceof-array
+    (0x1716694C, at(51325, 122)), // prefer-await-to-callbacks
+    (0x17DA8860, at(33268, 132)), // no-instanceof-array
     (0x18610854, OF_THE_FIX), // prefer-to-contain
-    (0x187F550D, OF_THE_FIX), // array-type errorStringGeneric
-    (0x18A66ABB, at(40460, 59)), // no-promise-executor-return returnsValue
-    (0x1905F47D, at(45946, 121)), // no-unsafe-call errorCallThis
+    (0x18A66ABB, at(40508, 59)), // no-promise-executor-return returnsValue
+    (0x1905F47D, at(45994, 121)), // no-unsafe-call errorCallThis
     (0x193E14CD, more(9)), // no-anonymous-default-export
     (0x193FD901, at(665, 94)), // alt-text
-    (0x19959635, at(32446, 33)), // no-implicit-globals globalLexicalBinding
+    (0x19959635, at(32494, 33)), // no-implicit-globals globalLexicalBinding
     (0x19B15CBB, at(20543, 46)), // no-array-reduce
-    (0x1A128CDC, at(38043, 55)), // no-nesting
-    (0x1A840B64, at(34396, 44)), // no-lone-blocks redundantNestedBlock
-    (0x1A9B3FED, at(38400, 78)), // no-new-buffer
-    (0x1A9EEA9F, at(42575, 58)), // no-standalone-expect
-    (0x1AB19EE9, at(50058, 78)), // numeric-separators-style
-    (0x1AB2D2B4, WITH_DATA | at(44485, 130)), // no-undef undef
+    (0x1A128CDC, at(38091, 55)), // no-nesting
+    (0x1A840B64, at(34444, 44)), // no-lone-blocks redundantNestedBlock
+    (0x1A9B3FED, at(38448, 78)), // no-new-buffer
+    (0x1A9EEA9F, at(42623, 58)), // no-standalone-expect
+    (0x1AB19EE9, at(50126, 78)), // numeric-separators-style
+    (0x1AB2D2B4, WITH_DATA | at(44533, 130)), // no-undef undef
     (0x1B0CC963, more(10)), // prefer-namespace-keyword useNamespace
-    (0x1B3387A4, at(25850, 113)), // no-did-mount-set-state
-    (0x1B56DF94, at(46985, 45)), // no-unused-expressions unusedExpression
-    (0x1BB099A0, at(50224, 62)), // padding-around-after-all-blocks
-    (0x1BD891E7, WITH_DATA | at(37263, 113)), // no-named-as-default
+    (0x1B3387A4, at(25898, 113)), // no-did-mount-set-state
+    (0x1B56DF94, at(47033, 45)), // no-unused-expressions unusedExpression
+    (0x1BB099A0, at(50292, 62)), // padding-around-after-all-blocks
+    (0x1BD891E7, WITH_DATA | at(37311, 113)), // no-named-as-default
     (0x1CB82C2D, at(2026, 57)), // arrow-body-style unexpectedObjectBlock
-    (0x1D322BFB, at(57458, 36)), // prefer-type-error
-    (0x1D83871A, at(33685, 94)), // no-invalid-void-type invalidVoidNotReturnOrThisParam
+    (0x1D322BFB, at(57656, 36)), // prefer-type-error
+    (0x1D83871A, at(33733, 94)), // no-invalid-void-type invalidVoidNotReturnOrThisParam
     (0x1E244682, more(11)), // prefer-event-target
-    (0x1E4D2974, at(43195, 112)), // no-thenable
-    (0x1EEBBE80, at(51571, 74)), // prefer-called-exactly-once-with
+    (0x1E4D2974, at(43243, 112)), // no-thenable
+    (0x1EEBBE80, at(51639, 74)), // prefer-called-exactly-once-with
     (0x1F90CE4A, at(21551, 99)), // no-await-expression-member
-    (0x1FAC619A, at(31349, 75)), // no-for-in-array forInViolation
-    (0x20D05EE5, at(54706, 46)), // prefer-literal-enum-member notLiteral
-    (0x21748555, OF_THE_FIX), // prefer-exponentiation-operator useExponentiation
+    (0x1FAC619A, at(31397, 75)), // no-for-in-array forInViolation
+    (0x20D05EE5, at(54904, 46)), // prefer-literal-enum-member notLiteral
+    (0x21748555, at(53949, 39)), // prefer-exponentiation-operator useExponentiation
     (0x2181B206, more(12)), // unified-signatures singleParameterDifference
-    (0x2205CF93, at(62030, 45)), // use-isnan comparisonWithNaN
-    (0x226B3AAC, at(38098, 70)), // no-new noNewStatement
-    (0x22B2BA85, at(28146, 106)), // no-empty-object-type noEmptyInterfaceWithSuper
-    (0x24487926, WITH_DATA | at(58262, 49)), // require-awaited-expect-poll
-    (0x244A0CCB, at(45251, 63)), // no-unnecessary-array-splice-count
-    (0x2481EB1F, at(56331, 53)), // prefer-rest-params preferRestParams
-    (0x248A8A81, OF_THE_FIX), // no-deprecated-destroyed-lifecycle
+    (0x2205CF93, at(62228, 45)), // use-isnan comparisonWithNaN
+    (0x226B3AAC, at(38146, 70)), // no-new noNewStatement
+    (0x22B2BA85, at(28194, 106)), // no-empty-object-type noEmptyInterfaceWithSuper
+    (0x24487926, WITH_DATA | at(58460, 49)), // require-awaited-expect-poll
+    (0x244A0CCB, at(45299, 63)), // no-unnecessary-array-splice-count
+    (0x2481EB1F, at(56529, 53)), // prefer-rest-params preferRestParams
+    (0x248A8A81, WITH_DATA | at(25801, 48)), // no-deprecated-destroyed-lifecycle
     (0x24AD54E2, at(25766, 35)), // no-deprecated-data-object-declaration
     (0x24E68FCA, OF_THE_FIX), // prefer-to-be
     (0x250F790D, WITH_DATA | at(7537, 75)), // consistent-test-it
-    (0x25AAA242, at(47499, 140)), // no-useless-backreference nested
+    (0x25AAA242, at(47547, 140)), // no-useless-backreference nested
     (0x25ADCBD5, at(14638, 107)), // guard-for-in wrap
-    (0x25AF89B7, at(38168, 232)), // no-new-array
+    (0x25AF89B7, at(38216, 232)), // no-new-array
     (0x25B6FA93, more(13)), // no-async-endpoint-handlers
-    (0x25EE7DEF, at(46350, 120)), // no-unsafe-enum-comparison mismatchedCondition
-    (0x2602EF24, at(41741, 56)), // no-return-wrap
+    (0x25EE7DEF, at(46398, 120)), // no-unsafe-enum-comparison mismatchedCondition
+    (0x2602EF24, at(41789, 56)), // no-return-wrap
     (0x266406B4, OF_THE_FIX), // text-encoding-identifier-case
     (0x2692F915, at(17323, 35)), // jsx-no-target-blank
-    (0x26B202C5, at(26318, 24)), // no-div-regex unexpected
+    (0x26B202C5, at(26366, 24)), // no-div-regex unexpected
     (0x26F06D05, at(22395, 82)), // no-before-interactive-script-outside-document
     (0x26FFE9DE, at(5834, 74)), // branches-sharing-code
     (0x279AAA40, at(12826, 47)), // exhaustive-deps
     (0x27F9437A, at(5834, 74)), // branches-sharing-code
     (0x28285BAA, WITH_DATA | more(14)), // no-barrel-file
     (0x287E3094, WITH_DATA | at(19638, 72)), // no-accessor-recursion
-    (0x28B8D6A6, WITH_DATA | at(38812, 59)), // no-new-native-nonconstructor noNewNonconstructor
-    (0x28EF0ABD, at(61256, 43)), // symbol-description expected
+    (0x28B8D6A6, WITH_DATA | at(38860, 59)), // no-new-native-nonconstructor noNewNonconstructor
+    (0x28EF0ABD, at(61454, 43)), // symbol-description expected
     (0x28F15987, OF_THE_FIX), // prefer-to-be
     (0x2905BD12, at(13819, 42)), // first
     (0x2914DD32, OF_THE_FIX), // no-blank-blocks
-    (0x2936D5DD, at(32742, 30)), // no-import-assign readonly
-    (0x294AC64D, at(43525, 64)), // no-this-assignment
-    (0x29E0C363, at(53816, 59)), // prefer-for-of preferForOf
-    (0x2A0567C6, WITH_DATA | at(32381, 65)), // no-immediate-mutation
-    (0x2A194A9C, at(29118, 135)), // no-expose-after-await
+    (0x2936D5DD, at(32790, 30)), // no-import-assign readonly
+    (0x294AC64D, at(43573, 64)), // no-this-assignment
+    (0x29E0C363, at(54014, 59)), // prefer-for-of preferForOf
+    (0x2A0567C6, WITH_DATA | at(32429, 65)), // no-immediate-mutation
+    (0x2A194A9C, at(29166, 135)), // no-expose-after-await
     (0x2A383EE8, WITH_DATA | at(2679, 195)), // bad-array-method-on-arguments
     (0x2A40F8AD, WITH_DATA | at(10360, 60)), // const-comparisons
     (0x2A64055F, WITH_DATA | more(15)), // no-dupe-class-members unexpected
@@ -269,708 +268,704 @@ static INDEX: &[(u32, u32)] = &[
     (0x2B87867E, more(17)), // unified-signatures allParametersAreSame
     (0x2C48190F, OF_THE_FIX), // no-useless-escape unnecessaryEscape
     (0x2D0C060F, at(15910, 68)), // interactive-supports-focus
-    (0x2D97980B, at(59696, 57)), // require-test-timeout
+    (0x2D97980B, at(59894, 57)), // require-test-timeout
     (0x2D97C338, at(2228, 120)), // await-thenable await
-    (0x2DB8429D, at(53343, 45)), // prefer-expect-assertions
+    (0x2DB8429D, at(53502, 45)), // prefer-expect-assertions
     (0x2E0DDD90, at(17285, 38)), // jsx-no-script-url
-    (0x2EBC678D, at(37144, 56)), // no-multiple-slot-args
+    (0x2EBC678D, at(37192, 56)), // no-multiple-slot-args
     (0x2EC5DBD1, more(18)), // consistent-type-assertions unexpectedObjectTypeAssertion
     (0x2F10E46A, at(15798, 59)), // init-declarations notInitialized
-    (0x2F2BBEA6, at(49419, 32)), // no-with unexpectedWith
+    (0x2F2BBEA6, at(49487, 32)), // no-with unexpectedWith
     (0x2F4F170A, at(23491, 36)), // no-conditional-tests
     (0x2F8E0659, at(6631, 50)), // class-literal-property-style preferGetterStyle
-    (0x2FD0D405, WITH_DATA | at(60616, 48)), // role-supports-aria-props
+    (0x2FD0D405, WITH_DATA | at(60814, 48)), // role-supports-aria-props
     (0x302217C2, OF_THE_FIX), // prefer-to-be
     (0x305AA56F, OF_THE_FIX), // prefer-mock-return-shorthand
     (0x30A935DC, WITH_DATA | at(7487, 50)), // consistent-test-filename
     (0x30DA2BE4, WITH_DATA | at(2083, 62)), // autocomplete-valid
     (0x30F77694, at(18032, 45)), // max-lines-per-function exceed
-    (0x31064F33, at(62632, 30)), // valid-expect
+    (0x31064F33, at(62830, 30)), // valid-expect
     (0x313E1D6C, at(21008, 63)), // no-async-client-component
     (0x31815129, at(24392, 175)), // no-const-enum
-    (0x323049FB, at(46067, 153)), // no-unsafe-declaration-merging unsafeMerging
-    (0x32A4602D, at(62167, 52)), // valid-define-emits
-    (0x32F34167, WITH_DATA | at(55492, 53)), // prefer-node-protocol
+    (0x323049FB, at(46115, 153)), // no-unsafe-declaration-merging unsafeMerging
+    (0x32A4602D, at(62365, 52)), // valid-define-emits
+    (0x32F34167, WITH_DATA | at(55690, 53)), // prefer-node-protocol
     (0x331EE56D, at(1909, 63)), // arrow-body-style expectedBlock
     (0x338A21D2, OF_THE_FIX), // prefer-to-have-length
-    (0x33ADF728, at(56384, 15)), // prefer-set-has
+    (0x33ADF728, at(56582, 15)), // prefer-set-has
     (0x345D4F08, at(11074, 38)), // default-param-last shouldBeLast
     (0x3491E50F, at(2450, 101)), // await-thenable forAwaitOfNonAsyncIterable
-    (0x35A40854, at(27976, 80)), // no-empty-interface noEmpty
+    (0x35A40854, at(28024, 80)), // no-empty-interface noEmpty
     (0x367988B3, at(25614, 152)), // no-delete-var unexpected
-    (0x372F35A2, at(51139, 29)), // prefer-at
-    (0x37356D1D, at(56682, 50)), // prefer-spread preferSpread
-    (0x37441D54, at(60273, 39)), // require-yields
-    (0x37A179DC, at(58592, 146)), // require-number-to-fixed-digits-argument
+    (0x372F35A2, at(51207, 29)), // prefer-at
+    (0x37356D1D, at(56880, 50)), // prefer-spread preferSpread
+    (0x37441D54, at(60471, 39)), // require-yields
+    (0x37A179DC, at(58790, 146)), // require-number-to-fixed-digits-argument
     (0x38375F1D, more(19)), // no-react-children
-    (0x38AA9EA3, at(58048, 111)), // react-in-jsx-scope
+    (0x38AA9EA3, at(58246, 111)), // react-in-jsx-scope
     (0x38F375BE, at(14807, 69)), // heading-has-content
     (0x39372F2F, at(0, 33)), // accessor-pairs missingGetterInObjectLiteral
     (0x39763B2A, WITH_DATA | at(11451, 36)), // eqeqeq unexpected
-    (0x39B8CC08, at(50913, 96)), // prefer-array-index-of
-    (0x39DAC322, at(62505, 39)), // valid-describe-callback
+    (0x39B8CC08, at(50981, 96)), // prefer-array-index-of
+    (0x39DAC322, at(62703, 39)), // valid-describe-callback
     (0x3A0B6013, at(11291, 119)), // empty-brace-spaces
     (0x3A63C3F6, at(14025, 44)), // func-names named
     (0x3A6CD864, at(21456, 62)), // no-async-promise-executor async
-    (0x3B71AA53, WITH_DATA | at(49687, 41)), // no-zero-fractions
+    (0x3B71AA53, WITH_DATA | at(49755, 41)), // no-zero-fractions
     (0x3BC6501C, at(12572, 34)), // exhaustive-deps
-    (0x3C576391, WITH_DATA | at(63608, 68)), // yoda expected
+    (0x3C576391, WITH_DATA | at(63806, 68)), // yoda expected
     (0x3C80759E, at(23112, 30)), // no-commented-out-tests
-    (0x3CD49CEB, at(50423, 99)), // parameter-properties preferParameterProperty
-    (0x3D523E1C, at(42537, 38)), // no-sparse-arrays unexpectedSparseArray
-    (0x3D84DFFA, at(41178, 43)), // no-render-return-value
+    (0x3CD49CEB, at(50491, 99)), // parameter-properties preferParameterProperty
+    (0x3D523E1C, at(42585, 38)), // no-sparse-arrays unexpectedSparseArray
+    (0x3D84DFFA, at(41226, 43)), // no-render-return-value
     (0x3D891842, WITH_DATA | at(1214, 38)), // aria-unsupported-elements
-    (0x3DFD522C, at(56262, 69)), // prefer-response-static-json
+    (0x3DFD522C, at(56460, 69)), // prefer-response-static-json
     (0x3E23022F, at(13276, 51)), // explicit-module-boundary-types missingArgType
     (0x3F702622, at(13194, 82)), // explicit-module-boundary-types anyTypedArgUnnamed
     (0x3FD5EFB3, at(13194, 82)), // explicit-module-boundary-types anyTypedArg
-    (0x4037A6A1, at(53790, 26)), // prefer-export-from
-    (0x403D7235, at(35954, 155)), // no-misleading-character-class regionalIndicatorSymbol
-    (0x40451C31, at(34080, 63)), // no-labels unexpectedLabel
+    (0x4037A6A1, at(53988, 26)), // prefer-export-from
+    (0x403D7235, at(36002, 155)), // no-misleading-character-class regionalIndicatorSymbol
+    (0x40451C31, at(34128, 63)), // no-labels unexpectedLabel
     (0x406EC540, OF_THE_FIX), // prefer-optional-catch-binding
-    (0x40C9F62F, WITH_DATA | at(41503, 8)), // no-restricted-properties restrictedProperty
+    (0x40C9F62F, WITH_DATA | at(41551, 8)), // no-restricted-properties restrictedProperty
     (0x40CE6680, at(13327, 48)), // explicit-module-boundary-types missingReturnType
-    (0x412B54E4, at(52252, 23)), // prefer-default-export
-    (0x4144820D, at(29403, 66)), // no-extra-boolean-cast unexpectedCall
+    (0x412B54E4, at(52320, 23)), // prefer-default-export
+    (0x4144820D, at(29451, 66)), // no-extra-boolean-cast unexpectedCall
     (0x414AD720, more(20)), // no-accumulating-spread loopSpread
-    (0x41AC451D, at(31168, 158)), // no-floating-promises floatingVoid
-    (0x41D3B241, at(47499, 140)), // no-useless-backreference forward
-    (0x41FB84E2, at(36972, 39)), // no-multi-comp
-    (0x42361FBE, at(47499, 140)), // no-useless-backreference intoNegativeLookaround
-    (0x427DA840, at(32844, 80)), // no-import-type-side-effects useTopLevelQualifier
-    (0x427F318F, at(45376, 47)), // no-unnecessary-slice-end
+    (0x41AC451D, at(31216, 158)), // no-floating-promises floatingVoid
+    (0x41D3B241, at(47547, 140)), // no-useless-backreference forward
+    (0x41FB84E2, at(37020, 39)), // no-multi-comp
+    (0x42361FBE, at(47547, 140)), // no-useless-backreference intoNegativeLookaround
+    (0x427DA840, at(32892, 80)), // no-import-type-side-effects useTopLevelQualifier
+    (0x427F318F, at(45424, 47)), // no-unnecessary-slice-end
     (0x42A5A57F, at(16093, 38)), // jsx-filename-extension
     (0x4330D24B, at(0, 33)), // accessor-pairs missingGetterInType
     (0x434A3BA3, at(33, 33)), // accessor-pairs missingSetterInType
-    (0x43773440, at(40075, 86)), // no-param-reassign assignmentToFunctionParam
-    (0x442E57AD, at(33685, 94)), // no-invalid-void-type invalidVoidNotReturn
+    (0x43773440, at(40123, 86)), // no-param-reassign assignmentToFunctionParam
+    (0x442E57AD, at(33733, 94)), // no-invalid-void-type invalidVoidNotReturn
     (0x44DE9770, WITH_DATA | at(5725, 109)), // block-scoped-var outOfScope
     (0x44E6FF10, more(21)), // unified-signatures omittingRestParameter
-    (0x450297EB, at(40855, 66)), // no-redeclare redeclared
+    (0x450297EB, at(40903, 66)), // no-redeclare redeclared
     (0x4576BB38, at(9764, 72)), // consistent-type-specifier-style
     (0x45E80181, at(15978, 84)), // interactive-supports-focus
     (0x467B6DF5, more(22)), // no-duplicate-case unexpected
     (0x46896AB1, more(23)), // no-accumulating-spread reduceSpread
-    (0x4694688D, at(36352, 76)), // no-misused-new errorMessageClass
-    (0x46BABB14, WITH_DATA | at(41058, 33)), // no-regex-spaces multipleSpaces
-    (0x47001535, WITH_DATA | at(55586, 40)), // prefer-number-properties
-    (0x470199BD, at(41683, 58)), // no-return-wrap
-    (0x470CFC81, at(51679, 91)), // prefer-called-times
-    (0x471B73CB, at(56103, 22)), // prefer-readonly preferReadonly
+    (0x4694688D, at(36400, 76)), // no-misused-new errorMessageClass
+    (0x46BABB14, WITH_DATA | at(41106, 33)), // no-regex-spaces multipleSpaces
+    (0x47001535, WITH_DATA | at(55784, 40)), // prefer-number-properties
+    (0x470199BD, at(41731, 58)), // no-return-wrap
+    (0x470CFC81, at(51747, 91)), // prefer-called-times
+    (0x471B73CB, at(56301, 22)), // prefer-readonly preferReadonly
     (0x47AD07A4, more(24)), // no-unexpected-multiline division
-    (0x4905AD5B, OF_THE_FIX), // consistent-type-definitions typeOverInterface
-    (0x4937801E, WITH_DATA | at(49728, 103)), // number-arg-out-of-range
-    (0x49BD2FA0, at(36478, 36)), // no-misused-spread noFunctionSpreadInObject
-    (0x49E9C313, at(43195, 112)), // no-thenable
-    (0x49EA0B99, at(48765, 65)), // no-useless-rename unnecessarilyRenamed
-    (0x4ADFEF5E, at(26183, 21)), // no-disabled-tests
+    (0x4937801E, WITH_DATA | at(49796, 103)), // number-arg-out-of-range
+    (0x49BD2FA0, at(36526, 36)), // no-misused-spread noFunctionSpreadInObject
+    (0x49E9C313, at(43243, 112)), // no-thenable
+    (0x49EA0B99, at(48833, 65)), // no-useless-rename unnecessarilyRenamed
+    (0x4ADFEF5E, at(26231, 21)), // no-disabled-tests
     (0x4AE7B876, WITH_DATA | at(6984, 85)), // consistent-each-for
-    (0x4B164347, at(48830, 41)), // no-useless-return unnecessaryReturn
-    (0x4BA3B55F, at(49267, 53)), // no-webpack-loader-syntax
+    (0x4B164347, at(48898, 41)), // no-useless-return unnecessaryReturn
+    (0x4BA3B55F, at(49335, 53)), // no-webpack-loader-syntax
     (0x4BD8F9C6, at(15080, 97)), // hook-use-state
     (0x4BF1674B, more(25)), // bad-match-all-arg
-    (0x4C73543E, at(32479, 97)), // no-implicit-globals globalNonLexicalBinding
-    (0x4C8838ED, at(51086, 53)), // prefer-as-const preferConstAssertion
+    (0x4C73543E, at(32527, 97)), // no-implicit-globals globalNonLexicalBinding
+    (0x4C8838ED, at(51154, 53)), // prefer-as-const preferConstAssertion
     (0x4CAC9F7A, at(25487, 29)), // no-debugger unexpected
-    (0x4CC7D5D8, at(50866, 47)), // prefer-array-flat-map
-    (0x4CD9641B, at(61350, 55)), // throw-new-error
+    (0x4CC7D5D8, at(50934, 47)), // prefer-array-flat-map
+    (0x4CD9641B, at(61548, 55)), // throw-new-error
     (0x4CFCA4DC, at(1972, 54)), // arrow-body-style unexpectedEmptyBlock
     (0x4CFFC774, OF_THE_FIX), // no-deprecated-functions
-    (0x4D020C34, at(52568, 74)), // prefer-ending-with-an-expect
+    (0x4D020C34, at(52727, 74)), // prefer-ending-with-an-expect
     (0x4D9BF559, more(26)), // no-anonymous-default-export
-    (0x4DA2D1D3, at(57264, 86)), // prefer-to-have-been-called-times
-    (0x4DCA515A, WITH_DATA | at(45423, 50)), // no-unnecessary-type-constraint unnecessaryConstraint
+    (0x4DA2D1D3, at(57462, 86)), // prefer-to-have-been-called-times
+    (0x4DCA515A, WITH_DATA | at(45471, 50)), // no-unnecessary-type-constraint unnecessaryConstraint
     (0x4DF5D5D7, at(18077, 54)), // max-nested-callbacks exceed
     (0x4E109504, more(27)), // require-unicode-regexp requireUFlag
     (0x4E226EF4, OF_THE_FIX), // escape-case
     (0x4E99BC4E, at(20006, 94)), // no-aria-hidden-on-focusable
     (0x4E9DB508, more(28)), // no-async-endpoint-handlers
     (0x4EF6DB9D, at(17822, 41)), // max-classes-per-file maximumExceeded
-    (0x501D6803, at(62632, 30)), // valid-expect
-    (0x50755686, at(28897, 97)), // no-explicit-any unexpectedAny
-    (0x50F2970D, at(47134, 214)), // no-unwanted-polyfillio
-    (0x50FFD073, at(42959, 52)), // no-sync-scripts
+    (0x501D6803, at(62830, 30)), // valid-expect
+    (0x50755686, at(28945, 97)), // no-explicit-any unexpectedAny
+    (0x50F2970D, at(47182, 214)), // no-unwanted-polyfillio
+    (0x50FFD073, at(43007, 52)), // no-sync-scripts
     (0x51203CCD, at(13949, 76)), // func-name-matching notMatchProperty
-    (0x516ED453, at(33817, 96)), // no-is-mounted
+    (0x516ED453, at(33865, 96)), // no-is-mounted
     (0x51D00F97, at(15761, 37)), // implements-on-classes
-    (0x51D024C7, at(47680, 103)), // no-useless-catch unnecessaryCatch
+    (0x51D024C7, at(47728, 103)), // no-useless-catch unnecessaryCatch
     (0x521DF4D2, at(6031, 72)), // callback-return
     (0x52347A5F, at(14117, 97)), // func-style expression
     (0x52821B9E, more(29)), // no-test-return-statement
     (0x52A4DF84, at(11487, 121)), // erasing-op
-    (0x52AF321E, at(61983, 47)), // use-isnan caseNaN
+    (0x52AF321E, at(62181, 47)), // use-isnan caseNaN
     (0x52B28245, OF_THE_FIX), // curly unexpectedCurlyAfter
-    (0x52BC8235, at(63519, 89)), // warn-todo
+    (0x52BC8235, at(63717, 89)), // warn-todo
     (0x53091EDD, WITH_DATA | at(11202, 89)), // double-comparisons
-    (0x531E3EC8, at(47499, 140)), // no-useless-backreference disjunctive
-    (0x5354B870, at(49022, 29)), // no-var unexpectedVar
-    (0x5368BAFF, at(60353, 28)), // require-yields-type
-    (0x5398EA92, at(57494, 82)), // preserve-caught-error caughtErrorShadowed
-    (0x53A1C515, at(56852, 33)), // prefer-structured-clone
-    (0x53D9403E, at(35061, 35)), // no-magic-array-flat-depth
-    (0x53FB4E46, at(30549, 85)), // no-floating-promises floatingPromiseArray
-    (0x548F0D63, at(41355, 25)), // no-restricted-exports restrictedDefault
+    (0x531E3EC8, at(47547, 140)), // no-useless-backreference disjunctive
+    (0x5354B870, at(49090, 29)), // no-var unexpectedVar
+    (0x5368BAFF, at(60551, 28)), // require-yields-type
+    (0x5398EA92, at(57692, 82)), // preserve-caught-error caughtErrorShadowed
+    (0x53A1C515, at(57050, 33)), // prefer-structured-clone
+    (0x53D9403E, at(35109, 35)), // no-magic-array-flat-depth
+    (0x53FB4E46, at(30597, 85)), // no-floating-promises floatingPromiseArray
+    (0x548F0D63, at(41403, 25)), // no-restricted-exports restrictedDefault
     (0x54B14656, at(7187, 43)), // consistent-generic-constructors preferConstructor
-    (0x54CBEA1A, at(58573, 19)), // require-module-specifiers
+    (0x54CBEA1A, at(58771, 19)), // require-module-specifiers
     (0x5557B33E, more(30)), // no-anonymous-default-export
     (0x556EEF87, at(12526, 46)), // exhaustive-deps
     (0x559A3AAA, WITH_DATA | at(1740, 169)), // array-callback-return mayReachEndOfIf
-    (0x5646286A, at(35697, 118)), // no-misleading-character-class combiningClass
+    (0x5646286A, at(35745, 118)), // no-misleading-character-class combiningClass
     (0x568E64EB, more(31)), // bad-replace-all-arg
-    (0x56D50D2B, at(32772, 43)), // no-import-compiler-macros
+    (0x56D50D2B, at(32820, 43)), // no-import-compiler-macros
     (0x56D7811F, at(23920, 37)), // no-confusing-void-expression invalidVoidExpr
-    (0x56E93E46, at(33685, 94)), // no-invalid-void-type invalidVoidNotReturnOrGeneric
+    (0x56E93E46, at(33733, 94)), // no-invalid-void-type invalidVoidNotReturnOrGeneric
     (0x5782557A, at(13904, 45)), // forward-ref-uses-ref
     (0x58A466ED, at(11012, 21)), // default-case missingDefaultCase
     (0x58DA34B4, at(18435, 82)), // media-has-caption
     (0x590E840B, OF_THE_FIX), // prefer-spy-on
-    (0x593BD524, at(42807, 39)), // no-string-refs
+    (0x593BD524, at(42855, 39)), // no-string-refs
     (0x59B22FBB, at(19778, 23)), // no-alert unexpected
-    (0x59F21520, WITH_DATA | at(51645, 34)), // prefer-called-once
-    (0x5A2BB6EF, at(47783, 141)), // no-useless-catch unnecessaryCatchClause
-    (0x5A2D5611, at(33685, 94)), // no-invalid-void-type invalidVoidForGeneric
+    (0x59F21520, WITH_DATA | at(51713, 34)), // prefer-called-once
+    (0x5A2BB6EF, at(47831, 141)), // no-useless-catch unnecessaryCatchClause
+    (0x5A2D5611, at(33733, 94)), // no-invalid-void-type invalidVoidForGeneric
     (0x5A60BB58, OF_THE_FIX), // no-useless-collection-argument
-    (0x5A80AFB1, at(57776, 97)), // radix invalidRadix
-    (0x5A9E7553, at(36185, 25)), // no-misleading-character-class surrogatePairWithoutUFlag
+    (0x5A80AFB1, at(57974, 97)), // radix invalidRadix
+    (0x5A9E7553, at(36233, 25)), // no-misleading-character-class surrogatePairWithoutUFlag
     (0x5AF1595D, at(14117, 97)), // func-style declaration
-    (0x5B734369, WITH_DATA | at(37376, 82)), // no-named-as-default-member
-    (0x5BC28272, at(59144, 60)), // require-render-return
-    (0x5BEE2655, at(32267, 43)), // no-immediate-mutation
-    (0x5C900B00, at(49051, 52)), // no-var-requires noVarReqs
-    (0x5CC6FCF8, WITH_DATA | at(37753, 96)), // no-negation-in-equality-check
-    (0x5D0F92E9, at(35096, 95)), // no-magic-numbers noMagic
-    (0x5D441852, at(33590, 42)), // no-interpolation-in-snapshots
+    (0x5B734369, WITH_DATA | at(37424, 82)), // no-named-as-default-member
+    (0x5BC28272, at(59342, 60)), // require-render-return
+    (0x5BEE2655, at(32315, 43)), // no-immediate-mutation
+    (0x5C900B00, at(49119, 52)), // no-var-requires noVarReqs
+    (0x5CC6FCF8, WITH_DATA | at(37801, 96)), // no-negation-in-equality-check
+    (0x5D0F92E9, at(35144, 95)), // no-magic-numbers noMagic
+    (0x5D441852, at(33638, 42)), // no-interpolation-in-snapshots
     (0x5D7B2CB9, WITH_DATA | at(18005, 27)), // max-lines exceed
-    (0x5DB5EA2F, at(58311, 81)), // require-direct-export
-    (0x5DB72799, at(48227, 25)), // no-useless-empty-export uselessExport
-    (0x5E3E5C10, at(48871, 38)), // no-useless-spread
-    (0x5E7E7B07, at(36428, 50)), // no-misused-new errorMessageInterface
+    (0x5DB5EA2F, at(58509, 81)), // require-direct-export
+    (0x5DB72799, at(48275, 25)), // no-useless-empty-export uselessExport
+    (0x5E3E5C10, at(48939, 38)), // no-useless-spread
+    (0x5E7E7B07, at(36476, 50)), // no-misused-new errorMessageInterface
     (0x5E7FBF0E, WITH_DATA | more(32)), // no-shadow noShadow
     (0x5E808371, at(493, 80)), // alt-text
-    (0x5E9582B5, at(41956, 70)), // no-self-compare comparingToSelf
-    (0x5E98BF1B, WITH_DATA | at(53554, 60)), // prefer-expect-assertions
-    (0x5E9FBEEF, at(25963, 114)), // no-did-update-set-state
+    (0x5E9582B5, at(42004, 70)), // no-self-compare comparingToSelf
+    (0x5E98BF1B, WITH_DATA | at(53713, 60)), // prefer-expect-assertions
+    (0x5E9FBEEF, at(26011, 114)), // no-did-update-set-state
     (0x5EC9566A, OF_THE_FIX), // valid-next-tick
-    (0x5ED5EA27, at(43589, 53)), // no-this-before-super noBeforeSuper
-    (0x5EF87FAD, at(43307, 137)), // no-this-alias thisAssignment
-    (0x5EFB52AD, at(32627, 39)), // no-implied-eval execScript
+    (0x5ED5EA27, at(43637, 53)), // no-this-before-super noBeforeSuper
+    (0x5EF87FAD, at(43355, 137)), // no-this-alias thisAssignment
+    (0x5EFB52AD, at(32675, 39)), // no-implied-eval execScript
     (0x5F1AAC0D, more(33)), // no-new-func noFunctionConstructor
-    (0x5F289D03, at(62265, 53)), // valid-define-props
-    (0x5FC22DE6, at(62861, 87)), // valid-expect-in-promise
+    (0x5F289D03, at(62463, 53)), // valid-define-props
+    (0x5FC22DE6, at(63059, 87)), // valid-expect-in-promise
     (0x60274EAA, at(13615, 22)), // exports-style
-    (0x6050AC87, OF_THE_FIX), // array-type errorStringArray
-    (0x6064B3C1, at(45473, 64)), // no-unneeded-async-expect-function
-    (0x60775FC2, at(62219, 46)), // valid-define-emits
-    (0x608038F2, at(58797, 33)), // require-param-description
+    (0x6064B3C1, at(45521, 64)), // no-unneeded-async-expect-function
+    (0x60775FC2, at(62417, 46)), // valid-define-emits
+    (0x608038F2, at(58995, 33)), // require-param-description
     (0x6099C903, WITH_DATA | more(34)), // adjacent-overload-signatures adjacentSignature
-    (0x6131F82C, at(59818, 41)), // require-throws-description
+    (0x6131F82C, at(60016, 41)), // require-throws-description
     (0x6182F6AE, at(11749, 82)), // error-message
-    (0x619CF5B6, at(35815, 139)), // no-misleading-character-class emojiModifier
-    (0x61C4E6B8, OF_THE_FIX | 1), // no-useless-iterator-to-array
+    (0x619CF5B6, at(35863, 139)), // no-misleading-character-class emojiModifier
+    (0x61C4E6B8, at(48537, 20)), // no-useless-iterator-to-array
     (0x61D610DB, at(11691, 58)), // error-message
     (0x62896888, WITH_DATA | at(1548, 192)), // array-callback-return mayFallThroughSwitch
     (0x62F126DF, at(22710, 96)), // no-case-declarations unexpected
     (0x62FB98DC, more(35)), // no-unexpected-multiline function
-    (0x63289AA6, WITH_DATA | at(60547, 69)), // role-has-required-aria-props
+    (0x63289AA6, WITH_DATA | at(60745, 69)), // role-has-required-aria-props
     (0x639C39AB, at(12467, 59)), // exhaustive-deps
     (0x643A3C40, at(14259, 40)), // global-require
     (0x645CBB4B, at(20415, 128)), // no-array-method-this-argument
     (0x6490DABD, at(23990, 38)), // no-confusing-void-expression invalidVoidExprReturn
     (0x649BA4B6, at(7230, 44)), // consistent-generic-constructors preferTypeAnnotation
-    (0x65D9A51E, at(56125, 59)), // prefer-reflect-apply
+    (0x65D9A51E, at(56323, 59)), // prefer-reflect-apply
     (0x65E653F3, at(17411, 26)), // jsx-props-no-spread-multi
-    (0x65F96EAF, WITH_DATA | at(41492, 11)), // no-restricted-matchers
-    (0x6634C5A7, at(59929, 55)), // require-typed-ref
+    (0x65F96EAF, WITH_DATA | at(41540, 11)), // no-restricted-matchers
+    (0x6634C5A7, at(60127, 55)), // require-typed-ref
     (0x66A86706, at(2026, 57)), // arrow-body-style unexpectedSingleBlock
-    (0x67B8A380, at(30324, 128)), // no-find-dom-node
+    (0x67B8A380, at(30372, 128)), // no-find-dom-node
     (0x67CED70F, at(18272, 82)), // max-params exceed
-    (0x67D5835A, at(55722, 69)), // prefer-object-spread useLiteralMessage
+    (0x67D5835A, at(55920, 69)), // prefer-object-spread useLiteralMessage
     (0x680FDFE8, at(13949, 76)), // func-name-matching notMatchVariable
     (0x686191F3, OF_THE_FIX), // function-component-definition
     (0x686EEEB2, at(25181, 48)), // no-css-tags
     (0x68A1A5BB, at(12244, 147)), // exhaustive-deps
-    (0x68B710EF, at(48623, 142)), // no-useless-promise-resolve-reject
-    (0x692FE0A5, WITH_DATA | at(41475, 17)), // no-restricted-imports pathWithCustomMessage
+    (0x68B710EF, at(48691, 142)), // no-useless-promise-resolve-reject
+    (0x692FE0A5, WITH_DATA | at(41523, 17)), // no-restricted-imports pathWithCustomMessage
     (0x697C0C1E, at(12195, 49)), // exhaustive-deps
     (0x69ABD53A, at(17070, 100)), // jsx-no-literals
-    (0x69CCD28C, at(49157, 110)), // no-watch-after-await
+    (0x69CCD28C, at(49225, 110)), // no-watch-after-await
     (0x6A29E837, OF_THE_FIX), // prefer-math-trunc
-    (0x6A610A9A, at(58830, 25)), // require-param-name
+    (0x6A610A9A, at(59028, 25)), // require-param-name
     (0x6B9BE531, OF_THE_FIX), // prefer-prototype-methods
     (0x6B9CF3B0, at(14876, 158)), // hoisted-apis-on-top
     (0x6BCE2B27, more(36)), // require-unicode-regexp requireVFlag
-    (0x6BE5A143, at(62948, 38)), // valid-title
+    (0x6BE5A143, at(63146, 38)), // valid-title
     (0x6C4F7631, at(24093, 30)), // no-console unexpected
-    (0x6C63014F, at(41861, 34)), // no-script-url unexpectedScriptURL
+    (0x6C63014F, at(41909, 34)), // no-script-url unexpectedScriptURL
     (0x6CAC0AD0, more(37)), // no-extra-non-null-assertion noExtraNonNullAssertion
-    (0x6D013E47, at(37675, 78)), // no-negated-condition
-    (0x6D67D4DA, at(56795, 29)), // prefer-strict-equal
-    (0x6D94AF0C, at(40161, 99)), // no-param-reassign assignmentToFunctionParamProp
+    (0x6D013E47, at(37723, 78)), // no-negated-condition
+    (0x6D67D4DA, at(56993, 29)), // prefer-strict-equal
+    (0x6D94AF0C, at(40209, 99)), // no-param-reassign assignmentToFunctionParamProp
     (0x6DA49EAF, at(5565, 51)), // ban-types
     (0x6DE8A23F, OF_THE_FIX), // no-empty-named-blocks
-    (0x6E4044E9, at(43831, 94)), // no-this-in-sfc
+    (0x6E4044E9, at(43879, 94)), // no-this-in-sfc
     (0x6E5C6A36, OF_THE_FIX), // function-component-definition
-    (0x6E682581, WITH_DATA | at(58455, 83)), // require-mock-type-parameters
-    (0x6E72D2C7, at(57494, 82)), // preserve-caught-error missingCause
+    (0x6E682581, WITH_DATA | at(58653, 83)), // require-mock-type-parameters
+    (0x6E72D2C7, at(57692, 82)), // preserve-caught-error missingCause
     (0x6EB15CD7, OF_THE_FIX), // no-null
-    (0x6ECB24E9, at(41256, 99)), // no-required-prop-with-default
-    (0x6F0AB04C, WITH_DATA | at(41475, 17)), // no-restricted-imports everythingWithAllowedImportNamePatternWithCustomMessage
+    (0x6ECB24E9, at(41304, 99)), // no-required-prop-with-default
+    (0x6F0AB04C, WITH_DATA | at(41523, 17)), // no-restricted-imports everythingWithAllowedImportNamePatternWithCustomMessage
     (0x6F1DD394, OF_THE_FIX), // object-shorthand expectedMethodShorthand
-    (0x6FF55E58, at(48198, 29)), // no-useless-default-assignment uselessUndefined
+    (0x6FF55E58, at(48246, 29)), // no-useless-default-assignment uselessUndefined
     (0x70393C91, at(18682, 73)), // missing-throw
-    (0x7043F91E, at(34080, 63)), // no-labels unexpectedLabelInContinue
+    (0x7043F91E, at(34128, 63)), // no-labels unexpectedLabelInContinue
     (0x70558DB2, at(7274, 85)), // consistent-indexed-object-style preferIndexSignature
-    (0x70962A56, at(52229, 23)), // prefer-date-now
-    (0x709A8728, at(58855, 27)), // require-param-type
-    (0x70BF82FC, WITH_DATA | at(33178, 42)), // no-inner-declarations moveDeclToRoot
+    (0x70962A56, at(52297, 23)), // prefer-date-now
+    (0x709A8728, at(59053, 27)), // require-param-type
+    (0x70BF82FC, WITH_DATA | at(33226, 42)), // no-inner-declarations moveDeclToRoot
     (0x710AF355, OF_THE_FIX), // ban-tslint-comment commentDetected
     (0x718431E5, at(9221, 172)), // consistent-type-imports noImportTypeAnnotations
-    (0x71BF1211, at(42846, 113)), // no-styled-jsx-in-document
+    (0x71BF1211, at(42894, 113)), // no-styled-jsx-in-document
     (0x71C9BA62, more(38)), // no-map-spread
     (0x71DC9E56, at(13637, 31)), // exports-style
     (0x71E0D9DB, at(12195, 49)), // exhaustive-deps
     (0x72888656, at(9836, 62)), // consistent-type-specifier-style
     (0x7289F291, at(23760, 58)), // no-confusing-non-null-assertion confusingAssign
-    (0x7316FAB1, at(39454, 83)), // no-noninteractive-element-interactions
-    (0x7350C08B, at(62583, 49)), // valid-describe-callback
+    (0x7316FAB1, at(39502, 83)), // no-noninteractive-element-interactions
+    (0x7350C08B, at(62781, 49)), // valid-describe-callback
     (0x7370F353, OF_THE_FIX), // consistent-type-assertions as
     (0x73ADA4DE, OF_THE_FIX), // function-component-definition
-    (0x73BD2A09, at(62030, 45)), // use-isnan comparisonWithNaN
-    (0x73DAE700, at(49915, 86)), // number-literal-case
+    (0x73BD2A09, at(62228, 45)), // use-isnan comparisonWithNaN
+    (0x73DAE700, at(49983, 86)), // number-literal-case
     (0x73E689A2, at(14577, 61)), // grouped-accessor-pairs invalidOrder
-    (0x73FB5C91, at(39123, 116)), // no-non-null-asserted-nullish-coalescing noNonNullAssertedNullishCoalescing
+    (0x73FB5C91, at(39171, 116)), // no-non-null-asserted-nullish-coalescing noNonNullAssertedNullishCoalescing
     (0x74052CCF, at(13375, 31)), // explicit-timer-delay
-    (0x7438222A, at(47030, 45)), // no-unused-private-class-members unusedPrivateClassMember
+    (0x7438222A, at(47078, 45)), // no-unused-private-class-members unusedPrivateClassMember
     (0x74772748, WITH_DATA | at(18199, 73)), // max-nested-describe
-    (0x7485E6BA, at(61226, 30)), // switch-case-braces
-    (0x754980E5, at(58392, 33)), // require-hook
+    (0x7485E6BA, at(61424, 30)), // switch-case-braces
+    (0x754980E5, at(58590, 33)), // require-hook
     (0x758E4948, WITH_DATA | at(3633, 183)), // bad-object-literal-comparison
-    (0x7616A2A5, WITH_DATA | at(41475, 17)), // no-restricted-imports everythingWithCustomMessage
-    (0x764B4A7A, at(57387, 71)), // prefer-ts-expect-error preferExpectErrorComment
+    (0x7616A2A5, WITH_DATA | at(41523, 17)), // no-restricted-imports everythingWithCustomMessage
+    (0x764B4A7A, at(57585, 71)), // prefer-ts-expect-error preferExpectErrorComment
     (0x767C35BB, WITH_DATA | at(13725, 50)), // extensions
-    (0x76C7C203, at(60774, 54)), // scope
+    (0x76C7C203, at(60972, 54)), // scope
     (0x76FFA74C, at(20982, 26)), // no-async-await
-    (0x771243CE, at(57350, 37)), // prefer-top-level-await
+    (0x771243CE, at(57548, 37)), // prefer-top-level-await
     (0x776978BB, at(12423, 44)), // exhaustive-deps
     (0x77997183, at(21650, 143)), // no-await-in-loop unexpectedAwait
-    (0x77CDA732, at(45769, 69)), // no-unreadable-iife
-    (0x77F7FD45, at(61299, 51)), // tabindex-no-positive
-    (0x78474DB3, at(62075, 49)), // use-isnan indexOfNaN
+    (0x77CDA732, at(45817, 69)), // no-unreadable-iife
+    (0x77F7FD45, at(61497, 51)), // tabindex-no-positive
+    (0x78474DB3, at(62273, 49)), // use-isnan indexOfNaN
     (0x784C8E87, at(24925, 109)), // no-constructor-return unexpected
-    (0x78ED9184, at(25801, 49)), // no-deprecated-events-api
+    (0x78ED9184, at(25849, 49)), // no-deprecated-events-api
     (0x797AD421, more(39)), // no-non-null-asserted-optional-chain noNonNullOptionalChain
     (0x798BFAED, at(6103, 51)), // capitalized-comments unexpectedLowercaseComment
-    (0x79D87FD1, at(51379, 105)), // prefer-await-to-then
-    (0x7A5C1437, at(56184, 78)), // prefer-regexp-test
+    (0x79D87FD1, at(51447, 105)), // prefer-await-to-then
+    (0x7A5C1437, at(56382, 78)), // prefer-regexp-test
     (0x7A83C681, more(40)), // consistent-type-assertions unexpectedArrayTypeAssertion
-    (0x7B1FB820, at(58193, 31)), // require-array-join-separator
-    (0x7B6BF287, OF_THE_FIX), // consistent-type-definitions interfaceOverType
-    (0x7B8E21D0, at(61405, 109)), // triple-slash-reference tripleSlashReference
-    (0x7BA56C1B, at(45946, 121)), // no-unsafe-member-access unsafeThisMemberExpression
-    (0x7BA57611, at(37011, 89)), // no-multi-str multilineString
+    (0x7B1FB820, at(58391, 31)), // require-array-join-separator
+    (0x7B8E21D0, at(61603, 109)), // triple-slash-reference tripleSlashReference
+    (0x7BA56C1B, at(45994, 121)), // no-unsafe-member-access unsafeThisMemberExpression
+    (0x7BA57611, at(37059, 89)), // no-multi-str multilineString
     (0x7BE6F2F9, at(24028, 30)), // no-confusing-void-expression invalidVoidExprReturnLast
     (0x7CC8D36D, at(12606, 220)), // exhaustive-deps
-    (0x7D500530, at(63462, 57)), // void-dom-elements-no-children
-    (0x7D8088CC, WITH_DATA | at(52510, 58)), // prefer-each
-    (0x7D83D2BA, WITH_DATA | at(52164, 45)), // prefer-comparison-matcher
-    (0x7D9F2601, at(30452, 97)), // no-floating-promises floating
+    (0x7D500530, at(63660, 57)), // void-dom-elements-no-children
+    (0x7D8088CC, WITH_DATA | at(52669, 58)), // prefer-each
+    (0x7D83D2BA, WITH_DATA | at(52232, 45)), // prefer-comparison-matcher
+    (0x7D9F2601, at(30500, 97)), // no-floating-promises floating
     (0x7DA5DD05, at(6553, 78)), // class-literal-property-style preferFieldStyle
-    (0x7DA8315F, at(33446, 144)), // no-interactive-element-to-noninteractive-role
+    (0x7DA8315F, at(33494, 144)), // no-interactive-element-to-noninteractive-role
     (0x7DEA67FA, more(41)), // no-non-null-assertion noNonNull
     (0x7DF33290, OF_THE_FIX), // explicit-length-check
-    (0x7E03A6C9, at(30078, 56)), // no-extraneous-class onlyStatic
-    (0x7E327F05, WITH_DATA | at(51770, 43)), // prefer-called-with
+    (0x7E03A6C9, at(30126, 56)), // no-extraneous-class onlyStatic
+    (0x7E327F05, WITH_DATA | at(51838, 43)), // prefer-called-with
     (0x7E38A935, at(10100, 88)), // const-comparisons
     (0x7E3DED4F, at(15321, 46)), // iframe-has-title
     (0x7E5C6924, WITH_DATA | at(10965, 47)), // default
     (0x7EF65762, OF_THE_FIX | 1), // valid-define-props
-    (0x7F15A285, at(32666, 48)), // no-implied-eval impliedEval
+    (0x7F15A285, at(32714, 48)), // no-implied-eval impliedEval
     (0x7F38C6CD, OF_THE_FIX), // jsx-boolean-value
     (0x7F86BC56, OF_THE_FIX), // catch-error-name
-    (0x7F943CCB, at(39800, 160)), // no-object-type-as-default-prop
+    (0x7F943CCB, at(39848, 160)), // no-object-type-as-default-prop
     (0x801EF696, WITH_DATA | at(1372, 176)), // array-callback-return expectedNoReturnValue
     (0x80AC457B, at(5616, 109)), // ban-types
     (0x810DC9D9, at(16829, 154)), // jsx-no-new-object-as-prop
     (0x81181E35, at(12117, 78)), // exhaustive-deps
     (0x81ECF042, OF_THE_FIX), // no-unused-labels unused
     (0x81F75B05, at(20100, 83)), // no-array-callback-reference
-    (0x822664B6, at(63360, 102)), // vars-on-top top
+    (0x822664B6, at(63558, 102)), // vars-on-top top
     (0x823B2F2D, at(12873, 29)), // expect-expect
     (0x823B4E38, at(16555, 209)), // jsx-no-constructed-context-values
     (0x824F9C6D, at(6277, 67)), // check-access
-    (0x82801981, WITH_DATA | at(54783, 40)), // prefer-lowercase-title
+    (0x82801981, WITH_DATA | at(54981, 40)), // prefer-lowercase-title
     (0x82B929F0, at(14415, 79)), // group-exports
-    (0x8303A4C7, at(42470, 67)), // no-single-promise-in-promise-methods
-    (0x831BBAE5, at(39015, 108)), // no-nodejs-modules
+    (0x8303A4C7, at(42518, 67)), // no-single-promise-in-promise-methods
+    (0x831BBAE5, at(39063, 108)), // no-nodejs-modules
     (0x83439EE7, at(16829, 154)), // jsx-no-new-function-as-prop
     (0x83451D02, WITH_DATA | at(5908, 76)), // button-has-type
-    (0x835861AA, at(57873, 63)), // radix missingParameters
-    (0x8360E1E4, at(29089, 29)), // no-exports-assign
+    (0x835861AA, at(58071, 63)), // radix missingParameters
+    (0x8360E1E4, at(29137, 29)), // no-exports-assign
     (0x838A42D5, OF_THE_FIX), // prefer-string-replace-all
     (0x83E2D9AC, OF_THE_FIX), // prefer-string-replace-all
     (0x841A2F88, at(12963, 141)), // explicit-member-accessibility missingAccessibility
     (0x84551859, at(6473, 44)), // checked-requires-onchange-or-readonly
-    (0x8471437D, at(59753, 65)), // require-test-timeout
-    (0x8484729E, at(37907, 53)), // no-nested-ternary
-    (0x84AB82D0, at(56428, 128)), // prefer-snapshot-hint
+    (0x8471437D, at(59951, 65)), // require-test-timeout
+    (0x8484729E, at(37955, 53)), // no-nested-ternary
+    (0x84AB82D0, at(56626, 128)), // prefer-snapshot-hint
     (0x84BCD86A, OF_THE_FIX), // sort-imports sortMembersAlphabetically
-    (0x84CC3F4B, at(39718, 44)), // no-obj-calls unexpectedCall
+    (0x84CC3F4B, at(39766, 44)), // no-obj-calls unexpectedCall
     (0x853D3736, at(14299, 56)), // google-font-display
     (0x856525FC, OF_THE_FIX), // curly missingCurlyAfterCondition
     (0x85AF642F, WITH_DATA | more(42)), // no-const-assign const
-    (0x863835C0, at(59025, 42)), // require-property-description
-    (0x872D13BE, WITH_DATA | at(46619, 86)), // no-unsafe-negation unexpected
+    (0x863835C0, at(59223, 42)), // require-property-description
+    (0x872D13BE, WITH_DATA | at(46667, 86)), // no-unsafe-negation unexpected
     (0x87322D5F, WITH_DATA | at(24058, 35)), // no-console limited
-    (0x8768308E, at(26077, 85)), // no-direct-mutation-state
-    (0x8771A3F9, at(62360, 65)), // valid-define-props
-    (0x87889300, at(59510, 139)), // require-test-timeout
+    (0x8768308E, at(26125, 85)), // no-direct-mutation-state
+    (0x8771A3F9, at(62558, 65)), // valid-define-props
+    (0x87889300, at(59708, 139)), // require-test-timeout
     (0x87A24908, at(15278, 43)), // html-has-lang
-    (0x87C0B7B7, at(27647, 72)), // no-dynamic-require
+    (0x87C0B7B7, at(27695, 72)), // no-dynamic-require
     (0x87C6AE3E, OF_THE_FIX | more(43)), // prefer-dom-node-remove
     (0x87E2FF31, more(44)), // no-anonymous-default-export
-    (0x880E8CF7, at(34275, 121)), // no-lone-blocks redundantBlock
+    (0x880E8CF7, at(34323, 121)), // no-lone-blocks redundantBlock
     (0x882EDA31, at(23957, 33)), // no-confusing-void-expression invalidVoidExprArrow
-    (0x88327F58, WITH_DATA | at(38911, 78)), // no-new-statics
+    (0x88327F58, WITH_DATA | at(38959, 78)), // no-new-statics
     (0x88746CF5, at(19419, 38)), // no-abusive-eslint-disable
     (0x8874C6B0, at(18928, 79)), // namespace
     (0x88C9C57E, at(9764, 72)), // consistent-type-specifier-style
-    (0x89246B3B, at(27719, 75)), // no-else-return unexpected
-    (0x8963104E, at(63131, 63)), // valid-title
-    (0x898463D4, WITH_DATA | at(40359, 48)), // no-plusplus unexpectedUnaryOp
+    (0x89246B3B, at(27767, 75)), // no-else-return unexpected
+    (0x8963104E, at(63329, 63)), // valid-title
+    (0x898463D4, WITH_DATA | at(40407, 48)), // no-plusplus unexpectedUnaryOp
     (0x899EA758, at(22575, 135)), // no-caller unexpected
-    (0x8A213DEC, at(58538, 35)), // require-module-attributes
-    (0x8A89DF45, at(45537, 58)), // no-unneeded-ternary unnecessaryConditionalAssignment
+    (0x8A213DEC, at(58736, 35)), // require-module-attributes
+    (0x8A89DF45, at(45585, 58)), // no-unneeded-ternary unnecessaryConditionalAssignment
     (0x8A9605FE, more(45)), // no-loss-of-precision noLossOfPrecision
     (0x8ABD121A, at(12195, 49)), // exhaustive-deps
-    (0x8AD4C18A, at(58425, 30)), // require-local-test-context-for-concurrent-snapshots
-    (0x8AE6F07F, at(61164, 27)), // switch-case-braces
+    (0x8AD4C18A, at(58623, 30)), // require-local-test-context-for-concurrent-snapshots
+    (0x8AE6F07F, at(61362, 27)), // switch-case-braces
     (0x8B6CA6B8, OF_THE_FIX | more(46)), // require-post-message-target-origin
     (0x8B9EEF6D, OF_THE_FIX | 1), // jsx-no-useless-fragment
-    (0x8BA1D2F1, at(34170, 105)), // no-lifecycle-after-await
+    (0x8BA1D2F1, at(34218, 105)), // no-lifecycle-after-await
     (0x8BA4818B, at(10022, 78)), // const-comparisons
     (0x8C9A3028, OF_THE_FIX), // consistent-empty-array-spread
     (0x8D1408A7, WITH_DATA | more(47)), // no-shadow noEnumShadow
-    (0x8D4EEAAF, at(30003, 75)), // no-extraneous-class onlyConstructor
-    (0x8D628DE3, at(28252, 45)), // no-empty-static-block unexpected
+    (0x8D4EEAAF, at(30051, 75)), // no-extraneous-class onlyConstructor
+    (0x8D628DE3, at(28300, 45)), // no-empty-static-block unexpected
     (0x8D7C59AE, at(23284, 58)), // no-cond-assign unexpected
     (0x8D88D57B, WITH_DATA | at(6681, 54)), // class-methods-use-this missingThis
     (0x8DA73E29, WITH_DATA | more(48)), // prefer-expect-type-of
-    (0x8EC92FCB, at(44399, 86)), // no-unassigned-vars unassigned
-    (0x9021BBE3, at(28146, 106)), // no-empty-object-type noEmptyObject
+    (0x8EC92FCB, at(44447, 86)), // no-unassigned-vars unassigned
+    (0x9021BBE3, at(28194, 106)), // no-empty-object-type noEmptyObject
     (0x90BD2E9A, more(49)), // new-cap lower
-    (0x90C03318, WITH_DATA | at(54956, 102)), // prefer-named-capture-group required
+    (0x90C03318, WITH_DATA | at(55154, 102)), // prefer-named-capture-group required
     (0x914A5EF2, at(22544, 31)), // no-callback-in-promise
-    (0x9199CAC4, at(30235, 89)), // no-fallthrough unusedFallthroughComment
-    (0x921522BD, at(62318, 42)), // valid-define-props
-    (0x92842C3D, WITH_DATA | at(41475, 17)), // no-restricted-imports everythingWithAllowImportNamesAndCustomMessage
-    (0x9285F5BC, at(62799, 62)), // valid-expect
-    (0x92899C84, at(41399, 76)), // no-restricted-globals customMessage
+    (0x9199CAC4, at(30283, 89)), // no-fallthrough unusedFallthroughComment
+    (0x921522BD, at(62516, 42)), // valid-define-props
+    (0x92842C3D, WITH_DATA | at(41523, 17)), // no-restricted-imports everythingWithAllowImportNamesAndCustomMessage
+    (0x9285F5BC, at(62997, 62)), // valid-expect
+    (0x92899C84, at(41447, 76)), // no-restricted-globals customMessage
     (0x92AF00FF, more(50)), // no-anonymous-default-export
     (0x92DE5142, at(1038, 49)), // anchor-is-valid
-    (0x930BC3EC, at(48909, 59)), // no-useless-switch-case
+    (0x930BC3EC, at(48977, 59)), // no-useless-switch-case
     (0x930CE0BB, at(19457, 181)), // no-access-key
     (0x936D88A9, at(23860, 60)), // no-confusing-set-timeout
     (0x93E80588, WITH_DATA | more(51)), // ban-ts-comment tsDirectiveCommentRequiresDescription
-    (0x93FAA91F, OF_THE_FIX | 1), // no-useless-iterator-to-array
+    (0x93FAA91F, at(48537, 20)), // no-useless-iterator-to-array
     (0x93FFFE35, more(52)), // no-map-spread
     (0x94116C9A, WITH_DATA | OF_THE_FIX | more(53)), // no-wrapper-object-types bannedClassType
     (0x9477C5C2, at(6205, 72)), // check-access
-    (0x94EDCB08, at(46470, 82)), // no-unsafe-finally unsafeUsage
+    (0x94EDCB08, at(46518, 82)), // no-unsafe-finally unsafeUsage
     (0x95283D32, at(25034, 36)), // no-continue unexpected
     (0x95474AF7, OF_THE_FIX), // prefer-string-starts-ends-with
     (0x9573D46D, at(14355, 60)), // google-font-preconnect
-    (0x95E7A825, at(59696, 57)), // require-test-timeout
-    (0x95FED5F5, at(48252, 103)), // no-useless-error-capture-stack-trace
+    (0x95E7A825, at(59894, 57)), // require-test-timeout
+    (0x95FED5F5, at(48300, 103)), // no-useless-error-capture-stack-trace
     (0x96A87BDE, at(16190, 59)), // jsx-fragments
-    (0x97730A48, at(35191, 102)), // no-magic-numbers useConst
+    (0x97730A48, at(35239, 102)), // no-magic-numbers useConst
     (0x97CD5B21, at(18592, 60)), // method-signature-style errorProperty
-    (0x98214428, at(55856, 87)), // prefer-promise-reject-errors rejectAnError
+    (0x98214428, at(56054, 87)), // prefer-promise-reject-errors rejectAnError
     (0x984ACAFA, OF_THE_FIX), // explicit-length-check
-    (0x9860D0C0, OF_THE_FIX), // prefer-dom-node-append
-    (0x98B1D184, at(51895, 74)), // prefer-class-fields
-    (0x98C42E09, at(46728, 75)), // no-unsafe-optional-chaining unsafeOptionalChain
+    (0x9860D0C0, at(52515, 50)), // prefer-dom-node-append
+    (0x98B1D184, at(51963, 74)), // prefer-class-fields
+    (0x98C42E09, at(46776, 75)), // no-unsafe-optional-chaining unsafeOptionalChain
     (0x98F58515, at(14069, 48)), // func-names unnamed
     (0x98F68BCF, OF_THE_FIX), // prefer-math-min-max
-    (0x99B68D6E, at(49103, 23)), // no-void noVoid
-    (0x99EBCD74, at(50688, 76)), // prefer-array-find
-    (0x9A28EDC3, at(33779, 38)), // no-irregular-whitespace noIrregularWhitespace
+    (0x99B68D6E, at(49171, 23)), // no-void noVoid
+    (0x99EBCD74, at(50756, 76)), // prefer-array-find
+    (0x9A28EDC3, at(33827, 38)), // no-irregular-whitespace noIrregularWhitespace
     (0x9A5B5A31, OF_THE_FIX), // component-definition-name-casing
-    (0x9ABD1E60, at(33632, 53)), // no-invalid-remove-event-listener
-    (0x9AF51DCD, at(27879, 40)), // no-empty-file
+    (0x9ABD1E60, at(33680, 53)), // no-invalid-remove-event-listener
+    (0x9AF51DCD, at(27927, 40)), // no-empty-file
     (0x9B264F04, at(6735, 114)), // click-events-have-key-events
-    (0x9B4D6B59, at(32815, 29)), // no-import-node-test
+    (0x9B4D6B59, at(32863, 29)), // no-import-node-test
     (0x9B7C4335, at(18131, 68)), // max-nested-calls
-    (0x9C1E1379, at(33685, 94)), // no-invalid-void-type invalidVoidUnionConstituent
+    (0x9C1E1379, at(33733, 94)), // no-invalid-void-type invalidVoidUnionConstituent
     (0x9C4495C1, at(17437, 120)), // label-has-associated-control
-    (0x9CAFDEED, at(61514, 87)), // unambiguous
-    (0x9CE88A4B, at(50764, 36)), // prefer-array-flat
-    (0x9CEA1942, WITH_DATA | at(59887, 42)), // require-to-throw-message
+    (0x9CAFDEED, at(61712, 87)), // unambiguous
+    (0x9CE88A4B, at(50832, 36)), // prefer-array-flat
+    (0x9CEA1942, WITH_DATA | at(60085, 42)), // require-to-throw-message
     (0x9D0C9DCE, at(21793, 18)), // no-await-in-promise-methods
     (0x9DA05EA0, at(17170, 115)), // jsx-no-literals
     (0x9DC29154, at(17909, 31)), // max-depth tooDeeply
     (0x9E01697E, OF_THE_FIX), // jsx-boolean-value
-    (0x9E236B61, at(31997, 25)), // no-identical-title
-    (0x9EC2FE79, at(62544, 39)), // valid-describe-callback
-    (0x9FE1D3CE, OF_THE_FIX | 1), // no-useless-iterator-to-array
-    (0xA01AC578, at(51969, 93)), // prefer-class-fields
+    (0x9E236B61, at(32045, 25)), // no-identical-title
+    (0x9EC2FE79, at(62742, 39)), // valid-describe-callback
+    (0x9FE1D3CE, at(48537, 20)), // no-useless-iterator-to-array
+    (0xA01AC578, at(52037, 93)), // prefer-class-fields
     (0xA032BEA0, more(54)), // no-duplicate-imports import
     (0xA04674AC, OF_THE_FIX), // prefer-dom-node-dataset
-    (0xA087B343, at(31838, 124)), // no-html-link-for-pages
+    (0xA087B343, at(31886, 124)), // no-html-link-for-pages
     (0xA09B127D, WITH_DATA | at(4073, 208)), // ban-ts-comment tsDirectiveComment
-    (0xA0B67ACB, at(62124, 43)), // valid-define-emits
-    (0xA0D015A0, at(31326, 23)), // no-focused-tests
+    (0xA0B67ACB, at(62322, 43)), // valid-define-emits
+    (0xA0D015A0, at(31374, 23)), // no-focused-tests
     (0xA0E2E977, OF_THE_FIX | 1), // jsx-curly-brace-presence
-    (0xA0E3B9A9, at(63267, 93)), // valid-title
+    (0xA0E3B9A9, at(63465, 93)), // valid-title
     (0xA11E2B4B, WITH_DATA | at(10274, 86)), // const-comparisons
     (0xA1395355, at(20722, 126)), // no-array-sort
-    (0xA13F3933, at(62772, 27)), // valid-expect
+    (0xA13F3933, at(62970, 27)), // valid-expect
     (0xA14925FC, at(15367, 134)), // iframe-missing-sandbox
-    (0xA1656366, at(52275, 50)), // prefer-default-parameters
-    (0xA1AA64D9, at(60980, 35)), // strict-boolean-expressions conditionErrorNullableObject
-    (0xA1EBE911, at(41511, 105)), // no-return-assign arrowAssignment
-    (0xA21E96A6, at(63194, 73)), // valid-title
-    (0xA237E215, at(60242, 31)), // require-yields
+    (0xA1656366, at(52343, 50)), // prefer-default-parameters
+    (0xA1AA64D9, at(61178, 35)), // strict-boolean-expressions conditionErrorNullableObject
+    (0xA1EBE911, at(41559, 105)), // no-return-assign arrowAssignment
+    (0xA21E96A6, at(63392, 73)), // valid-title
+    (0xA237E215, at(60440, 31)), // require-yields
     (0xA239492E, WITH_DATA | more(55)), // no-global-assign globalShouldNotBeModified
-    (0xA24F6A04, WITH_DATA | at(41475, 17)), // no-restricted-imports patternAndEverythingWithCustomMessage
+    (0xA24F6A04, WITH_DATA | at(41523, 17)), // no-restricted-imports patternAndEverythingWithCustomMessage
     (0xA299A7EB, OF_THE_FIX), // prefer-prototype-methods
     (0xA2BB9DDF, more(56)), // no-anonymous-default-export
-    (0xA35BBFF4, at(39762, 38)), // no-object-constructor preferLiteral
+    (0xA35BBFF4, at(39810, 38)), // no-object-constructor preferLiteral
     (0xA36125B5, at(18517, 75)), // method-signature-style errorMethod
-    (0xA37216DA, at(36925, 47)), // no-multi-assign unexpectedChain
+    (0xA37216DA, at(36973, 47)), // no-multi-assign unexpectedChain
     (0xA39911F7, at(2551, 128)), // await-thenable invalidPromiseAggregatorInput
-    (0xA3CD3DCF, at(61601, 124)), // unbound-method unboundWithoutThisAnnotation
+    (0xA3CD3DCF, at(61799, 124)), // unbound-method unboundWithoutThisAnnotation
     (0xA3FE0095, at(14494, 83)), // group-exports
-    (0xA45423F7, at(62483, 22)), // valid-describe-callback
+    (0xA45423F7, at(62681, 22)), // valid-describe-callback
     (0xA482BD6C, at(17863, 46)), // max-dependencies
     (0xA4A4D8EB, more(57)), // no-duplicate-imports exportAs
-    (0xA4C84134, at(50800, 66)), // prefer-array-flat-map
-    (0xA4E55B7F, at(58224, 38)), // require-await missingAwait
-    (0xA4EBAE34, at(38871, 40)), // no-new-require
-    (0xA4FEC9F7, at(37849, 58)), // no-nested-ternary
-    (0xA550E5CF, WITH_DATA | at(55545, 41)), // prefer-number-coercion
-    (0xA5713C0F, at(51056, 30)), // prefer-arrow-callback preferArrowCallback
-    (0xA59D59AF, at(45623, 73)), // no-unreachable unreachableCode
-    (0xA5DF2034, at(37458, 29)), // no-named-default
+    (0xA4C84134, at(50868, 66)), // prefer-array-flat-map
+    (0xA4E55B7F, at(58422, 38)), // require-await missingAwait
+    (0xA4EBAE34, at(38919, 40)), // no-new-require
+    (0xA4FEC9F7, at(37897, 58)), // no-nested-ternary
+    (0xA550E5CF, WITH_DATA | at(55743, 41)), // prefer-number-coercion
+    (0xA5713C0F, at(51124, 30)), // prefer-arrow-callback preferArrowCallback
+    (0xA59D59AF, at(45671, 73)), // no-unreachable unreachableCode
+    (0xA5DF2034, at(37506, 29)), // no-named-default
     (0xA63FC691, WITH_DATA | at(18796, 55)), // named
-    (0xA65E38C7, at(62219, 46)), // valid-define-props
+    (0xA65E38C7, at(62417, 46)), // valid-define-props
     (0xA680EB4A, OF_THE_FIX), // prefer-importing-jest-globals
-    (0xA6848C64, WITH_DATA | at(46904, 81)), // no-untyped-mock-factory
+    (0xA6848C64, WITH_DATA | at(46952, 81)), // no-untyped-mock-factory
     (0xA6A3075C, at(13406, 39)), // explicit-timer-delay
     (0xA6C73740, at(14745, 62)), // handle-callback-err
-    (0xA6DEB743, at(59477, 33)), // require-returns-type
+    (0xA6DEB743, at(59675, 33)), // require-returns-type
     (0xA6DF883A, more(58)), // no-confusing-array-with
     (0xA740D924, at(16376, 52)), // jsx-key
     (0xA7D7E9CA, at(24567, 35)), // no-constant-binary-expression alwaysNew
     (0xA7EE021C, WITH_DATA | at(9968, 54)), // consistent-vitest-vi
-    (0xA81B952C, at(37100, 44)), // no-multiple-slot-args
+    (0xA81B952C, at(37148, 44)), // no-multiple-slot-args
     (0xA83C3DF8, WITH_DATA | at(17940, 65)), // max-expects
-    (0xA86EE8DB, at(48027, 41)), // no-useless-constructor noUselessConstructor
-    (0xA872474E, at(62265, 53)), // valid-define-emits
+    (0xA86EE8DB, at(48075, 41)), // no-useless-constructor noUselessConstructor
+    (0xA872474E, at(62463, 53)), // valid-define-emits
     (0xA88D6F0B, WITH_DATA | at(7115, 72)), // consistent-function-scoping
-    (0xA8D87DAF, at(37487, 93)), // no-named-export
+    (0xA8D87DAF, at(37535, 93)), // no-named-export
     (0xA94E0D11, OF_THE_FIX), // prefer-string-raw
-    (0xA95AEAAE, at(43444, 81)), // no-this-alias thisDestructure
-    (0xA97AE8D9, WITH_DATA | at(54030, 101)), // prefer-function-type functionTypeOverCallableType
-    (0xA9FE8F0B, WITH_DATA | at(53238, 105)), // prefer-expect-assertions
+    (0xA95AEAAE, at(43492, 81)), // no-this-alias thisDestructure
+    (0xA97AE8D9, WITH_DATA | at(54228, 101)), // prefer-function-type functionTypeOverCallableType
+    (0xA9FE8F0B, WITH_DATA | at(53397, 105)), // prefer-expect-assertions
     (0xAA0E7FA2, at(10822, 143)), // control-has-associated-label
-    (0xAA1D712D, WITH_DATA | at(40659, 74)), // no-prototype-builtins prototypeBuildIn
+    (0xAA1D712D, WITH_DATA | at(40707, 74)), // no-prototype-builtins prototypeBuildIn
     (0xAA3BF80C, WITH_DATA | at(13668, 57)), // extensions
-    (0xAABFCF80, at(40437, 23)), // no-process-exit
+    (0xAABFCF80, at(40485, 23)), // no-process-exit
     (0xAAC75309, more(59)), // no-clone-element
     (0xAAC8A001, at(12902, 61)), // explicit-function-return-type missingReturnType
-    (0xAB22E794, at(37580, 28)), // no-namespace
-    (0xAB539868, WITH_DATA | at(56885, 100)), // prefer-tag-over-role
-    (0xAB8EDC17, at(60828, 31)), // self-closing-comp
+    (0xAB22E794, at(37628, 28)), // no-namespace
+    (0xAB539868, WITH_DATA | at(57083, 100)), // prefer-tag-over-role
+    (0xAB8EDC17, at(61026, 31)), // self-closing-comp
     (0xAB94B666, at(10739, 39)), // constructor-super missingAll
-    (0xABA004B6, at(54321, 35)), // prefer-hooks-on-top
-    (0xAC654D44, at(45343, 33)), // no-unnecessary-parameter-property-assignment unnecessaryAssign
-    (0xAC9E9DCA, at(59107, 37)), // require-property-type
+    (0xABA004B6, at(54519, 35)), // prefer-hooks-on-top
+    (0xAC654D44, at(45391, 33)), // no-unnecessary-parameter-property-assignment unnecessaryAssign
+    (0xAC9E9DCA, at(59305, 37)), // require-property-type
     (0xACC35EBF, OF_THE_FIX), // no-test-prefixes
-    (0xAD4FC5F0, at(41355, 25)), // no-restricted-exports restrictedDefault
+    (0xAD4FC5F0, at(41403, 25)), // no-restricted-exports restrictedDefault
     (0xADA5BAA4, at(23213, 71)), // no-compare-neg-zero unexpected
     (0xADB36002, OF_THE_FIX), // object-shorthand expectedLiteralMethodLongform
     (0xADEA61F1, at(33, 33)), // accessor-pairs missingSetterInClass
     (0xAE5D281B, more(60)), // no-dupe-keys unexpected
     (0xAE60BBEC, at(6922, 62)), // consistent-date-clone
     (0xAE6C3BCE, at(15501, 50)), // iframe-missing-sandbox
-    (0xAECB2492, at(49831, 47)), // number-literal-case
-    (0xAEDB1D74, at(33117, 26)), // no-inferrable-types noInferrableType
+    (0xAECB2492, at(49899, 47)), // number-literal-case
+    (0xAEDB1D74, at(33165, 26)), // no-inferrable-types noInferrableType
     (0xAF7C8CF2, at(33, 33)), // accessor-pairs missingSetterInObjectLiteral
-    (0xAF9C23C1, at(45595, 28)), // no-unneeded-ternary unnecessaryConditionalExpression
-    (0xAFEE01B5, at(41355, 25)), // no-restricted-exports restrictedDefault
-    (0xAFEFB54A, WITH_DATA | at(41475, 17)), // no-restricted-imports patternWithCustomMessage
-    (0xB01C9482, at(44325, 74)), // no-unassigned-import
-    (0xB053E134, at(45946, 121)), // no-unsafe-return unsafeReturnThis
-    (0xB0BF39D1, at(52325, 122)), // prefer-describe-function-title
-    (0xB0C09E23, at(42633, 77)), // no-static-element-interactions
-    (0xB0CC8CAD, WITH_DATA | at(49687, 41)), // no-zero-fractions
-    (0xB0D16A25, at(31744, 94)), // no-hooks
-    (0xB107B85E, at(39615, 43)), // no-noninteractive-tabindex
+    (0xAF9C23C1, at(45643, 28)), // no-unneeded-ternary unnecessaryConditionalExpression
+    (0xAFEE01B5, at(41403, 25)), // no-restricted-exports restrictedDefault
+    (0xAFEFB54A, WITH_DATA | at(41523, 17)), // no-restricted-imports patternWithCustomMessage
+    (0xB01C9482, at(44373, 74)), // no-unassigned-import
+    (0xB053E134, at(45994, 121)), // no-unsafe-return unsafeReturnThis
+    (0xB0BF39D1, at(52393, 122)), // prefer-describe-function-title
+    (0xB0C09E23, at(42681, 77)), // no-static-element-interactions
+    (0xB0CC8CAD, WITH_DATA | at(49755, 41)), // no-zero-fractions
+    (0xB0D16A25, at(31792, 94)), // no-hooks
+    (0xB107B85E, at(39663, 43)), // no-noninteractive-tabindex
     (0xB12E5352, at(6154, 51)), // capitalized-comments unexpectedUppercaseComment
     (0xB19ED905, WITH_DATA | at(19801, 66)), // no-alias-methods
-    (0xB1A814F2, OF_THE_FIX), // array-type errorStringGenericSimple
-    (0xB2443EEA, at(38989, 26)), // no-new-wrappers notAConstructor
-    (0xB296BFEB, at(59393, 42)), // require-returns
-    (0xB2C78415, at(30793, 157)), // no-floating-promises floatingUselessRejectionHandler
+    (0xB2443EEA, at(39037, 26)), // no-new-wrappers notAConstructor
+    (0xB296BFEB, at(59591, 42)), // require-returns
+    (0xB2C78415, at(30841, 157)), // no-floating-promises floatingUselessRejectionHandler
     (0xB2D20D3D, at(12391, 32)), // exhaustive-deps
     (0xB34DAB4C, at(973, 65)), // anchor-has-content
     (0xB42720B5, at(3138, 207)), // bad-comparison-sequence
-    (0xB4484750, at(41399, 76)), // no-restricted-globals defaultMessage
-    (0xB4873FEE, at(46705, 23)), // no-unsafe-optional-chaining unsafeArithmetic
-    (0xB5917204, at(31629, 52)), // no-head-element
+    (0xB4484750, at(41447, 76)), // no-restricted-globals defaultMessage
+    (0xB4873FEE, at(46753, 23)), // no-unsafe-optional-chaining unsafeArithmetic
+    (0xB5917204, at(31677, 52)), // no-head-element
     (0xB5B04ECD, at(12069, 48)), // exhaustive-deps
-    (0xB5D340E7, at(27376, 50)), // no-duplicates
+    (0xB5D340E7, at(27424, 50)), // no-duplicates
     (0xB63C4486, at(20920, 62)), // no-assign-module-variable
     (0xB6495F3F, OF_THE_FIX), // prefer-numeric-literals useLiteral
     (0xB6FEBA1F, at(20353, 62)), // no-array-index-key
-    (0xB733DAF4, at(50136, 88)), // only-used-in-recursion
-    (0xB7864DFF, at(32772, 43)), // no-import-compiler-macros
-    (0xB7A2A3A3, at(40017, 58)), // no-page-custom-font
-    (0xB7B1DBBD, WITH_DATA | at(53614, 55)), // prefer-expect-assertions
+    (0xB733DAF4, at(50204, 88)), // only-used-in-recursion
+    (0xB7864DFF, at(32820, 43)), // no-import-compiler-macros
+    (0xB7A2A3A3, at(40065, 58)), // no-page-custom-font
+    (0xB7B1DBBD, WITH_DATA | at(53773, 55)), // prefer-expect-assertions
     (0xB7E68201, at(21518, 33)), // no-autofocus
     (0xB888DD19, OF_THE_FIX | 1), // iframe-missing-sandbox
     (0xB8C4F070, more(61)), // no-img-element
-    (0xB908C6F3, WITH_DATA | at(44615, 77)), // no-underscore-dangle unexpectedUnderscore
-    (0xB94A4974, at(33352, 94)), // no-instanceof-builtins
-    (0xB9649756, at(37675, 78)), // no-negated-condition unexpectedNegated
-    (0xB9C0660B, at(57494, 82)), // preserve-caught-error incorrectCause
-    (0xB9DF2664, at(45696, 73)), // no-unreachable-loop invalid
-    (0xBA35DD43, at(56399, 29)), // prefer-single-call
-    (0xBAAFC30B, at(53669, 40)), // prefer-expect-resolves
+    (0xB908C6F3, WITH_DATA | at(44663, 77)), // no-underscore-dangle unexpectedUnderscore
+    (0xB94A4974, at(33400, 94)), // no-instanceof-builtins
+    (0xB9649756, at(37723, 78)), // no-negated-condition unexpectedNegated
+    (0xB9C0660B, at(57692, 82)), // preserve-caught-error incorrectCause
+    (0xB9DF2664, at(45744, 73)), // no-unreachable-loop invalid
+    (0xBA35DD43, at(56597, 29)), // prefer-single-call
+    (0xBAAFC30B, at(53828, 40)), // prefer-expect-resolves
     (0xBACA7360, at(18851, 77)), // namespace
-    (0xBAEB47B1, at(54466, 51)), // prefer-import-meta-properties
+    (0xBAEB47B1, at(54664, 51)), // prefer-import-meta-properties
     (0xBAFB064B, at(24728, 70)), // no-constant-binary-expression constantShortCircuit
     (0xBB8E23B2, OF_THE_FIX), // no-typeof-undefined
     (0xBB941C45, more(62)), // ban-types
-    (0xBBB60C82, at(57039, 49)), // prefer-ternary
+    (0xBBB60C82, at(57237, 49)), // prefer-ternary
     (0xBBDC9945, at(17783, 39)), // lang
-    (0xBC20EDA4, at(63062, 37)), // valid-title
-    (0xBC23A703, at(43925, 87)), // no-throw-literal object
+    (0xBC20EDA4, at(63260, 37)), // valid-title
+    (0xBC23A703, at(43973, 87)), // no-throw-literal object
     (0xBC32FC4D, at(15034, 46)), // hook-use-state
-    (0xBC421B75, at(44012, 62)), // no-title-in-document-head
-    (0xBC5457DD, at(59067, 40)), // require-property-name
-    (0xBCD177C5, at(59859, 28)), // require-throws-type
-    (0xBD73E97F, at(60933, 47)), // strict-boolean-expressions conditionErrorAny
+    (0xBC421B75, at(44060, 62)), // no-title-in-document-head
+    (0xBC5457DD, at(59265, 40)), // require-property-name
+    (0xBCD177C5, at(60057, 28)), // require-throws-type
+    (0xBD73E97F, at(61131, 47)), // strict-boolean-expressions conditionErrorAny
     (0xBD8E1A3D, at(20183, 38)), // no-array-constructor useLiteral
-    (0xBDAA4491, at(55626, 96)), // prefer-object-from-entries
-    (0xBDFFAF10, at(62425, 58)), // valid-describe-callback
-    (0xBE055C31, at(49126, 31)), // no-warning-comments unexpectedComment
+    (0xBDAA4491, at(55824, 96)), // prefer-object-from-entries
+    (0xBDFFAF10, at(62623, 58)), // valid-describe-callback
+    (0xBE055C31, at(49194, 31)), // no-warning-comments unexpectedComment
     (0xBE056113, OF_THE_FIX), // prefer-import-from-vue
     (0xBE2456FB, OF_THE_FIX), // operator-assignment replaced
     (0xBE70D594, at(23818, 42)), // no-confusing-non-null-assertion confusingEqual
-    (0xBEAC061A, at(36847, 78)), // no-mocks-import
-    (0xBEC89835, at(55791, 65)), // prefer-object-spread useSpreadMessage
-    (0xBED5EED0, at(54569, 22)), // prefer-jest-mocked
-    (0xBED66FB7, at(36568, 56)), // no-misused-spread noPromiseSpreadInObject
+    (0xBEAC061A, at(36895, 78)), // no-mocks-import
+    (0xBEC89835, at(55989, 65)), // prefer-object-spread useSpreadMessage
+    (0xBED5EED0, at(54767, 22)), // prefer-jest-mocked
+    (0xBED66FB7, at(36616, 56)), // no-misused-spread noPromiseSpreadInObject
     (0xBF2CCD40, WITH_DATA | at(25564, 50)), // no-defaults
     (0xBFCE433D, OF_THE_FIX), // prefer-array-some
     (0xBFDF8F0D, WITH_DATA | at(4281, 89)), // ban-ts-comment tsDirectiveCommentDescriptionNotMatchPattern
     (0xBFDF9F72, at(10778, 44)), // constructor-super missingSome
     (0xC032897D, at(2145, 83)), // avoid-new
-    (0xC0F0D78A, at(43011, 46)), // no-template-curly-in-string unexpectedTemplateExpression
+    (0xC0F0D78A, at(43059, 46)), // no-template-curly-in-string unexpectedTemplateExpression
     (0xC12E8574, at(7441, 46)), // consistent-template-literal-escape
     (0xC145FD68, OF_THE_FIX), // curly unexpectedCurlyAfterCondition
     (0xC1BBA066, WITH_DATA | at(1132, 35)), // approx-constant
     (0xC1CA8D7D, at(18354, 81)), // max-props
-    (0xC1E275BC, at(43925, 87)), // no-throw-literal undef
-    (0xC2008EC6, at(58738, 27)), // require-param
+    (0xC1E275BC, at(43973, 87)), // no-throw-literal undef
+    (0xC2008EC6, at(58936, 27)), // require-param
     (0xC20FCE34, at(16428, 127)), // jsx-key
     (0xC2AE9121, more(63)), // no-useless-constructor noUselessConstructor
-    (0xC2D7E692, at(60664, 110)), // rules-of-hooks
+    (0xC2D7E692, at(60862, 110)), // rules-of-hooks
     (0xC316E67B, more(64)), // no-unexpected-multiline property
-    (0xC370CDF0, at(26956, 143)), // no-duplicate-head
+    (0xC370CDF0, at(27004, 143)), // no-duplicate-head
     (0xC3C08E65, more(65)), // no-unexpected-multiline taggedTemplate
-    (0xC3F8879F, at(43642, 74)), // no-this-in-before-route-enter
+    (0xC3F8879F, at(43690, 74)), // no-this-in-before-route-enter
     (0xC434E826, OF_THE_FIX), // prefer-to-be-truthy
     (0xC482FC9B, at(1087, 45)), // anchor-is-valid
     (0xC488C6EB, at(20589, 133)), // no-array-reverse
-    (0xC4AF6C32, at(52994, 49)), // prefer-equality-matcher
+    (0xC4AF6C32, at(53153, 49)), // prefer-equality-matcher
     (0xC4DE872E, OF_THE_FIX), // curly missingCurlyAfter
-    (0xC52F8ED0, WITH_DATA | at(44288, 37)), // no-typos
+    (0xC52F8ED0, WITH_DATA | at(44336, 37)), // no-typos
     (0xC5475EA0, at(4827, 45)), // ban-ts-comment tsIgnoreInsteadOfExpectError
     (0xC572B7B0, more(66)), // no-dupe-else-if unexpected
     (0xC5D7A5F7, OF_THE_FIX), // object-shorthand expectedPropertyShorthand
-    (0xC5DC7B37, at(41616, 67)), // no-return-in-finally
-    (0xC5ECFCBE, at(40595, 64)), // no-proto unexpectedProto
-    (0xC5F3BE7B, at(54706, 46)), // prefer-literal-enum-member notLiteralOrBitwiseExpression
-    (0xC6329069, WITH_DATA | at(41503, 8)), // no-restricted-properties restrictedObjectProperty
-    (0xC63E95BF, at(33685, 94)), // no-invalid-void-type invalidVoidNotReturnOrThisParamOrGeneric
-    (0xC647D82B, WITH_DATA | at(40990, 68)), // no-redundant-roles
-    (0xC685CA97, at(62030, 45)), // use-isnan comparisonWithNaN
-    (0xC73061CC, WITH_DATA | at(53388, 106)), // prefer-expect-assertions
+    (0xC5DC7B37, at(41664, 67)), // no-return-in-finally
+    (0xC5ECFCBE, at(40643, 64)), // no-proto unexpectedProto
+    (0xC5F3BE7B, at(54904, 46)), // prefer-literal-enum-member notLiteralOrBitwiseExpression
+    (0xC6329069, WITH_DATA | at(41551, 8)), // no-restricted-properties restrictedObjectProperty
+    (0xC63E95BF, at(33733, 94)), // no-invalid-void-type invalidVoidNotReturnOrThisParamOrGeneric
+    (0xC647D82B, WITH_DATA | at(41038, 68)), // no-redundant-roles
+    (0xC685CA97, at(62228, 45)), // use-isnan comparisonWithNaN
+    (0xC73061CC, WITH_DATA | at(53547, 106)), // prefer-expect-assertions
     (0xC8028D27, at(11967, 102)), // exhaustive-deps
     (0xC86D58A2, more(67)), // no-use-before-define noUseBeforeDefine
     (0xC8913BD3, at(11158, 44)), // display-name
-    (0xC8BAEEFF, at(51086, 53)), // prefer-as-const variableConstAssertion
-    (0xC8F042E1, at(54752, 31)), // prefer-logical-operator-over-ternary
-    (0xC91DE135, at(61066, 45)), // strict-boolean-expressions conditionErrorNullableNumber
+    (0xC8BAEEFF, at(51154, 53)), // prefer-as-const variableConstAssertion
+    (0xC8F042E1, at(54950, 31)), // prefer-logical-operator-over-ternary
+    (0xC91DE135, at(61264, 45)), // strict-boolean-expressions conditionErrorNullableNumber
     (0xC9719D8B, at(16983, 87)), // jsx-no-literals
-    (0xC996806F, at(42775, 32)), // no-string-refs
-    (0xC9D5923E, at(51813, 82)), // prefer-catch
+    (0xC996806F, at(42823, 32)), // no-string-refs
+    (0xC9D5923E, at(51881, 82)), // prefer-catch
     (0xCA374218, at(6517, 36)), // checked-requires-onchange-or-readonly
-    (0xCA492FE3, at(56625, 57)), // prefer-spread
-    (0xCA4A3180, at(59357, 36)), // require-returns
-    (0xCB04B359, at(60273, 39)), // require-yields
+    (0xCA492FE3, at(56823, 57)), // prefer-spread
+    (0xCA4A3180, at(59555, 36)), // require-returns
+    (0xCB04B359, at(60471, 39)), // require-yields
     (0xCB07DF7B, at(15798, 59)), // init-declarations initialized
-    (0xCB71F493, at(42171, 65)), // no-setter-return returnsValue
+    (0xCB71F493, at(42219, 65)), // no-setter-return returnsValue
     (0xCB8E4930, at(23760, 58)), // no-confusing-non-null-assertion confusingOperator
     (0xCBA8F125, WITH_DATA | more(68)), // prefer-keyboard-event-key
     (0xCBA9E28F, OF_THE_FIX), // object-shorthand expectedMethodLongform
-    (0xCBB7DD3F, at(27841, 38)), // no-empty-character-class unexpected
-    (0xCBC1058B, at(58949, 76)), // require-property
-    (0xCC066ACD, at(41355, 25)), // no-restricted-exports restrictedDefault
-    (0xCC4B2F1B, WITH_DATA | at(45838, 108)), // no-unsafe
-    (0xCC71F6DB, at(48355, 134)), // no-useless-fallback-in-spread
+    (0xCBB7DD3F, at(27889, 38)), // no-empty-character-class unexpected
+    (0xCBC1058B, at(59147, 76)), // require-property
+    (0xCC066ACD, at(41403, 25)), // no-restricted-exports restrictedDefault
+    (0xCC4B2F1B, WITH_DATA | at(45886, 108)), // no-unsafe
+    (0xCC71F6DB, at(48403, 134)), // no-useless-fallback-in-spread
     (0xCCDD9B36, more(69)), // no-ex-assign unexpected
-    (0xCD6621D3, at(34080, 63)), // no-labels unexpectedLabelInBreak
+    (0xCD6621D3, at(34128, 63)), // no-labels unexpectedLabelInBreak
     (0xCD7F4FBF, at(2348, 102)), // await-thenable awaitUsingOfNonAsyncDisposable
-    (0xCDE5A417, at(28994, 95)), // no-export
-    (0xCDF86BF9, at(47639, 41)), // no-useless-call unnecessaryCall
+    (0xCDE5A417, at(29042, 95)), // no-export
+    (0xCDF86BF9, at(47687, 41)), // no-useless-call unnecessaryCall
     (0xCEE2352D, WITH_DATA | at(19867, 42)), // no-amd
-    (0xCF7B7BEF, at(43195, 112)), // no-thenable
-    (0xCF8B528E, at(52062, 32)), // prefer-classlist-toggle
-    (0xCFE5E9CF, at(34143, 27)), // no-length-as-slice-end
+    (0xCF7B7BEF, at(43243, 112)), // no-thenable
+    (0xCF8B528E, at(52130, 32)), // prefer-classlist-toggle
+    (0xCFE5E9CF, at(34191, 27)), // no-length-as-slice-end
     (0xD000C747, OF_THE_FIX), // prefer-to-be-falsy
     (0xD0426592, WITH_DATA | at(2874, 101)), // bad-bitwise-operator
-    (0xD047BF05, OF_THE_FIX | 1), // no-useless-iterator-to-array
+    (0xD047BF05, at(48537, 20)), // no-useless-iterator-to-array
     (0xD072A46A, at(22041, 196)), // no-base-to-string baseArrayJoin
     (0xD105B19C, WITH_DATA | at(24679, 49)), // no-constant-binary-expression constantRelationalComparison
-    (0xD184DFD1, at(61191, 35)), // switch-case-braces
-    (0xD1AE8B99, at(57150, 114)), // prefer-to-have-been-called
+    (0xD184DFD1, at(61389, 35)), // switch-case-braces
+    (0xD1AE8B99, at(57348, 114)), // prefer-to-have-been-called
     (0xD1CF7539, at(18775, 21)), // mouse-events-have-key-events
     (0xD1D097D1, at(356, 137)), // alt-text
-    (0xD1E9140B, at(45314, 29)), // no-unnecessary-await
-    (0xD20E792C, WITH_DATA | at(54356, 110)), // prefer-import-in-mock
+    (0xD1E9140B, at(45362, 29)), // no-unnecessary-await
+    (0xD20E792C, WITH_DATA | at(54554, 110)), // prefer-import-in-mock
     (0xD359EFA2, at(7359, 82)), // consistent-indexed-object-style preferRecord
     (0xD39CB001, at(11919, 48)), // exhaustive-deps
     (0xD3AA1A97, OF_THE_FIX), // prefer-object-has-own useHasOwn
-    (0xD3CC24A7, at(36210, 142)), // no-misleading-character-class zwj
-    (0xD3E94999, at(39960, 57)), // no-page-custom-font
+    (0xD3CC24A7, at(36258, 142)), // no-misleading-character-class zwj
+    (0xD3E94999, at(40008, 57)), // no-page-custom-font
     (0xD3FDEBA0, at(16829, 154)), // jsx-no-jsx-as-prop
-    (0xD40EEE3E, at(62986, 76)), // valid-title
+    (0xD40EEE3E, at(63184, 76)), // valid-title
     (0xD439F657, more(70)), // no-anonymous-default-export
     (0xD49AB8F2, at(13518, 68)), // exports-last
     (0xD49EBEE9, more(71)), // constructor-super badSuper
-    (0xD4AAB97B, at(49878, 37)), // number-literal-case
+    (0xD4AAB97B, at(49946, 37)), // number-literal-case
     (0xD513A642, at(24123, 165)), // no-console-spaces
-    (0xD5BEDB50, at(57088, 62)), // prefer-to-be-object
-    (0xD6C0B474, at(43057, 34)), // no-ternary noTernaryOperator
+    (0xD5BEDB50, at(57286, 62)), // prefer-to-be-object
+    (0xD6C0B474, at(43105, 34)), // no-ternary noTernaryOperator
     (0xD6C97C3E, OF_THE_FIX | 1), // jsx-no-useless-fragment
-    (0xD70F0A96, at(45232, 19)), // no-unnecessary-array-flat-depth
-    (0xD881F071, at(60487, 60)), // return-in-computed-property
+    (0xD70F0A96, at(45280, 19)), // no-unnecessary-array-flat-depth
+    (0xD881F071, at(60685, 60)), // return-in-computed-property
     (0xD885CC19, at(16829, 154)), // jsx-no-new-array-as-prop
-    (0xD899622F, at(41355, 25)), // no-restricted-exports restrictedDefault
-    (0xD8B5E5F7, at(54850, 66)), // prefer-module
+    (0xD899622F, at(41403, 25)), // no-restricted-exports restrictedDefault
+    (0xD8B5E5F7, at(55048, 66)), // prefer-module
     (0xD8F65EC5, WITH_DATA | at(6849, 73)), // consistent-assert
-    (0xD8FE53AF, at(60859, 74)), // sort-vars sortVars
-    (0xD90EF359, WITH_DATA | at(27794, 47)), // no-empty unexpected
-    (0xD90F5410, at(55943, 160)), // prefer-query-selector
-    (0xD9416D6B, at(34440, 48)), // no-lonely-if
+    (0xD8FE53AF, at(61057, 74)), // sort-vars sortVars
+    (0xD90EF359, WITH_DATA | at(27842, 47)), // no-empty unexpected
+    (0xD90F5410, at(56141, 160)), // prefer-query-selector
+    (0xD9416D6B, at(34488, 48)), // no-lonely-if
     (0xD950E53F, WITH_DATA | at(24602, 77)), // no-constant-binary-expression constantBinaryOperand
-    (0xD9B7948F, at(55447, 45)), // prefer-negative-index
-    (0xDA31B749, at(52229, 23)), // prefer-date-now
-    (0xDA5D85E6, at(56732, 63)), // prefer-strict-boolean-matchers
-    (0xDAD8A3E8, at(37608, 67)), // no-namespace moduleSyntaxIsPreferred
+    (0xD9B7948F, at(55645, 45)), // prefer-negative-index
+    (0xDA31B749, at(52297, 23)), // prefer-date-now
+    (0xDA5D85E6, at(56930, 63)), // prefer-strict-boolean-matchers
+    (0xDAD8A3E8, at(37656, 67)), // no-namespace moduleSyntaxIsPreferred
     (0xDB10F975, more(72)), // new-cap upper
     (0xDB48F444, at(2975, 163)), // bad-char-at-comparison
     (0xDB54409C, at(15551, 210)), // img-redundant-alt
@@ -979,123 +974,120 @@ static INDEX: &[(u32, u32)] = &[
     (0xDC61091E, at(15177, 101)), // html-has-lang
     (0xDC68306F, at(25229, 145)), // no-danger
     (0xDC7EB91E, WITH_DATA | more(73)), // no-label-var identifierClashWithLabel
-    (0xDCC5E572, at(48198, 29)), // no-useless-default-assignment uselessDefaultAssignment
-    (0xDCEEC554, at(62662, 25)), // valid-expect
+    (0xDCC5E572, at(48246, 29)), // no-useless-default-assignment uselessDefaultAssignment
+    (0xDCEEC554, at(62860, 25)), // valid-expect
     (0xDDEE2678, OF_THE_FIX), // require-prop-type-constructor
     (0xDDF7FF7A, at(23284, 58)), // no-cond-assign missing
-    (0xDE3B446F, at(34488, 33)), // no-lonely-if unexpectedLonelyIf
-    (0xDE487B04, at(29469, 69)), // no-extra-boolean-cast unexpectedNegation
-    (0xDE9B852F, WITH_DATA | at(37200, 63)), // no-mutable-exports
+    (0xDE3B446F, at(34536, 33)), // no-lonely-if unexpectedLonelyIf
+    (0xDE487B04, at(29517, 69)), // no-extra-boolean-cast unexpectedNegation
+    (0xDE9B852F, WITH_DATA | at(37248, 63)), // no-mutable-exports
     (0xDF3909E4, at(9898, 70)), // consistent-type-specifier-style
-    (0xDF3EE5E7, at(30634, 159)), // no-floating-promises floatingPromiseArrayVoid
+    (0xDF3EE5E7, at(30682, 159)), // no-floating-promises floatingPromiseArrayVoid
     (0xDF9AB5F1, WITH_DATA | more(74)), // ban-types
-    (0xDFFFA08C, at(30950, 218)), // no-floating-promises floatingUselessRejectionHandlerVoid
-    (0xE03E56A7, at(41221, 35)), // no-require-imports noRequireImports
-    (0xE044E499, at(42026, 54)), // no-self-import
-    (0xE04FD184, at(41380, 19)), // no-restricted-exports restrictedNamed
+    (0xDFFFA08C, at(30998, 218)), // no-floating-promises floatingUselessRejectionHandlerVoid
+    (0xE03E56A7, at(41269, 35)), // no-require-imports noRequireImports
+    (0xE044E499, at(42074, 54)), // no-self-import
+    (0xE04FD184, at(41428, 19)), // no-restricted-exports restrictedNamed
     (0xE09BFF21, more(75)), // jsx-curly-brace-presence
-    (0xE09D0B18, WITH_DATA | at(28297, 49)), // no-eq-null unexpected
+    (0xE09D0B18, WITH_DATA | at(28345, 49)), // no-eq-null unexpected
     (0xE0D8226F, more(76)), // no-document-cookie
     (0xE0E05D83, OF_THE_FIX | 1), // valid-define-emits
-    (0xE0EBE6D3, at(46851, 53)), // no-unsafe-type-assertion unsafeToAnyTypeAssertion
+    (0xE0EBE6D3, at(46899, 53)), // no-unsafe-type-assertion unsafeToAnyTypeAssertion
     (0xE14757CE, more(77)), // no-top-level-await
-    (0xE19777DE, WITH_DATA | at(27919, 57)), // no-empty-function unexpected
-    (0xE199E5B5, at(52229, 23)), // prefer-date-now
-    (0xE1DEC7FC, at(61111, 53)), // strict-boolean-expressions conditionErrorNullableString
-    (0xE206BD3B, at(54517, 52)), // prefer-import-meta-properties
+    (0xE19777DE, WITH_DATA | at(27967, 57)), // no-empty-function unexpected
+    (0xE199E5B5, at(52297, 23)), // prefer-date-now
+    (0xE1DEC7FC, at(61309, 53)), // strict-boolean-expressions conditionErrorNullableString
+    (0xE206BD3B, at(54715, 52)), // prefer-import-meta-properties
     (0xE2277A53, at(19354, 65)), // no-absolute-path
-    (0xE306EC1A, at(36624, 223)), // no-misused-spread noStringSpread
-    (0xE47FB7DA, at(34521, 167)), // no-loop-func unsafeRefs
+    (0xE306EC1A, at(36672, 223)), // no-misused-spread noStringSpread
+    (0xE47FB7DA, at(34569, 167)), // no-loop-func unsafeRefs
     (0xE498E2B0, at(22477, 67)), // no-bitwise unexpected
-    (0xE4D0D7C0, OF_THE_FIX), // no-hex-escape
     (0xE4EC54A3, more(78)), // no-constant-condition unexpected
-    (0xE4FCAE99, at(27099, 110)), // no-duplicate-hooks
-    (0xE50EA630, at(47075, 59)), // no-unwanted-polyfillio
+    (0xE4FCAE99, at(27147, 110)), // no-duplicate-hooks
+    (0xE50EA630, at(47123, 59)), // no-unwanted-polyfillio
     (0xE565B460, WITH_DATA | at(11410, 41)), // empty-tags
-    (0xE5685438, WITH_DATA | at(29538, 120)), // no-extra-label unexpected
+    (0xE5685438, WITH_DATA | at(29586, 120)), // no-extra-label unexpected
     (0xE568A058, at(13445, 73)), // export
-    (0xE580006E, at(56556, 69)), // prefer-snapshot-hint
-    (0xE5EBCD1C, at(60980, 35)), // strict-boolean-expressions conditionErrorNullableBoolean
-    (0xE706377D, at(47995, 32)), // no-useless-concat unexpectedConcat
-    (0xE777912D, at(40260, 99)), // no-path-concat
+    (0xE580006E, at(56754, 69)), // prefer-snapshot-hint
+    (0xE5EBCD1C, at(61178, 35)), // strict-boolean-expressions conditionErrorNullableBoolean
+    (0xE706377D, at(48043, 32)), // no-useless-concat unexpectedConcat
+    (0xE777912D, at(40308, 99)), // no-path-concat
     (0xE7B34C56, OF_THE_FIX), // next-tick-style
-    (0xE8B30721, at(58765, 32)), // require-param-description
-    (0xE8EE39F8, WITH_DATA | at(41475, 17)), // no-restricted-imports importNameWithCustomMessage
+    (0xE8B30721, at(58963, 32)), // require-param-description
+    (0xE8EE39F8, WITH_DATA | at(41523, 17)), // no-restricted-imports importNameWithCustomMessage
     (0xE92A065A, OF_THE_FIX), // prefer-todo
-    (0xE971B765, at(51009, 47)), // prefer-array-some
-    (0xE97E09AF, WITH_DATA | at(26204, 114)), // no-distracting-elements
-    (0xE99D5267, at(46220, 130)), // no-unsafe-enum-comparison mismatchedCase
-    (0xE9B56B33, at(36109, 76)), // no-misleading-character-class surrogatePair
-    (0xE9C50A93, at(43716, 115)), // no-this-in-exported-function
-    (0xE9E29A8C, WITH_DATA | at(54258, 63)), // prefer-hooks-in-order
+    (0xE971B765, at(51077, 47)), // prefer-array-some
+    (0xE97E09AF, WITH_DATA | at(26252, 114)), // no-distracting-elements
+    (0xE99D5267, at(46268, 130)), // no-unsafe-enum-comparison mismatchedCase
+    (0xE9B56B33, at(36157, 76)), // no-misleading-character-class surrogatePair
+    (0xE9C50A93, at(43764, 115)), // no-this-in-exported-function
+    (0xE9E29A8C, WITH_DATA | at(54456, 63)), // prefer-hooks-in-order
     (0xEA3192AA, at(13861, 43)), // for-direction incorrectDirection
-    (0xEAB591FB, WITH_DATA | at(54823, 27)), // prefer-mock-promise-shorthand
+    (0xEAB591FB, WITH_DATA | at(55021, 27)), // prefer-mock-promise-shorthand
     (0xEB77512C, WITH_DATA | at(1252, 120)), // array-callback-return expectedInside
     (0xEBC3515F, at(9033, 18)), // consistent-type-exports typeOverValue
-    (0xEBF16DC2, at(57936, 112)), // radix missingRadix
-    (0xEC2D5854, at(39537, 78)), // no-noninteractive-element-to-interactive-role
+    (0xEBF16DC2, at(58134, 112)), // radix missingRadix
+    (0xEC2D5854, at(39585, 78)), // no-noninteractive-element-to-interactive-role
     (0xEC613EF3, at(25374, 113)), // no-danger-with-children
     (0xEC763356, at(23342, 36)), // no-conditional-expect
-    (0xED0E1082, OF_THE_FIX), // object-shorthand expectedPropertyLongform
-    (0xED78762F, at(62687, 59)), // valid-expect
-    (0xEDA48D4E, at(61015, 51)), // strict-boolean-expressions conditionErrorNullableEnum
-    (0xEDC9825F, at(42710, 65)), // no-static-only-class
+    (0xED78762F, at(62885, 59)), // valid-expect
+    (0xEDA48D4E, at(61213, 51)), // strict-boolean-expressions conditionErrorNullableEnum
+    (0xEDC9825F, at(42758, 65)), // no-static-only-class
     (0xEE1F5A6E, more(79)), // consistent-type-imports typeOverValue
     (0xEE58986E, at(20221, 132)), // no-array-fill-with-reference-type
-    (0xEE6047E3, at(32310, 71)), // no-immediate-mutation
-    (0xEF52F1E4, at(26460, 66)), // no-document-import-in-page
+    (0xEE6047E3, at(32358, 71)), // no-immediate-mutation
+    (0xEF52F1E4, at(26508, 66)), // no-document-import-in-page
     (0xEF897DAB, at(13775, 44)), // first
-    (0xEFC0F404, WITH_DATA | at(41475, 17)), // no-restricted-imports allowedImportNamePatternWithCustomMessage
+    (0xEFC0F404, WITH_DATA | at(41523, 17)), // no-restricted-imports allowedImportNamePatternWithCustomMessage
     (0xEFE0EF94, WITH_DATA | at(8980, 53)), // consistent-type-exports singleExportIsType
-    (0xEFEBFAA9, at(29986, 17)), // no-extraneous-class empty
+    (0xEFEBFAA9, at(30034, 17)), // no-extraneous-class empty
     (0xF066073E, at(9051, 170)), // consistent-type-imports avoidImportType
     (0xF156010E, more(80)), // no-confusing-array-with
-    (0xF1746AFD, at(31962, 35)), // no-identical-title
-    (0xF1896FC1, WITH_DATA | at(60381, 49)), // restrict-plus-operands invalid
-    (0xF192F5C4, at(49320, 99)), // no-will-update-set-state
-    (0xF1A58E09, at(33143, 35)), // no-inline-comments unexpectedInlineComment
-    (0xF1EB9AE8, at(26162, 21)), // no-disabled-tests
+    (0xF1746AFD, at(32010, 35)), // no-identical-title
+    (0xF1896FC1, WITH_DATA | at(60579, 49)), // restrict-plus-operands invalid
+    (0xF192F5C4, at(49388, 99)), // no-will-update-set-state
+    (0xF1A58E09, at(33191, 35)), // no-inline-comments unexpectedInlineComment
+    (0xF1EB9AE8, at(26210, 21)), // no-disabled-tests
     (0xF2BC9BE9, at(5984, 47)), // button-has-type
     (0xF3BF69FE, more(81)), // no-duplicate-imports importAs
     (0xF43B393B, more(82)), // prefer-global-this
     (0xF486CAA1, at(17411, 26)), // jsx-props-no-spread-multi
     (0xF4B54969, WITH_DATA | more(83)), // no-duplicate-enum-values duplicateValue
-    (0xF4D295B7, at(58159, 15)), // relative-url-style
+    (0xF4D295B7, at(58357, 15)), // relative-url-style
     (0xF4DDFB84, at(24567, 35)), // no-constant-binary-expression bothAlwaysNew
-    (0xF53870F8, at(57576, 70)), // preserve-caught-error missingCatchErrorParam
-    (0xF5A9748D, at(28056, 90)), // no-empty-interface noEmptyWithSuper
+    (0xF53870F8, at(57774, 70)), // preserve-caught-error missingCatchErrorParam
+    (0xF5A9748D, at(28104, 90)), // no-empty-interface noEmptyWithSuper
     (0xF61463C0, more(84)), // unified-signatures omittingSingleParameter
     (0xF6C8740D, WITH_DATA | at(1167, 47)), // aria-activedescendant-has-tabindex
-    (0xF6C8D03B, at(42537, 38)), // no-sparse-arrays unexpectedSparseArray
-    (0xF82A7365, OF_THE_FIX | 1), // no-useless-iterator-to-array
-    (0xF834DBE7, at(46803, 48)), // no-unsafe-type-assertion unsafeOfAnyTypeAssertion
+    (0xF6C8D03B, at(42585, 38)), // no-sparse-arrays unexpectedSparseArray
+    (0xF82A7365, at(48537, 20)), // no-useless-iterator-to-array
+    (0xF834DBE7, at(46851, 48)), // no-unsafe-type-assertion unsafeOfAnyTypeAssertion
     (0xF84112AB, at(22806, 66)), // no-children-prop
     (0xF894B5A4, at(11831, 88)), // exhaustive-deps
-    (0xF95AFE11, at(41797, 64)), // no-script-component-in-head
-    (0xF99C9D8A, at(62746, 26)), // valid-expect
-    (0xF9B34A33, WITH_DATA | at(41475, 17)), // no-restricted-imports allowedImportNameWithCustomMessage
-    (0xFA73A165, at(38989, 26)), // no-new-wrappers noConstructor
+    (0xF95AFE11, at(41845, 64)), // no-script-component-in-head
+    (0xF99C9D8A, at(62944, 26)), // valid-expect
+    (0xF9B34A33, WITH_DATA | at(41523, 17)), // no-restricted-imports allowedImportNameWithCustomMessage
+    (0xFA73A165, at(39037, 26)), // no-new-wrappers noConstructor
     (0xFACAC847, OF_THE_FIX), // prefer-modern-dom-apis
-    (0xFB27139E, at(54916, 40)), // prefer-module
-    (0xFB660D51, at(63099, 32)), // valid-title
-    (0xFC42BC7F, at(32222, 45)), // no-immediate-mutation
-    (0xFC4F3444, OF_THE_FIX), // array-type errorStringArraySimple
-    (0xFC854321, at(60118, 124)), // require-yield missingYield
-    (0xFCA1907E, at(58174, 19)), // relative-url-style
+    (0xFB27139E, at(55114, 40)), // prefer-module
+    (0xFB660D51, at(63297, 32)), // valid-title
+    (0xFC42BC7F, at(32270, 45)), // no-immediate-mutation
+    (0xFC854321, at(60316, 124)), // require-yield missingYield
+    (0xFCA1907E, at(58372, 19)), // relative-url-style
     (0xFCD64168, at(15857, 53)), // inline-script-id
-    (0xFD4B6DE8, WITH_DATA | at(52094, 70)), // prefer-code-point
-    (0xFD7379FB, at(52209, 20)), // prefer-const useConst
+    (0xFD4B6DE8, WITH_DATA | at(52162, 70)), // prefer-code-point
+    (0xFD7379FB, at(52277, 20)), // prefer-const useConst
     (0xFE0C8B6D, at(16249, 127)), // jsx-key
-    (0xFE1699D3, at(40921, 69)), // no-redeclare redeclaredAsBuiltin
+    (0xFE1699D3, at(40969, 69)), // no-redeclare redeclaredAsBuiltin
     (0xFE9DD28C, at(18755, 20)), // mouse-events-have-key-events
-    (0xFEB93DCB, WITH_DATA | at(50001, 57)), // number-literal-case
-    (0xFEE4E16D, at(28146, 106)), // no-empty-object-type noEmptyInterface
+    (0xFEB93DCB, WITH_DATA | at(50069, 57)), // number-literal-case
+    (0xFEE4E16D, at(28194, 106)), // no-empty-object-type noEmptyInterface
     (0xFEFF2620, more(85)), // consistent-type-assertions never
-    (0xFF0B6D19, WITH_DATA | at(56824, 28)), // prefer-string-trim-start-end
-    (0xFF135B82, at(59204, 153)), // require-render-return
-    (0xFF321DDB, at(47451, 48)), // no-useless-assignment unnecessaryAssignment
-    (0xFF3DA765, at(61902, 81)), // uninvoked-array-callback
-    (0xFF4FF175, at(52252, 23)), // prefer-default-export
+    (0xFF0B6D19, WITH_DATA | at(57022, 28)), // prefer-string-trim-start-end
+    (0xFF135B82, at(59402, 153)), // require-render-return
+    (0xFF321DDB, at(47499, 48)), // no-useless-assignment unnecessaryAssignment
+    (0xFF3DA765, at(62100, 81)), // uninvoked-array-callback
+    (0xFF4FF175, at(52320, 23)), // prefer-default-export
     (0xFF674826, OF_THE_FIX), // jsx-boolean-value
     (0xFF73BE67, WITH_DATA | at(3471, 162)), // bad-object-literal-comparison
     (0xFFE6404B, OF_THE_FIX), // operator-assignment unexpected
@@ -1103,91 +1095,91 @@ static INDEX: &[(u32, u32)] = &[
 
 #[rustfmt::skip]
 static ROWS: &[Row] = &[
-    Row { help: at(51139, 29), first_label: 0, note: at(51168, 89) }, // prefer-at
-    Row { help: at(31424, 62), first_label: WITH_DATA | at(31486, 28), note: 0 }, // no-func-assign isAFunction
-    Row { help: at(27426, 61), first_label: 0, note: at(27487, 160) }, // no-dynamic-delete dynamicDelete
+    Row { help: at(51207, 29), first_label: 0, note: at(51236, 89) }, // prefer-at
+    Row { help: at(31472, 62), first_label: WITH_DATA | at(31534, 28), note: 0 }, // no-func-assign isAFunction
+    Row { help: at(27474, 61), first_label: 0, note: at(27535, 160) }, // no-dynamic-delete dynamicDelete
     Row { help: 0, first_label: at(11033, 41), note: 0 }, // default-case-last notLast
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
-    Row { help: WITH_DATA | at(52642, 183), first_label: 0, note: at(52825, 169) }, // prefer-enum-initializers defineInitializer
+    Row { help: WITH_DATA | at(52801, 183), first_label: 0, note: at(52984, 169) }, // prefer-enum-initializers defineInitializer
     Row { help: at(22872, 76), first_label: WITH_DATA | at(22948, 34), note: 0 }, // no-class-assign class
-    Row { help: at(53875, 52), first_label: 0, note: at(53927, 103) }, // prefer-function-component
+    Row { help: at(54073, 52), first_label: 0, note: at(54125, 103) }, // prefer-function-component
     Row { help: at(10647, 35), first_label: at(10682, 57), note: 0 }, // constructor-super duplicate
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
-    Row { help: at(55058, 60), first_label: 0, note: at(55118, 329) }, // prefer-namespace-keyword useNamespace
-    Row { help: at(53043, 135), first_label: 0, note: at(53178, 60) }, // prefer-event-target
-    Row { help: 0, first_label: at(61873, 29), note: 0 }, // unified-signatures singleParameterDifference
+    Row { help: at(55256, 60), first_label: 0, note: at(55316, 329) }, // prefer-namespace-keyword useNamespace
+    Row { help: at(53202, 135), first_label: 0, note: at(53337, 60) }, // prefer-event-target
+    Row { help: 0, first_label: at(62071, 29), note: 0 }, // unified-signatures singleParameterDifference
     Row { help: at(21071, 279), first_label: 0, note: at(21350, 106) }, // no-async-endpoint-handlers
     Row { help: WITH_DATA | at(21811, 161), first_label: 0, note: at(21972, 69) }, // no-barrel-file
-    Row { help: at(26526, 102), first_label: WITH_DATA | at(26628, 38), note: 0 }, // no-dupe-class-members unexpected
-    Row { help: at(27209, 59), first_label: at(27268, 25), note: 0 }, // no-duplicate-imports export
-    Row { help: 0, first_label: at(61801, 29), note: 0 }, // unified-signatures allParametersAreSame
+    Row { help: at(26574, 102), first_label: WITH_DATA | at(26676, 38), note: 0 }, // no-dupe-class-members unexpected
+    Row { help: at(27257, 59), first_label: at(27316, 25), note: 0 }, // no-duplicate-imports export
+    Row { help: 0, first_label: at(61999, 29), note: 0 }, // unified-signatures allParametersAreSame
     Row { help: at(8513, 249), first_label: 0, note: at(8762, 218) }, // consistent-type-assertions unexpectedObjectTypeAssertion
-    Row { help: at(40733, 67), first_label: 0, note: at(40800, 55) }, // no-react-children
+    Row { help: at(40781, 67), first_label: 0, note: at(40848, 55) }, // no-react-children
     Row { help: 0, first_label: 0, note: at(19710, 68) }, // no-accumulating-spread loopSpread
-    Row { help: 0, first_label: at(61830, 43), note: 0 }, // unified-signatures omittingRestParameter
-    Row { help: at(26834, 26), first_label: at(26860, 15), note: 0 }, // no-duplicate-case unexpected
+    Row { help: 0, first_label: at(62028, 43), note: 0 }, // unified-signatures omittingRestParameter
+    Row { help: at(26882, 26), first_label: at(26908, 15), note: 0 }, // no-duplicate-case unexpected
     Row { help: 0, first_label: 0, note: at(19710, 68) }, // no-accumulating-spread reduceSpread
-    Row { help: at(44692, 60), first_label: at(44752, 54), note: 0 }, // no-unexpected-multiline division
+    Row { help: at(44740, 60), first_label: at(44800, 54), note: 0 }, // no-unexpected-multiline division
     Row { help: at(3345, 50), first_label: 0, note: at(3395, 76) }, // bad-match-all-arg
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
-    Row { help: at(59984, 17), first_label: 0, note: at(60001, 100) }, // require-unicode-regexp requireUFlag
+    Row { help: at(60182, 17), first_label: 0, note: at(60199, 100) }, // require-unicode-regexp requireUFlag
     Row { help: at(21071, 279), first_label: 0, note: at(21350, 106) }, // no-async-endpoint-handlers
-    Row { help: at(43091, 64), first_label: 0, note: at(43155, 40) }, // no-test-return-statement
+    Row { help: at(43139, 64), first_label: 0, note: at(43203, 40) }, // no-test-return-statement
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
     Row { help: at(3816, 119), first_label: 0, note: at(3935, 138) }, // bad-replace-all-arg
-    Row { help: WITH_DATA | at(42236, 82), first_label: WITH_DATA | at(42318, 27), note: 0 }, // no-shadow noShadow
-    Row { help: at(38478, 123), first_label: at(38601, 43), note: at(38644, 168) }, // no-new-func noFunctionConstructor
+    Row { help: WITH_DATA | at(42284, 82), first_label: WITH_DATA | at(42366, 27), note: 0 }, // no-shadow noShadow
+    Row { help: at(38526, 123), first_label: at(38649, 43), note: at(38692, 168) }, // no-new-func noFunctionConstructor
     Row { help: WITH_DATA | at(66, 102), first_label: 0, note: at(168, 188) }, // adjacent-overload-signatures adjacentSignature
-    Row { help: at(44806, 80), first_label: at(44886, 61), note: 0 }, // no-unexpected-multiline function
-    Row { help: at(60101, 17), first_label: 0, note: at(60001, 100) }, // require-unicode-regexp requireVFlag
-    Row { help: at(29658, 55), first_label: 0, note: at(29713, 273) }, // no-extra-non-null-assertion noExtraNonNullAssertion
-    Row { help: at(35293, 102), first_label: 0, note: at(35395, 96) }, // no-map-spread
-    Row { help: at(39239, 30), first_label: at(39269, 44), note: 0 }, // no-non-null-asserted-optional-chain noNonNullOptionalChain
+    Row { help: at(44854, 80), first_label: at(44934, 61), note: 0 }, // no-unexpected-multiline function
+    Row { help: at(60299, 17), first_label: 0, note: at(60199, 100) }, // require-unicode-regexp requireVFlag
+    Row { help: at(29706, 55), first_label: 0, note: at(29761, 273) }, // no-extra-non-null-assertion noExtraNonNullAssertion
+    Row { help: at(35341, 102), first_label: 0, note: at(35443, 96) }, // no-map-spread
+    Row { help: at(39287, 30), first_label: at(39317, 44), note: 0 }, // no-non-null-asserted-optional-chain noNonNullOptionalChain
     Row { help: at(8045, 253), first_label: 0, note: at(8298, 215) }, // consistent-type-assertions unexpectedArrayTypeAssertion
-    Row { help: 0, first_label: 0, note: at(39313, 141) }, // no-non-null-assertion noNonNull
+    Row { help: 0, first_label: 0, note: at(39361, 141) }, // no-non-null-assertion noNonNull
     Row { help: at(24288, 67), first_label: WITH_DATA | at(24355, 37), note: 0 }, // no-const-assign const
-    Row { help: OF_THE_FIX, first_label: 0, note: at(52447, 63) }, // prefer-dom-node-remove
+    Row { help: OF_THE_FIX, first_label: 0, note: at(52565, 63) }, // prefer-dom-node-remove
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
-    Row { help: at(34688, 156), first_label: 0, note: at(34844, 217) }, // no-loss-of-precision noLossOfPrecision
-    Row { help: OF_THE_FIX, first_label: 0, note: at(58882, 67) }, // require-post-message-target-origin
-    Row { help: WITH_DATA | at(42236, 82), first_label: WITH_DATA | at(42318, 27), note: 0 }, // no-shadow noEnumShadow
-    Row { help: WITH_DATA | at(53709, 41), first_label: 0, note: at(53750, 40) }, // prefer-expect-type-of
+    Row { help: at(34736, 156), first_label: 0, note: at(34892, 217) }, // no-loss-of-precision noLossOfPrecision
+    Row { help: OF_THE_FIX, first_label: 0, note: at(59080, 67) }, // require-post-message-target-origin
+    Row { help: WITH_DATA | at(42284, 82), first_label: WITH_DATA | at(42366, 27), note: 0 }, // no-shadow noEnumShadow
+    Row { help: WITH_DATA | at(53868, 41), first_label: 0, note: at(53909, 40) }, // prefer-expect-type-of
     Row { help: at(19007, 118), first_label: at(19125, 24), note: 0 }, // new-cap lower
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
     Row { help: WITH_DATA | at(4370, 243), first_label: 0, note: at(4613, 214) }, // ban-ts-comment tsDirectiveCommentRequiresDescription
-    Row { help: at(35491, 106), first_label: 0, note: at(35597, 100) }, // no-map-spread
-    Row { help: OF_THE_FIX, first_label: 0, note: WITH_DATA | at(49451, 236) }, // no-wrapper-object-types bannedClassType
-    Row { help: at(27293, 58), first_label: at(27351, 25), note: 0 }, // no-duplicate-imports import
-    Row { help: WITH_DATA | at(31514, 64), first_label: WITH_DATA | at(31578, 51), note: 0 }, // no-global-assign globalShouldNotBeModified
+    Row { help: at(35539, 106), first_label: 0, note: at(35645, 100) }, // no-map-spread
+    Row { help: OF_THE_FIX, first_label: 0, note: WITH_DATA | at(49519, 236) }, // no-wrapper-object-types bannedClassType
+    Row { help: at(27341, 58), first_label: at(27399, 25), note: 0 }, // no-duplicate-imports import
+    Row { help: WITH_DATA | at(31562, 64), first_label: WITH_DATA | at(31626, 51), note: 0 }, // no-global-assign globalShouldNotBeModified
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
-    Row { help: at(27209, 59), first_label: at(27268, 25), note: 0 }, // no-duplicate-imports exportAs
+    Row { help: at(27257, 59), first_label: at(27316, 25), note: 0 }, // no-duplicate-imports exportAs
     Row { help: at(23527, 46), first_label: 0, note: at(23573, 54) }, // no-confusing-array-with
     Row { help: at(22982, 71), first_label: 0, note: at(23053, 59) }, // no-clone-element
-    Row { help: at(26773, 36), first_label: at(26809, 25), note: 0 }, // no-dupe-keys unexpected
-    Row { help: at(32022, 103), first_label: 0, note: at(32125, 51) }, // no-img-element
+    Row { help: at(26821, 36), first_label: at(26857, 25), note: 0 }, // no-dupe-keys unexpected
+    Row { help: at(32070, 103), first_label: 0, note: at(32173, 51) }, // no-img-element
     Row { help: at(4872, 203), first_label: 0, note: at(5075, 204) }, // ban-types
-    Row { help: at(48068, 42), first_label: 0, note: at(48110, 88) }, // no-useless-constructor noUselessConstructor
-    Row { help: at(44947, 73), first_label: at(45020, 63), note: 0 }, // no-unexpected-multiline property
-    Row { help: at(45083, 86), first_label: at(45169, 63), note: 0 }, // no-unexpected-multiline taggedTemplate
-    Row { help: at(26666, 79), first_label: at(26745, 28), note: 0 }, // no-dupe-else-if unexpected
-    Row { help: at(47348, 94), first_label: at(47442, 9), note: 0 }, // no-use-before-define noUseBeforeDefine
-    Row { help: WITH_DATA | at(54591, 49), first_label: 0, note: at(54640, 66) }, // prefer-keyboard-event-key
-    Row { help: at(28517, 99), first_label: at(28616, 55), note: at(28671, 226) }, // no-ex-assign unexpected
+    Row { help: at(48116, 42), first_label: 0, note: at(48158, 88) }, // no-useless-constructor noUselessConstructor
+    Row { help: at(44995, 73), first_label: at(45068, 63), note: 0 }, // no-unexpected-multiline property
+    Row { help: at(45131, 86), first_label: at(45217, 63), note: 0 }, // no-unexpected-multiline taggedTemplate
+    Row { help: at(26714, 79), first_label: at(26793, 28), note: 0 }, // no-dupe-else-if unexpected
+    Row { help: at(47396, 94), first_label: at(47490, 9), note: 0 }, // no-use-before-define noUseBeforeDefine
+    Row { help: WITH_DATA | at(54789, 49), first_label: 0, note: at(54838, 66) }, // prefer-keyboard-event-key
+    Row { help: at(28565, 99), first_label: at(28664, 55), note: at(28719, 226) }, // no-ex-assign unexpected
     Row { help: 0, first_label: 0, note: at(19909, 97) }, // no-anonymous-default-export
     Row { help: at(10420, 87), first_label: at(10507, 36), note: at(10543, 104) }, // constructor-super badSuper
     Row { help: at(19149, 118), first_label: at(19267, 32), note: 0 }, // new-cap upper
-    Row { help: at(33988, 59), first_label: WITH_DATA | at(34047, 33), note: 0 }, // no-label-var identifierClashWithLabel
+    Row { help: at(34036, 59), first_label: WITH_DATA | at(34095, 33), note: 0 }, // no-label-var identifierClashWithLabel
     Row { help: WITH_DATA | at(5279, 81), first_label: 0, note: WITH_DATA | at(5360, 205) }, // ban-types
     Row { help: at(16062, 31), first_label: at(16062, 31), note: 0 }, // jsx-curly-brace-presence
-    Row { help: at(26342, 53), first_label: 0, note: at(26395, 65) }, // no-document-cookie
-    Row { help: at(44074, 119), first_label: 0, note: at(44193, 95) }, // no-top-level-await
+    Row { help: at(26390, 53), first_label: 0, note: at(26443, 65) }, // no-document-cookie
+    Row { help: at(44122, 119), first_label: 0, note: at(44241, 95) }, // no-top-level-await
     Row { help: at(24798, 73), first_label: at(24871, 54), note: 0 }, // no-constant-condition unexpected
     Row { help: at(9393, 155), first_label: 0, note: at(9548, 216) }, // consistent-type-imports typeOverValue
     Row { help: at(23627, 64), first_label: 0, note: at(23691, 69) }, // no-confusing-array-with
-    Row { help: 0, first_label: at(27268, 25), note: 0 }, // no-duplicate-imports importAs
-    Row { help: at(54131, 36), first_label: 0, note: at(54167, 91) }, // prefer-global-this
-    Row { help: WITH_DATA | at(26875, 35), first_label: WITH_DATA | at(26910, 46), note: 0 }, // no-duplicate-enum-values duplicateValue
-    Row { help: 0, first_label: at(61830, 43), note: 0 }, // unified-signatures omittingSingleParameter
+    Row { help: 0, first_label: at(27316, 25), note: 0 }, // no-duplicate-imports importAs
+    Row { help: at(54329, 36), first_label: 0, note: at(54365, 91) }, // prefer-global-this
+    Row { help: WITH_DATA | at(26923, 35), first_label: WITH_DATA | at(26958, 46), note: 0 }, // no-duplicate-enum-values duplicateValue
+    Row { help: 0, first_label: at(62028, 43), note: 0 }, // unified-signatures omittingSingleParameter
     Row { help: at(7612, 213), first_label: 0, note: at(7825, 220) }, // consistent-type-assertions never
 ];
 
@@ -1507,6 +1499,7 @@ static TEXT: &str = concat!(
     "{{what}} are not permitted on `@{{tag_name}}` tag.",
     "Assign `undefined` to the variable instead of using `delete`. The `delete` operator is intended for removing properties from objects, not for variables.",
     "Use a function declaration instead.",
+    "Replace `{{deprecated}}` with `{{replacement}}`.",
     "Using external library instead, for example mitt.",
     "Updating state after a component mount triggers a second render() call and can lead to property/layout thrashing.",
     "Updating state after a component update triggers a second render() call and can lead to property/layout thrashing.",
@@ -1816,6 +1809,7 @@ static TEXT: &str = concat!(
     "Remove this empty export.",
     "The Error constructor already calls `captureStackTrace` internally, so calling it again is unnecessary.",
     "Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.",
+    "Remove `.toArray()`.",
     "Wrapping the error in `Promise.reject` is needlessly verbose. All errors thrown in async functions are already wrapped in a `Promise`.",
     "Wrapping the return value in `Promise.resolve` is needlessly verbose. All return values in async functions are already wrapped in a `Promise`.",
     "Use the variable's original name or rename it to a different name",
@@ -1873,7 +1867,9 @@ static TEXT: &str = concat!(
     "Prefer a default export",
     "Replace the reassignment with a default parameter.",
     "Pass the function as a description title argument or modify the description title to not match any imported function name.",
+    "Replace `Node#appendChild()` with `Node#append()`.",
     "https://developer.mozilla.org/en-US/docs/Web/API/Element/remove",
+    "Replace `.innerText` with `.textContent`.",
     "Prefer using `{{fn_name}}.each` rather than a manual loop.",
     "Add an `expect` or assertion call as the last statement in the test block.",
     "Using default numerical values for enum members can cause bugs later on if the enum is modified. Instead give \"{{name}}\" an explicit initializer (for example `= 0` or `= '{{name}}'`).",
@@ -1890,6 +1886,7 @@ static TEXT: &str = concat!(
     "Use `await expect(...).resolves` instead",
     "Substitute the assertion with `{{code}}`.",
     "https://vitest.dev/api/expect#tobetypeof",
+    "Replace `Math.pow(a, b)` with `a ** b`.",
     "use `export ... from ...;`",
     "Consider using a `for...of` loop for this simple iteration.",
     "Convert the class component to a function component.",

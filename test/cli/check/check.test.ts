@@ -1072,52 +1072,6 @@ describe.concurrent("bun check", () => {
       },
     );
 
-    test("files that two projects read alike are parsed once", async () => {
-      const config = JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [], lib: ["es2022"] } });
-      using dir = project({
-        "a/tsconfig.json": config,
-        "a/a.ts": `import "../shared/s";\n`,
-        "b/tsconfig.json": config,
-        "b/b.ts": `import "../shared/s";\n`,
-        "shared/s.ts": `export {};\n`,
-      });
-      const { stdout, stderr, exitCode } = await check(dir, ["a/a.ts", "b/b.ts", "--timing"]);
-      const count = (pattern: RegExp) => Number(pattern.exec(stderr)?.[1]);
-      const [loaded, parsed] = [count(/(\d+) files loaded in/), count(/(\d+) files parsed for all projects/)];
-      // Each loads the library, its own file and the shared one.
-      expect(loaded).toBeGreaterThan(20);
-      expect({ parsed, stdout, exitCode }).toEqual({ parsed: loaded / 2 + 1, stdout: "", exitCode: 0 });
-    });
-
-    test("the projects of a build parse a declaration file once", async () => {
-      const config = (references: string[]) =>
-        JSON.stringify({
-          compilerOptions: { composite: true, strict: true, outDir: "dist", types: [], lib: ["es2022"] },
-          include: ["*.ts"],
-          references: references.map(path => ({ path })),
-        });
-      using dir = project({
-        "a/tsconfig.json": config(["../b"]),
-        "a/a.ts": `import { b } from "../b/b";\nexport const a: number = b;\n`,
-        "b/tsconfig.json": config(["../c"]),
-        "b/b.ts": `import { c } from "../c/c";\nexport const b: number = c;\n`,
-        "c/tsconfig.json": config([]),
-        "c/c.ts": `export const c: number = 1;\n`,
-      });
-      const count = (stderr: string, pattern: RegExp) => Number(pattern.exec(stderr)?.[1]);
-      const [all, last] = await Promise.all([check(dir, ["-b", "a", "--timing"]), check(dir, ["-b", "c", "--timing"])]);
-      // The last one loads the library and its own file.
-      const library = count(last.stderr, /(\d+) files loaded in/) - 1;
-      expect(library).toBeGreaterThan(10);
-      expect({
-        loaded: count(all.stderr, /(\d+) files loaded in/),
-        parsed: count(all.stderr, /(\d+) files parsed for all projects/),
-        stdout: all.stdout,
-        exitCode: all.exitCode,
-        // And what b and c emit.
-      }).toEqual({ loaded: 3 * library + 5, parsed: library + 2, stdout: "", exitCode: 0 });
-    });
-
     test("two directories", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,

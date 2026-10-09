@@ -42,7 +42,7 @@ fn temporary_group_name(pattern: &[u8]) -> Vec<u8> {
         rest = &rest[at + "temp".len()..];
         let (digits, after) = rest.split_at(rest.iter().take_while(|b| b.is_ascii_digit()).count());
         if !digits.is_empty() {
-            highest_temp_count = highest_temp_count.max(text::string_to_number(digits));
+            highest_temp_count = highest_temp_count.max(bun_core::fmt::js_string_to_number(digits));
         }
         rest = after;
     }

@@ -1,10 +1,7 @@
 //! What the functions in upstream's `callAllowed` return.
 
 use super::builtins::{Builtin, Member, get_member, set_property};
-use super::js_number::{
-    parse_float, parse_int, to_exponential, to_fixed, to_int32, to_precision, to_radix_string,
-    to_uint32,
-};
+use super::js_number::{parse_float, parse_int, to_int32, to_radix_string, to_uint32};
 use super::js_string;
 use super::static_value::{
     Eval, IteratorKind, MAX_LEN, PropertyKey, StaticSymbol, StaticValue, Stop, join,
@@ -12,7 +9,7 @@ use super::static_value::{
 };
 use crate::regex::{Ignore, Mode, Options, escape_source, validate_pattern};
 use crate::utils::text;
-use bun_core::fmt::{hex_byte_upper, hex_pair_value};
+use bun_core::fmt::{FormatDouble, hex_byte_upper, hex_pair_value};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -648,11 +645,16 @@ fn number_method<'a>(name: &[u8], n: f64, args: Args<'_, 'a>) -> Eval<StaticValu
     let text = match name {
         b"toExponential" if !n.is_finite() => text::number_to_string(n),
         b"toExponential" if (0.0..=100.0).contains(&digits) => {
-            to_exponential(n, is_given.then_some(digits as usize))
+            FormatDouble::to_exponential(&mut [0; 124], n, is_given.then_some(digits as u32))
+                .to_vec()
         }
-        b"toFixed" if (0.0..=100.0).contains(&digits) => to_fixed(n, digits as usize),
+        b"toFixed" if (0.0..=100.0).contains(&digits) => {
+            FormatDouble::to_fixed(&mut [0; 124], n, digits as u32).to_vec()
+        }
         b"toPrecision" if !is_given || !n.is_finite() => text::number_to_string(n),
-        b"toPrecision" if (1.0..=100.0).contains(&digits) => to_precision(n, digits as usize),
+        b"toPrecision" if (1.0..=100.0).contains(&digits) => {
+            FormatDouble::to_precision(&mut [0; 124], n, digits as u32).to_vec()
+        }
         b"toString" if !is_given => text::number_to_string(n),
         b"toString" if (2.0..=36.0).contains(&digits) => to_radix_string(n, digits as u32),
         _ => return Err(Stop::Abort),

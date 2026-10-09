@@ -578,9 +578,7 @@ impl Parser<'_> {
                     && effective_pivot_type == LineType::Text
                     && n_brothers + n_children == 0
                     && compat::tag_does_not_end_a_list(&self.flags)
-                    && self.containers[n_parents as usize..self.n_containers as usize]
-                        .iter()
-                        .all(|it| it.ch != b'>')
+                    && self.containers_up_to_quote() <= n_parents
                 {
                     n_parents = self.n_containers;
                 }
@@ -686,9 +684,7 @@ impl Parser<'_> {
             if (effective_pivot_type == LineType::Text
                 || (follows_empty_item && compat::text_goes_on_in_an_empty_item(&self.flags)))
                 && n_brothers + n_children == 0
-                && !self.containers[n_parents as usize..self.n_containers as usize]
-                    .iter()
-                    .any(|it| it.ch == b':')
+                && self.directives.last().is_none_or(|it| *it < n_parents)
             {
                 // Lazy continuation
                 n_parents = self.n_containers;
@@ -827,7 +823,7 @@ impl Parser<'_> {
                     0
                 },
                 types::BLOCK_CONTAINER_CLOSER,
-                (self.line_beg, self.containers[n_parents as usize].end, 0),
+                (self.line_beg, self.container_end(n_parents), 0),
             )?;
             self.push_container_bytes(
                 BlockType::Li,
@@ -852,13 +848,11 @@ impl Parser<'_> {
         }
 
         if self.track {
-            let mut count = self.n_containers as usize;
-            while is_empty && count > 0 && self.containers[count - 1].ch != b'>' {
-                count -= 1;
-            }
-            for container in &mut self.containers[..count] {
-                container.end = raw_end;
-            }
+            let count = match is_empty {
+                true => self.containers_up_to_quote(),
+                false => self.n_containers,
+            };
+            self.set_container_ends(count, raw_end);
         }
 
         Ok(())

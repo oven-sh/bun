@@ -11,11 +11,14 @@
 //! The model is `ExportMap.imports` of eslint-plugin-import, or the module records of oxlint: [`Flavor`].
 
 use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind, StmtTag};
+use crate::language::LanguageOptions;
 use crate::options::Json;
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::any::Any;
+use std::borrow::Cow;
 
 /// Whose notion of what a module imports. All files of a run have the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -145,6 +148,14 @@ pub enum Lookup<'e> {
     Node(SmallVec<[&'e [u8]; 4]>),
 }
 
+/// How a plugin reads a file that is not the one that is linted.
+#[derive(Copy, Clone)]
+pub struct Reader {
+    /// Whether a file with this text is parsed at all.
+    pub wants: fn(&[u8]) -> bool,
+    pub read: for<'a> fn(&'a File<'a>) -> Box<dyn Any + Send + Sync>,
+}
+
 pub trait Modules: Sync {
     /// Everything is known. Until then only [`Modules::record`] does something.
     fn is_complete(&self) -> bool;
@@ -197,6 +208,24 @@ pub trait Modules: Sync {
 
     /// Whether there is a file or a directory at `path`. It can be asked at any time.
     fn exists(&self, path: &[u8]) -> bool;
+
+    /// The file at `path`, as it is on the disk. It can be asked at any time.
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
+
+    /// What `reader` makes of the file at `path` as it is on the disk, parsed as `language` says. It is made the first
+    /// time that it is asked for, and kept by the path and by what of `language` the parser looks at. All who ask have
+    /// the same `reader`. `None`: the file cannot be read, `reader.wants` says no, or the code is nested too deeply.
+    /// It can be asked at any time.
+    fn facts(
+        &self,
+        path: &[u8],
+        language: &LanguageOptions,
+        reader: &Reader,
+    ) -> Option<&(dyn Any + Send + Sync)>;
+
+    /// `esModuleInterop`, as it is written, in the `tsconfig.json` that is closest to `directory`, or in one that it
+    /// extends. It can be asked at any time.
+    fn es_module_interop(&self, directory: &[u8]) -> bool;
 
     /// The `package.json` that is closest to the file at `path`, of those that are an object. It can be asked at any time.
     fn package_json(&self, path: &[u8]) -> Option<&Json>;

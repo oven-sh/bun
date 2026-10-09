@@ -35,8 +35,8 @@
 //!
 //! | JavaScript | [`js_number`] |
 //! | --- | --- |
-//! | `n.toFixed(d)`, `n.toExponential(d)`, `n.toPrecision(p)`, `n.toString(radix)` | `to_fixed`, `to_exponential`, `to_precision`, `to_radix_string` |
-//! | the digits and the exponent of `n.toPrecision(p)` | `decimal_digits` |
+//! | `n.toString(radix)` | `to_radix_string` |
+//! | `n.toFixed(d)`, `n.toExponential(d)`, `n.toPrecision(p)` | not here: `bun_core::fmt::FormatDouble::to_fixed`, `to_exponential`, `to_precision` |
 //! | `parseInt(s, radix)`, `parseFloat(s)` | `parse_int`, `parse_float` |
 //! | `n \| 0`, `n >>> 0` | `to_int32`, `to_uint32` |
 //!

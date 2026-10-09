@@ -319,7 +319,7 @@ impl Checker {
                 is_negative: false,
                 digits: name.bytes(),
             },
-            false => Value::Number(text::string_to_number(name.bytes())),
+            false => Value::Number(bun_core::fmt::js_string_to_number(name.bytes())),
         };
         if self.is_ignored_value(value) {
             return;

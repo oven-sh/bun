@@ -24,7 +24,8 @@
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
-//! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::to_precision(n, p)`, `js_number::decimal_digits(n, p)`, .. |
+//! | `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::parse_int(text, 10)`, .. |
+//! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 124], n, p)`, `js_string_to_number(s)` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | `equalTokens` of each of n nodes with each other | [`token_key`] | `TokenClasses::default().number_of(file, node)`: the same number for the same tokens |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |

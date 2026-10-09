@@ -158,8 +158,12 @@ fn direction_of(written: Option<&str>) -> Direction {
 fn pattern_of(group: Object) -> (Pattern, bool) {
     let (written, options) = (group.str("pattern").unwrap_or_default().as_bytes(), group.object("patternOptions"));
     let has_no_comment = !group.has("patternOptions") || options.bool_or("nocomment", false);
-    // Otherwise a pattern that starts with `#` is a comment.
-    let escape: &[u8] = if has_no_comment && written.starts_with(b"#") { b"\\" } else { b"" };
+    // Otherwise a pattern that starts with `#` is a comment, and one that starts with `!` is negated.
+    let escape: &[u8] = match written {
+        [b'#', ..] if has_no_comment => b"\\",
+        [b'!', rest @ ..] if options.bool_or("nonegate", false) && !rest.starts_with(b"(") => b"\\",
+        _ => b"",
+    };
     let mode = if options.bool_or("dot", false) { GlobOptions::MINIMATCH_DOT } else { GlobOptions::MINIMATCH };
     let matches_base = options.bool_or("matchBase", false) && !strings::contains_char(written, b'/');
     (Pattern::new(&[escape, written].concat(), mode), matches_base)
@@ -331,7 +335,10 @@ fn can_be_crossed(statement: Stmt) -> bool {
         StmtKind::Import(import) => {
             import.default().is_some() || import.namespace().is_some() || !import.named().is_empty()
         }
-        StmtKind::ImportEquals(import) => matches!(import.target(), ImportEqualsTarget::Require(_)),
+        // With `export` before it, it is in an `ExportNamedDeclaration`.
+        StmtKind::ImportEquals(import) => {
+            !statement.is_exported() && matches!(import.target(), ImportEqualsTarget::Require(_))
+        }
         StmtKind::Var(declarations) if declarations.len() == 1 && !statement.is_exported() => {
             let Some((declaration, init)) = declarations.first().and_then(|it| Some((it, it.init()?))) else {
                 return false;

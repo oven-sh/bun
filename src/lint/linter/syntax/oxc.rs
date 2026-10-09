@@ -230,9 +230,13 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
                 }
             }
         }
-        let twice = (names.iter().enumerate())
-            .find(|&(i, it)| names[i + 1..].iter().any(|later| later.0 == it.0));
-        let Some((_, &(_, at))) = twice else {
+        // The first of the names that are there again: those of one name are side by side, in the order of the text.
+        names.sort_unstable_by_key(|it| (it.0.0, it.1));
+        let is_first = |i: usize| i == 0 || names[i - 1].0 != names[i].0;
+        let twice = (0..names.len().saturating_sub(1))
+            .filter(|&i| names[i].0 == names[i + 1].0 && is_first(i))
+            .map(|i| names[i].1);
+        let Some(at) = twice.min() else {
             continue;
         };
         let func = Func::from_raw(file, i as u32);

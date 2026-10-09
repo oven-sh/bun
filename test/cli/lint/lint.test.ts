@@ -956,6 +956,7 @@ describe.concurrent("bun lint", () => {
               code: "eslint(no-debugger)",
               severity: "error",
               url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+              help: "Remove the debugger statement",
               filename: "a.js",
               labels: [{ span: { offset: 0, length: 9, line: 1, column: 1 } }],
             },
@@ -964,6 +965,7 @@ describe.concurrent("bun lint", () => {
               code: "eslint(eqeqeq)",
               severity: "warning",
               url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/eqeqeq.html",
+              help: "Prefer === operator",
               filename: "a.js",
               labels: [{ span: { offset: 17, length: 2, line: 2, column: 8 } }],
             },
@@ -2460,9 +2462,7 @@ describe.concurrent("bun lint", () => {
         "no-restricted-syntax/no-moment",
         "no-restricted-syntax/no-env",
       ]);
-      expect(metadata.rulesMeta["no-restricted-syntax/no-moment"].docs.url).toBe(
-        "https://eslint.org/docs/latest/rules/no-restricted-syntax",
-      );
+      expect(metadata.rulesMeta["no-restricted-syntax/no-moment"].type).toBe("suggestion");
       const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["eslint-suppressions.json"] });
       expect(JSON.parse(suppressed.files["eslint-suppressions.json"])).toEqual({
         "a.js": { "no-restricted-syntax/no-moment": { "count": 1 } },

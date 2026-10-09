@@ -142,7 +142,7 @@ const SUITES: [(&str, &str); 5] = [
 ];
 
 /// The directories of a suite that have the tests of rules.
-const PLUGINS: [(&str, Plugin); 19] = [
+const PLUGINS: [(&str, Plugin); 20] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
     ("react-hooks", Plugin::ReactHooks),
@@ -162,6 +162,7 @@ const PLUGINS: [(&str, Plugin); 19] = [
     ("jsdoc", Plugin::Jsdoc),
     ("vue", Plugin::Vue),
     ("regexp", Plugin::Regexp),
+    ("prettier", Plugin::Prettier),
 ];
 
 /// The directories of the bundle that are written to the disk.
@@ -340,14 +341,18 @@ fn run_case(
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory: &[u8] = if entry.meta.follows_oxlint {
+            let directory: &[u8] = if fixture.plugin_of_oxlint().is_some() {
                 b"oxlint-import-project"
             } else if entry.meta.plugin == Plugin::Node {
                 b"n-project"
             } else {
                 b"import-project"
             };
-            let project = [flags.projects.ok_or(())?, b"/", directory].concat();
+            // A fixture that is not in the bundle yet has the names of the files as they were recorded.
+            let project = match fixture.json.get(b"root").and_then(Json::as_str) {
+                Some(root) => root.to_vec(),
+                None => [flags.projects.ok_or(())?, b"/", directory].concat(),
+            };
             lint(
                 &in_directory(directory).ok_or(())?,
                 Place::Project(&project),

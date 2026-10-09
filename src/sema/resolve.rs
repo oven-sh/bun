@@ -115,10 +115,24 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
-    /// Whether what is read at `path` is not what is on the disk: a project of the build has emitted it. Another program of
-    /// the build may find there what is on the disk.
-    fn is_emitted(&self, _path: &[u8]) -> bool {
-        false
+    /// Several programs are about to be loaded: from here on there is a `shared_file` for a
+    /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them
+    /// has. What no other program can use is not kept: nothing is once `programs` more
+    /// `stay_loaded`.
+    fn share_declaration_files(&self, _variants: u32, _programs: usize) {}
+    /// The program that was `loaded` is checked as it is. One that lacks what another has yet to
+    /// emit is loaded again.
+    fn stays_loaded(&self) {}
+    /// Where the first program that loads the file at `path` leaves it for the others. `variant`:
+    /// `variant_of_files`, and a bit for whether the file keeps its text. `None`: each program
+    /// loads its own, also where it is given another `text` than the first.
+    fn shared_file(
+        &self,
+        _path: &[u8],
+        _text: &[u8],
+        _variant: u8,
+    ) -> Option<std::sync::Arc<std::sync::OnceLock<crate::portable::SharedFile>>> {
+        None
     }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(

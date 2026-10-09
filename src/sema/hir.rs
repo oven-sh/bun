@@ -319,7 +319,7 @@ impl<'s, T: Copy> Fixed<'s, T> {
         Fixed(FixedIn::Arena(ArenaBox::from_iter_in(values, arena)))
     }
 
-    fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
+    pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
 
@@ -405,6 +405,17 @@ static CELLS_OF_NO_NODES: LazyCells = LazyCells {
     class_extends_places: OnceLock::new(),
     keyword_identifiers: OnceLock::new(),
 };
+
+impl<'s> Lazy<'s> {
+    /// Nothing is computed yet. `arena` is one of `session`.
+    pub(crate) fn new(arena: &'s Arena, session: &'s Session) -> Lazy<'s> {
+        Lazy {
+            session,
+            arena,
+            cells: session.keep(LazyCells::default()),
+        }
+    }
+}
 
 /// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {

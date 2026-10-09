@@ -255,3 +255,42 @@ impl<'a> LaunchOptions<'a> {
         })
     }
 }
+
+/// Modules, each with the names of what it exports. Without a name: the module itself.
+pub(crate) type Exports = Box<[(Box<str>, Box<[Box<str>]>)]>;
+
+/// The option `key` of the first object: `[{ "module": "m", "names": ["a"] }]`.
+pub(crate) fn exports_option(options: &Options, key: &str) -> Exports {
+    let listed = options.object(0).array(key).iter().filter_map(|it| {
+        let entry = Object::of(Some(it));
+        let names = entry.strings("names").into_iter().map(Box::from);
+        Some((Box::from(entry.str("module")?), names.collect()))
+    });
+    listed.collect()
+}
+
+/// Calls `each` with the calls that `then` asks for of each of `exports`, as [`calls_of_modules`] has them.
+pub(crate) fn each_call_of_exports<'a>(
+    file: &'a File<'a>,
+    exports: &Exports,
+    then: TraceMap<'_, ()>,
+    each: &mut dyn FnMut(Expr<'a>, &str),
+) {
+    for (module, names) in exports.iter().filter(|it| file.mentions(&it.0)) {
+        let members: Vec<_> = names.iter().map(|it| (&**it, then)).collect();
+        let exported = match members.is_empty() {
+            true => then,
+            false => TraceMap::new(&members),
+        };
+        let modules = [(&**module, exported)];
+        for (e, name) in calls_of_modules(file, &TraceMap::new(&modules)) {
+            each(e, name);
+        }
+    }
+}
+
+/// Whether `path` ends with `end`, which begins a name: `src/a.ts` with `a.ts`, not with `.ts`.
+pub(crate) fn is_end_of_path(path: &[u8], end: &[u8]) -> bool {
+    let before = path.strip_suffix(end);
+    before.is_some_and(|it| matches!(it.last(), None | Some(b'/' | b'\\')))
+}

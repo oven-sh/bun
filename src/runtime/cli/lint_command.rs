@@ -170,11 +170,13 @@ impl LintCommand {
             })
         }
         if HAS_TEST_RUNNER && let [b"--run-path-tests", rest @ ..] = &args[..] {
-            let answers = bun_lint_driver::for_tests::run_path_tests(rest);
-            run_and_exit(b"lint", None, |_| Outcome {
-                exit_code: u8::from(answers.is_none()),
-                stdout: answers.unwrap_or_default(),
-                ..Outcome::default()
+            run_and_exit(b"lint", None, |_| {
+                let answers = bun_lint_driver::for_tests::run_path_tests(rest);
+                Outcome {
+                    exit_code: u8::from(answers.is_none()),
+                    stdout: answers.unwrap_or_default(),
+                    ..Outcome::default()
+                }
             })
         }
         let options = match Options::parse(&args) {

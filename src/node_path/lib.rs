@@ -2690,3 +2690,23 @@ pub fn to_namespaced_path_buf_len<T: PathCharCwd>(path: &[T]) -> usize {
     // +8 for possible UNC prefix, +1 for null terminator.
     buf_len + 8 + 1
 }
+
+/// How long each of the two buffers of [`join_posix_t`] and [`join_windows_t`] has to be.
+pub fn join_buf_len<T: PathCharCwd>(is_windows: bool, paths: &[&[T]]) -> usize {
+    // Adding 8 bytes when Windows for the possible UNC root.
+    let mut buf_len: usize = if is_windows { 8 } else { 0 };
+    for path in paths {
+        buf_len += if !path.is_empty() {
+            path.len() + 1
+        } else {
+            path.len()
+        };
+    }
+    buf_len.max(path_size::<T>())
+}
+
+/// How long the buffer of [`normalize_posix_t`] and [`normalize_windows_t`] has to be.
+pub fn normalize_buf_len<T: PathCharCwd>(path: &[T]) -> usize {
+    // +1 for null terminator
+    path.len().max(path_size::<T>()) + 1
+}

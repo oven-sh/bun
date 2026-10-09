@@ -8,6 +8,8 @@
 use crate::Refusal;
 use crate::names::{Names, Text};
 use crate::token::T;
+use bun_core::lexer::{is_identifier_part, is_identifier_start};
+use bun_core::strings::{is_js_line_terminator, push_codepoint_wtf8_joined};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind};
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
@@ -175,14 +177,6 @@ fn is_unicode_blank(c: u32) -> bool {
 /// `IsWhiteSpaceLike`
 fn is_white_space_like(c: u32) -> bool {
     matches!(c, 0x09..=0x0D | 0x20 | 0x2028 | 0x2029) || is_unicode_blank(c)
-}
-
-fn is_identifier_start(c: u32) -> bool {
-    bun_core::lexer::is_identifier_start(c)
-}
-
-fn is_identifier_part(c: u32) -> bool {
-    bun_core::lexer::is_identifier_part(c)
 }
 
 impl<'a> Lexer<'a> {
@@ -1221,27 +1215,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Appends the UTF-16 code unit or the code point `c` to `text`, which is WTF-8: the second half
-    /// of a surrogate pair joins the first.
-    pub(crate) fn push_code_point(text: &mut Vec<u8>, mut c: u32) {
-        if (0xDC00..=0xDFFF).contains(&c)
-            && let [.., 0xED, second @ 0xA0..=0xAF, third] = text[..]
-        {
-            let high = 0xD000 | u32::from(second & 0x3F) << 6 | u32::from(third & 0x3F);
-            c = 0x1_0000 + ((high - 0xD800) << 10) + (c - 0xDC00);
-            text.truncate(text.len() - 3);
-        }
-        match char::from_u32(c) {
-            Some(c) => text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-            // Half of a surrogate pair.
-            None => text.extend_from_slice(&[
-                0xE0 | (c >> 12) as u8,
-                0x80 | (c >> 6 & 0x3F) as u8,
-                0x80 | (c & 0x3F) as u8,
-            ]),
-        }
-    }
-
     /// Decodes the escape whose backslash is at `pos` and appends what it stands for to `text`.
     /// Returns its end. `None`: TypeScript reports an error for it.
     /// `\1` to `\377`, `\8` or `\9` at `pos` in a string. Returns its end.
@@ -1259,7 +1232,7 @@ impl<'a> Lexer<'a> {
         if !self.flag(code, pos, end) {
             return None;
         }
-        Self::push_code_point(text, c);
+        push_codepoint_wtf8_joined(text, c);
         Some(end)
     }
 
@@ -1314,12 +1287,12 @@ impl<'a> Lexer<'a> {
                     return None;
                 }
                 let c = u32::from_str_radix(core::str::from_utf8(digits).ok()?, 16).ok()?;
-                Self::push_code_point(text, c);
+                push_codepoint_wtf8_joined(text, c);
                 return Some(pos + 4);
             }
             b'u' => {
                 let (c, end) = self.unicode_escape(pos + 1)?;
-                Self::push_code_point(text, c);
+                push_codepoint_wtf8_joined(text, c);
                 return Some(end);
             }
             // A line continuation.
@@ -1347,7 +1320,7 @@ impl<'a> Lexer<'a> {
         if !self.recovers {
             return None;
         }
-        Self::push_code_point(text, 0xFFFD);
+        push_codepoint_wtf8_joined(text, 0xFFFD);
         Some(pos + 2)
     }
 
@@ -1423,7 +1396,7 @@ impl<'a> Lexer<'a> {
                 let code = digits.fold(0, |code, &digit| code * 8 + u32::from(digit - b'0'));
                 let syntax = format!("\\x{code:02x}");
                 self.report(1487, (pos, end), &[syntax.as_bytes()]);
-                Self::push_code_point(text, code);
+                push_codepoint_wtf8_joined(text, code);
             }
             b'8' | b'9' => {
                 self.report(1488, (pos, end), &[written]);
@@ -2288,10 +2261,6 @@ fn with_replacement_characters(mut text: &[u8]) -> String {
     read
 }
 
-fn is_line_break(c: char) -> bool {
-    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
-}
-
 /// The value of the JSX text `text`: lines are trimmed and joined by a blank, lines of blanks are
 /// dropped, and entities are decoded.
 fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
@@ -2300,7 +2269,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     // The blanks at the start of the first line stay.
     let mut first_non_whitespace = Some(0);
     for (at, c) in text.char_indices() {
-        if is_line_break(c) {
+        if is_js_line_terminator(u32::from(c)) {
             if let (Some(start), Some(end)) = (first_non_whitespace, after_last_non_whitespace) {
                 if !decoded.is_empty() {
                     decoded.push(b' ');
@@ -2344,7 +2313,7 @@ fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
         });
         match (c, entity) {
             (Some(c), Some(entity)) => {
-                Lexer::push_code_point(decoded, c);
+                push_codepoint_wtf8_joined(decoded, c);
                 text = &text[entity.len() + 1..];
             }
             _ => decoded.push(b'&'),

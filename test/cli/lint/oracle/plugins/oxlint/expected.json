@@ -4772,5 +4772,17 @@
  ],
  "no-unnecessary-condition/awaited-and-overloads": [
   "c10.ts:2:19+9 typescript(no-unnecessary-condition)"
+ ],
+ "no-unnecessary-condition/an-optional-index-before-two-question-marks": [
+  "a.ts:10:66+11 typescript(no-unnecessary-condition)",
+  "a.ts:10:66+16 typescript(no-unnecessary-condition)",
+  "a.ts:11:63+11 typescript(no-unnecessary-condition)",
+  "a.ts:11:63+16 typescript(no-unnecessary-condition)",
+  "a.ts:3:122+26 typescript(no-unnecessary-condition)",
+  "a.ts:5:75+11 typescript(no-unnecessary-condition)",
+  "a.ts:6:66+11 typescript(no-unnecessary-condition)"
+ ],
+ "no-unnecessary-condition/a-conditional-type-that-is-not-resolved": [
+  "a.ts:8:84+6 typescript(no-unnecessary-condition)"
  ]
 }

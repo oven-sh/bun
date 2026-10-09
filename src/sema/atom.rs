@@ -47,6 +47,9 @@ impl std::fmt::Debug for Atom {
 /// The texts of the atoms whose numbers are constants (`known`), by number.
 pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
+/// The atoms below it are the same in every interner: `known`.
+pub const FIXED: u32 = known::global_augmentation.0 + 1;
+
 /// An interner of the texts of one file numbers what it is asked for and is not in the file from
 /// here. An interner of many files does not get that far.
 pub const NOT_IN_THE_FILE: u32 = 1 << 29;

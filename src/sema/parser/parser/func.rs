@@ -396,6 +396,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // What a pattern binds is not looked at here.
             _ => Atom::NONE,
         };
+        // A long list is not compared, each name with each.
+        if params.len() > 8 {
+            self.f.may_bind_a_parameter_twice = true;
+            return;
+        }
         let mut rest = params;
         while let [first, others @ ..] = rest {
             let name = name_of(first);

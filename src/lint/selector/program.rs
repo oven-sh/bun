@@ -329,7 +329,7 @@ pub(super) enum Names {
 
 impl Literal {
     pub(super) fn new(text: Box<[u8]>, is_number: bool) -> Literal {
-        let number = text::string_to_number(&text);
+        let number = bun_core::fmt::js_string_to_number(&text);
         let names = match &*text {
             b"undefined" => Names::Undefined,
             b"null" => Names::Null,

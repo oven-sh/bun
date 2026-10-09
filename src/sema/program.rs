@@ -11,6 +11,7 @@ use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
+use crate::portable::SharedFile;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, PackageId, ParseOptions, Phase, ResolvedModule, Resolver, ScriptKind, ScriptTarget,
@@ -791,8 +792,6 @@ struct ParseKey {
     script_kind: Option<ScriptKind>,
     is_lib: bool,
     specifies_esm: bool,
-    /// `Host::is_emitted`, in a build.
-    is_emitted: bool,
 }
 
 /// What the programs of one request have in common: the names, and each file parsed and bound once. A file is the same
@@ -804,10 +803,6 @@ pub struct Run<'u> {
     parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>)>>>,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
-    /// The programs are the projects of a build: what one of them emits another reads. Only declaration files are the same
-    /// for all programs. One that a project has emitted is the same where its text is: a program that is not given it by that
-    /// project finds at its path what is on the disk.
-    is_of_build: bool,
     /// Programs run at the same time.
     overlaps: bool,
     parses: AtomicUsize,
@@ -821,7 +816,6 @@ impl<'u> Run<'u> {
             atoms: Interner::new_in(session),
             parsed: ShardedMap::default(),
             provided,
-            is_of_build: false,
             overlaps: false,
             parses: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
@@ -841,40 +835,20 @@ impl<'u> Run<'u> {
         self.bytes.load(Ordering::Relaxed)
     }
 
-    /// For the projects of a build.
-    pub fn of_build(session: &'u Session) -> Run<'u> {
-        Run {
-            is_of_build: true,
-            overlaps: true,
-            ..Run::new(session, FxHashSet::default())
-        }
-    }
-
     /// How many files have been parsed.
     pub fn parses(&self) -> usize {
         self.parses.load(Ordering::Relaxed)
     }
 
     /// Whether the file at `path` is the same for all programs.
-    fn has_file(&self, host: &dyn Host, path: &[u8], is_lib: bool) -> bool {
-        let is_declaration_file =
-            || crate::resolve::is_declaration_file_name(path) && host.script_kind(path).is_none();
-        (is_lib || !self.is_of_build || is_declaration_file())
-            && (self.provided.is_empty()
-                || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))
+    fn has_file(&self, host: &dyn Host, path: &[u8]) -> bool {
+        self.provided.is_empty()
+            || !(self.provided).contains(&*to_path(path, host.is_case_sensitive()))
     }
 
     /// Whether `parse` may answer for `path` without its text.
-    fn has(&self, host: &dyn Host, path: &[u8], is_lib: bool) -> bool {
-        // The host is asked before the list is: it notes who asks for what is yet to be emitted.
-        self.has_file(host, path, is_lib)
-            && !(self.is_of_build && !is_lib && host.is_emitted(path))
-            && self.parsed.get_ref(path).is_some()
-    }
-
-    /// `ParseKey::is_emitted`. `has_text`: `has` has said no.
-    fn is_emitted(&self, host: &dyn Host, path: &[u8], is_lib: bool, has_text: bool) -> bool {
-        self.is_of_build && !is_lib && has_text && host.is_emitted(path)
+    fn has(&self, path: &[u8]) -> bool {
+        self.parsed.get_ref(path).is_some()
     }
 
     fn parse(
@@ -892,15 +866,7 @@ impl<'u> Run<'u> {
         };
         // Until the file is parsed: a program that comes to it at the same time waits for that.
         let mut of_path = of_path.lock();
-        // What is emitted keeps its text: it is no library.
-        let is_same = |parse: &Parse| {
-            !key.is_emitted || text.as_deref().is_some_and(|text| *parse.hir.text == *text)
-        };
-        if let Some(found) = (of_path.iter()).find(|it| it.0 == key && is_same(it.1)) {
-            #[cfg(debug_assertions)]
-            if self.is_of_build {
-                self.assert_is_what_a_program_would_parse(host, path, key, found.1);
-            }
+        if let Some(found) = of_path.iter().find(|it| it.0 == key) {
             return found.1;
         }
         self.parses.fetch_add(1, Ordering::Relaxed);
@@ -932,39 +898,6 @@ impl<'u> Run<'u> {
         let more = arena.allocated_bytes().saturating_sub(before);
         self.bytes.fetch_add(more, Ordering::Relaxed);
         parse
-    }
-
-    /// `parse` is what a program would have made of the file by itself.
-    #[cfg(debug_assertions)]
-    fn assert_is_what_a_program_would_parse(
-        &self,
-        host: &dyn Host,
-        path: &[u8],
-        key: ParseKey,
-        parse: &Parse,
-    ) {
-        let session = Session::new();
-        let (mut hir, bound) = Files::parse_and_bind(
-            session.arena(),
-            host,
-            key.options,
-            &self.atoms,
-            path,
-            key.is_lib,
-            key.specifies_esm,
-            host.read(path).unwrap_or_default(),
-        );
-        rename_private_names(&mut hir, &bound, &self.atoms, path);
-        // Such a file is parsed as far as the stack of the thread allows.
-        if hir.ran_out_of_stack || parse.hir.ran_out_of_stack {
-            return;
-        }
-        assert_eq!(
-            crate::portable::first_difference((&hir, &bound), (&parse.hir, &parse.bound)),
-            None,
-            "{}",
-            bstr::BStr::new(path)
-        );
     }
 }
 
@@ -4273,6 +4206,48 @@ fn output_path_errors(
     (errors, common)
 }
 
+/// What `Host::parse` and the binder read of the options for a declaration file, as a number below 32: two programs for
+/// which it is the same parse and bind one alike.
+pub fn variant_of_files(options: ParseOptions) -> u8 {
+    let variant = [
+        options.experimental_decorators,
+        options.module_detection == ModuleDetection::Force,
+        options.bind.emit_standard_class_fields,
+        options.bind.before_es2020,
+        options.bind.before_es2017,
+    ];
+    variant
+        .iter()
+        .fold(0, |bits, &bit| bits << 1 | u8::from(bit))
+}
+
+/// `None`: no atom is left out, for another interner `shared` is what the parser and the binder
+/// return. Or else the name of a field that differs. `hir`: the file that `shared` was made from.
+#[cfg(any(debug_assertions, feature = "baselines"))]
+pub fn difference_for_another_program(
+    shared: &SharedFile,
+    host: &dyn Host,
+    options: ParseOptions,
+    path: &[u8],
+    hir: &hir::File,
+) -> Option<&'static str> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    // No name has the number that it has in the program.
+    for junk in 0..1000 {
+        atoms.intern(format!("\u{1}{junk}").as_bytes());
+    }
+    let arena = session.arena();
+    let (mut copied, copied_bound) = shared.for_program(arena, &atoms);
+    let text = host.read_source(path);
+    let mut parsed = host.parse(arena, path, &text, &atoms, options);
+    // The binder consults it.
+    parsed.text = Cow::Owned(hir.text.to_vec());
+    copied.text = Cow::Owned(hir.text.to_vec());
+    let bound = bind::bind(&parsed, options.bind, &atoms, arena);
+    crate::portable::first_difference((&parsed, &bound), (&copied, &copied_bound))
+}
+
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is scoped to the class that declares it. From here on
 /// it is spelled `\xFE#x@<hash of the path>.<class>` (`PRIVATE_NAME_PREFIX`), at its declaration
 /// and at every reference. An `#x` that no enclosing class declares stays `#x`, which resolves to
@@ -4358,8 +4333,9 @@ impl<'s> Files<'s> {
         host: &dyn Host,
         options: Options,
         roots: &[Vec<u8>],
-        // Called when all files are read, and no thread allocates in `session` but this one.
-        files_are_found: &dyn Fn(),
+        // Called when all files are read, and no thread allocates in `session` but this one, with the bytes of what is freed
+        // when the program is loaded.
+        files_are_found: &dyn Fn(usize),
     ) -> Files<'s> {
         let arena = session.arena();
         // Nothing drops `Files`.
@@ -4594,7 +4570,7 @@ impl<'s> Files<'s> {
                 true => Default::default(),
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
-        files_are_found();
+        files_are_found(resolving.allocated_bytes());
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -5527,8 +5503,8 @@ impl<'s> Files<'s> {
                     state.in_progress += count;
                     drop(state);
                     for file in some {
-                        let is_at_hand = file.package.is_none()
-                            && run.is_some_and(|run| run.has(host, file.path, file.is_lib));
+                        let is_at_hand =
+                            file.package.is_none() && run.is_some_and(|run| run.has(file.path));
                         let text = (!is_at_hand).then(|| host.read_source(file.path));
                         shared.lock().ready.push((file, text));
                         has_changed.notify_one();
@@ -5591,14 +5567,13 @@ impl<'s> Files<'s> {
                         }
                         (Some(_), None) => {
                             let text = text.unwrap_or_default();
-                            let parse = match run.filter(|run| run.has_file(host, path, is_lib)) {
+                            let parse = match run.filter(|run| run.has_file(host, path)) {
                                 Some(run) => {
                                     let key = ParseKey {
                                         options: options.for_parsing(),
                                         script_kind: host.script_kind(path),
                                         is_lib,
                                         specifies_esm,
-                                        is_emitted: run.is_emitted(host, path, is_lib, true),
                                     };
                                     let parse = run.parse(host, path, key, Some(text));
                                     Parse {
@@ -5743,8 +5718,20 @@ impl<'s> Files<'s> {
         specifies_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
+        let keeps_text = !is_lib || options.keeps_the_text_of_libraries;
+        // The binder consults the text.
+        let variant = variant_of_files(options) << 1 | u8::from(keeps_text);
+        let shared = host.shared_file(path, &text, variant);
+        if let Some(file) = shared.as_ref().and_then(|it| it.get()) {
+            let _parsing = Spent::on(host, Phase::Parse);
+            let (mut hir, bound) = file.for_program(arena, atoms);
+            if keeps_text {
+                hir.text = text;
+            }
+            return (hir, bound);
+        }
         let mut hir = host.parse(arena, path, &text, atoms, options);
-        if !is_lib || options.keeps_the_text_of_libraries {
+        if keeps_text {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: the other conditions that make a file without imports or
@@ -5788,6 +5775,19 @@ impl<'s> Files<'s> {
                 ..host.parse(arena, path, b"", atoms, options)
             };
             bound = bind::bind(&hir, options.bind, atoms, arena);
+        } else if let Some(shared) = shared
+            && hir.kind == FileKind::Declaration
+            && !hir.ran_out_of_stack
+        {
+            let file = SharedFile::new(&hir, &bound, atoms);
+            #[cfg(debug_assertions)]
+            assert_eq!(
+                difference_for_another_program(&file, host, options, path, &hir),
+                None,
+                "{}",
+                bstr::BStr::new(path)
+            );
+            let _ = shared.set(file);
         }
         (hir, bound)
     }
@@ -5822,14 +5822,13 @@ impl<'s> Files<'s> {
         text: Option<Cow<'static, [u8]>>,
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
-        let (hir, bound) = match run.filter(|run| run.has_file(host, path, is_lib)) {
+        let (hir, bound) = match run.filter(|run| run.has_file(host, path)) {
             Some(run) => {
                 let key = ParseKey {
                     options: options.for_parsing(),
                     script_kind: host.script_kind(path),
                     is_lib,
                     specifies_esm,
-                    is_emitted: run.is_emitted(host, path, is_lib, text.is_some()),
                 };
                 let parse = run.parse(host, path, key, text);
                 (parse.hir.share(arena, session), parse.bound.share(arena))

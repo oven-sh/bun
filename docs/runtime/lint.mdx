@@ -306,6 +306,8 @@ const parser = import("./parser"); // ✗
 const loadParser = () => import("./parser"); // ✓
 ```
 
+`vi.mock(import("./module"))` is left alone: that is how Vitest is told which module to mock.
+
 ### `bun/no-eager-native-addon`
 
 A native addon (`*.node`) that is imported or required outside any function is loaded on every start.
@@ -456,6 +458,8 @@ const text = readFileSync("./schema.sql", "utf8"); // ✗
 const text = readFileSync(new URL("./schema.sql", import.meta.url), "utf8"); // ✓
 ```
 
+The patterns of `fs.glob()` are left alone.
+
 | Option      | Default | Meaning                                       |
 | ----------- | ------- | --------------------------------------------- |
 | `functions` | `[]`    | More functions whose first argument is a path |
@@ -593,6 +597,8 @@ const schema = join(import.meta.dirname, "schema.sql"); // ✗
 const schema = new URL("./schema.sql", import.meta.url); // ✓
 ```
 
+A path that ends in `..`, `.` or `/` names a directory and is left alone.
+
 ### `bun/react-no-local-render-helpers`
 
 A component that makes a function such as `renderCell` in its body, and uses it in its JSX, makes it anew on every render. React cannot tell what it renders from the component around it. It should be a component of its own.
@@ -640,6 +646,72 @@ import { http as axios } from "@/http"; // ✓
 | `names`     | `{ "theirName": "yourName" }` for exports that have another name in your module |
 
 `exemptFiles` are the ends of paths: `"src/http.ts"` is every file of that name in a directory `src`.
+
+### `bun/no-unbounded-requests`
+
+[axios](https://axios-http.com/docs/req_config) has no timeout unless it is given one: a server that never answers holds the request for ever. A request, and an instance made with `axios.create()`, needs a `timeout` above 0 or a `signal`.
+
+```ts
+await axios.get("/rows"); // ✗
+await axios.get("/rows", { timeout: 0 }); // ✗
+
+await axios.get("/rows", { timeout: 8000 }); // ✓
+await axios.get("/rows", { signal }); // ✓
+```
+
+A configuration that is not written out in the call is left alone, and so is a file that sets `axios.defaults.timeout`.
+
+| Option    | Default | Meaning                                                                                                                    |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `clients` | `[]`    | `{ "module": "./http", "names": ["http"] }`: what else takes the arguments of `axios`. Without `names`: the default export |
+
+### `bun/no-unhandled-emitter-errors`
+
+An [`EventEmitter`](https://nodejs.org/api/events.html#error-events) that emits `error` and has no listener for it throws the error, which ends the process. So a child process that cannot be started, or a file that cannot be opened, takes the program down.
+
+```ts
+spawn("convert", [file]).on("exit", done); // ✗
+
+spawn("convert", [file]).on("exit", done).on("error", fail); // ✓
+await pipeline(createReadStream(file), target); // ✓
+```
+
+It looks at the functions of Node.js that begin to work when they are called and return an object with a documented `'error'` event: `spawn()` and `fork()`, `cluster.fork()`, `fs.createReadStream()`, `createWriteStream()` and `watch()`, `request()` and `get()` of `http` and `https`, `http2.connect()`, `net.connect()` and `createConnection()`, `tls.connect()`. What is returned, stored in an object or handed to a function is left alone.
+
+| Option      | Default | Meaning                                                                                                               |
+| ----------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `factories` | `[]`    | `{ "module": "./observer", "names": ["observe"] }`: what else returns an emitter. Without `names`: the default export |
+
+### `bun/no-cast-to-brand`
+
+A branded type, such as `string & { readonly brand: unique symbol }`, says that a value has been checked. A cast says so without a check. With this rule only the module that declares the type casts to it, and only the listed files import the function that makes one of any value.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-cast-to-brand": [
+      "error",
+      { "branded": [{ "module": "src/ids", "type": "UserId", "mint": ["toUserId"], "mintedIn": ["src/session.ts"] }] }
+    ]
+  }
+}
+```
+
+```ts
+import type { UserId } from "../ids";
+
+const id = text as UserId; // ✗
+const all = texts as readonly UserId[]; // ✗
+```
+
+The type is found in arrays, tuples and unions, under another name, through `import * as ids` and through an alias.
+
+| Key        | Meaning                                                                       |
+| ---------- | ----------------------------------------------------------------------------- |
+| `module`   | The end of the path of the file that declares the type, without the extension |
+| `type`     | The name of the type                                                          |
+| `mint`     | The functions of the module that make a value of the type without a check     |
+| `mintedIn` | The ends of the paths of the files that may import them, besides the module   |
 
 ## What cannot be linted
 

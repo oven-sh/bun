@@ -134,7 +134,7 @@ impl QuoteProps {
         match raw_key.first() {
             // What `String(n)` returns is a token.
             Some(b'0'..=b'9') => {
-                skip_number_literals || text::number_to_string(text::string_to_number(raw_key)) != raw_key
+                skip_number_literals || text::number_to_string(bun_core::fmt::js_string_to_number(raw_key)) != raw_key
             }
             _ => tokenize_word(raw_key).is_none_or(|word| self.keywords && is_keyword(&word)),
         }

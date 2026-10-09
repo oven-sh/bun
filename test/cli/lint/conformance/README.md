@@ -10,7 +10,7 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint                    | 10.12.0 | 292   | 33977 |
 | typescript-eslint         | 8.71.1  | 136   | 29823 |
 | eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
-| eslint-plugin-import      | 2.32.0  | 2     | 255   |
+| eslint-plugin-import      | 2.32.0  | 3     | 314   |
 | eslint-plugin-n           | 18.4.1  | 4     | 1530  |
 | eslint-plugin-react       | 7.37.5  | 1     | 124   |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
@@ -66,6 +66,9 @@ bun-lint conformance /tmp/fixtures [--plugin=eslint] [--rule=no-undef] [--verbos
 ```
 
 The runner is the crate `bun_lint_conformance` (`src/lint/conformance`): it says what is compared.
+
+Unpack the projects where no directory above them has a name that begins with a dot. Two cases of `import/no-restricted-paths` match
+`**/a.js` against the absolute path, and the `**` of minimatch does not cross such a directory. The plugin itself fails them there.
 
 `expected.txt` is what `bun lint --run-eslint-tests` prints with `--suite=upstream`: the cases that fail, and the totals.
 `expected-oxlint.txt` is the same with `--suite=oxlint`. `expected-more.txt` is the same with `--suite=more --every-typed=10`: there are 22,000 cases with types in `more/`, each of

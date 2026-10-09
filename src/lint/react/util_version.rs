@@ -1,0 +1,135 @@
+#![allow(dead_code)] // until every rule of the plugin is written
+//! `lib/util/version.js` of eslint-plugin-react.
+//!
+//! What `semver.coerce` returns has no prerelease, so `testReactVersion(context, range)` is a
+//! comparison of tuples:
+//!
+//! | upstream | here, with `let version = get_react_version_from_context(file);` |
+//! |---|---|
+//! | `">= 16.3.0"`, `">= 18"` | `version >= (16, 3, 0)`, `version >= (18, 0, 0)` |
+//! | `"< 18.3.0"` | `version < (18, 3, 0)` |
+//! | `"^15.7.0"` | `((15, 7, 0)..(16, 0, 0)).contains(&version)` |
+//! | `"^0.14.10"` | `((0, 14, 10)..(0, 15, 0)).contains(&version)` |
+//! | `"999.999.999"` | `version == ULTIMATE_LATEST_SEMVER` |
+//!
+//! Upstream keeps what it has detected, and a default that it could not read, for the whole
+//! process: the first file decides for all. Here each file is on its own. Its warnings on the
+//! console are not printed.
+
+use bun_core::strings;
+use bun_lint::prelude::*;
+
+/// Major, minor, patch.
+pub(crate) type Version = (u64, u64, u64);
+
+pub(crate) const ULTIMATE_LATEST_SEMVER: Version = (999, 999, 999);
+
+/// semver's `MAX_SAFE_COMPONENT_LENGTH`
+const MAX_SAFE_COMPONENT_LENGTH: usize = 16;
+
+/// The digits that `source` starts with, as a number, and the rest. `None` if there are none, or
+/// too many for `\d{1,16}`, which is followed by what is no digit.
+fn component(source: &[u8]) -> Option<(u64, &[u8])> {
+    let length = source.iter().take_while(|it| it.is_ascii_digit()).count();
+    let (digits, rest) = source.split_at_checked(length)?;
+    let is_component = (1..=MAX_SAFE_COMPONENT_LENGTH).contains(&length);
+    let number = bun_core::fmt::parse_decimal::<u64>(digits).filter(|_| is_component)?;
+    Some((number, rest))
+}
+
+/// `(?:\.(\d{1,16}))?`
+fn next_component(source: &[u8]) -> Option<(u64, &[u8])> {
+    component(source.strip_prefix(b".")?)
+}
+
+/// `semver.coerce(source)`
+fn coerce(mut source: &[u8]) -> Option<Version> {
+    const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+    loop {
+        // A component begins where no digit is before it.
+        let start = source.iter().take_while(|it| !it.is_ascii_digit()).count();
+        source = source.get(start..).filter(|it| !it.is_empty())?;
+        let Some((major, rest)) = component(source) else {
+            let digits = source.iter().take_while(|it| it.is_ascii_digit()).count();
+            source = source.get(digits..)?;
+            continue;
+        };
+        let (minor, rest) = next_component(rest).unwrap_or((0, &[]));
+        let patch = next_component(rest).map_or(0, |it| it.0);
+        let is_safe = [major, minor, patch]
+            .iter()
+            .all(|it| *it <= MAX_SAFE_INTEGER);
+        return is_safe.then_some((major, minor, patch));
+    }
+}
+
+/// `convertConfVerToSemver`
+fn convert_conf_ver_to_semver(conf_ver: &[u8]) -> Option<Version> {
+    let numbers = strings::split(conf_ver, b".").map(bun_core::fmt::js_string_to_number);
+    let numbers: Vec<Vec<u8>> = numbers.map(text::number_to_string).collect();
+    coerce(&numbers.join(&b"."[..]))
+}
+
+/// `String(value)`, if `value` is truthy and no array or object.
+fn truthy_text(value: &Json) -> Option<Vec<u8>> {
+    match value {
+        Json::String(it) if !it.is_empty() => Some(it.clone()),
+        Json::Number(it) if *it != 0.0 && !it.is_nan() => Some(text::number_to_string(*it)),
+        Json::Bool(true) => Some(b"true".to_vec()),
+        _ => None,
+    }
+}
+
+/// `detectReactVersion`, `detectFlowVersion`: the version of the `package` that is installed for
+/// `file`.
+fn detect_version<'a>(file: &'a File<'a>, package: &[u8]) -> Option<&'a [u8]> {
+    let modules = file.modules()?;
+    let mut directory = file.path();
+    loop {
+        let slash = strings::last_index_of_char(directory, b'/');
+        let end = slash.max(strings::last_index_of_char(directory, b'\\'))?;
+        directory = directory.get(..end)?;
+        // The closest `package.json`, which is that of the project if there is no such package.
+        let path = [directory, b"/node_modules/", package, b"/package.json"].concat();
+        if let Some(found) = modules.package_json(&path)
+            && (found.get(b"name").and_then(Json::as_str)).is_some_and(|name| name == package)
+        {
+            return found.get(b"version")?.as_str();
+        }
+    }
+}
+
+/// `String(settings.react[key])`, if that is truthy.
+fn setting(file: &File, key: &[u8]) -> Option<Vec<u8>> {
+    let value = file.settings().get(b"react")?.get(key)?;
+    truthy_text(value)
+}
+
+/// `defaultVersion`, as `readDefaultReactVersionFromContext` leaves it.
+fn default_version(file: &File) -> Version {
+    let written = setting(file, b"defaultVersion");
+    (written.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
+}
+
+/// `getReactVersionFromContext`
+pub(crate) fn get_react_version_from_context<'a>(file: &'a File<'a>) -> Version {
+    let version = match setting(file, b"version") {
+        Some(version) if version == b"detect" => detect_version(file, b"react").map(<[u8]>::to_vec),
+        version => version,
+    };
+    let version = version.and_then(|it| convert_conf_ver_to_semver(&it));
+    version.unwrap_or_else(|| default_version(file))
+}
+
+/// `getFlowVersionFromContext`. `None`: there is no `settings.react.flowVersion`, and upstream
+/// throws.
+pub(crate) fn get_flow_version_from_context<'a>(file: &'a File<'a>) -> Option<Version> {
+    let version = match setting(file, b"flowVersion")? {
+        version if version == b"detect" => match detect_version(file, b"flow-bin") {
+            Some(detected) => detected.to_vec(),
+            None => return Some(ULTIMATE_LATEST_SEMVER),
+        },
+        version => version,
+    };
+    Some(convert_conf_ver_to_semver(&version).unwrap_or_else(|| default_version(file)))
+}

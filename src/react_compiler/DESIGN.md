@@ -147,7 +147,7 @@ upstream does for its own unsupported cases.
 
 A function that is nested too deeply bails out the same way, with the Todo "Support functions of this
 size". The first walk of the lowering (`find_context_identifiers`) counts the statements, expressions
-and patterns around each node, blocks apart, and stops above `MAX_NESTING` (256) levels, on every platform. Every
+and patterns around each node, what only wraps apart (blocks, object and array literals, property accesses, functions), and stops above `MAX_NESTING` (256) levels, on every platform. Every
 function of the lowering that calls itself also asks `Environment::has_stack()`, which says no earlier
 in a build with large frames.
 

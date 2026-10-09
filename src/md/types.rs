@@ -281,7 +281,12 @@ pub struct Container {
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,
     pub(crate) mark_end: OFF,
-    /// See `RendererImpl::container_source`. Only kept if that is wanted.
+}
+
+/// The first `count` of the open containers end at `end`, as far as a later one of these does not say otherwise.
+#[derive(Copy, Clone)]
+pub(crate) struct ContainerEnds {
+    pub(crate) count: u32,
     pub(crate) end: OFF,
 }
 

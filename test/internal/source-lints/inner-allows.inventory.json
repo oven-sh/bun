@@ -142,6 +142,24 @@
     "non_snake_case",
     "non_upper_case_globals"
   ],
+  "src/lint/react/util_is_create_context.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_create_element.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_destructured_from_pragma_import.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_pragma.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_variable.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_version.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lsquic_sys/lib.rs": [
     "non_camel_case_types"
   ],

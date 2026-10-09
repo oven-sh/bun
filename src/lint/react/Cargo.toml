@@ -11,6 +11,7 @@ bun_lint.workspace = true
 bun_lint_oxlint.workspace = true
 bun_lint_react_compiler.workspace = true
 bun_core.workspace = true
+bun_glob.workspace = true
 bstr.workspace = true
 smallvec.workspace = true
 rustc-hash = "2"

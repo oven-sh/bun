@@ -9,10 +9,11 @@ use bun_core::Utf8Bytes;
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, CHAR_STR_DOT, PathCharCwd, PathParsed,
     basename_posix_t, basename_windows_t, dirname_posix_t, dirname_windows_t, extname_posix_t,
-    extname_windows_t, format_t, is_absolute_posix_t, is_absolute_windows_t, join_posix_t,
-    join_windows_t, normalize_posix_t, normalize_windows_t, parse_posix_t, parse_windows_t,
-    path_size, relative_buf_len, relative_posix_t, relative_windows_t, resolve_buf_len,
-    resolve_posix_t, resolve_windows_t, to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    extname_windows_t, format_t, is_absolute_posix_t, is_absolute_windows_t, join_buf_len,
+    join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_t, normalize_windows_t,
+    parse_posix_t, parse_windows_t, path_size, relative_buf_len, relative_posix_t,
+    relative_windows_t, resolve_buf_len, resolve_posix_t, resolve_windows_t,
+    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -496,16 +497,7 @@ fn join_js_t<T: PathCharCwd>(
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
-    for path in paths {
-        buf_len += if !path.is_empty() {
-            path.len() + 1
-        } else {
-            path.len()
-        };
-    }
-    buf_len = buf_len.max(path_size::<T>());
+    let buf_len = join_buf_len(is_windows, paths);
     let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     if is_windows {
@@ -575,9 +567,7 @@ fn normalize_js_t<T: PathCharCwd>(
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
-    let buf_len = path.len().max(path_size::<T>());
-    // +1 for null terminator
-    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1);
+    let mut scratch = PathScratch::<T>::new(pool, normalize_buf_len(path));
     let buf = scratch.slice();
     if is_windows {
         normalize_windows_js_t(global_object, path, buf)

@@ -61,7 +61,7 @@ fn value_of(literal: Literal) -> Option<f64> {
     if literal.is_bigint() {
         return None;
     }
-    Some(text::string_to_number(key?.name()?.bytes()))
+    Some(bun_core::fmt::js_string_to_number(key?.name()?.bytes()))
 }
 
 const KNOWN_CONSTS: [(f64, &str, usize); 8] = [

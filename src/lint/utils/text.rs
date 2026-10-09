@@ -13,7 +13,7 @@
 //! | `s.toLowerCase()`, `s.toUpperCase()` | [`to_lower_case`], [`to_upper_case`] |
 //! | `s[0].toUpperCase() + s.slice(1)` | [`upper_case_first`] |
 //! | `String(n)` | [`number_to_string`] |
-//! | `Number(s)` | [`string_to_number`] |
+//! | `Number(s)` | [`bun_core::fmt::js_string_to_number`] |
 //! | `JSON.stringify(s)` | [`json_stringify`] |
 //! | `s.toWellFormed()` | [`strings::push_wtf8_well_formed`] |
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`strings::push_codepoint_wtf8_joined`] |
@@ -196,66 +196,6 @@ pub fn escape_string_regexp(text: &[u8]) -> Cow<'_, [u8]> {
 #[inline]
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_sema::atom::number_to_string(n)
-}
-
-/// `Number(text)`: ECMAScript's `StringToNumber`. NaN if `text` is not a number.
-pub fn string_to_number(text: &[u8]) -> f64 {
-    let text = strings::trim_js_whitespace(text);
-    if text.is_empty() {
-        return 0.0;
-    }
-    if let [b'0', prefix, digits @ ..] = text
-        && let Some(radix) = match prefix {
-            b'x' | b'X' => Some(16u32),
-            b'o' | b'O' => Some(8),
-            b'b' | b'B' => Some(2),
-            _ => None,
-        }
-    {
-        let value = digits.iter().try_fold(0f64, |value, &c| {
-            Some(value * f64::from(radix) + f64::from(char::from(c).to_digit(radix)?))
-        });
-        return value.filter(|_| !digits.is_empty()).unwrap_or(f64::NAN);
-    }
-    let unsigned = match text {
-        [b'+' | b'-', rest @ ..] => rest,
-        _ => text,
-    };
-    if unsigned == b"Infinity" {
-        return if text[0] == b'-' {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    // `StrUnsignedDecimalLiteral`
-    let digits = |from: usize| {
-        unsigned[from..]
-            .iter()
-            .take_while(|c| c.is_ascii_digit())
-            .count()
-    };
-    let whole = digits(0);
-    let mut at = whole;
-    let mut fraction = 0;
-    if unsigned.get(at) == Some(&b'.') {
-        fraction = digits(at + 1);
-        at += 1 + fraction;
-    }
-    if whole + fraction == 0 {
-        return f64::NAN;
-    }
-    if let Some(b'e' | b'E') = unsigned.get(at) {
-        let sign = usize::from(matches!(unsigned.get(at + 1), Some(b'+' | b'-')));
-        match digits(at + 1 + sign) {
-            0 => return f64::NAN,
-            exponent => at += 1 + sign + exponent,
-        }
-    }
-    match at == unsigned.len() {
-        true => bun_core::fmt::parse_f64(text).unwrap_or(f64::NAN),
-        false => f64::NAN,
-    }
 }
 
 /// Whether `text` is an `IdentifierName` without escapes. Reserved words are.

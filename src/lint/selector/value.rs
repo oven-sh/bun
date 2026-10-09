@@ -294,9 +294,9 @@ impl<'a> Val<'a> {
             Val::Null => 0.0,
             Val::Bool(value) => f64::from(u8::from(value)),
             Val::Number(value) => value,
-            Val::BigInt(digits) => text::string_to_number(digits),
+            Val::BigInt(digits) => bun_core::fmt::js_string_to_number(digits),
             // Objects are converted to strings first.
-            _ if literal.is_number => self.with_string(text::string_to_number),
+            _ if literal.is_number => self.with_string(bun_core::fmt::js_string_to_number),
             _ => {
                 return Some(
                     self.with_string(|text| bun_core::strings::order_utf16(text, &literal.text)),

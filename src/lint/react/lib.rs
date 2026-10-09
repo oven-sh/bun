@@ -15,6 +15,12 @@ mod jsx;
 mod nextjs;
 mod react;
 mod react_perf;
+mod util_is_create_context;
+mod util_is_create_element;
+mod util_is_destructured_from_pragma_import;
+mod util_pragma;
+mod util_variable;
+mod util_version;
 
 bun_lint::rules! {
     jsx_a11y_alt_text::AltText,

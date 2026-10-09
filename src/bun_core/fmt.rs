@@ -1060,6 +1060,81 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     None // partial match → trailing garbage
 }
 
+/// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
+/// is no digit, or a byte that is none in that radix.
+fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
+    // The first 123 bits or more, then how many bits follow and whether one of them is set: that
+    // decides a tie, and nothing else of them can be seen in 53 bits.
+    let (mut value, mut dropped, mut is_inexact) = (0u128, 0u32, false);
+    for &c in digits {
+        let digit = char::from(c).to_digit(1 << bits)?;
+        if value >> 123 == 0 {
+            value = value << bits | u128::from(digit);
+        } else {
+            dropped = dropped.saturating_add(bits);
+            is_inexact |= digit != 0;
+        }
+    }
+    let scale = 2f64.powi(i32::try_from(dropped).unwrap_or(i32::MAX));
+    (!digits.is_empty()).then(|| (value | u128::from(is_inexact)) as f64 * scale)
+}
+
+/// `Number(text)` of JavaScript, for UTF-8: ECMAScript's `StringToNumber`. NaN if `text` is no number.
+/// `JSC::jsToNumber` adds up the digits of `0b` and `0o` in a double, which is not the nearest one
+/// from 2^53 on.
+pub fn js_string_to_number(text: &[u8]) -> f64 {
+    let text = strings::trim_js_whitespace(text);
+    let bits = match text {
+        [] => return 0.0,
+        [b'0', b'x' | b'X', ..] => 4,
+        [b'0', b'o' | b'O', ..] => 3,
+        [b'0', b'b' | b'B', ..] => 1,
+        _ => 0,
+    };
+    if bits != 0 {
+        return parse_digits_of_bits(&text[2..], bits).unwrap_or(f64::NAN);
+    }
+    let unsigned = match text {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => text,
+    };
+    if unsigned == b"Infinity" {
+        return if text[0] == b'-' {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    // `StrUnsignedDecimalLiteral`
+    let digits = |from: usize| {
+        unsigned[from..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count()
+    };
+    let whole = digits(0);
+    let mut at = whole;
+    let mut fraction = 0;
+    if unsigned.get(at) == Some(&b'.') {
+        fraction = digits(at + 1);
+        at += 1 + fraction;
+    }
+    if whole + fraction == 0 {
+        return f64::NAN;
+    }
+    if let Some(b'e' | b'E') = unsigned.get(at) {
+        let sign = usize::from(matches!(unsigned.get(at + 1), Some(b'+' | b'-')));
+        match digits(at + 1 + sign) {
+            0 => return f64::NAN,
+            exponent => at += 1 + sign + exponent,
+        }
+    }
+    match at == unsigned.len() {
+        true => parse_f64(text).unwrap_or(f64::NAN),
+        false => f64::NAN,
+    }
+}
+
 /// `parse_f64` truncated to `f32`.
 #[inline]
 pub fn parse_f32(s: &[u8]) -> Option<f32> {
@@ -3193,6 +3268,23 @@ unsafe extern "C" {
     // only precondition (≥124-byte writable buffer), so `safe fn` discharges
     // the link-time proof and callers need no `unsafe` block.
     safe fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize;
+    // The same, for the arguments that the callers below let through: at most 100 digits, and for
+    // `toFixed` a number below 1e21.
+    safe fn WTF__numberToFixed(
+        buf: &mut [u8; 124],
+        number: f64,
+        fraction_digits: core::ffi::c_uint,
+    ) -> usize;
+    safe fn WTF__numberToPrecision(
+        buf: &mut [u8; 124],
+        number: f64,
+        precision: core::ffi::c_uint,
+    ) -> usize;
+    safe fn WTF__numberToExponential(
+        buf: &mut [u8; 124],
+        number: f64,
+        fraction_digits: core::ffi::c_int,
+    ) -> usize;
 }
 
 impl FormatDouble {
@@ -3206,6 +3298,36 @@ impl FormatDouble {
             return b"-0";
         }
         let len = WTF__dtoa(buf, number);
+        &buf[..len]
+    }
+
+    /// `number.toFixed(fraction_digits)`. More than 100 digits are 100.
+    pub fn to_fixed(buf: &mut [u8; 124], number: f64, fraction_digits: u32) -> &[u8] {
+        // "If x ≥ 10^21, then let m be ToString(x)", and so for what is not finite.
+        if number.is_nan() || number.abs() >= 1e21 {
+            return Self::dtoa(buf, number);
+        }
+        let len = WTF__numberToFixed(buf, number, fraction_digits.min(100));
+        &buf[..len]
+    }
+
+    /// `number.toPrecision(precision)`, for a precision from 1 to 100.
+    pub fn to_precision(buf: &mut [u8; 124], number: f64, precision: u32) -> &[u8] {
+        if !number.is_finite() {
+            return Self::dtoa(buf, number);
+        }
+        let len = WTF__numberToPrecision(buf, number, precision.clamp(1, 100));
+        &buf[..len]
+    }
+
+    /// `number.toExponential(fraction_digits)`. `None`: as many digits as it takes. More than 100
+    /// are 100.
+    pub fn to_exponential(buf: &mut [u8; 124], number: f64, fraction_digits: Option<u32>) -> &[u8] {
+        if !number.is_finite() {
+            return Self::dtoa(buf, number);
+        }
+        let digits = fraction_digits.map_or(-1, |it| it.min(100) as i32);
+        let len = WTF__numberToExponential(buf, number, digits);
         &buf[..len]
     }
 }

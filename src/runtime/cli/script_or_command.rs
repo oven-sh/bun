@@ -1,16 +1,17 @@
 //! `bun check`, `bun lint` and `bun format` ran the script of that name in `package.json` before they
 //! were commands, so where a project has such a script they still do. In that script, and in what it
-//! runs, they are the commands: `"lint": "bun lint"`.
+//! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
+//! `node_modules/.bin/lint`.
 
 use bun_core::{UnwrapOrOom, env_var};
 
 use super::check_command::working_directory;
 
-/// Whether `command` is a script of the project: of the nearest `package.json`, which is where
-/// `bun run` looks.
+/// Whether `bun <command>` runs something of the project, as it did before `command` was one: a script
+/// of the nearest `package.json`, which is where `bun run` looks, a file, or what a package installs.
 #[cold]
 #[inline(never)]
-pub(crate) fn is_package_script(command: &[u8]) -> bool {
+pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
@@ -39,7 +40,7 @@ pub(crate) fn is_package_script(command: &[u8]) -> bool {
         }
     }
     let Some((dir, path, contents)) = nearest_package_json(&cwd) else {
-        return false;
+        return is_file_or_executable(command, &cwd);
     };
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
@@ -56,19 +57,70 @@ pub(crate) fn is_package_script(command: &[u8]) -> bool {
     if package_of_inherited_script(command).is_some_and(|it| it == dir) {
         return false;
     }
+    has_script(command, &path, &contents) || is_file_or_executable(command, &cwd)
+}
+
+/// Whether the `package.json` at `path`, which has `contents`, has the script `name`.
+fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> bool {
     // Most have no such word in them.
-    if !bun_core::strings::contains(&contents, &[&b"\""[..], command, b"\""].concat()) {
+    if !bun_core::strings::contains(contents, &[&b"\""[..], name, b"\""].concat()) {
         return false;
     }
     bun_ast::initialize_store();
-    let source = bun_ast::Source::init_path_string(&path[..], &contents[..]);
+    let source = bun_ast::Source::init_path_string(path, contents);
     let (mut log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
     let Ok(json) = bun_parsers::json::parse_package_json_utf8(&source, &mut log, &bump) else {
         return false;
     };
     (json.as_property(b"scripts"))
-        .and_then(|scripts| scripts.expr.as_property(command))
+        .and_then(|scripts| scripts.expr.as_property(name))
         .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
+}
+
+/// Whether `bun <name>` in `cwd` finds a file to run, `name`, `name.ts` or `name/index.ts`, or an executable that a package has
+/// installed, here or further up. Not for `check`, which has been a command for longer.
+fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
+    use bun_paths::platform::Auto;
+    use bun_paths::resolve_path::{dirname, join_abs_string};
+    use bun_sys::ExistsAtType;
+    if name == b"check" {
+        return false;
+    }
+    let kind = |dir: &[u8], parts: &[&[u8]]| {
+        let path = bun_core::ZBox::from_bytes(join_abs_string::<Auto>(dir, &[&parts.concat()]));
+        bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
+    };
+    // Those of the resolver.
+    let extensions: [&[u8]; 9] = [
+        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
+    ];
+    let is_file = |parts: &[&[u8]]| kind(cwd, parts) == Some(ExistsAtType::File);
+    let found = match kind(cwd, &[name]) {
+        Some(ExistsAtType::File) => true,
+        Some(ExistsAtType::Directory) => {
+            is_file(&[name, b"/package.json"])
+                || extensions.iter().any(|it| is_file(&[name, b"/index", it]))
+        }
+        None => false,
+    };
+    if found || extensions.iter().any(|it| is_file(&[name, it])) {
+        return true;
+    }
+    let suffixes: &[&[u8]] = match cfg!(windows) {
+        true => &[b".bunx", b".exe", b".cmd"],
+        false => &[b""],
+    };
+    let mut dir = cwd;
+    loop {
+        if (suffixes.iter()).any(|it| kind(dir, &[b"node_modules/.bin/", name, it]).is_some()) {
+            return true;
+        }
+        let parent = dirname::<Auto>(dir);
+        if parent.is_empty() || parent.len() >= dir.len() {
+            return false;
+        }
+        dir = parent;
+    }
 }
 
 /// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
@@ -142,11 +194,11 @@ fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-/// Makes `env` that of the script `name` of the package that has `dir`. See `is_package_script`.
+/// Makes `env` that of the script `name` of the package that has `dir`. See `is_of_the_project`.
 pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir: &[u8]) {
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
-    // As `is_package_script` finds it, wherever in the package the script is started.
+    // As `is_of_the_project` finds it, wherever in the package the script is started.
     let Some((dir, ..)) = nearest_package_json(dir) else {
         return;
     };

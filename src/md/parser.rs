@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::VecDeque;
 
 // What a byte can mean in inline content: `MARK_*`. 0: nothing, and the scans
 // in inlines.rs and links.rs do not look at it.
@@ -23,7 +24,8 @@ use bun_core::StackCheck;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
-    Align, BlockType, Container, Extensions, Flags, OFF, Renderer, TABLE_MAXCOLCOUNT, VerbatimLine,
+    Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
+    TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions;
 
@@ -89,6 +91,12 @@ pub(crate) struct Parser<'a> {
 
     // Number of active containers
     pub(crate) n_containers: u32,
+    // Where in `containers` the open `:::` are, the innermost last
+    pub(crate) directives: Vec<u32>,
+    // The same for `>`. Only kept if `keeps_quotes`
+    pub(crate) quotes: Vec<u32>,
+    // See `set_container_ends`. Only kept if `track`
+    pub(crate) container_ends: VecDeque<ContainerEnds>,
 
     // Current block being built
     pub(crate) current_block: Option<usize>,
@@ -334,6 +342,9 @@ impl<'a> Parser<'a> {
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             not_hr: Cell::new((0, 0)),
             n_containers: 0,
+            directives: Vec::new(),
+            quotes: Vec::new(),
+            container_ends: VecDeque::new(),
             current_block: None,
             current_block_lines: Vec::new(),
             html_block_type: 0,

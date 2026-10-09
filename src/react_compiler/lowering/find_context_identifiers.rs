@@ -58,10 +58,10 @@ struct ContextIdentifierVisitor<'a> {
     inner_references: Vec<(Ref, u32)>,
     inner_reassignments: Vec<(Ref, u32)>,
     error: Option<CompilerError>,
-    /// How many statements, expressions and patterns are around what is walked.
-    level: u32,
-    /// Counted apart, so that `if (a) { .. }` is one level, as a reader counts.
-    blocks: u32,
+    /// How many statements, expressions and patterns are around what is walked. After the first: blocks, object
+    /// literals, array literals, property accesses and functions, each counted apart, so that `if (a) { .. }`, an
+    /// element of JSX, `.m()` and `() => ..` are one level each, as a reader counts.
+    levels: [u32; 6],
 }
 
 impl<'a> ContextIdentifierVisitor<'a> {
@@ -141,10 +141,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
-        if !self.env.can_nest(self.level) {
+        if !self.env.can_nest(self.levels[0]) {
             return;
         }
-        self.level += 1;
+        self.levels[0] += 1;
         match &binding.data {
             B::BIdentifier(id) => self.record_decl(id.r#ref),
             B::BArray(arr) => {
@@ -168,7 +168,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             }
             B::BMissing(_) => {}
         }
-        self.level -= 1;
+        self.levels[0] -= 1;
     }
 
     fn walk_args(&mut self, args: &[G::Arg]) {
@@ -239,12 +239,11 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
-        if !self.env.can_nest(self.level.max(self.blocks)) {
+        let kind = usize::from(matches!(stmt.data, StmtData::SBlock(_)));
+        if !self.env.can_nest(self.levels[kind]) {
             return;
         }
-        let is_block = u32::from(matches!(stmt.data, StmtData::SBlock(_)));
-        self.blocks += is_block;
-        self.level += 1 - is_block;
+        self.levels[kind] += 1;
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -390,8 +389,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | StmtData::SExportFrom(_)
             | StmtData::SExportStar(_) => {}
         }
-        self.blocks -= is_block;
-        self.level -= 1 - is_block;
+        self.levels[kind] -= 1;
     }
 
     #[allow(
@@ -399,10 +397,17 @@ impl<'a> ContextIdentifierVisitor<'a> {
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {
-        if !self.env.can_nest(self.level) {
+        let kind = match &e.data {
+            Data::EObject(_) => 2,
+            Data::EArray(_) => 3,
+            Data::EDot(_) | Data::EIndex(_) => 4,
+            Data::EArrow(_) | Data::EFunction(_) => 5,
+            _ => 0,
+        };
+        if !self.env.can_nest(self.levels[kind]) {
             return;
         }
-        self.level += 1;
+        self.levels[kind] += 1;
         match &e.data {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
@@ -559,7 +564,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ESpecial(_)
             | Data::ENameOfSymbol(_) => {}
         }
-        self.level -= 1;
+        self.levels[kind] -= 1;
     }
 }
 
@@ -688,8 +693,7 @@ pub(crate) fn find_context_identifiers(
         inner_references: Vec::new(),
         inner_reassignments: Vec::new(),
         error: None,
-        level: 0,
-        blocks: 0,
+        levels: [0; 6],
     };
 
     // Walk params and body (like Babel's func.traverse())

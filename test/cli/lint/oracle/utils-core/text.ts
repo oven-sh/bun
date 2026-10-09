@@ -26,6 +26,9 @@ const texts = new Set<string>([
   "\u{10000}", "\uDFFF", "\u{10FFFF}", "\uDBFF", "\uD800", "\uD800a", "\uD7FF", "\uD800\uE000", "a\uDC00", "a\u{10FFFF}",
   // Numbers that a double does not hold.
   "a19007199254740993", "a19007199254740992", "90071992547409930", "90071992547409921", "x90071992547409939007199254740993", "x90071992547409929007199254740992",
+  // Digits of 1, 3 and 4 bits that have to be rounded once, at the end.
+  "0o3450214447355555064307507", "0b011100100101010010011101001011011010010011100101101010101000", "0xd6B1EDe45fFAB43c3967Cd6E16", "0x20000000000001", "0x20000000000003",
+  "0x" + "f".repeat(300), "0b1" + "0".repeat(52) + "1" + "0".repeat(90) + "1", "0b1" + "0".repeat(52) + "1" + "0".repeat(91),
 ]);
 for (const line of readFileSync(process.argv[2], "utf8").split("\n").slice(0, 60000)) {
   if (!line) continue;

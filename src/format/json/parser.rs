@@ -577,8 +577,8 @@ impl Reader<'_, '_> {
             }
             Kind::Number if config.is_stringify() => {
                 // `String(Number(raw)) === raw`
-                use bun_lint::utils::text::{number_to_string, string_to_number};
-                if number_to_string(string_to_number(source)) == source {
+                use bun_lint::utils::text::number_to_string;
+                if number_to_string(bun_core::fmt::js_string_to_number(source)) == source {
                     flags |= QUOTED;
                     width += 2;
                 }

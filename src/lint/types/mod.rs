@@ -578,11 +578,21 @@ pub fn with_file<R>(
     read_library: Option<ReadLibrary<'_>>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
-    with_file_and_modules(checker, file, None, language, read_library, None, then)
+    with_file_and_modules(
+        checker,
+        file,
+        None,
+        language,
+        read_library,
+        None,
+        None,
+        then,
+    )
 }
 
-/// The same, for a file that has [`File::modules`]. `path`: [`File::path`], the path that the file is linted under. `None`: the
-/// name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the program found it.
+/// The same, for a file that has [`File::modules`] and [`File::formatter`]. `path`: [`File::path`], the path that the file is
+/// linted under. `None`: the name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the
+/// program found it.
 pub fn with_file_and_modules<R>(
     checker: &mut bun_sema::check::Checker<'_, '_>,
     file: FileId,
@@ -590,6 +600,7 @@ pub fn with_file_and_modules<R>(
     language: &crate::language::LanguageOptions,
     read_library: Option<ReadLibrary<'_>>,
     modules: Option<&dyn crate::modules::Modules>,
+    formatter: Option<&dyn crate::formats::Formats>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
     let module = checker.p.files.module(file);
@@ -604,6 +615,9 @@ pub fn with_file_and_modules<R>(
         let file = File::new(path, hir, bound, atoms, language, Some(types));
         if let Some(modules) = modules {
             file.set_modules(modules);
+        }
+        if let Some(formatter) = formatter {
+            file.set_formatter(formatter, None);
         }
         then(&file)
     }))

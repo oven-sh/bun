@@ -37,11 +37,6 @@ fn modifiers_of(flags: Flags) -> Flags {
     flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::MISSING_BODY)
 }
 
-/// `IsValidIdentifier`
-fn is_valid_identifier(text: &[u8]) -> bool {
-    bun_core::lexer::is_identifier(text)
-}
-
 /// `entityNameToString`
 /// The names of those of `tags` that no parameter matches, with the code of what is said about each.
 fn push_unmatched_names<'d, 't>(
@@ -218,7 +213,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
 
     /// `checkNonIdentifierName`. It is an error of the parser, not of the comment.
     fn check_non_identifier_name(&mut self, name: &Name<'_>) {
-        if is_valid_identifier(&name.text) {
+        if bun_core::lexer::is_identifier(&name.text) {
             return;
         }
         // A missing name is reported at the character before it.
@@ -274,7 +269,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             };
             let mut flags = Flags::REPARSED;
             // A name that is not an identifier is still a name, as a string.
-            if !is_valid_identifier(&name.text) {
+            if !bun_core::lexer::is_identifier(&name.text) {
                 flags |= Flags::STRING_NAME | Flags::LITERAL_NAME;
             }
             if Self::is_optional(property) {
@@ -569,7 +564,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
 
     /// The name of the parameter for the tag `index` of a signature, which names `text`: `_` stands for what no identifier has.
     fn parameter_name(&mut self, text: &[u8], index: usize) -> Atom {
-        if is_valid_identifier(text) {
+        if bun_core::lexer::is_identifier(text) {
             return self.atom(text);
         }
         if text.is_empty() {

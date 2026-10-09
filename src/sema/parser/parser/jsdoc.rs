@@ -320,13 +320,6 @@ fn is_blank(c: CodePoint) -> bool {
     is_white_space_single_line(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
 }
 
-/// Whether `IsLineBreak` is true of a character of `text`.
-fn has_line_break(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some()
-        || strings::contains(text, b"\xE2\x80\xA8")
-        || strings::contains(text, b"\xE2\x80\xA9")
-}
-
 /// A token of `Scan`, as the parser of JSDoc comments tells tokens apart.
 fn token_of(token: T) -> JSDocToken {
     match token {
@@ -1030,7 +1023,9 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         {
             index += 1;
             let comment = src.get(start as usize..end as usize).unwrap_or_default();
-            is_collecting |= has_line_break(src.get(before..start as usize).unwrap_or_default());
+            is_collecting |= strings::contains_js_line_break(
+                src.get(before..start as usize).unwrap_or_default(),
+            );
             before = end as usize;
             let is_like = is_jsdoc_like(comment);
             // In JavaScript all are read, and nobody asks for links.

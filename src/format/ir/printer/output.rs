@@ -25,6 +25,11 @@ impl<'o> Out<'o> {
         self.len
     }
 
+    /// What has been written from `from` on.
+    pub(super) fn since(&self, from: usize) -> &[u8] {
+        self.buffer.get(from..self.len).unwrap_or_default()
+    }
+
     /// Leaves the vector with what has been written.
     pub(super) fn finish(&mut self) {
         self.buffer.truncate(self.len);

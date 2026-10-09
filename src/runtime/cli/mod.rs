@@ -1058,19 +1058,19 @@ pub(crate) mod command {
             return Tag::AuditCommand;
         }
         if x == RootCommandMatcher::case(b"check") {
-            return match super::script_or_command::is_package_script(b"check") {
+            return match super::script_or_command::is_of_the_project(b"check") {
                 true => Tag::AutoCommand,
                 false => Tag::CheckCommand,
             };
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_package_script(b"lint") {
+            return match super::script_or_command::is_of_the_project(b"lint") {
                 true => Tag::AutoCommand,
                 false => Tag::LintCommand,
             };
         }
         if x == RootCommandMatcher::case(b"format") {
-            return match super::script_or_command::is_package_script(b"format") {
+            return match super::script_or_command::is_of_the_project(b"format") {
                 true => Tag::AutoCommand,
                 false => Tag::FormatCommand,
             };

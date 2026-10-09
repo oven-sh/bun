@@ -3,10 +3,11 @@ use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::types::tsutils::union_constituents;
 use bun_lint::types::utils::get_type_name;
-use bun_lint::utils::eslint_utils::get_static_value;
+use bun_lint::utils::eslint_utils::{find_variable_of, get_static_value};
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, is_static_member_access_of_value,
 };
+use rustc_hash::FxHashMap;
 
 /// Enforce `RegExp#exec` over `String#match` if no global flag is provided.
 pub struct PreferRegexpExec;
@@ -80,10 +81,17 @@ impl PreferRegexpExec {
         }
 
         // Regular expressions with the global flag are not reported.
-        match get_static_value(argument_node, Some(cx.file().scope())) {
-            None if !definitely_does_not_contain_global_flag(argument_node) => return,
-            Some(value) if value.as_regex().is_some_and(|(_, flags)| strings::contains_char(flags, b'g')) => return,
-            _ => {}
+        let scope = cx.file().scope();
+        let can_have_global_flag = || match get_static_value(argument_node, Some(scope)) {
+            None => !definitely_does_not_contain_global_flag(argument_node),
+            Some(value) => value.as_regex().is_some_and(|(_, flags)| strings::contains_char(flags, b'g')),
+        };
+        let can_have_global_flag = match find_variable_of(argument_node) {
+            Some(variable) => *cx.state.entry(variable).or_insert_with(can_have_global_flag),
+            None => can_have_global_flag(),
+        };
+        if can_have_global_flag {
+            return;
         }
 
         if let ExprKind::String(pattern) = argument_node.kind() {
@@ -129,13 +137,15 @@ impl Rule for PreferRegexpExec {
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// Whether the value of a variable can have the global flag. All its references are looked at to find its value.
+    type State<'a> = FxHashMap<Symbol<'a>, bool>;
 
     fn new(_: &Options) -> Self {
         PreferRegexpExec
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Symbol<'a>, bool> {
         on.exprs([ExprTag::Call], Self::check);
+        FxHashMap::default()
     }
 }

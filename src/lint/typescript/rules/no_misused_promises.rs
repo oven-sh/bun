@@ -6,12 +6,13 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, is_array_method_call_with_predicate, is_promise_like,
     is_rest_parameter_declaration, parse_finally_call,
 };
-use bun_lint::types::{NameOf, SymbolList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
+use bun_lint::types::{NameOf, SignatureList, SymbolList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::get_function_head_loc;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::cell::Cell;
+use std::rc::Rc;
 
 /// Disallow Promises in places not designed to handle them.
 pub struct NoMisusedPromises {
@@ -127,7 +128,9 @@ struct CallableLiterals([Cell<Option<bool>>; 5]);
 /// Whether the type of `node` can have call signatures. All literals of a sort have the same.
 fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
     let sort = match node.kind() {
-        ExprKind::Missing | ExprKind::Null | ExprKind::Object(_) => return false,
+        ExprKind::Missing | ExprKind::Null => return false,
+        // `{ ...t }` has the type of `t` if that is a type parameter.
+        ExprKind::Object(properties) => return properties.iter().any(|it| it.kind() == PropKind::Spread),
         ExprKind::True | ExprKind::False => 0,
         ExprKind::Number(_) => 1,
         ExprKind::BigInt(_) => 2,
@@ -151,6 +154,7 @@ pub struct State<'a> {
     /// Whether what has been passed on the way up from an operand is in a test.
     tests: AncestorMemo<'a, bool>,
     callable_literals: CallableLiterals,
+    parameters: ParametersByType<'a>,
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
@@ -320,37 +324,102 @@ fn is_promise_finally_method(node: Expr) -> bool {
     parse_finally_call(node).is_some_and(|call| is_promise_like(get_constrained_type_at_location(call.object)))
 }
 
-/// An argument that returns a thenable, and what the parameters at its position accept.
-struct Argument<'a> {
-    index: usize,
-    node: Expr<'a>,
-    accepts_thenable_return: bool,
-    accepts_void_return: bool,
+/// Whether functions that return a thenable, and functions that return nothing, are accepted somewhere.
+#[derive(Copy, Clone, Default)]
+struct Accepted {
+    thenable_return: bool,
+    void_return: bool,
 }
 
-fn check_thenable_or_void_argument<'a>(
-    node: TsNode<'a>,
-    expression: TsNode<'a>,
-    mut ty: Type<'a>,
-    argument: &mut Argument<'a>,
-) {
-    loop {
+impl Accepted {
+    fn add_type<'a>(&mut self, expression: TsNode<'a>, ty: Type<'a>) {
         if is_thenable_returning_function_type(expression, ty) {
-            argument.accepts_thenable_return = true;
+            self.thenable_return = true;
         } else if is_void_returning_function_type(expression, ty) {
-            argument.accepts_void_return = true;
-        }
-        match node.get_contextual_type_for_argument_at_index(argument.index) {
-            Some(contextual_type) if contextual_type != ty => ty = contextual_type,
-            _ => return,
+            self.void_return = true;
         }
     }
 }
 
+/// An argument that returns a thenable, and what the parameters at its position accept.
+struct Argument<'a> {
+    index: usize,
+    node: Expr<'a>,
+    accepted: Accepted,
+    /// The type of a parameter at its position: the last that was looked at.
+    parameter_type: Option<Type<'a>>,
+}
+
+impl<'a> Argument<'a> {
+    fn add_parameter_type(&mut self, expression: TsNode<'a>, ty: Type<'a>) {
+        if self.parameter_type != Some(ty) {
+            self.accepted.add_type(expression, ty);
+            self.parameter_type = Some(ty);
+        }
+    }
+}
+
+/// A rest parameter at `index` takes all the arguments from there to the end.
+fn add_rest_parameter_type<'a>(expression: TsNode<'a>, index: usize, ty: Type<'a>, arguments: &mut [Argument<'a>]) {
+    let type_args = ty.get_type_arguments();
+    let (is_array, is_tuple) = (ty.is_array_type(), ty.is_tuple_type());
+    for argument in arguments.iter_mut().filter(|it| it.index >= index) {
+        let element = match (is_array, is_tuple) {
+            (true, _) => type_args.first(),
+            (false, true) => type_args.get(argument.index - index),
+            (false, false) => None,
+        };
+        if let Some(element) = element {
+            argument.add_parameter_type(expression, element);
+        }
+    }
+}
+
+/// The parameters of all the signatures of a type that has many: to go through them for each call takes long.
+#[derive(Default)]
+struct Parameters<'a> {
+    /// What those at an index accept that are no rest parameters, and the type of one of them.
+    plain: FxHashMap<usize, (Accepted, Type<'a>)>,
+    /// The index and the type of the rest parameters, each once.
+    rest: Vec<(usize, Type<'a>)>,
+}
+
+impl<'a> Parameters<'a> {
+    const MANY_SIGNATURES: usize = 16;
+
+    fn of(signatures: SignatureList<'a>, expression: TsNode<'a>) -> Self {
+        let (mut parameters, mut seen) = (Parameters::default(), FxHashSet::default());
+        for signature in signatures {
+            for (index, parameter) in signature.parameters().iter().enumerate() {
+                let is_rest = parameter.value_declaration().is_some_and(is_rest_parameter_declaration);
+                let ty = parameter.get_type_at_location(expression);
+                if !seen.insert((index, is_rest, ty)) {
+                    continue;
+                }
+                match is_rest {
+                    true => parameters.rest.push((index, ty)),
+                    false => {
+                        let (accepted, _) = parameters.plain.entry(index).or_insert_with(|| (Accepted::default(), ty));
+                        accepted.add_type(expression, ty);
+                    }
+                }
+            }
+        }
+        parameters
+    }
+}
+
+type ParametersByType<'a> = FxHashMap<(Type<'a>, bool), Rc<Parameters<'a>>>;
+
 /// Finds out which of `arguments` are passed for void functions, and not also for thenable
 /// functions. All signatures are looked at: the resolved one would be an early `() => void` where a
 /// later `() => Promise<void>` applies as well.
-fn void_function_arguments<'a>(node: Expr<'a>, call: Call<'a>, arguments: &mut [Argument<'a>]) {
+fn void_function_arguments<'a>(
+    node: Expr<'a>,
+    call: Call<'a>,
+    arguments: &mut [Argument<'a>],
+    known: &mut ParametersByType<'a>,
+) {
     let (node, is_new) = (node.ts_node(), node.tag() == ExprTag::New);
     let expression = call.callee().ts_node();
     for sub_type in union_constituents(expression.get_type_at_location()) {
@@ -358,33 +427,43 @@ fn void_function_arguments<'a>(node: Expr<'a>, call: Call<'a>, arguments: &mut [
             true => sub_type.get_construct_signatures(),
             false => sub_type.get_call_signatures(),
         };
-        for signature in signatures {
-            for (index, parameter) in signature.parameters().iter().enumerate() {
-                if !parameter.value_declaration().is_some_and(is_rest_parameter_declaration) {
-                    // They are in the order of their indices.
-                    if let Ok(at) = arguments.binary_search_by_key(&index, |it| it.index)
-                        && let Some(argument) = arguments.get_mut(at)
-                    {
-                        let ty = parameter.get_type_at_location(expression);
-                        check_thenable_or_void_argument(node, expression, ty, argument);
-                    }
-                    continue;
-                }
-                // A rest parameter takes all the arguments from here to the end.
-                let ty = parameter.get_type_at_location(expression);
-                let type_args = ty.get_type_arguments();
-                let (is_array, is_tuple) = (ty.is_array_type(), ty.is_tuple_type());
-                for argument in arguments.iter_mut().filter(|it| it.index >= index) {
-                    let element = match (is_array, is_tuple) {
-                        (true, _) => type_args.first(),
-                        (false, true) => type_args.get(argument.index - index),
-                        (false, false) => None,
-                    };
-                    if let Some(element) = element {
-                        check_thenable_or_void_argument(node, expression, element, argument);
-                    }
+        if signatures.len() > Parameters::MANY_SIGNATURES {
+            let parameters = known.entry((sub_type, is_new));
+            let parameters = Rc::clone(parameters.or_insert_with(|| Rc::new(Parameters::of(signatures, expression))));
+            for argument in arguments.iter_mut() {
+                if let Some(&(accepted, ty)) = parameters.plain.get(&argument.index) {
+                    argument.accepted.thenable_return |= accepted.thenable_return;
+                    argument.accepted.void_return |= accepted.void_return;
+                    argument.parameter_type = Some(ty);
                 }
             }
+            for &(index, ty) in &parameters.rest {
+                add_rest_parameter_type(expression, index, ty, arguments);
+            }
+            continue;
+        }
+        for signature in signatures {
+            for (index, parameter) in signature.parameters().iter().enumerate() {
+                if parameter.value_declaration().is_some_and(is_rest_parameter_declaration) {
+                    add_rest_parameter_type(expression, index, parameter.get_type_at_location(expression), arguments);
+                    continue;
+                }
+                // They are in the order of their indices.
+                if let Ok(at) = arguments.binary_search_by_key(&index, |it| it.index)
+                    && let Some(argument) = arguments.get_mut(at)
+                {
+                    argument.add_parameter_type(expression, parameter.get_type_at_location(expression));
+                }
+            }
+        }
+    }
+    // Upstream looks at the contextual type beside each of the types of the parameters. It is the same for all of them.
+    for argument in arguments {
+        if let Some(parameter_type) = argument.parameter_type
+            && let Some(contextual_type) = node.get_contextual_type_for_argument_at_index(argument.index)
+            && contextual_type != parameter_type
+        {
+            argument.accepted.add_type(expression, contextual_type);
         }
     }
 }
@@ -488,16 +567,16 @@ impl NoMisusedPromises {
             .map(|(index, node)| Argument {
                 index,
                 node,
-                accepts_thenable_return: false,
-                accepts_void_return: false,
+                accepted: Accepted::default(),
+                parameter_type: None,
             })
             .collect();
         if arguments.is_empty() || is_promise_finally_method(node) {
             return;
         }
-        void_function_arguments(node, call, &mut arguments);
+        void_function_arguments(node, call, &mut arguments, &mut cx.state.parameters);
         for argument in arguments {
-            if argument.accepts_void_return && !argument.accepts_thenable_return {
+            if argument.accepted.void_return && !argument.accepted.thenable_return {
                 cx.report(argument.node, VOID_RETURN_ARGUMENT);
             }
         }

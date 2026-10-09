@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::types::utils::{ReadonlynessOptions, is_type_branded_literal_like, is_type_readonly};
+use rustc_hash::FxHashMap;
 
 /// Require function parameters to be typed as `readonly` to prevent accidental mutation of inputs.
 pub struct PreferReadonlyParameterTypes {
@@ -40,7 +41,8 @@ impl PreferReadonlyParameterTypes {
                 continue;
             }
             let ty = get_parameter_type(param);
-            if !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty) {
+            let is_mutable = || !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
+            if *cx.state.entry(ty).or_insert_with(is_mutable) {
                 cx.report(param.span_without_modifiers(), SHOULD_BE_READONLY);
             }
         }
@@ -49,7 +51,8 @@ impl PreferReadonlyParameterTypes {
 
 impl Rule for PreferReadonlyParameterTypes {
     const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
-    type State<'a> = ();
+    /// Whether a type is to be reported. All that can be reached from it is looked at, and parameters share types.
+    type State<'a> = FxHashMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -60,7 +63,8 @@ impl Rule for PreferReadonlyParameterTypes {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Type<'a>, bool> {
         on.funcs(Self::check);
+        FxHashMap::default()
     }
 }

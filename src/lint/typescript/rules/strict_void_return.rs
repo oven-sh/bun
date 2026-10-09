@@ -3,6 +3,7 @@ use bun_lint::types::utils::get_base_types_of_class_member;
 use bun_lint::types::{Signature, Type, TypeFlags, tsutils};
 use bun_lint::utils::eslint_utils::{HasSideEffectOptions, has_side_effect};
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_function_head_loc, get_wrapping_fixer};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow passing a value-returning function in a position accepting a void function.
@@ -22,6 +23,37 @@ const SUGGEST_ADD_VOID_OP: Message =
     Message::new("suggestAddVoidOp", "Add a void operator to discard the return value.");
 const SUGGEST_WRAP_IN_ASYNC_IIFE: Message =
     Message::new("suggestWrapInAsyncIIFE", "Wrap the function body in an async IIFE.");
+
+/// What the functions return that all the signatures of a callee expect for an argument.
+#[derive(Copy, Clone)]
+pub struct ExpectedReturnTypes {
+    /// `void`, nullish, `any` or a type parameter, which is not resolved even for an overload that matches the call.
+    are_all_void: bool,
+    is_any_void: bool,
+    are_all_nullish_or_any: bool,
+}
+
+impl ExpectedReturnTypes {
+    fn of<'a>(func_signatures: &[Signature<'a>], arg_idx: usize, callee: Expr<'a>) -> Self {
+        let mut found = ExpectedReturnTypes { are_all_void: true, is_any_void: false, are_all_nullish_or_any: true };
+        let return_types = func_signatures
+            .iter()
+            .filter_map(|signature| signature.parameters().get(arg_idx))
+            .flat_map(|param| tsutils::union_constituents(param.get_type_at_location(callee)))
+            .flat_map(|param_type| param_type.get_call_signatures())
+            .map(|param_signature| param_signature.get_return_type());
+        for ty in return_types {
+            found.are_all_void &= is_void(ty) || is_nullish_or_any(ty) || tsutils::is_type_parameter(ty);
+            found.is_any_void |= is_void(ty);
+            found.are_all_nullish_or_any &= is_nullish_or_any(ty);
+        }
+        found
+    }
+}
+
+/// By the type of a callee that has many signatures, whether it is called with `new`, and the index of the argument: to
+/// go through the signatures for each call takes long.
+type ExpectedByCallee<'a> = FxHashMap<(Type<'a>, bool, usize), ExpectedReturnTypes>;
 
 /// What stands where a function is expected.
 #[derive(Copy, Clone)]
@@ -162,38 +194,31 @@ impl StrictVoidReturn {
             ExprKind::New(call) => (call, true),
             _ => return,
         };
-        let mut func_signatures: Option<SmallVec<[Signature<'a>; 4]>> = None;
+        let mut callee: Option<(Type<'a>, SmallVec<[Signature<'a>; 4]>)> = None;
         for (arg_idx, arg_node) in call.args().iter().enumerate() {
             if !self.is_candidate(arg_node) {
                 continue;
             }
-            let func_signatures = func_signatures.get_or_insert_with(|| {
+            let (callee_type, func_signatures) = callee.get_or_insert_with(|| {
                 let signatures_of = |ty: Type<'a>| match is_new {
                     true => ty.get_construct_signatures(),
                     false => ty.get_call_signatures(),
                 };
-                tsutils::union_constituents(call.callee().ty()).iter().flat_map(signatures_of).collect()
+                let ty = call.callee().ty();
+                (ty, tsutils::union_constituents(ty).iter().flat_map(signatures_of).collect())
             });
 
             // The types from all of the call signatures.
-            let arg_expected_return_types: SmallVec<[Type<'a>; 4]> = func_signatures
-                .iter()
-                .filter_map(|signature| signature.parameters().get(arg_idx))
-                .flat_map(|param| tsutils::union_constituents(param.get_type_at_location(call.callee())))
-                .flat_map(|param_type| param_type.get_call_signatures())
-                .map(|param_signature| param_signature.get_return_type())
-                .collect();
-
+            let find_expected = || ExpectedReturnTypes::of(func_signatures, arg_idx, call.callee());
+            let expected = match func_signatures.len() > 16 {
+                true => *cx.state.entry((*callee_type, is_new, arg_idx)).or_insert_with(find_expected),
+                false => find_expected(),
+            };
             let has_single_signature = func_signatures.len() == 1;
-            // A type parameter is not resolved even for an overload that matches the call.
-            let all_signatures_return_void = arg_expected_return_types
-                .iter()
-                .all(|&ty| is_void(ty) || is_nullish_or_any(ty) || tsutils::is_type_parameter(ty));
 
             // The contextual type is that of the first overload, though another one may match the call.
-            let is_void_expected = (has_single_signature || all_signatures_return_void) && expects_void_function(arg_node)
-                || arg_expected_return_types.iter().any(|&ty| is_void(ty))
-                    && arg_expected_return_types.iter().all(|&ty| is_nullish_or_any(ty));
+            let is_void_expected = (has_single_signature || expected.are_all_void) && expects_void_function(arg_node)
+                || expected.is_any_void && expected.are_all_nullish_or_any;
             if is_void_expected {
                 self.report_non_void_function(FuncNode::Expr(arg_node), cx);
             }
@@ -325,7 +350,7 @@ impl StrictVoidReturn {
 
 impl Rule for StrictVoidReturn {
     const META: Meta = Meta::typescript("strict-void-return", Kind::Problem).has_suggestions().requires_types();
-    type State<'a> = ();
+    type State<'a> = ExpectedByCallee<'a>;
 
     fn new(options: &Options) -> Self {
         let mut allowed_return_type = TypeFlags::VOID | TypeFlags::NEVER | TypeFlags::UNDEFINED;
@@ -335,7 +360,7 @@ impl Rule for StrictVoidReturn {
         StrictVoidReturn { allowed_return_type }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ExpectedByCallee<'a> {
         on.exprs([ExprTag::Array], |rule, node, cx| {
             let ExprKind::Array(elements) = node.kind() else {
                 return;
@@ -378,5 +403,6 @@ impl Rule for StrictVoidReturn {
                 rule.check_expression_node(init, cx);
             }
         });
+        ExpectedByCallee::default()
     }
 }

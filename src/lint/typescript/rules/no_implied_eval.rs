@@ -1,3 +1,4 @@
+use crate::rules::no_wrapper_object_types::GlobalFunctions;
 use bun_lint::prelude::*;
 use bun_lint::types::SymbolFlags;
 use bun_lint::types::utils::is_builtin_symbol_like;
@@ -93,7 +94,10 @@ impl NoImpliedEval {
         };
         if callee_name.is_any(&EVAL_LIKE_FUNCTIONS)
             && !is_function(handler)
-            && is_reference_to_global_function(callee_name, node)
+            && *cx
+                .state
+                .entry((Node::Expr(node).scope(), callee_name))
+                .or_insert_with(|| is_reference_to_global_function(callee_name, node))
         {
             cx.report(handler, NO_IMPLIED_EVAL_ERROR);
         }
@@ -105,13 +109,14 @@ impl Rule for NoImpliedEval {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("no-implied-eval");
-    type State<'a> = ();
+    type State<'a> = GlobalFunctions<'a>;
 
     fn new(_: &Options) -> Self {
         NoImpliedEval
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GlobalFunctions<'a> {
         on.exprs([ExprTag::Call, ExprTag::New], Self::check_implied_eval);
+        GlobalFunctions::default()
     }
 }

@@ -241,6 +241,12 @@ fn hash_func(func: Func, depth: u32, hasher: &mut FxHasher) -> Option<()> {
     }
 }
 
+/// [`is_same_ast_node`] of a constituent and a later one. What the later one is a part of is not the same, and all that
+/// is around a type that is nested deeply would be compared with it to the end.
+fn is_repeated_by<'a>(earlier: TypeNode<'a>, later: TypeNode<'a>) -> bool {
+    !earlier.span().contains(later.span()) && is_same_ast_node(earlier, later)
+}
+
 /// Hashes some of what two types have in common if [`is_same_ast_node`] holds for them.
 fn hash_ast_node(mut node: TypeNode, depth: u32, hasher: &mut FxHasher) -> Option<()> {
     while let TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) = node.kind() {
@@ -429,7 +435,7 @@ impl<'a> Index<'a> {
 
     /// The one that is not [plain](is_plain) and the same as `node`. No two of them are the same.
     fn find_not_plain(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
-        let is_same = |it: &TypeNode<'a>| is_same_ast_node(*it, node);
+        let is_same = |it: &TypeNode<'a>| is_repeated_by(*it, node);
         if is_plain(node) {
             return None;
         }
@@ -455,7 +461,7 @@ impl<'a> Constituents<'a> {
     const MANY: usize = 32;
 
     fn find_same_ast_node(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
-        let is_same = |it: &TypeNode<'a>| is_same_ast_node(*it, node);
+        let is_same = |it: &TypeNode<'a>| is_repeated_by(*it, node);
         match &self.index {
             None => self.unique.iter().map(|it| it.0).find(is_same),
             Some(index) => {

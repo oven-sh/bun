@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
 use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::rc::Rc;
 
 /// Disallow type parameters that aren't used multiple times.
 pub struct NoUnnecessaryTypeParameters;
@@ -84,6 +85,9 @@ fn is_type_parameter_repeated_in_ast<'a>(
 
 /// By the declaration of the type parameter.
 type Counts<'a> = FxHashMap<TsNode<'a>, u32>;
+
+/// What has been counted in the type of a function.
+type CountsByType<'a> = FxHashMap<Type<'a>, Rc<Counts<'a>>>;
 
 /// Upstream's `collectTypeParameterUsageCounts`: how often each type parameter appears in a type.
 struct UsageCounter<'a, 'c> {
@@ -360,11 +364,11 @@ fn replace_usages_with_constraint<'a>(
 }
 
 fn check_node<'a>(
-    cx: &Cx<'a, NoUnnecessaryTypeParameters>,
+    cx: &mut Cx<'a, NoUnnecessaryTypeParameters>,
     type_parameters: List<'a, TypeParam<'a>>,
     start_of_body: u32,
     descriptor: &'static str,
-    count_type_parameter_usage: impl Fn() -> Counts<'a>,
+    count_type_parameter_usage: impl Fn(&mut CountsByType<'a>) -> Rc<Counts<'a>>,
 ) {
     let mut counts = None;
     for type_parameter in type_parameters {
@@ -376,7 +380,7 @@ fn check_node<'a>(
             continue;
         }
         // Inferred types take the type checker.
-        let counts = counts.get_or_insert_with(&count_type_parameter_usage);
+        let counts = counts.get_or_insert_with(|| count_type_parameter_usage(&mut cx.state));
         let uses = match counts.get(&type_parameter.ts_node()).copied() {
             Some(1) => "never used",
             Some(2) => "used only once",
@@ -397,13 +401,13 @@ impl Rule for NoUnnecessaryTypeParameters {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = CountsByType<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTypeParameters
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> CountsByType<'a> {
         on.funcs(|_, node, cx| {
             let type_parameters = node.type_params();
             // Upstream does not listen for a `TSConstructSignatureDeclaration`.
@@ -415,10 +419,18 @@ impl Rule for NoUnnecessaryTypeParameters {
                 FnBody::Expr(body) => Some(body.span().start),
                 FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
             };
-            check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", || {
-                let mut counts = Counts::default();
-                collect_type_parameter_usage_counts(node.ts_node(), &mut counts, false);
-                counts
+            check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
+                let ts_node = node.ts_node();
+                let count = || {
+                    let mut counts = Counts::default();
+                    collect_type_parameter_usage_counts(ts_node, &mut counts, false);
+                    Rc::new(counts)
+                };
+                match ts_node.kind() {
+                    SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
+                    // Each overload of a function has the type of the function, with the signatures of all of them.
+                    _ => Rc::clone(known.entry(ts_node.get_type_at_location()).or_insert_with(count)),
+                }
             });
         });
         on.classes(|_, node, cx| {
@@ -426,7 +438,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             if type_parameters.is_empty() {
                 return;
             }
-            check_node(cx, type_parameters, node.body_span().start, "class", || {
+            check_node(cx, type_parameters, node.body_span().start, "class", |_| {
                 let mut counts = Counts::default();
                 for type_parameter in type_parameters {
                     collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true);
@@ -435,8 +447,9 @@ impl Rule for NoUnnecessaryTypeParameters {
                 for member in node.members().iter().filter(|member| member.kind() != MemberKind::StaticBlock) {
                     collect_type_parameter_usage_counts(member.ts_node(), &mut counts, true);
                 }
-                counts
+                Rc::new(counts)
             });
         });
+        CountsByType::default()
     }
 }

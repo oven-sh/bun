@@ -8,6 +8,7 @@ use bun_lint::types::utils::{
 use bun_lint::types::{Signature, TsSymbol, Type};
 use bun_lint::utils::eslint_utils::is_parenthesized;
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence_for_node};
+use rustc_hash::FxHashMap;
 
 /// Require Promise-like statements to be handled appropriately.
 pub struct NoFloatingPromises {
@@ -44,6 +45,14 @@ const FLOATING_VOID: Message = Message::new(
     "floatingVoid",
     "Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator.",
 );
+
+/// What has been found out about types, unless with `checkThenables` it depends on the place too. Each constituent of a
+/// union is looked at, and many statements have the same type.
+#[derive(Default)]
+pub struct State<'a> {
+    promise_arrays: FxHashMap<Type<'a>, bool>,
+    promise_likes: FxHashMap<Type<'a>, bool>,
+}
 
 /// In which way a promise is not handled.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -97,11 +106,11 @@ fn add_await(fixer: Fixer, node: Span, expression: Expr) -> Vec<Fix> {
 impl NoFloatingPromises {
     /// `node`: the range of the statement, or of the expression if it is the body of an arrow
     /// function.
-    fn check_node<'a>(&self, node: Span, expression: Expr<'a>, cx: &Cx<'a, Self>) {
+    fn check_node<'a>(&self, node: Span, expression: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if self.is_known_safe_promise_call(expression) {
             return;
         }
-        let Some(unhandled) = self.is_unhandled_promise(expression, true) else {
+        let Some(unhandled) = self.is_unhandled_promise(expression, true, &mut cx.state) else {
             return;
         };
         let message = match (unhandled, self.ignore_void) {
@@ -140,17 +149,22 @@ impl NoFloatingPromises {
 
     /// `is_chain_element`: where ESLint has a `ChainExpression` and in it the call, `node` stands
     /// for the call.
-    fn is_unhandled_promise(&self, node: Expr, is_chain_element: bool) -> Option<Unhandled> {
+    fn is_unhandled_promise<'a>(
+        &self,
+        node: Expr<'a>,
+        is_chain_element: bool,
+        known: &mut State<'a>,
+    ) -> Option<Unhandled> {
         match node.kind() {
             ExprKind::Assign { .. } => return None,
             // Any operand of a comma expression can be an unhandled promise, whatever the type of
             // the last is.
             ExprKind::Binary { op: BinOp::Comma, .. } => {
                 let mut items = node.sequence().into_iter();
-                return items.find_map(|item| self.is_unhandled_promise(item, false));
+                return items.find_map(|item| self.is_unhandled_promise(item, false, known));
             }
             ExprKind::Unary { op: UnOp::Void, operand } if !self.ignore_void => {
-                return self.is_unhandled_promise(operand, false);
+                return self.is_unhandled_promise(operand, false, known);
             }
             // The value of every other unary operator is a primitive.
             ExprKind::Unary { .. } => return None,
@@ -158,7 +172,7 @@ impl NoFloatingPromises {
         }
 
         let ty = node.ty();
-        if self.is_promise_array(node, ty) {
+        if self.is_promise_array(node, ty, known) {
             return Some(Unhandled::PromiseArray);
         }
         // `await` handles a promise, but not an array of promises. The type does not tell: that of
@@ -166,7 +180,7 @@ impl NoFloatingPromises {
         if let ExprKind::Await(_) = node.kind() {
             return None;
         }
-        if !self.is_promise_like(node, ty) {
+        if !self.is_promise_like(node, ty, known) {
             return None;
         }
 
@@ -184,33 +198,47 @@ impl NoFloatingPromises {
                     };
                 }
                 match parse_finally_call(node) {
-                    Some(call) => self.is_unhandled_promise(call.object, false),
+                    Some(call) => self.is_unhandled_promise(call.object, false, known),
                     None => Some(Unhandled::Promise),
                 }
             }
             // The promise is the value of one of the branches.
             ExprKind::Cond { yes, no, .. } => self
-                .is_unhandled_promise(no, false)
-                .or_else(|| self.is_unhandled_promise(yes, false)),
+                .is_unhandled_promise(no, false, known)
+                .or_else(|| self.is_unhandled_promise(yes, false, known)),
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } => self
-                .is_unhandled_promise(left, false)
-                .or_else(|| self.is_unhandled_promise(right, false)),
+                .is_unhandled_promise(left, false, known)
+                .or_else(|| self.is_unhandled_promise(right, false, known)),
             _ => Some(Unhandled::Promise),
         }
     }
 
-    fn is_promise_array<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {
-        union_constituents(ty).iter().map(|t| t.get_apparent_type()).any(|ty| {
+    fn is_promise_array<'a>(&self, node: Expr<'a>, ty: Type<'a>, known: &mut State<'a>) -> bool {
+        if let Some(&is_promise_array) = known.promise_arrays.get(&ty) {
+            return is_promise_array;
+        }
+        let is_promise_array = union_constituents(ty).iter().map(|t| t.get_apparent_type()).any(|ty| {
             if ty.is_array_type() {
                 let array_type = ty.get_type_arguments().first();
-                return array_type.is_some_and(|it| self.is_promise_like(node, it));
+                return array_type.is_some_and(|it| self.is_promise_like(node, it, known));
             }
             ty.is_tuple_type()
-                && ty.get_type_arguments().iter().any(|it| self.is_promise_like(node, it))
-        })
+                && ty.get_type_arguments().iter().any(|it| self.is_promise_like(node, it, known))
+        });
+        if !self.check_thenables {
+            known.promise_arrays.insert(ty, is_promise_array);
+        }
+        is_promise_array
     }
 
-    fn is_promise_like<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {
+    fn is_promise_like<'a>(&self, node: Expr<'a>, ty: Type<'a>, known: &mut State<'a>) -> bool {
+        if self.check_thenables {
+            return self.is_promise_like_at(node, ty);
+        }
+        *known.promise_likes.entry(ty).or_insert_with(|| self.is_promise_like_at(node, ty))
+    }
+
+    fn is_promise_like_at<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {
         if type_matches_some_specifier(ty, &self.allow_for_known_safe_promises) {
             return false;
         }
@@ -244,7 +272,7 @@ impl Rule for NoFloatingPromises {
         .has_suggestions()
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -261,7 +289,7 @@ impl Rule for NoFloatingPromises {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Expr], |rule, stmt, cx| {
             let StmtKind::Expr(expression) = stmt.kind() else {
                 return;
@@ -284,5 +312,6 @@ impl Rule for NoFloatingPromises {
                 }
             });
         }
+        State::default()
     }
 }

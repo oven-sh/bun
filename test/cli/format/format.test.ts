@@ -468,6 +468,16 @@ describe.concurrent("bun format", () => {
     expect(huge.stderr).toContain("[error] huge.json:");
   });
 
+  test.each(["@", "keyof ", "renders ", "infer A extends ", "component() renders "])(
+    "code that is nested too deeply is refused, and does not overflow the stack: 100,000 times `%s`",
+    async word => {
+      const text = word === "@" ? word.repeat(100_000) : `// @flow\ntype A = ${word.repeat(100_000)}x;`;
+      const result = await format({ "deep.js": text + "\n" }, ["--check", "deep.js"]);
+      expect(result.stderr).toContain("[error] deep.js:");
+      expect(result.exitCode).toBe(2);
+    },
+  );
+
   test("YAML, GraphQL, Markdown", async () => {
     const result = await format(
       {

@@ -322,14 +322,14 @@ impl Parser<'_> {
 
     /// `?T`
     fn flow_prefix_type(&mut self) -> TypeNodeId {
+        if self.is_too_deep() {
+            return TypeNodeId::NONE;
+        }
         if self.token() == T::QuestionQuestion {
             self.split_token(T::Question);
         }
         if self.token() != T::Question {
             return self.flow_postfix_type();
-        }
-        if self.is_too_deep() {
-            return TypeNodeId::NONE;
         }
         let start = self.pos();
         self.next();

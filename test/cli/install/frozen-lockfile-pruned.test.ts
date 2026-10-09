@@ -758,8 +758,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     },
   );
 
-  // bun.lockb stores the list as hashes without names, and a hash without a name trusts nothing.
-  // So a named list of the missing workspace cannot be kept: the default list applies, and it has electron.
+  // Only an empty recorded list is kept. With entries, the default list applies again, and it has electron.
   test.concurrent.each([
     ["[]", "absent", [], false],
     ["[]", "intact", [], false],
@@ -792,6 +791,38 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
       expect(await exists(join(electron, "package.json"))).toBeTrue();
       expect(await exists(join(electron, "preinstall.txt"))).toBe(runs);
       expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+    },
+  );
+
+  // uses-what-bin is not on the default list and its install script writes what-bin.txt.
+  // bun.lock still records the list that package.json no longer has, and the missing workspace never declared one.
+  test.concurrent(
+    "a trustedDependencies list deleted from package.json is not kept for a missing workspace",
+    async () => {
+      const root: PackageJson = { name: "mono", workspaces: ["packages/*"] };
+      const tree: Tree = {
+        root: { ...root, trustedDependencies: ["uses-what-bin"] },
+        packages: {
+          "packages/other": { name: "other" },
+          "packages/uses": { name: "uses", dependencies: { "uses-what-bin": "1.0.0" } },
+        },
+      };
+      const { fullDir, full } = await fullInstall(linker, tree);
+      const usesWhatBin = dirname(installedPath(fullDir, linker, "uses-what-bin", "1.0.0"));
+      expect(full).toContain('"trustedDependencies": [\n    "uses-what-bin",\n  ],');
+      expect(await exists(join(usesWhatBin, "what-bin.txt"))).toBeTrue();
+
+      await write(join(fullDir, "package.json"), JSON.stringify(root));
+      await rm(join(fullDir, "packages", "other"), { recursive: true, force: true });
+      await rm(join(fullDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(fullDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+
+      const { stderr } = await frozen(fullDir, linker, 0);
+
+      expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "other"');
+      expect(await exists(join(usesWhatBin, "package.json"))).toBeTrue();
+      expect(await exists(join(usesWhatBin, "what-bin.txt"))).toBeFalse();
+      expect(await lockText(fullDir)).toBe(full);
     },
   );
 });

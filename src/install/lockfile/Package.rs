@@ -901,7 +901,7 @@ pub struct DiffSummary {
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
     /// A list appeared or disappeared. `[]` adds no name, so the two maps above cannot report it.
     pub(crate) trusted_dependencies_list_toggled: bool,
-    /// A manifest is missing and the recorded list has its names, so the install keeps that list.
+    /// A manifest is missing and the recorded list is empty, so the install keeps that list.
     pub(crate) keeps_recorded_trusted_dependencies: bool,
 
     pub(crate) patched_dependencies_changed: bool,
@@ -1608,11 +1608,8 @@ impl Diff {
 
             // The list was removed: the default list applies again.
             (Some(from_trusted_dependencies), None) => {
-                // The missing manifest can be the one that declares the list.
-                let names_known = from_trusted_dependencies
-                    .iter()
-                    .all(|(_, name)| !name.is_empty());
-                if summary.manifests_incomplete() && names_known {
+                // The missing manifest can declare the `[]`. An empty list trusts nothing, so it is kept.
+                if summary.manifests_incomplete() && from_trusted_dependencies.count() == 0 {
                     summary.keeps_recorded_trusted_dependencies = true;
                     return Ok(());
                 }

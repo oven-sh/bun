@@ -1773,15 +1773,18 @@ fn do_flush_dependency_queue(this: &mut PackageManager) {
         let mut i: u32 = dependencies_list.off;
         let end = dependencies_list.off + dependencies_list.len;
         while i < end {
-            let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
             let resolution = this.lockfile.buffers.resolutions[i as usize];
             // A row that kept its git, github: or tarball package when its
             // package.json was parsed again has nothing to resolve
             // (`keep_git_and_tarball_resolutions`).
-            if !this.lockfile.is_git_or_tarball_package(resolution) {
-                let _ =
-                    enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
+            if resolution != crate::invalid_package_id
+                && this.lockfile.is_git_or_tarball_package(resolution)
+            {
+                i += 1;
+                continue;
             }
+            let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
+            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
             i += 1;
         }
     }

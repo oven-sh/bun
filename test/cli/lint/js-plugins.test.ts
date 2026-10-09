@@ -1021,12 +1021,65 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  test("without rules in JavaScript there is no engine", async () => {
-    const { stderr, exitCode } = await lint(
-      { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },
-      ["--timing", "a.js"],
-    );
-    expect(stderr).toContain("JavaScript: 0 engines, which have loaded 0 modules, 0.0 MB of source, in 0.0ms");
-    expect(exitCode).toBe(1);
-  });
+  test(
+    "a rule that asks for types is taken out, the rest runs, and the run ends with an error that names it",
+    async () => {
+      // As `getParserServices` of @typescript-eslint/utils does it.
+      const services = `context => {
+        if (context.sourceCode.parserServices.program == null) {
+          throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file. See https://tseslint.com/typed-linting for enabling linting with type information.\\nParser: (unknown)");
+        }
+      }`;
+      const files = {
+        "eslint.config.mjs": `
+          const services = ${services};
+          const report = context => ({ Program(node) { context.report({ node, message: context.id }); } });
+          const typed = {
+            rules: {
+              "at-once": { create: context => (services(context), report(context)) },
+              later: { create: context => ({ "Program:exit"() { services(context); }, ...report(context) }) },
+              untyped: { create: report },
+            },
+          };
+          export default [{ plugins: { typed }, rules: { "typed/at-once": "error", "typed/later": "error", "typed/untyped": "error", "no-var": "error" } }];`,
+        "a.js": "// eslint-disable-next-line typed/later\nvar a;\n",
+        "b.js": "var b;\n",
+      };
+      const { stdout, stderr, exitCode } = await lint(files, [
+        "-f",
+        "unix",
+        "--report-unused-disable-directives",
+        "a.js",
+        "b.js",
+      ]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: typed/untyped [Error/typed/untyped]
+        <dir>/a.js:2:1: Unexpected var, use let or const instead. [Error/no-var]
+        <dir>/b.js:1:1: typed/untyped [Error/typed/untyped]
+        <dir>/b.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
+
+        4 problems"
+      `);
+      expect(stderr).toContain(
+        "2 rules in JavaScript did not run, only the built-in rules have types: typed/at-once, typed/later",
+      );
+      expect(stderr).not.toContain("You have used a rule");
+      expect(exitCode).toBe(2);
+      expect((await lint(files, ["--allow-unsupported", "a.js", "b.js"])).exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "without rules in JavaScript there is no engine",
+    async () => {
+      const { stderr, exitCode } = await lint(
+        { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },
+        ["--timing", "a.js"],
+      );
+      expect(stderr).toContain("JavaScript: 0 engines, which have loaded 0 modules, 0.0 MB of source, in 0.0ms");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
 });

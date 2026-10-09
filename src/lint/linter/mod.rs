@@ -423,36 +423,56 @@ impl Linter {
             (options.js_plugins, &config.js_settings, options.again)
             && !running_js.is_empty()
         {
-            let enabled: Vec<&js_plugin::Configured> =
-                running_js.iter().map(|it| &**it.configured).collect();
-            let physical_path_len = options.physical_path_len;
-            match host.run_on_block(
-                file,
-                settings,
-                &enabled,
-                options.wants_fixes,
-                physical_path_len,
-            ) {
-                Ok(reports) => {
-                    problems.reserve(reports.len());
-                    for report in reports {
-                        if let Some(rule) = running_js.get(report.rule as usize) {
-                            problems.push(js_message(report, rule));
+            // What a rule that does not run would have reported cannot be told.
+            running_js.retain(|it| {
+                let has_asked = host.has_asked_for_types(&it.configured.rule);
+                if has_asked {
+                    rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
+                }
+                !has_asked
+            });
+            // Once more for each rule that asks for types.
+            while !running_js.is_empty() {
+                let enabled: Vec<&js_plugin::Configured> =
+                    running_js.iter().map(|it| &**it.configured).collect();
+                match host.run_on_block(
+                    file,
+                    settings,
+                    &enabled,
+                    options.wants_fixes,
+                    options.physical_path_len,
+                ) {
+                    Ok(reports) => {
+                        problems.reserve(reports.len());
+                        for report in reports {
+                            if let Some(rule) = running_js.get(report.rule as usize) {
+                                problems.push(js_message(report, rule));
+                            }
+                        }
+                    }
+                    Err(failure) => {
+                        let asks = |it: &RunningJs| {
+                            host.asks_for_types(&it.configured.rule, &failure.message)
+                        };
+                        let at = failure.rule.map(|it| it as usize);
+                        if let Some(at) = at.filter(|it| running_js.get(*it).is_some_and(asks)) {
+                            let taken = running_js.remove(at);
+                            rules_to_ignore.push(RuleId::Js(Arc::clone(&taken.configured.rule)));
+                            continue;
+                        }
+                        let rule = at.and_then(|it| running_js.get(it));
+                        match js_failure(&failure, rule, file.path(), config) {
+                            Ok(problem) => problems.push(problem),
+                            Err(thrown) => {
+                                return LintResult {
+                                    thrown: Some(thrown),
+                                    ..LintResult::default()
+                                };
+                            }
                         }
                     }
                 }
-                Err(failure) => {
-                    let rule = failure.rule.and_then(|it| running_js.get(it as usize));
-                    match js_failure(&failure, rule, file.path(), config) {
-                        Ok(problem) => problems.push(problem),
-                        Err(thrown) => {
-                            return LintResult {
-                                thrown: Some(thrown),
-                                ..LintResult::default()
-                            };
-                        }
-                    }
-                }
+                break;
             }
         }
         let enabled: Vec<Enabled> = (running.iter())

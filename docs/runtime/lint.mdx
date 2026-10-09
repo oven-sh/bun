@@ -86,7 +86,7 @@ Plugins run inside `bun lint`, on the threads that lint, as they run inside `esl
 
 Three things are not there for a rule in JavaScript:
 
-- Types. `parserServices.program` is `null`, also with `--type-aware`.
+- Types. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 - `languageOptions.parser`. A rule cannot parse text of its own.
 - Parsers other than those of ESLint and typescript-eslint, and languages other than JavaScript.
 

@@ -766,6 +766,20 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *loader.warnings.lock()) {
             self.warn(&warning);
         }
+        let without_types = js_plugins.rules_that_asked_for_types();
+        if !without_types.is_empty() {
+            let ids: Vec<&[u8]> = without_types.iter().map(|it| &it.id[..]).collect();
+            let noun: &[u8] = match ids.len() {
+                1 => b" rule",
+                _ => b" rules",
+            };
+            loader.cannot_do(&[
+                ids.len().to_string().as_bytes(),
+                noun,
+                b" in JavaScript did not run, only the built-in rules have types: ",
+                &ids.join(&b", "[..]),
+            ]);
+        }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
         if options.allow_unsupported {
             for line in unsupported.drain(..) {

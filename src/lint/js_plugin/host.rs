@@ -16,6 +16,7 @@ use crate::span::Span;
 use bun_threading::Guarded;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
@@ -106,7 +107,12 @@ struct State {
     /// By their text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
+    /// [`Host::rules_that_asked_for_types`]
+    asked_for_types: Vec<Arc<Rule>>,
 }
+
+/// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
+const ASKS_FOR_TYPES: &[u8] = b"You have used a rule which requires ";
 
 /// The plugins of a run. All threads share it.
 pub struct Host<'e> {
@@ -114,6 +120,8 @@ pub struct Host<'e> {
     cwd: Vec<u8>,
     /// Whether [`Host::loading`] is read.
     measures: bool,
+    /// Whether a rule [has asked for types](Host::has_asked_for_types).
+    has_been_asked_for_types: AtomicBool,
     state: Guarded<State>,
 }
 
@@ -188,6 +196,7 @@ impl<'e> Host<'e> {
             engine,
             cwd: cwd.to_vec(),
             measures: false,
+            has_been_asked_for_types: AtomicBool::new(false),
             state: Guarded::new(State::default()),
         }
     }
@@ -238,6 +247,33 @@ impl<'e> Host<'e> {
     /// [`Engine::most_realms`]
     pub fn most_realms(&self) -> usize {
         self.engine.most_realms()
+    }
+
+    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
+    pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
+        self.has_been_asked_for_types.load(Ordering::Relaxed)
+            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
+    }
+
+    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
+    /// [has asked](Host::has_asked_for_types).
+    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
+        if !thrown.starts_with(ASKS_FOR_TYPES) {
+            return false;
+        }
+        if !self.has_asked_for_types(rule) {
+            self.state.lock().asked_for_types.push(Arc::clone(rule));
+            self.has_been_asked_for_types.store(true, Ordering::Relaxed);
+        }
+        true
+    }
+
+    /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
+    pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
+        let mut rules = self.state.lock().asked_for_types.clone();
+        rules.sort_by(|a, b| a.id.cmp(&b.id));
+        rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
+        rules
     }
 
     /// Whether any plugin has been loaded.

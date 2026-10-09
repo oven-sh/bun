@@ -33,7 +33,7 @@ impl Handler for Collector<'_> {
                 || written.starts_with(b"\\u"))
         {
             self.control_chars.push(value as u8);
-            self.first.get_or_insert(Span::new(start, end));
+            self.first.get_or_insert_with(|| Span::new(start, end));
         }
     }
 }

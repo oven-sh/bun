@@ -1572,6 +1572,58 @@ catalogs:
     },
   );
 
+  test.concurrent("workspaces in both dependency groups, and a link: to a workspace's own folder", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-ws",
+          workspaces: ["packages/*"],
+          // the folder of the workspace `pkg-a`, under the workspace's own name
+          dependencies: { "pkg-a": "link:./packages/pkg-a" },
+        }),
+        "packages/pkg-a/package.json": JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+        "packages/pkg-b/package.json": JSON.stringify({ name: "pkg-b", version: "1.0.0" }),
+        "packages/pkg-c/package.json": JSON.stringify({
+          name: "pkg-c",
+          version: "1.0.0",
+          // the same range in both groups, and two ranges for one workspace
+          dependencies: { "pkg-a": "workspace:^", "pkg-b": "workspace:*" },
+          devDependencies: { "pkg-a": "workspace:^", "pkg-b": "workspace:^" },
+        }),
+        "yarn.lock": yarnLock({
+          "berry-ws@workspace:.": [
+            `resolution: "berry-ws@workspace:."`,
+            `dependencies:`,
+            `  pkg-a: "link:./packages/pkg-a"`,
+          ],
+          "pkg-a@link:./packages/pkg-a::locator=berry-ws%40workspace%3A.": [
+            `resolution: "pkg-a@link:./packages/pkg-a::locator=berry-ws%40workspace%3A."`,
+          ],
+          "pkg-a@workspace:^, pkg-a@workspace:packages/pkg-a": [`resolution: "pkg-a@workspace:packages/pkg-a"`],
+          "pkg-b@workspace:^, pkg-b@workspace:packages/pkg-b": [`resolution: "pkg-b@workspace:packages/pkg-b"`],
+          "pkg-c@workspace:packages/pkg-c": [
+            `resolution: "pkg-c@workspace:packages/pkg-c"`,
+            `dependencies:`,
+            `  pkg-a: "workspace:^"`,
+            `  pkg-b: "workspace:^"`,
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "pkg-a@workspace:packages/pkg-a",
+      "pkg-b@workspace:packages/pkg-b",
+      "pkg-c@workspace:packages/pkg-c",
+    ]);
+    await expectFrozenInstall(dir);
+  });
+
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

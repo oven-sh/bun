@@ -1504,7 +1504,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
             match found.map(|i| entries[i].package_id) {
                 Some(pid) if pid != INVALID_PACKAGE_ID => {
-                    let bound = this.packages.items_resolution()[pid as usize];
+                    let mut pid = pid;
+                    let mut bound = this.packages.items_resolution()[pid as usize];
                     let owner_name = owner.as_ref().map_or(&b""[..], |(n, _)| n);
                     // Bun links every workspace into the root's node_modules under its
                     // name, so the root cannot hold another package under that name.
@@ -1512,28 +1513,48 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                         && !dep.behavior.is_workspace()
                         && !dep.behavior.is_peer()
                         && bound.tag != crate::resolution::Tag::Workspace
-                        && this.workspace_paths.get(&dep.name_hash).is_some()
                     {
-                        return Err(invalid_lockfile(
-                            log,
-                            format_args!(
-                                "\"{}\" is a workspace, and yarn.lock pins the root package's \"{}@{}\" to a package that is not that workspace; bun installs the workspace in its place",
-                                bstr::BStr::new(name),
-                                bstr::BStr::new(name),
-                                bstr::BStr::new(original_literal),
-                            ),
-                        ));
+                        if let Some(ws_path) = this.workspace_paths.get(&dep.name_hash) {
+                            let ws_path = ws_path.slice(string_bytes!(this));
+                            // a `link:` / `portal:` / `file:` to the workspace's own folder is the workspace
+                            let same_folder = bound.tag == crate::resolution::Tag::Folder
+                                && bound.folder().slice(string_bytes!(this)) == ws_path;
+                            match workspaces.iter().find(|w| &*w.path == ws_path) {
+                                Some(ws) if same_folder => {
+                                    pid = ws.package_id;
+                                    bound = this.packages.items_resolution()[pid as usize];
+                                }
+                                _ => {
+                                    return Err(invalid_lockfile(
+                                        log,
+                                        format_args!(
+                                            "\"{}\" is a workspace, and yarn.lock pins the root package's \"{}@{}\" to a package that is not that workspace; bun installs the workspace in its place",
+                                            bstr::BStr::new(name),
+                                            bstr::BStr::new(name),
+                                            bstr::BStr::new(original_literal),
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
                     }
                     if original_specs.from_dev_dependencies.contains(&dep_id) {
                         // what yarn locked for the devDependencies range has to be
                         // something the dependencies range, which bun reads, accepts
-                        let accepted = dep.version.tag == dependency::VersionTag::Npm
-                            && bound.tag == crate::resolution::Tag::Npm
-                            && dep.version.npm().version.satisfies(
-                                bound.npm().version,
-                                string_bytes!(this),
-                                string_bytes!(this),
-                            );
+                        let accepted = match (dep.version.tag, bound.tag) {
+                            (dependency::VersionTag::Npm, crate::resolution::Tag::Npm) => {
+                                dep.version.npm().version.satisfies(
+                                    bound.npm().version,
+                                    string_bytes!(this),
+                                    string_bytes!(this),
+                                )
+                            }
+                            (
+                                dependency::VersionTag::Workspace,
+                                crate::resolution::Tag::Workspace,
+                            ) => true,
+                            _ => false,
+                        };
                         if !accepted {
                             return Err(invalid_lockfile(
                                 log,
@@ -2143,8 +2164,10 @@ fn append_manifest_dependencies(
     let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // name -> yarn's spelling of a rewritten range (bound to dependency ids after the sort below)
     let mut originals: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
-    // name -> the devDependencies range of a name `dependencies` also lists
+    // name -> the devDependencies range of a name `dependencies` also lists with another range
     let mut dev_ranges: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
+    // name -> its range in the first group that lists it
+    let mut declared: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
     for (group, behavior) in [
         (b"dependencies".as_slice(), Behavior::PROD),
         (b"devDependencies".as_slice(), Behavior::DEV),
@@ -2178,12 +2201,15 @@ fn append_manifest_dependencies(
                     // an optionalDependencies entry replaces the dependencies one (as in
                     // `Package::parse`); a dev duplicate is dropped
                     if !behavior.is_optional() {
-                        dev_ranges.put(name, spec)?;
+                        if declared.get(name).is_none_or(|first| *first != spec) {
+                            dev_ranges.put(name, spec)?;
+                        }
                         continue;
                     }
                     replaces = Some(*e.value_ptr);
                 } else {
                     *e.value_ptr = this.buffers.dependencies.len();
+                    declared.put(name, spec)?;
                 }
             }
             // Ranges only yarn understands: depend on what bun can read instead;

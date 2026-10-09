@@ -25,28 +25,27 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readBundle } from "../../bundle.ts";
 
-declare var self: Worker;
-
 async function load(directory: string, specifier: string) {
   const module = await import(pathToFileURL(createRequire(resolve(directory, "index.js")).resolve(specifier)).href);
   return module.format ? module : module.default;
 }
 
-if (!Bun.isMainThread) {
+// The other tool runs in processes of its own: it can hang, and oxfmt, which is native code, can end the process.
+if (process.argv[2] == "--child") {
   let tool: any;
-  self.onmessage = async ({ data: { directory, isOxfmt, name, text, options } }: MessageEvent) => {
+  process.on("message", async ({ directory, isOxfmt, name, text, options }: any) => {
     tool ??= await load(directory, isOxfmt ? "oxfmt" : "prettier");
     try {
       if (isOxfmt) {
         const result = await tool.format(name, text, options);
-        postMessage(
+        process.send!(
           result.errors.length ? { error: String(result.errors[0].message).split("\n")[0] } : { expected: result.code },
         );
-      } else postMessage({ expected: await tool.format(text, { ...options, filepath: name }) });
+      } else process.send!({ expected: await tool.format(text, { ...options, filepath: name }) });
     } catch (error) {
-      postMessage({ error: String((error as Error).message ?? error).split("\n")[0] });
+      process.send!({ error: String((error as Error).message ?? error).split("\n")[0] });
     }
-  };
+  });
 } else {
   const flags = new Map<string, string[]>();
   for (const argument of process.argv.slice(2)) {
@@ -215,24 +214,25 @@ if (!Bun.isMainThread) {
 
   // Theirs.
   const directory = isOxfmt ? flag("oxfmt") : flag("prettier");
-  type Answer = { expected?: string; error?: string; hangs?: boolean };
+  type Answer = { expected?: string; error?: string; hangs?: boolean; dies?: boolean };
   let next = 0;
   const answers: Answer[] = [];
   await Promise.all(
     Array.from({ length: Number(flag("jobs", "4")) }, async () => {
-      let worker: Worker | undefined;
+      let child: ReturnType<typeof Bun.spawn> | undefined;
+      let done: (answer: Answer) => void = () => {};
       while (next < texts.length) {
         const index = next++;
         const { name, text, set } = texts[index];
-        worker ??= new Worker(import.meta.url);
-        answers[index] = await new Promise<Answer>(done => {
-          const timer = setTimeout(() => {
-            worker!.terminate();
-            worker = undefined;
-            done({ hangs: true });
-          }, 8000);
-          worker!.onmessage = ({ data }) => (clearTimeout(timer), done(data));
-          worker!.postMessage({
+        child ??= Bun.spawn([process.execPath, import.meta.path, "--child"], {
+          stdio: ["ignore", "ignore", "ignore"],
+          ipc: message => done(message),
+          onExit: () => done({ dies: true }),
+        });
+        answers[index] = await new Promise<Answer>(resolve => {
+          const timer = setTimeout(() => done({ hangs: true }), 8000);
+          done = answer => (clearTimeout(timer), resolve(answer));
+          child!.send({
             directory,
             isOxfmt,
             name,
@@ -240,8 +240,13 @@ if (!Bun.isMainThread) {
             options: isOxfmt ? { printWidth: 80, ...sets[set] } : sets[set],
           });
         });
+        done = () => {};
+        if (answers[index].hangs || answers[index].dies) {
+          child.kill();
+          child = undefined;
+        }
       }
-      worker?.terminate();
+      child?.kill();
     }),
   );
 
@@ -277,22 +282,24 @@ if (!Bun.isMainThread) {
   texts.forEach(({ name, text, set }, index) => {
     const ending = endingOf(name)!;
     const refusal = refusals.get(`${set}/${name}`);
-    const { expected, error, hangs } = answers[index];
+    const { expected, error, hangs, dies } = answers[index];
     const ours = refusal === undefined ? readFileSync(join(root, String(set), name), "utf8") : undefined;
     const isSyntax = refusal !== undefined && /^(SyntaxError|RangeError)/.test(refusal);
     const verdict = hangs
       ? "the other hangs"
-      : ours === undefined
-        ? error !== undefined
-          ? "both refuse"
-          : isSyntax
-            ? "only we refuse: syntax"
-            : "only we refuse: a check"
-        : error !== undefined
-          ? "only the other refuses"
-          : ours == expected
-            ? "same"
-            : "different";
+      : dies
+        ? "the other dies"
+        : ours === undefined
+          ? error !== undefined
+            ? "both refuse"
+            : isSyntax
+              ? "only we refuse: syntax"
+              : "only we refuse: a check"
+          : error !== undefined
+            ? "only the other refuses"
+            : ours == expected
+              ? "same"
+              : "different";
     const row = counts.get(ending) ?? {};
     counts.set(ending, row);
     row.texts = (row.texts ?? 0) + 1;
@@ -339,6 +346,7 @@ if (!Bun.isMainThread) {
     "only we refuse: a check",
     "only the other refuses",
     "the other hangs",
+    "the other dies",
   ];
   console.log(`| ending | ${columns.join(" | ")} |\n| --- | ${columns.map(() => "---:").join(" | ")} |`);
   for (const [ending, row] of counts)

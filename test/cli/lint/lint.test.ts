@@ -153,6 +153,10 @@ describe.concurrent("bun lint", () => {
       "x = {async a}",
       "class A { async a }",
       "try {} catch (a = 1) {}",
+      "let a!",
+      "function f(this) {}",
+      `declare module "a"`,
+      "export as namespace a",
     ];
     const files = Object.fromEntries(codes.map((code, i) => [`a${i}.js`, code + "\n"]));
     const { stdout, exitCode } = await lint({ [name]: text, ...files }, ["-f", "unix", ...Object.keys(files)]);

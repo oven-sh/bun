@@ -213,32 +213,53 @@ describe("bundler", () => {
       build.onResolve({ filter: /^virtual:/ }, ({ path }) => ({ path, namespace: "virtual" }));
       build.onLoad({ filter: /./, namespace: "virtual" }, () => ({
         loader: "ts",
-        contents: `console.log(import.meta.glob("./modules/*.ts"));`,
+        contents: `try { import.meta.glob("./modules/*.ts"); } catch (error) { console.log(error.message); }`,
       }));
     },
-    bundleErrors: {
-      "virtual:virtual:relative": [
-        `Expected a glob pattern in a module that is not a file to start with "/", but got "./modules/*.ts"`,
-      ],
+    run: {
+      stdout: `Expected a glob pattern in a module that is not a file to start with "/", but got "./modules/*.ts"`,
     },
   });
 
-  itBundled("import-meta-glob/Errors", {
+  const invalid = [
+    `Expected a glob pattern to be a string literal, but got identifier`,
+    `Expected the "import.meta.glob" option "eager" to be a boolean literal, but got identifier`,
+    `Expected a glob pattern to start with "/", "./", "../", "**" or a path alias, but got "modules/*.ts"`,
+  ];
+  const invalidCalls = `
+    const pattern = "./modules/*.ts", eager = true;
+    for (const call of [
+      () => import.meta.glob(pattern),
+      () => import.meta.glob("./modules/*.ts", { eager }),
+      () => import.meta.glob("modules/*.ts"),
+    ])
+      try { call(); } catch (error) { console.log(error.name + ": " + error.message); }
+    console.log(import.meta.glob ? import.meta.glob(pattern) : "fallback");`;
+
+  itBundled("import-meta-glob/CallsThatCannotBeReplacedThrowWhenReached", {
+    entryPoints: ["/entry.ts"],
+    files: { ...modules, "/entry.ts": invalidCalls },
+    bundleWarnings: { "/entry.ts": [...invalid, invalid[0]] },
+    run: { stdout: [...invalid.map(message => "TypeError: " + message), "fallback"].join("\n") },
+  });
+
+  itBundled("import-meta-glob/NoWarningForAPackage", {
+    entryPoints: ["/entry.ts"],
+    files: { ...modules, "/entry.ts": `import "dep";`, "/node_modules/dep/index.js": invalidCalls },
+    run: { stdout: [...invalid.map(message => "TypeError: " + message), "fallback"].join("\n") },
+  });
+
+  itBundled("import-meta-glob/AFileThatAssignsToItCallsWhatItAssigned", {
     entryPoints: ["/entry.ts"],
     files: {
       ...modules,
       "/entry.ts": `
-        import.meta.glob(pattern);
-        import.meta.glob("./modules/*.ts", { eager });
-        import.meta.glob("modules/*.ts");`,
+        const load = () => import.meta.glob("./modules/*.ts", { eager: true });
+        import.meta.glob ??= pattern => "own " + pattern;
+        console.log(load());`,
     },
-    bundleErrors: {
-      "/entry.ts": [
-        `Expected a glob pattern to be a string literal, but got identifier`,
-        `Expected the "import.meta.glob" option "eager" to be a boolean literal, but got identifier`,
-        `Expected a glob pattern to start with "/", "./", "../", "**" or a path alias, but got "modules/*.ts"`,
-      ],
-    },
+    target: "bun",
+    run: { stdout: "own ./modules/*.ts" },
   });
 
   itBundled("import-meta-glob/NotCalled", {

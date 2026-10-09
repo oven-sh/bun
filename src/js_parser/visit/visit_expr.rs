@@ -336,10 +336,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 .ref_,
                         ),
                 )
-                .with_is_template_tag(matches!(
-                    (p.template_tag, expr.data),
-                    (Data::EIdentifier(tag), Data::EIdentifier(id)) if tag.ref_.eql(id.ref_)
-                ))
                 .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
@@ -667,6 +663,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
             p.visit_expr(tag);
+            if p.options.features.inject_jest_globals {
+                p.drop_namespace_of_lowered_callee(tag);
+            }
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1878,16 +1877,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        if p.has_import_meta {
-            if p.is_import_meta_glob(&e_) {
-                *e = p.visit_import_meta_glob(&mut e_, expr.loc, false);
-                return;
-            }
-            if let Some(mut glob) = p.import_meta_glob_in_object_keys(&e_) {
-                let arg = &mut e_.args.slice_mut()[0];
-                *arg = p.visit_import_meta_glob(&mut glob, arg.loc, true);
-            }
-        }
+        let is_import_meta_glob = p.has_import_meta && p.is_import_meta_glob_call(&e_);
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1967,7 +1957,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         if p.options.features.inject_jest_globals {
-            p.unwrap_import_in_mock_path(&mut e_);
+            p.drop_namespace_of_lowered_callee(&mut e_.target);
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
@@ -2151,8 +2141,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
 
-            for arg in e_.args.slice_mut() {
-                p.visit_expr(arg);
+            let visited_args = usize::from(
+                p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
+            );
+            let mut arg_in = ExprIn {
+                is_object_keys_argument: p.has_import_meta && p.is_object_keys_call(&e_),
+                ..Default::default()
+            };
+            for arg in &mut e_.args.slice_mut()[visited_args..] {
+                p.visit_expr_in_out(arg, arg_in);
+                arg_in = ExprIn::default();
             }
 
             // Restore saved state.
@@ -2168,6 +2166,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 };
                 return;
             }
+        }
+
+        if is_import_meta_glob {
+            p.expand_import_meta_glob(e, in_.is_object_keys_argument);
+            return;
         }
 
         // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`

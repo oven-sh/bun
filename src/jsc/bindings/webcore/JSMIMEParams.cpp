@@ -20,12 +20,19 @@
 #include "ZigGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
+#include "headers.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 namespace WebCore {
 
 using namespace JSC;
 using namespace WTF;
+
+// JSC inlines JSMap::has whole into every caller.
+static NEVER_INLINE bool hasParameter(JSGlobalObject* globalObject, JSMap* map, JSValue name)
+{
+    return map->has(globalObject, name);
+}
 
 //-- Helper Functions (Adapted from mime.ts & HTTPParsers.h) --
 
@@ -310,10 +317,10 @@ __attribute__((minsize)) bool parseMIMEParamsString(JSGlobalObject* globalObject
 
         // Add to map only if the name doesn't exist yet (first one wins)
         JSValue nameJS = jsString(vm, name);
-        auto has = map->has(globalObject, nameJS);
+        auto has = hasParameter(globalObject, map, nameJS);
         RETURN_IF_EXCEPTION(scope, {});
         if (!has) {
-            map->set(globalObject, nameJS, jsString(vm, valueStr));
+            JSC__JSMap__set(map, globalObject, JSValue::encode(nameJS), JSValue::encode(jsString(vm, valueStr)));
             RETURN_IF_EXCEPTION(scope, false);
         }
 
@@ -406,12 +413,12 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
 
     // 3. Perform operation on the map
     JSMap* map = thisObject->jsMap();
-    auto has = map->has(globalObject, jsString(vm, name));
+    auto has = hasParameter(globalObject, map, jsString(vm, name));
     RETURN_IF_EXCEPTION(scope, {});
     if (!has) {
         return JSValue::encode(jsNull());
     }
-    JSValue result = map->get(globalObject, jsString(vm, name));
+    JSValue result = JSValue::decode(JSC__JSMap__get(map, globalObject, JSValue::encode(jsString(vm, name))));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // 4. Return result (null if not found)
@@ -434,7 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
-    bool result = map->has(globalObject, jsString(vm, name));
+    bool result = hasParameter(globalObject, map, jsString(vm, name));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     return JSValue::encode(jsBoolean(result));
@@ -476,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
 
     // 2. Perform Set Operation
     JSMap* map = thisObject->jsMap();
-    map->set(globalObject, jsString(vm, nameStr), jsString(vm, valueStr));
+    JSC__JSMap__set(map, globalObject, JSValue::encode(jsString(vm, nameStr)), JSValue::encode(jsString(vm, valueStr)));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     return JSValue::encode(jsUndefined());
@@ -498,7 +505,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
-    map->remove(globalObject, jsString(vm, name));
+    JSC__JSMap__remove(map, globalObject, JSValue::encode(jsString(vm, name)));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     return JSValue::encode(jsUndefined());

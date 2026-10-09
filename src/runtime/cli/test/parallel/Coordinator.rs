@@ -36,8 +36,8 @@ pub(crate) struct Coordinator<'a> {
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
-    /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
-    /// and BUN_TEST_WORKER_ID appended.
+    /// One envp per worker slot — same base, with that slot's
+    /// `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],
@@ -454,7 +454,7 @@ impl<'a> Coordinator<'a> {
                 Output::flush();
             }
             frame::Kind::FileDone => {
-                let mut nums = [0u32; 9];
+                let mut nums = [0u32; 10];
                 for n in nums.iter_mut() {
                     *n = rd.u32();
                 }
@@ -467,6 +467,7 @@ impl<'a> Coordinator<'a> {
                     expectations,
                     skipped_label,
                     files,
+                    shuffled,
                     unhandled,
                 ] = nums;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
@@ -499,6 +500,7 @@ impl<'a> Coordinator<'a> {
                     summary.expectations += expectations;
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
+                    summary.shuffled += shuffled;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);

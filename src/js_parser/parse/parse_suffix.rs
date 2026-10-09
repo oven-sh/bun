@@ -190,6 +190,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
+            if matches!(target.data, ExprData::EImportMeta(_)) {
+                p.did_parse_import_meta_property(name.slice());
+            }
 
             let loc = left.loc;
             *left = p.new_expr(

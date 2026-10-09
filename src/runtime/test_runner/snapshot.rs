@@ -10,8 +10,9 @@ use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 
-use super::bun_test::ExecutionEntry;
+use super::bun_test::{BunTest, DescribeScope, ExecutionEntry, TestScheduleEntry};
 use super::diff_format::DiffFormatter;
+use super::execution::Result as TestResult;
 use super::expect::Expect;
 use super::expect::get_state::full_test_name;
 use super::jest::{FileColumns as _, Jest};
@@ -59,6 +60,11 @@ impl Format {
         if self == Format::Vitest { b" > " } else { b": " }
     }
 
+    /// Jest and Vitest print values with pretty-format, and keep the entries of a file sorted.
+    pub(crate) fn is_pretty_format(self) -> bool {
+        self != Format::Bun
+    }
+
     pub(crate) fn matches(self, saved: &[u8], received: &[u8]) -> bool {
         match self {
             Format::Vitest => saved.trim_ascii() == received.trim_ascii(),
@@ -76,7 +82,19 @@ struct Entry {
 pub(crate) enum Outcome {
     Passed,
     Written,
+    /// Not counted yet.
     Mismatch { saved: Box<[u8]> },
+}
+
+pub(crate) enum FileOutcome {
+    Passed,
+    Written,
+    Mismatch { saved: Box<[u8]> },
+    /// The path is that of the file that `toMatchSnapshot()` uses.
+    IsSnapshotFile,
+    NotAllowedInCI,
+    NoTest(Error),
+    Failed(bun_sys::Error),
 }
 
 pub(crate) struct Snapshots {
@@ -140,6 +158,8 @@ pub(crate) struct InlineSnapshotToWrite {
     pub(crate) start_indent: Option<Box<[u8]>>,
     /// owned (was: owned by Snapshots.allocator)
     pub(crate) end_indent: Option<Box<[u8]>>,
+    /// Vitest indents a new snapshot by a tab where the line of the matcher is indented by tabs.
+    pub(crate) is_in_vitest_test: bool,
 }
 
 impl InlineSnapshotToWrite {
@@ -154,6 +174,44 @@ impl InlineSnapshotToWrite {
             return true;
         }
         false
+    }
+}
+
+/// The errors of updating the inline snapshots of one file, printed when it is done with.
+struct ReportedLog<'a> {
+    log: bun_ast::Log,
+    success: &'a core::cell::Cell<bool>,
+}
+
+impl core::ops::Deref for ReportedLog<'_> {
+    type Target = bun_ast::Log;
+    fn deref(&self) -> &bun_ast::Log {
+        &self.log
+    }
+}
+
+impl core::ops::DerefMut for ReportedLog<'_> {
+    fn deref_mut(&mut self) -> &mut bun_ast::Log {
+        &mut self.log
+    }
+}
+
+impl Drop for ReportedLog<'_> {
+    fn drop(&mut self) {
+        if self.log.errors > 0 {
+            let _ = self.log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
+            self.success.set(false);
+        }
+    }
+}
+
+/// A slot that `TSXParser::init` has filled.
+struct InitializedParser<'a>(core::mem::MaybeUninit<js_parser::TSXParser<'a>>);
+
+impl Drop for InitializedParser<'_> {
+    fn drop(&mut self) {
+        // SAFETY: only made of a slot that is initialized.
+        unsafe { self.0.assume_init_drop() };
     }
 }
 
@@ -211,8 +269,7 @@ fn natural_compare(a: &[u16], b: &[u16]) -> core::cmp::Ordering {
         while DIGITS.contains(&code(text, end)) {
             end += 1;
         }
-        let digits: Vec<u8> = text[first_digit..end].iter().map(|unit| *unit as u8).collect();
-        (bun_core::str_utf8(&digits).and_then(|digits| digits.parse().ok()).unwrap_or(0.0), end)
+        (text[first_digit..end].iter().fold(0.0, |number, digit| number * 10.0 + f64::from(*digit - 48)), end)
     }
 
     let (mut at_a, mut at_b) = (0, 0);
@@ -287,7 +344,7 @@ impl Snapshots {
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
         // SAFETY: `buntest_strong` owns the entries of its sequences.
         let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
-        let mut name = full_test_name(entry, format.name_separator());
+        let mut name = full_test_name(entry, format.name_separator(), format == Format::Jest);
         if !hint.is_empty() {
             name.extend_from_slice(format.hint_separator());
             name.extend_from_slice(hint);
@@ -335,7 +392,11 @@ impl Snapshots {
             self.file_buf.extend_from_slice(format.header());
         } else {
             self.file_buf = contents;
-            self.parse_file(path)?;
+            if let Err(err) = self.parse_file(path) {
+                self.file_buf = Vec::new();
+                self.values.clear();
+                return Err(err);
+            }
         }
         if format != Format::Bun {
             self.file_buf = Vec::new();
@@ -378,7 +439,6 @@ impl Snapshots {
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                self.failed += 1;
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
         } else if crate::cli::ci_info::is_ci() && !self.update_snapshots {
@@ -487,6 +547,112 @@ impl Snapshots {
         Ok(())
     }
 
+    /// With `--update-snapshots`, the entries that no test asks for any more go. Those of a test that was skipped or
+    /// failed stay: it did not come to ask.
+    pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) {
+        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return };
+        if !self.update_snapshots || file.format == Format::Bun || self.values.values().iter().all(|entry| entry.checked) {
+            return;
+        }
+        let done: Vec<*const ExecutionEntry> = buntest
+            .execution
+            .sequences
+            .iter()
+            .filter(|sequence| matches!(sequence.result, TestResult::Pass | TestResult::Todo))
+            .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
+            .collect();
+        Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
+        file.dirty = true;
+        self.values.retain(|_, entry| entry.checked);
+    }
+
+    fn keep_entries_of_tests(
+        values: &mut StringArrayHashMap<Entry>,
+        format: Format,
+        scope: &DescribeScope,
+        except: &[*const ExecutionEntry],
+    ) {
+        for entry in &scope.entries {
+            match entry {
+                TestScheduleEntry::Describe(describe) => Self::keep_entries_of_tests(values, format, describe, except),
+                TestScheduleEntry::TestCallback(test) => {
+                    if except.contains(&core::ptr::from_ref::<ExecutionEntry>(test)) {
+                        continue;
+                    }
+                    let name = full_test_name(test, format.name_separator(), format == Format::Jest);
+                    for i in 0..values.len() {
+                        let Some(rest) = values.keys()[i].strip_prefix(name.as_slice()) else { continue };
+                        if rest.starts_with(format.hint_separator())
+                            || rest.strip_prefix(b" ").is_some_and(|count| count.iter().all(u8::is_ascii_digit))
+                        {
+                            values.values_mut()[i].checked = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `toMatchFileSnapshot()`: `received` is all that the file at `path`, relative to the test file, holds.
+    #[cold]
+    pub(crate) fn match_or_write_file(&mut self, expect: &Expect, path: &[u8], received: &[u8], hint: &[u8]) -> FileOutcome {
+        let format = match self.format_of(expect) {
+            Ok(format) => format,
+            Err(err) => return FileOutcome::NoTest(err),
+        };
+        let Some(file_id) = self._current_file.as_ref().map(|file| file.id) else {
+            return FileOutcome::NoTest(Error::NoTest);
+        };
+
+        let mut snapshot_path_buf = bun_paths::path_buffer_pool::get();
+        let (test_dir, _, len) = snapshot_file_path(file_id, snapshot_path_buf.0.as_mut_slice());
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some(path) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, &mut path_buf.0, &[path])
+        else {
+            return FileOutcome::Failed(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
+        };
+        if path == &snapshot_path_buf.0[..len] {
+            return FileOutcome::IsSnapshotFile;
+        }
+
+        let saved = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(saved) => Some(saved),
+            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => None,
+            Err(err) => return FileOutcome::Failed(err.with_path(path)),
+        };
+        // In Vitest it takes a number of the test's snapshots like the others.
+        if let Err(err) = self.add_count(expect, format, hint) {
+            return FileOutcome::NoTest(err);
+        }
+        match saved {
+            Some(mut saved) => {
+                if strings::contains(&saved, b"\r\n") && !strings::contains(received, b"\r\n") {
+                    saved = saved.iter().enumerate().filter(|(i, byte)| **byte != b'\r' || saved.get(i + 1) != Some(&b'\n')).map(|(_, byte)| *byte).collect();
+                }
+                if saved == received {
+                    self.passed += 1;
+                    return FileOutcome::Passed;
+                }
+                if !self.update_snapshots {
+                    self.failed += 1;
+                    return FileOutcome::Mismatch { saved: saved.into_boxed_slice() };
+                }
+            }
+            None if crate::cli::ci_info::is_ci() && !self.update_snapshots => return FileOutcome::NotAllowedInCI,
+            None => {}
+        }
+
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+        match bun_sys::File::make_open(path, flags, 0o644).and_then(|file| file.write_all(received)) {
+            Ok(()) => {
+                self.added += 1;
+                FileOutcome::Written
+            }
+            Err(err) => FileOutcome::Failed(err.with_path(path)),
+        }
+    }
+
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
             let result = if file.dirty { self.write_sorted(&file) } else { Ok(()) };
@@ -513,20 +679,23 @@ impl Snapshots {
         let (_, _, len) = snapshot_file_path(file.id, path_buf.0.as_mut_slice());
         let path = ZStr::from_buf(&path_buf.0[..], len);
         if self.values.is_empty() {
-            let _ = bun_sys::unlink(path);
-            return Ok(());
+            return match bun_sys::unlink(path) {
+                Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(Error::FailedToWriteSnapshotFile),
+                _ => Ok(()),
+            };
         }
 
-        let keys: Vec<Vec<u16>> = self
+        let keys = self
             .values
             .keys()
             .iter()
-            .map(|key| strings::to_utf16_alloc_for_real(key, false, false).unwrap_or_default())
-            .collect();
+            .map(|key| strings::to_utf16_alloc_for_real(key, false, false))
+            .collect::<Result<Vec<Vec<u16>>, _>>()
+            .map_err(|_| Error::FailedToWriteSnapshotFile)?;
         // Insertion, because the comparison is not known to be a total order, which `sort_by` may panic on.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        for i in 0..keys.len() {
-            let at = order.partition_point(|other| natural_compare(&keys[*other], &keys[i]).is_le());
+        for (i, key) in keys.iter().enumerate() {
+            let at = order.partition_point(|other| natural_compare(&keys[*other], key).is_le());
             order.insert(at, i);
         }
 
@@ -557,8 +726,6 @@ impl Snapshots {
     }
 
     pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
-        // `success` is a Cell so the per-iteration error-check guard
-        // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
         let vm = VirtualMachine::get().as_mut();
@@ -575,16 +742,7 @@ impl Snapshots {
                 .get_mut(&file_id)
                 .expect("unreachable");
 
-            // The guard runs on every exit of the loop body (continue,
-            // fall-through, AND `?` early-return).
-            let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        bun_output::error_writer(),
-                    ));
-                    success.set(false);
-                }
-            });
+            let mut log = ReportedLog { log: bun_ast::Log::init(), success: &success };
 
             // 1. sort ils_info by row, col
             index_sort::sort_slice_by(ils_info, |a, b| {
@@ -715,7 +873,7 @@ impl Snapshots {
                     // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
                     // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
                     // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow via the scopeguard between parser uses.
+                    // reborrow between parser uses.
                     // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
@@ -758,13 +916,9 @@ impl Snapshots {
                         lexer,
                         opts,
                     )?;
-                    // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
-                    // the guard's drop closure is the sole owner of the slot from here.
-                    let mut __parser_guard =
-                        scopeguard::guard(__parser_slot, |mut s| unsafe { s.assume_init_drop() });
-                    // SAFETY: guard armed only after `init` succeeded.
-                    let parser: &mut js_parser::TSXParser<'_> =
-                        unsafe { __parser_guard.assume_init_mut() };
+                    let mut __parser_guard = InitializedParser(__parser_slot);
+                    // SAFETY: `init` returned `Ok`, so the slot is initialized.
+                    let parser: &mut js_parser::TSXParser<'_> = unsafe { __parser_guard.0.assume_init_mut() };
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;
@@ -934,7 +1088,8 @@ impl Snapshots {
                             // regular line. indent.
                             re_indented_string.extend_from_slice(start_indent);
                             if needs_more_spaces {
-                                re_indented_string.extend_from_slice(b"  ");
+                                let by_tab = ils.is_in_vitest_test && strings::contains_char(start_indent, b'\t');
+                                re_indented_string.extend_from_slice(if by_tab { b"\t" } else { b"  " });
                             }
                         }
                         re_indented_string.extend_from_slice(segment);

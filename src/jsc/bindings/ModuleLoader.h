@@ -52,9 +52,9 @@ struct OnLoadResult {
 
 extern "C" bool isBunTest;
 
-class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<7> {
+class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<8> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<7>;
+    using Base = JSC::JSInternalFieldObjectImpl<8>;
 
     // After the specifier, the referrer and the promise. Each is empty if there is none.
     enum Field : unsigned {
@@ -62,6 +62,7 @@ public:
         ModuleGraph,
         OnLoadPath, // Set while waiting for the promise of an onLoad callback, which may decline.
         OnLoadCallbacks, // To ask next.
+        ModuleMock, // Set while waiting for Bun::runModuleMock().
     };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -72,7 +73,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     JSC::JSPromise* internalPromise();
@@ -82,8 +83,6 @@ public:
 
     PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
-
-    bool wasModuleMock = false;
 };
 
 // `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file

@@ -1134,6 +1134,7 @@ impl AsyncModule {
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+        let depends_on_more_than_source = self.parse_result.ast.depends_on_more_than_source;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
@@ -1221,6 +1222,7 @@ impl AsyncModule {
             };
 
             resolved_source.is_commonjs_module = is_commonjs_module;
+            resolved_source.depends_on_more_than_source = depends_on_more_than_source;
 
             return Ok(resolved_source);
         }
@@ -1229,6 +1231,7 @@ impl AsyncModule {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
+            depends_on_more_than_source,
             ..Default::default()
         })
     }

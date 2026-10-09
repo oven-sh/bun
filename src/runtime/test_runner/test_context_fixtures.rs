@@ -65,9 +65,11 @@ struct Override {
 pub(crate) struct TestFixtures {
     /// Replaced ones too. The value or the function of each is in `js::values`.
     definitions: JsCell<Vec<Definition>>,
+    /// How many of them outlive the file: the others are of its `test.override()` calls.
+    lasting: Cell<usize>,
     /// What each name stands for, in the order the names were first defined.
     registrations: JsCell<Vec<usize>>,
-    /// `test.override()` in a describe block.
+    /// `test.override()`, in a describe block or at the top level of the file.
     overrides: JsCell<Vec<Override>>,
     /// The file- and worker-scoped fixtures that were started. The `ActiveFixture` of each is in `js::scoped`.
     scoped: JsCell<Vec<usize>>,
@@ -135,11 +137,6 @@ fn settle(global: &JSGlobalObject, promise: Option<JSValue>, value: Result<JSVal
     }
 }
 
-fn current_generation() -> u32 {
-    // SAFETY: the runner outlives every test file and is only touched on this thread.
-    Jest::runner_ptr().map_or(0, |runner| unsafe { (*runner.as_ptr()).bun_test_root.file_generation })
-}
-
 impl TestFixtures {
     fn of<'a>(value: JSValue) -> Option<&'a TestFixtures> {
         // SAFETY: the wrapper owns the payload; every caller holds `value` on the stack or in a slot for as long as it uses the borrow.
@@ -147,13 +144,24 @@ impl TestFixtures {
     }
 
     /// Forgets what is about an earlier file: a helper module can be shared by several.
-    fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) {
-        let generation = current_generation();
-        if self.generation.replace(generation) != generation {
-            self.overrides.with_mut(Vec::clear);
-            self.scoped.with_mut(Vec::clear);
-            js::scoped_set_cached(this_value, global, JSValue::UNDEFINED);
+    fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let generation = Jest::file_generation(global);
+        if self.generation.replace(generation) == generation {
+            return Ok(());
         }
+        self.overrides.with_mut(Vec::clear);
+        self.scoped.with_mut(Vec::clear);
+        js::scoped_set_cached(this_value, global, JSValue::UNDEFINED);
+        let lasting = self.lasting.get();
+        if self.definitions.get().len() > lasting {
+            self.definitions.with_mut(|definitions| definitions.truncate(lasting));
+            let values = JSValue::create_empty_array(global, lasting)?;
+            for index in 0..lasting {
+                values.put_index(global, index as u32, Self::value_of(this_value, global, index)?)?;
+            }
+            js::values_set_cached(this_value, global, values);
+        }
+        Ok(())
     }
 
     fn value_of(this_value: JSValue, global: &JSGlobalObject, definition: usize) -> JsResult<JSValue> {
@@ -185,7 +193,7 @@ impl TestFixtures {
     }
 
     /// `test.extend(fixtures)`, `test.extend(name, value)`, `test.extend(name, options, value)`: a new set.
-    /// `test.override(...)`: changes `parent` for `active_scope`, or for the whole file at the top level.
+    /// `test.override(...)`: changes `parent` for `active_scope`; for good in a preload script, and where there is no scope.
     pub(crate) fn define(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -198,7 +206,7 @@ impl TestFixtures {
         let [first, second, third] = frame.arguments_as_array::<3>();
         let parent_fixtures = Self::of(parent);
         if let Some(parent_fixtures) = parent_fixtures {
-            parent_fixtures.enter_file(parent, global);
+            parent_fixtures.enter_file(parent, global)?;
         }
         let mut definitions = parent_fixtures.map_or_else(Vec::new, |parent| parent.definitions.get().clone());
         let mut registrations = match parent_fixtures {
@@ -367,9 +375,11 @@ impl TestFixtures {
         }
 
         if let (true, Some(parent_fixtures)) = (is_override, parent_fixtures) {
+            let defined = definitions.len();
             parent_fixtures.definitions.set(definitions);
             js::values_set_cached(parent, global, values);
-            if is_top_level {
+            if active_scope.is_null() || global.bun_vm().is_in_preload {
+                parent_fixtures.lasting.set(defined);
                 parent_fixtures.registrations.set(registrations);
             } else {
                 parent_fixtures.overrides.with_mut(|overrides| {
@@ -380,11 +390,12 @@ impl TestFixtures {
             return Ok(parent);
         }
         let fixtures = TestFixtures {
+            lasting: Cell::new(definitions.len()),
             definitions: JsCell::new(definitions),
             registrations: JsCell::new(registrations),
             overrides: JsCell::new(Vec::new()),
             scoped: JsCell::new(Vec::new()),
-            generation: Cell::new(current_generation()),
+            generation: Cell::new(Jest::file_generation(global)),
         }
         .to_js(global);
         js::values_set_cached(fixtures, global, values);
@@ -470,7 +481,7 @@ impl TestFixtures {
         let Some(this) = Self::of(this_value) else {
             return Ok(Next::Ready);
         };
-        this.enter_file(this_value, global);
+        this.enter_file(this_value, global)?;
         let names: &[Box<[u8]>] = match parameter {
             ContextParameter::Properties(names) => names,
             ContextParameter::Absent => &[],
@@ -505,7 +516,7 @@ impl TestFixtures {
                 };
                 match ActiveFixture::of(active_fixture).map(|active_fixture| active_fixture.state.get()) {
                     Some(State::Ready) => {
-                        context.put(global, name, active::value_get_cached(active_fixture).unwrap_or(JSValue::UNDEFINED));
+                        context.put_may_be_index(global, &name, active::value_get_cached(active_fixture).unwrap_or(JSValue::UNDEFINED))?;
                         continue;
                     }
                     _ => return Ok(Next::SetUp(bound(global, active_fixture, "setUp", __jsc_host_set_up)?)),
@@ -523,7 +534,7 @@ impl TestFixtures {
             }
             if fixture.kind == Kind::Value {
                 test_context.add_fixture(index);
-                context.put(global, name, Self::value_of(this_value, global, index)?);
+                context.put_may_be_index(global, &name, Self::value_of(this_value, global, index)?)?;
                 continue;
             }
             let active_fixture = ActiveFixture::create(global, this_value, context, index, timeout);
@@ -573,11 +584,11 @@ impl TestFixtures {
             if fixture.scope >= scope
                 && ActiveFixture::of(active_fixture).is_some_and(|active_fixture| active_fixture.state.get() == State::Ready)
             {
-                context.put(
+                context.put_may_be_index(
                     global,
-                    BunString::clone_utf8(&fixture.name),
+                    &BunString::clone_utf8(&fixture.name),
                     active::value_get_cached(active_fixture).unwrap_or(JSValue::UNDEFINED),
-                );
+                )?;
             }
         }
         Ok(context)
@@ -587,7 +598,7 @@ impl TestFixtures {
     pub(crate) fn suite_hook_context(this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         match Self::of(this_value) {
             Some(this) => {
-                this.enter_file(this_value, global);
+                this.enter_file(this_value, global)?;
                 this.scoped_context(this_value, global, Scope::File)
             }
             None => Ok(JSValue::create_empty_object(global, 0)),
@@ -631,7 +642,7 @@ impl ActiveFixture {
                 // SAFETY: the wrapper owns the payload, and the slot keeps the wrapper alive.
                 Some(test_context) if definition.scope == Scope::Test => unsafe {
                     (*test_context).add_fixture(self.definition);
-                    context.put(global, BunString::clone_utf8(&definition.name), value);
+                    context.put_may_be_index(global, &BunString::clone_utf8(&definition.name), value)?;
                     (*test_context).defer(buntest, Deferred::Fixture, tear_down, self.timeout);
                 },
                 _ => buntest.defer_to_file_end(tear_down, self.timeout),

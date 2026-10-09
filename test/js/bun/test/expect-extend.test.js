@@ -831,3 +831,73 @@ describe("MatcherContext", () => {
     });
   });
 });
+
+describe.skipIf(!isBun)("the namespace of a module as matchers", () => {
+  test("only `default` and `__esModule` are left out when they are not functions", () => {
+    expect.extend({
+      // @ts-expect-error
+      default: { _toBeInTheDefaultExport() {} },
+      // @ts-expect-error
+      __esModule: true,
+      _toBeInTheNamespace(actual) {
+        return { pass: actual === "namespace" };
+      },
+    });
+    // @ts-expect-error
+    expect("namespace")._toBeInTheNamespace();
+    expect("default" in expect(1)).toBe(false);
+    expect("__esModule" in expect(1)).toBe(false);
+    expect("_toBeInTheDefaultExport" in expect(1)).toBe(false);
+
+    for (const name of ["Default", "esModule", "__esmodule", "module.exports"]) {
+      expect(() => expect.extend({ [name]: {} })).toThrow(
+        `expect.extend: \`${name}\` is not a valid matcher. Must be a function, is "object"`,
+      );
+    }
+  });
+
+  test("import * as matchers from a CommonJS module", async () => {
+    using dir = tempDir("expect-extend-namespace", {
+      "plain.cjs": `exports.toBeEven = actual => ({ pass: actual % 2 === 0 });`,
+      "transpiled.cjs": `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.toBeOdd = actual => ({ pass: actual % 2 === 1 });
+        exports.default = { toBeOdd: exports.toBeOdd };
+      `,
+      "namespace.test.js": `
+        import { expect, test } from "bun:test";
+        import * as plain from "./plain.cjs";
+        import * as transpiled from "./transpiled.cjs";
+        for (const matchers of [plain, transpiled]) {
+          console.log(Object.keys(matchers).map(name => name + ": " + typeof matchers[name]).join(", "));
+          expect.extend(matchers);
+        }
+        test("the matchers of the modules", () => {
+          expect(2).toBeEven();
+          expect(2).not.toBeOdd();
+        });
+        test("a function named default is a matcher", () => {
+          expect.extend({ default: actual => ({ pass: actual === 1 }) });
+          expect(1).default();
+          expect(2).not.default();
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "namespace.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.split("\n").slice(1),
+      stderr: stderr.split("\n").filter(line => /^ \d+ \w+$/.test(line)),
+    }).toEqual({
+      stdout: ["default: object, toBeEven: function", "default: object, toBeOdd: function", ""],
+      stderr: [" 2 pass", " 0 fail"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});

@@ -30,15 +30,17 @@ public:
     static uint64_t s_nextInvocationId;
     static uint64_t nextInvocationId() { return ++s_nextInvocationId; }
 
-#define FOR_EACH_JSMOCKMODULE_GC_MEMBER(V)           \
-    V(Structure, mockFunctionStructure)              \
-    V(Structure, mockResultStructure)                \
-    V(Structure, mockImplementationStructure)        \
-    V(Structure, mockObjectStructure)                \
-    V(Structure, mockModuleStructure)                \
-    V(Structure, activeSpySetStructure)              \
-    V(JSFunction, withImplementationCleanupFunction) \
-    V(JSC::Structure, mockWithImplementationCleanupDataStructure)
+#define FOR_EACH_JSMOCKMODULE_GC_MEMBER(V)                        \
+    V(Structure, mockFunctionStructure)                           \
+    V(Structure, mockResultStructure)                             \
+    V(Structure, mockImplementationStructure)                     \
+    V(Structure, mockObjectStructure)                             \
+    V(Structure, mockModuleStructure)                             \
+    V(Structure, activeSpySetStructure)                           \
+    V(JSFunction, withImplementationCleanupFunction)              \
+    V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
+    V(JSCell, lazyPrototype)                                      \
+    V(JSString, defaultName)
 
 #define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \
     LazyProperty<JSGlobalObject, T> name;
@@ -47,18 +49,20 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    // These are used by "spyOn"
-    // This is useful for iterating through every non-GC'd spyOn
+    // Weak sets, created by what enters them first and dropped once they have been walked.
+    // The spies that have not been restored
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
-
-    // Every JSMockFunction::create appends to this list
-    // This is useful for iterating through every non-GC'd mock function
-    // This list includes activeSpies
-    JSC::WriteBarrier<JSC::Unknown> activeMocks;
+    // The mocks that were called, or whose `mock` was read, since they were last cleared
+    JSC::WriteBarrier<JSC::Unknown> calledMocks;
+    // The mocks whose implementation or mock name is not the one that resetting gives them
+    JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
     // What `vi.stubEnv` / `vi.stubGlobal` replaced: a JSMap from name to original, created by the first stub
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
+    // What a preload stubbed: a JSMap from name to stub. Every test file starts with these.
+    JSC::WriteBarrier<JSC::Unknown> envsOfPreload;
+    JSC::WriteBarrier<JSC::Unknown> globalsOfPreload;
 
     // A JSMap whose keys are what `didStartDynamicImport` was given, less the settled ones that were swept
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;

@@ -26,9 +26,3 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
         .entry(buntest)
         .is_some_and(|entry| entry.added_in_phase == AddedInPhase::Preload)
 }
-
-#[unsafe(no_mangle)]
-extern "C" fn JSMock__testFilesShareModules(global: &JSGlobalObject) -> bool {
-    let vm = global.bun_vm();
-    !vm.test_isolation_enabled && vm.worker_ref().is_none()
-}

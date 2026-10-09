@@ -243,7 +243,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeSetTimeoutPromisified, (JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto schedule = Bun__FakeTimers__isInstalled(JSValue::encode(callFrame->thisValue())) ? Bun__FakeTimers__setTimeout : Bun__Timer__setTimeout;
-    schedule(globalObject, JSValue::encode(promise), JSValue::encode(callFrame->argument(1)), JSValue::encode(callFrame->argument(0)));
+    schedule(globalObject, JSValue::encode(promise->createFirstResolveFunction(vm, globalObject)), JSValue::encode(callFrame->argument(1)), JSValue::encode(callFrame->argument(0)));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
 }
@@ -255,7 +255,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeSetImmediatePromisified, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto schedule = Bun__FakeTimers__isInstalled(JSValue::encode(callFrame->thisValue())) ? Bun__FakeTimers__setImmediate : Bun__Timer__setImmediate;
-    schedule(globalObject, JSValue::encode(promise), JSValue::encode(callFrame->argument(0)));
+    schedule(globalObject, JSValue::encode(promise->createFirstResolveFunction(vm, globalObject)), JSValue::encode(callFrame->argument(0)));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
 }

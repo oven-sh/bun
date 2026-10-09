@@ -6,6 +6,9 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{G, Stmt};
 use bun_jsc::JSValue;
 
+/// Of the callback of an entry, read when it is first asked for. The rows of a table share one.
+pub(crate) type SharedContextParameter = std::rc::Rc<core::cell::OnceCell<ContextParameter>>;
+
 pub(crate) enum ContextParameter {
     /// The function has no such parameter, or is not written in JavaScript.
     Absent,
@@ -84,10 +87,19 @@ impl ContextParameter {
             if property.flags.contains(bun_ast::flags::Property::IsComputed) {
                 continue;
             }
-            if let Data::EString(name) = &property.key.data
-                && let Ok(name) = name.string(arena)
-            {
-                names.push(name.into());
+            match &property.key.data {
+                Data::EString(name) => {
+                    if let Ok(name) = name.string(arena) {
+                        names.push(name.into());
+                    }
+                }
+                // `({ 0: first }) => {}`
+                Data::ENumber(index)
+                    if index.value() >= 0.0 && index.value() <= f64::from(u32::MAX) && index.value().fract() == 0.0 =>
+                {
+                    names.push((index.value() as u32).to_string().into_bytes().into());
+                }
+                _ => {}
             }
         }
         ContextParameter::Properties(names)

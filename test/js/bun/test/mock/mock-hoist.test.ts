@@ -220,6 +220,25 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load mod", true, true, true, true, true]]);
   });
 
+  test("a call of an import has no this, however the callee is written", async () => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { test, vi } from "vitest";
+          import { self } from "./mod";
+          vi.mock("./unrelated", () => ({}));
+          enum Initializer { A = self() as any }
+          events.push(
+            [(0, self)(), (true ? self : null)(), (false ? null : self)(), (null ?? self)(), (1 && self)(), (0 || self)()],
+            [(0, self)\`\`, (true ? self : null)\`\`, (0, self)?.()],
+            Object.keys(Initializer),
+          );
+          ${print}
+        `,
+      }),
+    ).toEqual([["load mod", [null, null, null, null, null, null], [null, null, null], ["A", "undefined"]]]);
+  });
+
   test("hoisted statements, then imports, then the rest, each in source order", async () => {
     expect(
       await events({
@@ -568,6 +587,32 @@ describe.concurrent("not hoisted", () => {
     ).toEqual([["load other", "mocked", "other", "mocked in a block", "mocked in a test"]]);
   });
 
+  test.each([
+    ["a file without any test API", ``],
+    ["a file that hoists", `import { value } from "./mod"; vi.mock("./mod", () => ({ value: "mocked" }));`],
+  ])("a call into another block of a TypeScript namespace keeps its this: %s", async (_, header) => {
+    expect(
+      await events({
+        "registry.ts": `
+          ${header}
+          export namespace Registry {
+            export function isThis(this: unknown, ..._: unknown[]) { return this === Registry; }
+          }
+          export namespace Registry {
+            export function calls() { return [isThis(), isThis\`\`, isThis?.()]; }
+          }
+        `,
+        "hoist.test.ts": `
+          import { Registry } from "./registry";
+          (globalThis.events ??= []).push(Registry.calls(), Registry.calls.toString().replace(/\\s+/g, " "));
+          ${print}
+        `,
+      }),
+    ).toEqual([
+      [[true, true, true], "function calls() { return [Registry.isThis(), Registry.isThis``, Registry.isThis?.()]; }"],
+    ]);
+  });
+
   test("without a hoisted statement the module has no top-level await", async () => {
     expect(
       await events({
@@ -611,6 +656,46 @@ describe.concurrent("vi.mock(import(path))", () => {
         `,
       }),
     ).toEqual([["mocked", "mocked other", ["./a", "./b", "./c", "./d", "./e", "./variable"]]]);
+  });
+
+  // Each of these opens a scope, and the parser visits scopes in the order it parsed them.
+  test.each([
+    `class {}`,
+    `class { static {} }`,
+    `(() => ({}))()`,
+    `function () {}`,
+    `{ with: { get type() { return "js"; } } }`,
+  ])("drops the options of the import: %s", async options => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { value } from "./mod";
+          vi.mock(import("./mod", ${options}), () => ({ value: "mocked" }));
+          jest.unmock(await import((() => "./unrelated")(), ${options}));
+          function shadows(value) { return value; }
+          (globalThis.events ??= []).push(value, shadows("parameter"));
+          test("nested", () => {
+            vi.doUnmock(import("./unrelated", ${options}));
+            events.push((value => value)("nested parameter"));
+          });
+          ${print}
+        `,
+      }),
+    ).toEqual([["mocked", "parameter", "nested parameter"]]);
+  });
+
+  test("nothing inside of the dropped options is resolved", async () => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { value } from "./mod";
+          import { other } from "./other";
+          vi.mock(import("./mod", { with: other, more: import("./missing"), again: require("./missing") }), () => ({ value: "mocked" }));
+          (globalThis.events ??= []).push(value);
+          ${print}
+        `,
+      }),
+    ).toEqual([["load other", "mocked"]]);
   });
 
   test("only for the first argument of those methods of vi and jest", async () => {
@@ -769,6 +854,66 @@ describe.concurrent("modes", () => {
   });
 });
 
+describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %s.mock", api => {
+  const file = (declaration: string, exported: string, read: string) => ({
+    "hoist.test.ts": `
+      import { value } from "./mod";
+      ${declaration}
+      ${api}.mock("./mod", () => ({ value: ${exported} }));
+      test("print", () => console.log(JSON.stringify([${read}])));
+    `,
+  });
+
+  // A declaration that only holds primitive literals moves with the mocks. babel-jest does that for the first two.
+  test.each([
+    [`const fake = "fake";`, `fake`, `value`, "fake"],
+    [`let fake = "fake";`, `fake`, `value`, "fake"],
+    [`const mockFake = "fake";`, `mockFake`, `value`, "fake"],
+    [`const mockFake = String("fake");`, `() => mockFake`, `value()`, "fake"],
+    [`function fake() { return "fake"; }`, `fake()`, `value`, "fake"],
+    [`export const fake = "fake";`, `fake`, `value`, "fake"],
+    [
+      "const a = 1, b = -1.5, c = `c`, d = true, e = null, f = undefined; let g = -2n;",
+      `[a, b, c, d, e, typeof f, String(g)]`,
+      `value`,
+      [1, -1.5, "c", true, null, "undefined", "-2"],
+    ],
+  ])("%s", async (declaration, exported, read, expected) => {
+    expect(await events(file(declaration, exported, read))).toEqual([[expected]]);
+  });
+
+  test.each([
+    [`const fake = String("fake");`, "fake"],
+    [`const mockFake = String("fake");`, "mockFake"],
+    ["const fake = `${1}`;", "fake"],
+    [`const fake = { a: 1 };`, "fake"],
+    [`const fake = -"1";`, "fake"],
+    [`const fake = "fake", other = String("other");`, "fake"],
+    [`const [fake] = "fake";`, "fake"],
+    [`const undefined = String("local"), fake = undefined;`, "fake"],
+    [`const local = "local"; const fake = local;`, "fake"],
+  ])("stays in its place: %s", async (declaration, name) => {
+    const { stderr, exitCode } = await run(file(declaration, name, `value`));
+    expect(stderr).toContain(
+      `ReferenceError: Cannot access '${name}' before initialization.\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("the same variable with a literal and with a call", async () => {
+    expect(await events(file(`const fake = "x";`, `fake`, `value`))).toEqual([["x"]]);
+    const { stderr, exitCode } = await run(file(`const fake = String("x");`, `fake`, `value`));
+    expect(stderr).toContain(
+      `ReferenceError: Cannot access 'fake' before initialization.\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("a var stays in its place", async () => {
+    expect(await events(file(`var fake = "fake";`, `typeof fake`, `value`))).toEqual([["undefined"]]);
+  });
+});
+
 describe.concurrent("errors", () => {
   test("a factory that runs during the imports cannot read a later const", async () => {
     const { stderr, exitCode } = await run({
@@ -794,6 +939,44 @@ describe.concurrent("errors", () => {
     });
     expect(stderr).toContain("error: Cannot use import statement with CommonJS-only features");
     expect(exitCode).toBe(1);
+  });
+
+  test("two files that hoist and import each other are both named", async () => {
+    const { stderr, exitCode } = await run({
+      "helper.ts": `
+        import { shared } from "./hoist.test";
+        vi.mock("./unrelated", () => ({}));
+        export const helper = () => shared;
+      `,
+      "hoist.test.ts": `
+        import { helper } from "./helper";
+        vi.mock("./unrelated", () => ({}));
+        export const shared = 1;
+        test("unreachable", () => { helper(); });
+      `,
+    });
+    expect(stderr).toMatch(/error: ".*hoist\.test\.ts" never finished loading/);
+    expect(stderr).toMatch(/note: unsettled top-level await in ".*hoist\.test\.ts"/);
+    expect(stderr).toMatch(/note: unsettled top-level await in ".*helper\.ts"/);
+    expect(exitCode).toBe(1);
+  });
+
+  test("only one of two files that import each other hoists", async () => {
+    expect(
+      await events({
+        "helper.ts": `
+          import { shared } from "./hoist.test";
+          export const helper = () => shared;
+        `,
+        "hoist.test.ts": `
+          import { helper } from "./helper";
+          vi.mock("./unrelated", () => ({}));
+          export const shared = "shared";
+          (globalThis.events ??= []).push(helper());
+          ${print}
+        `,
+      }),
+    ).toEqual([["shared"]]);
   });
 });
 

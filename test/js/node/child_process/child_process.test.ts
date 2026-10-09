@@ -378,6 +378,17 @@ describe("spawn()", () => {
     expect(result.trim()).toBe(tmpdir);
   });
 
+  it("cwd can be a URL of another implementation", () => {
+    const tmpdir = tmpdirSync();
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(tmpdir);
+    const { stdout } = spawnSync(bunExe(), ["-e", "console.log(process.cwd())"], {
+      cwd: { href, protocol, hostname, pathname } as URL,
+      env: bunEnv,
+      encoding: "utf8",
+    });
+    expect(stdout.trim()).toBe(tmpdir);
+  });
+
   it("should allow us to write to stdin", async () => {
     const result: string = await new Promise(resolve => {
       const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], { env: bunEnv });

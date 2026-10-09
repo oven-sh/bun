@@ -178,7 +178,7 @@ async function request(
   if (typeof url === "string") {
     if (query) url = new URL(url);
   } else if (typeof url === "object" && url !== null) {
-    if (!(url instanceof URL)) {
+    if (!require("internal/url").isURL(url)) {
       // TODO: Parse undici UrlObject
       throw new Error("not implemented");
     }

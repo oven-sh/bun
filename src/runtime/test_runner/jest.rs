@@ -117,10 +117,6 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
-    /// The --seed value when --randomize is on. Used to derive a per-file
-    /// shuffle PRNG from hash(seed, file_path) so within-file test order is
-    /// independent of which worker (and which prior files) ran it.
-    pub(crate) randomize_seed: Option<u32>,
     /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
@@ -134,6 +130,10 @@ pub(crate) struct TestRunner<'a> {
 
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
     pub(crate) default_timeout_override: u32,
+
+    pub(crate) vi_config: vi_utils::Config,
+    /// What `vi_config` goes back to at the end of a test file.
+    pub(crate) vi_config_of_preload: vi_utils::Config,
 
     pub(crate) test_options: &'a TestOptions,
 
@@ -158,11 +158,11 @@ impl<'a> TestRunner<'a> {
             return bun_core::Timespec::EPOCH;
         };
         // Per-entry deadline, not the (only-advances-sooner) file timer.
-        // `on_stack_entry` pins the caller when still synchronously on stack;
+        // `on_stack` pins the caller when still synchronously on stack;
         // else take the latest running entry so a sibling never terminates early.
-        if let Some(entry) = active_file.execution.on_stack_entry.get() {
+        if let Some(on_stack) = active_file.execution.on_stack.get() {
             // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-            return unsafe { entry.as_ref() }.timespec;
+            return unsafe { &*on_stack.entry.cast::<bun_test::ExecutionEntry>() }.timespec;
         }
         if active_file.phase == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group_ref() {
@@ -268,6 +268,8 @@ pub(crate) struct Summary {
     pub(crate) fail: u32,
     pub(crate) files: u32,
     pub(crate) skipped_because_label: u32,
+    /// Files in which a `describe.shuffle` decided an order, so that the seed is worth printing.
+    pub(crate) shuffled: u32,
 }
 
 impl Summary {
@@ -307,9 +309,10 @@ pub(crate) mod Jest {
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
+    /// `None` outside of `bun test`, and in a Worker: the runner belongs to the thread that runs the test files.
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
-        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
+        // SAFETY: `runner_ptr` hands it to one thread only.
+        runner_ptr().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
     /// Raw-pointer accessor for callers that must not materialise
@@ -317,8 +320,21 @@ pub(crate) mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
+        // SAFETY: a thread's VM outlives the script that runs on it.
+        if VirtualMachine::get_or_null().is_some_and(|vm| unsafe { (*vm).worker_ref().is_some() }) {
+            return None;
+        }
+        // SAFETY: written and read on the thread that runs the test files only.
         unsafe { RUNNER.read() }
+    }
+
+    /// `BunTestRoot::file_generation`. 0 outside of `bun test`, and in a worker thread: the runner belongs to the main thread.
+    pub(crate) fn file_generation(global: &JSGlobalObject) -> u32 {
+        if global.bun_vm().worker_ref().is_some() {
+            return 0;
+        }
+        // SAFETY: the runner outlives every test file and is only touched on this thread.
+        runner_ptr().map_or(0, |runner| unsafe { (*runner.as_ptr()).bun_test_root.file_generation })
     }
 
     #[unsafe(no_mangle)]
@@ -567,7 +583,7 @@ pub(crate) fn js_file_generation(
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
-/// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
+/// `done`'s bound `DoneCallback.entry` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
 pub(crate) fn js_node_test_mark_result(
     _global: &JSGlobalObject,
@@ -587,25 +603,11 @@ pub(crate) fn js_node_test_mark_result(
     };
     // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
     // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
-    let bound = match dcb_ref {
-        Some(refdata) => refdata.phase,
-        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
-        // drain before it stamps the DoneCallback. `get_current_state_data()`
-        // can't name a sequence inside a concurrent group, but
-        // `on_stack_entry_data` holds exactly the `cfg_data` that
-        // `run_test_callback` was invoked with (set/restored around it), so
-        // the mark lands on the right sequence under --concurrent too.
-        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
-            Some(entry_data) => bun_test::RefDataValue::Execution {
-                group_index: buntest.execution.group_index,
-                entry_data: Some(entry_data),
-            },
-            None => buntest.get_current_state_data(),
-        },
+    let (bound, dcb_called) = unsafe { ((*dcb).entry, (*dcb).called) };
+    if dcb_called {
         // done() already ran and reported — nothing left to mark.
-        None => return Ok(JSValue::UNDEFINED),
-    };
+        return Ok(JSValue::UNDEFINED);
+    }
     let Some((sequence_ptr, _)) =
         buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
@@ -630,8 +632,7 @@ pub(crate) mod on_unhandled_rejection {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
             // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
-            // dereferenced for this scope and is dropped before `BunTest::run`
-            // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
+            // dereferenced for this scope. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
@@ -655,22 +656,12 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
-                // As `RunTestsTask::call`: what advancing the runner threw is
-                // recorded against wherever the runner now is; a termination is
-                // left where it is.
-                if !global_object.has_pending_termination_exception() {
-                    // SAFETY: as above; `run` has returned, this is the only handle.
-                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-                    let phase = buntest.get_current_state_data();
-                    buntest.on_uncaught_exception(
-                        global_object,
-                        Some(global_object.take_exception(e)),
-                        false,
-                        &phase,
-                    );
-                }
-            }
+            // Script that reported the error may be on the stack: the next test does not start beneath it.
+            bun_test::BunTest::run_next_tick(
+                &std::rc::Rc::downgrade(&buntest_strong),
+                global_object,
+                current_state_data,
+            );
             return;
         }
 
@@ -701,14 +692,38 @@ fn write_inspected(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>)
     formatter.format_value::<false>(value, title)
 }
 
+/// vitest's `truncateString(value, taskTitleValueFormatTruncate)`
+fn write_truncated(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    const MAX_UTF16_LENGTH: usize = 40;
+    let string = value.to_bun_string(global)?;
+    if string.length() <= MAX_UTF16_LENGTH {
+        title.extend_from_slice(string.to_utf8().slice());
+        return Ok(());
+    }
+    let is_high_surrogate = (0xD800..=0xDBFF).contains(&string.char_at(MAX_UTF16_LENGTH - 2));
+    let end = MAX_UTF16_LENGTH - 1 - usize::from(is_high_surrogate);
+    title.extend_from_slice(string.substring_with_len(0, end).to_utf8().slice());
+    title.extend_from_slice("…".as_bytes());
+    Ok(())
+}
+
 /// Node's `hasBuiltInToString`: `util.format("%s")` inspects such an object instead of calling its `toString`.
-fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<bool> {
+/// vitest only inspects for `Object.prototype.toString`.
+fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue, is_vitest: bool) -> JsResult<bool> {
     const BUILTINS: [&[u8]; 9] = [
         b"Object", b"Array", b"Date", b"RegExp", b"Boolean", b"Number", b"String", b"Symbol", b"BigInt",
     ];
+    // What a trap of a Proxy answers need not lead anywhere.
+    const MAX_PROTOTYPES: usize = 1000;
+    // As in Node, it is the target of a Proxy that counts.
+    let object = match object.get_proxy_target() {
+        target if target.is_empty() => object,
+        target => target,
+    };
     let mut owner = object;
+    let mut prototypes = 0;
     loop {
-        if !owner.is_object() {
+        if !owner.is_object() || prototypes > MAX_PROTOTYPES {
             return Ok(true);
         }
         if let Some(to_string) = owner.get_own(global, &bun_core::String::static_("toString"))? {
@@ -718,6 +733,7 @@ fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<b
             break;
         }
         owner = owner.get_prototype(global)?;
+        prototypes += 1;
     }
     if owner == object {
         return Ok(false);
@@ -726,7 +742,8 @@ fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<b
         return Ok(false);
     };
     let name = constructor.get_name(global)?;
-    Ok(BUILTINS.iter().any(|builtin| name.eq_ascii(builtin)))
+    let builtins = if is_vitest { &BUILTINS[..1] } else { &BUILTINS[..] };
+    Ok(builtins.iter().any(|builtin| name.eq_ascii(builtin)))
 }
 
 fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
@@ -798,12 +815,13 @@ fn write_placeholder(
     specifier: u8,
     value: JSValue,
     title: &mut Vec<u8>,
+    is_vitest: bool,
 ) -> JsResult<()> {
     let number = match specifier {
         b's' if value.is_string()
             || value.is_function()
             || value.is_any_error()
-            || (value.is_object() && !has_builtin_to_string(global, value)?) =>
+            || (value.is_object() && !has_builtin_to_string(global, value, is_vitest)?) =>
         {
             return write_to_string(global, value, title);
         }
@@ -819,11 +837,13 @@ fn write_placeholder(
     write_inspected(global, JSValue::js_number(number), title)
 }
 
-/// Length of the `a.b.c` at the start of `text`.
+/// Length of the `a.b.c`, or of the array index, at the start of `text`.
 fn property_path_len(text: &[u8]) -> usize {
     use bun_js_parser::js_lexer::{is_identifier_continue, is_identifier_start};
     if !is_identifier_start(bun_core::lexer::char_and_size(text, 0).0) {
-        return 0;
+        let digits = text.iter().take_while(|c| c.is_ascii_digit()).count();
+        let is_all = bun_core::lexer::end_of_run(text, digits, is_identifier_continue) == digits;
+        return if is_all { digits } else { 0 };
     }
     let mut end = bun_core::lexer::end_of_run(text, 0, is_identifier_continue);
     while text.get(end) == Some(&b'.') {
@@ -857,6 +877,7 @@ pub(crate) fn format_label(
     label: &[u8],
     function_args: &[JSValue],
     test_idx: usize,
+    is_vitest: bool,
 ) -> JsResult<Box<[u8]>> {
     let object_row = function_args.first().copied().filter(|row| row.is_object());
     let mut args = function_args.iter();
@@ -869,20 +890,24 @@ pub(crate) fn format_label(
             (b'%', Some(b'%'), _) => title.push(b'%'),
             (b'%', Some(b'#'), _) | (b'$', Some(b'#'), Some(_)) => write!(&mut title, "{}", test_idx).unwrap(),
             (b'%', Some(b'$'), _) => write!(&mut title, "{}", test_idx + 1).unwrap(),
-            (b'%', Some(specifier @ (b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p' | b'c')), _) => {
-                let Some(&arg) = args.next() else {
+            (b'%', Some(specifier @ (b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p' | b'c')), _)
+                if !(is_vitest && specifier == b'p') =>
+            {
+                let Some(&arg) = args.next().or_else(|| is_vitest.then_some(&JSValue::UNDEFINED)) else {
                     title.push(b'%');
                     continue;
                 };
-                write_placeholder(global_this, specifier, arg, &mut title)?;
+                write_placeholder(global_this, specifier, arg, &mut title, is_vitest)?;
             }
             (b'$', Some(_), Some(row)) => {
                 let (path, after_path) = after.split_at(property_path_len(after));
                 rest = after_path;
                 match get_property_path(global_this, row, path)? {
+                    Some(value) if value.is_string() && is_vitest => write_truncated(global_this, value, &mut title)?,
                     // https://github.com/jestjs/jest/issues/7689
                     Some(value) if value.is_string() => write_to_string(global_this, value, &mut title)?,
                     Some(value) => write_inspected(global_this, value, &mut title)?,
+                    None if is_vitest => title.extend_from_slice(b"undefined"),
                     None => {
                         title.push(b'$');
                         title.extend_from_slice(path);

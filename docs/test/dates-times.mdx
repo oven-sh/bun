@@ -133,7 +133,7 @@ test("fires after a minute", () => {
 
 An error that a timer callback throws comes out of the function that ran the timer.
 
-At the end of each test file, Bun puts the real timers and the real time back. Fake timers and a system time that a [preload](/test/configuration#preload-scripts) sets at its top level stay on for every file.
+At the end of each test file, Bun puts the real timers and the real time back. Fake timers and a system time that a [preload](/test/configuration#preload-scripts) sets at its top level stay on for every file. Without `--isolate` that is one clock for all files: it keeps the time and the pending timers that a file leaves behind.
 
 `runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` does not run forever. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
 
@@ -171,8 +171,8 @@ jest.useFakeTimers({ doNotFake: ["performance"] }); // performance.now() stays r
 | -------------------------------------------------------------- | ---------------- |
 | `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`   | Yes              |
 | `Date`, `performance`, `hrtime`                                | Yes              |
+| `requestAnimationFrame`, `cancelAnimationFrame`                | Yes, with a DOM  |
 | `setImmediate`, `clearImmediate`, `nextTick`, `queueMicrotask` | No               |
-| `requestAnimationFrame`, `cancelAnimationFrame`                | No               |
 
 Vitest and Jest fake `setImmediate` by default. In `bun:test` it stays real unless `toFake` lists it. Bun fakes `requestAnimationFrame` only when a DOM library has defined it on `globalThis`.
 

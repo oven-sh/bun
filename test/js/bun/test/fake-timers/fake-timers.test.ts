@@ -1293,9 +1293,70 @@ describe.concurrent("the end of a test file", () => {
     });
     const { stdout, stderr, exitCode } = await run(["test", ...flags, "./a.test.ts", "./b.test.ts"], String(dir));
     expect({ stdout: stdout.replace(/^bun test .*\n/, ""), passed: passed(stderr), exitCode }, stderr).toEqual({
-      stdout: "a: settled\n",
+      stdout: "",
       passed: ["(pass) leaves everything faked", "(pass) nothing is faked"],
       exitCode: 0,
+    });
+  });
+
+  // As in vitest. What goes on after it would fail where no test is left to fail.
+  test.each([[[]], [["--isolate"]]])("leaves the promise of an …Async call in flight pending %j", async flags => {
+    using dir = tempDir("fake-timers-file-end-in-flight", {
+      "a.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("leaves a call in flight", () => {
+          vi.useFakeTimers();
+          setInterval(() => {}, 10);
+          (async () => {
+            await vi.advanceTimersByTimeAsync(1e7);
+            console.log("a: goes on");
+            expect(1).toBe(2);
+          })();
+        });
+      `,
+      "b.test.ts": needsRealTimers,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", ...flags, "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), passed: passed(stderr), exitCode }, stderr).toEqual({
+      stdout: "",
+      passed: ["(pass) leaves a call in flight", "(pass) nothing is faked"],
+      exitCode: 0,
+    });
+  });
+
+  test("what the getter of a global throws is an error of the file that ends", async () => {
+    using dir = tempDir("fake-timers-file-end-getter", {
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        test("replaces a fake by a getter", () => {
+          vi.useFakeTimers();
+          Object.defineProperty(globalThis, "clearTimeout", {
+            configurable: true,
+            get() {
+              vi.useFakeTimers();
+            },
+          });
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("nothing is faked", async () => {
+          expect(vi.isFakeTimers()).toBe(false);
+          await new Promise(resolve => setTimeout(resolve, 5));
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    const lines = stderr.split("\n").filter(line => /^(\((pass|fail)\)|error:|\S+\.test\.ts:$)/.test(line));
+    expect({ lines: lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), exitCode }, stderr).toEqual({
+      lines: [
+        "a.test.ts:",
+        "(pass) replaces a fake by a getter",
+        "error: useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace.",
+        "b.test.ts:",
+        "(pass) nothing is faked",
+      ],
+      exitCode: 1,
     });
   });
 
@@ -1416,6 +1477,62 @@ describe.concurrent("the end of a test file", () => {
     expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
       passed: ["(pass) leaves setTimeout replaced twice", "(pass) nothing is faked"],
       exitCode: 0,
+    });
+  });
+});
+
+describe("a global with a getter", () => {
+  function withGetter(name: "clearTimeout" | "setImmediate", get: () => unknown, callback: () => void) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name)!;
+    Object.defineProperty(globalThis, name, { configurable: true, get });
+    try {
+      callback();
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(globalThis, name, descriptor);
+    }
+  }
+
+  test("that throws leaves the fake timers there are as they were", () => {
+    vi.useFakeTimers({ now: 5 });
+    const fake = setTimeout;
+    const fired = vi.fn();
+    setTimeout(fired, 10);
+    const getter = () => {
+      throw new Error("from the getter");
+    };
+    withGetter("setImmediate", getter, () => {
+      expect(() => vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] })).toThrow("from the getter");
+      expect([vi.isFakeTimers(), setTimeout === fake, vi.getTimerCount(), Date.now()]).toEqual([true, true, 1, 5]);
+      vi.advanceTimersByTime(10);
+      expect(fired).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test.each(["useFakeTimers", "useRealTimers"] as const)("cannot call %s() while useFakeTimers() reads it", nested => {
+    const thrown: unknown[] = [];
+    const getter = () => {
+      try {
+        vi[nested]();
+      } catch (error) {
+        thrown.push(error);
+      }
+      return saved.clearTimeout;
+    };
+    withGetter("clearTimeout", getter, () => {
+      vi.useFakeTimers();
+      expect(thrown).toEqual([
+        new Error("useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace."),
+      ]);
+      expect(vi.isFakeTimers()).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!.value).toBeFunction();
+      const fired = vi.fn();
+      clearTimeout(setTimeout(fired, 1));
+      setTimeout(fired, 1);
+      vi.advanceTimersByTime(1);
+      expect(fired).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      expect([vi.isFakeTimers(), setTimeout, clearTimeout]).toEqual([false, saved.setTimeout, saved.clearTimeout]);
     });
   });
 });
@@ -1864,14 +1981,46 @@ describe("a faked requestAnimationFrame", () => {
     expect(dom.cancelAnimationFrame).toBe(ofTheDom.cancelAnimationFrame);
   });
 
-  test("is faked only where there is one, and only when toFake lists it", () => {
-    vi.useFakeTimers({ toFake: [...toFake] });
-    expect("requestAnimationFrame" in globalThis).toBe(false);
+  test.each([[undefined], [{ toFake: [...toFake] }]])("is faked only where there is one: %j", options => {
+    vi.useFakeTimers(options);
+    expect(["requestAnimationFrame" in globalThis, "cancelAnimationFrame" in globalThis]).toEqual([false, false]);
+  });
+
+  // As in Jest and Vitest: the timers a DOM library runs its own frames on are not the test's to advance.
+  test.each([
+    ["vi", vi],
+    ["jest", jest],
+  ])("%s.useFakeTimers() fakes it by default", (_, fake) => {
     Object.assign(dom, ofTheDom);
-    vi.useFakeTimers();
-    expect(dom.requestAnimationFrame).toBe(ofTheDom.requestAnimationFrame);
-    vi.useFakeTimers({ toFake: [...toFake] });
+    fake.useFakeTimers();
     expect(dom.requestAnimationFrame).not.toBe(ofTheDom.requestAnimationFrame);
+    expect(dom.cancelAnimationFrame).not.toBe(ofTheDom.cancelAnimationFrame);
+    const frames: number[] = [];
+    dom.requestAnimationFrame!(now => frames.push(now));
+    dom.cancelAnimationFrame!(dom.requestAnimationFrame!(() => frames.push(-1)));
+    fake.advanceTimersByTime(15);
+    expect(frames).toEqual([]);
+    fake.advanceTimersByTime(1);
+    expect(frames).toEqual([16]);
+
+    fake.useRealTimers();
+    expect(dom.requestAnimationFrame).toBe(ofTheDom.requestAnimationFrame);
+    expect(dom.cancelAnimationFrame).toBe(ofTheDom.cancelAnimationFrame);
+  });
+
+  test.each([
+    [{ doNotFake: ["requestAnimationFrame"] }, [false, true]],
+    [{ toNotFake: ["cancelAnimationFrame"] }, [true, false]],
+    [{ doNotFake: ["requestAnimationFrame", "cancelAnimationFrame"] }, [false, false]],
+    [{ toFake: ["setTimeout"] }, [false, false]],
+    [{ toFake: ["cancelAnimationFrame"] }, [false, true]],
+  ] as const)("%j", (options, faked) => {
+    Object.assign(dom, ofTheDom);
+    vi.useFakeTimers(options as unknown as Parameters<typeof vi.useFakeTimers>[0]);
+    expect([
+      dom.requestAnimationFrame !== ofTheDom.requestAnimationFrame,
+      dom.cancelAnimationFrame !== ofTheDom.cancelAnimationFrame,
+    ]).toEqual([...faked]);
   });
 });
 

@@ -1452,37 +1452,37 @@ extern "C" fn Zig__GlobalObject__resolve(
 }
 
 /// `import.meta.resolve()` of a path or `file:` URL, which it does not look for on disk: what the
-/// answer of an `onResolve` resolves to, or `undefined` when none answers.
+/// answer of an `onResolve` resolves to. False when none answers, or with what it was asked about.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__resolveWithOnResolve(
+    res: &mut ErrorableString,
     global: &JSGlobalObject,
     specifier: &BunString,
     source: &BunString,
-) -> JSValue {
-    crate::to_js_host_call(global, || {
-        let path;
-        let specifier = if specifier.starts_with_ascii(b"file://") {
-            path = bun_url::path_from_file_url(specifier);
-            &path
-        } else {
-            specifier
-        };
-        let mut query = BunString::EMPTY;
-        match VirtualMachine::resolve_with_on_resolve::<true>(
-            global,
-            specifier,
-            source,
-            Some(&mut query),
-            crate::virtual_machine::ResolveMode::Esm,
-        )? {
-            None => Ok(JSValue::UNDEFINED),
-            Some(Err(error)) => Err(global.throw_value(error)),
-            Some(Ok(resolved)) if query.is_empty() => resolved.into_js(global),
-            Some(Ok(resolved)) => {
-                BunString::create_format(format_args!("{resolved}{query}")).into_js(global)
-            }
-        }
-    })
+    query: &mut BunString,
+) -> bool {
+    crate::mark_binding();
+    let path;
+    let specifier = if specifier.starts_with_ascii(b"file://") {
+        path = bun_url::path_from_file_url(specifier);
+        &path
+    } else {
+        specifier
+    };
+    match VirtualMachine::resolve_with_on_resolve::<true>(
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::Esm,
+        true,
+    ) {
+        Ok(None) => return false,
+        Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),
+        Ok(Some(Err(value))) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
+    true
 }
 
 #[unsafe(no_mangle)]

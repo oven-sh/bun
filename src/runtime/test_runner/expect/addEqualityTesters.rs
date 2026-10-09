@@ -4,15 +4,6 @@ use super::super::jest::Jest;
 use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
-/// Worker threads never read the runner, which belongs to the main thread.
-fn file_generation(global: &JSGlobalObject) -> u32 {
-    if global.bun_vm().worker_ref().is_some() {
-        return 0;
-    }
-    // SAFETY: the runner outlives every test file and is only touched on this thread.
-    Jest::runner_ptr().map_or(0, |runner| unsafe { (*runner.as_ptr()).bun_test_root.file_generation })
-}
-
 fn append_first(global: &JSGlobalObject, target: JSValue, source: JSValue, count: u32) -> JsResult<()> {
     let mut iter = source.array_iterator(global)?;
     while iter.i < count {
@@ -30,7 +21,7 @@ impl Expect {
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
 
-        let file = file_generation(global);
+        let file = Jest::file_generation(global);
         let same_file = utils.testers_file.replace(file) == file;
         let Some(testers) = js::equality_testers_get_cached(utils_value) else { return Ok(None) };
         if same_file {
@@ -93,7 +84,7 @@ impl Expect {
 
     fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
         let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
-        let context = ExpectMatcherContext { flags: Flags::default() }.to_js(global);
+        let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
             if !tester.is_callable() {

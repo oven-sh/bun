@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
 
@@ -7,15 +9,15 @@ use super::super::jest::{FileColumns as _, Jest};
 use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
-/// The names of the enclosing `describe` blocks and of the test.
-pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8]) -> Vec<u8> {
+/// The names of the enclosing `describe` blocks and of the test. Only Jest counts a `describe("")` among them.
+pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
     let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
     let mut parent = entry.base.parent;
     while let Some(scope) = parent {
         // SAFETY: the `BunTest` that owns `entry` owns its enclosing scopes.
         let scope = unsafe { &*scope };
         if let Some(name) = scope.base.name.as_deref() {
-            if !name.is_empty() {
+            if with_empty_names || !name.is_empty() {
                 names.push(name);
             }
         }
@@ -54,7 +56,7 @@ fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
     let name = with_sequence(test, |sequence| {
         // SAFETY: the `BunTest` kept alive by `with_sequence` owns the entry.
         sequence.test_entry.map(|entry| unsafe { entry.as_ref() }).map(|entry| {
-            full_test_name(entry, if entry.calling.is_vitest() { b" > " } else { b" " })
+            full_test_name(entry, if entry.calling.is_vitest() { b" > " } else { b" " }, false)
         })
     });
     match name.flatten() {
@@ -160,24 +162,31 @@ impl Expect {
 }
 
 impl ExpectMatcherContext {
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_assertion_calls(_this: &Self, _global: &JSGlobalObject) -> JSValue {
-        assertion_calls(None)
+    /// The test that called `expect()`, which `expect` of a test context knows among concurrent tests too.
+    fn test(&self) -> Test {
+        let parent = self.parent.as_ref()?;
+        let names_a_test = matches!(parent.phase, RefDataValue::Execution { entry_data: Some(_), .. });
+        (names_a_test && Rc::ptr_eq(&parent.bun_test()?, &bun_test::clone_active_strong()?)).then_some(parent.phase)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_current_test_name(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        current_test_name(global, None)
+    pub(crate) fn get_assertion_calls(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        assertion_calls(this.test())
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_expected_assertions_number(_this: &Self, _global: &JSGlobalObject) -> JSValue {
-        expected_assertions_number(None)
+    pub(crate) fn get_current_test_name(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        current_test_name(global, this.test())
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_is_expecting_assertions(_this: &Self, _global: &JSGlobalObject) -> JSValue {
-        is_expecting_assertions(None)
+    pub(crate) fn get_expected_assertions_number(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        expected_assertions_number(this.test())
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_is_expecting_assertions(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        is_expecting_assertions(this.test())
     }
 
     #[bun_jsc::host_fn(getter)]

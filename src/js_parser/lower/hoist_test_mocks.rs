@@ -8,7 +8,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
 use bun_collections::VecExt;
 
 use crate::p::P;
-use crate::parser::Jest;
+use crate::parser::{Jest, RefMap};
 
 #[derive(Clone, Copy)]
 pub(crate) enum MockApi {
@@ -44,10 +44,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
             return MockApi::from_export_name(Jest::GLOBALS[global].as_bytes());
         }
-        self.imported_mock_apis
-            .iter()
-            .find(|(imported, _)| imported.eql(ref_))
-            .map(|(_, api)| *api)
+        self.imported_mock_apis.get(&ref_).copied()
     }
 
     /// What an identifier of a top-level statement is bound to, before the visit pass.
@@ -114,21 +111,58 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         }
     }
 
+    /// Evaluating it runs no code. Before the visit pass.
+    fn is_unvisited_primitive_literal(&self, expr: Expr) -> bool {
+        match expr.data {
+            ExprData::EString(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EBoolean(_)
+            | ExprData::ENull(_) => true,
+            ExprData::EUnary(unary) => {
+                unary.op == js_ast::OpCode::UnNeg
+                    && matches!(
+                        unary.value.data,
+                        ExprData::ENumber(_) | ExprData::EBigInt(_)
+                    )
+            }
+            ExprData::EIdentifier(id) => {
+                self.load_name_from_ref(id.ref_) == b"undefined"
+                    && self.unvisited_top_level_symbol(id.ref_).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// `const a = "a"`: like babel-jest, it moves with the mocks, whose factories can then read it.
+    /// Only an access that would have thrown can tell.
+    fn is_primitive_literal_declaration(&self, stmt: &Stmt) -> bool {
+        let StmtData::SLocal(local) = stmt.data else {
+            return false;
+        };
+        matches!(local.kind, S::Kind::KConst | S::Kind::KLet)
+            && local.decls.slice().iter().all(|decl| {
+                matches!(decl.binding.data, js_ast::binding::Data::BIdentifier(_))
+                    && decl
+                        .value
+                        .is_some_and(|value| self.is_unvisited_primitive_literal(value))
+            })
+    }
+
     /// Runs before the visit pass. `None` when no statement is hoisted.
     pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
         if !stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt)) {
             return None;
         }
 
-        let mut exported = BumpVec::<Ref>::new_in(self.arena);
+        let mut exported = RefMap::default();
         for stmt in stmts {
             if let StmtData::SExportClause(clause) = stmt.data {
-                exported.extend(
-                    clause
-                        .items
-                        .iter()
-                        .filter_map(|item| self.unvisited_top_level_symbol(item.name.ref_)),
-                );
+                for item in clause.items.iter() {
+                    if let Some(ref_) = self.unvisited_top_level_symbol(item.name.ref_) {
+                        exported.insert(ref_, ());
+                    }
+                }
             }
         }
 
@@ -136,7 +170,11 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         for stmt in stmts {
             order.push(match stmt.data {
                 StmtData::SImport(import) => self.plan_import(&import, &exported),
-                _ if self.is_hoisted_mock_stmt(stmt) => MockHoistOrder::Hoisted,
+                _ if self.is_hoisted_mock_stmt(stmt)
+                    || self.is_primitive_literal_declaration(stmt) =>
+                {
+                    MockHoistOrder::Hoisted
+                }
                 _ => MockHoistOrder::InPlace,
             });
         }
@@ -144,7 +182,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     }
 
     /// The names of a lowered import become reads of its namespace. Any other import stays static.
-    pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &[Ref]) -> MockHoistOrder {
+    pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
         let record = &self.import_records.items()[import.import_record_index as usize];
         // "bun" prints as `var`s that read `globalThis.Bun`.
         if is_test_module(record.path.text) || record.path.text == b"bun" {
@@ -165,7 +203,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 .chain(import.items.iter().map(|item| (item.name.ref_, item.alias)))
         };
         // `export { a }` needs `a` to be a binding.
-        if bindings().any(|(ref_, _)| exported.iter().any(|exported| exported.eql(ref_))) {
+        if bindings().any(|(ref_, _)| exported.contains_key(&ref_)) {
             return MockHoistOrder::InPlace;
         }
 
@@ -269,32 +307,58 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         )
     }
 
-    /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Runs before the arguments are visited.
-    pub(crate) fn unwrap_import_in_mock_path(&self, call: &mut E::Call) {
-        let Some(path) = call.args.slice_mut().first_mut() else {
+    /// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`.
+    pub(crate) fn drop_namespace_of_lowered_callee(&self, callee: &mut Expr) {
+        let ExprData::EImportIdentifier(import) = callee.data else {
             return;
+        };
+        let symbol = &self.symbols[import.ref_.inner_index() as usize];
+        // A name of another block of a TypeScript namespace has an alias too, and keeps its `this`.
+        if import.was_originally_identifier()
+            && symbol.kind == js_ast::symbol::Kind::Import
+            && symbol.namespace_alias.is_some()
+        {
+            *callee = Expr {
+                data: crate::prefill::data::ZERO,
+                loc: callee.loc,
+            }
+            .join_with_comma(*callee);
+        }
+    }
+
+    /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Returns whether it visited the first argument.
+    pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
+        let ExprData::EDot(dot) = call.target.data else {
+            return false;
+        };
+        let api = match dot.target.data {
+            ExprData::EIdentifier(id) => id.ref_,
+            ExprData::EImportIdentifier(id) => id.ref_,
+            _ => return false,
+        };
+        let Some(path) = call.args.slice_mut().first_mut() else {
+            return false;
         };
         let path = match &mut path.data {
             ExprData::EAwait(awaited) => &mut awaited.value,
             _ => path,
         };
-        let ExprData::EImport(import) = path.data else {
-            return;
+        let ExprData::EImport(mut import) = path.data else {
+            return false;
         };
-        let ExprData::EDot(dot) = call.target.data else {
-            return;
-        };
-        let api = match dot.target.data {
-            ExprData::EIdentifier(id) => id.ref_,
-            ExprData::EImportIdentifier(id) => id.ref_,
-            _ => return,
-        };
-        if matches!(
+        if !matches!(
             dot.name.slice(),
             b"mock" | b"unmock" | b"doMock" | b"doUnmock"
-        ) && self.mock_api(api).is_some()
+        ) || self.mock_api(api).is_none()
         {
-            *path = import.expr;
+            return false;
         }
+        self.visit_expr(&mut import.expr);
+        // The options go away: no `import()` or `require()` in them gets an import record.
+        let was_control_flow_dead = core::mem::replace(&mut self.is_control_flow_dead, true);
+        self.visit_expr(&mut import.options);
+        self.is_control_flow_dead = was_control_flow_dead;
+        *path = import.expr;
+        true
     }
 }

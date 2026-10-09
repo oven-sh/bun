@@ -211,7 +211,6 @@ pub(crate) mod expect {
     use bun_jsc::console_object::Formatter;
 
     pub(crate) trait JSValueTestExt {
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
         fn bind(
@@ -224,29 +223,6 @@ pub(crate) mod expect {
         ) -> JsResult<JSValue>;
     }
     impl JSValueTestExt for JSValue {
-        #[inline]
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
-            let fmt_options = FormatOptions {
-                enable_colors: false,
-                add_newline: false,
-                flush: false,
-                quote_strings: true,
-            };
-            JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global,
-                core::slice::from_ref(&self),
-                1,
-                out,
-                fmt_options,
-            )?;
-            // `FormatOptions.flush` is false, so the formatter does not flush
-            // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes.
-            out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
-            Ok(())
-        }
         #[inline]
         fn is_reg_exp(self) -> bool {
             self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
@@ -498,6 +474,7 @@ pub(crate) mod expect {
         "toMatch.rs"                            => to_match,
         "toMatchInlineSnapshot.rs"              => to_match_inline_snapshot,
         "toMatchObject.rs"                      => to_match_object,
+        "toMatchFileSnapshot.rs"                => to_match_file_snapshot,
         "toMatchSnapshot.rs"                    => to_match_snapshot,
         "toSatisfy.rs"                          => to_satisfy,
         "toStrictEqual.rs"                      => to_strict_equal,

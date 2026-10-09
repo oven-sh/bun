@@ -1,6 +1,6 @@
 use core::fmt;
 use std::rc::Rc;
-use crate::test_runner::expect::JSValueTestExt;
+use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
@@ -9,7 +9,7 @@ use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, Describ
 use crate::test_runner::bun_test::js_fns::{Signature, generic_hook};
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
-use crate::test_runner::test_context_parameter::ContextParameter;
+use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -100,6 +100,14 @@ impl ScopeFunctions {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fails(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Fails, ..Default::default() }, b"get .fails", "fails")
+    }
+    /// vitest's, whichever module `this` is from.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_shuffle(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if this.mode == Mode::Test {
+            return Ok(JSValue::UNDEFINED);
+        }
+        this.generic_extend(global, BaseScopeCfg { self_shuffle: true, ..Default::default() }, b"get .shuffle", "shuffle")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -247,7 +255,7 @@ impl ScopeFunctions {
 
         let [array] = frame.arguments_as_array::<1>();
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
@@ -295,7 +303,7 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
     for row_values in values.chunks_exact(headings.len()) {
         let row = JSValue::create_empty_object(global, headings.len());
         for (heading, &value) in headings.iter().zip(row_values) {
-            row.put(global, BunString::clone_utf8(heading), value);
+            row.put_may_be_index(global, &BunString::clone_utf8(heading), value)?;
         }
         rows.push(global, row)?;
     }
@@ -345,20 +353,20 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         _ => 0,
     };
     // The fixtures the callback asks for.
-    let parameter: Option<Rc<ContextParameter>> = match args.callback {
-        Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => Some(Rc::new(if this.each.is_empty() {
+    let parameter: Option<SharedContextParameter> = match args.callback {
+        Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => Some(Rc::new(core::cell::OnceCell::from(if this.each.is_empty() {
             ContextParameter::of(callback, 0)
         } else if this.rows == Rows::For {
             ContextParameter::of(callback, 1)
         } else {
             ContextParameter::Absent
-        })),
+        }))),
         _ => None,
     };
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
         // vitest spreads the rows only if each of them is an array.
@@ -397,7 +405,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
 
                 let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
+                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx, is_vitest)?.into_vec())
                 } else {
                     None
                 };
@@ -503,7 +511,7 @@ impl ScopeFunctions {
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
         calling: Calling,
-        parameter: Option<&Rc<ContextParameter>>,
+        parameter: Option<&SharedContextParameter>,
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
@@ -577,6 +585,8 @@ impl ScopeFunctions {
                 let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
                 if self.cfg.flavor == Flavor::Vitest {
                     new_scope.inherited = options.inherited;
+                } else {
+                    new_scope.inherited.shuffle = options.inherited.shuffle;
                 }
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
@@ -631,10 +641,11 @@ impl ScopeFunctions {
                 ));
 
                 let mut callback = if matches_filter { callback } else { None };
-                if let (Some(parameter), Some(function)) = (parameter, callback) {
+                let mut parameter_of_callback = None;
+                if let (Some(parameter), Some(_)) = (parameter, callback) {
                     let (call, ordinal) = if self.each.is_empty() { ("()", "first") } else { ("", "second") };
                     let why = "fixtures are set up for the properties it names";
-                    let error = match &**parameter {
+                    let error = match parameter.get().unwrap_or(&ContextParameter::Absent) {
                         ContextParameter::Absent | ContextParameter::Properties(_) => None,
                         ContextParameter::RestProperty => Some(global.create_error_instance(format_args!(
                             "{self}{call} expects the {ordinal} parameter of its callback not to have a rest property: {why}"
@@ -649,14 +660,14 @@ impl ScopeFunctions {
                     };
                     match error {
                         Some(error) => callback = Some(test_context::rejecting(global, error)?),
-                        None => bun_test.set_context_parameter(function, Rc::clone(parameter)),
+                        None => parameter_of_callback = Some(Rc::clone(parameter)),
                     }
                     if TestFixtures::has_scope_beyond_test(self.fixtures) {
                         bun_test.expect_file_scoped_fixtures();
                     }
                 }
 
-                let _ = bun_test.collection.active_scope_mut().append_test(
+                let entry = bun_test.collection.active_scope_mut().append_test(
                     description,
                     callback,
                     bun_test::ExecutionEntryCfg {
@@ -669,6 +680,9 @@ impl ScopeFunctions {
                     base,
                     bun_test::AddedInPhase::Collection,
                 )?;
+                if parameter_of_callback.is_some() {
+                    entry.parameter = parameter_of_callback;
+                }
             }
         }
         Ok(())
@@ -772,6 +786,7 @@ pub(crate) struct InheritedOptions {
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: Option<u32>,
     pub(crate) fails: Option<bool>,
+    pub(crate) shuffle: Option<bool>,
 }
 
 /// vitest: `test(name, { skip: true }, fn)` is `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
@@ -821,6 +836,7 @@ pub(crate) enum CallbackMode {
 pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
+    VitestHook,
 }
 
 #[derive(Copy, Clone)]
@@ -944,7 +960,7 @@ pub(crate) fn parse_arguments(
     } else if callback.is_function() {
         Some(callback.with_async_context_if_needed(global))
     } else {
-        let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
+        let ordinal = if cfg.kind == FunctionKind::TestOrDescribe { "second" } else { "first" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
     };
 
@@ -959,6 +975,7 @@ pub(crate) fn parse_arguments(
     let mut repeats_option: Option<u32> = None;
     let mut fails_option: Option<bool> =
         matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_mode == SelfMode::Fails).then_some(true);
+    let mut shuffle_option: Option<bool> = None;
 
     if options.is_number() {
         timeout_option = Some(options.as_number());
@@ -1000,6 +1017,7 @@ pub(crate) fn parse_arguments(
                 ("skip", &mut modifiers.skip),
                 ("todo", &mut modifiers.todo),
                 ("fails", &mut fails_option),
+                ("shuffle", &mut shuffle_option),
                 ("concurrent", &mut modifiers.concurrent),
             ] {
                 *modifier = options.get(global, name)?.map(JSValue::to_boolean).or(*modifier);
@@ -1031,6 +1049,10 @@ pub(crate) fn parse_arguments(
         retry: result.options.retry.or(cfg.inherited.retry),
         repeats: repeats_option.or(cfg.inherited.repeats),
         fails: fails_option.or(cfg.inherited.fails),
+        shuffle: matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_shuffle)
+            .then_some(true)
+            .or(shuffle_option)
+            .or(cfg.inherited.shuffle),
     };
     result.options.retry = result.options.inherited.retry;
     result.options.repeats = result.options.inherited.repeats.unwrap_or(0);
@@ -1044,13 +1066,21 @@ pub(crate) fn parse_arguments(
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
-    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_ms != 0 { Some(runner.default_timeout_ms) } else { None }
+    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match (runner.default_timeout_ms, cfg.kind) {
+        (0, _) => None,
+        // vitest's default `hookTimeout`
+        (ms, FunctionKind::VitestHook) => Some(ms.max(10_000)),
+        (ms, _) => Some(ms),
     });
     let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
         if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
     });
-    result.options.timeout = result.options.inherited.timeout.or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
+    let vi_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match cfg.kind {
+        FunctionKind::TestOrDescribe => runner.vi_config.test_timeout,
+        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.hook_timeout,
+    });
+    result.options.timeout =
+        result.options.inherited.timeout.or(vi_timeout_ms).or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
 
     Ok(result)
 }
@@ -1081,6 +1111,9 @@ impl fmt::Display for ScopeFunctions {
         }
         if self.cfg.self_only {
             write!(f, ".only")?;
+        }
+        if self.cfg.self_shuffle {
+            write!(f, ".shuffle")?;
         }
         if !self.each.is_empty() {
             write!(f, "{}", if self.rows == Rows::For { ".for()" } else { ".each()" })?;

@@ -20,7 +20,8 @@ use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    MacroImportReplacementMap, MacroMap, MacroOptions, TestEnvironment,
+    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, TestEnvironment,
+    TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
@@ -444,6 +445,24 @@ impl<'a> Parser<'a> {
                     }
                 }
 
+                if let Some(expr) = test.get(b"globals") {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(globals) = TestGlobals::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"globals\" to be \"bun\" or \"vitest\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --globals is parsed first and wins.
+                    if self.ctx.test_options.globals.is_none() {
+                        self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
                 if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
@@ -571,6 +590,13 @@ impl<'a> Parser<'a> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                for (index, name) in RESETS_BEFORE_EACH_TEST.iter().enumerate() {
+                    if let Some(expr) = test.get(name.as_bytes()) {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        self.ctx.test_options.resets_before_each_test[index] = expr.as_bool();
+                    }
                 }
 
                 let mut randomize_from_config: Option<bool> = None;

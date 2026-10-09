@@ -48,6 +48,26 @@ describe("url.fileURLToPath", () => {
     }
   });
 
+  test("a URL of another implementation", () => {
+    const fileURL = isWindows ? "file:///C:/dir/foo%20bar" : "file:///dir/foo%20bar";
+    const { href, protocol, hostname, pathname } = new URL(fileURL);
+    assert.strictEqual(
+      url.fileURLToPath({ href, protocol, hostname, pathname }),
+      isWindows ? "C:\\dir\\foo bar" : "/dir/foo bar",
+    );
+    assert.throws(() => url.fileURLToPath({ href: "https://a/b", protocol: "https:", hostname: "a", pathname: "/b" }), {
+      code: "ERR_INVALID_URL_SCHEME",
+    });
+    // What url.parse() returns is not a URL.
+    assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname, path: pathname }), {
+      code: "ERR_INVALID_ARG_TYPE",
+      message: /^The "path" argument must be of type string or an instance of URL\. Received an instance of Object/,
+    });
+    assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname, auth: null }), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  });
+
   test("general", () => {
     let testCases;
     if (isWindows) {

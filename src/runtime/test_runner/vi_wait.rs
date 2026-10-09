@@ -60,6 +60,10 @@ pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("ViWait"; callback, promise, lastError, timeoutError);
 }
 
+unsafe extern "C" {
+    safe fn ExpectDeferred__setCauseIfNone(global: &JSGlobalObject, error: JSValue, cause: JSValue);
+}
+
 /// The generation of the test file that is running. `None` in a worker: the runner belongs to the main thread.
 fn running_test_file(vm: &VirtualMachine) -> Option<u32> {
     if vm.worker_ref().is_some() {
@@ -362,12 +366,12 @@ impl ViWait {
             return self.settle(global, this_value, Err(timeout_error));
         };
         if self.kind == Kind::Poll
-            && error.is_object()
-            && error
-                .get(global, "cause")?
-                .is_none_or(JSValue::is_undefined_or_null)
+            && let Err(terminated) = bun_jsc::call_check_slow(global, || {
+                ExpectDeferred__setCauseIfNone(global, error, timeout_error)
+            })
         {
-            error.put(global, b"cause", timeout_error);
+            self.finish();
+            return Err(terminated);
         }
         self.settle(global, this_value, Err(error))
     }

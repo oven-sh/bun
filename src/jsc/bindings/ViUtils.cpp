@@ -10,6 +10,9 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
+extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
+
 namespace Bun {
 
 using namespace JSC;
@@ -34,23 +37,46 @@ static NEVER_INLINE Identifier propertyKeyOf(JSGlobalObject* globalObject, JSVal
     return value.toPropertyKey(globalObject);
 }
 
-using RestoreOriginal = void (*)(JSGlobalObject*, JSObject* target, JSValue key, JSValue original);
-
-static void restoreOriginals(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& slot, JSObject* target, RestoreOriginal restore)
+// Goes on after an exception, and throws the first one once it is through.
+template<typename Functor>
+static void forEachEntry(Zig::GlobalObject* globalObject, JSMap* map, const Functor& apply)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSC::Exception* firstException = nullptr;
+    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
+    while (true) {
+        auto [key, value] = iterator->nextWithAdvance(vm);
+        if (!key)
+            break;
+        apply(key, value);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return;
+            if (!firstException)
+                firstException = exception;
+        }
+    }
+    if (firstException)
+        throwException(globalObject, scope, firstException);
+}
+
+using RestoreOriginal = void (*)(JSGlobalObject*, JSObject* target, JSValue key, JSValue original);
+
+static void restoreOriginals(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& slot, WriteBarrier<Unknown>& stubsOfPreload, JSObject* target, RestoreOriginal restore)
+{
     auto* originals = uncheckedDowncast<JSMap>(slot.get());
     slot.clear();
-    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), originals, IterationKind::Entries);
-    while (true) {
-        auto [key, original] = iterator->nextWithAdvance(vm);
-        if (!key)
-            return;
-        restore(globalObject, target, key, original);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    if (ViUtils__isLoadingPreload(globalObject))
+        stubsOfPreload.clear();
+    forEachEntry(globalObject, originals, [&](JSValue key, JSValue original) { restore(globalObject, target, key, original); });
+}
+
+static void didStub(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& stubsOfPreload, JSValue key, JSValue stub)
+{
+    if (JSMock__isInPreload(globalObject))
+        JSC__JSMap__set(ensureMap(getVM(globalObject), globalObject, stubsOfPreload), globalObject, JSValue::encode(key), JSValue::encode(stub));
 }
 
 static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue original)
@@ -76,40 +102,46 @@ static void unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
     auto& stubbedGlobals = globalObject->mockModule.stubbedGlobals;
     if (stubbedGlobals)
-        restoreOriginals(globalObject, stubbedGlobals, globalObject->globalThis(), restoreGlobal);
+        restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue value)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto name = propertyKeyOf(globalObject, callFrame->argument(0));
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue value = callFrame->argument(1);
+    auto name = propertyKeyOf(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+    key = identifierToJSValue(vm, name);
 
     JSObject* target = globalObject->globalThis();
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
-    JSValue key = identifierToJSValue(vm, name);
     bool isRemembered = hasOriginal(globalObject, originals, key);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     if (!isRemembered) {
         JSValue original = jsUndefined();
         PropertyDescriptor descriptor;
         bool exists = target->getOwnPropertyDescriptor(globalObject, name, descriptor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
         if (exists) {
             JSObject* object = constructObjectFromPropertyDescriptor(globalObject, descriptor);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
             original = object;
         }
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(lexicalGlobalObject));
+    stubGlobal(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
@@ -160,29 +192,27 @@ static void unstubAllEnvs(Zig::GlobalObject* globalObject)
         return;
     JSObject* env = processEnv(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, restoreOriginals(globalObject, stubbedEnvs, env, setEnv));
+    RELEASE_AND_RETURN(scope, restoreOriginals(globalObject, stubbedEnvs, globalObject->mockModule.envsOfPreload, env, setEnv));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+static void stubEnv(Zig::GlobalObject* globalObject, JSValue nameValue, JSValue value)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue value = callFrame->argument(1);
+    String name = nameValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     if (!value.isUndefined()) {
         if (name == "DEV"_s || name == "PROD"_s || name == "SSR"_s) {
             value = value.toBoolean(globalObject) ? jsString(vm, String("1"_s)) : jsEmptyString(vm);
         } else {
             value = value.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 
     JSObject* env = processEnv(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedEnvs);
     JSValue nameString = jsString(vm, name);
 #if OS(WINDOWS)
@@ -191,22 +221,30 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, Cal
     JSValue key = nameString;
 #endif
     bool isRemembered = hasOriginal(globalObject, originals, key);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     if (!isRemembered) {
         JSValue original = jsUndefined();
         auto propertyName = Identifier::fromString(vm, name);
         PropertySlot slot(env, PropertySlot::InternalMethodType::GetOwnProperty);
         bool exists = env->methodTable()->getOwnPropertySlot(env, globalObject, propertyName, slot);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
         if (exists) {
             original = slot.getValue(globalObject, propertyName);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
         }
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     setEnv(globalObject, env, nameString, value);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.envsOfPreload, key, value));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(lexicalGlobalObject));
+    stubEnv(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
@@ -324,6 +362,20 @@ extern "C" void ViUtils__unstubAllEnvs(Zig::GlobalObject* globalObject)
 extern "C" void ViUtils__unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
     Bun::unstubAllGlobals(globalObject);
+}
+
+// After the two above: a test file may have undone or replaced them.
+extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (JSC::JSValue envs = globalObject->mockModule.envsOfPreload.get()) {
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(envs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubEnv(globalObject, name, stub); });
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (JSC::JSValue globals = globalObject->mockModule.globalsOfPreload.get()) {
+        scope.release();
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(globals), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobal(globalObject, name, stub); });
+    }
 }
 
 extern "C" void ViUtils__forgetDynamicImports(Zig::GlobalObject* globalObject)

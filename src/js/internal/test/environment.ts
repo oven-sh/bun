@@ -3,20 +3,25 @@
 const { createRequire } = require("node:module");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+const isInPreload = $newRustFunction("environment.rs", "jsIsInPreload", 0);
 
-const { defineProperty, getOwnPropertyDescriptor, getOwnPropertyNames, getOwnPropertySymbols } = Object;
-const { defineProperty: tryDefineProperty, deleteProperty } = Reflect;
 const { captureStackTrace } = Error;
 const NativeBlob = Blob;
 const NativeFormData = FormData;
 const NativeRequest = Request;
 const NativeURL = URL;
 
+// This runs between files that may have patched anything: private names, no iterators, descriptors without a prototype.
 type Properties = Map<string, PropertyDescriptor>;
 
 interface Environment {
+  window: any;
   /** What `globalThis` has while a file runs in this environment. */
   properties: Properties;
+  /** The keys `properties` had at first, in the order they are defined. */
+  keys: string[];
+  /** Called when a file is about to load, each time it does. */
+  forgetLastFile?(): void;
   close(): void | Promise<void>;
 }
 
@@ -59,69 +64,98 @@ const KEYS = [
   "scroll", "scrollBy", "scrollLeft", "scrollTo", "scrollTop", "scrollX", "scrollY", "self", "sessionStorage", "stop",
   "top", "Window", "window",
 ];
-// Globals of Bun that Node.js does not have, so vitest takes the window's.
-const BUN_KEYS = ["onerror", "onmessage"];
 const SELF_KEYS = ["window", "self", "top", "parent"];
 
 function dataProperty(value: unknown, enumerable: boolean): PropertyDescriptor {
-  return { value, writable: true, enumerable, configurable: true };
+  return { __proto__: null, value, writable: true, enumerable, configurable: true } as PropertyDescriptor;
 }
 
 function windowProperty(win: any, key: string): PropertyDescriptor {
   const initial = win[key];
-  const bound = typeof initial === "function" && key[0] !== key[0].toUpperCase() && initial.bind(win);
+  const first = key.$charCodeAt(0);
+  const bound = typeof initial === "function" && first >= 97 /* a */ && first <= 122 /* z */ && initial.bind(win);
   let isOverridden = false;
   let override: unknown;
   return {
+    __proto__: null,
     get() {
       return isOverridden ? override : bound || win[key];
     },
     set(value) {
       isOverridden = true;
       override = value;
-      win[key] = value;
+      // The window has read-only properties (`document`), globalThis as vitest sets it up has none.
+      try {
+        win[key] = value;
+      } catch {}
     },
     enumerable: false,
     configurable: true,
-  };
+  } as PropertyDescriptor;
 }
 
-function windowProperties(win: any, additionalKeys: string[]): Properties {
-  const taken = new Set(additionalKeys.concat(KEYS));
-  const properties: Properties = new Map();
-  for (const key of taken) properties.$set(key, windowProperty(win, key));
-  for (const key of BUN_KEYS) taken.$add(key);
-  for (const key of getOwnPropertyNames(win)) {
-    if (properties.$has(key) || (key in globalThis && !taken.$has(key))) continue;
+function windowProperties(win: any, additionalKeys: string[]): Pick<Environment, "window" | "properties" | "keys"> {
+  const properties: Properties = new $Map();
+  const keys: string[] = [];
+  function take(key: string) {
+    if (properties.$has(key)) return;
     properties.$set(key, windowProperty(win, key));
+    $arrayPush(keys, key);
   }
-  for (const key of SELF_KEYS) properties.$set(key, dataProperty(globalThis, true));
+  for (let i = 0; i < additionalKeys.length; i++) take(additionalKeys[i]);
+  for (let i = 0; i < KEYS.length; i++) take(KEYS[i]);
+  const names = $Object.$getOwnPropertyNames(win);
+  for (let i = 0; i < names.length; i++) {
+    const key = names[i];
+    // Node.js does not have these two globals of Bun, so vitest takes the window's.
+    if (!(key in globalThis) || key === "onerror" || key === "onmessage") take(key);
+  }
+  for (let i = 0; i < SELF_KEYS.length; i++) properties.$set(SELF_KEYS[i], dataProperty(globalThis, true));
   const { document } = win;
   if (document?.defaultView) {
-    defineProperty(document, "defaultView", { get: () => globalThis, enumerable: true, configurable: true });
+    $Object.$defineProperty(document, "defaultView", {
+      __proto__: null,
+      get: () => globalThis,
+      enumerable: true,
+      configurable: true,
+    } as PropertyDescriptor);
   }
-  return properties;
+  return { window: win, properties, keys };
 }
 
+/**
+ * As vitest and Jest: errors go to the runner unless the file listens for them, counted by its calls alone (so
+ * `{ once: true }`, `signal` and `onerror` do not count down or up). Returns what forgets the listeners of a file.
+ */
 function catchWindowErrors(win: any, properties: Properties) {
-  let userErrorListenerCount = 0;
+  let listenersOfPreloads = 0;
+  let listenersOfFile = 0;
   const addEventListener = win.addEventListener.bind(win);
   const removeEventListener = win.removeEventListener.bind(win);
   addEventListener("error", (event: ErrorEvent) => {
     const { error } = event;
-    if (userErrorListenerCount === 0 && error != null) {
+    if (listenersOfPreloads + listenersOfFile === 0 && error != null) {
       event.preventDefault();
       reportUncaughtException(error);
     }
   });
   properties.$get("addEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
-    if (args[0] === "error") userErrorListenerCount++;
+    if (args[0] === "error") {
+      if (isInPreload()) listenersOfPreloads++;
+      else listenersOfFile++;
+    }
     return addEventListener.$apply(this, args);
   });
   properties.$get("removeEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
-    if (args[0] === "error" && userErrorListenerCount) userErrorListenerCount--;
+    if (args[0] === "error") {
+      if (listenersOfFile) listenersOfFile--;
+      else if (listenersOfPreloads) listenersOfPreloads--;
+    }
     return removeEventListener.$apply(this, args);
   });
+  return () => {
+    listenersOfFile = 0;
+  };
 }
 
 // `AbortSignal` stays Bun's (fetch needs it), jsdom only takes its own.
@@ -150,18 +184,30 @@ function acceptNativeAbortSignals(win: any) {
 
 // jsdom has no public, synchronous way to read a Blob's bytes.
 function blobImplGetter(requireFromTest: NodeJS.Require, win: any): (blob: unknown) => any {
-  for (const id of ["jsdom/lib/generated/idl/utils.js", "jsdom/lib/jsdom/living/generated/utils.js"]) {
+  const ids = ["jsdom/lib/generated/idl/utils.js", "jsdom/lib/jsdom/living/generated/utils.js"];
+  for (let i = 0; i < ids.length; i++) {
     try {
-      const { implForWrapper } = requireFromTest(id);
+      const { implForWrapper } = requireFromTest(ids[i]);
       if (typeof implForWrapper === "function") return implForWrapper;
     } catch {}
   }
-  const implSymbol = getOwnPropertySymbols(new win.Blob())[0];
+  const implSymbol = $Object.$getOwnPropertySymbols(new win.Blob())[0];
   return (blob: any) => blob[implSymbol];
 }
 
-function createJSDOM(requireFromTest: NodeJS.Require, packagePath: string, options: any): Environment {
-  const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = requireFromTest(packagePath);
+function addProperty(
+  { properties, keys }: Pick<Environment, "properties" | "keys">,
+  key: string,
+  value: PropertyDescriptor,
+) {
+  if (!properties.$has(key)) $arrayPush(keys, key);
+  properties.$set(key, value);
+}
+
+/** Like `createHappyDOM`, returns why not if it cannot. */
+function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any): Environment | string {
+  const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
+  if (typeof JSDOM !== "function") return "the package does not export JSDOM";
   const {
     html = "<!DOCTYPE html>",
     userAgent,
@@ -198,8 +244,8 @@ function createJSDOM(requireFromTest: NodeJS.Require, packagePath: string, optio
   });
   const win = dom.window;
   acceptNativeAbortSignals(win);
-  const properties = windowProperties(win, []);
-  catchWindowErrors(win, properties);
+  const globals = windowProperties(win, []);
+  const forgetLastFile = catchWindowErrors(win, globals.properties);
 
   const getBlobImpl = blobImplGetter(requireFromTest, win);
   function toNativeBlob(blob: any) {
@@ -236,27 +282,27 @@ function createJSDOM(requireFromTest: NodeJS.Require, packagePath: string, optio
       }
     },
   };
-  properties.$set("jsdom", dataProperty(dom, true));
-  properties.$set("Request", dataProperty(compat.Request, false));
-  properties.$set("URL", dataProperty(compat.URL, false));
-  return { properties, close: () => win.close() };
+  addProperty(globals, "jsdom", dataProperty(dom, true));
+  addProperty(globals, "Request", dataProperty(compat.Request, false));
+  addProperty(globals, "URL", dataProperty(compat.URL, false));
+  return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
-function createHappyDOM(requireFromTest: NodeJS.Require, packagePath: string, options: any): Environment {
-  const { Window, GlobalWindow } = requireFromTest(packagePath);
-  const win = new (GlobalWindow || Window)({
+function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environment | string {
+  const Window = exports.GlobalWindow || exports.Window;
+  if (typeof Window !== "function") return "the package does not export Window";
+  const win = new Window({
     ...options,
     console,
     url: options.url || "http://localhost:3000",
     settings: { ...options.settings, disableErrorCapturing: true },
   });
-  // prettier-ignore
-  const properties = windowProperties(win, [
-    "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
-    "URLSearchParams", "FormData",
-  ]);
   return {
-    properties,
+    // prettier-ignore
+    ...windowProperties(win, [
+      "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
+      "URLSearchParams", "FormData",
+    ]),
     async close() {
       if (win.close && win.happyDOM.abort) {
         await win.happyDOM.abort();
@@ -269,7 +315,9 @@ function createHappyDOM(requireFromTest: NodeJS.Require, packagePath: string, op
 }
 
 // Without --isolate modules outlive a file, and keep what they read from `document`: so does the window.
-const kept = new Map<string, Environment>();
+const kept = new $Map<string, Environment>();
+// A module with a top-level await cannot be required the first time and can the second: every file gets the first answer.
+const failedToLoad = new $Map<string, unknown>();
 
 /** Returns why not, if it cannot. */
 function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file: string, keep: boolean) {
@@ -282,18 +330,89 @@ function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file
   }
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
-  let environment = kept.$get(id);
-  if (!environment) {
-    let options;
-    try {
-      options = optionsText === undefined ? undefined : JSON.parse(optionsText);
-    } catch (error) {
-      return `its options are not JSON: ${(error as Error).message}`;
-    }
-    environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, packagePath, options ?? {});
-    if (keep) kept.$set(id, environment);
+  const last = kept.$get(id);
+  if (last && !last.window.closed && last.window.document) return last;
+
+  let options;
+  try {
+    options = optionsText === undefined ? undefined : JSON.parse(optionsText);
+  } catch (error) {
+    return `its options are not JSON: ${(error as Error).message}`;
   }
+  if (failedToLoad.$has(packagePath)) throw failedToLoad.$get(packagePath);
+  let exports;
+  try {
+    exports = requireFromTest(packagePath);
+  } catch (error) {
+    failedToLoad.$set(packagePath, error);
+    throw error;
+  }
+  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, exports, options ?? {});
+  if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
+}
+
+function ownProperty(key: string): PropertyDescriptor | undefined {
+  const descriptor = $Object.$getOwnPropertyDescriptor(globalThis, key);
+  return descriptor && ({ __proto__: null, ...descriptor } as PropertyDescriptor);
+}
+
+/** False if script has made that impossible. */
+function putBack(key: string, original: PropertyDescriptor | undefined) {
+  try {
+    if (original) $Object.$defineProperty(globalThis, key, original);
+    else delete (globalThis as any)[key];
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** All of its properties or none: returns what takes them away again, or why it cannot. */
+function enter(name: string, environment: Environment, keep: boolean) {
+  const { properties, keys } = environment;
+  const defined: string[] = [];
+  const originals: (PropertyDescriptor | undefined)[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const descriptor = properties.$get(key);
+    if (!descriptor) continue;
+    const original = ownProperty(key);
+    if (original?.configurable === false) continue;
+    try {
+      $Object.$defineProperty(globalThis, key, descriptor);
+    } catch (error) {
+      for (let j = defined.length; j--; ) putBack(defined[j], originals[j]);
+      return `cannot define "${key}" on globalThis: ${(error as Error).message}`;
+    }
+    $arrayPush(defined, key);
+    $arrayPush(originals, original);
+  }
+  environment.forgetLastFile?.();
+
+  return function teardown(isLoadingFileAgain: boolean) {
+    if (isLoadingFileAgain) return environment.forgetLastFile?.();
+
+    let stuck: string | undefined;
+    for (let i = 0; i < defined.length; i++) {
+      const key = defined[i];
+      const ours = properties.$get(key)!;
+      // What the file (or a preload) redefined is there again for the next file in this environment.
+      const current = ownProperty(key);
+      if (current) properties.$set(key, current);
+      else properties.$delete(key);
+
+      // A property of its own that the file made permanent is the file's to leave behind, like any other global.
+      if (!putBack(key, originals[i]) && current!.get === ours.get && current!.value === ours.value) stuck ??= key;
+    }
+    const closed = keep ? undefined : environment.close();
+    if (stuck !== undefined) {
+      throw new Error(
+        `The "${name}" test environment cannot be taken away: "${stuck}" of globalThis is no longer configurable`,
+      );
+    }
+    return closed;
+  };
 }
 
 /** Returns what undoes it, nothing if a preload brought its own DOM, or `isFromComment` and it cannot: the warning. */
@@ -306,43 +425,22 @@ function setup(
 ) {
   if ("document" in globalThis) return;
 
-  let environment;
+  let result;
   try {
-    environment = open(name, optionsText, file, keep);
+    result = open(name, optionsText, file, keep);
   } catch (error) {
     if (!isFromComment) throw error;
-    environment = String((error as Error)?.message ?? error);
+    result = String((error as Error)?.message ?? error);
   }
-  if (typeof environment === "string") {
-    const message = `Cannot set up the "${name}" test environment of "${file}": ${environment}`;
-    if (isFromComment) return message;
-    const error = new Error(message);
-    // Every frame would be of this file.
-    captureStackTrace(error, setup);
-    throw error;
-  }
+  if (typeof result !== "string") result = enter(name, result, keep);
+  if (typeof result !== "string") return result;
 
-  const { properties, close } = environment;
-  const originals: [string, PropertyDescriptor | undefined][] = [];
-  for (const [key, descriptor] of properties) {
-    const original = getOwnPropertyDescriptor(globalThis, key);
-    if (original?.configurable === false) continue;
-    originals.push([key, original]);
-    defineProperty(globalThis, key, descriptor);
-  }
-
-  return function teardown() {
-    for (const [key, original] of originals) {
-      // What the file (or a preload) redefined is there again for the next file in this environment.
-      const current = getOwnPropertyDescriptor(globalThis, key);
-      if (current) properties.$set(key, current);
-      else properties.$delete(key);
-
-      if (original) tryDefineProperty(globalThis, key, original);
-      else deleteProperty(globalThis, key);
-    }
-    if (!keep) return close();
-  };
+  const message = `Cannot set up the "${name}" test environment of "${file}": ${result}`;
+  if (isFromComment) return message;
+  const error = new Error(message);
+  // Every frame would be of this file.
+  captureStackTrace(error, setup);
+  throw error;
 }
 
 export default setup;

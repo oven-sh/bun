@@ -2057,6 +2057,140 @@ describe.each([
   });
 });
 
+// With such a cycle, looking up a name that nothing has never ends: hence another process, which is killed.
+test.concurrent("the prototype chain of the globalThis of a context cannot lead back to it", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const attempt = set => {
+      try {
+        return set();
+      } catch (error) {
+        return error.name;
+      }
+    };
+    const cycles = {
+      "itself": inner => Object.setPrototypeOf(inner, inner) === inner,
+      "its child": inner => Object.setPrototypeOf(inner, Object.create(inner)) === inner,
+      "its grandchild": inner => Object.setPrototypeOf(inner, Object.create(Object.create(inner))) === inner,
+      "__proto__": inner => void (inner.__proto__ = Object.create(inner)),
+      "Reflect": inner => Reflect.setPrototypeOf(inner, Object.create(inner)),
+      "from inside": inner => inner.eval("Object.setPrototypeOf(globalThis, Object.create(globalThis)) === globalThis"),
+      "its parent": inner => {
+        const parent = {};
+        Object.setPrototypeOf(inner, parent);
+        return Object.setPrototypeOf(parent, inner) === parent;
+      },
+      "its grandparent": inner => {
+        const grandparent = {};
+        Object.setPrototypeOf(inner, Object.create(grandparent));
+        return Reflect.setPrototypeOf(grandparent, Object.create(inner));
+      },
+      "through another context": (inner, other) => {
+        Object.setPrototypeOf(inner, other);
+        return Reflect.setPrototypeOf(other, inner);
+      },
+    };
+    const allowed = {
+      "an object": inner => {
+        const parent = { inherited: 1 };
+        Object.setPrototypeOf(inner, parent);
+        return [Object.getPrototypeOf(inner) === parent, inner.inherited, inner.eval("inherited")].join();
+      },
+      "null": inner => Object.getPrototypeOf(Object.setPrototypeOf(inner, null)),
+      "what was its parent inherits from it": inner => {
+        const parent = {};
+        const prototype = Object.getPrototypeOf(inner);
+        Object.setPrototypeOf(inner, parent);
+        Object.setPrototypeOf(inner, prototype);
+        return Reflect.setPrototypeOf(parent, inner);
+      },
+    };
+    for (const sandbox of [vm.constants.DONT_CONTEXTIFY, {}]) {
+      const make = () => vm.runInContext("this", vm.createContext(typeof sandbox === "object" ? {} : sandbox));
+      const inners = [];
+      const results = {};
+      for (const [name, set] of Object.entries({ ...cycles, ...allowed })) {
+        inners.push(make());
+        results[name] = attempt(() => set(inners.at(-1), make()));
+      }
+      console.log(JSON.stringify(results));
+      console.log(inners.map(inner => typeof inner.missing).join());
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = {
+    "itself": "TypeError",
+    "its child": "TypeError",
+    "its grandchild": "TypeError",
+    "__proto__": "TypeError",
+    "Reflect": false,
+    "from inside": "TypeError",
+    "its parent": "TypeError",
+    "its grandparent": false,
+    "through another context": false,
+    "an object": "true,1,1",
+    "null": null,
+    "what was its parent inherits from it": true,
+  };
+  const lookups = Array(Object.keys(results).length).fill("undefined").join();
+  const lines = stdout.split("\n").map(line => (line.startsWith("{") ? JSON.parse(line) : line));
+  expect({ lines, stderr, exitCode }).toEqual({
+    lines: [results, lookups, results, lookups, ""],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The global of one context is the contextified object of the next.
+test.concurrent("operations on contexts that are nested too deeply are a RangeError", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const operations = {
+      "get": inner => inner.base,
+      "set": inner => void (inner.base = 2),
+      "set a new name": inner => void (inner.fresh = 2),
+      "define an accessor": inner => Reflect.defineProperty(inner, "accessor", { get() {}, configurable: true }),
+      "define a value": inner => Reflect.defineProperty(inner, "value", { value: 1, configurable: true, writable: true }),
+      "in": inner => "missing" in inner,
+      "getOwnPropertyDescriptor": inner => Object.getOwnPropertyDescriptor(inner, "missing"),
+      "hasOwn": inner => Object.hasOwn(inner, "base"),
+    };
+    let inner = { base: 1 };
+    // A level of the others takes less of the stack than one of "get", but not that much less.
+    let [every, limit] = [10, Infinity];
+    for (let depth = 1; depth <= limit && Object.keys(operations).length; depth++) {
+      inner = vm.runInContext("this", vm.createContext(inner));
+      if (depth % every) continue;
+      for (const name in operations) {
+        try {
+          operations[name](inner);
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+          delete operations[name];
+          if (name === "get") [every, limit] = [depth, depth * 20];
+        }
+      }
+    }
+    console.log("went all the way down:", Object.keys(operations).join(", "));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    // So small a stack is used up by few enough contexts to make them here. What does not check goes on beyond this limit.
+    env: { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: isDebug || isASAN ? "450000" : "200000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went all the way down: \n", stderr: "", exitCode: 0 });
+});
+
 test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how hot the code is", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -3295,4 +3429,24 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
     stderr: "",
     exitCode: 0,
   });
+});
+
+test.concurrent("contexts that nothing refers to are collected, the last one made as well", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    (function make() {
+      for (let i = 0; i < 20; i++) {
+        vm.createContext({ i });
+        vm.createContext(vm.constants.DONT_CONTEXTIFY);
+        vm.runInNewContext("1", { i });
+        new vm.Script("1").runInNewContext({ i });
+      }
+    })();
+    Bun.gc(true);
+    console.log(heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
 });

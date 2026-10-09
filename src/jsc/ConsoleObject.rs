@@ -2142,26 +2142,17 @@ pub mod formatter {
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
+                && let Some(callback_value) =
+                    value.fast_get(global_this, jsc::BuiltinName::InspectCustom)?
+                && callback_value.is_callable()
             {
-                // Attempt to get custom formatter
-                match value.fast_get(global_this, jsc::BuiltinName::InspectCustom) {
-                    Err(_) => {
-                        return Ok(TagResult {
-                            tag: TagPayload::RevokedProxy,
-                            ..Default::default()
-                        });
-                    }
-                    Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
-                    }
-                    _ => {}
-                }
+                return Ok(TagResult {
+                    tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                        function: callback_value,
+                        this: value,
+                    }),
+                    cell: js_type,
+                });
             }
 
             if js_type == jsc::JSType::DOMWrapper {
@@ -3190,12 +3181,15 @@ pub mod formatter {
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
         if value.js_type() == jsc::JSType::GlobalProxy {
-            let prototype = value.get_proxy_target().get_prototype(global_this)?;
-            let Some(constructor) = prototype.get(global_this, "constructor")? else {
-                return Ok(None);
-            };
-            let name_str = constructor.get_name(global_this)?;
-            return Ok((!name_str.is_empty() && !name_str.eq_ascii(b"Object")).then_some(name_str));
+            let target = value.get_proxy_target();
+            let name_str = target.get_class_name(global_this)?;
+            // Without a constructor to be found, it is the name of the native class.
+            let is_label = !name_str.is_empty()
+                && !name_str.eq_ascii(b"Object")
+                && !target
+                    .get_class_info_name()
+                    .is_some_and(|native| name_str.eq_ascii(native));
+            return Ok(is_label.then_some(name_str));
         }
         let name_str = value.get_class_name(global_this)?;
         if !name_str.eq_ascii(b"Object") {
@@ -3880,7 +3874,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            if self.single_line {
+            if self.single_line && self.dom_printer.is_some() {
                 let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
                 return Ok(());
             }

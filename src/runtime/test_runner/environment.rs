@@ -7,8 +7,8 @@ use bun_core::strings::{self, CodePoint};
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSInternalPromise, JSPromise, JSValue, JsError, JsResult, StringJsc as _, Strong,
-    bun_string_jsc, js_promise,
+    CallFrame, JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
 
@@ -22,31 +22,54 @@ fn is_line_terminator(c: CodePoint) -> bool {
     matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
 }
 
+fn is_space(c: CodePoint) -> bool {
+    lexer::is_whitespace(c) || is_line_terminator(c)
+}
+
+/// Where the comment that Jest reads ends: jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
+fn end_of_leading_docblock(source: &[u8]) -> usize {
+    let start = end_of_run(source, 0, is_space);
+    if !source[start..].starts_with(b"/*") {
+        return 0;
+    }
+    strings::index_of(&source[start + 2..], b"*/").map_or(0, |offset| start + 2 + offset)
+}
+
 impl<'a> Pragmas<'a> {
-    /// As vitest: the text's first `/@(?:vitest|jest)-environment\s+([\w-]+)\b/` and `/@(?:vitest|jest)-environment-options\s+(.+)/`.
+    /// `@vitest-` as vitest: the text's first `/@vitest-environment\s+([\w-]+)\b/` and `/@vitest-environment-options\s+(.+)/`.
+    /// `@jest-` the same, but as Jest only in a comment that the file starts with.
     fn find(source: &'a [u8]) -> Self {
         const ENVIRONMENT: &[u8] = b"-environment";
         const OPTIONS: &[u8] = b"-options";
 
+        let end_of_docblock = end_of_leading_docblock(source);
         let mut found = Self::default();
         let mut at = 0;
         while let Some(offset) = strings::index_of(&source[at..], ENVIRONMENT) {
             let prefix = &source[..at + offset];
             at += offset + ENVIRONMENT.len();
-            if !prefix.ends_with(b"@vitest") && !prefix.ends_with(b"@jest") {
+            if !prefix.ends_with(b"@vitest")
+                && !(prefix.ends_with(b"@jest") && at < end_of_docblock)
+            {
                 continue;
             }
             let is_options = source[at..].starts_with(OPTIONS);
+            let first = if is_options {
+                found.options
+            } else {
+                found.environment
+            };
+            if first.is_some() {
+                continue;
+            }
             let spaces = if is_options { at + OPTIONS.len() } else { at };
-            let start = end_of_run(source, spaces, |c| {
-                lexer::is_whitespace(c) || is_line_terminator(c)
-            });
+            let start = end_of_run(source, spaces, is_space);
             if start == spaces {
                 continue;
             }
             if is_options {
                 let line = &source[start..end_of_run(source, start, |c| !is_line_terminator(c))];
-                if found.options.is_none() && !line.is_empty() {
+                if !line.is_empty() {
                     found.options = Some(line.strip_suffix(b"*/").unwrap_or(line));
                 }
             } else {
@@ -55,7 +78,7 @@ impl<'a> Pragmas<'a> {
                         .is_ok_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
                 });
                 let name = strings::trim_right(&source[start..end], b"-");
-                if found.environment.is_none() && !name.is_empty() {
+                if !name.is_empty() {
                     found.environment = Some(name);
                 }
             }
@@ -87,7 +110,11 @@ impl Environment {
             comment: pragmas
                 .environment
                 .map(|name| TestEnvironment::from_name(name).ok_or_else(|| name.into())),
-            options: pragmas.options.map(Box::from),
+            // vitest: `JSON.parse(text || "null")`.
+            options: pragmas
+                .options
+                .filter(|text| !text.is_empty())
+                .map(Box::from),
             project,
             is_entered: false,
             teardown: None,
@@ -103,6 +130,14 @@ impl Environment {
         if !core::mem::replace(&mut self.is_entered, true) {
             if let Some(rejected) = self.enter(vm, path)? {
                 return Ok(rejected);
+            }
+        } else if let Some(function) = &self.teardown {
+            // --rerun-each
+            if let Err(err) = function
+                .get()
+                .call(vm.global(), JSValue::UNDEFINED, &[JSValue::TRUE])
+            {
+                return rejected(vm, err);
             }
         }
         Ok(vm.load_entry_point_for_test_runner(path)?)
@@ -169,6 +204,11 @@ impl Environment {
     }
 }
 
+/// What a preload registers is for every file, what a file registers ends with it.
+pub(crate) fn js_is_in_preload(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::from(global.bun_vm().is_in_preload))
+}
+
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
     let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(), err)?;
     promise.set_handled();
@@ -221,7 +261,10 @@ fn setup(
 
 fn teardown(vm: &mut VirtualMachine, function: &Strong) {
     let global = vm.global();
-    let error = match function.get().call(global, JSValue::UNDEFINED, &[]) {
+    let error = match function
+        .get()
+        .call(global, JSValue::UNDEFINED, &[JSValue::FALSE])
+    {
         Ok(result) => {
             let Some(promise) = result.as_any_promise() else {
                 return;

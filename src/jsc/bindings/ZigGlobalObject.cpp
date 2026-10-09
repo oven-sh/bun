@@ -937,9 +937,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    bool entryExistedBefore = false;
-    if (auto* entry = loader->registryEntry(key)) {
-        entryExistedBefore = true;
+    auto* entryBefore = loader->registryEntry(key);
+    if (auto* entry = entryBefore) {
         if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
@@ -960,6 +959,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     case JSPromise::Status::Rejected: {
         promise->markAsHandled();
         JSValue error = promise->result();
+        Bun::evictModulesThatHaveLoaded(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         scope.throwException(globalObject, error);
         return {};
     }
@@ -989,13 +990,16 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // outer import() is mid-load, or the module is EvaluatingAsync from a
         // prior import), removing it would force a second evaluation and a
         // second namespace object once that outer load completes.
-        if (!entryExistedBefore)
+        if (!entryBefore)
             loader->removeEntry(key); // takes the loader's cellLock itself
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
     }
 
+    // (A module that was evaluated may have evicted it: vi.resetModules().)
     auto* entry = loader->registryEntry(key);
+    if (!entry)
+        entry = entryBefore;
     if (!entry || !entry->record()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistentency error."_s));
 
@@ -1017,6 +1021,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
 
     auto* ns = record->getModuleNamespace(globalObject, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::evictModulesThatHaveLoaded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
 }
@@ -1239,6 +1245,9 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     JSC::JSPromiseRejectionOperation operation)
 {
     auto* globalObj = static_cast<GlobalObject*>(obj);
+    // handleRejectedPromises() is only asked of the thread's default realm. What a finished test file's realm rejects goes with it.
+    if (!globalObj->isThreadLocalDefaultGlobalObject && !Bun::isRetiredTestIsolationRealm(globalObj)) [[unlikely]]
+        globalObj = defaultGlobalObject(obj->vm());
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
@@ -2697,36 +2706,6 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
          } },
 
-        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             auto scope = DECLARE_THROW_SCOPE(init.vm);
-             JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-             RETURN_IF_EXCEPTION(scope, );
-             RELEASE_ASSERT(nodeUtilValue.isObject());
-             auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-             RETURN_IF_EXCEPTION(scope, );
-             ASSERT(prop);
-             init.set(uncheckedDowncast<JSFunction>(prop));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             auto scope = DECLARE_THROW_SCOPE(init.vm);
-             JSC::MarkedArgumentBuffer args;
-             args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-             RETURN_IF_EXCEPTION(scope, );
-
-             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-             RETURN_IF_EXCEPTION(scope, );
-
-             JSC::CallData callData = JSC::getCallData(getStylize);
-             NakedPtr<JSC::Exception> returnedException = nullptr;
-             auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-             RETURN_IF_EXCEPTION(scope, );
-
-             if (returnedException) {
-                 throwException(init.owner, scope, returnedException.get());
-             }
-             RETURN_IF_EXCEPTION(scope, );
-             init.set(uncheckedDowncast<JSFunction>(result));
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeNoColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
          } },
@@ -2973,6 +2952,42 @@ BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
+}
+
+// These two run script, which can throw, so they have no LazyProperty initializer: that has to set a value.
+JSC::JSFunction* GlobalObject::utilInspectFunction()
+{
+    if (auto* function = m_utilInspectFunction.getInitializedOnMainThread(this))
+        return function;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nodeUtilValue = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(nodeUtilValue.isObject());
+    auto prop = nodeUtilValue.getObject()->getIfPropertyExists(this, Identifier::fromString(vm, "inspect"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(prop);
+    m_utilInspectFunction.set(vm, this, uncheckedDowncast<JSFunction>(prop));
+    return uncheckedDowncast<JSFunction>(prop);
+}
+
+JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
+{
+    if (auto* function = m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this))
+        return function;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer args;
+    args.append(utilInspectFunction());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSC::JSFunction* getStylize = JSC::JSFunction::create(vm, this, utilInspectGetStylizeWithColorCodeGenerator(vm), this);
+    auto result = JSC::profiledCall(this, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_utilInspectStylizeColorFunction.set(vm, this, uncheckedDowncast<JSFunction>(result));
+    return uncheckedDowncast<JSFunction>(result);
 }
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
@@ -3562,6 +3577,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
@@ -3608,7 +3624,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     bool moduleMocksRun = false;
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
-        if (!keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString))
+        if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString))
             return Identifier::fromString(vm, keyString.substring(1));
         if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString)) {
             if (moduleMocksRun) [[unlikely]]
@@ -3718,6 +3734,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
+    globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
     auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
         JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
@@ -3785,6 +3802,30 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
 
+    // Script that the fetch runs (an onLoad() callback, the factory of a module mock) may require() a module that imports this one, which
+    // fetches it again from there. JSC takes an entry that is still new for one that nothing has been asked of.
+    JSC::ModuleRegistryEntry* newEntry = nullptr;
+    bool isBeingFetchedBelow = false;
+    if (auto& plugins = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins; plugins.hasVirtualModules() || !plugins.isEmpty()) [[unlikely]] {
+        if (auto* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript)) {
+            if (entry->status() == JSC::ModuleRegistryEntry::Status::New) {
+                newEntry = entry;
+                entry->setStatus(JSC::ModuleRegistryEntry::Status::Fetching);
+            } else
+                isBeingFetchedBelow = entry->status() == JSC::ModuleRegistryEntry::Status::Fetching && !entry->loadPromise();
+        }
+    }
+
+    // Not thrown: JSC would leave the entry as it is, for good. Unless the fetch below is to go on: a rejection would settle that one.
+    const auto rejectedWithCaughtException = [&]() -> JSC::JSPromise* {
+        JSValue error = scope.exception()->value();
+        if (!isBeingFetchedBelow && scope.tryClearException())
+            return rejectedInternalPromise(globalObject, error);
+        if (newEntry)
+            newEntry->setStatus(JSC::ModuleRegistryEntry::Status::New);
+        return nullptr;
+    };
+
     // require(esm) needs the entire dependency graph to load without yielding
     // to microtasks. The async fetch path goes through the transpiler thread
     // pool; route to the synchronous fetch instead so the returned promise is
@@ -3800,7 +3841,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
             &moduleKeyBun,
             &source,
             typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
-        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        if (scope.exception()) [[unlikely]]
+            return rejectedWithCaughtException();
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(result))
             return promise;
         if (result && result.inherits<JSC::JSSourceCode>())
@@ -3817,7 +3859,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         &source,
         typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
 
-    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+    if (scope.exception()) [[unlikely]]
+        return rejectedWithCaughtException();
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         return promise;

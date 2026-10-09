@@ -102,6 +102,17 @@ bun test --environment=happy-dom
 
 A `// @vitest-environment <name>` or `// @jest-environment <name>` comment in a test file overrides both.
 
+### Globals
+
+`test`, `expect` and the other globals of a file come from `"vitest"` if the file imports anything from `"vitest"`, and from `"bun:test"` otherwise. With `globals = "vitest"` they come from `"vitest"` in every file, as in a Vitest project with `globals: true`; see [what differs](/test/writing-tests#importing-from-vitest).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+globals = "vitest" # default "bun"
+```
+
+What a file imports from `"bun:test"` or `"@jest/globals"` keeps the semantics of that module. The `--globals` flag overrides `bunfig.toml`.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.
@@ -272,6 +283,21 @@ Re-run each test file multiple times to identify flaky tests:
 [test]
 rerunEach = 3
 ```
+
+#### clearMocks, mockReset, restoreMocks, unstubEnvs, unstubGlobals
+
+Undo what the previous test did to mocks and stubs, before each test and each retry, ahead of its `beforeEach` hooks. The names and the order are Vitest's:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+restoreMocks = true   # mock.restore() / vi.restoreAllMocks()
+mockReset = true      # vi.resetAllMocks()
+clearMocks = true     # mock.clearAllMocks()
+unstubEnvs = true     # vi.unstubAllEnvs()
+unstubGlobals = true  # vi.unstubAllGlobals()
+```
+
+All are off by default, except that tests imported from `"vitest"` clear mocks as Vitest 5 does; `clearMocks = false` turns that off. `vi.setConfig({ clearMocks: true })` changes them for the rest of a test file.
 
 ## Coverage Options
 

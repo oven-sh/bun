@@ -7,6 +7,7 @@ export default [
     name: "TestContext",
     construct: false,
     noConstructor: true,
+    callable: true,
     finalize: true,
     JSType: "0b11101110",
     values: ["result", "errors", "annotations", "fixtures"],

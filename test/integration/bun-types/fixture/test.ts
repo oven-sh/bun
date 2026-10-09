@@ -592,3 +592,23 @@ expect.poll(() => 1).toThrow();
 expect.poll(() => 1).resolves;
 // @ts-expect-error
 expect.poll(1);
+
+expectType(expect("text").toMatchFileSnapshot("./text.txt")).is<Promise<void>>();
+expectType(expect("text").toMatchFileSnapshot("./text.txt", "hint")).is<Promise<void>>();
+expectType(expect(Promise.resolve("text")).resolves.toMatchFileSnapshot("./text.txt")).is<Promise<void>>();
+// @ts-expect-error
+expect("text").toMatchFileSnapshot();
+
+expect.addSnapshotSerializer({
+  test: value => value instanceof Date,
+  serialize: (value, config, indentation, depth, refs, printer) =>
+    `Date(${printer(value.getTime(), config, indentation + config.indent, depth, refs)})`,
+});
+expect.addSnapshotSerializer({
+  test: value => typeof value === "string",
+  print: (value, print, indent) => indent(print([value])),
+});
+// @ts-expect-error
+expect.addSnapshotSerializer({ test: () => true });
+// @ts-expect-error
+expect.addSnapshotSerializer({ serialize: () => "" });

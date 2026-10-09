@@ -481,23 +481,28 @@ The object that fixtures are destructured from is the test context. There is one
 | `signal`                                 | An `AbortSignal`, aborted when the test times out                                                                                   |
 | `annotate(message, type?, attachment?)`  | Adds to `task.annotations`                                                                                                          |
 
+As in Vitest, the context is not a `done` callback: calling it throws `done() callback is deprecated, use promise instead`.
+
 ## Importing from `vitest`
 
 Under `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. The functions behave like those of the runner they are named after, so a file (or a helper module) keeps the semantics it was written for:
 
-|                                                           | `"bun:test"`, `"@jest/globals"`        | `"vitest"`                                             |
-| --------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------ |
-| Parameter of a test or hook callback                      | a `done` callback, which is waited for | the [test context](#test-context)                      |
-| Extra parameter of a `test.each` callback                 | a `done` callback                      | `undefined`                                            |
-| `beforeAll`, `afterAll` callback                          | `(done)`                               | `({}, suite)`                                          |
-| `afterEach`, `afterAll` of one scope                      | run in the order they were registered  | run last registered first                              |
-| A function returned by `beforeEach`, `beforeAll`          | ignored                                | runs after the matching `afterEach` / `afterAll` hooks |
-| `test(name, { skip, only, todo, fails, concurrent }, fn)` | ignored                                | like the modifiers                                     |
-| Options of `describe(name, options, fn)`                  | ignored                                | the defaults of the tests inside it                    |
-| `test(name)` without a callback                           | an error                               | a todo                                                 |
-| `beforeAll` in a scope with only skipped tests            | runs                                   | does not run                                           |
+|                                                           | `"bun:test"`, `"@jest/globals"`        | `"vitest"`                                                   |
+| --------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
+| Parameter of a test or hook callback                      | a `done` callback, which is waited for | the [test context](#test-context)                            |
+| Extra parameter of a `test.each` callback                 | a `done` callback                      | `undefined`                                                  |
+| `$name` in a `test.each` title, for a long string         | the whole string                       | cut to 40 characters, ending in `…`                          |
+| `beforeAll`, `afterAll` callback                          | `(done)`                               | `({}, suite)`                                                |
+| `afterEach`, `afterAll` of one scope                      | run in the order they were registered  | run last registered first                                    |
+| A function returned by `beforeEach`, `beforeAll`          | ignored                                | runs after the matching `afterEach` / `afterAll` hooks       |
+| `test(name, { skip, only, todo, fails, concurrent }, fn)` | ignored                                | like the modifiers                                           |
+| Options of `describe(name, options, fn)`                  | ignored                                | the defaults of the tests inside it                          |
+| `test(name)` without a callback                           | an error                               | a todo                                                       |
+| Mock functions, before each test                          | left as they are                       | cleared ([`clearMocks`](/test/configuration#test-execution)) |
+| Default timeout of a hook                                 | that of a test                         | 10 seconds, or `--timeout` if that is longer                 |
+| `beforeAll` in a scope with only skipped tests            | runs                                   | does not run                                                 |
 
-`"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`. A file that imports from `"vitest"`, or uses the `vi` global, gets the other globals (`test`, `describe`, `beforeEach`, ...) from `"vitest"` too.
+`"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`. A file that imports from `"vitest"` gets the other globals (`test`, `describe`, `beforeEach`, ...) from `"vitest"` too; [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` does that for every file.
 
 ## Promises
 
@@ -771,25 +776,21 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.toMatchInlineSnapshot()`              |
 | ✅     | `.toThrowErrorMatchingSnapshot()`       |
 | ✅     | `.toThrowErrorMatchingInlineSnapshot()` |
+| ✅     | `.toMatchFileSnapshot()`                |
 
 ### Utility Matchers
 
-| Status | Matcher                 |
-| ------ | ----------------------- |
-| ✅     | `.extend`               |
-| ✅     | `.anything()`           |
-| ✅     | `.any()`                |
-| ✅     | `.assertions()`         |
-| ✅     | `.hasAssertions()`      |
-| ✅     | `.addEqualityTesters()` |
-| ✅     | `.getState()`           |
-| ✅     | `.setState()`           |
-
-### Not Yet Implemented
-
 | Status | Matcher                    |
 | ------ | -------------------------- |
-| ❌     | `.addSnapshotSerializer()` |
+| ✅     | `.extend`                  |
+| ✅     | `.anything()`              |
+| ✅     | `.any()`                   |
+| ✅     | `.assertions()`            |
+| ✅     | `.hasAssertions()`         |
+| ✅     | `.addEqualityTesters()`    |
+| ✅     | `.getState()`              |
+| ✅     | `.setState()`              |
+| ✅     | `.addSnapshotSerializer()` |
 
 ## Best Practices
 

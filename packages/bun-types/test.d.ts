@@ -157,7 +157,7 @@ declare module "bun:test" {
     /**
      * Fake these and nothing else.
      *
-     * @default ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance", "hrtime"]
+     * @default ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "Date", "performance", "hrtime"]
      */
     toFake?: FakeableAPI[] | undefined;
     /**
@@ -597,13 +597,30 @@ declare module "bun:test" {
      */
     unstubAllGlobals(): typeof vi;
     /**
-     * Change the configuration for the rest of the test file. Only `testTimeout` has an effect: it is the
-     * default timeout, in milliseconds, of the tests and hooks registered after this call. `0` and `Infinity`
-     * mean no timeout.
+     * Change the configuration for the rest of the test file, or for every test file when a preload script
+     * calls it. Other options of Vitest are accepted and have no effect.
      */
-    setConfig(config: { testTimeout?: number | undefined; [option: string]: unknown }): void;
+    setConfig(config: {
+      /** Default timeout, in milliseconds, of the tests registered after this call. `0` and `Infinity` mean no timeout. */
+      testTimeout?: number | undefined;
+      /** Default timeout, in milliseconds, of the hooks registered after this call. `0` and `Infinity` mean no timeout. */
+      hookTimeout?: number | undefined;
+      /** How many concurrent tests run at the same time. */
+      maxConcurrency?: number | undefined;
+      /** Call `vi.clearAllMocks()` before each test. The default for tests imported from `"vitest"`. */
+      clearMocks?: boolean | undefined;
+      /** Call `vi.resetAllMocks()` before each test. */
+      mockReset?: boolean | undefined;
+      /** Call `vi.restoreAllMocks()` before each test. */
+      restoreMocks?: boolean | undefined;
+      /** Call `vi.unstubAllEnvs()` before each test. */
+      unstubEnvs?: boolean | undefined;
+      /** Call `vi.unstubAllGlobals()` before each test. */
+      unstubGlobals?: boolean | undefined;
+      [option: string]: unknown;
+    }): void;
     /**
-     * Undo `vi.setConfig()`.
+     * Undo every `vi.setConfig()`.
      */
     resetConfig(): void;
     /**
@@ -704,6 +721,12 @@ declare module "bun:test" {
      * @alias serial
      */
     sequential: Describe<T>;
+    /**
+     * Runs the tests of this group, and of the groups inside it, in a random order.
+     *
+     * The summary of the run prints the seed: `bun test --seed=<seed>` gives the same order again.
+     */
+    shuffle: Describe<T>;
     /**
      * Runs this group of tests, only if `condition` is true.
      *
@@ -1528,6 +1551,26 @@ declare module "bun:test" {
     addEqualityTesters(testers: Tester[]): void;
 
     /**
+     * Registers how the snapshot matchers print the values that `serializer.test()` returns `true` for,
+     * wherever in a snapshot they are. The serializer that was added last is asked first.
+     *
+     * A serializer added by a test file lasts until the end of that file; one added by a preload
+     * script lasts for every file.
+     *
+     * @example
+     * expect.addSnapshotSerializer({
+     *   test: value => value instanceof Money,
+     *   serialize: value => `${value.amount} ${value.currency}`,
+     * });
+     * expect({ price: new Money(5, "EUR") }).toMatchInlineSnapshot(`
+     *   {
+     *     "price": 5 EUR,
+     *   }
+     * `);
+     */
+    addSnapshotSerializer(serializer: SnapshotSerializer): void;
+
+    /**
      * What `expect` knows about the test that is running, plus whatever was given to
      * {@link Expect.setState}. The same object is returned, up to date, by every call.
      */
@@ -2348,6 +2391,20 @@ declare module "bun:test" {
     toMatchInlineSnapshot(propertyMatchers?: object, value?: string): R;
 
     /**
+     * Asserts that a value matches the contents of a file of its own. A string is compared as it is,
+     * anything else as a snapshot prints it.
+     *
+     * A file that does not exist is written, unless in CI. `--update-snapshots` rewrites one that differs.
+     *
+     * @example
+     * await expect(render(page)).toMatchFileSnapshot("./snapshots/page.html");
+     *
+     * @param path Path of the file, relative to the test file.
+     * @param hint Hint used to number the snapshot among those of the test.
+     */
+    toMatchFileSnapshot(path: string, hint?: string): Promise<void>;
+
+    /**
      * Asserts that a function throws an error matching the most recent snapshot.
      *
      * @example
@@ -2823,6 +2880,45 @@ declare module "bun:test" {
       ? CustomMatcher<unknown, Parameters<CustomMatchersDetected[k]>>
       : CustomMatcher<unknown, any[]>;
   };
+
+  /** Prints a value that is inside of the one a {@link SnapshotSerializer} prints. */
+  export type SnapshotPrinter = (
+    value: unknown,
+    config: SnapshotSerializerConfig,
+    indentation: string,
+    depth: number,
+    refs: unknown[],
+  ) => string;
+
+  /** The options of `pretty-format` that snapshots are printed with. */
+  export interface SnapshotSerializerConfig {
+    /** What one more level of `indentation` adds. */
+    indent: string;
+    /** Between two items. */
+    spacingInner: string;
+    /** After an opening and before a closing bracket. */
+    spacingOuter: string;
+    min: boolean;
+    plugins: SnapshotSerializer[];
+    [option: string]: unknown;
+  }
+
+  /** For {@link Expect.addSnapshotSerializer}: a plugin of `pretty-format`, with either of its two interfaces. */
+  export type SnapshotSerializer = { test(value: any): boolean } & (
+    | {
+        serialize(
+          value: any,
+          config: SnapshotSerializerConfig,
+          indentation: string,
+          depth: number,
+          refs: unknown[],
+          printer: SnapshotPrinter,
+        ): string;
+      }
+    | {
+        print(value: any, print: (value: unknown) => string, indent: (text: string) => string): string;
+      }
+  );
 
   /** Custom equality tester */
   export type Tester = (this: TesterContext, a: any, b: any, customTesters: Tester[]) => boolean | undefined;

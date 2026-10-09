@@ -3262,3 +3262,831 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     },
   );
 });
+
+describe.concurrent("script that has replaced the methods of Promise sees nothing of how a module is loaded", () => {
+  const hooks = `
+    import { describe as describeCell } from "bun:jsc";
+
+    const { then } = Promise.prototype;
+    const { resolve } = Promise;
+    const constructorDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor");
+    const speciesDescriptor = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+
+    export function replace(saw) {
+      Promise.prototype.then = function (...reactions) {
+        saw("then", this);
+        return then.apply(this, reactions);
+      };
+      Promise.resolve = function (value) {
+        saw("resolve", value);
+        return resolve.call(this, value);
+      };
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        get() {
+          saw("constructor", this);
+          return Promise;
+        },
+      });
+      Object.defineProperty(Promise, Symbol.species, {
+        configurable: true,
+        get() {
+          saw("species", this);
+          return this;
+        },
+      });
+    }
+
+    export function restore() {
+      Promise.prototype.then = then;
+      Promise.resolve = resolve;
+      Object.defineProperty(Promise.prototype, "constructor", constructorDescriptor);
+      Object.defineProperty(Promise, Symbol.species, speciesDescriptor);
+    }
+
+    // The name of the native class: it is safe to ask for that of a cell script should never hold.
+    export function kind(value) {
+      const text = describeCell(value);
+      const name = /^(?:Object|Cell): .*?\\[0x[0-9a-f]+\\/\\d+, (\\w+),/.exec(text)?.[1] ?? /^\\w+/.exec(text)[0];
+      if (name !== "Promise") return name;
+      return "Promise<" + (Bun.peek.status(value) === "pending" ? "pending" : kind(Bun.peek(value))) + ">";
+    }
+
+    async function trace(load) {
+      // What awaits this function has begun to by the time the methods are replaced.
+      await undefined;
+      const seen = [];
+      let value;
+      replace((hook, value) => seen.push([hook, value]));
+      try {
+        value = load();
+        const isPromise = value instanceof Promise;
+        for (const each of Array.isArray(value) ? value : [value])
+          value = await new Promise(done => then.call(resolve.call(Promise, each), done, error => done(String(error))));
+        for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done));
+        // How many turns of the event loop are awaited, here and in the test runner, varies. Each is these two.
+        const turn = ["constructor Promise<Undefined>", "species Function"];
+        const all = seen.map(([hook, value]) => hook + " " + kind(value)).filter(saw => !turn.includes(saw));
+        return { value, isPromise, seen: [kind(value), ...all] };
+      } finally {
+        restore();
+      }
+    }
+
+    export const late = value => new Promise(done => setImmediate(() => done(value)));
+
+    let controls = 0;
+    // Each of \`loads\` is to show what loading a file in the same way does.
+    export const importsFile = () => () => import("./control.ts?" + controls++);
+    export const importsFileTwice = () => () => [import("./control.ts?" + controls), import("./control.ts?" + controls++)];
+    // Or, where script is given no promise of import(), what being handed the same value does.
+    export const givesTheSame = ({ value, isPromise }) => () => (isPromise ? new Promise(done => done(value)) : value);
+
+    export async function compare(loads, controlOf) {
+      const different = {};
+      let control;
+      for (const name in loads) {
+        const loaded = await trace(loads[name]);
+        control = await trace(controlOf(loaded));
+        if (JSON.stringify(loaded.seen) !== JSON.stringify(control.seen)) different[name] = loaded.seen;
+      }
+      console.log(JSON.stringify({ different, control: control.seen }));
+    }
+  `;
+  const x = `export const x = 1;`;
+  const importerOf = (path: string) =>
+    `import { x as imported } from ${JSON.stringify(path)}; export const x = imported;`;
+  const times = ["at once", "with a promise", "with a pending promise", "later"];
+
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-promise-hooks", { "hooks.ts": hooks, "control.ts": x, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const comparison = (stdout: string) =>
+    stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+  const same = (first: string) => ({ different: {}, control: expect.arrayContaining([first]) });
+
+  it("a file", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "entry.ts": `
+          import { compare, importsFile, importsFileTwice, givesTheSame } from "./hooks.ts";
+          await compare({
+            "that awaits": () => import("./awaits.ts"),
+            "that imports": () => import("./imports.ts"),
+            "CommonJS": () => import("./commonjs.cjs"),
+            "JSON": () => import("./data.json"),
+            "TOML": () => import("./data.toml"),
+            "text": () => import("./data.txt"),
+            "as text": () => import("./x.ts", { with: { type: "text" } }),
+            "?raw": () => import("./x.ts?raw"),
+            "CSS": () => import("./plain.css"),
+            "a CSS module": () => import("./a.module.css"),
+            "a builtin": () => import("node:path"),
+            "loaded already": () => import("./imports.ts"),
+          }, importsFile);
+          await compare({
+            "JSON": () => [import("./twice.json"), import("./twice.json")],
+            "CommonJS": () => [import("./twice.cjs"), import("./twice.cjs")],
+          }, importsFileTwice);
+          await compare({
+            "an ES module": () => require("./required.ts"),
+            "an ES module that imports": () => require("./required-imports.ts"),
+            "CommonJS": () => require("./required.cjs"),
+            "JSON": () => require("./required.json"),
+          }, givesTheSame);
+        `,
+        "awaits.ts": `await 0; ${x}`,
+        "imports.ts": importerOf("./x.ts"),
+        "x.ts": x,
+        "commonjs.cjs": `exports.x = 1;`,
+        "data.json": `{ "x": 1 }`,
+        "data.toml": `x = 1`,
+        "data.txt": `x`,
+        "plain.css": `.x { color: red }`,
+        "a.module.css": `.x { color: red }`,
+        "twice.json": `{ "x": 1 }`,
+        "twice.cjs": `exports.x = 1;`,
+        "required.ts": x,
+        "required-imports.ts": importerOf("./x.ts"),
+        "required.cjs": `exports.x = 1;`,
+        "required.json": `{ "x": 1 }`,
+      },
+      ["entry.ts"],
+    );
+    expect(comparison(stdout)).toEqual([
+      same("then Promise<ModuleNamespaceObject>"),
+      same("then Promise<ModuleNamespaceObject>"),
+      same("Object"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([[["entry.ts"]], [["test", "--timeout=60000", "./entry.ts"]]])("what plugins answer: bun %j", async args => {
+    const answers = ["contents", "CommonJS", "JSON", "an object", "nothing"];
+    const files: Record<string, string> = {};
+    for (const answer of answers) {
+      for (const time of times) {
+        files[`${answer}, ${time}.ts`] = x;
+        files[`imports ${answer}, ${time}.ts`] = importerOf(`./${answer}, ${time}.ts`);
+        files[`twice ${answer}, ${time}.ts`] = x;
+      }
+      files[`${answer}, after others.ts`] = x;
+    }
+    const { stdout, exitCode } = await run(
+      {
+        ...files,
+        "redirected.ts": x,
+        "entry.ts": `
+          import { compare, importsFile, importsFileTwice, late } from "./hooks.ts";
+          const answers = {
+            "contents": () => ({ contents: "export const x = 1;", loader: "ts" }),
+            "CommonJS": () => ({ contents: "exports.x = 1;", loader: "js" }),
+            "JSON": () => ({ contents: '{ "x": 1 }', loader: "json" }),
+            "an object": () => ({ exports: { x: 1 }, loader: "object" }),
+            "nothing": () => undefined,
+          };
+          const times = {
+            "at once": answer => answer(),
+            "with a promise": async answer => answer(),
+            "with a pending promise": async answer => (await 0, answer()),
+            "later": answer => late(answer()),
+          };
+          const once = {}, twice = {};
+          Bun.plugin({
+            name: "answers",
+            setup(build) {
+              for (const name in answers) {
+                for (const time in times) {
+                  build.onLoad({ filter: new RegExp(name + ", " + time + "\\\\.ts$") }, () => times[time](answers[name]));
+                  once[name + ", " + time] = () => import("./" + name + ", " + time + ".ts");
+                  once[name + ", " + time + ", to a file that imports it"] = () => import("./imports " + name + ", " + time + ".ts");
+                  twice[name + ", " + time] = () => [import("./twice " + name + ", " + time + ".ts"), import("./twice " + name + ", " + time + ".ts")];
+                  if (name === "nothing") continue;
+                  build.module("virtual: " + name + ", " + time, () => times[time](answers[name]));
+                  once["build.module(): " + name + ", " + time] = () => import("virtual: " + name + ", " + time);
+                }
+                for (const time in times) build.onLoad({ filter: new RegExp(name + ", after others\\\\.ts$") }, () => times[time](answers.nothing));
+                build.onLoad({ filter: new RegExp(name + ", after others\\\\.ts$") }, () => late(answers[name]()));
+                once[name + ", after others"] = () => import("./" + name + ", after others.ts");
+              }
+              build.onResolve({ filter: /^redirected$/ }, () => ({ path: import.meta.dir + "/redirected.ts" }));
+              once["onResolve"] = () => import("redirected");
+              build.onResolve({ filter: /^in a namespace$/ }, () => ({ path: "x", namespace: "custom" }));
+              build.onLoad({ filter: /./, namespace: "custom" }, () => late(answers.contents()));
+              once["a namespace"] = () => import("in a namespace");
+            },
+          });
+          await compare(once, importsFile);
+          await compare(twice, importsFileTwice);
+        `,
+      },
+      args,
+    );
+    expect(comparison(stdout)).toEqual([
+      same("then Promise<ModuleNamespaceObject>"),
+      same("then Promise<ModuleNamespaceObject>"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("module mocks", async () => {
+    const files: Record<string, string> = {};
+    for (const time of times) {
+      for (const name of ["mocked", "twice", "imported", "loaded"])
+        files[`${name}, ${time}.ts`] = `export const x = 0;`;
+      files[`imports, ${time}.ts`] = importerOf(`./imported, ${time}.ts`);
+    }
+    for (const name of [
+      "ignored",
+      "returned",
+      "spread",
+      "automocked",
+      "spied",
+      "manual",
+      "actual",
+      "actual-first",
+      "patched",
+      "unmocked",
+      "plain",
+    ])
+      files[`${name}.ts`] = `export const x = 0; export function f() {}`;
+    const { stdout, exitCode } = await run(
+      {
+        ...files,
+        "automocked.cjs": `exports.x = 0; exports.f = function () {};`,
+        "__mocks__/manual.ts": x,
+        "entry.test.ts": `
+          import { jest, mock, test, vi } from "bun:test";
+          import { compare, givesTheSame, importsFile, importsFileTwice, late, restore } from "./hooks.ts";
+
+          const factories = {
+            "at once": () => ({ x: 1 }),
+            "with a promise": async () => ({ x: 1 }),
+            "with a pending promise": async () => (await 0, { x: 1 }),
+            "later": () => late({ x: 1 }),
+          };
+          const builtins = { "at once": "node:os", "with a promise": "node:url", "with a pending promise": "node:util", "later": "node:zlib" };
+
+          test("import()", async () => {
+            const once = {}, twice = {};
+            for (const time in factories) {
+              const mocked = (path, imported = path) => () => (mock.module(path, factories[time]), import(imported));
+              once[time] = mocked("./mocked, " + time + ".ts");
+              once[time + ", to a file that imports it"] = mocked("./imported, " + time + ".ts", "./imports, " + time + ".ts");
+              once[time + ", a package that does not exist"] = mocked("absent, " + time);
+              once[time + ", a builtin"] = mocked(builtins[time]);
+              twice[time] = () => (mock.module("./twice, " + time + ".ts", factories[time]), [import("./twice, " + time + ".ts"), import("./twice, " + time + ".ts")]);
+            }
+            Object.assign(once, {
+              "the original is not asked for": () => (vi.doMock("./ignored.ts", importOriginal => ({ x: 1 })), import("./ignored.ts")),
+              "the original is returned": () => (vi.doMock("./returned.ts", importOriginal => importOriginal()), import("./returned.ts")),
+              "no factory": () => (vi.doMock("./automocked.ts"), import("./automocked.ts")),
+              "no factory, CommonJS": () => (vi.doMock("./automocked.cjs"), import("./automocked.cjs")),
+              "no factory, a builtin": () => (vi.doMock("node:dns"), import("node:dns")),
+              "spy": () => (vi.doMock("./spied.ts", { spy: true }), import("./spied.ts")),
+              "__mocks__": () => (vi.doMock("./manual.ts"), import("./manual.ts")),
+              "after vi.resetModules()": () => (vi.resetModules(), import("./mocked, later.ts")),
+              "after jest.resetModules()": () => (jest.resetModules(), import("./mocked, with a pending promise.ts")),
+              "a file after vi.resetModules()": () => (vi.resetModules(), import("./plain.ts")),
+              "after vi.doUnmock()": () => (vi.doMock("./unmocked.ts", factories.later), vi.doUnmock("./unmocked.ts"), import("./unmocked.ts")),
+            });
+            await compare(once, importsFile);
+            await compare(twice, importsFileTwice);
+          });
+
+          test("the rest", async () => {
+            vi.doMock("./actual.ts", () => ({ x: 1 }));
+            vi.doMock("./actual-first.ts", importOriginal => ({ x: 1 }));
+            await import("./patched.ts");
+            vi.doMock("./patched.ts", () => ({ x: 1 }));
+            const loads = {
+              "vi.importActual() of a file": () => vi.importActual("./plain.ts"),
+              "vi.importActual()": () => vi.importActual("./actual.ts"),
+              "vi.importActual() again": () => vi.importActual("./actual.ts"),
+              "vi.importActual() that loads the mock first": () => vi.importActual("./actual-first.ts"),
+              "vi.importActual() of a module that was loaded first": () => vi.importActual("./patched.ts"),
+              "vi.importMock()": () => vi.importMock("./plain.ts"),
+              "vi.importMock() of a mocked module": () => vi.importMock("./actual.ts"),
+              "vi.importMock() of __mocks__": () => vi.importMock("./manual.ts"),
+              "jest.requireActual()": () => jest.requireActual("./actual.ts"),
+              "jest.requireMock()": () => jest.requireMock("./plain.ts"),
+              "require()": () => require("./actual.ts"),
+            };
+            for (const time in factories) {
+              await import("./loaded, " + time + ".ts");
+              loads["mock.module() of a module that is loaded, " + time] = () => mock.module("./loaded, " + time + ".ts", factories[time]);
+            }
+            await compare(loads, givesTheSame);
+          });
+        `,
+      },
+      ["test", "--timeout=60000", "./entry.test.ts"],
+    );
+    expect(comparison(stdout)).toEqual([
+      same("then Promise<ModuleNamespaceObject>"),
+      same("then Promise<ModuleNamespaceObject>"),
+      same("Undefined"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([[[]], [["--isolate"]], [["--parallel=2"]]])("in a run of bun test %j", async args => {
+    const real = `export const x = "real";`;
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "preload.ts": `
+          import { afterAll } from "bun:test";
+          import { kind, late, replace } from "./hooks.ts";
+          const seen = new Set();
+          replace((hook, value) => seen.add(value));
+          afterAll(() => console.log(JSON.stringify([...new Set([...seen].map(kind))].sort())));
+          Bun.plugin({
+            name: "answers",
+            setup(build) {
+              build.onLoad({ filter: /declined\\.ts$/ }, async () => { await 0; });
+              build.onLoad({ filter: /declined\\.ts$/ }, () => late(undefined));
+              build.onLoad({ filter: /served\\.ts$/ }, async () => (await 0, { contents: 'export const x = "plugin";', loader: "ts" }));
+              build.module("virtual", async () => (await 0, { exports: { x: "virtual" }, loader: "object" }));
+            },
+          });
+        `,
+        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+        "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            document = { body: {}, defaultView: this };
+            happyDOM = { async abort() { await Promise.resolve(); } };
+            close() {}
+          };
+        `,
+        "statements.test.ts": `
+          // @vitest${"-environment"} happy-dom
+          import { expect, test, vi } from "bun:test";
+          import { x as hoisted } from "./hoisted.ts";
+          import { x as original, y } from "./original.ts";
+          import { f as automocked } from "./automocked.ts";
+          import { x as manual } from "./manual.ts";
+          import { x as declined } from "./declined.ts";
+          import { x as served } from "./served.ts";
+          import { x as virtual } from "virtual";
+          import styles from "./a.module.css";
+          import raw from "./plain.ts?raw";
+          vi.mock("./hoisted.ts", async () => (await 0, { x: "mock" }));
+          vi.mock("./original.ts", async importOriginal => ({ ...(await importOriginal()), y: "mock" }));
+          vi.mock("./automocked.ts");
+          vi.mock("./manual.ts");
+          test("loads", async () => {
+            expect([hoisted, original, y, automocked(), manual, declined, served, virtual, typeof styles.a, raw, typeof document]).toEqual(
+              ["mock", "real", "mock", undefined, "manual", "real", "plugin", "virtual", "string", ${JSON.stringify(real)}, "object"],
+            );
+            expect((await vi.importActual("./hoisted.ts")).x).toBe("real");
+            expect(require("./required.ts").x).toBe("real");
+            vi.resetModules();
+            expect((await import("./hoisted.ts")).x).toBe("mock");
+            expect((await import("./declined.ts")).x).toBe("real");
+            await vi.dynamicImportSettled();
+          });
+        `,
+        "import.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { late } from "./hooks.ts";
+          test("loads", async () => {
+            mock.module("./hoisted.ts", () => late({ x: "mock" }));
+            expect((await Promise.all([import("./hoisted.ts"), import("./hoisted.ts")])).map(({ x }) => x)).toEqual(["mock", "mock"]);
+            expect((await import("./declined.ts")).x).toBe("real");
+            expect((await import("virtual")).x).toBe("virtual");
+          });
+        `,
+        "hoisted.ts": real,
+        "original.ts": real,
+        "automocked.ts": `export function f() { return 1; }`,
+        "manual.ts": real,
+        "__mocks__/manual.ts": `export const x = "manual";`,
+        "declined.ts": real,
+        "served.ts": real,
+        "required.ts": real,
+        "plain.ts": real,
+        "a.module.css": `.a { color: red }`,
+      },
+      ["test", "--timeout=60000", "--preload", "./preload.ts", ...args],
+    );
+    // With --parallel, what a test file logs is in stderr.
+    const kinds = new Set(
+      (stdout + stderr)
+        .split("\n")
+        .filter(line => line.startsWith('["'))
+        .flatMap(line => JSON.parse(line)),
+    );
+    expect([...kinds].sort()).toEqual([
+      "Function",
+      "Promise<Array>",
+      "Promise<ModuleNamespaceObject>",
+      "Promise<Undefined>",
+    ]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("what a plugin answers that cannot be followed is an error", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-answers", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  // Logs what each way to ask about \`specifier\` throws or rejects with.
+  const ask = `
+    const ways = {
+      "Bun.resolveSync()": specifier => Bun.resolveSync(specifier, import.meta.dir),
+      "Bun.resolve()": specifier => Bun.resolve(specifier, import.meta.dir),
+      "require.resolve()": specifier => require.resolve(specifier),
+      "import.meta.resolve()": specifier => import.meta.resolve(specifier),
+      "require()": specifier => require(specifier),
+      "import()": specifier => import(specifier),
+    };
+    async function ask(specifier) {
+      for (const way in ways) {
+        try {
+          console.log(way, "gave", JSON.stringify(await ways[way](specifier)));
+        } catch (error) {
+          console.log(way, JSON.stringify(error instanceof Error ? [error.code, error.message] : error));
+        }
+      }
+    }
+  `;
+  const everyWay = (thrown: unknown) =>
+    ["Bun.resolveSync()", "Bun.resolve()", "require.resolve()", "import.meta.resolve()", "require()", "import()"].map(
+      way => `${way} ${JSON.stringify(thrown)}`,
+    );
+
+  it("an onResolve callback that rejects", async () => {
+    expect(
+      await run(
+        {
+          "a.ts": `export {};`,
+          "entry.ts": `
+            ${ask}
+            Bun.plugin({
+              name: "rejects",
+              setup(build) {
+                build.onResolve({ filter: /^throws$/ }, async () => { throw new Error("plugin failed"); });
+                build.onResolve({ filter: /^rejects$/ }, () => Promise.reject({ path: "./a.ts" }));
+                build.onResolve({ filter: /^(throws|rejects)$/ }, () => ({ path: "./a.ts" }));
+              },
+            });
+            await ask("throws");
+            await ask("rejects");
+          `,
+        },
+        ["entry.ts"],
+      ),
+    ).toEqual({
+      stdout: [...everyWay([null, "plugin failed"]), ...everyWay({ path: "./a.ts" })],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    ["path", `{ path: "/tmp/a\\0b/x.ts" }`, `'/tmp/a\\x00b/x.ts'`],
+    ["path", `{ path: "\\0x", namespace: "custom" }`, `'\\x00x'`],
+    ["path", `{ path: "file:///tmp/a%00b/x.ts" }`, `'file:///tmp/a%00b/x.ts'`],
+    ["namespace", `{ path: "x", namespace: "cus\\0tom" }`, `'cus\\x00tom'`],
+  ])("a null byte in the %s onResolve answers with: %s", async (property, answer, received) => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "entry.ts": `
+          ${ask}
+          Bun.plugin({
+            name: "answers",
+            setup(build) {
+              build.onResolve({ filter: /^asked$/ }, () => (${answer}));
+              build.onLoad({ filter: /./ }, () => ({ contents: "", loader: "js" }));
+              build.onLoad({ filter: /./, namespace: "custom" }, () => ({ contents: "", loader: "js" }));
+            },
+          });
+          await ask("asked");
+        `,
+      },
+      ["entry.ts"],
+    );
+    expect(stdout.map(line => line.replaceAll("\\u0000", "\\x00"))).toEqual(
+      everyWay([
+        "ERR_INVALID_ARG_VALUE",
+        `The property "${property}" is invalid. Expected a string without null bytes, received type string (${received})`,
+      ]).map(line => line.replaceAll("\\\\x00", "\\x00")),
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  it("a null byte in the name given to build.module()", async () => {
+    expect(
+      await run(
+        {
+          "entry.ts": `
+            Bun.plugin({
+              name: "names",
+              setup(build) {
+                try {
+                  build.module("/tmp/a\\0b/x.ts", () => ({ contents: "", loader: "js" }));
+                } catch (error) {
+                  console.log(error.message);
+                }
+              },
+            });
+          `,
+        },
+        ["entry.ts"],
+      ),
+    ).toEqual({ stdout: ["virtual module cannot contain a null byte"], stderr: "", exitCode: 0 });
+  });
+
+  it.each(["file", "wasm", "napi", "sqlite", "sqlite_embedded", "html", "sh", "dataurl", "base64"])(
+    "contents with no loader for a module that is imported with { type: %j }",
+    async type => {
+      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", or "css"`;
+      expect(
+        await run(
+          {
+            "entry.ts": `
+              Bun.plugin({
+                name: "supplies",
+                setup(build) {
+                  build.onLoad({ filter: /^unnamed/, namespace: "ns" }, () => ({ contents: "{}" }));
+                  build.onLoad({ filter: /^pending/, namespace: "ns" }, async () => (await 0, { contents: "{}" }));
+                  build.onLoad({ filter: /^named/, namespace: "ns" }, () => ({ contents: "{}", loader: "json" }));
+                },
+              });
+              const attributes = { with: { type: ${JSON.stringify(type)} } };
+              for (const name of ["unnamed", "pending", "named"])
+                console.log(await import("ns:" + name, attributes).then(({ default: value }) => JSON.stringify(value), error => error.message));
+            `,
+          },
+          ["entry.ts"],
+        ),
+      ).toEqual({ stdout: [message, message, "{}"], stderr: "", exitCode: 0 });
+    },
+  );
+
+  it("the key of the module that calls the factories of module mocks", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "mocked.ts": `export {};`,
+        "steals.test.ts": `
+          import { mock, test } from "bun:test";
+          Bun.plugin({
+            name: "steals",
+            setup(build) {
+              build.onResolve({ filter: /^stolen$/ }, () => ({ path: "module-mock", namespace: "bun" }));
+              build.onLoad({ filter: /^module-mock$/, namespace: "bun" }, () => ({ contents: "export default 'from the plugin';", loader: "js" }));
+            },
+          });
+          test("is the plugin's to serve", async () => {
+            mock.module("./mocked.ts", importOriginal => ({}));
+            await import("./mocked.ts");
+            console.log((await import("stolen")).default);
+            console.log(require("stolen").default);
+          });
+        `,
+      },
+      ["test", "./steals.test.ts"],
+    );
+    expect(stdout.slice(-2)).toEqual(["from the plugin", "from the plugin"]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("import.meta.resolve()", () => {
+  const specifiers = [
+    "./src/a.ts",
+    "./src/a.ts?q=1",
+    "./src/a",
+    "./src/link.ts",
+    "./absent",
+    "./absent?x#y",
+    "./src/a.ts#fragment",
+    "../up",
+    "/absolute/absent.ts?z",
+    "file:///absolute/absent.ts?z=1",
+    "./a space.ts?a b",
+    "./%41.ts",
+    "dep",
+    "dep?x=1",
+    "dep/index.js?x=1&y",
+  ];
+  async function resolveAll(plugin: string) {
+    using dir = tempDir("plugin-import-meta-resolve", {
+      "src/a.ts": ``,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+      "node_modules/dep/index.js": ``,
+      "entry.ts": `
+        import { symlinkSync } from "node:fs";
+        symlinkSync("a.ts", import.meta.dir + "/src/link.ts");
+        ${plugin}
+        const root = import.meta.url.slice(0, -"/entry.ts".length);
+        for (const specifier of ${JSON.stringify(specifiers)}) {
+          try {
+            console.log(import.meta.resolve(specifier).replace(root, "<root>"));
+          } catch (error) {
+            console.log(error.code);
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+  const withoutPlugins = {
+    stdout: [
+      "<root>/src/a.ts",
+      "<root>/src/a.ts?q=1",
+      "<root>/src/a",
+      "<root>/src/link.ts",
+      "<root>/absent",
+      "<root>/absent?x#y",
+      "<root>/src/a.ts#fragment",
+      expect.stringMatching(/^file:.*\/up$/),
+      "file:///absolute/absent.ts?z",
+      "file:///absolute/absent.ts?z=1",
+      "<root>/a%20space.ts?a%20b",
+      "<root>/%41.ts",
+      "<root>/node_modules/dep/index.js",
+      "<root>/node_modules/dep/index.js?x=1",
+      "<root>/node_modules/dep/index.js?x=1&y",
+    ],
+    stderr: "",
+    exitCode: 0,
+  };
+
+  it.skipIf(process.platform === "win32")("keeps the query of what it finds on disk a query", async () => {
+    expect(await resolveAll("")).toEqual(withoutPlugins);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "answers as without plugins when onResolve answers with what it was asked about",
+    async () => {
+      expect(
+        await resolveAll(
+          `Bun.plugin({ name: "same", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => ({ path })); } });`,
+        ),
+      ).toEqual(withoutPlugins);
+    },
+  );
+
+  it("keeps the query of what onResolve answers a query", async () => {
+    using dir = tempDir("plugin-import-meta-resolve-query", {
+      "src/a.ts": ``,
+      "entry.ts": `
+        Bun.plugin({
+          name: "alias",
+          setup(build) {
+            build.onResolve({ filter: /^\\.\\/alias/ }, ({ path }) => ({ path: import.meta.dir + "/src/a.ts" + path.slice("./alias".length) }));
+          },
+        });
+        const root = import.meta.url.slice(0, -"/entry.ts".length);
+        for (const specifier of ["./alias", "./alias?q=1"]) console.log(import.meta.resolve(specifier).replace(root, "<root>"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "<root>/src/a.ts\n<root>/src/a.ts?q=1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent("a module made from an object", () => {
+  const kinds = {
+    "JSON": [`import("./data.json")`, { "data.json": `{ "x": 1 }` }],
+    "a JSON array": [`import("./data.json")`, { "data.json": `[{ "x": 1 }]` }],
+    "TOML": [`import("./data.toml")`, { "data.toml": `x = 1` }],
+    "the exports of a plugin": [
+      `import("./served.ts")`,
+      {
+        "served.ts": ``,
+        "preload.ts": `Bun.plugin({ name: "serves", setup(build) { build.onLoad({ filter: /served\\.ts$/ }, () => ({ exports: { x: 1 }, loader: "object" })); } });`,
+      },
+    ],
+  } as const;
+
+  it.each(Object.keys(kinds) as (keyof typeof kinds)[])(
+    "does not keep the global object of a test file that imports it twice at once under --isolate: %s",
+    async kind => {
+      const [load, data] = kinds[kind];
+      const files: Record<string, string> = { "preload.ts": ``, ...data };
+      for (let i = 0; i < 8; i++) {
+        files[`${i}.test.ts`] = `
+          import { test } from "bun:test";
+          test("imports", async () => {
+            await Promise.all([${load}, ${load}]);
+          });
+        `;
+      }
+      files["9.test.ts"] = `
+        import { heapStats } from "bun:jsc";
+        import { test } from "bun:test";
+        test("counts", () => {
+          Bun.gc(true);
+          Bun.gc(true);
+          console.log("GlobalObject: " + heapStats().objectTypeCounts.GlobalObject);
+        });
+      `;
+      using dir = tempDir("plugin-object-module-leak", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // This file's, and that of the file before it.
+      expect(stdout).toContain("GlobalObject: 2\n");
+      expect(stderr).toContain(" 9 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // JavaScriptCore makes the module a second time for a require() that comes right after import() has made it.
+  it("is there to make the module from again, whenever the collector runs", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 8; i++) {
+      files[`data${i}.json`] = `{ "x": ${i} }`;
+      files[`text${i}.txt`] = `${i}`;
+      files[`served${i}.ts`] = ``;
+      files[`imports${i}.mjs`] = `
+        import data from "./data${i}.json";
+        import text from "./text${i}.txt";
+        import { x } from "./served${i}.ts";
+        export const all = [data.x, text, x];
+      `;
+    }
+    files["entry.ts"] = `
+      Bun.plugin({
+        name: "serves",
+        setup(build) {
+          build.onLoad({ filter: /served\\d\\.ts$/ }, ({ path }) => ({ exports: { x: "served" + path.at(-4) }, loader: "object" }));
+        },
+      });
+      const all = [];
+      for (let i = 0; i < 8; i++) {
+        const imports = [import(\`./data\${i}.json\`), import(\`./text\${i}.txt\`), import(\`./served\${i}.ts\`)];
+        let turn = Promise.resolve();
+        for (let turns = 0; turns < i; turns++) turn = turn.then(() => {});
+        await turn.then(() => all.push(require(\`./imports\${i}.mjs\`).all.join()));
+        await Promise.all(imports);
+      }
+      console.log(all.join(" "));
+    `;
+    using dir = tempDir("plugin-object-module-twice", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: Array.from({ length: 8 }, (_, i) => `${i},${i},served${i}`).join(" ") + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

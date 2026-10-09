@@ -3,6 +3,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/Identifier.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
@@ -136,6 +137,8 @@ typedef struct ResolvedSource {
     // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
     // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
     bool is_prelinked_module;
+    // source_code holds what a macro returned or the files `import.meta.glob` matched: it is not what another load of the file gives.
+    bool depends_on_more_than_source;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -152,7 +155,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -432,48 +435,40 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
+namespace Bun {
+struct DeepMatchState {
+    // The (value, pattern) pairs that have been compared or are being compared.
+    std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seen;
+    JSC::MarkedArgumentBuffer gcBuffer;
+    // When `records`: for each property that matched an asymmetric matcher, its object and the matcher; for each
+    // nested object that was compared, the object it is in and itself.
+    bool records { false };
+    JSC::MarkedArgumentBuffer recorded;
+    WTF::Vector<JSC::Identifier> recordedNames;
+
+    void recordIfAsked(JSC::JSObject* holder, const JSC::Identifier& name, JSC::JSValue value)
+    {
+        if (!records)
+            return;
+        recorded.append(holder);
+        recorded.append(value);
+        recordedNames.append(name);
+    }
+};
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
- * `object` and `subset` must be objects. In the future we should change the
- * signature of this function to only take `JSC::JSCell`. For now, panics
- * if either `object` or `subset` are not `JSCCell`.
- *
- * @note
- * The sets recording already visited properties (`seenObjProperties` and
- * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
- * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
- * `nullptr`.
- *
- * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
- * properties currently within those stacks. Likely unnecessary, but better to
- * be safe tnan sorry
- *
- *
- * @tparam enableAsymmetricMatchers
- * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
- * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
- * @param globalObject
- * @param Scope
- * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
- * @param isMatchingObjectContaining
- *
- * @return true
- * @return false
+ * `object` and `subset` must be objects. Neither is changed.
  */
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSC::JSValue object,
-    std::set<JSC::EncodedJSValue>* seenObjProperties,
     JSC::JSValue subset,
-    std::set<JSC::EncodedJSValue>* seenSubsetProperties,
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
-    JSC::MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeepMatchState& state,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

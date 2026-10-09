@@ -1142,13 +1142,10 @@ impl BabyString {
     /// Locates `substring` inside `container` (the string later passed to
     /// [`BabyString::slice`]) and records its offset and length.
     pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
-        // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `substring` reaches this path via resolve errors
-        // for `import ""`, so short-circuit it here to offset 0.
-        if substring.is_empty() {
+        // Not found: `import ""`, or a specifier that is not UTF-8 and was formatted lossily.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
-        }
-        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        };
         BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 

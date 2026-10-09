@@ -134,6 +134,7 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(natives) \
     macro(nodeName) \
     macro(nodeType) \
     macro(normalize) \

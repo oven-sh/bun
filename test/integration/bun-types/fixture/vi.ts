@@ -19,6 +19,16 @@ expectType<void>(vi.setConfig({ testTimeout: 1000, hookTimeout: 1000, sequence: 
 vi.setConfig({ testTimeout: undefined });
 // @ts-expect-error
 vi.setConfig({ testTimeout: "1000" });
+vi.setConfig({
+  maxConcurrency: 2,
+  clearMocks: false,
+  mockReset: true,
+  restoreMocks: true,
+  unstubEnvs: true,
+  unstubGlobals: true,
+});
+// @ts-expect-error
+vi.setConfig({ clearMocks: "yes" });
 // @ts-expect-error
 vi.setConfig();
 expectType<void>(vi.resetConfig());

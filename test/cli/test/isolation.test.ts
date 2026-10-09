@@ -897,6 +897,97 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The close handlers of what a file leaves open are the last of its script to run.
+  test.each(["--isolate", "--parallel=1"])(
+    "what a close handler of a finished file fakes is not faked in the next file: bun test %s",
+    async flag => {
+      using dir = tempDir("isolate-fake-timers-close-handler", {
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          test("leaves sockets open", async () => {
+            let isFaked = false;
+            const close = () => {
+              // Again, it would settle the call that is in flight.
+              if (isFaked) return;
+              isFaked = true;
+              vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "setImmediate", "nextTick", "queueMicrotask", "Date"] });
+              process.nextTick(() => console.log("a: tick"));
+              queueMicrotask(() => console.log("a: microtask"));
+              setImmediate(() => console.log("a: immediate"));
+              setTimeout(() => console.log("a: timeout"), 5);
+              vi.advanceTimersByTimeAsync(100).then(() => console.log("a: settled"));
+              vi.setTimerTickMode("nextTimerAsync");
+            };
+            const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close } });
+            await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, close } });
+          });
+        `,
+        "b.test.ts": `
+          import { afterEach, expect, test, vi } from "bun:test";
+          const atTheTop = { setTimeout, isFake: vi.isFakeTimers(), date: Date.now() };
+          afterEach(() => void vi.useRealTimers());
+          test("nothing is faked", () => {
+            expect({ ...atTheTop, date: atTheTop.date > 1e12 }).toEqual({ setTimeout, isFake: false, date: true });
+          });
+          test("useRealTimers() has left the functions of this file's realm", async () => {
+            expect(setTimeout).toBe(atTheTop.setTimeout);
+            expect(Object.getPrototypeOf(setTimeout)).toBe(Function.prototype);
+            for (let i = 0; i < 3; i++) await new Promise(resolve => setTimeout(resolve, 1));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.ts", "./b.test.ts"]);
+      expect({
+        stdout: stdout.replace(/^bun test .*\n/, ""),
+        counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+        exitCode,
+      }).toEqual({ stdout: "", counts: [" 3 pass", " 0 fail"], exitCode: 0 });
+    },
+  );
+
+  // The runs of a file share one global, with --isolate too.
+  test.each(["--rerun-each=3", "--isolate --rerun-each=3", "--parallel=1 --rerun-each=3"])(
+    "every run of a file starts with nothing mocked: bun test %s",
+    async flags => {
+      using dir = tempDir("rerun-each-starts-clean", {
+        "dep.ts": `export const f = () => "real";`,
+        "a.test.ts": `
+          import { mock, test, vi } from "bun:test";
+          import { f } from "./dep.ts";
+          console.log(
+            JSON.stringify({
+              isFake: vi.isFakeTimers(),
+              isNow: Date.now() > 1e12,
+              env: process.env.STUBBED ?? null,
+              global: typeof stubbed,
+              f: f(),
+            }),
+          );
+          await new Promise(resolve => setTimeout(resolve, 1));
+          test("mocks", () => {
+            vi.useFakeTimers({ now: 1000 });
+            vi.stubEnv("STUBBED", "1");
+            vi.stubGlobal("stubbed", 1);
+            mock.module("./dep.ts", () => ({ f: () => "mocked" }));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(String(dir), flags.split(" "), ["./a.test.ts"]);
+      expect({
+        loads: stdout
+          .split("\n")
+          .filter(line => line.startsWith("{"))
+          .map(line => JSON.parse(line)),
+        counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+        exitCode,
+      }).toEqual({
+        loads: Array(3).fill({ isFake: false, isNow: true, env: null, global: "undefined", f: "real" }),
+        counts: [" 3 pass", " 0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
   test("with --isolate, a leaked monitorEventLoopDelay() is disabled before next file", async () => {
     // The monitor is per thread while its histogram belongs to the file's
     // global. A file that enables it and never disables it used to leave the
@@ -1785,6 +1876,21 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  test("a module mock that was removed while its module was being loaded", async () => {
+    using dir = tempDir("isolate-leak-evicted-mock", {
+      ...makeLeakFixture(`
+        import { vi } from "bun:test";
+        const called = Promise.withResolvers();
+        vi.doMock("./mocked-dep.js", async () => (vi.doUnmock("./mocked-dep.js"), called.resolve(), await new Promise(() => {})));
+        void import("./imports-mocked-dep.js");
+        await called.promise;
+      `),
+      "mocked-dep.js": `export default 0;`,
+      "imports-mocked-dep.js": `import "./mocked-dep.js";`,
+    });
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
   test("Bun.plugin left registered", async () => {
     using dir = tempDir(
       "isolate-leak-plugin",
@@ -1928,4 +2034,296 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
     expect(stderr, `run ${run}`).toContain("0 fail");
     expect(exitCode, `run ${run}`).toBe(0);
   }
+});
+
+describe.concurrent("the SourceProvider cache does not keep what is made from more than the source", () => {
+  // Over and under the size from which the RuntimeTranspilerCache takes a file.
+  const padding = { small: "", large: Buffer.alloc("// padding\n".length * 6000, "// padding\n").toString() };
+  const files = (size: keyof typeof padding) => ({
+    "globbed/a.ts": ``,
+    "value.txt": `first`,
+    "macro.ts": `
+      import { readFileSync } from "node:fs";
+      export const read = () => readFileSync(import.meta.dir + "/value.txt", "utf8");
+    `,
+    "globs.ts": `${padding[size]}export const matched = Object.keys(import.meta.glob("./globbed/*.ts"));`,
+    "calls-macro.ts": `${padding[size]}import { read } from "./macro.ts" with { type: "macro" }; export const value = read();`,
+    "plain.ts": `${padding[size]}export const plain = 1;`,
+    "1.test.ts": `
+      import { expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      import { matched } from "./globs.ts";
+      import { value } from "./calls-macro.ts";
+      import "./plain.ts";
+      test("the first file", () => {
+        expect({ matched, value }).toEqual({ matched: ["./globbed/a.ts"], value: "first" });
+        writeFileSync(import.meta.dir + "/globbed/b.ts", "");
+        writeFileSync(import.meta.dir + "/value.txt", "second");
+      });
+    `,
+    "2.test.ts": `
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+      import { expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      import { matched } from "./globs.ts";
+      import { value } from "./calls-macro.ts";
+      test("the second file", () => {
+        expect({ matched, value }).toEqual({ matched: ["./globbed/a.ts", "./globbed/b.ts"], value: "second" });
+        expect(["globs", "calls-macro", "plain"].map(name => isolatedModuleCacheSourceType(import.meta.dir + "/" + name + ".ts"))).toEqual(
+          [null, null, "BunTranspiledModule"],
+        );
+        writeFileSync(import.meta.dir + "/globbed/c.ts", "");
+        writeFileSync(import.meta.dir + "/value.txt", "third");
+      });
+    `,
+    "3.test.ts": `
+      import { expect, test } from "bun:test";
+      test("the third file, which uses require()", () => {
+        expect({ matched: require("./globs.ts").matched, value: require("./calls-macro.ts").value }).toEqual({
+          matched: ["./globbed/a.ts", "./globbed/b.ts", "./globbed/c.ts"],
+          value: "third",
+        });
+      });
+    `,
+  });
+
+  test.each([
+    ["--isolate", "small", undefined],
+    ["--isolate", "large", undefined],
+    ["--isolate", "large", "0"],
+    ["--parallel=1", "small", undefined],
+  ] as const)("%s, %s files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=%s", async (flag, size, cachePath) => {
+    using dir = tempDir("isolate-more-than-source", files(size));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", flag],
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath ?? `${String(dir)}/transpiler-cache`,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("--isolate: a macro runs in every file when a plugin is registered", async () => {
+  const files: Record<string, string> = {
+    "preload.ts": `Bun.plugin({ name: "never matches", setup(build) { build.onLoad({ filter: /never-matches$/ }, () => undefined); } });`,
+    "macro.ts": `export const macro = () => "from the macro";`,
+  };
+  for (const name of ["a", "b", "c"]) {
+    files[`calls-${name}.ts`] =
+      `import { macro } from "./macro.ts" with { type: "macro" }; export const value = macro();`;
+    files[`${name}.test.ts`] = `
+      import { expect, test } from "bun:test";
+      import { value } from "./calls-${name}.ts";
+      test("${name}", () => {
+        expect(value).toBe("from the macro");
+      });
+    `;
+  }
+  using dir = tempDir("isolate-macro-plugin", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 3 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--isolate: two import()s at once of a file both put it into the SourceProvider cache", async () => {
+  using dir = tempDir("isolate-import-twice", {
+    "imported.ts": `export const x = 1;`,
+    "required.cjs": `exports.x = 1;`,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      test("imports", async () => {
+        const all = await Promise.all([import("./imported.ts"), import("./imported.ts"), import("./required.cjs"), import("./required.cjs")]);
+        expect(all.map(({ x }) => x)).toEqual([1, 1, 1, 1]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("mocks and spies do not outlive their test file", () => {
+  const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
+  const results = (stderr: string) => [
+    ...new Set(
+      stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail)\)/.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+    ),
+  ];
+  const spied = `[
+    [globalThis, "fetch"], [console, "info"], [process, "cwd"], [Response.prototype, "status", "get"], [path, "join"], [fs, "readFileSync"],
+    [Object, "keys"], [Date, "now"], [Math, "random"], [Bun, "sleep"], [process.env, "ISOLATION_SPIED", "get"], [shared, "method"], [Shared.prototype, "inherited"],
+  ]`;
+  const prelude = `
+    import { expect, jest, spyOn, test, vi } from "bun:test";
+    import fs from "node:fs";
+    import path from "node:path";
+    import { shared, Shared } from "./shared.ts";
+    const isSpied = ([object, key, access]) => {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      return jest.isMockFunction(access ? descriptor?.[access] : descriptor?.value);
+    };
+  `;
+  const files = {
+    "shared.ts": `
+      export class Shared { inherited() { return "original"; } shadowed() { return "original"; } }
+      export const shared = Object.assign(new Shared(), { method: () => "original" });
+    `,
+    "a.test.ts": `
+      ${prelude}
+      test("a", () => {
+        const makers = [spyOn, jest.spyOn, vi.spyOn];
+        ${spied}.forEach((target, i) => makers[i % 3](...target).mockReturnValue("spied"));
+        vi.spyOn(shared, "shadowed").mockReturnValue("spied");
+        expect(${spied}.map(isSpied)).not.toContain(false);
+        expect([shared.method(), shared.inherited(), shared.shadowed(), Object.hasOwn(shared, "shadowed")]).toEqual(["spied", "spied", "spied", true]);
+      });
+    `,
+    "b.test.ts": `
+      ${prelude}
+      test("b", () => {
+        expect(${spied}.map(isSpied)).not.toContain(true);
+        expect([shared.method(), shared.inherited(), shared.shadowed(), Object.hasOwn(shared, "shadowed")]).toEqual(["original", "original", "original", false]);
+        expect(path.join("a", "b")).toBe(path.sep === "/" ? "a/b" : "a\\\\b");
+        expect(new Response(null, { status: 201 }).status).toBe(201);
+      });
+    `,
+  };
+
+  test.each(modes)("spies are restored: bun test %s", async flags => {
+    using dir = tempDir("spies-of-a-file", files);
+    const { stderr, exitCode } = await runTests(String(dir), flags.split(" "), ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      ISOLATION_SPIED: "original",
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  test("spies of a file that fails to load are restored", async () => {
+    using dir = tempDir("spies-of-a-file", {
+      ...files,
+      "a.test.ts": `
+        ${prelude}
+        for (const target of ${spied}) vi.spyOn(...target);
+        vi.spyOn(shared, "shadowed");
+        throw new Error("thrown while loading");
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      ISOLATION_SPIED: "original",
+    });
+    expect(stderr).toContain("error: thrown while loading");
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) b"], exitCode: 1 });
+  });
+
+  test("the spies of a preload, and of its beforeAll(), stay", async () => {
+    using dir = tempDir("spies-of-a-preload", {
+      "preload.ts": `
+        import { beforeAll, jest, vi } from "bun:test";
+        globalThis.target = { loading: () => "original", hook: () => "original", file: () => "original" };
+        vi.spyOn(target, "loading").mockReturnValue("spied");
+        beforeAll(() => {
+          jest.spyOn(target, "hook").mockReturnValue("spied");
+        });
+      `,
+      "a.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("a", () => {
+          vi.spyOn(target, "file").mockReturnValue("spied");
+          expect([target.loading(), target.hook(), target.file()]).toEqual(["spied", "spied", "spied"]);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("b", () => {
+          expect([target.loading(), target.hook(), target.file()]).toEqual(["spied", "spied", "original"]);
+          vi.restoreAllMocks();
+          expect([target.loading(), target.hook(), target.file()]).toEqual(["original", "original", "original"]);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  test("the next file does not see the calls, and its *AllMocks() do not visit the mocks", async () => {
+    using dir = tempDir("mocks-of-a-file", {
+      "preload.ts": `
+        import { jest, vi } from "bun:test";
+        globalThis.ofPreload = { jest: jest.fn(() => "initial"), vi: vi.fn(() => "initial").mockReturnValue("configured") };
+      `,
+      "a.test.ts": `
+        import { expect, jest, test, vi } from "bun:test";
+        test("a", () => {
+          globalThis.prototypeReads = 0;
+          const implementation = new Proxy(function () {}, {
+            get(target, key, receiver) {
+              if (key === "prototype") prototypeReads++;
+              return Reflect.get(target, key, receiver);
+            },
+          });
+          globalThis.ofFile = { jest: jest.fn(() => "initial"), vi: vi.fn(implementation).mockReturnValue("configured") };
+          ofFile.vi.prototype;
+          for (const mocks of [ofFile, ofPreload]) for (const mocked of Object.values(mocks)) mocked("a");
+          expect(ofFile.jest).toHaveBeenCalledTimes(1);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, jest, test, vi } from "bun:test";
+        test("b", () => {
+          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
+          expect([ofPreload.jest.mock.calls, ofPreload.vi.mock.calls]).toEqual([[["a"]], [["a"]]]);
+          vi.clearAllMocks();
+          expect([ofPreload.jest.mock.calls, ofPreload.vi.mock.calls]).toEqual([[], []]);
+
+          prototypeReads = 0;
+          vi.resetAllMocks();
+          expect(prototypeReads).toBe(0);
+          expect([ofFile.jest(), ofFile.vi()]).toEqual(["initial", "configured"]);
+          expect([ofPreload.jest(), ofPreload.vi()]).toEqual([undefined, "initial"]);
+
+          vi.clearAllMocks();
+          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
+          ofFile.vi.mockReturnValue("configured in b");
+          vi.resetAllMocks();
+          expect(prototypeReads).toBe(1);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
 });

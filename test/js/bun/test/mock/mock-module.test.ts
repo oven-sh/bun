@@ -1345,7 +1345,7 @@ describe.concurrent("factories", () => {
           const errors = {};
           for (const name of ["throws", "rejected", "rejects", "not-hoisted", "other-error"])
             errors[name] = await import("./" + name).catch(error => error);
-          const later = "later";
+          const later = String("later");
 
           test("note", () => {
             const message = "Cannot access 'later' before initialization.";
@@ -1370,7 +1370,7 @@ describe.concurrent("factories", () => {
       "tdz.test.ts": `
         import { test, vi } from "bun:test";
         import { value } from "./dep";
-        const later = "later";
+        const later = String("later");
         vi.mock("./dep", () => ({ value: later }));
         test("never runs", () => value);
       `,
@@ -1799,15 +1799,8 @@ describe.concurrent("a factory that returns a module namespace object", () => {
             await expect(import("./static")).rejects.toThrow("Cannot find");
           });
 
-          test("and does nothing for the original of one, which an import() names like the mock", async () => {
-            const { default: evaluate } = await ns.importByKey();
-            const actual = await vi.importActual("./a");
-            for (const args of [[], [1, 2], [{}, {}], [ns], [ns, ns], [actual, ns], [actual, actual], [ns, actual]]) expect(evaluate(...args)).toBeUndefined();
-            expect([ns.a, actual.a]).toEqual(["mocked-a", "real-a"]);
-
-            vi.doUnmock("./a");
-            for (const args of [[ns, ns], [ns, actual]]) expect(evaluate(...args)).toBeUndefined();
-            expect(ns.a).toBe("mocked-a");
+          test("and for the original of one, which an import() names like the mock", async () => {
+            await expect(ns.importByKey()).rejects.toThrow("Cannot find");
           });
         `,
       },
@@ -1894,16 +1887,23 @@ describe.concurrent("an export the factory did not return", () => {
         `,
         "names.test.ts": `
           import { expect, jest, mock, test, vi } from "bun:test";
+          test("vi.doMock", async () => {
+            vi.doMock("./dep", () => ({}));
+            const { readA } = await import("./user");
+            expect(readA).toThrow('Did you forget to return it from the vi.doMock() factory?\\nTo keep the exports of the original module, spread them:\\n\\nvi.doMock("./dep", ');
+          });
           test.each([
             ["mock.module", mock.module],
-            ["vi.doMock", vi.doMock],
             ["jest.mock", jest.mock],
             ["jest.doMock", jest.doMock],
-          ])("%s", async (name, mockIt) => {
-            mockIt("./dep", () => ({}));
+          ])("%s: it is undefined", async (name, mockIt) => {
+            mockIt("./dep", () => ({ x: 1 }));
             vi.resetModules();
-            const { readA } = await import("./user");
-            expect(readA).toThrow("Did you forget to return it from the " + name + '() factory?\\nTo keep the exports of the original module, spread them:\\n\\n' + name + '("./dep", ');
+            const user = await import("./user");
+            expect([user.readA(), user.readB(), user.readDefault(), user.typeofB()]).toEqual([undefined, undefined, undefined, "undefined"]);
+            const ns = await import("./dep");
+            const { a } = ns;
+            expect([a, ns.a?.(), typeof ns.a, ns.default ?? "none", JSON.stringify(ns)]).toEqual([undefined, undefined, "undefined", "none", '{"x":1}']);
           });
         `,
         "__mocks__/pkg.ts": `export const a = "manual-a";`,
@@ -2203,7 +2203,7 @@ describe.concurrent("import cycles through a mocked module", () => {
       "hoisted.test.ts": `
         import { test, vi } from "bun:test";
         import { seen } from "./b";
-        const later = "later";
+        const later = String("later");
         vi.mock("./a", async importOriginal => ({ ...(await importOriginal()), a: later }));
         test("never runs", () => seen());
       `,
@@ -2692,4 +2692,904 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
       ["--preload", "./preload.ts"],
     );
   });
+});
+
+describe.concurrent("a mocked module that exports then", () => {
+  const files = {
+    "real.ts": `
+      export const a = 1;
+      export function then(resolve, reject) {
+        globalThis.receivers.push(this);
+        globalThis.settle(resolve, reject);
+      }
+    `,
+    "mocked.ts": `export const a = 0;`,
+    "given-the-original.ts": `export const a = 0;`,
+    "namespaces.ts": `
+      export * as real from "./real";
+      export * as mocked from "./mocked";
+      export * as givenTheOriginal from "./given-the-original";
+    `,
+  };
+  const mocks = `
+    function then(resolve, reject) {
+      globalThis.receivers.push(this);
+      globalThis.settle(resolve, reject);
+    }
+    globalThis.receivers = [];
+    mock.module("./mocked", () => ({ a: 1, then }));
+    vi.doMock("./given-the-original", importOriginal => ({ a: 1, then }));
+  `;
+
+  test("is to import() what a module that exports then is", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "then.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          ${mocks}
+
+          async function outcome(promise) {
+            try {
+              return { fulfilled: await promise };
+            } catch (error) {
+              return { rejected: error };
+            }
+          }
+
+          test.each([
+            [resolve => resolve({ evil: 1 }), { fulfilled: { evil: 1 } }],
+            [resolve => resolve("a string"), { fulfilled: "a string" }],
+            [resolve => resolve(), { fulfilled: undefined }],
+            [resolve => resolve({ then: resolve => resolve("from a thenable") }), { fulfilled: "from a thenable" }],
+            [resolve => resolve(Promise.resolve("from a promise")), { fulfilled: "from a promise" }],
+            [(resolve, reject) => reject("rejected"), { rejected: "rejected" }],
+            [() => { throw "thrown"; }, { rejected: "thrown" }],
+          ])("%s", async (settle, expected) => {
+            globalThis.settle = settle;
+            globalThis.receivers.length = 0;
+            expect(await outcome(import("./real"))).toEqual(expected);
+            expect(await outcome(import("./mocked"))).toEqual(expected);
+            expect(await outcome(import("./given-the-original"))).toEqual(expected);
+
+            const { real, mocked, givenTheOriginal } = await import("./namespaces");
+            expect(globalThis.receivers.length).toBe(3);
+            expect(globalThis.receivers[0]).toBe(real);
+            expect(globalThis.receivers[1]).toBe(mocked);
+            expect(globalThis.receivers[2]).toBe(givenTheOriginal);
+          });
+        `,
+      },
+      7,
+    );
+  });
+
+  test("has it like any other export for an import statement and require()", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "importer.ts": `
+          import * as mocked from "./mocked";
+          import { a, then } from "./mocked";
+          import { then as thenOfGivenTheOriginal } from "./given-the-original";
+          export const seen = { keys: Object.keys(mocked), a, then, same: mocked.then === then, thenOfGivenTheOriginal };
+        `,
+        "then.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          ${mocks}
+
+          test("it is not called", async () => {
+            const { seen } = await import("./importer");
+            expect(seen).toEqual({ keys: ["a", "then"], a: 1, then, same: true, thenOfGivenTheOriginal: then });
+            expect(require("./mocked")).toEqual({ a: 1, then });
+            expect(globalThis.receivers).toEqual([]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("has it read by import() and by nothing else", async () => {
+    await expectFixturesToPass(
+      {
+        "sync.ts": ``,
+        "pending.ts": ``,
+        "namespaces.ts": `export * as pending from "./pending";`,
+        "then.test.ts": `
+          import { expect, mock, test } from "bun:test";
+
+          test("a factory that returns the exports", async () => {
+            let reads = 0;
+            mock.module("./sync", () => ({ a: 1, get then() { reads++; } }));
+            expect((await import("./sync")).a).toBe(1);
+            const readsOfTheImportThatLoadsIt = reads;
+            expect(readsOfTheImportThatLoadsIt).toBeGreaterThan(0);
+            await import("./sync");
+            expect(reads).toBe(2 * readsOfTheImportThatLoadsIt);
+          });
+
+          test("a factory that returns a promise for them, which reads it too", async () => {
+            let reads = 0;
+            const receivers = [];
+            mock.module("./pending", async () => {
+              await 0;
+              return {
+                get then() {
+                  if (++reads === 2) return function (resolve) { receivers.push(this); resolve("the second time"); };
+                },
+              };
+            });
+            expect(await import("./pending")).toBe("the second time");
+            expect(reads).toBe(2);
+            expect(receivers).toEqual([(await import("./namespaces")).pending]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("gets the exports from it when a promise of the factory is resolved with them", async () => {
+    await expectFixturesToPass(
+      {
+        "mocked.ts": ``,
+        "then.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("as any promise does", async () => {
+            mock.module("./mocked", async () => ({ a: 1, then: resolve => resolve({ b: 2 }) }));
+            expect({ ...(await import("./mocked")) }).toEqual({ b: 2 });
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
+describe.concurrent("script cannot name a module by its key", () => {
+  const attempts = `
+    export async function attempts() {
+      const outcomes = [];
+      for (const specifier of ["\\0bun:module-mock", "\\0\\0bun:module-mock", "\\0node:fs", "\\0/etc/hostname"]) {
+        for (const load of [() => import(specifier), () => vi.importActual(specifier), () => vi.importMock(specifier), () => require(specifier)]) {
+          try {
+            outcomes.push(Object.keys(await load()));
+          } catch (error) {
+            outcomes.push(error.constructor.name);
+          }
+        }
+      }
+      return outcomes;
+    }
+  `;
+  const refused = Array.from({ length: 4 }, () => [
+    "ResolveMessage",
+    "TypeError",
+    "TypeError",
+    "ResolveMessage",
+  ]).flat();
+
+  test("in the original of a module that is mocked", async () => {
+    await expectFixturesToPass(
+      {
+        "mocked.ts": `import { vi } from "bun:test"; ${attempts}`,
+        "key.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("import()", async () => {
+            vi.doMock("./mocked.ts", async importOriginal => ({ ...(await importOriginal()) }));
+            expect(await (await import("./mocked.ts")).attempts()).toEqual(${JSON.stringify(refused)});
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("in a test file that mocks itself", async () => {
+    await expectFixturesToPass(
+      {
+        "key.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          ${attempts}
+          test("import()", async () => {
+            vi.doMock(import.meta.path, async importOriginal => ({ a: 1 }));
+            expect(await attempts()).toEqual(${JSON.stringify(refused)});
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
+test.concurrent("a mocked module loads after require() of a module that imports one with a syntax error", async () => {
+  await expectFixturesToPass(
+    {
+      "broken.js": `export const = ;`,
+      "importer.js": `import "./broken.js"; export const y = 1;`,
+      "mocked.js": `export const x = "real";`,
+      "1.test.js": `
+        import { expect, mock, test } from "bun:test";
+        test("in the same file", async () => {
+          expect(() => require("./importer.js")).toThrow();
+          mock.module("./mocked.js", () => ({ x: "mock" }));
+          expect((await import("./mocked.js")).x).toBe("mock");
+        });
+      `,
+      "2.test.js": `
+        import { expect, mock, test } from "bun:test";
+        test("in the next file", async () => {
+          mock.module("./mocked.js", () => ({ x: "mock" }));
+          expect((await import("./mocked.js")).x).toBe("mock");
+        });
+      `,
+    },
+    2,
+  );
+});
+
+test.concurrent("a getter of a pending factory's exports that calls Bun.plugin.clearAll() and throws", async () => {
+  await expectFixturesToPass(
+    {
+      "mocked.js": `export const x = "real";`,
+      "clears.test.js": `
+        import { expect, mock, test } from "bun:test";
+        test("rejects the promise of mock.module()", async () => {
+          const mocked = await import("./mocked.js");
+          const patched = mock.module("./mocked.js", async () => {
+            await null;
+            return {
+              get x() {
+                Bun.plugin.clearAll();
+                throw new Error("from the getter");
+              },
+            };
+          });
+          expect(patched).rejects.toThrow("from the getter");
+          await patched.catch(() => {});
+          expect(mocked.x).toBe("real");
+        });
+      `,
+    },
+    1,
+  );
+});
+
+test("the name of a module to mock has no null byte", () => {
+  const nameless = " requires a module name without null bytes";
+  for (const name of ["/tmp/a\0b.ts", "./a\0b.ts", "\0a"]) {
+    expect(() => mock.module(name, () => ({}))).toThrow("mock(module, fn)" + nameless);
+    expect(() => vi.doMock(name)).toThrow("mock(module, fn)" + nameless);
+    expect(() => vi.doMock(name, { spy: true })).toThrow("mock(module, fn)" + nameless);
+    expect(() => vi.doUnmock(name)).toThrow("unmock(module)" + nameless);
+    expect(() => vi.importActual(name)).toThrow("importActual(module)" + nameless);
+    expect(() => vi.importMock(name)).toThrow("importMock(module)" + nameless);
+    expect(() => jest.requireActual(name)).toThrow("requireActual(module)" + nameless);
+    expect(() => jest.requireMock(name)).toThrow("requireMock(module)" + nameless);
+  }
+  expect(() => mock.module("file:///tmp/a%00b.ts", () => ({}))).toThrow('Invalid "file:" URL');
+});
+
+test("two import()s at once of a mocked module do not keep the global object of the test file under --isolate", async () => {
+  const files: Record<string, string> = { "mocked.ts": `export const a = 0;` };
+  for (let i = 0; i < 8; i++) {
+    files[`${i}.test.ts`] = `
+      import { mock, test } from "bun:test";
+      test("imports", async () => {
+        mock.module("./mocked", () => ({ a: 1 }));
+        await Promise.all([import("./mocked"), import("./mocked")]);
+      });
+    `;
+  }
+  files["9.test.ts"] = `
+    import { heapStats } from "bun:jsc";
+    import { test } from "bun:test";
+    test("counts", () => {
+      Bun.gc(true);
+      Bun.gc(true);
+      const { GlobalObject, ModuleMock } = heapStats().objectTypeCounts;
+      console.log(JSON.stringify({ GlobalObject, ModuleMock }));
+    });
+  `;
+  using dir = tempDir("mock-module-leak", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // This file's, and that of the file before it.
+  expect(stdout).toContain(`{"GlobalObject":2,"ModuleMock":1}`);
+  expect(stderr).toContain(" 9 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("a module that is being loaded when it is to be evicted", () => {
+  // root imports a, which imports the mocked k, and b, which imports root.
+  const graph = {
+    "k.js": `export const x = "real";`,
+    "a.js": `import { x } from "./k.js"; export const seen = x;`,
+    "b.js": `import "./root.js"; export const b = 1;`,
+    "root.js": `import { seen } from "./a.js"; import "./b.js"; export { seen };`,
+    "count.js": `globalThis.loads = (globalThis.loads ?? 0) + 1; export const n = globalThis.loads;`,
+  };
+
+  test("finishes loading, and the next import loads it again", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "own.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          const loaders = [["import()", path => import(path)], ["require()", async path => require(path)]];
+          test.each(loaders)("a factory that removes its own mock: %s", async (_, load) => {
+            vi.resetModules();
+            vi.doMock("./k.js", () => (vi.doUnmock("./k.js"), { x: "mock" }));
+            expect((await load("./root.js")).seen).toBe("mock");
+            expect((await load("./k.js")).x).toBe("real");
+            expect((await load("./root.js")).seen).toBe("real");
+          });
+          test.each(loaders)("a factory that mocks its module again: %s", async (_, load) => {
+            vi.resetModules();
+            vi.doMock("./k.js", () => (vi.doMock("./k.js", () => ({ x: "second" })), { x: "first" }));
+            expect((await load("./root.js")).seen).toBe("first");
+            expect((await load("./k.js")).x).toBe("second");
+            vi.doUnmock("./k.js");
+          });
+          test.each(loaders.flatMap(([name, load]) => [[name, "vi", load], [name, "jest", load]]))("a factory that resets the modules: %s, %s.resetModules()", async (_, api, load) => {
+            vi.resetModules();
+            globalThis.loads = 0;
+            const before = await load("./count.js");
+            vi.doMock("./k.js", () => {
+              ({ vi, jest })[api].resetModules();
+              return { x: "mock", isLoadedAgain: require("./count.js") !== before };
+            });
+            const root = await load("./root.js");
+            expect(root.seen).toBe("mock");
+            expect((await load("./k.js")).isLoadedAgain).toBe(true);
+            expect(await load("./root.js")).not.toBe(root);
+            expect(globalThis.loads).toBe(2);
+            vi.doUnmock("./k.js");
+          });
+        `,
+      },
+      8,
+    );
+  });
+
+  test("a graph with CommonJS modules and cycles that require() loads", async () => {
+    using dir = tempDir("mock-module-evict", {
+      "entry.js": `import "./one.js"; export * as sub from "./zero.cjs";`,
+      "one.js": `import "./seven.js";`,
+      "two.js": `import "./six.js";`,
+      "six.js": `export * from "./entry.js";`,
+      "seven.js": `import "./two.js"; import { a } from "./five.cjs";`,
+      "zero.cjs": `try { require("./five.cjs"); } catch {}`,
+      "five.cjs": `try { require("./two.js"); } catch {}`,
+      "graph.test.js": `
+        import { test, vi } from "bun:test";
+        test("loads", () => {
+          vi.doMock("./zero.cjs", importOriginal => (void importOriginal().catch(() => {}), { a: 2 }));
+          vi.doMock("./seven.js", () => (vi.doUnmock("./seven.js"), { a: 3 }));
+          console.log(Object.keys(require("./entry.js")));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain(`[ "sub" ]`);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+  test("is what whoever waits for it gets, whatever its mock has become", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "again.test.js": `
+          import { beforeEach, expect, test, vi } from "bun:test";
+          beforeEach(() => {
+            vi.doUnmock("./k.js");
+            vi.resetModules();
+          });
+          function pendingFactory(result) {
+            const called = Promise.withResolvers(), gate = Promise.withResolvers();
+            vi.doMock("./k.js", async () => (called.resolve(), await gate.promise, result));
+            return { called: called.promise, settle: gate.resolve };
+          }
+          test("mocked again, and the modules reset between import() and its await", async () => {
+            vi.doMock("./k.js", () => ({ first: 1 }));
+            await import("./k.js");
+            vi.doMock("./k.js", () => ({ second: 2 }));
+            const importing = import("./k.js");
+            vi.resetModules();
+            expect(Object.keys(await importing)).toEqual(["second"]);
+            expect(Object.keys(await import("./k.js"))).toEqual(["second"]);
+          });
+          test("mocked again while the factory runs", async () => {
+            const factory = pendingFactory({ x: "first" });
+            const importing = import("./a.js");
+            await factory.called;
+            vi.doMock("./k.js", () => ({ x: "second" }));
+            factory.settle();
+            expect((await importing).seen).toBe("first");
+            expect((await import("./k.js")).x).toBe("second");
+          });
+          test("not mocked any more while the factory runs", async () => {
+            const factory = pendingFactory({ x: "mock" });
+            const importing = import("./a.js");
+            await factory.called;
+            vi.doUnmock("./k.js");
+            factory.settle();
+            expect((await importing).seen).toBe("mock");
+            expect([(await import("./a.js")).seen, (await import("./k.js")).x]).toEqual(["real", "real"]);
+          });
+          test("mocked again before the factory is called", async () => {
+            let calls = 0;
+            vi.doMock("./k.js", () => (calls++, { x: "first" }));
+            const importing = [import("./a.js"), import("./k.js")];
+            vi.doMock("./k.js", () => ({ x: "second" }));
+            expect([(await importing[0]).seen, (await importing[1]).x, calls]).toEqual(["second", "second", 0]);
+          });
+          test("not mocked any more before the factory is called", async () => {
+            let calls = 0;
+            vi.doMock("./k.js", () => (calls++, { x: "mock" }));
+            const importing = [import("./a.js"), import("./k.js")];
+            vi.doUnmock("./k.js");
+            expect([(await importing[0]).seen, (await importing[1]).x, calls]).toEqual(["real", "real", 0]);
+          });
+          test("mocked a thousand times while it is loaded", async () => {
+            const factory = pendingFactory({ x: "first" });
+            const importing = import("./root.js");
+            await factory.called;
+            for (let i = 0; i < 1000; i++) vi.doMock("./k.js", () => ({ x: i }));
+            factory.settle();
+            expect((await importing).seen).toBe("first");
+            expect((await import("./k.js")).x).toBe(999);
+          });
+        `,
+      },
+      6,
+    );
+  });
+  test("and fails to load", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "syntax.js": `export const = ;`,
+        "throws.js": `throw new Error("thrown by throws.js");`,
+        "uses-syntax.js": `import { x } from "./k.js"; import "./syntax.js"; export const seen = x;`,
+        "uses-throws.js": `import { x } from "./k.js"; import "./throws.js"; export const seen = x;`,
+        "uses-missing.js": `import { x } from "./k.js"; import "./missing.js"; export const seen = x;`,
+        "fails.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test.each(["syntax", "throws", "missing"].flatMap(kind => [[kind, "import()", path => import(path)], [kind, "require()", async path => require(path)]]))("%s: %s", async (kind, _, load) => {
+            vi.resetModules();
+            let calls = 0;
+            vi.doMock("./k.js", () => (calls++, vi.doUnmock("./k.js"), { x: "mock" }));
+            expect(load("./uses-" + kind + ".js")).rejects.toThrow();
+            await load("./uses-" + kind + ".js").catch(() => {});
+            expect((await load("./a.js")).seen).toBe("real");
+            expect(calls).toBeLessThan(2);
+          });
+        `,
+      },
+      6,
+    );
+  });
+  test("while a plugin is pending, inside require() inside a factory, and before vi.dynamicImportSettled()", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "slow.js": `export const s = "slow";`,
+        "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+        "inner.js": `import { n } from "./count.js"; export const inner = "inner" + n;`,
+        "interplay.test.js": `
+          import { afterEach, expect, test, vi } from "bun:test";
+          afterEach(() => {
+            Bun.plugin.clearAll();
+            vi.resetModules();
+          });
+          test("an onLoad() callback that is pending", async () => {
+            const called = Promise.withResolvers(), gate = Promise.withResolvers();
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow\\.js$/ }, async () => (called.resolve(), await gate.promise, undefined));
+              },
+            });
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            await import("./k.js");
+            const importing = import("./user.js");
+            await called.promise;
+            vi.doUnmock("./k.js");
+            const joining = import("./user.js");
+            vi.resetModules();
+            gate.resolve();
+            expect((await importing).seen).toBe("mock/slow");
+            expect(await joining).toBe(await importing);
+            expect((await import("./user.js")).seen).toBe("real/slow");
+          });
+          test("require() of ES modules in a factory that import() called", async () => {
+            globalThis.loads = 0;
+            vi.doMock("./k.js", () => {
+              const before = require("./inner.js").inner;
+              vi.resetModules();
+              return { x: before + "+" + require("./inner.js").inner };
+            });
+            expect((await import("./root.js")).seen).toBe("inner1+inner2");
+            expect((await import("./root.js")).seen).toBe("inner1+inner2");
+            expect(globalThis.loads).toBe(2);
+            vi.doUnmock("./k.js");
+          });
+          test("vi.dynamicImportSettled()", async () => {
+            vi.doMock("./k.js", async () => (vi.doUnmock("./k.js"), await null, { x: "mock" }));
+            let seen;
+            void import("./root.js").then(root => (seen = root.seen));
+            await vi.dynamicImportSettled();
+            expect([seen, (await import("./root.js")).seen]).toEqual(["mock", "real"]);
+          });
+          test("script that is terminated in a factory", async () => {
+            let calls = 0;
+            globalThis.load = () => require("./k.js");
+            vi.doMock("./k.js", () => {
+              if (++calls === 1) for (;;);
+              return { x: "mock" };
+            });
+            expect(() => require("node:vm").runInThisContext("load()", { timeout: 100 })).toThrow(expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }));
+            expect((await import("./root.js")).seen).toBe("mock");
+            vi.doUnmock("./k.js");
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("a file that never finishes loading", async () => {
+    using dir = tempDir("mock-module-evict", {
+      ...graph,
+      "a.test.js": `
+        import { test, vi } from "bun:test";
+        vi.doMock("./k.js", async () => (vi.doUnmock("./k.js"), vi.resetModules(), await new Promise(() => {})));
+        await import("./root.js");
+        test("never runs", () => {});
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        import { seen } from "./root.js";
+        test("the next file loads the modules", () => expect(seen).toBe("real"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('a.test.js" never finished loading');
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("the module mocks of a test file are undone when it ends: loads that are in flight", () => {
+  const modules = {
+    "k.js": `export const x = "real";`,
+    "slow.js": `export const s = "slow";`,
+    "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+  };
+  const next = `
+    import { expect, test } from "bun:test";
+    import { seen } from "./user.js";
+    test("the next file gets the original", async () => {
+      expect([seen, (await import("./k.js")).x]).toEqual(["real/slow", "real"]);
+      await globalThis.settle?.();
+      expect([(await import("./user.js")).seen, (await import("./k.js")).x]).toEqual(["real/slow", "real"]);
+      expect(globalThis.events).toEqual(EVENTS);
+    });
+  `;
+
+  test.each(["", "--rerun-each=2"])("a factory that is still running is not waited for: bun test %s", async flags => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": `
+          import { test, vi } from "bun:test";
+          test("leaves an import of a mock whose factory has not settled", async () => {
+            const events = (globalThis.events = []);
+            const called = Promise.withResolvers(), gate = Promise.withResolvers();
+            vi.doMock("./k.js", async () => (called.resolve(), await gate.promise, events.push("factory settled"), { x: "mock" }));
+            void import("./user.js").then(() => events.push("import settled"), () => events.push("import rejected"));
+            await called.promise;
+            globalThis.settle = async () => {
+              gate.resolve();
+              await new Promise(resolve => setImmediate(resolve));
+            };
+          });
+        `,
+        "b.test.js": next.replace("EVENTS", `["factory settled"]`),
+      },
+      flags ? 4 : 2,
+      ["./a.test.js", "./b.test.js", ...flags.split(" ").filter(Boolean)],
+    );
+  });
+
+  test("a load that has imported a mock has settled before the next file is loaded", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": `
+          import { test, vi } from "bun:test";
+          test("leaves an import that waits for a plugin", async () => {
+            const events = (globalThis.events = []);
+            const called = Promise.withResolvers();
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                  called.resolve();
+                  await new Promise(resolve => setImmediate(resolve));
+                  events.push("plugin settled");
+                });
+              },
+            });
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            await import("./k.js");
+            void import("./user.js").then(user => events.push("import settled: " + user.seen));
+            await called.promise;
+          });
+        `,
+        "b.test.js": next.replace("EVENTS", `["plugin settled", "import settled: mock/slow"]`),
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+  test("the factory of a preload's mock that is still running is called again for the next file", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "preload.js": `
+          import { mock } from "bun:test";
+          globalThis.called = Promise.withResolvers();
+          let calls = 0;
+          mock.module("./k.js", async () => {
+            globalThis.called.resolve();
+            if (++calls === 1) await new Promise(() => {});
+            return { x: "preload" + calls };
+          });
+        `,
+        "a.test.js": `
+          import { test } from "bun:test";
+          test("leaves an import of the mock", async () => {
+            void import("./user.js");
+            await globalThis.called.promise;
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user.js";
+          test("gets the mock", () => expect(seen).toBe("preload2/slow"));
+        `,
+      },
+      2,
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+    );
+  });
+});
+test.concurrent.each(["vi.mock", "vi.doMock", "mock.module"])(
+  "a module and one it imports, both loaded by an earlier file, are mocked with %s: the next file gets the originals",
+  async mockIt => {
+    const imports = mockIt === "vi.mock" ? `import { x } from "./k.js";` : "";
+    await expectFixturesToPass(
+      {
+        "j.js": `export const y = "real-j";`,
+        "k.js": `import { y } from "./j.js"; export const x = "real-k"; export const viaJ = () => y;`,
+        "0.test.js": `
+          import { expect, test } from "bun:test";
+          import { x } from "./k.js";
+          test("loads them", () => expect(x).toBe("real-k"));
+        `,
+        "1.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          ${imports}
+          ${mockIt}("./k.js", () => ({ x: "mock-k" }));
+          ${mockIt}("./j.js", () => ({ y: "mock-j" }));
+          test("mocks them", async () => expect((await import("./k.js")).x).toBe("mock-k"));
+        `,
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          test("mocks nothing", async () => {
+            const k = await import("./k.js");
+            expect([k.x, k.viaJ()]).toEqual(["real-k", "real-j"]);
+          });
+        `,
+      },
+      3,
+      ["./0.test.js", "./1.test.js", "./2.test.js"],
+    );
+  },
+);
+
+test.concurrent(
+  "a factory that resets the modules while it patches a loaded module: the next run of the file gets the original",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "k.js": `export const x = "real";`,
+        "reset.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("mocks", async () => {
+          expect((await import("./k.js")).x).toBe("real");
+          vi.doMock("./k.js", () => (vi.resetModules(), { x: "mock" }));
+          expect((await import("./k.js")).x).toBe("mock");
+        });
+      `,
+      },
+      2,
+      ["--rerun-each=2"],
+    );
+  },
+);
+
+test.concurrent("jest.resetModules() leaves what was imported from a mock as it is", async () => {
+  await expectFixturesToPass(
+    {
+      "dep.js": `export const x = "real"; export function f() { return "real-f"; }`,
+      "user.js": `import { x, f } from "./dep.js"; export const read = () => [x, f()];`,
+      "reset.test.js": `
+        import { expect, jest, test } from "bun:test";
+        import * as ns from "./dep.js";
+        import { f, x } from "./dep.js";
+        import { read } from "./user.js";
+        let calls = 0;
+        jest.mock("./dep.js", () => ({ x: "mock" + ++calls, f: jest.fn(() => "mock-f") }));
+        test("and calls the factory again for the next import", async () => {
+          jest.resetModules();
+          expect([x, f(), ns.x, Object.keys(ns), read()]).toEqual(["mock1", "mock-f", "mock1", ["x", "f"], ["mock1", "mock-f"]]);
+          expect((await import("./user.js")).read()).toEqual(["mock2", "mock-f"]);
+          expect([x, read()[0], require("./dep.js").x]).toEqual(["mock1", "mock1", "mock2"]);
+        });
+      `,
+    },
+    1,
+  );
+});
+
+test.concurrent("a mock that is made from the original of a module that is imported with a type", async () => {
+  await expectFixturesToPass(
+    {
+      "data.json": `{ "a": "real", "b": 1 }`,
+      "note.txt": `real`,
+      "conf.toml": `a = "real"`,
+      "uses-json.js": `import data from "./data.json" with { type: "json" }; export const read = () => data;`,
+      "uses-text.js": `import text from "./note.txt" with { type: "text" }; export const read = () => text;`,
+      "uses-toml.js": `import conf from "./conf.toml" with { type: "toml" }; export const read = () => conf;`,
+      "uses-js-as-text.js": `import text from "./uses-text.js" with { type: "text" }; export const read = () => text.slice(0, 11);`,
+      "type.test.js": `
+        import { afterEach, expect, test, vi } from "bun:test";
+        afterEach(() => vi.resetModules());
+        test.each([
+          ["./data.json", "./uses-json.js", { a: "real", b: 1 }],
+          ["./note.txt", "./uses-text.js", "real"],
+          ["./conf.toml", "./uses-toml.js", { a: "real" }],
+          ["./uses-text.js", "./uses-js-as-text.js", "import text"],
+        ])("%s", async (path, user, real) => {
+          using _ = vi.doMock(path, async importOriginal => ({ default: [(await importOriginal()).default] }));
+          const [original] = (await import(user)).read();
+          expect(path === "./uses-text.js" ? original.slice(0, 11) : original).toEqual(real);
+        });
+        test("without a factory", async () => {
+          using _ = vi.doMock("./data.json");
+          expect((await import("./uses-json.js")).read()).toEqual({ a: "real", b: 1 });
+        });
+      `,
+    },
+    5,
+  );
+});
+
+test.concurrent(
+  "a factory that fails, and has imported its module, whose original imports itself, is called once",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "m.js": `import "./m.js"; export const b = 1;`,
+        "user.js": `import "./m.js"; export const a = 1;`,
+        "fails.test.js": `
+        import { expect, mock, test, vi } from "bun:test";
+        const loaders = [["require()", async path => require(path)], ["import()", path => import(path)]];
+        const failures = [
+          ["throws", () => { throw new Error("the factory failed"); }],
+          ["returns no object", () => 1],
+          ["rejects", () => Promise.reject(new Error("the factory failed"))],
+          ["resolves to no object", async () => (await null, 1)],
+        ];
+        test.each(loaders.flatMap(([name, load]) => failures.map(([how, fail]) => [name, how, load, fail])))("%s, %s", async (_, how, load, fail) => {
+          vi.resetModules();
+          let calls = 0;
+          const imports = [];
+          mock.module("./m.js", () => {
+            calls++;
+            imports.push(import("./m.js").catch(() => {}));
+            return fail();
+          });
+          await expect(load("./user.js")).rejects.toThrow();
+          await Promise.all(imports);
+          await vi.dynamicImportSettled();
+          expect(calls).toBe(1);
+        });
+      `,
+      },
+      8,
+    );
+  },
+);
+
+test.concurrent("importOriginal() fails with what a getter of the original's exports throws", async () => {
+  await expectFixturesToPass(
+    {
+      "other.js": `export const boom = 1;`,
+      "barrel.js": `export * from "./other.js"; export const own = "own";`,
+      "getter.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("instead of taking it for an export that is not initialized", async () => {
+          vi.doMock("./other.js", () => ({ get boom() { throw new RangeError("from the getter"); } }));
+          vi.doMock("./barrel.js", async importOriginal => ({ ...(await importOriginal()) }));
+          expect(import("./barrel.js")).rejects.toThrow(new RangeError("from the getter"));
+        });
+      `,
+    },
+    1,
+  );
+});
+
+test.concurrent("a factory that require()s a module that is waiting for the mock", async () => {
+  await expectFixturesToPass(
+    {
+      "k.js": `export const x = "real";`,
+      "a.js": `import { x } from "./k.js"; export const seen = x;`,
+      "root.js": `export { seen } from "./a.js";`,
+      "helper.cjs": `try { module.exports = require("./a.js").seen; } catch (error) { module.exports = error.message; }`,
+      "nested.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("fails there, and the module that was waiting gets the mock", () => {
+          vi.doMock("./k.js", () => ({ x: "mock", nested: require("./helper.cjs") }));
+          expect(require("./root.js").seen).toBe("mock");
+          expect(require("./k.js").nested).toStartWith("Circular import: ");
+        });
+      `,
+    },
+    1,
+  );
+});
+
+test.concurrent("importOriginal() of a module that re-exports a name the mock of another module lacks", async () => {
+  await expectFixturesToPass(
+    {
+      "other.js": `export const a = "real-a"; export const b = "real-b";`,
+      "barrel.js": `export { a, b } from "./other.js"; export const own = "own";`,
+      "lacks.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("has undefined for it", async () => {
+          vi.doMock("./other.js", () => ({ a: "mock-a" }));
+          vi.doMock("./barrel.js", async importOriginal => ({ ...(await importOriginal()), extra: 1 }));
+          expect({ ...(await import("./barrel.js")) }).toEqual({ a: "mock-a", b: undefined, own: "own", extra: 1 });
+        });
+      `,
+    },
+    1,
+  );
 });

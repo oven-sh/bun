@@ -51,7 +51,9 @@ impl TimeoutObject {
         this_value: JSValue,
         _global: &JSGlobalObject,
     ) -> JSValue {
-        js::callback_get_cached(this_value).unwrap()
+        js::callback_get_cached(this_value)
+            .unwrap()
+            .without_async_context()
     }
 
     pub(crate) fn set_on_timeout(

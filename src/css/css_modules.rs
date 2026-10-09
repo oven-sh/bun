@@ -481,6 +481,8 @@ pub struct ComposesVisitor<'a> {
     visited: ArrayHashMap<Ref, ()>,
     names: Vec<ExportedName<'a>>,
     stack_check: StackCheck,
+    /// A chain of `composes` was cut short for lack of stack.
+    pub out_of_stack: bool,
 }
 
 impl<'a> ComposesVisitor<'a> {
@@ -490,6 +492,7 @@ impl<'a> ComposesVisitor<'a> {
             visited: ArrayHashMap::new(),
             names: Vec::new(),
             stack_check: StackCheck::init(),
+            out_of_stack: false,
         }
     }
 
@@ -536,6 +539,7 @@ impl<'a> ComposesVisitor<'a> {
         log: &mut Log,
     ) {
         if !self.stack_check.is_safe_to_recurse() {
+            self.out_of_stack = true;
             log.add_error_fmt(
                 self.graph.source(source_index),
                 compose.loc,
@@ -635,39 +639,5 @@ impl<'a> ComposesVisitor<'a> {
             return;
         }
         self.visit_local(sheet, local.ref_, source_index, log);
-    }
-}
-
-/// Reports each `composes: name from "file"` in the file `source_index` whose `file` has no local `name`.
-pub fn check_composes_from(graph: &impl ComposesGraph, source_index: u32, log: &mut Log) {
-    let Some(sheet) = graph.stylesheet(source_index) else {
-        return;
-    };
-    for compose in sheet.composes.values().iter().flat_map(|e| &e.composes) {
-        let Some(Specifier::ImportRecordIndex(import_record_index)) = compose.from else {
-            continue;
-        };
-        let other_index = graph
-            .import_record(source_index, import_record_index)
-            .source_index;
-        if !other_index.is_valid() {
-            continue;
-        }
-        let Some(other_sheet) = graph.stylesheet(other_index.get()) else {
-            continue;
-        };
-        for name in compose.names.slice() {
-            if !other_sheet.local_scope.contains(name.v()) {
-                log.add_error_fmt(
-                    graph.source(source_index),
-                    compose.loc,
-                    format_args!(
-                        "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                        quote(name.v()),
-                        quote(graph.source(other_index.get()).path.pretty),
-                    ),
-                );
-            }
-        }
     }
 }

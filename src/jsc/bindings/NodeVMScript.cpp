@@ -554,9 +554,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMGlobalObject* targetContext = context ? getGlobalObjectFromContext(globalObject, context, false) : nullptr;
     RETURN_IF_EXCEPTION(scope, {});
     if (!targetContext || targetContext->contextifiedObject()) {
-        targetContext = NodeVMGlobalObject::create(vm,
-            defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
-            contextOptions, importer, context);
+        targetContext = NodeVMGlobalObject::create(vm, contextOptions, importer, context);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

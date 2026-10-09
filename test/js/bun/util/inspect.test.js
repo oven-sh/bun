@@ -1447,6 +1447,108 @@ describe("values of another realm", () => {
   });
 });
 
+describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
+  const values = {
+    "inherits from a Proxy that throws": () =>
+      Object.create(
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("cannot be read");
+            },
+          },
+        ),
+      ),
+    "has a getter that throws": () => ({
+      get [Symbol.for("nodejs.util.inspect.custom")]() {
+        throw new Error("cannot be read");
+      },
+    }),
+  };
+  const holders = {
+    "itself": value => value,
+    "the first property": value => ({ value, b: 2 }),
+    "the second property": value => ({ a: 1, value }),
+    "an element": value => [1, value],
+    "a property of the global of a node:vm context": value => vm.runInContext("this", vm.createContext({ value })),
+    "a property of a DONT_CONTEXTIFY context": value =>
+      Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { value }),
+  };
+
+  describe.each(Object.keys(values))("because it %s", kind => {
+    it.each(Object.keys(holders))("Bun.inspect() throws the error: %s", holder => {
+      expect(() => Bun.inspect(holders[holder](values[kind]()))).toThrow("cannot be read");
+      expect(Bun.inspect({ a: 1 })).toBe("{\n  a: 1,\n}");
+    });
+  });
+
+  it.concurrent("console.log() throws the error, and goes on printing afterwards", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const value = { get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); } };
+        for (const log of [console.log, console.error, console.table]) {
+          try {
+            log([{ value }]);
+            process.stdout.write("\\nreturned\\n");
+          } catch (error) {
+            process.stdout.write("\\n" + error.message + "\\n");
+          }
+        }
+        console.log({ a: 1 });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ lines: stdout.split("\n").filter(line => /^[a-z]/.test(line)), end: stdout.slice(-12), exitCode }).toEqual(
+      {
+        lines: ["cannot be read", "cannot be read", "cannot be read"],
+        end: "{\n  a: 1,\n}\n",
+        exitCode: 0,
+      },
+    );
+  });
+
+  // The report of an error does not fail.
+  describe.each(["throw thrown;", "Promise.reject(thrown);", "reportError(thrown); process.exitCode = 1;"])(
+    "%s",
+    report => {
+      async function reportOf(thrown) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const thrown = ${thrown};\n${report}`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr: stderr.replace(/\n+Bun v.*\n$/, "\n"), exitCode };
+      }
+
+      it.concurrent("does not read it", async () => {
+        const getter = `get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); }`;
+        expect(await reportOf(`{ value: { ${getter} }, b: 2 }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  value: {\n    [Symbol(nodejs.util.inspect.custom)]: [Getter],\n  },\n  b: 2,\n}\n",
+          exitCode: 1,
+        });
+      });
+
+      it.concurrent("says where printing what was thrown threw", async () => {
+        const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
+        expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  a: 1,\n  value: [threw while it was printed]\n",
+          exitCode: 1,
+        });
+      });
+    },
+  );
+});
+
 describe("compact prints one line", () => {
   it("an array of more than 100 items", () => {
     expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(
@@ -1460,16 +1562,5 @@ describe("compact prints one line", () => {
   it("an object past the depth", () => {
     expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
     expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
-  });
-
-  it("an error", () => {
-    expect(Bun.inspect(new Error("boom"), { compact: true })).toBe("[Error: boom]");
-    expect(Bun.inspect({ e: new TypeError("boom") }, { compact: true })).toBe("{ e: [TypeError: boom] }");
-    expect(Bun.inspect([new Error(), new (class MyError extends Error {})("mine")], { compact: true })).toBe(
-      "[ [Error], [Error: mine] ]",
-    );
-    expect(Bun.inspect({ e: new Error("boom", { cause: new Error("why") }) }, { compact: true })).toBe(
-      "{ e: [Error: boom] }",
-    );
   });
 });

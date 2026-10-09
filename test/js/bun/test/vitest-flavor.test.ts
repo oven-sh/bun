@@ -2,6 +2,7 @@
 // vitest's, those of "bun:test" and "@jest/globals" as Jest's. Expected outputs were taken from vitest 5.0.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 
 async function runTests(files: Record<string, string>, args: string[] = [], env: Record<string, string> = {}) {
   using dir = tempDir("vitest-flavor", files);
@@ -63,6 +64,44 @@ describe.concurrent("test context", () => {
       ],
       results: ["(pass) one parameter", "(pass) destructured", "(pass) async", "(pass) arguments"],
       exitCode: 0,
+    });
+  });
+
+  test("is a function, which tells a test that was written for a done callback so", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, beforeEach } from "vitest";
+        beforeEach(ctx => { console.log("beforeEach:", typeof ctx); });
+        test("a function with the members of the context", ctx => {
+          const { task, expect, skip } = ctx;
+          console.log(typeof ctx, ctx instanceof Function, task.name === ctx.task.name, typeof expect, typeof skip);
+          for (const call of [() => ctx(), () => ctx(new Error("ignored")), () => ctx.call(undefined), () => Reflect.apply(ctx, undefined, [])]) {
+            try { console.log(call()); } catch (error) { console.log(error.constructor.name + ":", error.message); }
+          }
+        });
+        test("calls done", done => { done(); });
+        test("calls done in a callback", done => { setImmediate(() => done()); });
+        test("runs when that callback does", () => new Promise(resolve => setImmediate(resolve)));
+      `,
+    });
+    const message = "done() callback is deprecated, use promise instead";
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "beforeEach: function",
+        "function true true function function",
+        ...Array(4).fill("Error: " + message),
+        "beforeEach: function",
+        "beforeEach: function",
+        "beforeEach: function",
+      ],
+      results: [
+        "(pass) a function with the members of the context",
+        "(fail) calls done",
+        "(pass) calls done in a callback",
+        "(fail) runs when that callback does",
+      ],
+      errors: ["error: " + message, "error: " + message],
+      exitCode: 1,
     });
   });
 
@@ -478,6 +517,11 @@ describe.concurrent("test context", () => {
           test("has what expect has", ({ expect }) => {
             console.log(expect !== globalExpect, Object.getPrototypeOf(expect) === globalExpect, typeof expect.any, typeof expect.extend);
             expect({ a: 1 }).toEqual({ a: expect.any(Number) });
+            expect({ a: 1, b: Promise.resolve(1), c: Promise.reject(1) }).toEqual({
+              a: expect.not.any(String),
+              b: expect.resolvesTo.any(Number),
+              c: expect.rejectsTo.any(Number),
+            });
             expect(() => expect(1).toBe(2)).toThrow();
             expect("x", "label").not.toBe("y");
           });
@@ -666,6 +710,56 @@ describe.concurrent("beforeAll and afterAll", () => {
 });
 
 describe.concurrent("each and for", () => {
+  test("titles: long strings, values that are missing, %p and %s", async () => {
+    const file = (module: string) => `
+      import { test } from "${module}";
+      const digits = count => Buffer.alloc(count, "0123456789").toString();
+      const title = (rows, title) => test.each(rows)(title, () => {});
+      title([{ name: digits(40) }], "fits: $name");
+      title([{ name: digits(41) }], "cut: $name");
+      title([{ name: Buffer.alloc(90, "é").toString() }], "two bytes: $name");
+      title([{ name: Buffer.alloc(100, "😀").toString() }], "surrogates: $name");
+      title([[digits(41)]], "not cut: %s");
+      title([{ a: { b: "nested" } }], "missing: $a.b $missing $a.missing");
+      title([[1]], "no value left: %d %d %i %f %s %j %o %O");
+      title([[1]], "unknown: %p");
+      title([[[1, 2]], [/x/g], [{ toString: () => "own" }], [{ a: 1 }]], "toString: %s");
+    `;
+    const [vitest, bun] = await Promise.all([
+      runTests({ "a.test.js": file("vitest") }),
+      runTests({ "a.test.js": file("bun:test") }),
+    ]);
+    const digits = (count: number) => Buffer.alloc(count, "0123456789").toString();
+    expect(vitest.results.map(line => line.slice("(pass) ".length))).toEqual([
+      "fits: " + digits(40),
+      "cut: " + digits(39) + "…",
+      "two bytes: " + Buffer.alloc(78, "é").toString() + "…",
+      "surrogates: " + Buffer.alloc(76, "😀").toString() + "…",
+      "not cut: " + digits(41),
+      "missing: nested undefined undefined",
+      "no value left: 1 NaN NaN NaN undefined undefined undefined undefined",
+      "unknown: %p",
+      "toString: 1,2",
+      "toString: /x/g",
+      "toString: own",
+      "toString: { a: 1 }",
+    ]);
+    expect(bun.results.map(line => line.slice("(pass) ".length))).toEqual([
+      "fits: " + digits(40),
+      "cut: " + digits(41),
+      "two bytes: " + Buffer.alloc(90, "é").toString(),
+      "surrogates: " + Buffer.alloc(100, "😀").toString(),
+      "not cut: " + digits(41),
+      "missing: nested $missing $a.missing",
+      "no value left: 1 %d %i %f %s %j %o %O",
+      "unknown: 1",
+      "toString: [ 1, 2 ]",
+      "toString: /x/g",
+      "toString: own",
+      "toString: { a: 1 }",
+    ]);
+  });
+
   test("each: a parameter beyond the values of the row is undefined", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -829,6 +923,38 @@ describe.concurrent("each and for", () => {
       `,
     });
     expect({ log, results, exitCode }).toEqual({ log: [`{"a":1,"b":2} 1 2`], results: ["(pass) 1 2"], exitCode: 0 });
+  });
+
+  test.each(["vitest", "bun:test"])("a heading of a tagged template may be an array index: %s", async module => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from ${JSON.stringify(module)};
+        test.each\`
+          0    | 1    | a
+          \${1} | \${2} | \${3}
+        \`("$0 $1 $a", row => { console.log(JSON.stringify(row), row[0], row[1], Object.keys(row).join()); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [`{"0":1,"1":2,"a":3} 1 2 0,1,a`],
+      results: ["(pass) 1 2 3"],
+      exitCode: 0,
+    });
+  });
+
+  test.each(["vitest", "bun:test"])("%%s of a Proxy whose traps lead nowhere: %s", async module => {
+    const { results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from ${JSON.stringify(module)};
+        const endless = new Proxy({}, { getPrototypeOf: () => endless, getOwnPropertyDescriptor: () => undefined });
+        class Named { toString() { return "named"; } }
+        test.each([[endless], [Object.create(endless)], [new Proxy(new Named(), {})], [new Proxy({}, { get() { throw new Error("trap"); } })]])("%s", () => {});
+      `,
+    });
+    expect({ results, exitCode }).toEqual({
+      results: ["(pass) {}", "(pass) {}", "(pass) named", "(pass) {}"],
+      exitCode: 0,
+    });
   });
 });
 
@@ -1146,7 +1272,7 @@ describe.concurrent("hooks", () => {
         `,
         "b.test.js": `
           import { test } from "vitest";
-          test.fails("b", (ctx) => { console.log("b", typeof ctx); throw new Error("expected"); });
+          test.fails("b", (ctx) => { console.log("b", typeof ctx.task); throw new Error("expected"); });
         `,
       },
       ["--preload", "./preload.js"],
@@ -1201,7 +1327,7 @@ describe.concurrent("behaviour follows the function", () => {
         bun.beforeEach((done) => { console.log("bun beforeEach", typeof done); done(); });
         bun.test("bun", (done) => { console.log("bun", typeof done); setTimeout(done, 1); });
         jest.test("jest", (done) => { console.log("jest", typeof done); done(); });
-        vitest.test("vitest", (ctx) => { console.log("vitest", typeof ctx); });
+        vitest.test("vitest", (ctx) => { console.log("vitest", typeof ctx.task); });
         bun.test.each([[1]])("bun each %i", (a, done) => { console.log("bun each", a, typeof done); done(); });
         bun.test("never calls done", (done) => {}, 20);
       `,
@@ -1229,7 +1355,7 @@ describe.concurrent("behaviour follows the function", () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, it, describe, xtest, xit, xdescribe } from "vitest";
-        const show = (ctx) => console.log(ctx.task.name, typeof ctx);
+        const show = (ctx) => console.log(ctx.task.name, typeof ctx.task);
         test.concurrent("concurrent", show, 500);
         test.serial("serial", show, 500);
         test.if(true)("if", show, 500);
@@ -1272,7 +1398,7 @@ describe.concurrent("behaviour follows the function", () => {
     const { log, results, exitCode } = await runTests({
       "helper.js": `
         import { test, afterEach } from "vitest";
-        export const withContext = (name) => test(name, (ctx) => console.log(name, typeof ctx), 500);
+        export const withContext = (name) => test(name, (ctx) => console.log(name, typeof ctx.task), 500);
         export const cleanup = (name) => afterEach(() => console.log(name));
       `,
       "a.test.js": `
@@ -1351,10 +1477,17 @@ describe.concurrent("exports", () => {
   const vitestGlobals = { suite: "function", vitest: "object", onTestFailed: "function", assertType: "function" };
   const typeofEach = (names: object) => `({ ${Object.keys(names).map(name => `${name}: typeof ${name}`)} })`;
 
-  for (const name of ["a.test.js", "a.test.cjs"]) {
-    test(`${name}: every global of a file that uses vitest comes from "vitest"`, async () => {
-      const { log, results, exitCode } = await runTests({
-        [name]: `
+  for (const [name, header, args] of [
+    ["a.test.js", `import "vitest";`, []],
+    ["a.test.cjs", `require("vitest");`, []],
+    ["a.test.js", ``, ["--globals=vitest"]],
+    ["a.test.cjs", ``, ["--globals=vitest"]],
+  ] as const) {
+    test(`${name}: every global comes from "vitest": ${header || args}`, async () => {
+      const { log, results, exitCode } = await runTests(
+        {
+          [name]: `
+          ${header}
           console.log(JSON.stringify(${typeofEach({ ...globals, ...vitestGlobals })}));
           console.log(vitest === vi, suite === describe);
           suite("a suite", () => {
@@ -1367,7 +1500,9 @@ describe.concurrent("exports", () => {
             });
           });
         `,
-      });
+        },
+        [...args],
+      );
       expect({ log, results, exitCode }).toEqual({
         log: [
           JSON.stringify({ ...globals, ...vitestGlobals }),
@@ -1380,36 +1515,64 @@ describe.concurrent("exports", () => {
         exitCode: 0,
       });
     });
+  }
 
+  for (const name of ["a.test.js", "a.test.cjs"]) {
     test(`${name}: the names that only "vitest" exports are not globals of another file`, async () => {
       const { log, results, exitCode } = await runTests({
         [name]: `
           globalThis.suite = "mine";
-          console.log(JSON.stringify(${typeofEach({ suite: 1, onTestFailed: 1, assertType: 1 })}), suite);
+          console.log(JSON.stringify(${typeofEach({ suite: 1, vitest: 1, onTestFailed: 1, assertType: 1 })}), suite);
           test("test", (done) => { console.log(typeof done); done(); });
         `,
       });
       expect({ log, results, exitCode }).toEqual({
-        log: [`{"suite":"string","onTestFailed":"undefined","assertType":"undefined"} mine`, "function"],
+        log: [
+          `{"suite":"string","vitest":"undefined","onTestFailed":"undefined","assertType":"undefined"} mine`,
+          "function",
+        ],
         results: ["(pass) test"],
         exitCode: 0,
       });
     });
+
+    test(`${name}: the global vi does not make the other globals those of "vitest"`, async () => {
+      const { log, results, errors, exitCode } = await runTests({
+        [name]: `
+          afterEach(() => console.log("afterEach 1"));
+          afterEach(() => { vi.restoreAllMocks(); console.log("afterEach 2"); });
+          test("waits for done", done => { setImmediate(() => { console.log("done"); done(); }); });
+          test("fails before done", done => { setImmediate(() => { expect("received").toBe("expected"); done(); }); });
+        `,
+      });
+      expect({ log, results, errors, exitCode }).toEqual({
+        log: ["done", "afterEach 1", "afterEach 2", "afterEach 1", "afterEach 2"],
+        results: ["(pass) waits for done", "(fail) fails before done"],
+        errors: ["error: expect(received).toBe(expected)"],
+        exitCode: 1,
+      });
+    });
   }
 
-  for (const header of [`import { vitest } from "vitest";`, ``]) {
+  for (const [header, args] of [
+    [`import { vitest } from "vitest";`, []],
+    [``, ["--globals=vitest"]],
+  ] as const) {
     test(`vitest.mock() and vitest.hoisted() are hoisted like vi's: ${header || "the global"}`, async () => {
-      const { log, exitCode } = await runTests({
-        "mod.js": `globalThis.loads = (globalThis.loads ?? 0) + 1; export const value = "real";`,
-        "side.js": `import { value } from "./mod.js"; export const captured = value;`,
-        "a.test.js": `
+      const { log, exitCode } = await runTests(
+        {
+          "mod.js": `globalThis.loads = (globalThis.loads ?? 0) + 1; export const value = "real";`,
+          "side.js": `import { value } from "./mod.js"; export const captured = value;`,
+          "a.test.js": `
           ${header}
           import { captured } from "./side.js";
           const hoisted = vitest.hoisted(() => ({ value: "mocked" }));
           vitest.mock("./mod.js", () => hoisted);
           test("test", () => console.log(globalThis.loads ?? 0, captured));
         `,
-      });
+        },
+        [...args],
+      );
       expect({ log, exitCode }).toEqual({ log: ["0 mocked"], exitCode: 0 });
     });
   }
@@ -1425,6 +1588,156 @@ describe.concurrent("exports", () => {
       `,
     });
     expect({ log, exitCode }).toEqual({ log: ["1 undefined undefined undefined undefined"], exitCode: 0 });
+  });
+});
+
+describe.concurrent(`[test] globals = "vitest"`, () => {
+  // Neither an import nor the global \`vi\` tells where the globals of this file are from.
+  const file = `
+    afterEach(() => console.log("afterEach 1"));
+    afterEach(() => console.log("afterEach 2"));
+    const fn = jest.fn();
+    test("test", parameter => {
+      fn();
+      console.log("parameter:", parameter.task ? "context" : "done");
+      if (!parameter.task) parameter();
+    });
+    test.each([[1]])("each", (value, extra) => {
+      console.log("extra parameter:", typeof extra + ",", fn.mock.calls.length, "calls");
+      if (typeof extra === "function") extra();
+    });
+  `;
+  const ofBun = [
+    "parameter: done",
+    "afterEach 1",
+    "afterEach 2",
+    "extra parameter: function, 1 calls",
+    "afterEach 1",
+    "afterEach 2",
+  ];
+  const ofVitest = [
+    "parameter: context",
+    "afterEach 2",
+    "afterEach 1",
+    "extra parameter: undefined, 0 calls",
+    "afterEach 2",
+    "afterEach 1",
+  ];
+  const bunfig = (globals: string) => `[test]\nglobals = "${globals}"\n`;
+
+  for (const name of ["a.test.js", "a.test.cjs", "a.test.ts"]) {
+    test(`${name}: the globals of a file that names neither module`, async () => {
+      const [byDefault, vitest] = await Promise.all([
+        runTests({ [name]: file }),
+        runTests({ [name]: file, "bunfig.toml": bunfig("vitest") }),
+      ]);
+      expect({ byDefault: byDefault.log, vitest: vitest.log }).toEqual({ byDefault: ofBun, vitest: ofVitest });
+      for (const { results, exitCode } of [byDefault, vitest]) {
+        expect({ results, exitCode }).toEqual({ results: ["(pass) test", "(pass) each"], exitCode: 0 });
+      }
+    });
+  }
+
+  test("--globals, which wins over bunfig.toml", async () => {
+    const [alone, vitest, bun] = await Promise.all([
+      runTests({ "a.test.js": file }, ["--globals=vitest"]),
+      runTests({ "a.test.js": file, "bunfig.toml": bunfig("bun") }, ["--globals=vitest"]),
+      runTests({ "a.test.js": file, "bunfig.toml": bunfig("vitest") }, ["--globals=bun"]),
+    ]);
+    expect({ alone: alone.log, vitest: vitest.log, bun: bun.log }).toEqual({
+      alone: ofVitest,
+      vitest: ofVitest,
+      bun: ofBun,
+    });
+  });
+
+  test("--isolate", async () => {
+    const { log, exitCode } = await runTests({ "a.test.js": file, "bunfig.toml": bunfig("vitest") }, ["--isolate"]);
+    expect({ log, exitCode }).toEqual({ log: ofVitest, exitCode: 0 });
+  });
+
+  test.each([
+    ["--globals=vitest", undefined, ["--globals=vitest"]],
+    [`globals = "vitest"`, "vitest", []],
+  ] as const)("in the workers of --parallel: %s", async (_, config, args) => {
+    const { stdout, stderr, exitCode } = await runTests(
+      {
+        "a.test.js": file,
+        "b.test.js": `test("another file", () => {});`,
+        "bunfig.toml": config ? bunfig(config) : "",
+      },
+      ["--parallel=2", ...args],
+    );
+    expect((stdout + stderr).split("\n").filter(line => ofVitest.includes(line) || ofBun.includes(line))).toEqual(
+      ofVitest,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("what a file imports keeps the semantics of its module, and preload scripts and helpers follow the key", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "bunfig.toml": bunfig("vitest"),
+        "preload.js": `beforeEach(parameter => { console.log("preload:", typeof parameter.task); if (!parameter.task) parameter(); });`,
+        "helper.js": `export const define = name => test(name, parameter => console.log("helper:", typeof parameter.task));`,
+        "a.test.js": `
+          import { test as bunTest } from "bun:test";
+          import { it as jestIt } from "@jest/globals";
+          import { define } from "./helper.js";
+          bunTest("bun:test", done => { console.log("bun:test:", typeof done.task); done(); });
+          jestIt("@jest/globals", done => { console.log("@jest/globals:", typeof done.task); done(); });
+          test("global", parameter => console.log("global:", typeof parameter.task, typeof suite, typeof onTestFailed));
+          define("helper");
+        `,
+      },
+      ["--preload=./preload.js"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "preload: object",
+        "bun:test: undefined",
+        "preload: object",
+        "@jest/globals: undefined",
+        "preload: object",
+        "global: object function function",
+        "preload: object",
+        "helper: object",
+      ],
+      results: ["(pass) bun:test", "(pass) @jest/globals", "(pass) global", "(pass) helper"],
+      exitCode: 0,
+    });
+  });
+
+  test("is part of the key of the transpiler cache", async () => {
+    using cache = tempDir("vitest-flavor-cache", {});
+    const env = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) };
+    // Small files are not cached.
+    const files = { "a.test.js": file + "// " + Buffer.alloc(8192, "-").toString() };
+    const logs: string[][] = [];
+    for (const args of [[], ["--globals=vitest"], [], ["--globals=vitest"]]) {
+      logs.push((await runTests(files, args, env)).log);
+      expect(readdirSync(String(cache))).not.toBeEmpty();
+    }
+    expect(logs).toEqual([ofBun, ofVitest, ofBun, ofVitest]);
+  });
+
+  test("is one of two names", async () => {
+    const [config, flag, bun] = await Promise.all([
+      runTests({ "a.test.js": file, "bunfig.toml": bunfig("jest") }),
+      runTests({ "a.test.js": file }, ["--globals=jest"]),
+      runTests({ "a.test.js": file, "bunfig.toml": bunfig("bun") }),
+    ]);
+    expect({
+      config: config.errors,
+      flag: flag.errors,
+      bun: bun.log,
+      exitCodes: [config.exitCode, flag.exitCode, bun.exitCode],
+    }).toEqual({
+      config: [`error: expected "globals" to be "bun" or "vitest" but received "jest"`],
+      flag: [`error: --globals expects 'bun' or 'vitest', received "jest"`],
+      bun: ofBun,
+      exitCodes: [1, 1, 0],
+    });
   });
 });
 
@@ -2347,6 +2660,83 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  test("override() at the top level of a file is undone at the end of the file, that of a preload script stays", async () => {
+    const files = {
+      "helper.js": `
+        import { test as base } from "vitest";
+        export const test = base.extend({ value: "default", other: "default", dependent: async ({ value }, use) => use("dependent(" + value + ")") });
+      `,
+      "preload.js": `
+        import { test } from "./helper.js";
+        test.override({ other: "of the preload" });
+      `,
+      "a.test.js": `
+        import { test } from "./helper.js";
+        test.override({ value: "of a" });
+        test("a", ({ value, other, dependent }) => console.log("a:", value, other, dependent));
+      `,
+      "b.test.js": `
+        import { test } from "./helper.js";
+        test("b", ({ value, other, dependent }) => console.log("b:", value, other, dependent));
+      `,
+      "c.test.js": `
+        import { describe } from "vitest";
+        import { test } from "./helper.js";
+        test.override({ value: async ({ value }, use) => use(value + ", then of c") });
+        describe("block", () => {
+          test.override({ other: "of the block" });
+          test("c", ({ value, other, dependent }) => console.log("c:", value, other, dependent));
+        });
+      `,
+    };
+    const { log, exitCode } = await runTests(files, [
+      "--preload=./preload.js",
+      "./a.test.js",
+      "./b.test.js",
+      "./c.test.js",
+    ]);
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "a: of a of the preload dependent(of a)",
+        "b: default of the preload dependent(default)",
+        "c: default, then of c of the block dependent(default, then of c)",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("what a callback destructures is not taken from another callback that has been collected", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, describe } from "vitest";
+        const test = base.extend({ a: async ({}, use) => use("A"), b: async ({}, use) => use("B") });
+        // Nothing keeps the callback of a skipped test.
+        for (let i = 0; i < 500; i++) test.skip("skipped " + i, ({ a }) => i);
+        Bun.gc(true);
+        let hooks = 0, wrong = 0;
+        describe("block", () => {
+          for (let i = 0; i < 300; i++) test.beforeEach(({ b }) => { hooks++; if (b !== "B") wrong++; });
+          test("test", () => console.log(hooks, wrong));
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["300 0"], exitCode: 0 });
+  });
+
+  test("a fixture may have the name of an array index", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        const test = base
+          .extend({ 0: "zero", 1: async ({}, use) => use("one"), 2: [async ({}, use) => use("two"), { scope: "file" }] })
+          .extend("3", async ({ 0: zero }) => zero + ", three");
+        test("test", ({ 0: zero, 1: one, "2": two, 3: three }) => console.log(zero, one, two, three));
+        test.beforeAll(({ 2: two }) => console.log("beforeAll:", two));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["beforeAll: two", "zero one two zero, three"], exitCode: 0 });
+  });
+
   test("extend(name, value) and extend(name, options, fn)", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
@@ -2476,7 +2866,7 @@ describe.concurrent("resolution", () => {
         const jest = require("@jest/globals");
         const bun = require("bun:test");
         console.log("cjs", vitest !== bun, jest === bun, require.resolve("vitest"), require.resolve("@jest/globals"));
-        vitest.test("vitest", (ctx) => console.log("cjs vitest", typeof ctx));
+        vitest.test("vitest", (ctx) => console.log("cjs vitest", typeof ctx.task));
         jest.test("jest", (done) => { console.log("cjs jest", typeof done); done(); });
       `,
     });
@@ -2599,4 +2989,100 @@ describe.concurrent("resolution", () => {
       exitCode: 0,
     });
   });
+});
+
+describe.concurrent("the name of the running test", () => {
+  const names = `
+    expect.extend({
+      toLogItsTest(received) {
+        console.log(received, "matcher:", this.currentTestName);
+        return { pass: true, message: () => "" };
+      },
+    });
+    const log = label => {
+      console.log(label, "state:", expect.getState().currentTestName);
+      expect(label).toLogItsTest();
+    };
+  `;
+
+  test(`is joined with " > " for a test of "vitest", with a space for the others`, async () => {
+    const file = (module: string) => `
+      import { describe, test, expect, beforeEach, afterEach } from ${JSON.stringify(module)};
+      ${names}
+      describe("outer", () => {
+        beforeEach(() => log("beforeEach"));
+        afterEach(() => log("afterEach"));
+        describe("", () => {
+          describe("inner", () => {
+            test("a > b", () => log("test"));
+          });
+        });
+      });
+      test("alone", () => log("test"));
+    `;
+    const expected = (name: string) => [
+      ...["beforeEach", "test", "afterEach"].flatMap(label => [`${label} state: ${name}`, `${label} matcher: ${name}`]),
+      "test state: alone",
+      "test matcher: alone",
+    ];
+    const [vitest, bun, jest] = await Promise.all(
+      ["vitest", "bun:test", "@jest/globals"].map(module => runTests({ "a.test.js": file(module) })),
+    );
+    expect(vitest.log).toEqual(expected("outer > inner > a > b"));
+    expect(bun.log).toEqual(expected("outer inner a > b"));
+    expect(jest.log).toEqual(expected("outer inner a > b"));
+    expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
+  });
+
+  test("goes by the test, not by the describe block, the hook or the expect", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as vitest from "vitest";
+        import * as bun from "bun:test";
+        const { expect } = bun;
+        ${names}
+        vitest.describe("of vitest", () => {
+          bun.beforeEach(() => log("beforeEach"));
+          bun.test("test of bun", () => log("test"));
+        });
+        bun.describe("of bun", () => {
+          vitest.beforeEach(() => log("beforeEach"));
+          vitest.test("test of vitest", () => log("test"));
+        });
+      `,
+    });
+    expect(log).toEqual([
+      "beforeEach state: of vitest test of bun",
+      "beforeEach matcher: of vitest test of bun",
+      "test state: of vitest test of bun",
+      "test matcher: of vitest test of bun",
+      "beforeEach state: of bun > test of vitest",
+      "beforeEach matcher: of bun > test of vitest",
+      "test state: of bun > test of vitest",
+      "test matcher: of bun > test of vitest",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("node:module does not take what stands in for a package for a builtin module", async () => {
+  const { log, exitCode } = await runTests({
+    "builtin.test.ts": `
+      import { test } from "bun:test";
+      import Module, { builtinModules, isBuiltin } from "node:module";
+      test("every way to ask", () => {
+        for (const name of ["vitest", "@jest/globals", "bun:test/vitest", "bun:test", "fs"]) {
+          console.log(name, isBuiltin(name), builtinModules.includes(name), require.resolve.paths(name) === null, Module._resolveLookupPaths(name, null) === null);
+        }
+      });
+    `,
+  });
+  expect(log).toEqual([
+    "vitest false false false false",
+    "@jest/globals false false false false",
+    "bun:test/vitest false false false false",
+    "bun:test true true true true",
+    "fs true true true true",
+  ]);
+  expect(exitCode).toBe(0);
 });

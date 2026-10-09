@@ -87,8 +87,11 @@ function validateBoolean(value, name) {
 
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (typeof p !== "string") {
+    const path = require("internal/url").toPathIfFileURL(p);
+    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+    return path;
+  }
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
 }
@@ -105,14 +108,14 @@ function throwIfNullBytesInFileName(filename: string) {
  * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
  */
 function getValidatedFsPath(p: any, propName: string = "path") {
-  if (p instanceof URL) p = Bun.fileURLToPath(p);
+  if (typeof p !== "string") p = require("internal/url").toPathIfFileURL(p);
   if (typeof p === "string") {
     if (p.indexOf("\u0000") !== -1) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
     return p;
   }
-  if (p instanceof Uint8Array) {
+  if (require("node:util/types").isUint8Array(p)) {
     if (p.indexOf(0) !== -1) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
@@ -171,7 +174,6 @@ export default {
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

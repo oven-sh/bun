@@ -201,11 +201,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     other_bytes += memory_cost_array_list(&dev.directory_watchers.dependencies_free_list);
     other_bytes += memory_cost_array_hash_map(&dev.directory_watchers.watches);
     for dep in dev.directory_watchers.dependencies.iter() {
-        if let crate::bake::dev_server::directory_watch_store::Check::Resolves(specifier) =
-            &dep.check
-        {
-            other_bytes += specifier.len();
-        }
+        other_bytes += dep.specifier.len();
     }
     for dir_name in dev.directory_watchers.watches.keys() {
         other_bytes += dir_name.len();

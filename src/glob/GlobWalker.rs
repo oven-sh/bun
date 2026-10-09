@@ -245,8 +245,6 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 
     pub(crate) pattern_components: Vec<Component>,
     pub matched_paths: MatchedMap,
-    /// With `Some`, every directory that is looked into is added, named like the matched paths.
-    pub visited_directories: Option<Vec<Box<[u8]>>>,
 
     pub(crate) dot: bool,
     pub(crate) absolute: bool,
@@ -649,10 +647,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
             }
         };
-
-        if let Some(visited) = &mut self.walker.visited_directories {
-            visited.push(dir_path.as_bytes().into());
-        }
 
         // Literal-tail optimization: if the only active index is the last
         // component and it is a Literal, statat() instead of iterating.
@@ -1454,7 +1448,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             matched_paths: MatchedMap::default(),
-            visited_directories: None,
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
             followed_links: Vec::new(),

@@ -102,6 +102,8 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+    /// A macro ran or `import.meta.glob()` read directories: the same source can parse differently.
+    pub depends_on_more_than_source: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -147,6 +149,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            depends_on_more_than_source: false,
         }
     }
 }

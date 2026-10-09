@@ -39,12 +39,10 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)))
+    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
         return;
     provider.m_pluginContentsHash = pluginContentsHash(pluginContents);
-    auto result = WebCore::clientData(vm)->isolationSourceProviderCache.add(key, nullptr);
-    ASSERT_WITH_MESSAGE(result.isNewEntry || static_cast<Zig::SourceProvider*>(result.iterator->value.get())->m_pluginContentsHash != provider.m_pluginContentsHash, "IsolatedModuleCache::insert for already-cached key — a lookup was bypassed");
-    result.iterator->value = &provider;
+    WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

@@ -7,7 +7,7 @@ export default [
     noConstructor: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["expect", "call", "promise", "callSite", "awaited"],
+    values: ["expect", "call", "promise", "callSite", "awaited", "journal"],
     configurable: false,
     klass: {},
     proto: {},

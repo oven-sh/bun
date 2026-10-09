@@ -525,8 +525,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
 
     pub(crate) jest: Jest,
     /// The `vi` / `vitest` / `jest` this file imports from a test module.
-    pub(crate) imported_mock_apis: List<'a, (Ref, MockApi)>,
+    pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
 
+    pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
     /// The `S::Import`s of the `import.meta.glob(..., { eager: true })` calls visited so far.
     pub(crate) import_meta_glob_imports: List<'a, Stmt>,
 
@@ -2355,18 +2356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
 
                 self.note_import_use(ref_, opts);
-                let import = self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
-                // `(0, ns.fn)()`: a call of a lowered import does not pass `ns` as `this`.
-                if self.options.features.inject_jest_globals
-                    && (opts.is_call_target() || opts.is_template_tag())
-                {
-                    return Expr {
-                        data: crate::prefill::data::ZERO,
-                        loc,
-                    }
-                    .join_with_comma(import);
-                }
-                return import;
+                return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
@@ -4678,7 +4668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if self.options.features.inject_jest_globals && is_test_module(path.text) {
             for item in stmt.items.iter() {
                 if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
-                    self.imported_mock_apis.push((item.name.ref_, api));
+                    self.imported_mock_apis.insert(item.name.ref_, api);
                 }
             }
         }
@@ -9633,6 +9623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
+            depends_on_more_than_source: self.depends_on_more_than_source(),
 
             symbols,
             parts: parts_list,
@@ -10029,7 +10020,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             react_compiler_may_replace_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
-            imported_mock_apis: BumpVec::new_in(arena),
+            imported_mock_apis: Default::default(),
+            import_meta_glob_use: Default::default(),
             import_meta_glob_imports: BumpVec::new_in(arena),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),

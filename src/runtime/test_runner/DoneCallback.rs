@@ -2,22 +2,25 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsRe
 use bun_core::String as BunString;
 use bun_ptr::RefPtr;
 
-use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
+use crate::test_runner::bun_test::{group_begin, BunTest, RefData, RefDataValue};
 
 #[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js
 pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub(crate) r#ref: Option<RefPtr<RefData>>,
     pub(crate) called: bool, // = false
+    /// The entry whose callback it is an argument of.
+    pub(crate) entry: RefDataValue,
 }
 
 impl DoneCallback {
-    pub(crate) fn create_unbound(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_unbound(global: &JSGlobalObject, entry: RefDataValue) -> JSValue {
         let _g = group_begin!();
 
         let done_callback = DoneCallback {
             r#ref: None,
             called: false,
+            entry,
         };
 
         // `JsClass::to_js` boxes `self` and hands the raw pointer to the JS

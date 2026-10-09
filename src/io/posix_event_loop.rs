@@ -1352,6 +1352,24 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
+    /// Of the JS loop's `num_polls`, the one-shot polls in the hive that have fired, report nothing until registered again, and keep nothing alive.
+    pub fn disarmed_count(&self) -> i32 {
+        let mut count = 0;
+        let mut used = self.hive.hive.used.iter_set();
+        while let Some(index) = used.next() {
+            let poll = self.hive.hive.ptr_at(index);
+            // SAFETY: `get_init` is the only way into the hive, so a used slot is initialized; reads of `Copy` fields.
+            let (flags, allocator_type) = unsafe { ((*poll).flags, (*poll).allocator_type) };
+            count += i32::from(
+                allocator_type == AllocatorType::Js
+                    && flags.contains(Flags::HasIncrementedPollCount)
+                    && flags.contains(Flags::NeedsRearm)
+                    && !flags.contains(Flags::HasIncrementedActiveCount),
+            );
+        }
+        count
+    }
+
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
     /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
     /// as `&mut FilePoll` while `&mut self` is live would retag overlapping

@@ -156,7 +156,7 @@ export default [
     call: false,
     finalize: true,
     JSType: "0b11101110",
-    values: ["equalityTesters", "equals", "state", "deferred"],
+    values: ["equalityTesters", "equals", "state", "snapshotSerializers"],
     configurable: false,
     klass: {},
     proto: {},
@@ -531,6 +531,10 @@ export default [
         fn: "toMatchInlineSnapshot",
         length: 1,
       },
+      toMatchFileSnapshot: {
+        fn: "toMatchFileSnapshot",
+        length: 1,
+      },
       toStrictEqual: {
         fn: "toStrictEqual",
         length: 1,
@@ -876,6 +880,10 @@ export default [
       },
       fails: {
         getter: "getFails",
+        cache: true,
+      },
+      shuffle: {
+        getter: "getShuffle",
         cache: true,
       },
       concurrent: {

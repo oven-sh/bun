@@ -35,8 +35,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     }
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
-        // Bun.sleep(), which has no arguments, or util.promisify() of a faked timer function, which has the value.
-        promise->resolve(globalObject, vm, argumentsValue);
+        // This was a Bun.sleep() call
+        promise->fulfill(vm, jsUndefined());
     } else {
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {

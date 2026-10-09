@@ -47,6 +47,11 @@ bun test <patterns>
   <code>@vitest-environment</code> or <code>@jest-environment</code> comment in a file overrides it
 </ParamField>
 
+<ParamField path="--globals" type="string" default="bun">
+  Where the globals <code>test</code>, <code>expect</code>, ... come from: <code>bun</code> (<code>"vitest"</code> in a
+  file that imports from it, else <code>"bun:test"</code>) or <code>vitest</code> (in every file)
+</ParamField>
+
 ### Test Filtering
 
 <ParamField path="--todo" type="boolean">

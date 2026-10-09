@@ -313,3 +313,95 @@ retry = 3
   expect(stderr).toContain("attempt 3");
   expect(exitCode).toBe(0);
 });
+
+test("what an earlier attempt still does neither ends nor fails a later one", async () => {
+  using dir = tempDir("retry-stale", {
+    "stale.test.ts": `
+      import { test, expect } from "bun:test";
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const turns = async () => { for (let i = 0; i < 5; i++) await turn(); };
+      const attempts = {};
+      function secondAttempt(name) {
+        attempts[name] = (attempts[name] ?? 0) + 1;
+        return attempts[name] === 2;
+      }
+      async function failAtTheEnd(name) {
+        await turns();
+        console.log(name + ": the second attempt ran to its end");
+        throw new Error(name + ": the second attempt fails");
+      }
+
+      const fulfilledLate = Promise.withResolvers();
+      test("times out, then its promise is fulfilled", async () => {
+        if (!secondAttempt("fulfilled late")) return fulfilledLate.promise;
+        fulfilledLate.resolve();
+        await failAtTheEnd("fulfilled late");
+      }, { retry: 1, timeout: 500 });
+
+      const rejectedLate = Promise.withResolvers();
+      test("times out, then its promise is rejected", async () => {
+        if (!secondAttempt("rejected late")) return rejectedLate.promise;
+        rejectedLate.reject(new Error("rejected late: the first attempt"));
+        await turns();
+        console.log("rejected late: the second attempt ran to its end");
+      }, { retry: 1, timeout: 500 });
+
+      test("done(error), then throws", async done => {
+        if (!secondAttempt("done")) {
+          await 1;
+          done(new Error("done: the first attempt"));
+          throw new Error("done: thrown by the first attempt");
+        }
+        await failAtTheEnd("done");
+      }, { retry: 1 });
+
+      let lateDone;
+      test("times out, then calls done()", done => {
+        if (!secondAttempt("late done")) return void (lateDone = done);
+        lateDone();
+        failAtTheEnd("late done").catch(done);
+      }, { retry: 1, timeout: 500 });
+
+      test("a rejection nobody handles, and the end of the test", async () => {
+        if (!secondAttempt("floating")) return void Promise.reject(new Error("floating: the first attempt"));
+        await failAtTheEnd("floating");
+      }, { retry: 1 });
+
+      test("next", () => {});
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "stale.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.split("\n").filter(line => line.includes("ran to its end"))).toEqual([
+    "fulfilled late: the second attempt ran to its end",
+    "rejected late: the second attempt ran to its end",
+    "done: the second attempt ran to its end",
+    "late done: the second attempt ran to its end",
+    "floating: the second attempt ran to its end",
+  ]);
+  expect(
+    stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\)|^# Unhandled error|^error: rejected late/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+  ).toEqual([
+    "(fail) times out, then its promise is fulfilled (attempt 2)",
+    "# Unhandled error between tests",
+    "error: rejected late: the first attempt",
+    "(pass) times out, then its promise is rejected (attempt 2)",
+    "(fail) done(error), then throws (attempt 2)",
+    "(fail) times out, then calls done() (attempt 2)",
+    "(fail) a rejection nobody handles, and the end of the test (attempt 2)",
+    "(pass) next",
+  ]);
+  expect(exitCode).toBe(1);
+});

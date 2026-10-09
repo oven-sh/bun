@@ -339,7 +339,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
         // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-        requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
+        JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(this->filename()));
         RETURN_IF_EXCEPTION(scope, false);
 
         scope.throwException(globalObject, exception);
@@ -1404,7 +1404,7 @@ NEVER_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObje
     // On error, remove the module from the require map
     // so that it can be re-evaluated on the next require.
     // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMapOf(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
+    JSC__JSMap__remove(requireMapOf(globalObject, referrerModule->moduleGraph()), globalObject, JSValue::encode(specifierValue));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, exception);
@@ -1712,7 +1712,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
+                                JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
                                 RETURN_IF_EXCEPTION(scope, void());
 
                                 scope.throwException(globalObject, exception);

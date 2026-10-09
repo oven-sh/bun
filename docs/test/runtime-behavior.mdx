@@ -44,6 +44,45 @@ To test with a specific time zone:
 TZ=America/New_York bun test
 ```
 
+### `import.meta.env`
+
+Under `bun test`, `import.meta.env` also has the variables that [Vite](https://vite.dev/guide/env-and-mode) defines, so code written for Vite runs unchanged.
+
+| Variable   | Value                                                                     |
+| ---------- | ------------------------------------------------------------------------- |
+| `MODE`     | `"test"`                                                                  |
+| `DEV`      | `true`, or `false` when `bun test` starts with `NODE_ENV=production`      |
+| `PROD`     | The opposite of `DEV`                                                     |
+| `SSR`      | `true`, or `false` while there is a `document` ([DOM testing](/test/dom)) |
+| `BASE_URL` | `"/"`                                                                     |
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("Vite's variables", () => {
+  expect(import.meta.env.MODE).toBe("test");
+  expect(import.meta.env.DEV).toBe(true);
+});
+```
+
+Everything else is read from and written to `process.env`. The five variables are not in `process.env`, so child processes don't inherit them. If `process.env` does have one, that value is used: `DEV`, `PROD` and `SSR` are `false` for `""` and `true` for any other string.
+
+```bash terminal icon="terminal"
+MODE=staging bun test
+```
+
+`vi.stubEnv()` changes them for a test:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+test("in production", () => {
+  vi.stubEnv("PROD", true);
+  expect(import.meta.env.PROD).toBe(true);
+  vi.unstubAllEnvs();
+});
+```
+
 ## Test Timeouts
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.

@@ -1529,6 +1529,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.lower_using = !target.is_bun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.vitest_globals = self.options.vitest_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;

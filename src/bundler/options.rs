@@ -472,6 +472,73 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
+/// What one of Vite's suffixes on an import path, as in `./icon.svg?raw`, imports.
+#[derive(Clone, Copy)]
+pub enum ImportSuffix {
+    /// `?raw`, and `?inline` on a style sheet: the text of the file.
+    Raw,
+    /// `?url`, `?worker&url`: its path.
+    Url,
+    /// `?init`: a function that instantiates the WebAssembly module.
+    Init,
+    /// `?worker`, `?sharedworker`: a function that constructs the global of this name with the path.
+    Worker(&'static str),
+}
+
+impl ImportSuffix {
+    /// `query` is empty or starts with `?`. Which parameter wins is as in Vite.
+    pub fn find(query: &[u8], by_extension: Option<Loader>) -> Option<Self> {
+        let (mut raw, mut url, mut inline, mut init, mut worker) =
+            (false, false, false, false, None);
+        for parameter in strings::split(query.strip_prefix(b"?")?, b"&") {
+            match parameter {
+                b"raw" => raw = true,
+                b"url" => url = true,
+                b"inline" => inline = true,
+                b"init" => init = true,
+                b"worker" => worker = worker.or(Some("Worker")),
+                b"sharedworker" => worker = worker.or(Some("SharedWorker")),
+                _ => {}
+            }
+        }
+        match worker {
+            Some(_) if url => Some(Self::Url),
+            Some(constructor) => Some(Self::Worker(constructor)),
+            None if raw => Some(Self::Raw),
+            None if url => Some(Self::Url),
+            None if inline && by_extension == Some(Loader::Css) => Some(Self::Raw),
+            None if init && by_extension == Some(Loader::Wasm) => Some(Self::Init),
+            None => None,
+        }
+    }
+
+    pub fn loader(self) -> Loader {
+        match self {
+            Self::Raw => Loader::Text,
+            Self::Url => Loader::File,
+            Self::Init | Self::Worker(_) => Loader::Js,
+        }
+    }
+
+    /// Loaded instead of `file`, under the name `specifier`: an error in it is not shown with the file's source.
+    pub fn module(self, file: &[u8], specifier: &[u8]) -> Option<bun_ast::Source> {
+        let quoted = bun_core::fmt::format_json_string_utf8(file, Default::default());
+        let contents = match self {
+            Self::Raw | Self::Url => return None,
+            Self::Init => format!(
+                "export default async function init(imports) {{\n  return (await WebAssembly.instantiate(await Bun.file({quoted}).arrayBuffer(), imports)).instance;\n}}\n"
+            ),
+            Self::Worker(constructor) => format!(
+                "export default function WorkerWrapper(options) {{\n  return new {constructor}({quoted}, {{ type: \"module\", name: options?.name }});\n}}\n"
+            ),
+        };
+        Some(bun_ast::Source::init_path_string_owned(
+            specifier,
+            contents.into_bytes(),
+        ))
+    }
+}
+
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
@@ -486,6 +553,11 @@ pub fn get_loader_and_virtual_source<'a>(
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let attribute_loader = type_attribute_str.and_then(Loader::from_string);
+    let suffix = match attribute_loader {
+        Some(_) => None,
+        None => ImportSuffix::find(query, loader),
+    };
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
@@ -543,16 +615,15 @@ pub fn get_loader_and_virtual_source<'a>(
         } else {
             return Err(GetLoaderAndVirtualSourceErr::BlobNotFound);
         }
+    } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
+        *virtual_source_to_use = Some(module);
+        virtual_source = virtual_source_to_use.as_ref();
+        path = Fs::Path::init(specifier);
     }
 
-    if query == b"?raw" {
-        loader = Some(Loader::Text);
-    }
-    if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
-    }
+    loader = attribute_loader
+        .or_else(|| suffix.map(ImportSuffix::loader))
+        .or(loader);
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
@@ -1296,6 +1367,8 @@ pub struct BundleOptions<'a> {
     pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
+    /// `bun test --globals=vitest`
+    pub vitest_globals: bool,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
@@ -1534,6 +1607,7 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
+            vitest_globals: self.vitest_globals,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1792,6 +1866,7 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
+            vitest_globals: false,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {

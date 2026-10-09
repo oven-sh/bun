@@ -48,8 +48,10 @@ use super::bun_test::{
     group_begin, AddedInPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
+use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
 use super::test_context_fixtures::{Next as NextFixture, TestFixtures};
+use super::test_context_parameter::ContextParameter;
 use crate::cli::test_command;
 
 // ── local shims for upstream Timespec methods not yet ported ───────────────
@@ -91,17 +93,11 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// The entry whose callback is synchronously on the stack right now. Set
-    /// around `run_test_callback` so code re-entered from a test body (e.g.
-    /// spawnSync's wait loop) can read the calling entry's own deadline.
-    pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
-    /// set/restored alongside it. `get_current_state_data()` can't name a
-    /// sequence inside a concurrent group; this can, for code re-entered from
-    /// the microtask drain inside `run_test_callback` (node:test's runtime
-    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
-    /// stamped).
-    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// The entry whose callback is synchronously on the stack right now, which
+    /// `get_current_state_data()` can't name inside a concurrent group. Not set
+    /// while the microtasks that follow the call run: those also continue the
+    /// other tests of the group.
+    pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -164,6 +160,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    /// How many retries and repeats came before this run of the entries.
+    pub(crate) attempt: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -194,6 +192,7 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            attempt: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -413,8 +412,7 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
-            on_stack_entry: core::cell::Cell::new(None),
-            on_stack_entry_data: core::cell::Cell::new(None),
+            on_stack: core::cell::Cell::new(None),
         }
     }
 
@@ -615,9 +613,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.attempt != entry_data.attempt {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry or repeat (outdated)",
             ));
             return None;
         }
@@ -736,7 +734,7 @@ impl Execution {
         }
     }
 
-    fn on_sequence_started(sequence: &mut ExecutionSequence) {
+    fn on_sequence_started(global_this: &JSGlobalObject, sequence: &mut ExecutionSequence) {
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
             if unsafe { entry.as_ref() }.callback.is_none() {
@@ -755,6 +753,7 @@ impl Execution {
                 // `BStr`'s `Debug` impl quotes and escapes for display.
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
+            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
 
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
@@ -887,6 +886,7 @@ impl Execution {
 
         // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence {
+            attempt: sequence.attempt.wrapping_add(1),
             context: sequence.context.take(),
             ..ExecutionSequence::init(
                 sequence.first_entry,
@@ -1001,7 +1001,7 @@ fn step_group(
         // inside step_group_one.
         let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
             Some(g) => NonNull::from(g),
-            None => return Ok(StepResult::Complete),
+            None => return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now)),
         };
         {
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
@@ -1035,6 +1035,8 @@ fn step_group(
             if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
                 return Ok(StepResult::Waiting { timeout });
             }
+            group.pending_matchers = 0;
+            ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
         group.executing = false;
         Execution::on_group_completed(global_this);
@@ -1078,7 +1080,8 @@ fn step_group_one(
     let mut final_status = AdvanceStatus::Done;
     let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        unsafe { reporter.as_ref() }.jest.max_concurrency as usize
+        let runner = &unsafe { reporter.as_ref() }.jest;
+        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20
@@ -1191,7 +1194,7 @@ fn step_sequence_one(
     sequence.executing = true;
     // The first entry comes up again after the fixtures it asks for.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
-        Execution::on_sequence_started(sequence);
+        Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);
 
@@ -1201,7 +1204,7 @@ fn step_sequence_one(
         let entry_data = EntryData {
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            attempt: sequence.attempt,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
@@ -1242,12 +1245,11 @@ fn step_sequence_one(
             _ => (next_item.fixtures.as_ref().map(Strong::get), next_item.base.parent),
         };
         if let Some(fixtures) = fixtures
-            && next_item.calling.is_vitest()
-            && next_item.added_in_phase != AddedInPhase::Execution
+            && let Some(parameter) = &next_item.parameter
         {
-            let parameter = buntest_strong.get().context_parameter(cb.get());
+            let parameter = parameter.get_or_init(|| ContextParameter::of(cb.get(), 0));
             let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
-            match TestFixtures::next(fixtures, global_this, into, fixtures_scope, &parameter, next_item.timeout) {
+            match TestFixtures::next(fixtures, global_this, into, fixtures_scope, parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {
                     let set_up = buntest_strong.get().create_vitest_entry(set_up, next_item.timeout, false);
@@ -1268,17 +1270,6 @@ fn step_sequence_one(
                 }
             }
         }
-
-        let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
-        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
-        let on_stack_cell = &raw const this.on_stack_entry;
-        let on_stack_data_cell = &raw const this.on_stack_entry_data;
-        // SAFETY: both cells point into `buntest.execution`, which is
-        // never moved during execution (arena-owned BunTest behind an Rc).
-        let _restore = scopeguard::guard((), move |()| unsafe {
-            (*on_stack_cell).set(prev_on_stack);
-            (*on_stack_data_cell).set(prev_on_stack_data);
-        });
 
         if BunTest::run_test_callback(
             buntest_strong,

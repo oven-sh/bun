@@ -314,9 +314,9 @@ describe("modifiers", () => {
         describe.skip.skip("describe.skip.skip", () => { test("inner", never); });
         describe.todo.skip("describe.todo.skip", () => { test("inner", never); });
 
-        const modifiers = ["skip", "only", "todo", "fails", "concurrent", "sequential"];
+        const modifiers = ["skip", "only", "todo", "fails", "concurrent", "sequential", "shuffle"];
         const functions = ["runIf", "skipIf", "each"];
-        for (const [name, root, skipped] of [["test", test, []], ["describe", describe, ["fails"]]]) {
+        for (const [name, root, skipped] of [["test", test, ["shuffle"]], ["describe", describe, ["fails"]]]) {
           for (const first of modifiers.filter(m => !skipped.includes(m))) {
             for (const second of [...modifiers, ...functions].filter(m => !skipped.includes(m))) {
               let outcome;
@@ -360,6 +360,127 @@ describe("modifiers", () => {
 
   test("describe.fails is an error, like describe.failing", () => {
     expect(() => (describe as any).fails).toThrow("Cannot get .fails on describe");
+  });
+
+  describe.concurrent("describe.shuffle", () => {
+    const numbered = (prefix: string, count = 20) => Array.from({ length: count }, (_, i) => prefix + i);
+    const seedOf = (stderr: string) => /^ --seed=(\d+)$/m.exec(stderr)?.[1];
+    const linesOf = (stdout: string) => stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
+    const startingWith = (lines: string[], prefix: string) => lines.filter(line => line.startsWith(prefix));
+    const add = `const add = (prefix, count = 20) => { for (let i = 0; i < count; i++) test(prefix + i, () => console.log(prefix + i)); };`;
+    const blocks = (module: string) => `
+      import { afterAll, beforeAll, describe, test } from "${module}";
+      ${add}
+      add("before", 3);
+      describe.shuffle("shuffled", () => {
+        beforeAll(() => console.log("beforeAll"));
+        afterAll(() => console.log("afterAll"));
+        add("outer");
+        describe("nested", () => {
+          beforeAll(() => console.log("nested beforeAll"));
+          afterAll(() => console.log("nested afterAll"));
+          add("inner");
+        });
+      });
+      add("after", 3);
+    `;
+
+    test.each(["bun:test", "vitest"])(
+      "of %j shuffles its tests and the blocks inside it, by the seed",
+      async module => {
+        const files = { "a.test.ts": blocks(module) };
+        const first = await runTests(files);
+        const lines = linesOf(first.stdout);
+
+        expect(lines.slice(0, 4)).toEqual([...numbered("before", 3), "beforeAll"]);
+        expect(lines.slice(-4)).toEqual(["afterAll", ...numbered("after", 3)]);
+        expect(startingWith(lines, "outer").toSorted()).toEqual(numbered("outer").toSorted());
+        expect(startingWith(lines, "outer")).not.toEqual(numbered("outer"));
+        const nested = lines.slice(lines.indexOf("nested beforeAll") + 1, lines.indexOf("nested afterAll"));
+        expect(nested.toSorted()).toEqual(numbered("inner").toSorted());
+        expect(nested).not.toEqual(numbered("inner"));
+        expect(first.exitCode).toBe(0);
+
+        const seed = seedOf(first.stderr);
+        expect(seed).toBeString();
+        const [again, another] = await Promise.all([
+          runTests(files, ["--seed=" + seed]),
+          runTests(files, ["--seed=" + (Number(seed) ^ 1)]),
+        ]);
+        expect({
+          outer: startingWith(linesOf(again.stdout), "outer"),
+          inner: startingWith(linesOf(again.stdout), "inner"),
+          seed: seedOf(again.stderr),
+        }).toEqual({ outer: startingWith(lines, "outer"), inner: nested, seed });
+        expect(startingWith(linesOf(another.stdout), "outer")).not.toEqual(startingWith(lines, "outer"));
+      },
+    );
+
+    test("the shuffle option of a block of vitest, which the blocks inside it inherit until one says false", async () => {
+      const files = {
+        "a.test.ts": `
+          import { describe, test } from "vitest";
+          import { describe as bunDescribe } from "bun:test";
+          ${add}
+          describe("on", { shuffle: true }, () => {
+            add("on");
+            describe("off", { shuffle: false }, () => {
+              add("off");
+              describe("nested", () => add("nestedOff"));
+              describe.shuffle("on again", () => add("again"));
+            });
+            bunDescribe("of bun:test", () => add("inherited"));
+          });
+          describe.shuffle("the modifier wins", { shuffle: false }, () => add("modifier"));
+          bunDescribe("bun:test does not read it", () => add("ignored"), { shuffle: true });
+          describe.shuffle.each([["x"], ["y"]])("each %s", letter => add(letter));
+          describe.shuffle.skip("skipped", () => add("skipped", 1));
+          test("the option means nothing for a test", { shuffle: true }, () => {});
+        `,
+      };
+      const [plain, randomized] = await Promise.all([runTests(files), runTests(files, ["--randomize"])]);
+      const inOrder = (stdout: string) =>
+        Object.fromEntries(
+          ["on", "off", "nestedOff", "again", "inherited", "modifier", "ignored", "x", "y"].map(prefix => {
+            const lines = linesOf(stdout).filter(line => line.replace(/\d+$/, "") === prefix);
+            expect(lines.toSorted()).toEqual(numbered(prefix).toSorted());
+            return [prefix, lines.join() === numbered(prefix).join()];
+          }),
+        );
+      const shuffled = { on: false, again: false, inherited: false, modifier: false, x: false, y: false };
+      expect(inOrder(plain.stdout)).toEqual({ ...shuffled, off: true, nestedOff: true, ignored: true });
+      expect(inOrder(randomized.stdout)).toEqual({ ...shuffled, off: true, nestedOff: true, ignored: false });
+      expect(plain.results).toContain("(skip) skipped > skipped0");
+      expect({ plain: plain.exitCode, randomized: randomized.exitCode }).toEqual({ plain: 0, randomized: 0 });
+    });
+
+    test.each([[[]], [["--parallel=2"]]])(
+      "the summary names the seed only if something was shuffled %j",
+      async args => {
+        const other = `import { test } from "bun:test"; test("other", () => {});`;
+        const files = { "a.test.ts": blocks("bun:test"), "b.test.ts": other };
+        const [shuffled, inOrder] = await Promise.all([
+          runTests(files, args),
+          runTests({ "a.test.ts": other, "b.test.ts": other }, args),
+        ]);
+        expect({ seed: seedOf(inOrder.stderr), exitCode: inOrder.exitCode }).toEqual({ seed: undefined, exitCode: 0 });
+        const seed = seedOf(shuffled.stderr);
+        expect(seed).toBeString();
+        const again = await runTests(files, ["--seed=" + seed]);
+        // The coordinator of --parallel prints what its workers wrote to stderr.
+        const lines = linesOf(shuffled.stdout + shuffled.stderr);
+        expect(startingWith(lines, "outer")).not.toEqual(numbered("outer"));
+        expect(startingWith(lines, "outer")).toEqual(startingWith(linesOf(again.stdout), "outer"));
+        expect(startingWith(lines, "after")).toEqual(["afterAll", ...numbered("after", 3)]);
+        expect(shuffled.exitCode).toBe(0);
+      },
+    );
+
+    test("is a modifier of describe only", () => {
+      expect(describe.shuffle).toBeFunction();
+      expect((test as any).shuffle).toBeUndefined();
+      expect((test.skip as any).shuffle).toBeUndefined();
+    });
   });
 });
 
@@ -605,6 +726,69 @@ test("a custom matcher reads the state of the test from `this`", () => {
     testPath: import.meta.path,
   });
 });
+
+test.concurrent(
+  "among concurrent tests, a custom matcher of the expect of a test context reads the state of that test",
+  async () => {
+    const { stdout, results, exitCode } = await runTests(
+      {
+        "shared.ts": `
+        import { expect } from "bun:test";
+        export const contexts = [];
+        expect.extend({
+          toShowItsTest(received, label) {
+            contexts.push(this);
+            console.log(label + ":", this.currentTestName, this.assertionCalls, this.expectedAssertionsNumber, this.isExpectingAssertions);
+            return { pass: true, message: () => "" };
+          },
+        });
+      `,
+        "a.test.ts": `
+        import { describe, test } from "vitest";
+        import { contexts } from "./shared.ts";
+        describe.concurrent("concurrent", () => {
+          test("one", async ({ expect }) => {
+            expect.assertions(2);
+            expect(1).toShowItsTest("one");
+            await 1;
+            expect(1).toShowItsTest("one, later");
+          });
+          test("two", async ({ expect }) => {
+            expect.hasAssertions();
+            await 1;
+            expect(1).toShowItsTest("two");
+          });
+        });
+        test("afterwards", () => console.log("afterwards:", contexts.map(context => context.currentTestName).join()));
+      `,
+        "b.test.ts": `
+        import { test } from "bun:test";
+        import { contexts } from "./shared.ts";
+        test("the next file", () => console.log("the next file:", contexts.map(context => context.currentTestName).join()));
+      `,
+      },
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({
+      stdout: stdout
+        .split("\n")
+        .filter(line => line.includes(":"))
+        .toSorted(),
+      results: results.toSorted(),
+      exitCode,
+    }).toEqual({
+      stdout: [
+        "afterwards: concurrent > one,concurrent > one,concurrent > two",
+        "one, later: concurrent > one 2 2 false",
+        "one: concurrent > one 1 2 false",
+        "the next file: the next file,the next file,the next file",
+        "two: concurrent > two 1 null true",
+      ],
+      results: ["(pass) afterwards", "(pass) concurrent > one", "(pass) concurrent > two", "(pass) the next file"],
+      exitCode: 0,
+    });
+  },
+);
 
 test("this.equals and the functions of this.utils do not need a receiver", () => {
   let outcome: unknown;

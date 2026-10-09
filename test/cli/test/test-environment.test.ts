@@ -117,13 +117,21 @@ function summary(stderr: string) {
 }
 
 describe.concurrent("test environment", () => {
-  test("the comment is found where vitest finds it", async () => {
-    // Expectations are what vitest 5.0.3's `detectCodeBlock` returns for the same text.
+  test("vitest's comment is found where vitest finds it, Jest's where Jest does", async () => {
+    // Expectations are what vitest 5.0.3's `detectCodeBlock` and jest-docblock 30's `extract` return for the same text.
     const comments: Record<string, [text: string, environment: string]> = {
       "line": [`// ${VITEST} jsdom\n`, "jsdom#1"],
       "block": [`/** ${VITEST} happy-dom */\n`, "happy-dom#1"],
       "jest-docblock": [`/**\n * ${JEST} jsdom\n */\n`, "jsdom#1"],
-      "jest-line": [`// ${JEST} happy-dom\n`, "happy-dom#1"],
+      "jest-block": [`\n  /* ${JEST} jsdom */\n`, "jsdom#1"],
+      "jest-line": [`// ${JEST} happy-dom\n`, "node"],
+      "jest-second-docblock": [`/** first */\n/** ${JEST} jsdom */\n`, "node"],
+      "jest-after-line": [`// first\n/** ${JEST} jsdom */\n`, "node"],
+      "jest-after-code": [`import "node:fs";\n/** ${JEST} jsdom */\n`, "node"],
+      "jest-string": [`const text = "/** ${JEST} jsdom */";\n`, "node"],
+      "jest-after-shebang": [`#!/usr/bin/env bun\n/** ${JEST} jsdom */\n`, "node"],
+      "jest-after-empty": [`/**/ /** ${JEST} jsdom */\n`, "node"],
+      "jest-then-vitest": [`// ${JEST} jsdom\n// ${VITEST} happy-dom\n`, "happy-dom#1"],
       "string": [`const text = "${VITEST} happy-dom";\n`, "happy-dom#1"],
       "spaces": [`// ${VITEST} \t  happy-dom\n`, "happy-dom#1"],
       "next-line": [`/* ${VITEST}\nhappy-dom */\n`, "happy-dom#1"],
@@ -178,6 +186,8 @@ describe.concurrent("test environment", () => {
       "4.test.js": `/* ${VITEST}-options {"url":"https://example.com/d"} */\r\n${logEnvironment}`,
       "5.test.js": `// ${VITEST}-options null\n${logEnvironment}`,
       "6.test.js": `// ${VITEST}-options {"url":"https://example.com/f"}\n// ${JEST}-options {"url":"https://example.com/g"}\n${logEnvironment}`,
+      "7.test.js": `/* ${VITEST}-options */\n// ${VITEST}-options {"url":"https://example.com/h"}\n${logEnvironment}`,
+      "8.test.js": `// ${JEST}-options {"url":"https://example.com/i"}\n${logEnvironment}`,
     });
     const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=jsdom");
     const jsdomDefaults = { pretendToBeVisual: true, runScripts: "dangerously" };
@@ -202,8 +212,11 @@ describe.concurrent("test environment", () => {
       "5.test.js jsdom#3 http://localhost:3000",
       ["jsdom#4", { html: "<!DOCTYPE html>", ...jsdomDefaults, url: "https://example.com/f", ...jsdomMoreDefaults }],
       "6.test.js jsdom#4 https://example.com/f",
+      ["jsdom#5", { html: "<!DOCTYPE html>", ...jsdomDefaults, url: "http://localhost:3000", ...jsdomMoreDefaults }],
+      "7.test.js jsdom#5 http://localhost:3000",
+      "8.test.js jsdom#5 http://localhost:3000",
     ]);
-    expect(summary(stderr)).toEqual(["6 pass", "0 fail"]);
+    expect(summary(stderr)).toEqual(["8 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 
@@ -400,10 +413,45 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.each([
+      ["jsdom", "JSDOM"],
+      ["happy-dom", "Window"],
+    ])("%s does not export %s", async (name, missing) => {
+      using dir = tempDir("test-environment", {
+        [`node_modules/${name}/package.json`]: JSON.stringify({ name, main: "index.js" }),
+        [`node_modules/${name}/index.js`]: `exports.version = 1;`,
+        "a.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(warnings(stderr)).toEqual([
+        `warn: ${cannotSetUp(name, join(String(dir), "a.test.js"))}: the package does not export ${missing}`,
+      ]);
+      expect(stdout).toEqual(["a.test.js node "]);
+      expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a package that cannot be required is the same for every file", async () => {
+      using dir = tempDir("test-environment", {
+        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.mjs" }),
+        "node_modules/happy-dom/index.mjs": `await 0;\nexport class Window {}`,
+        "1.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+        "2.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      const reason = `require() async module "${join(String(dir), "node_modules", "happy-dom", "index.mjs")}" is unsupported. use "await import()" instead.`;
+      expect(warnings(stderr)).toEqual(
+        ["1.test.js", "2.test.js"].map(file => `warn: ${cannotSetUp("happy-dom", join(String(dir), file))}: ${reason}`),
+      );
+      expect(stdout).toEqual(["1.test.js node ", "2.test.js node "]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("--isolate: a preload that registers a DOM of its own still does", async () => {
       using dir = tempDir("test-environment", {
         "preload.js": `globalThis.document = { body: {} }; globalThis.environment = "preloaded";`,
-        "1.test.js": `// ${JEST} jsdom\n${logEnvironment}`,
+        "1.test.js": `/** ${JEST} jsdom */\n${logEnvironment}`,
         "2.test.js": logEnvironment,
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate", "--preload=./preload.js");
@@ -631,6 +679,172 @@ describe.concurrent("test environment", () => {
       expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
+
+    test("whatever a file leaves patched", async () => {
+      // Each file undoes it first thing: only what the runner does between two files sees the patches.
+      const patches = `
+        import { afterAll } from "bun:test";
+        process.undoPatches?.();
+        afterAll(() => {
+          const undo = [];
+          const patch = (object, key, value) => {
+            const original = Object.getOwnPropertyDescriptor(object, key);
+            undo.push(() => (original ? Object.defineProperty(object, key, original) : delete object[key]));
+            Object.defineProperty(object, key, { value, writable: true, configurable: true });
+          };
+          const { defineProperty, getOwnPropertyDescriptor } = Object;
+          process.undoPatches = () => {
+            Object.defineProperty = defineProperty;
+            Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
+            for (let i = undo.length; i--; ) undo[i]();
+          };
+          const nothing = function* () {};
+          const refuse = () => {
+            throw new Error("patched");
+          };
+          for (const prototype of [Array.prototype, Map.prototype, Set.prototype]) patch(prototype, Symbol.iterator, nothing);
+          for (const key of ["get", "set", "has", "delete", "forEach", "keys", "entries"]) patch(Map.prototype, key, refuse);
+          for (const key of ["push", "concat", "forEach", "map"]) patch(Array.prototype, key, refuse);
+          for (const key of ["get", "set", "value", "writable", "enumerable", "configurable"]) patch(Object.prototype, key, refuse);
+          for (const key of ["defineProperty", "deleteProperty", "getOwnPropertyDescriptor", "ownKeys"]) patch(Reflect, key, refuse);
+          for (const key of ["getOwnPropertyNames", "getOwnPropertySymbols", "keys", "getOwnPropertyDescriptor", "defineProperty"]) patch(Object, key, refuse);
+          patch(globalThis, "Map", refuse);
+          patch(globalThis, "Set", refuse);
+          patch(globalThis, "Object", refuse);
+        });
+      `;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": `// ${VITEST} happy-dom\n${patches}${logEnvironment}`,
+        "2.test.js": patches + logEnvironment,
+        "3.test.js": `// ${VITEST} jsdom\n${patches}${logEnvironment}`,
+        "4.test.js": `// ${VITEST} happy-dom\n${patches}${logEnvironment}`,
+        "5.test.js": patches + logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(warnings(stderr)).toEqual([]);
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "1.test.js happy-dom#1 http://localhost:3000",
+        "2.test.js node ",
+        "3.test.js jsdom#1 http://localhost:3000",
+        "4.test.js happy-dom#1 http://localhost:3000",
+        "5.test.js node ",
+      ]);
+      expect(summary(stderr)).toEqual(["5 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an environment that cannot be set up whole is not set up at all", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": `
+          import { test } from "bun:test";
+          process.natives = { DOMException, EventTarget, Request };
+          test("node", () => void Object.preventExtensions(globalThis));`,
+        "2.test.js": `// ${VITEST} happy-dom
+          import { test } from "bun:test";
+          test("happy-dom", () => {
+            const { DOMException, EventTarget, Request } = globalThis;
+            console.log(typeof document, Bun.deepEquals({ DOMException, EventTarget, Request }, process.natives, true));
+          });`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(warnings(stderr)).toEqual([
+        `warn: ${cannotSetUp("happy-dom", join(String(dir), "2.test.js"))}: cannot define "NamedNodeMap" on globalThis: Attempting to define property on object that is not extensible.`,
+      ]);
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["undefined true"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an environment that cannot be taken away is an error", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": `// ${VITEST} happy-dom
+          import { test } from "bun:test";
+          test("happy-dom", () => void Object.seal(globalThis));`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).toContain(
+        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis is no longer configurable\n`,
+      );
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js happy-dom#1 http://localhost:3000"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a window that a file closed is not the next file's", async () => {
+      const closable = (name: "jsdom" | "happy-dom", window: string) => ({
+        [`node_modules/${name}/index.js`]: `${fakePackages[`node_modules/${name}/index.js`]}
+          const Original = exports.${window};
+          exports.${window} = class extends Original {
+            constructor(...args) {
+              super(...args);
+              const window = this.window ?? this;
+              ${name === "jsdom" ? `window.close = () => delete window.document;` : `window.close = () => (window.closed = true);`}
+            }
+          };`,
+      });
+      const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        ...closable("jsdom", "JSDOM"),
+        ...closable("happy-dom", "Window"),
+        "1.test.js": `// ${VITEST} jsdom\n${closes}${logEnvironment}`,
+        "2.test.js": `// ${VITEST} jsdom\n${logEnvironment}`,
+        "3.test.js": `// ${VITEST} jsdom\n${logEnvironment}`,
+        "4.test.js": `// ${VITEST} happy-dom\n${closes}${logEnvironment}`,
+        "5.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(
+        stdout.filter(line => !line.startsWith("open ")).map(line => line.split(" ").slice(0, 2).join(" ")),
+      ).toEqual([
+        "1.test.js jsdom#1",
+        "2.test.js jsdom#2",
+        "3.test.js jsdom#2",
+        "4.test.js happy-dom#1",
+        "5.test.js happy-dom#2",
+      ]);
+      expect(summary(stderr)).toEqual(["5 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("assigning to a global that the window does not let be assigned", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            constructor(...args) {
+              super(...args);
+              Object.defineProperty(this, "document", { value: this.document, writable: false });
+            }
+          };`,
+        "a.test.js": `/** ${JEST} happy-dom */
+          import { test } from "bun:test";
+          globalThis.document = "mine";
+          test("happy-dom", () => console.log(document, window.document));`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["mine mine"]);
+      expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("many comments on one line", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "a.test.js": `// ${Buffer.alloc(40 * 50_000, `${VITEST}-options {"url":"https://a/"} `.padEnd(40)).toString()}\n// ${VITEST} happy-dom\n${logEnvironment}`,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir));
+    expect(warnings(stderr)).toHaveLength(1);
+    expect(stdout).toEqual(["a.test.js node "]);
+    expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
   });
 
   test("--isolate: each file has its own window, closed after its afterAll hooks", async () => {
@@ -1108,5 +1322,142 @@ describe.concurrent("test environment with the real", () => {
     expect(stderr).toContain("error: from the listener");
     expect(summary(stderr)).toEqual(["1 pass", "1 fail"]);
     expect(exitCode).toBe(1);
+  });
+
+  // While jsdom reports an error to the window it reports no other: no test runs meanwhile.
+  test("jsdom: an error that ends a test does not hide those of the next test", async () => {
+    using dir = project({
+      "a.test.js": `// ${VITEST} jsdom
+        import { test } from "bun:test";
+        test.failing("throws in a frame callback", done => {
+          requestAnimationFrame(() => {
+            throw new Error("from the frame callback");
+          });
+        });
+        test("throws in a listener", () => {
+          document.body.addEventListener("click", () => {
+            throw new Error("from the listener");
+          });
+          document.body.click();
+        });`,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir));
+    expect(stderr).toContain("error: from the listener");
+    expect(summary(stderr)).toEqual(["1 pass", "1 fail"]);
+    expect(exitCode).toBe(1);
+  });
+
+  const throwInListener = `
+    function throwInListener() {
+      const button = document.createElement("button");
+      button.addEventListener("click", () => {
+        throw new Error("from the listener");
+      });
+      button.click();
+    }
+  `;
+
+  describe("jsdom: an error goes to the runner unless the file listens for errors", () => {
+    // What a file does, and whether vitest 5.0.3 reports the error after it. Nothing is cleaned up: with one window
+    // for all the files, each still gets the answer it gets alone.
+    const files: [code: string, isReported: boolean][] = [
+      [``, true],
+      [`window.addEventListener("error", () => {});`, false],
+      [`addEventListener("error", () => {});`, false],
+      [`window.addEventListener("error", event => event.preventDefault());`, false],
+      [`window.addEventListener("error", null);`, false],
+      [`window.addEventListener("error", listener); window.removeEventListener("error", listener);`, true],
+      [`window.addEventListener("error", () => {}, { once: true });`, false],
+      [`window.addEventListener("error", () => {}, { once: true }); throwInListener();`, false],
+      [`window.addEventListener("error", () => {}, { signal: AbortSignal.abort() });`, false],
+      [`window.addEventListener("error", listener, true); window.removeEventListener("error", listener, false);`, true],
+      [`window.addEventListener("error", () => {}); window.removeEventListener("error", listener);`, true],
+      [`window.removeEventListener("error", listener);`, true],
+      [`window.removeEventListener("error", listener); window.addEventListener("error", listener);`, false],
+      [
+        `window.addEventListener("error", listener); window.addEventListener("error", listener); window.removeEventListener("error", listener);`,
+        false,
+      ],
+      [`window.onerror = () => {};`, true],
+      [`window.onerror = () => true;`, true],
+      [`document.addEventListener("error", () => {});`, true],
+      [``, true],
+    ];
+
+    test.each([[[]], [["--isolate"]]])("%j", async flags => {
+      using dir = project(
+        Object.fromEntries(
+          files.map(([code, isReported], i) => [
+            `${String(i).padStart(2, "0")}.test.js`,
+            `// ${VITEST} jsdom
+            import { test } from "bun:test";
+            ${throwInListener}
+            test${isReported ? ".failing" : ""}("file ${i}", () => {
+              const listener = () => {};
+              ${code}
+              throwInListener();
+            });`,
+          ]),
+        ),
+      );
+      const { stderr, exitCode } = await bunTest(String(dir), ...flags);
+      expect(stderr).not.toContain("(fail)");
+      expect(summary(stderr)).toEqual([`${files.length} pass`, "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--rerun-each", async () => {
+      using dir = project({
+        "a.test.js": `// ${VITEST} jsdom
+          import { test } from "bun:test";
+          ${throwInListener}
+          test("reported", throwInListener);
+          test("leaves a listener", () => window.addEventListener("error", () => {}));`,
+      });
+      const { stderr, exitCode } = await bunTest(String(dir), "--rerun-each=2");
+      expect(summary(stderr)).toEqual(["2 pass", "2 fail"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([[[]], [["--isolate"]]])("a listener of a preload is one of every file %j", async flags => {
+      const file = `// ${VITEST} jsdom
+        import { test } from "bun:test";
+        ${throwInListener}
+        test("not reported", throwInListener);`;
+      using dir = project({
+        "preload.js": `window.addEventListener("error", event => console.log(event.error.message));`,
+        "1.test.js": file,
+        "2.test.js": file,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(
+        String(dir),
+        "--environment=jsdom",
+        "--preload=./preload.js",
+        ...flags,
+      );
+      expect(stdout).toEqual(["from the listener", "from the listener"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("a window that a file closed is not the next file's", async () => {
+    const file = (name: string, code: string) => `// ${VITEST} ${name}
+      import { test, expect } from "bun:test";
+      test("${name}", () => {
+        document.body.innerHTML = "<b>1</b>";
+        expect(document.querySelector("b").textContent).toBe("1");
+        ${code}
+      });`;
+    using dir = project({
+      "1.test.js": file("jsdom", "window.close();"),
+      "2.test.js": file("jsdom", ""),
+      "3.test.js": file("happy-dom", "window.close();"),
+      "4.test.js": file("happy-dom", ""),
+    });
+    const { stderr, exitCode } = await bunTest(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
   });
 });

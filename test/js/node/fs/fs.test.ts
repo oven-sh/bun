@@ -3747,6 +3747,22 @@ describe("rmdirSync", () => {
   });
 });
 
+it("streams, cp, glob and watchFile take a URL of another implementation", async () => {
+  using dir = tempDir("fs-foreign-url", { "a.txt": "a" });
+  function foreignURL(name: string) {
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(join(String(dir), name));
+    return { href, protocol, hostname, pathname } as URL;
+  }
+  expect(Buffer.concat(await createReadStream(foreignURL("a.txt")).toArray()).toString()).toBe("a");
+  await new Promise<void>(resolve => createWriteStream(foreignURL("b.txt")).end("b", resolve));
+  fs.cpSync(foreignURL("a.txt"), foreignURL("c.txt"));
+  expect(fs.globSync("*.txt", { cwd: foreignURL("") }).sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+  expect(readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("b");
+  expect(readFileSync(join(String(dir), "c.txt"), "utf8")).toBe("a");
+  fs.watchFile(foreignURL("a.txt"), () => {});
+  fs.unwatchFile(foreignURL("a.txt"));
+});
+
 describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {

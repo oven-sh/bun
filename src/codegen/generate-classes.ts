@@ -972,7 +972,8 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
-        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr unsigned StructureFlags = Base::StructureFlags${obj.callable ? " | JSC::OverridesGetCallData" : ""};
+        ${obj.callable ? "static JSC::CallData getCallData(JSC::JSCell*);" : ""}
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
         ${obj.valuesArray ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray);` : ""}
         ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
@@ -1233,7 +1234,23 @@ void ${name}::destroy(JSCell* cell)
 }
 
 const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
+${
+  obj.callable
+    ? `
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, "callInstance")}) SYSV_ABI;
 
+JSC::CallData ${name}::getCallData(JSC::JSCell*)
+{
+    JSC::CallData callData;
+    callData.type = JSC::CallData::Type::Native;
+    callData.native.function = ${symbolName(typeName, "callInstance")};
+    callData.native.isBoundFunction = false;
+    callData.native.isWasm = false;
+    return callData;
+}
+`
+    : ""
+}
 void ${name}::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -1361,7 +1378,7 @@ ${
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
     auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${
-      obj.forBind
+      obj.forBind || obj.callable
         ? "globalObject->functionPrototype()"
         : obj.prototypeBase === "Error"
           ? "globalObject->errorPrototype()"

@@ -32,6 +32,21 @@ use bun_sourcemap_jsc::code_coverage;
 /// module load alone can exceed the production 5ms threshold.
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
+/// Each holds the 1-based index of the worker. (Vitest counts VITEST_WORKER_ID up with every file.)
+const WORKER_ID_VARIABLES: [&[u8]; 4] = [
+    b"JEST_WORKER_ID",
+    b"BUN_TEST_WORKER_ID",
+    b"VITEST_POOL_ID",
+    b"VITEST_WORKER_ID",
+];
+
+/// Vitest sets its two without workers as well. JEST_WORKER_ID stays unset there: libraries take it for Jest.
+pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
+    for name in [b"VITEST_POOL_ID".as_slice(), b"VITEST_WORKER_ID"] {
+        let _ = env.map.put(name, b"1");
+    }
+}
+
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
@@ -53,8 +68,9 @@ pub(crate) fn run_as_coordinator(
     if k <= 1 {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
-        let _ = env.map.put(b"JEST_WORKER_ID", b"1");
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
+        for name in WORKER_ID_VARIABLES {
+            let _ = env.map.put(name, b"1");
+        }
         // SAFETY: see vm_ptr note above.
         TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
@@ -74,8 +90,9 @@ pub(crate) fn run_as_coordinator(
     for i in 0..k {
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
-        let _ = env.map.put(b"JEST_WORKER_ID", &id);
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        for name in WORKER_ID_VARIABLES {
+            let _ = env.map.put(name, &id);
+        }
         envps.push(env.map.create_null_delimited_env_map()?);
     }
     let argv = build_worker_argv(ctx)?;
@@ -428,6 +445,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             environment.name()
         ))?);
     }
+    if let Some(globals) = opts.globals {
+        argv.push(print_z(format_args!("--globals={}", globals.name()))?);
+    }
 
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.
@@ -624,6 +644,7 @@ impl<'a> WorkerLoop<'a> {
                 after.expectations - before.expectations,
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
+                after.shuffled - before.shuffled,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
             ] {
                 wf.u32(v);

@@ -1199,6 +1199,32 @@ describe("fs.promises.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
+  test.each(["URL", "URL of another implementation"])("should work with a %s", async kind => {
+    const filepath = path.join(testDir, "url.txt");
+    let url = pathToFileURL(filepath);
+    if (kind !== "URL") {
+      const { href, protocol, hostname, pathname } = url;
+      url = { href, protocol, hostname, pathname } as URL;
+    }
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "hello");
+    });
+    try {
+      for await (const event of fs.promises.watch(url)) {
+        expect(event.filename).toBe("url.txt");
+        break;
+      }
+      const watcher = fs.watch(url);
+      try {
+        expect(await EventEmitter.once(watcher, "change")).toEqual(["change", "url.txt"]);
+      } finally {
+        watcher.close();
+      }
+    } finally {
+      clearInterval(interval);
+    }
+  });
+
   test("yields events with a null prototype", async () => {
     const root = path.join(testDir, "null-proto-dir");
     fs.mkdirSync(root, { recursive: true });

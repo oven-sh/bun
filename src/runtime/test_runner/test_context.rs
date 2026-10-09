@@ -66,6 +66,12 @@ fn bound(
     )
 }
 
+/// A test written for a `done` callback calls its context.
+#[bun_jsc::host_fn(export = "TestContext__callInstance")]
+fn call_instance(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Err(global.throw(format_args!("done() callback is deprecated, use promise instead")))
+}
+
 fn ascii(global: &JSGlobalObject, text: &'static str) -> JsResult<JSValue> {
     BunString::static_(text).to_js(global)
 }
@@ -139,9 +145,16 @@ impl TestContext {
             entry_data: Some(EntryData {
                 sequence_index: self.sequence_index,
                 entry: sequence.active_entry.map_or(core::ptr::null(), |entry| entry.as_ptr().cast_const().cast()),
-                remaining_repeat_count: i64::from(sequence.remaining_repeat_count),
+                attempt: sequence.attempt,
             }),
         })
+    }
+
+    /// `state_data()` of the context that `function`, one made by `bound`, is bound to.
+    pub(crate) fn state_of_bound(function: JSValue) -> Option<RefDataValue> {
+        let this_value = jsc::cpp::Bun__JSBoundFunction__boundThis(function);
+        // SAFETY: the wrapper owns the payload, and `function` keeps the wrapper alive.
+        unsafe { &*TestContext::from_js(this_value)? }.state_data(this_value)
     }
 
     pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
@@ -290,11 +303,14 @@ impl TestContext {
     /// `expect`, whose assertion counts and snapshots belong to this test.
     pub(crate) fn get_expect(_this: &Self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         let expect = bound(global, this_value, "expect", 1, __jsc_host_expect)?;
-        jsc::cpp::Bun__JSValue__setPrototypeDirect(
-            expect,
-            jsc::codegen::js::get_constructor::<Expect>(global),
-            global,
-        )?;
+        let constructor = jsc::codegen::js::get_constructor::<Expect>(global);
+        jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, constructor, global)?;
+        // Their getters only answer the constructor itself.
+        for name in ["not", "resolvesTo", "rejectsTo"] {
+            if let Some(value) = constructor.get(global, name)? {
+                expect.put(global, name.as_bytes(), value);
+            }
+        }
         expect.put(global, b"assertions", bound(global, this_value, "assertions", 1, __jsc_host_assertions)?);
         expect.put(global, b"hasAssertions", bound(global, this_value, "hasAssertions", 0, __jsc_host_has_assertions)?);
         expect.put(global, b"getState", bound(global, this_value, "getState", 0, __jsc_host_get_state)?);
@@ -331,7 +347,7 @@ impl TestContext {
             Signature::Str(signature),
             ParseArgumentsCfg {
                 callback: CallbackMode::Require,
-                kind: FunctionKind::Hook,
+                kind: FunctionKind::VitestHook,
                 inherited: Default::default(),
             },
         )?;
@@ -349,7 +365,7 @@ impl TestContext {
 #[bun_jsc::host_fn]
 fn expect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::call_in(global, frame, state)
+    Expect::call_in(global, frame.arguments(), state)
 }
 
 #[bun_jsc::host_fn]

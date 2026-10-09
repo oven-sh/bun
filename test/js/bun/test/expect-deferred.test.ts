@@ -342,6 +342,205 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("the matchers of an attempt end it once", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      let attempt = 0;
+      test("every attempt fails", async () => {
+        if (++attempt === 1) {
+          const a = Promise.withResolvers(), b = Promise.withResolvers();
+          expect(a.promise).resolves.toBe("a");
+          expect(b.promise).resolves.toBe("b");
+          setImmediate(() => {
+            a.resolve(1);
+            b.resolve(1);
+          });
+          return;
+        }
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        console.log("the second attempt ran to its end");
+        expect(1).toBe(2);
+      }, { retry: 1 });
+      test("next", () => {});
+    `);
+    expect(stdout).toEqual(["the second attempt ran to its end"]);
+    expect(results).toEqual(["(fail) every attempt fails (attempt 2)", "(pass) next"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("what a concurrent test does after its first await is not another test's", async () => {
+    const { report, exitCode } = await runTests(`
+      for (const [name, fail] of [
+        ["soft", () => expect.soft(1).toBe(2)],
+        ["not awaited", () => void expect(later(1)).resolves.toBe(2)],
+      ]) {
+        describe(name, () => {
+          // Goes on in the microtasks that follow the call of the other test's callback.
+          const started = Promise.withResolvers();
+          test.concurrent("culprit", async () => {
+            await started.promise;
+            fail();
+          });
+          test.concurrent("innocent", async () => {
+            started.resolve();
+            await later();
+          });
+        });
+      }
+      describe("beside a test that has to fail", () => {
+        const started = Promise.withResolvers();
+        test.concurrent("culprit", async () => {
+          await started.promise;
+          expect.soft(1).toBe(2);
+        });
+        test.concurrent.failing("does not fail", async () => {
+          started.resolve();
+          await later();
+        });
+      });
+    `);
+    expect(report.toSorted()).toEqual([
+      "# Unhandled error between tests",
+      "(fail) beside a test that has to fail > culprit",
+      "(fail) beside a test that has to fail > does not fail",
+      "(fail) soft > culprit",
+      "(pass) not awaited > culprit",
+      "(pass) not awaited > innocent",
+      "(pass) soft > innocent",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a matcher that no test is known to have called is an error once its group has waited as long as it can", async () => {
+    const source = `
+      describe("concurrent", () => {
+        test.concurrent("does not await it", async () => {
+          await later();
+          expect(never()).resolves.toBe("not awaited");
+        }, 50);
+        test.concurrent("awaits it", async () => {
+          await later();
+          await expect(never()).resolves.toBe("awaited");
+        }, 50);
+        test.concurrent("handles it", async () => {
+          await later();
+          expect(never()).resolves.toBe("handled").catch(() => {});
+        }, 50);
+      });
+      test("next", () => {});
+    `;
+    const { report, stderr, exitCode } = await runTests(source);
+    expect(report.toSorted()).toEqual([
+      "  ^ this test timed out after 50ms.",
+      "# Unhandled error between tests",
+      "(fail) concurrent > awaits it",
+      "(pass) concurrent > does not await it",
+      "(pass) concurrent > handles it",
+      "(pass) next",
+      "error: A matcher that a concurrent test did not await timed out: its promise has not settled",
+    ]);
+    expect(report.at(-1)).toBe("(pass) next");
+    expect(failingLines(stderr, source)).toEqual(['expect(never()).resolves.toBe("not awaited");']);
+    expect(exitCode).toBe(1);
+  });
+
+  describe.each([[[]], [["--isolate"]]])("outside of a test: bun test %j", flags => {
+    const sections = (stderr: string) =>
+      Object.fromEntries(
+        stderr
+          .split(/^(?=[ab]\.test\.js:$)/m)
+          .slice(1)
+          .map(section => [
+            section.slice(0, 1),
+            section
+              .split("\n")
+              .map(line => line.replace(/ \[[\d.]+ms\]$/, ""))
+              .filter(line => /^\((pass|fail)\)|^error: |^# Unhandled error|^Expected: /.test(line))
+              .toSorted(),
+          ]),
+      );
+
+    test("the file waits for a matcher, whose failure is its own", async () => {
+      const { stderr, exitCode } = await run(["test", ...flags, "./a.test.js", "./b.test.js"], {
+        "a.test.js":
+          prelude +
+          `
+          expect.extend({ async toBeOdd(received) { await later(); return { pass: received % 2 === 1, message: () => "toBeOdd" }; } });
+          expect(later(1, 5)).resolves.toBe("top level");
+          expect(later(1, 5)).resolves.toBe(1);
+          expect(async () => { await later(); }).toThrow();
+          expect({ a: 2 }).toEqual({ a: expect.toBeOdd() });
+          describe("d", () => {
+            expect(later(1, 5)).resolves.toBe("describe");
+            test("a", () => {});
+          });
+        `,
+        "b.test.js": prelude + `test("b", async () => { for (let i = 0; i < 5; i++) await later(); });`,
+      });
+      expect(sections(stderr)).toEqual({
+        a: [
+          "# Unhandled error between tests",
+          "# Unhandled error between tests",
+          "# Unhandled error between tests",
+          "# Unhandled error between tests",
+          "(pass) d > a",
+          'Expected: "describe"',
+          'Expected: "top level"',
+          "error: expect(received).toBe(expected)",
+          "error: expect(received).toBe(expected)",
+          "error: expect(received).toEqual(expected)",
+          "error: expect(received).toThrow()",
+        ],
+        b: ["(pass) b"],
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    test("not for ever", async () => {
+      const source = `
+        expect(never()).resolves.toBe("not awaited");
+        expect(never()).resolves.toBe("handled").catch(() => {});
+        test("a", () => {});
+      `;
+      const { stderr, exitCode } = await run(["test", ...flags, "--timeout=50", "./a.test.js", "./b.test.js"], {
+        "a.test.js": prelude + source,
+        "b.test.js": prelude + `test("b", () => {});`,
+      });
+      expect(sections(stderr)).toEqual({
+        a: [
+          "# Unhandled error between tests",
+          "(pass) a",
+          "error: A matcher that was called outside of a test and not awaited timed out 50ms after the tests of its file: its promise has not settled",
+        ],
+        b: ["(pass) b"],
+      });
+      expect(failingLines(stderr, source)).toEqual(['expect(never()).resolves.toBe("not awaited");']);
+      expect(exitCode).toBe(1);
+    });
+
+    test("in a preload", async () => {
+      const { stderr, exitCode } = await run(
+        ["test", ...flags, "--preload=./preload.js", "./a.test.js", "./b.test.js"],
+        {
+          "preload.js":
+            prelude +
+            `if (!globalThis.preloaded) expect(later(1, 5)).resolves.toBe("preload"); globalThis.preloaded = true; process.env.PRELOADED = "1";`,
+          "a.test.js": prelude + `test("a", () => {});`,
+          "b.test.js": prelude + `test("b", () => {});`,
+        },
+      );
+      expect(sections(stderr).a).toEqual([
+        "# Unhandled error between tests",
+        "(pass) a",
+        'Expected: "preload"',
+        "error: expect(received).toBe(expected)",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("concurrent tests go on while one of them waits for a matcher", async () => {
     const source = `
       const log = [];
@@ -596,6 +795,86 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("in a Worker, expect() is what it is outside of bun test, and nothing can be registered", async () => {
+    const { stdout, results, exitCode, signalCode } = await run(["test", "./a.test.js"], {
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        const messages = [];
+        let heard = Promise.withResolvers();
+        worker.onerror = event => heard.reject(new Error(event.message));
+        worker.onmessage = event => {
+          messages.push(event.data);
+          heard.resolve();
+          heard = Promise.withResolvers();
+        };
+        async function hear(message) {
+          while (!messages.includes(message)) await heard.promise;
+        }
+        test("ends while a matcher of the worker waits", () => hear("waiting"));
+        test("goes on while that matcher runs", async () => {
+          expect.assertions(0);
+          worker.postMessage("settle");
+          await hear("done");
+          console.log(messages.join("\\n"));
+          worker.terminate();
+        });
+      `,
+      "worker.js": `
+        import { beforeAll, describe, expect, test, vi } from "bun:test";
+        const settle = Promise.withResolvers();
+        self.onmessage = () => settle.resolve(1);
+        const notAwaited = expect(settle.promise).resolves.toBe(1);
+        postMessage("waiting");
+        await notAwaited;
+        for (const [name, fn] of Object.entries({
+          "resolves": () => expect(Promise.resolve().then(() => 1)).resolves.toBe(1),
+          "resolves fails": () => expect(Promise.resolve().then(() => 1)).resolves.toBe(2),
+          "soft": () => expect.soft(1).toBe(2),
+          "poll": () => expect.poll(() => 1).toBe(1),
+          "waitFor": () => vi.waitFor(() => 1),
+          "assertions": () => expect.assertions(1),
+          "hasAssertions": () => expect.hasAssertions(),
+          "toMatchSnapshot": () => expect(1).toMatchSnapshot(),
+          "toMatchInlineSnapshot": () => expect(1).toMatchInlineSnapshot(),
+          "test": () => test("in a worker", () => {}),
+          "test.each": () => test.each([1])("in a worker", () => {}),
+          "describe": () => describe("in a worker", () => {}),
+          "beforeAll": () => beforeAll(() => {}),
+        })) {
+          try {
+            postMessage(name + ": " + (await fn()));
+          } catch (error) {
+            postMessage(name + " throws: " + Bun.stripANSI(error.message).trim().split("\\n").at(name.includes("Snapshot") ? -1 : 0));
+          }
+        }
+        postMessage("done");
+      `,
+    });
+    expect(stdout).toEqual([
+      "waiting",
+      "resolves: undefined",
+      "resolves fails throws: expect(received).toBe(expected)",
+      "soft throws: expect(received).toBe(expected)",
+      "poll: undefined",
+      "waitFor: 1",
+      "assertions throws: expect.assertions() must be called within a test",
+      "hasAssertions throws: expect.assertions() must be called within a test",
+      "toMatchSnapshot throws: Matcher error: Snapshot matchers cannot be used outside of a test",
+      "toMatchInlineSnapshot throws: Matcher error: Snapshot matchers cannot be used outside of a test",
+      "test throws: Cannot use test in a Worker.",
+      "test.each throws: Cannot use test.each() in a Worker.",
+      "describe throws: Cannot use describe in a Worker.",
+      "beforeAll throws: Cannot use beforeAll() in a Worker.",
+      "done",
+    ]);
+    expect(results).toEqual([
+      "(pass) ends while a matcher of the worker waits",
+      "(pass) goes on while that matcher runs",
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
   test("what is pending when its file ends is dropped", async () => {
     for (const args of [[], ["--isolate"]]) {
       const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {
@@ -800,6 +1079,184 @@ describe.concurrent("matchers that meet a pending promise", () => {
       'expect(later("one")).toEqual(expect.rejectsTo.anything());',
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("a matcher that runs again is given what it was given the first time", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      const calls = {};
+      const count = name => (calls[name] = (calls[name] ?? 0) + 1);
+      expect.extend({
+        async toBeOdd(received) {
+          count("toBeOdd");
+          await later();
+          return { pass: received % 2 === 1, message: () => "toBeOdd" };
+        },
+        async toHaveMessage(received, message) {
+          count("toHaveMessage");
+          await later();
+          return { pass: received?.message === message, message: () => "toHaveMessage" };
+        },
+        async toBeAnObject(received) {
+          count("toBeAnObject");
+          await 0;
+          return { pass: typeof received === "object", message: () => "toBeAnObject" };
+        },
+        toBeCalledFirst() {
+          return { pass: count("toBeCalledFirst") === 1, message: () => "toBeCalledFirst" };
+        },
+      });
+      function* numbers() {
+        count("generator");
+        yield 2;
+        yield 1;
+      }
+      const cases = {
+        "toMatchObject": () => expect({ a: 1, b: 1 }).toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
+        "not.toMatchObject": () => expect({ a: 1, b: 1 }).not.toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
+        "not.toMatchObject, resolvesTo": () =>
+          expect({ a: 1, b: later("x") }).not.toMatchObject({ a: expect.any(Number), b: expect.resolvesTo.any(String) }),
+        "toContainEqual, generator": () => expect(numbers()).toContainEqual(expect.toBeOdd()),
+        "not.toContainEqual, generator": () => expect(numbers()).not.toContainEqual(expect.toBeOdd()),
+        "toContainEqual, Set": () => expect(new Set([2, 1])).toContainEqual(expect.toBeOdd()),
+        "toThrow, asymmetric": () =>
+          expect(() => {
+            count("function");
+            throw new Error("x");
+          }).toThrow(expect.toHaveMessage("x")),
+        "toThrow, objectContaining": () =>
+          expect(() => {
+            count("function");
+            throw Object.assign(new Error("x"), { code: 1 });
+          }).toThrow(expect.objectContaining({ code: expect.toBeOdd() })),
+        "a getter that returns another object each time": () =>
+          expect({ get a() { return {}; }, get b() { return {}; } }).toEqual({ a: expect.toBeAnObject(), b: expect.toBeAnObject() }),
+        "a getter that returns another promise each time": () =>
+          expect({ get a() { return later(1); } }).toEqual({ a: expect.resolvesTo.any(Number) }),
+        "toHaveProperty, getter": () => expect({ get p() { return { v: 1 }; } }).toHaveProperty("p", { v: expect.toBeOdd() }),
+        "a synchronous matcher before an asynchronous one": () =>
+          expect({ a: 1, b: 1, c: 3 }).toEqual({ a: expect.toBeCalledFirst(), b: expect.toBeOdd(), c: expect.toBeOdd() }),
+        "the same matcher twice": () => {
+          const odd = expect.toBeOdd();
+          return expect({ a: 1, b: 2 }).toEqual({ a: odd, b: odd });
+        },
+      };
+      for (const [name, matcher] of Object.entries(cases)) {
+        test(name, async () => {
+          for (const key in calls) delete calls[key];
+          const outcome = await matcher().then(() => "passes", error => (error instanceof Error ? "fails" : "throws " + error));
+          console.log(name + ": " + outcome + " " + JSON.stringify(calls));
+        }, 2000);
+      }
+    `);
+    expect(stdout).toEqual([
+      'toMatchObject: passes {"toBeOdd":1}',
+      'not.toMatchObject: fails {"toBeOdd":1}',
+      "not.toMatchObject, resolvesTo: fails {}",
+      'toContainEqual, generator: passes {"generator":1,"toBeOdd":2}',
+      'not.toContainEqual, generator: fails {"generator":1,"toBeOdd":2}',
+      'toContainEqual, Set: passes {"toBeOdd":2}',
+      'toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
+      'toThrow, objectContaining: passes {"function":1,"toBeOdd":1}',
+      'a getter that returns another object each time: passes {"toBeAnObject":2}',
+      "a getter that returns another promise each time: passes {}",
+      'toHaveProperty, getter: passes {"toBeOdd":1}',
+      'a synchronous matcher before an asynchronous one: passes {"toBeCalledFirst":1,"toBeOdd":2}',
+      'the same matcher twice: fails {"toBeOdd":2}',
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("a matcher that another one calls has its own promises", async () => {
+    const { stdout, exitCode } = await runTests(`
+      expect.extend({
+        async toBeOdd(received) {
+          await later();
+          return { pass: received % 2 === 1, message: () => "toBeOdd" };
+        },
+        async toHoldOdd(received) {
+          await expect(received).toEqual({ v: expect.toBeOdd(), w: expect.toBeOdd() });
+          return { pass: true, message: () => "toHoldOdd" };
+        },
+      });
+      test("nested", async () => {
+        const inner = [];
+        const received = {
+          a: 1,
+          get b() {
+            inner.push(expect({ v: 1 }).toEqual({ v: expect.toBeOdd() }), expect({ v: 2 }).not.toEqual({ v: expect.toBeOdd() }));
+            return 3;
+          },
+          c: { v: 5, w: 7 },
+          d: 9,
+        };
+        await expect(received).toEqual({ a: expect.toBeOdd(), b: expect.toBeOdd(), c: expect.toHoldOdd(), d: expect.toBeOdd() });
+        console.log(inner.length > 0, (await Promise.all(inner)).every(value => value === undefined));
+        await expect(expect({ ...received, d: 10 }).toEqual({ a: expect.toBeOdd(), b: 3, c: expect.toHoldOdd(), d: expect.toBeOdd() })).rejects.toThrow("toEqual");
+      });
+    `);
+    expect(stdout).toEqual(["true true"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the time limit of its test ends a matcher that never stops meeting promises", async () => {
+    const { report, exitCode, signalCode } = await runTests(`
+      expect.extend({ async toBeAnything() { await 0; return { pass: true, message: () => "" }; } });
+      test("endless", async () => {
+        let length = 0;
+        const received = { get a() { return Array(++length).fill(0); } };
+        const expected = { get a() { return Array.from({ length }, () => expect.toBeAnything()); } };
+        await expect(received).toEqual(expected);
+      }, 100);
+      test("next", () => {});
+    `);
+    expect(report).toEqual(["(fail) endless", "  ^ this test timed out after 100ms.", "(pass) next"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("what cannot wait for an asynchronous matcher says so", async () => {
+    const { stdout, exitCode } = await runTests(`
+      const message = error => Object.prototype.toString.call(error) + " " + error.message;
+      expect.extend({
+        async toBeOdd(received) {
+          await later();
+          return { pass: received % 2 === 1, message: () => "toBeOdd" };
+        },
+        async toBeOddAtOnce(received) {
+          return { pass: received % 2 === 1, message: () => "toBeOddAtOnce" };
+        },
+        toEqualWithThisEquals(received, expected) {
+          try {
+            console.log("this.equals():", this.equals(received, expected));
+          } catch (error) {
+            console.log("this.equals():", message(error));
+          }
+          return { pass: true, message: () => "" };
+        },
+      });
+      test("asymmetricMatch()", () => {
+        console.log(expect.toBeOddAtOnce().asymmetricMatch(1), expect.toBeOddAtOnce().asymmetricMatch(2));
+        try {
+          console.log(expect.toBeOdd().asymmetricMatch(1));
+        } catch (error) {
+          console.log(message(error));
+        }
+      });
+      test("this.equals()", () => {
+        expect({ a: 1 }).toEqualWithThisEquals({ a: expect.toBeOddAtOnce() });
+        expect({ a: 1 }).toEqualWithThisEquals({ a: expect.toBeOdd() });
+        expect({ a: later(1) }).toEqualWithThisEquals({ a: expect.resolvesTo.anything() });
+      });
+    `);
+    const cannotWait =
+      "[object Error] An asynchronous matcher can only be waited for by a matcher of expect(), which then returns a promise: await expect(received).toEqual(expected)";
+    expect(stdout).toEqual([
+      "true false",
+      cannotWait,
+      "this.equals(): true",
+      "this.equals(): " + cannotWait,
+      "this.equals(): " + cannotWait,
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1173,5 +1630,66 @@ describe.concurrent("expect.poll()", () => {
       "0",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("rejects with its last error, whatever that is", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      test("errors", async () => {
+        const errors = {
+          plain: new Error("plain"),
+          frozen: Object.freeze(new Error("frozen")),
+          "with a cause": new Error("with a cause", { cause: "its own" }),
+          "whose cause cannot be read": new Proxy(new Error("proxy"), {
+            get(target, key) {
+              if (key === "cause") throw new Error("thrown by the trap");
+              return target[key];
+            },
+          }),
+          "whose cause cannot be written": new Proxy(new Error("proxy"), {
+            set() {
+              throw new Error("thrown by the trap");
+            },
+          }),
+          "not an object": "a string",
+        };
+        for (const [name, error] of Object.entries(errors)) {
+          const thrown = await expect.poll(() => { throw error; }, { interval: 1, timeout: 5 }).toBe(1).then(() => "nothing", thrown => thrown);
+          console.log(name + ":", thrown === error);
+        }
+        console.log(errors.plain.cause.message, Object.keys(errors.frozen).join(), errors["with a cause"].cause);
+      }, 2000);
+    `);
+    expect(stdout).toEqual([
+      "plain: true",
+      "frozen: true",
+      "with a cause: true",
+      "whose cause cannot be read: true",
+      "whose cause cannot be written: true",
+      "not an object: true",
+      "Matcher did not succeed in time.  its own",
+    ]);
+    expect(results).toEqual(["(pass) errors"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("like expect.soft(), does not call what it is called on", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      test("receivers", async () => {
+        const object = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 };
+        const returned = [object, 5, "string", undefined, () => {}, new Proxy(expect(1), {}), expect.anything(), test];
+        let calls = 0;
+        const receivers = returned.map(value => function () {
+          calls++;
+          return value;
+        });
+        for (const receiver of [...receivers, ...returned, Object.assign(value => new Proxy(expect(value), {}), expect)]) {
+          await expect.poll.call(receiver, () => 1).toBe(1);
+          expect.soft.call(receiver, 1).toBe(1);
+        }
+        console.log(calls, JSON.stringify(object));
+      });
+    `);
+    expect(stdout).toEqual(['0 {"a":1,"b":2,"c":3,"d":4,"e":5,"f":6}']);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 });

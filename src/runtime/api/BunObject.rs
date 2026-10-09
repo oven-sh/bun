@@ -1266,31 +1266,6 @@ pub(crate) fn bun_resolve_sync_with_paths(
     })
 }
 
-bun_output::declare_scope!(importMetaResolve, visible);
-
-// HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub(crate) fn bun_resolve_sync_with_strings(
-    global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
-    is_esm: bool,
-) -> JSValue {
-    bun_output::scoped_log!(
-        importMetaResolve,
-        "source: {}, specifier: {}",
-        source,
-        specifier
-    );
-    jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
-            global,
-            specifier,
-            source,
-            ResolveMode::from_ffi_bools(is_esm, false),
-        )
-    })
-}
-
 /// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier

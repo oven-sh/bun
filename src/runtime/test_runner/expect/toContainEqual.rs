@@ -3,28 +3,19 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
+use super::expect_deferred::{Asked, Pass};
 use super::{get_signature, throw, Expect};
 
-struct ExpectedEntry<'a> {
-    global_this: &'a JSGlobalObject,
-    expected: JSValue,
-    pass: &'a mut bool,
+struct Items {
+    array: JSValue,
+    len: u32,
 }
 
-extern "C" fn deep_equals_iterator(
-    _: *mut VM,
-    _: &JSGlobalObject,
-    entry_: *mut c_void,
-    item: JSValue,
-) {
-    // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
-    let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
-        return;
-    };
-    if eq {
-        *entry.pass = true;
-        // PERF: break out of the `forEach` when a match is found
+extern "C" fn collect_item(_: *mut VM, global: &JSGlobalObject, items: *mut c_void, item: JSValue) {
+    // SAFETY: `items` is the `&mut Items` passed through `for_each` below; non-null by contract.
+    let items = unsafe { bun_ptr::callback_ctx::<Items>(items) };
+    if items.array.put_index(global, items.len, item).is_ok() {
+        items.len += 1;
     }
 }
 
@@ -80,16 +71,18 @@ pub(crate) fn to_contain_equal(
             };
         }
     } else if value.is_iterable(global)? {
-        let mut expected_entry = ExpectedEntry {
-            global_this: global,
-            expected,
-            pass: &mut pass,
-        };
-        value.for_each(
-            global,
-            (&raw mut expected_entry).cast::<c_void>(),
-            deep_equals_iterator,
-        )?;
+        let items = Pass::once(global, Asked::Items, &mut || {
+            let mut items = Items { array: JSValue::create_empty_array(global, 0)?, len: 0 };
+            value.for_each(global, (&raw mut items).cast::<c_void>(), collect_item)?;
+            Ok(items.array)
+        })?;
+        let mut itr = items.array_iterator(global)?;
+        while let Some(item) = itr.next()? {
+            if item.jest_deep_equals(expected, global)? {
+                pass = true;
+                break;
+            }
+        }
     } else {
         return Err(global.throw(format_args!(
             "Received value must be an array type, or both received and expected values must be strings."

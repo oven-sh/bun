@@ -249,6 +249,7 @@ impl<'a> Options<'a> {
                 allow_runtime: f.allow_runtime,
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
+                vitest_globals: f.vitest_globals,
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
@@ -1241,6 +1242,12 @@ impl<'a> Parser<'a> {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
+            let mock_hoist_order = if p.options.features.inject_jest_globals {
+                p.plan_mock_hoisting(stmts)
+            } else {
+                None
+            };
+
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
             //
@@ -1282,12 +1289,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-
-            let mock_hoist_order = if p.options.features.inject_jest_globals {
-                p.plan_mock_hoisting(stmts)
-            } else {
-                None
-            };
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (i, stmt) in stmts.iter().enumerate() {
@@ -1407,22 +1408,38 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Lowered or not, they come before the imports that the file has itself.
+        let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
         for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
             let is_lowered = !hoisted_mocks.is_empty()
                 && matches!(
                     stmt.data,
                     js_ast::StmtData::SImport(import)
-                        if matches!(p.plan_import(&import, &[]), MockHoistOrder::LoweredImport)
+                        if matches!(
+                            p.plan_import(&import, &Default::default()),
+                            MockHoistOrder::LoweredImport
+                        )
                 );
             let sliced = p.arena.alloc_slice_copy(&[stmt]);
             p.append_part(
                 if is_lowered {
-                    &mut imports_after_hoisted_mocks
+                    &mut lowered_glob_imports
                 } else {
                     &mut before
                 },
                 sliced,
             )?;
+        }
+        lowered_glob_imports.append(&mut imports_after_hoisted_mocks);
+        let mut imports_after_hoisted_mocks = lowered_glob_imports;
+        if let Some(stmt) = p.import_meta_glob_definition() {
+            before.insert(
+                0,
+                js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&[stmt]).into(),
+                    ..Default::default()
+                },
+            );
         }
 
         visit_tracer.end();
@@ -2277,9 +2294,7 @@ impl<'a> Parser<'a> {
                 p.arena,
             );
 
-            let import_path: &'static [u8] = if used
-                .iter()
-                .any(|(name, _)| matches!(*name, "vi" | "vitest"))
+            let import_path: &'static [u8] = if p.options.features.vitest_globals
                 || p.import_records
                     .items()
                     .iter()
@@ -2650,10 +2665,9 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+            let depends_on_more_than_source = p.depends_on_more_than_source();
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if p.macro_call_count != 0 {
-                    // disable this for:
-                    // - macros
+                if depends_on_more_than_source {
                     cache.input_hash = None;
                 } else {
                     cache.exports_kind = exports_kind;

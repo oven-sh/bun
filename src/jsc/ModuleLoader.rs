@@ -194,12 +194,15 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
-/// C++ entry point: whether `data[..len]` names a builtin module.
+/// C++ entry point: whether `data[..len]` names a builtin module to `node:module`. As to `isBuiltin()`, what `bun test`
+/// serves in place of a package ("vitest", "@jest/globals"), and the key it serves "vitest" under, do not.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    (str != b"bun:test/vitest"
+        && HardcodedModule::Alias::has(str, bun_ast::Target::Bun, Default::default()))
+        || exposed_internal_tag(str).is_some()
 }
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias
@@ -214,7 +217,7 @@ unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize
 }
 
 /// C++ entry point: the loader of what a plugin supplies without naming one. As for a file: the `type` it is imported
-/// with, else its file extension in the VM's loader map.
+/// with, else its file extension in the VM's loader map. None for a `type` that loads what is at the path instead.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
@@ -224,19 +227,32 @@ extern "C" fn Bun__getDefaultLoader(
     use bun_ast::Loader;
     use bun_options_types::schema::api;
     let filename = str.to_utf8();
-    let loader = type_attribute
-        .and_then(|attribute| Loader::from_string(&attribute.to_utf8()))
-        .unwrap_or_else(|| {
-            match global
-                .bun_vm()
-                .transpiler
-                .options
-                .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
-            {
-                Loader::File | Loader::Bunsh => Loader::Js,
-                loader => loader,
+    let loader =
+        match type_attribute.and_then(|attribute| Loader::from_string(&attribute.to_utf8())) {
+            Some(
+                Loader::File
+                | Loader::Wasm
+                | Loader::Napi
+                | Loader::Base64
+                | Loader::Dataurl
+                | Loader::Bunsh
+                | Loader::Sqlite
+                | Loader::SqliteEmbedded
+                | Loader::Html,
+            ) => return api::Loader::_none,
+            Some(loader) => loader,
+            None => {
+                match global
+                    .bun_vm()
+                    .transpiler
+                    .options
+                    .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
+                {
+                    Loader::File | Loader::Bunsh => Loader::Js,
+                    loader => loader,
+                }
             }
-        });
+        };
     match loader {
         // (`to_api` makes it `json`.)
         Loader::Jsonc => api::Loader::jsonc,

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { A, B, C, cases, tree, type Case, type Entry } from "./import-meta-glob-cases";
@@ -177,20 +177,175 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  test("only a direct call is replaced", async () => {
+  // Vite's module runner has such a function too.
+  test("only a direct call is replaced, and any other finds a function that throws", async () => {
     const { stdout, stderr, exitCode } = await runEntry(`
+      const message = call => { try { return call(); } catch (error) { return error.name + ": " + error.message; } };
       console.log(JSON.stringify([
         Object.keys(import.meta.glob("./dir/a.ts")),
         typeof import.meta.glob,
-        import.meta.glob?.("./dir/a.ts") ?? null,
-        import.meta?.glob ?? null,
-        import.meta["glob"] ?? null,
+        "glob" in import.meta,
+        new Set([
+          message(() => import.meta.glob?.("./dir/a.ts")),
+          message(() => import.meta?.glob("./dir/a.ts")),
+          message(() => import.meta["glob"]("./dir/a.ts")),
+          message(() => (0, import.meta.glob)("./dir/a.ts")),
+          message(() => { const { glob } = import.meta; return glob("./dir/a.ts"); }),
+        ]).values().toArray(),
       ]));`);
     expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: [["./dir/a.ts"], "undefined", null, null, null],
+      stdout: [
+        ["./dir/a.ts"],
+        "function",
+        true,
+        [`TypeError: "import.meta.glob" is replaced when its file is transpiled: call it by this name, with literals`],
+      ],
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // Each is a module of its own, in the project and in a package.
+  async function evaluateEach(codes: string[]) {
+    const modules = (dir: string) => codes.map((code, i) => [`${dir}/${i}.js`, `export default ${code};`]);
+    const { stdout, stderr, exitCode } = await runEntry(
+      `const out = [];
+       for (const dir of ["./each", "../node_modules/each"])
+         for (let i = 0; i < ${codes.length}; i++)
+           out.push(await import(dir + "/" + i + ".js").then(
+             module => module.default ?? null,
+             error => error.name + ": " + error.message));
+       console.log(JSON.stringify(out));`,
+      Object.fromEntries([...modules("proj/src/each"), ...modules("proj/node_modules/each")]),
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const out = JSON.parse(stdout);
+    expect(out.slice(codes.length)).toEqual(out.slice(0, codes.length));
+    return out.slice(0, codes.length);
+  }
+
+  test("code that only calls it where it exists runs as it did without it", async () => {
+    expect(
+      await evaluateEach([
+        `typeof import.meta.glob === "function" ? import.meta.glob(globalThis.pattern) : "fallback"`,
+        `import.meta.glob ? import.meta.glob("locales/*.json") : "fallback"`,
+        `import.meta.glob && import.meta.glob("@@CONTENT@@/**/*.md")`,
+        "import.meta.env?.VITE ? import.meta.glob(`./${globalThis.pattern}/*.js`) : 'fallback'",
+        `(() => { return "dead"; import.meta.glob(pattern); })()`,
+        `(() => { if (false) return import.meta.glob(pattern); return "dead"; })()`,
+        `typeof import.meta.glob`,
+      ]),
+    ).toEqual(["fallback", "fallback", null, "fallback", "dead", "dead", "undefined"]);
+  });
+
+  test("a file that assigns to it calls what it assigned", async () => {
+    expect(
+      await evaluateEach([
+        `(import.meta.glob = pattern => "own " + pattern, import.meta.glob("../dir/*.ts"))`,
+        `(import.meta.glob ??= pattern => "own " + pattern, import.meta.glob("whatever"))`,
+        `(import.meta.glob ||= pattern => "own " + pattern, import.meta.glob("../dir/*.ts", { eager: true }))`,
+        `(() => { const load = () => import.meta.glob("../dir/*.ts"); import.meta.glob = pattern => "own " + pattern; return load(); })()`,
+        `(import.meta.glob = pattern => [pattern], Object.keys(import.meta.glob("../dir/*.ts")))`,
+      ]),
+    ).toEqual(["own ../dir/*.ts", "own whatever", "own ../dir/*.ts", "own ../dir/*.ts", ["0"]]);
+  });
+
+  test("a test for the function agrees with the calls that are replaced", async () => {
+    const keys = `Object.keys(import.meta.glob("/src/dir/[ab].ts"))`;
+    expect(
+      await evaluateEach([
+        `typeof import.meta.glob === "function" ? ${keys} : "fallback"`,
+        `import.meta.glob ? ${keys} : "fallback"`,
+        `import.meta.glob && ${keys}`,
+        `(import.meta.glob ?? "fallback") === "fallback" ? "fallback" : ${keys}`,
+        `!import.meta.glob ? "fallback" : ${keys}`,
+      ]),
+    ).toEqual(Array(5).fill(["/src/dir/a.ts", "/src/dir/b.ts"]));
+  });
+
+  // Vite replaces each of these.
+  test("TypeScript syntax and parentheses do not hide a call", async () => {
+    const calls = [
+      `(import.meta.glob("./dir/[ab].ts"))`,
+      `import.meta.glob("./dir/[ab].ts")!`,
+      `import.meta.glob("./dir/[ab].ts") as any`,
+      `import.meta.glob("./dir/[ab].ts") satisfies object`,
+      `<any>import.meta.glob("./dir/[ab].ts")`,
+      `import.meta.glob<any>("./dir/[ab].ts")`,
+      `(import.meta.glob)("./dir/[ab].ts")`,
+      `import.meta.glob!("./dir/[ab].ts")`,
+      `(import.meta.glob as any)("./dir/[ab].ts")`,
+      `(import.meta.glob satisfies any)("./dir/[ab].ts")`,
+      `(import.meta).glob("./dir/[ab].ts")`,
+      `(import.meta as any).glob("./dir/[ab].ts")`,
+      `import.meta!.glob("./dir/[ab].ts")`,
+      `import.meta.glob("./dir/[ab].ts" as const)`,
+      `import.meta.glob(("./dir/[ab].ts"))`,
+      `import.meta.glob("./dir/[ab].ts", { eager: true } as const)`,
+      `import.meta.glob("./dir/[ab].ts", { eager: true as boolean })`,
+      `import.meta.glob(["./dir/[ab].ts"] as string[])`,
+    ];
+    const { stdout, stderr, exitCode } = await runEntry(
+      `console.log(JSON.stringify([\n${calls.map(call => `Object.keys(${call}),`).join("\n")}\n]));`,
+    );
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: calls.map(() => ["./dir/a.ts", "./dir/b.ts"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the function is only in the modules whose calls are replaced", async () => {
+    const { stdout, stderr, exitCode } = await runEntry(
+      `import other from "./other.ts";
+       import.meta.glob("./dir/a.ts");
+       console.log(JSON.stringify([typeof import.meta.glob, Object.keys(import.meta), other]));`,
+      { "proj/src/other.ts": `export default [typeof import.meta.glob, Object.keys(import.meta)];` },
+    );
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: ["function", ["glob"], ["undefined", []]],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the function moves no line or column and is not in the coverage", async () => {
+    const rest = `
+      export function covered() { return 1; }
+      export function thrower() {
+        throw new Error("thrown");
+      }`;
+    using dir = tempDir("import-meta-glob", {
+      "modules/a.ts": "",
+      "glob.ts": `export const keys = Object.keys(import.meta.glob("./modules/*.ts"));${rest}`,
+      "hand.ts": `export const keys = Object.keys({ "./modules/a.ts": 0 });${rest}`,
+      "positions.test.ts": `
+        import * as glob from "./glob.ts";
+        import * as hand from "./hand.ts";
+        test("positions", () => {
+          for (const module of [glob, hand]) {
+            module.covered();
+            try { module.thrower(); } catch (error) { console.log("at " + /(\\w+)\\.ts:(\\d+:\\d+)/.exec(error.stack).slice(1)); }
+          }
+        });`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--coverage", "./positions.test.ts"]);
+    expect(stdout.split("\n").filter(line => line.startsWith("at "))).toEqual(["at glob,4:19", "at hand,4:19"]);
+    expect(
+      stderr
+        .split("\n")
+        .filter(line => /^ (glob|hand)\.ts/.test(line))
+        .map(line => line.replace(/\s+/g, "")),
+    ).toEqual(["glob.ts|100.00|100.00|", "hand.ts|100.00|100.00|"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Object.keys of another Object gets the modules", async () => {
+    expect(
+      await runEntry(
+        `console.log(JSON.stringify((Object => Object.keys(import.meta.glob("./dir/[ab].ts", { eager: true, import: "name" })))({ keys: object => globalThis.Object.values(object) })));`,
+      ),
+    ).toEqual({ stdout: `["a","b"]`, stderr: "", exitCode: 0 });
   });
 
   test("Bun.Transpiler and --no-bundle leave it alone", async () => {
@@ -217,12 +372,106 @@ describe.concurrent("import.meta.glob", () => {
     [`"./${"a/".repeat(60_000)}*.ts"`, "The glob pattern is too long for a path"],
     [`"./*.ts", { base: "./${"a/".repeat(60_000)}" }`, 'The "import.meta.glob" option "base" is too long for a path'],
   ])("text that is too long for a path", async (args, message) => {
-    const { stdout, stderr, exitCode } = await runEntry(`console.log(import.meta.glob(${args}));`);
-    expect({ stdout, stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
-      stdout: "",
-      stderr: ["error: " + message],
-      exitCode: 1,
+    expect(
+      await runEntry(
+        `try { import.meta.glob(${args}); } catch (error) { console.log(error.name + ": " + error.message); }`,
+      ),
+    ).toEqual({ stdout: "TypeError: " + message, stderr: "", exitCode: 0 });
+  });
+
+  // No path on Windows is long enough.
+  test.skipIf(isWindows)("a file that is too far away for a path", async () => {
+    using dir = tempDir("import-meta-glob", { "x/a.js": "" });
+    // "../" is longer than a directory with a name of one letter.
+    const levels = Math.floor(((isMacOS ? 1024 : 4096) - String(dir).length - 16) / 2);
+    const deep = join(String(dir), Buffer.alloc(levels * 2, "d/").toString());
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(
+      join(deep, "m.js"),
+      `try { import.meta.glob("/x/*.js"); } catch (error) { console.log(error.name + ": " + error.message); }`,
+    );
+    const { stdout, stderr, exitCode } = await run(String(dir), [join(deep, "m.js")]);
+    expect({ stdout: stdout.replaceAll(String(dir), "<dir>"), stderr, exitCode }).toEqual({
+      stdout: `TypeError: The way to "<dir>/x/a.js" is too long for a path\n`,
+      stderr: "",
+      exitCode: 0,
     });
+  });
+
+  // Windows allows none of these names.
+  describe.skipIf(isWindows)("names", () => {
+    const names = {
+      "w/plain.js": `export default "plain";`,
+      "w/q.js": `export default "q";`,
+      "w/q.js?x.js": `export default "q?x";`,
+      "w/?.js": `export default "?";`,
+      "w/back\\slash.js": `export default "back\\\\slash";`,
+      "w/back/slash.js": `export default "another file";`,
+      "w/h#1.js": `export default "h#1";`,
+      "w/#h.js": `export default "#h";`,
+      "w/%3F.js": `export default "%3F";`,
+    };
+    const print = (options: string) => `
+      const found = import.meta.glob("./w/*.js", { import: "default"${options} });
+      for (const key in found) if (typeof found[key] === "function") found[key] = await found[key]();
+      console.log(JSON.stringify(found));`;
+    const importable = {
+      "./w/#h.js": "#h",
+      "./w/%3F.js": "%3F",
+      "./w/h#1.js": "h#1",
+      "./w/plain.js": "plain",
+      "./w/q.js": "q",
+    };
+
+    test.each(["", ", eager: true"])(
+      "that no import path can have are skipped: { import: 'default'%s }",
+      async options => {
+        using dir = tempDir("import-meta-glob", { ...names, "entry.js": print(options) });
+        const { stdout, stderr, exitCode } = await run(String(dir), ["entry.js"]);
+        expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+          stdout: importable,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("bun build says what it skips, and can import a name with a question mark", async () => {
+      using dir = tempDir("import-meta-glob", { ...names, "entry.js": print(", eager: true") });
+      const built = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "entry.js"]);
+      expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([
+        `warn: "import.meta.glob" skips "./w/back\\slash.js", whose name cannot be imported`,
+      ]);
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["out.js"]);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: { ...importable, "./w/?.js": "?", "./w/q.js?x.js": "q?x" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // macOS does not store such names.
+    test.skipIf(!isLinux).each(["", ", eager: true"])(
+      "that are not UTF-8 are skipped: { import: 'default'%s }",
+      async options => {
+        using dir = tempDir("import-meta-glob", {
+          "w/plain.js": `export default "plain";`,
+          "entry.js": print(options),
+        });
+        for (const bytes of [[0xff], [0x80], [0xf0, 0x9f], [0xed, 0xa0, 0x80], [0xc0, 0xaf]])
+          writeFileSync(
+            Buffer.concat([Buffer.from(join(String(dir), "w", "x")), Buffer.from(bytes), Buffer.from(".js")]),
+            "",
+          );
+        const { stdout, stderr, exitCode } = await run(String(dir), ["entry.js"]);
+        expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+          stdout: { "./w/plain.js": "plain" },
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   // Vite looks in the whole file system.
@@ -388,6 +637,42 @@ describe.concurrent("import.meta.glob", () => {
     expect(exitCode).toBe(0);
   });
 
+  // As in Vitest.
+  test.each([
+    ["does not hoist", ``],
+    ["hoists a mock", `vi.mock("./nothing.ts", () => ({}));`],
+  ])("eager entries are evaluated before the other imports of a file that %s", async (_, mock) => {
+    using dir = tempDir("import-meta-glob", {
+      "modules/a.ts": `(globalThis.events ??= []).push("a");`,
+      "modules/b.ts": `(globalThis.events ??= []).push("b");`,
+      "first.ts": `(globalThis.events ??= []).push("first");`,
+      "last.ts": `(globalThis.events ??= []).push("last");`,
+      "glob.test.ts": `
+        import "./first.ts";
+        import.meta.glob("./modules/*.ts", { eager: true });
+        import "./last.ts";
+        ${mock}
+        test("order", () => console.log(JSON.stringify(globalThis.events)));`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
+    expect(stdout.split("\n").filter(line => line.startsWith("["))).toEqual([`["a","b","first","last"]`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the factory of a hoisted mock can use eager entries", async () => {
+    using dir = tempDir("import-meta-glob", {
+      "modules/a.ts": `export const name = "a";`,
+      "mocked.ts": `export const names = "real";`,
+      "glob.test.ts": `
+        import { names } from "./mocked.ts";
+        vi.mock("./mocked.ts", () => ({ names: import.meta.glob("./modules/*.ts", { eager: true, import: "name" }) }));
+        test("names", () => console.log(JSON.stringify([names])));`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
+    expect(stdout.split("\n").filter(line => line.startsWith("["))).toEqual([`[{"./modules/a.ts":"a"}]`]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a module that calls it is not restored from the transpiler cache", async () => {
     const padding = Buffer.alloc(80 * 1024, "/").toString();
     using dir = tempDir("import-meta-glob", {
@@ -412,8 +697,31 @@ describe.concurrent("import.meta.glob", () => {
     });
     expect(readdirSync(cache)).toHaveLength(1);
   });
+
+  test("nor is one whose call could not be replaced, which does not only depend on the module", async () => {
+    const padding = Buffer.alloc(80 * 1024, "/").toString();
+    using dir = tempDir("import-meta-glob", {
+      "modules/a.ts": "",
+      "glob.ts": `let keys; try { keys = Object.keys(import.meta.glob("@/*.ts")); } catch (error) { keys = error.name; }\nconsole.log(JSON.stringify(keys));\n//${padding}`,
+    });
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    expect(await run(String(dir), ["glob.ts"], env)).toEqual({ stdout: `"TypeError"\n`, stderr: "", exitCode: 0 });
+    writeFileSync(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./modules/*"] } } }),
+    );
+    expect(await run(String(dir), ["glob.ts"], env)).toEqual({
+      stdout: `["/modules/a.ts"]\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
+// A call that cannot be replaced throws when it is reached, at the argument that is wrong.
 describe("errors", () => {
   // prettier-ignore
   const errors: [code: string, message: string, column: number][] = [
@@ -456,23 +764,23 @@ describe("errors", () => {
     ['import.meta.glob("./dir/*.ts", { query: { a: variable } })', 'Expected a value of the "import.meta.glob" option "query" to be a string, number or boolean literal, but got identifier', 61],
     ['import.meta.glob("#nope/*.ts")', 'Expected a glob pattern to start with "/", "./", "../", "**" or a path alias, but got "#nope/*.ts"', 33],
     ['import.meta.glob("@/dir/*.ts")', 'Expected a glob pattern to start with "/", "./", "../", "**" or a path alias, but got "@/dir/*.ts"', 33],
+    ['import.meta.glob("./d\\0ir/*.ts")', 'Expected a glob pattern without a null byte', 33],
+    ['import.meta.glob(["./dir/*.ts", "!/\\0/*.ts"])', 'Expected a glob pattern without a null byte', 48],
+    ['import.meta.glob("./*.ts", { base: "./dir/\\0" })', 'Expected the "import.meta.glob" option "base" without a null byte', 51],
   ];
   let actual: [message: string, line: number, column: number][];
   beforeAll(async () => {
     using dir = tempDir("import-meta-glob", {
       ...tree,
       ...Object.fromEntries(
-        errors.map(([code], i) => [
-          `proj/src/errors/${i}.ts`,
-          `declare const variable: any;\nexport default ${code};\n`,
-        ]),
+        errors.map(([code], i) => [`proj/src/errors/${i}.ts`, `const variable: any = [];\nexport default ${code};\n`]),
       ),
       "proj/src/entry.ts": `
         const out = [];
         for (let i = 0; i < ${errors.length}; i++)
           out.push(await import("./errors/" + i + ".ts").then(
             () => ["no error"],
-            error => [error.message, error.position?.line, error.position?.column]));
+            error => [error.name + ": " + error.message, ...error.stack.match(/:(\\d+):(\\d+)\\)?$/m).slice(1).map(Number)]));
         console.log(JSON.stringify(out));`,
     });
     const { stdout, stderr, exitCode } = await run(join(String(dir), "proj"), ["src/entry.ts"]);
@@ -480,6 +788,6 @@ describe("errors", () => {
     actual = JSON.parse(stdout);
   });
   test.each(errors.map(([code], i) => [code, i] as const))("%s", (_, i) => {
-    expect(actual[i]).toEqual([errors[i][1], 2, errors[i][2]]);
+    expect(actual[i]).toEqual(["TypeError: " + errors[i][1], 2, errors[i][2]]);
   });
 });

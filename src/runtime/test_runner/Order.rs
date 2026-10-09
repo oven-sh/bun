@@ -15,6 +15,8 @@ pub(crate) struct Order {
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
     pub(crate) previous_group_was_concurrent: bool,
+    /// A `describe.shuffle` decided an order.
+    pub(crate) shuffled: bool,
     pub(crate) cfg: Config,
 }
 
@@ -25,6 +27,7 @@ impl Order {
             sequences: Vec::new(),
             cfg,
             previous_group_was_concurrent: false,
+            shuffled: false,
         }
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
@@ -100,8 +103,16 @@ impl Order {
         };
 
         // shuffle entries if randomize flag is set
-        if let Some(random) = self.cfg.randomize.as_mut() {
-            shuffle_with_index(random, &mut current.entries);
+        match (current.inherited.shuffle, self.cfg.randomize.as_mut()) {
+            (Some(false), _) | (None, None) => {}
+            (None, Some(random)) => shuffle_with_index(random, &mut current.entries),
+            // A generator of its own: `--seed`, which shuffles everything else as well, gives this order again.
+            (Some(true), _) => {
+                let name = bun_wyhash::hash(current.base.name.as_deref().unwrap_or_default());
+                let mut random = bun_core::rand::DefaultPrng::init(self.cfg.seed.wrapping_add(name));
+                shuffle_with_index(&mut random, &mut current.entries);
+                self.shuffled = true;
+            }
         }
 
         // gather children
@@ -274,6 +285,8 @@ pub(crate) struct Config {
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
+    /// What `randomize` is seeded with.
+    pub(crate) seed: u64,
 }
 
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.

@@ -324,128 +324,232 @@ describe.concurrent("css module exports", () => {
     expect(await runtimeAndBundled(String(dir))).toEqual({ empty: {}, noLocals: {} });
   });
 
-  test("import() and require() throw what the bundler logs", async () => {
+  // What is wrong with the CSS never fails the import: it is skipped, as a
+  // browser skips it, and nothing is printed. `Bun.build` goes on rejecting it.
+  const skipping = `
+    const results = await Promise.all(
+      process.argv.slice(2).map(async file => {
+        const { logs } = await Bun.build({ entrypoints: ["./" + file], throw: false });
+        return [
+          file,
+          {
+            require: require("./" + file),
+            import: (await import("./" + file)).default,
+            bundler: logs.filter(log => log.level === "error").map(log => log.message),
+          },
+        ];
+      }),
+    );
+    process.stdout.write(JSON.stringify(Object.fromEntries(results)));
+  `;
+
+  async function expectSkipped(
+    cwd: string,
+    cases: Record<string, { exports: Record<string, string>; bundler: string | string[] }>,
+  ) {
+    const { stdout, stderr, exitCode } = await run(cwd, "skipping.ts", ...Object.keys(cases));
+    expect(stderr).toBe("");
+    const results = JSON.parse(stdout);
+    for (const [file, { exports, bundler }] of Object.entries(cases)) {
+      expect({ file, ...results[file] }).toEqual({
+        file,
+        import: exports,
+        require: exports,
+        bundler: expect.arrayContaining([bundler].flat()),
+      });
+    }
+    expect(exitCode).toBe(0);
+  }
+
+  test("invalid rules and declarations are skipped", async () => {
+    const emptySelector = "Invalid selector. Empty selector is not allowed";
+    const notSupported = (name: string) => `Invalid selector. CSS module class: '${name}' is currently not supported.`;
+    const cases = {
+      "bare-global.module.css": {
+        css: `.btn { color: red }\n:global .dark .btn { color: white }`,
+        exports: { btn: "btn_2oH-8A" },
+        bundler: notSupported("global"),
+      },
+      "global-block.module.css": {
+        css: `:global { .reset { margin: 0 } }\n.card { margin: 0 }`,
+        exports: { card: "card_zb_7FQ" },
+        bundler: notSupported("global"),
+      },
+      "bare-local.module.css": {
+        css: `:local .panel { color: red }\n.row { color: red }`,
+        exports: { row: "row_fzRKIQ" },
+        bundler: notSupported("local"),
+      },
+      "global-keyframes.module.css": {
+        css: `@keyframes :global(spin) { to { opacity: 1 } }\n.spinner { animation: spin 1s }`,
+        exports: { spinner: "spinner_dPaeTg" },
+        bundler: "Unexpected token: :",
+      },
+      "line-comments.module.css": {
+        css: `.head {\n  // first\n  color: red; // second\n}\n.foot { color: red }`,
+        exports: { head: "head_AaIjDQ", foot: "foot_AaIjDQ" },
+        bundler: "Unexpected token: ;",
+      },
+      // Up to the next "{", everything is the selector of the next rule.
+      "line-comment-before-a-rule.module.css": {
+        css: `.one { color: red }\n// comment\n.two { color: red }\n.three { color: red }`,
+        exports: { one: "one_2CjRWA", three: "three_2CjRWA" },
+        bundler: emptySelector,
+      },
+      "sass-variable.module.css": {
+        css: `$gap: 4px;\n.first { margin: $gap }\n.second { margin: $gap }`,
+        exports: { second: "second_0tV0hA" },
+        bundler: emptySelector,
+      },
+      "stray-semicolon.module.css": {
+        css: `.one { color: red };\n.two { color: red }\n.three { color: red }`,
+        exports: { one: "one_avrLAQ", three: "three_avrLAQ" },
+        bundler: emptySelector,
+      },
+      "stray-brace.module.css": {
+        css: `.one { color: red } }\n.two { color: red }\n.three { color: red }`,
+        exports: { one: "one_bxI1dg", three: "three_bxI1dg" },
+        bundler: emptySelector,
+      },
+      "less.module.css": {
+        css: `.rounded() { border-radius: 2px }\n.box { .rounded(); color: red }`,
+        exports: { box: "box_OTTf4Q" },
+        bundler: "Invalid selector. Expected identifier after '.' in class selector, found: rounded(",
+      },
+      "star-hack.module.css": {
+        css: `.clearfix { *zoom: 1; color: red }\n.next { color: red }`,
+        exports: { clearfix: "clearfix_lvEdxw", next: "next_lvEdxw" },
+        bundler: "Unexpected token: ;",
+      },
+      "late-import.module.css": {
+        css: `.one { color: red }\n@import "./plain.css";\n.two { color: red }`,
+        exports: { one: "one_r-liRw", two: "two_r-liRw" },
+        bundler: "@import rules must come before any other rules except @charset and @layer",
+      },
+      "declaration-after-composes.module.css": {
+        css: `.base { color: red }\n.a { composes: base; *zoom: 1 }\n.b { *zoom: 1; composes: base }`,
+        exports: { base: "base_dl5igQ", a: "base_dl5igQ a_dl5igQ", b: "base_dl5igQ b_dl5igQ" },
+        bundler: "Unexpected end of input",
+      },
+      // The names a selector had before it went wrong are kept.
+      "deep-combinator.module.css": {
+        css: `.outer >>> .inner { color: red }\n.next { color: red }`,
+        exports: { outer: "outer_AQnDcA", next: "next_AQnDcA" },
+        bundler: "Invalid selector. Found a dangling combinator with no selector",
+      },
+      "unescaped.module.css": {
+        css: `.w-1/2 { width: 50% }\n.1col { width: 100% }\n.ok { width: 1px }`,
+        exports: { "w-1": "w-1_-1Df1Q", ok: "ok_-1Df1Q" },
+        bundler: "Unexpected token: /",
+      },
+      "not-css.module.css": { css: `{"a": 1}`, exports: {}, bundler: emptySelector },
+    };
+    using dir = tempDir("css-module-skipped", {
+      ...Object.fromEntries(Object.entries(cases).map(([file, { css }]) => [file, css])),
+      "plain.css": `.x { color: red }`,
+      "skipping.ts": skipping,
+    });
+    await expectSkipped(String(dir), cases);
+  });
+
+  test("a composes that cannot be followed is left out", async () => {
     const neverAppears = (name: string, file: string) =>
       `The name "${name}" never appears in "${file}" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.`;
-    const invalidSelector = {
-      name: "BuildMessage",
-      message: "Invalid selector. Expected identifier after '.' in class selector, found: .",
-      at: "syntax.module.css:2:2",
-    };
+    const notCSS = (file: string) =>
+      `Cannot use the "composes" property with the "${file}" file (it is not a CSS file)`;
+    const invalidSelector = "Invalid selector. Expected identifier after '.' in class selector, found: .";
     const cases = {
-      "syntax.module.css": { css: `.a { color: red }\n..b { }\n`, error: invalidSelector },
-      "composes-syntax.module.css": { css: `.a { composes: a from "./syntax.module.css" }`, error: invalidSelector },
+      "syntax.module.css": {
+        css: `.a { color: red }\n..b { }\n`,
+        exports: { a: "a_bksvvA" },
+        bundler: invalidSelector,
+      },
+      "composes-syntax.module.css": {
+        css: `.a { composes: a from "./syntax.module.css" }`,
+        exports: { a: "a_bksvvA a_M__03g" },
+        bundler: invalidSelector,
+      },
       "missing-local.module.css": {
         css: `.a { composes: nope }`,
-        error: {
-          name: "BuildMessage",
-          message: neverAppears("nope", "missing-local.module.css"),
-          at: "missing-local.module.css:1:15",
-        },
+        exports: { a: "a_axKivQ" },
+        bundler: neverAppears("nope", "missing-local.module.css"),
       },
       "missing-imported.module.css": {
         css: `.a { composes: nope from "./ok.module.css" }`,
-        error: {
-          name: "BuildMessage",
-          message: neverAppears("nope", "ok.module.css"),
-          at: "missing-imported.module.css:1:15",
-        },
+        exports: { a: "a_lV3ovQ" },
+        bundler: neverAppears("nope", "ok.module.css"),
       },
       "not-a-module.module.css": {
         css: `.a { composes: x from "./plain.css" }`,
-        error: { name: "BuildMessage", message: neverAppears("x", "plain.css"), at: "not-a-module.module.css:1:15" },
+        exports: { a: "a_XQAOgQ" },
+        bundler: neverAppears("x", "plain.css"),
       },
       "missing-in-composed.module.css": {
         css: `.a { composes: a from "./missing-local.module.css" }`,
-        error: {
-          name: "BuildMessage",
-          message: neverAppears("nope", "missing-local.module.css"),
-          at: "missing-local.module.css:1:15",
-        },
+        exports: { a: "a_axKivQ a_22pesA" },
+        bundler: neverAppears("nope", "missing-local.module.css"),
       },
       "missing-file.module.css": {
         css: `.a { composes: x from "./nofile.module.css" }`,
-        error: {
-          name: "ResolveMessage",
-          message: `Could not resolve: "./nofile.module.css"`,
-          at: "missing-file.module.css:1:22",
-        },
+        exports: { a: "a_fujFUQ" },
+        bundler: `Could not resolve: "./nofile.module.css"`,
       },
       "missing-package.module.css": {
         css: `.a { composes: x from "nopkg/x.module.css" }`,
-        error: {
-          name: "ResolveMessage",
-          message: `Could not resolve: "nopkg/x.module.css". Maybe you need to "bun install"?`,
-          at: "missing-package.module.css:1:22",
-        },
+        exports: { a: "a_wsh19Q" },
+        bundler: `Could not resolve: "nopkg/x.module.css". Maybe you need to "bun install"?`,
+      },
+      "alias.module.css": {
+        css: `.a { composes: x from "@/styles/x.module.css"; composes: y from "~pkg/y.module.css" }`,
+        exports: { a: "a_hM-9SA" },
+        bundler: [
+          `Could not resolve: "@/styles/x.module.css". Maybe you need to "bun install"?`,
+          `Could not resolve: "~pkg/y.module.css". Maybe you need to "bun install"?`,
+        ],
       },
       "not-css.module.css": {
-        css: `.a { composes: x from "./script.js" }`,
-        error: {
-          name: "BuildMessage",
-          message: `Cannot use the "composes" property with the "script.js" file (it is not a CSS file)`,
-          at: "not-css.module.css:1:15",
-        },
+        css: `.a { composes: x from "./script.js"; composes: y from "./sheet.scss" }`,
+        exports: { a: "a_56-NkA" },
+        bundler: [notCSS("script.js"), notCSS("sheet.scss")],
       },
       "id-only.module.css": {
         css: `#x { color: red }\n.a { composes: x }`,
-        error: {
-          name: "BuildMessage",
-          message: `The composes property cannot be used with "x", because it is not a single class name.`,
-          at: "id-only.module.css:2:15",
-        },
+        exports: { x: "x_0YzEFA", a: "a_0YzEFA" },
+        bundler: `The composes property cannot be used with "x", because it is not a single class name.`,
       },
       "two.module.css": {
         css: `.a { composes: n1 n2 }`,
-        error: [
-          { name: "BuildMessage", message: neverAppears("n1", "two.module.css"), at: "two.module.css:1:15" },
-          { name: "BuildMessage", message: neverAppears("n2", "two.module.css"), at: "two.module.css:1:15" },
-        ],
+        exports: { a: "a_yCs-Eg" },
+        bundler: [neverAppears("n1", "two.module.css"), neverAppears("n2", "two.module.css")],
+      },
+      "function.module.css": {
+        css: `.a { composes: global(x) }`,
+        exports: { a: "a_3mn57Q" },
+        bundler: "Invalid declaration",
+      },
+      "the-rest.module.css": {
+        css: `
+          .base { color: red }
+          .a {
+            composes: base nope;
+            composes: x from "./nofile.module.css";
+            composes: g from global;
+            composes: title nope from "./ok.module.css";
+          }
+        `,
+        exports: { base: "base_-Ns4ug", a: "base_-Ns4ug g title_eAaSLw a_-Ns4ug" },
+        bundler: `Could not resolve: "./nofile.module.css"`,
       },
     };
-    using dir = tempDir("css-module-errors", {
+    using dir = tempDir("css-module-composes-skipped", {
       ...Object.fromEntries(Object.entries(cases).map(([file, { css }]) => [file, css])),
       "ok.module.css": `.title { color: red }`,
       "plain.css": `.x { color: red }`,
       "script.js": `export {};`,
-      "errors.ts": `
-        import { basename } from "node:path";
-        const show = e =>
-          e.errors?.map(show) ?? {
-            name: e.name,
-            message: e.message,
-            at: basename(e.position.file) + ":" + e.position.line + ":" + e.position.column,
-          };
-        const results = {};
-        for (const file of process.argv.slice(2)) {
-          const result = (results[file] = {});
-          try {
-            result.import = await import("./" + file);
-          } catch (e) {
-            result.import = show(e);
-          }
-          try {
-            result.require = require("./" + file);
-          } catch (e) {
-            result.require = show(e);
-          }
-          const { logs } = await Bun.build({ entrypoints: ["./" + file], throw: false });
-          result.bundler = logs.map(log => log.message);
-        }
-        process.stdout.write(JSON.stringify(results));
-      `,
+      "sheet.scss": `.y { color: red }`,
+      "skipping.ts": skipping,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "errors.ts", ...Object.keys(cases));
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const results = JSON.parse(stdout);
-    for (const [file, { error }] of Object.entries(cases)) {
-      expect({ file, ...results[file] }).toEqual({
-        file,
-        import: error,
-        require: error,
-        bundler: expect.arrayContaining([error].flat().map(({ message }) => message)),
-      });
-    }
+    await expectSkipped(String(dir), cases);
   });
 
   test("a file that was deleted after it was resolved", async () => {
@@ -461,7 +565,7 @@ describe.concurrent("css module exports", () => {
         unlinkSync("c.module.css");
         for (const file of ["a", "b"]) {
           try {
-            await import("./" + file + ".module.css?again");
+            console.log(JSON.stringify((await import("./" + file + ".module.css?again")).default));
           } catch (e) {
             console.log(e.name + ": " + e.message);
           }
@@ -470,27 +574,130 @@ describe.concurrent("css module exports", () => {
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "e.ts");
     expect({ stdout: normalizeBunSnapshot(stdout, dir), stderr, exitCode }).toEqual({
-      stdout: `BuildMessage: ENOENT reading "<dir>/a.module.css"\nBuildMessage: ENOENT reading "<dir>/c.module.css"`,
+      stdout: `BuildMessage: ENOENT reading "<dir>/a.module.css"\n{"b":"b_Kd7Gww"}`,
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test("an uncaught error shows the line of the CSS file", async () => {
-    using dir = tempDir("css-module-uncaught", {
+  test("an invalid module as the entry point, a preload or a static import", async () => {
+    using dir = tempDir("css-module-invalid-entry", {
       "a.module.css": `.a { color: red }\n..b { }\n`,
-      "e.ts": `import "./a.module.css";`,
+      "e.ts": `import styles from "./a.module.css";\nconsole.log(JSON.stringify(styles));`,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "e.ts");
-    expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
-      "2 | ..b { }
-           ^
-      error: Invalid selector. Expected identifier after '.' in class selector, found: .
-          at <dir>/a.module.css:2:2
+    expect(
+      await Promise.all([
+        run(String(dir), "./a.module.css"),
+        run(String(dir), "--preload", "./a.module.css", "e.ts"),
+        run(String(dir), "e.ts"),
+      ]),
+    ).toEqual([
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: `{"a":"a_BLNoTg"}\n`, stderr: "", exitCode: 0 },
+      { stdout: `{"a":"a_BLNoTg"}\n`, stderr: "", exitCode: 0 },
+    ]);
+  });
 
-      Bun v<bun-version>"
-    `);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  test("a specifier that is not UTF-8 and does not resolve", async () => {
+    const invalid = (before: string, after: string) =>
+      Buffer.concat([Buffer.from(before), Buffer.from([0xff]), Buffer.from(after)]);
+    using dir = tempDir("css-module-invalid-utf8", {
+      "a.module.css": invalid(`.a { composes: b from "./b`, `.module.css" }`),
+      "import.css": invalid(`@import "./b`, `.css";`),
+      "url.css": invalid(`.a { background: url("./b`, `.png") }`),
+      "e.ts": `import styles from "./a.module.css";\nconsole.log(JSON.stringify(styles));`,
+    });
+    const [runtime, ...bundler] = await Promise.all([
+      run(String(dir), "e.ts"),
+      run(String(dir), "build", "e.ts", "--outdir=out"),
+      run(String(dir), "build", "import.css", "--outdir=out"),
+      run(String(dir), "build", "url.css", "--outdir=out"),
+    ]);
+    expect(runtime).toEqual({ stdout: `{"a":"a_BLNoTg"}\n`, stderr: "", exitCode: 0 });
+    expect(bundler.map(({ stderr, exitCode }) => [stderr.match(/^error: .*$/m)?.[0], exitCode])).toEqual([
+      [`error: Could not resolve: "./b\uFFFD.module.css"`, 1],
+      [`error: Could not resolve: "./b\uFFFD.css"`, 1],
+      [`error: Could not resolve: "./b\uFFFD.png"`, 1],
+    ]);
+  });
+
+  test("a plugin's path that is longer than a path buffer", async () => {
+    using dir = tempDir("css-module-long-path", {
+      "e.ts": `
+        const repeat = text => Buffer.alloc(100_000 * text.length, text).toString();
+        const paths = {
+          "long:name": "/" + repeat("a") + "/x.module.css",
+          "long:directories": repeat("/a") + "/x.module.css",
+          "long:parents": repeat("/..") + "/x.module.css",
+          "long:relative": repeat("a/") + "x.module.css",
+        };
+        Bun.plugin({
+          name: "long paths",
+          setup(build) {
+            build.onResolve({ filter: /^long:/ }, ({ path }) => ({ path: paths[path] }));
+            build.onLoad({ filter: /x\\.module\\.css$/ }, () => ({
+              contents: ".a { color: red } .b { composes: a }",
+              loader: "css",
+            }));
+          },
+        });
+        for (const specifier in paths) console.log(specifier, JSON.stringify((await import(specifier)).default));
+      `,
+    });
+    expect(await run(String(dir), "e.ts")).toEqual({
+      stdout: [
+        `long:name {"a":"a_jsfsgw","b":"a_jsfsgw b_jsfsgw"}`,
+        `long:directories {"a":"a_eK6HIw","b":"a_eK6HIw b_eK6HIw"}`,
+        `long:parents {"a":"a_3vXDBw","b":"a_3vXDBw b_3vXDBw"}`,
+        `long:relative {"a":"a_v5UDKQ","b":"a_v5UDKQ b_v5UDKQ"}`,
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("what the resolver logs while it follows composes is not printed", async () => {
+    using dir = tempDir("css-module-resolver-log", {
+      "a.module.css": `.a { composes: b from "cut-short/b.module.css" }`,
+      "node_modules/cut-short/package.json": `{ "name": "cut-short",`,
+      "node_modules/cut-short/b.module.css": `.b { color: red }`,
+      "e.ts": `import styles from "./a.module.css";\nconsole.log(JSON.stringify(styles));`,
+    });
+    expect(await run(String(dir), "e.ts")).toEqual({
+      stdout: `{"a":"b_ua79Dw a_BLNoTg"}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("nested rules, required with little stack left", async () => {
+    using dir = tempDir("css-module-little-stack", {
+      "a.module.css": Buffer.alloc(150 * 3, ".a{").toString() + Buffer.alloc(150, "}").toString(),
+      // On the main thread, JavaScript runs out of stack long before native code does.
+      "e.cjs": `new Worker(require.resolve("./worker.cjs"));`,
+      "worker.cjs": `
+        let styles;
+        let frames = 0;
+        let next = 128;
+        // Overflows the stack, then tries from ever higher frames on the way back up.
+        (function dive() {
+          try {
+            dive();
+          } catch {}
+          if (styles || ++frames < next) return;
+          next *= 2;
+          try {
+            // A require() that overflows can leave an empty module in require.cache: a new specifier each time.
+            styles = require("./a.module.css?" + frames);
+          } catch (e) {
+            if (!(e instanceof RangeError)) throw e;
+          }
+        })();
+        console.log(JSON.stringify(styles ?? require("./a.module.css")));
+      `,
+    });
+    expect(await run(String(dir), "e.cjs")).toEqual({ stdout: `{"a":"a_BLNoTg"}\n`, stderr: "", exitCode: 0 });
   });
 
   test("what the bundler only warns about does not throw", async () => {
@@ -520,42 +727,60 @@ describe.concurrent("css module exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.each(["--hot", "--watch"])("%s reloads when the module or a file it composes from changes", async flag => {
+  // Each file is seen half written before it is seen complete.
+  const rewrites = {
+    "the module": [
+      ["a.module.css", `.c { color: red } .`, `{"c":"c_BLNoTg"}`],
+      ["a.module.css", `.c { color: red } .z { color: red }`, `{"c":"c_BLNoTg","z":"z_BLNoTg"}`],
+    ],
+    "a file it composes from": [
+      ["b.module.css", "", `{"a":"a_BLNoTg"}`],
+      ["b.module.css", `.x { color: red }`, `{"a":"x_Kd7Gww a_BLNoTg"}`],
+    ],
+  };
+  test.each([
+    ["--hot", "the module"],
+    ["--hot", "a file it composes from"],
+    ["--watch", "the module"],
+    ["--watch", "a file it composes from"],
+  ] as const)("%s reloads when %s changes", async (flag, which) => {
     using dir = tempDir("css-module-reload", {
       "a.module.css": `.a { composes: x from "./b.module.css" }`,
       "b.module.css": `.x { composes: y } .y { color: red }`,
       "e.ts": `
-        import styles from "./a.module.css";
+        // Until the other end of stdin is closed: a test that times out never gets to kill this process.
+        globalThis.keepAlive ??= Bun.stdin.text().then(() => process.exit());
+        const { default: styles } = await import("./a.module.css");
         console.log(JSON.stringify(styles));
-        globalThis.keepAlive ??= setInterval(() => {}, 1 << 30);
       `,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), flag, "e.ts"],
       env: bunEnv,
       cwd: String(dir),
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",
     });
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let output = "";
-    async function nextLine() {
-      while (!output.includes("\n")) {
+    // One write can cause several reloads, and the first of them can find the
+    // file still empty: what is printed before the line does not matter.
+    async function line(expected: string) {
+      while (!output.split("\n").slice(0, -1).includes(expected)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stdout closed after ${JSON.stringify(output)}`);
+        if (done) break;
         output += decoder.decode(value, { stream: true });
       }
-      const line = output.slice(0, output.indexOf("\n"));
-      output = output.slice(line.length + 1);
-      return line;
+      expect(output.split("\n")).toContain(expected);
     }
 
-    expect(await nextLine()).toBe(`{"a":"y_Kd7Gww x_Kd7Gww a_BLNoTg"}`);
-    writeFileSync(join(String(dir), "b.module.css"), `.x { color: red }`);
-    expect(await nextLine()).toBe(`{"a":"x_Kd7Gww a_BLNoTg"}`);
-    writeFileSync(join(String(dir), "a.module.css"), `.a { color: red } .z { color: red }`);
-    expect(await nextLine()).toBe(`{"a":"a_BLNoTg","z":"z_BLNoTg"}`);
+    await line(`{"a":"y_Kd7Gww x_Kd7Gww a_BLNoTg"}`);
+    for (const [file, contents, expected] of rewrites[which]) {
+      writeFileSync(join(String(dir), file), contents);
+      await line(expected);
+    }
   });
 });
 
@@ -592,6 +817,6 @@ test("css module: a composes chain too deep for the stack is an error", async ()
   expect(steps).toEqual([
     // `.a`, and `.c0` to `.c<depth>`.
     ...steps.slice(0, -1).map(([depth]) => [depth, depth + 2]),
-    [steps.at(-1)![0], `BuildMessage: Maximum "composes" depth exceeded`],
+    [steps.at(-1)![0], "RangeError: Maximum call stack size exceeded."],
   ]);
 });

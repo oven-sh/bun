@@ -16,9 +16,10 @@ use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
-use self::expect_deferred::ExpectDeferred;
+use self::expect_deferred::{Asked, ExpectDeferred, Pass};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::pretty_format::JestPrettyFormat;
 use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
@@ -666,7 +667,9 @@ impl Expect {
         let v = unsafe { *value };
         let promise = match flags.promise() {
             Promise::None => None,
-            _ => match ExpectDeferred::settled(global_this, [v, JSValue::UNDEFINED], || Self::promise_to_await(global_this, v)) {
+            _ => match Pass::settled(global_this, Asked::Promise, &mut || {
+                Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
+            }) {
                 Ok(promise) => promise,
                 Err(_) => return false,
             },
@@ -690,16 +693,15 @@ impl Expect {
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::call_in(global_this, callframe, None)
+        Self::call_in(global_this, callframe.arguments(), None)
     }
 
     /// `state`: the test the call belongs to, if not the one that is running.
     pub(crate) fn call_in(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        arguments: &[JSValue],
         state: Option<bun_test::RefDataValue>,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
         let mut custom_label = bun_core::String::EMPTY;
@@ -739,18 +741,15 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// `expect(...arguments)` with `flags` set, for a static function of whichever `expect` `callframe` calls it on.
+    /// `expect(...arguments)` with `flags` set, for a static function that `callframe` calls on `expect` or on the `expect` of a test context.
     fn call_with_flags(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         arguments: &[JSValue],
         flags: u8,
     ) -> JsResult<JSValue> {
-        let expect_fn = match callframe.this() {
-            expect_fn if expect_fn.is_callable() => expect_fn,
-            _ => <Self as bun_jsc::JsClass>::get_constructor(global_this),
-        };
-        let expect_js_value = expect_fn.call(global_this, JSValue::UNDEFINED, arguments)?;
+        let state = super::test_context::TestContext::state_of_bound(callframe.this());
+        let expect_js_value = Self::call_in(global_this, arguments, state)?;
         if let Some(expect_ptr) = Self::from_js(expect_js_value) {
             // SAFETY: `expect_js_value` is on the stack and owns the payload.
             unsafe { &*expect_ptr }.update_flags(|f| f.0 |= flags);
@@ -931,52 +930,45 @@ impl Expect {
         // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
         let vm = global_this.bun_vm().as_mut();
 
-        let mut return_value_from_function: JSValue = JSValue::ZERO;
-
         if !value.js_type().is_function() {
             if self.flags.get().promise() != Promise::None {
-                return Ok((Some(value), return_value_from_function));
+                return Ok((Some(value), JSValue::ZERO));
             }
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
-        let key = [value, JSValue::UNDEFINED];
-        let thrown_by = |promise: bun_jsc::AnyPromise, returned: JSValue| match promise
-            .unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled)
-        {
-            js_promise::Unwrapped::Fulfilled(_) => Ok((None, returned)),
-            // since we know for sure it rejected, we should always return the error
-            js_promise::Unwrapped::Rejected(rejected) => Ok((Some(rejected.to_error().unwrap_or(rejected)), returned)),
-            js_promise::Unwrapped::Pending => Err(ExpectDeferred::wait_for(global_this, key, promise)),
-        };
-        if let Some(promise) = ExpectDeferred::waited_for(global_this, key)? {
-            return thrown_by(promise, promise.as_value());
-        }
+        let mut captured_rejection: JSValue = JSValue::ZERO;
+        let return_value_from_function = Pass::once(global_this, Asked::Call, &mut || {
+            // Drain existing unhandled rejections
+            let _ = vm.global().handle_rejected_promises();
 
-        let mut return_value: JSValue = JSValue::ZERO;
+            let scope = vm.unhandled_rejection_scope();
+            let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+            vm.unhandled_pending_rejection_to_capture = Some(&raw mut captured_rejection);
+            vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+            let returned = match value.call(global_this, JSValue::UNDEFINED, &[]) {
+                Ok(v) => v,
+                Err(err) => global_this.take_exception(err),
+            };
+            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
-        // Drain existing unhandled rejections
-        let _ = vm.global().handle_rejected_promises();
-
-        let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
-            Ok(v) => v,
-            Err(err) => global_this.take_exception(err),
-        };
-        vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-
-        let _ = vm.global().handle_rejected_promises();
-
-        if return_value.is_empty() {
-            return_value = return_value_from_function;
-        }
+            let _ = vm.global().handle_rejected_promises();
+            scope.apply(vm);
+            Ok(returned)
+        })?;
+        let return_value = Pass::once(global_this, Asked::Call, &mut || {
+            Ok(if captured_rejection.is_empty() { return_value_from_function } else { captured_rejection })
+        })?;
 
         if let Some(promise) = return_value.as_any_promise() {
-            scope.apply(vm);
-            return thrown_by(promise, return_value_from_function);
+            return match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
+                js_promise::Unwrapped::Fulfilled(_) => Ok((None, return_value_from_function)),
+                // since we know for sure it rejected, we should always return the error
+                js_promise::Unwrapped::Rejected(rejected) => {
+                    Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function))
+                }
+                js_promise::Unwrapped::Pending => Err(Pass::wait_for(global_this, promise)),
+            };
         }
 
         if return_value != return_value_from_function {
@@ -984,8 +976,6 @@ impl Expect {
                 existing.set_handled(global_this.vm());
             }
         }
-
-        scope.apply(vm);
 
         Ok((
             return_value.to_error().or_else(|| return_value_from_function.to_error()),
@@ -1013,23 +1003,29 @@ impl Expect {
         if !thrown.is_object() {
             return Ok(JSValue::UNDEFINED);
         }
+        const MAX_CAUSES: usize = 100;
         let message = thrown.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED);
-        let mut cause = thrown.get(global_this, "cause")?;
-        if cause.is_none() {
+        let Some(mut cause) = thrown.get(global_this, "cause")? else {
             return Ok(message);
-        }
+        };
         let mut text = message.to_bun_string(global_this)?.to_owned_slice();
-        while let Some(error) = cause {
-            let line = if error.is_any_error() {
-                error.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)
-            } else if error.is_string() {
-                error
+        // Only compared: Jest goes round a cycle until the message is too long for a string.
+        let mut seen = vec![thrown];
+        while !seen.contains(&cause) && seen.len() <= MAX_CAUSES {
+            let line = if cause.is_any_error() {
+                cause.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)
+            } else if cause.is_string() {
+                cause
             } else {
                 break;
             };
             text.extend_from_slice(b"\nCause: ");
             text.extend_from_slice(&line.to_bun_string(global_this)?.to_owned_slice());
-            cause = if error.is_object() { error.get(global_this, "cause")? } else { None };
+            seen.push(cause);
+            match if cause.is_object() { cause.get(global_this, "cause")? } else { None } {
+                Some(next) => cause = next,
+                None => break,
+            }
         }
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &text)
     }
@@ -1146,11 +1142,6 @@ impl Expect {
             let signature = Self::get_signature(fn_name, "", false);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
-        let file_format = runner.snapshots.format_of(this).unwrap_or(SnapshotFormat::Bun);
-        if let Err(crate::Error::Alloc(bun_alloc::AllocError)) = runner.snapshots.add_count(this, file_format, b"") {
-            return Err(JsError::OutOfMemory);
-        }
-
         let update = runner.snapshots.update_snapshots;
         let needs_write;
 
@@ -1159,7 +1150,15 @@ impl Expect {
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
+        let (shown, same_as_older_bun) =
+            this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
+        if this.bun_test().is_some() {
+            match runner.snapshots.format_of(this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
+                Ok(_) => {}
+                Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
+                Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
+            }
+        }
 
         let mut start_indent: Option<Box<[u8]>> = None;
         let mut end_indent: Option<Box<[u8]>> = None;
@@ -1175,7 +1174,19 @@ impl Expect {
                 needs_write = true;
                 start_indent = trim_res.start_indent.map(Box::<[u8]>::from);
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
-            } else if this.matches_in_another_format(global_this, received, format, trim_res.trimmed)? {
+            } else if Self::was_written_by_another(
+                // Jest and Vitest print a value alike.
+                match (received, is_vitest) {
+                    (Received::Value(_), true) => &[],
+                    (Received::Value(_), false) | (Received::Thrown(_), true) => &[SnapshotFormat::Jest],
+                    (Received::Thrown(_), false) => &[SnapshotFormat::Jest, SnapshotFormat::Vitest],
+                },
+                !same_as_older_bun,
+                global_this,
+                if property_matchers.is_some() { Received::Value(shown) } else { received },
+                property_matchers,
+                trim_res.trimmed,
+            )? {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
             } else {
@@ -1236,34 +1247,45 @@ impl Expect {
                 kind: fn_name.as_bytes(),
                 start_indent,
                 end_indent,
+                is_in_vitest_test: is_vitest,
             })?;
         }
 
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Whether `saved` is what another runner than that of `tried` writes for `received`.
+    /// Whether `saved`, which is not what `received` prints as, is what an older Bun or the runner of one of `formats`
+    /// wrote for it. What printing throws here only says that it is not.
     #[cold]
-    fn matches_in_another_format(
-        &self,
+    fn was_written_by_another(
+        formats: &[SnapshotFormat],
+        or_older_bun: bool,
         global_this: &JSGlobalObject,
         received: Received,
-        tried: SnapshotFormat,
+        property_matchers: Option<JSValue>,
         saved: &[u8],
     ) -> JsResult<bool> {
-        for format in [SnapshotFormat::Bun, SnapshotFormat::Jest, SnapshotFormat::Vitest] {
-            if format == tried {
-                continue;
-            }
-            let mut printed: Vec<u8> = Vec::new();
-            Self::value_to_snapshot(global_this, received, format)?.jest_snapshot_pretty_format(&mut printed, global_this)?;
-            if format.matches(saved, &printed) {
-                return Ok(true);
+        for format in or_older_bun.then_some(None).into_iter().chain(formats.iter().copied().map(Some)) {
+            let is_it = (|| {
+                let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
+                let Some(format) = format else {
+                    return JestPrettyFormat::did_older_bun_print(global_this, value, saved);
+                };
+                let mut printed: Vec<u8> = Vec::new();
+                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)?;
+                Ok(printed == saved)
+            })();
+            match is_it {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(JsError::Thrown) if global_this.clear_exception_except_termination() => {}
+                Err(err) => return Err(err),
             }
         }
         Ok(false)
     }
 
+    /// What was printed, which has the matchers of `property_matchers`, and the result of `print_snapshot`.
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1271,16 +1293,19 @@ impl Expect {
         property_matchers: Option<JSValue>,
         pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
-    ) -> JsResult<()> {
+        format: SnapshotFormat,
+    ) -> JsResult<(JSValue, bool)> {
+        let mut value = value;
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (value, true));
             }
 
             let prop_matchers = _prop_matchers;
 
-            if !value.jest_deep_match(prop_matchers, global_this, true)? {
+            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, true)?;
+            if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(false);
@@ -1288,11 +1313,13 @@ impl Expect {
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(drop);
+                ).map(|_| (value, true));
             }
+            value = with_matchers;
         }
 
-        value.jest_snapshot_pretty_format(pretty_value, global_this)
+        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, value, property_matchers, pretty_value, format)?;
+        Ok((value, same_as_older_bun))
     }
 
     pub(crate) fn snapshot(
@@ -1310,11 +1337,21 @@ impl Expect {
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
+        let (shown, same_as_older_bun) =
+            self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
 
         match runner.snapshots.match_or_write(self, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
+                // Bun used to add to the files of Jest in its own format.
+                let received = if property_matchers.is_some() { Received::Value(shown) } else { received };
+                if format != SnapshotFormat::Vitest
+                    && Self::was_written_by_another(&[], !same_as_older_bun, global_this, received, property_matchers, &saved)?
+                {
+                    runner.snapshots.passed += 1;
+                    return Ok(JSValue::UNDEFINED);
+                }
+                runner.snapshots.failed += 1;
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
                 let diff_format = DiffFormatter::from_strings(&pretty_value, &saved, false);
                 throw!(self, global_this, signature, "\n\n{}\n", diff_format)
@@ -1324,7 +1361,7 @@ impl Expect {
     }
 
     #[cold]
-    fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
+    pub(crate) fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
         let runner = Jest::runner().expect("unreachable");
         let Some(buntest_strong) = self.bun_test() else {
             return global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"));
@@ -1476,6 +1513,10 @@ impl Expect {
             while let Some((matcher_name, matcher_fn)) = iter.next()? {
 
                 if !matcher_fn.js_type().is_function() {
+                    // `import * as matchers from "a-commonjs-package"`
+                    if matcher_name.eq_ascii(b"default") || matcher_name.eq_ascii(b"__esModule") {
+                        continue;
+                    }
                     let type_name = if matcher_fn.is_null() {
                         bun_core::StringView::static_("null")
                     } else {
@@ -1558,29 +1599,26 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
-    /// `user`: with the left value, tells this use of the matcher from the others in the same `expect()` matcher call.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         custom_label: &bun_core::String,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
-        user: JSValue,
         args: &[JSValue],
         flags: Flags,
+        parent: Option<&RefPtr<bun_test::RefData>>,
         silent: bool,
     ) -> JsResult<bool> {
-        let key = [user, args[0]];
-        let mut result = match ExpectDeferred::waited_for(global_this, key)? {
-            Some(promise) => promise.as_value(),
-            // call the custom matcher implementation
-            None => matcher_fn.call(global_this, ExpectMatcherContext { flags }.to_js(global_this), args)?,
-        };
+        // call the custom matcher implementation
+        let mut result = Pass::once(global_this, Asked::Matcher, &mut || {
+            matcher_fn.call(global_this, ExpectMatcherContext { flags, parent: parent.cloned() }.to_js(global_this), args)
+        })?;
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
             promise.set_handled(vm);
             if promise.status() == js_promise::Status::Pending {
-                return Err(ExpectDeferred::wait_for(global_this, key, promise));
+                return Err(Pass::wait_for(global_this, promise));
             }
 
             result = promise.result(vm);
@@ -1725,7 +1763,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), expect.parent.as_ref(), false)?;
 
         Ok(this_value)
     }
@@ -1734,7 +1772,7 @@ impl Expect {
     // `Expect::add_snapshot_serializer(..)` UFCS, so forward.
     #[inline]
     pub(crate) fn add_snapshot_serializer(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::not_implemented_static_fn(global_this, call_frame)
+        JestPrettyFormat::add_snapshot_serializer(global_this, call_frame)
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -1819,12 +1857,6 @@ impl Expect {
         execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 
         Ok(JSValue::UNDEFINED)
-    }
-
-
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub(crate) fn not_implemented_static_fn(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Err(global_this.throw(format_args!("Not implemented")))
     }
 
 
@@ -2406,6 +2438,7 @@ __forward_matcher! {
     to_match                                 => to_match::to_match,
     to_match_inline_snapshot                 => to_match_inline_snapshot::to_match_inline_snapshot,
     to_match_object                          => to_match_object::to_match_object,
+    to_match_file_snapshot                   => to_match_file_snapshot::to_match_file_snapshot,
     to_match_snapshot                        => to_match_snapshot::to_match_snapshot,
     to_satisfy                               => to_satisfy::to_satisfy,
     to_start_with                            => simple_matchers::to_start_with,
@@ -2438,7 +2471,7 @@ pub(crate) mod expect_custom_asymmetric_matcher_js {
     bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
 }
 pub(crate) mod expect_matcher_utils_js {
-    bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; equalityTesters, equals, state, deferred);
+    bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; equalityTesters, equals, state);
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
@@ -2737,7 +2770,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, &matcher_args, this.flags, None, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2760,6 +2793,8 @@ impl ExpectCustomAsymmetricMatcher {
     pub(crate) fn asymmetric_match(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let received_value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
+        let pass = Pass::barrier();
+        let _entered = pass.enter();
         let matched = Self::execute_impl(self, callframe.this(), global_this, received_value)?;
         Ok(JSValue::from(matched))
     }
@@ -2828,6 +2863,8 @@ impl ExpectCustomAsymmetricMatcher {
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ExpectMatcherContext {
     pub(crate) flags: Flags,
+    /// `Expect::parent` of the `expect()` whose matcher is called.
+    pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
 }
 
 impl ExpectMatcherContext {
@@ -2885,6 +2922,8 @@ impl ExpectMatcherContext {
             custom_testers
         };
         let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
+        let pass = Pass::barrier();
+        let _entered = pass.enter();
         Ok(JSValue::from(if strict_check.to_boolean() {
             a.jest_strict_deep_equals(b, global_this)?
         } else {
@@ -2955,6 +2994,9 @@ pub(crate) struct ExpectMatcherUtils {
     pub(crate) preload_testers: Cell<u32>,
     /// `BunTestRoot::file_generation` of the test file that registered the other equality testers.
     pub(crate) testers_file: Cell<u32>,
+    /// The same two for the snapshot serializers, of which those of preload scripts are the last.
+    pub(crate) preload_serializers: Cell<u32>,
+    pub(crate) serializers_file: Cell<u32>,
 }
 
 impl ExpectMatcherUtils {

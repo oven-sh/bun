@@ -147,6 +147,11 @@ export class ClassDefinition {
    */
   call?: boolean;
   /**
+   * Instances are callable: `typeof instance` is "function", and `instance(...)` runs the host function
+   * exported as `<Type>__callInstance`.
+   */
+  callable?: boolean;
+  /**
    * The instances of this class are intended to be inside the this of a bound function.
    */
   forBind?: boolean;

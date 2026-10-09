@@ -444,3 +444,17 @@ describe.concurrent("titles", () => {
     });
   });
 });
+
+it("prints rows that are not an array as the messages of matchers print values", () => {
+  const rows = {
+    get computed() {
+      return 1;
+    },
+  };
+  // @ts-expect-error
+  expect(() => it.each(rows)).toThrow("Expected array, got {\n  computed: 1,\n}");
+  // @ts-expect-error
+  expect(() => describe.for(rows)).toThrow("Expected array, got {\n  computed: 1,\n}");
+  // @ts-expect-error
+  expect(() => it.each("text")).toThrow("Expected array, got text");
+});

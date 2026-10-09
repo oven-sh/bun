@@ -35,7 +35,8 @@ async function expectRejects(promise) {
 describe("mock()", () => {
   if (isBun) {
     test("exists as jest.fn, bunTest.mock, and vi.fn", () => {
-      expect(jest.fn).toBe(mock);
+      expect(mock).toBeFunction();
+      expect(jest.fn).toBeFunction();
       expect(vi.fn).toBeFunction();
     });
 
@@ -894,9 +895,9 @@ describe("mock()", () => {
     }
 
     function bar(fn = jest.fn(foo)) {
-      expect(fn.getMockName()).toBe("foo");
+      expect(fn.name).toBe("foo");
       let newFn = jest.fn(fn);
-      expect(newFn.getMockName()).toBe("foo");
+      expect(newFn.name).toBe("foo");
       return newFn;
     }
 
@@ -3321,7 +3322,8 @@ if (isBun) {
     test("vi.fn and vi.spyOn are functions of their own", () => {
       expect(vi.fn).not.toBe(jest.fn);
       expect(vi.spyOn).not.toBe(jest.spyOn);
-      expect(jest.spyOn).toBe(spyOn);
+      expect(jest.fn).not.toBe(mock);
+      expect(jest.spyOn).not.toBe(spyOn);
       expect(vi.fn.name).toBe("fn");
       expect(vi.fn.length).toBe(jest.fn.length);
       expect(vi.spyOn.name).toBe("spyOn");
@@ -3584,6 +3586,113 @@ if (isBun) {
       }
     });
 
+    describe("getMockName()", () => {
+      const symbol = Symbol("sym");
+      const target = () => ({
+        method() {},
+        get accessor() {
+          return 1;
+        },
+        [symbol]() {},
+      });
+      const names = (fn, spyOn) => ({
+        "fn()": fn().getMockName(),
+        "fn(function)": fn(function implementation() {}).getMockName(),
+        "fn(arrow)": fn(() => {}).getMockName(),
+        "spyOn(method)": spyOn(target(), "method").getMockName(),
+        "spyOn(getter)": spyOn(target(), "accessor", "get").getMockName(),
+        "spyOn(symbol)": spyOn(target(), symbol).getMockName(),
+      });
+
+      test("vi: 'vi.fn()', and the name of the property for a spy", () => {
+        expect(names(vi.fn, vi.spyOn)).toEqual({
+          "fn()": "vi.fn()",
+          "fn(function)": "vi.fn()",
+          "fn(arrow)": "vi.fn()",
+          "spyOn(method)": "method",
+          "spyOn(getter)": "get accessor",
+          "spyOn(symbol)": "[sym]",
+        });
+      });
+
+      test("jest: 'jest.fn()'", () => {
+        expect(names(jest.fn, jest.spyOn)).toEqual({
+          "fn()": "jest.fn()",
+          "fn(function)": "jest.fn()",
+          "fn(arrow)": "jest.fn()",
+          "spyOn(method)": "jest.fn()",
+          "spyOn(getter)": "jest.fn()",
+          "spyOn(symbol)": "jest.fn()",
+        });
+      });
+
+      test("bun:test: the name of the function", () => {
+        expect(names(mock, spyOn)).toEqual({
+          "fn()": "mockConstructor",
+          "fn(function)": "implementation",
+          "fn(arrow)": "",
+          "spyOn(method)": "method",
+          "spyOn(getter)": "get accessor",
+          "spyOn(symbol)": "[sym]",
+        });
+      });
+
+      test.each(flavors)("%s: mockName() sets it, mockClear() keeps it", (_, isVitest, fn, spyOn) => {
+        for (const mocked of [fn(), spyOn(target(), "method")]) {
+          expect(mocked.mockName("given")).toBe(mocked);
+          expect(mocked.getMockName()).toBe("given");
+          expect(mocked.mockClear().getMockName()).toBe("given");
+        }
+      });
+
+      test.each([
+        ["vi", vi.fn, vi.spyOn, "vi.fn()", "method"],
+        ["jest", jest.fn, jest.spyOn, "jest.fn()", "jest.fn()"],
+        ["bun:test", mock, spyOn, "given", "given"],
+      ])("%s: after mockReset() and mockRestore()", (_, fn, spyOn, ofFn, ofSpy) => {
+        for (const reset of ["mockReset", "mockRestore"]) {
+          const mocked = fn().mockName("given");
+          mocked[reset]();
+          expect(mocked.getMockName()).toBe(ofFn);
+          const spy = spyOn(target(), "method").mockName("given");
+          spy[reset]();
+          expect(spy.getMockName()).toBe(ofSpy);
+        }
+      });
+
+      test.each([
+        ["vi", vi.fn, vi.spyOn, { "": "vi.fn()", undefined: "given", 5: "given" }],
+        ["jest", jest.fn, jest.spyOn, { "": "given", undefined: "given", 5: "5" }],
+        ["bun:test", mock, spyOn, { "": "given", undefined: "given", 5: "5" }],
+      ])("%s: mockName() with something else than a name", (_, fn, spyOn, expected) => {
+        for (const make of [() => fn(), () => spyOn(target(), "method")]) {
+          expect({
+            "": make().mockName("given").mockName("").getMockName(),
+            undefined: make().mockName("given").mockName(undefined).getMockName(),
+            5: make().mockName("given").mockName(5).getMockName(),
+          }).toEqual(expected);
+        }
+      });
+
+      test.each([
+        ["vi", vi.fn, false],
+        ["jest", jest.fn, false],
+        ["bun:test", mock, true],
+      ])("%s: whether mockName() renames the function", (_, fn, renames) => {
+        const mocked = fn(function implementation() {}).mockName("given");
+        expect(mocked.name).toBe(renames ? "given" : "implementation");
+      });
+
+      test("the mocks that an automocked class gives its instances", () => {
+        const Mocked = vi.mockObject(
+          class {
+            method() {}
+          },
+        );
+        expect(new Mocked().method.getMockName()).toBe("vi.fn()");
+      });
+    });
+
     test("vi.mockObject(value, { spy: true }) goes back to the originals", () => {
       class K {
         method() {
@@ -3604,6 +3713,573 @@ if (isBun) {
       expect(instance.method()).toBe("real");
       expect(new spied.K().method()).toBe("real");
       expect(new spied.K()).toBeInstanceOf(K);
+    });
+
+    describe.each(flavors)("%s: `prototype` of a mock that nothing has looked at yet", (_, isVitest, fn) => {
+      const makers = [
+        ["fn()", () => fn(), Object.prototype],
+        ["fn(function)", implementation => fn(implementation), undefined],
+      ];
+      describe.each(makers)("%s", (_, make, parent) => {
+        function implementation() {}
+        const fresh = () => make(implementation);
+        parent ??= implementation.prototype;
+        const attributes = { writable: true, enumerable: false, configurable: false };
+
+        test("getOwnPropertyDescriptor", () => {
+          const mocked = fresh();
+          const descriptor = Object.getOwnPropertyDescriptor(mocked, "prototype");
+          expect(descriptor).toEqual({ value: expect.any(Object), ...attributes });
+          expect(descriptor.value).toBe(mocked.prototype);
+          expect(Object.getOwnPropertyDescriptor(descriptor.value, "constructor")).toEqual({
+            value: mocked,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+          });
+          expect(Reflect.ownKeys(descriptor.value)).toEqual(["constructor"]);
+          expect(Object.getPrototypeOf(descriptor.value)).toBe(parent);
+        });
+
+        test("own keys", () => {
+          expect(Object.keys(fresh())).toEqual([]);
+          expect(Reflect.ownKeys(fresh())[0]).toBe("prototype");
+          expect(Object.getOwnPropertyNames(fresh())[0]).toBe("prototype");
+          const read = fresh();
+          read.prototype;
+          expect(Reflect.ownKeys(fresh())).toEqual(Reflect.ownKeys(read));
+          expect({ ...fresh() }).toEqual({});
+          const keys = [];
+          for (const key in fresh()) keys.push(key);
+          expect(keys).not.toContain("prototype");
+        });
+
+        test("has", () => {
+          expect(Object.hasOwn(fresh(), "prototype")).toBe(true);
+          expect(fresh().hasOwnProperty("prototype")).toBe(true);
+          expect("prototype" in fresh()).toBe(true);
+          expect(fresh().propertyIsEnumerable("prototype")).toBe(false);
+        });
+
+        test("read", () => {
+          const mocked = fresh();
+          expect(mocked.prototype).toBe(mocked.prototype);
+          expect(mocked.prototype.constructor).toBe(mocked);
+          const other = fresh();
+          expect(other.prototype).not.toBe(mocked.prototype);
+          const receiver = {};
+          const viaReflect = fresh();
+          expect(Reflect.get(viaReflect, "prototype", receiver)).toBe(viaReflect.prototype);
+          const inherited = fresh();
+          expect(Object.create(inherited).prototype).toBe(inherited.prototype);
+        });
+
+        test("assignment", () => {
+          const mocked = fresh();
+          const assigned = {};
+          mocked.prototype = assigned;
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({ value: assigned, ...attributes });
+          expect(new mocked()).toBeInstanceOf(mocked);
+          expect(Object.getPrototypeOf(new mocked())).toBe(assigned);
+
+          const primitive = fresh();
+          primitive.prototype = 5;
+          expect(Object.getOwnPropertyDescriptor(primitive, "prototype")).toEqual({ value: 5, ...attributes });
+
+          const viaReflect = fresh();
+          expect(Reflect.set(viaReflect, "prototype", assigned)).toBe(true);
+          expect(viaReflect.prototype).toBe(assigned);
+
+          const notExtensible = Object.preventExtensions(fresh());
+          notExtensible.prototype = assigned;
+          expect(notExtensible.prototype).toBe(assigned);
+        });
+
+        test("assignment through an object that inherits from it", () => {
+          const mocked = fresh();
+          const child = Object.create(mocked);
+          child.prototype = 1;
+          expect(Object.getOwnPropertyDescriptor(child, "prototype")).toEqual({
+            value: 1,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          expect(mocked.prototype.constructor).toBe(mocked);
+
+          const receiver = {};
+          const other = fresh();
+          expect(Reflect.set(other, "prototype", 1, receiver)).toBe(true);
+          expect(receiver).toEqual({ prototype: 1 });
+          expect(other.prototype.constructor).toBe(other);
+        });
+
+        test("defineProperty", () => {
+          const value = {};
+          const mocked = fresh();
+          Object.defineProperty(mocked, "prototype", { value });
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({ value, ...attributes });
+
+          const readOnly = fresh();
+          Object.defineProperty(readOnly, "prototype", { writable: false });
+          const descriptor = Object.getOwnPropertyDescriptor(readOnly, "prototype");
+          expect(descriptor).toEqual({ value: expect.any(Object), ...attributes, writable: false });
+          expect(descriptor.value.constructor).toBe(readOnly);
+          expect(() => {
+            "use strict";
+            readOnly.prototype = {};
+          }).toThrow(TypeError);
+
+          expect(() => Object.defineProperty(fresh(), "prototype", { enumerable: true })).toThrow(TypeError);
+          expect(() => Object.defineProperty(fresh(), "prototype", { configurable: true })).toThrow(TypeError);
+          expect(() => Object.defineProperty(fresh(), "prototype", { get() {} })).toThrow(TypeError);
+          expect(Reflect.defineProperty(fresh(), "prototype", { enumerable: true })).toBe(false);
+        });
+
+        test("delete", () => {
+          const mocked = fresh();
+          expect(Reflect.deleteProperty(mocked, "prototype")).toBe(false);
+          expect(() => {
+            "use strict";
+            delete mocked.prototype;
+          }).toThrow(TypeError);
+          expect(mocked.prototype.constructor).toBe(mocked);
+        });
+
+        test("freeze and seal", () => {
+          const frozen = Object.freeze(fresh());
+          expect(Object.getOwnPropertyDescriptor(frozen, "prototype")).toEqual({
+            value: expect.any(Object),
+            ...attributes,
+            writable: false,
+          });
+          expect(frozen.prototype.constructor).toBe(frozen);
+          expect(Object.isFrozen(frozen)).toBe(true);
+
+          const sealed = Object.seal(fresh());
+          expect(Object.getOwnPropertyDescriptor(sealed, "prototype")).toEqual({
+            value: expect.any(Object),
+            ...attributes,
+          });
+          expect(sealed.prototype.constructor).toBe(sealed);
+        });
+
+        test("what makes instances", () => {
+          const mocked = fresh();
+          const instance = new mocked();
+          expect(Object.getPrototypeOf(instance)).toBe(mocked.prototype);
+          expect(instance).toBeInstanceOf(mocked);
+          expect({}).not.toBeInstanceOf(fresh());
+
+          const base = fresh();
+          class Derived extends base {}
+          expect(Object.getPrototypeOf(Derived.prototype)).toBe(base.prototype);
+          expect(new Derived()).toBeInstanceOf(base);
+
+          const newTarget = fresh();
+          expect(Object.getPrototypeOf(Reflect.construct(Object, [], newTarget))).toBe(newTarget.prototype);
+          expect(Object.getPrototypeOf(Reflect.construct(class {}, [], newTarget))).toBe(newTarget.prototype);
+        });
+
+        test("its parent is that of the implementation of the moment", () => {
+          class Later {}
+          const configuredFirst = fresh().mockImplementation(Later);
+          expect(Object.getPrototypeOf(configuredFirst.prototype)).toBe(Later.prototype);
+
+          const readFirst = fresh();
+          const prototype = readFirst.prototype;
+          readFirst.mockImplementation(Later);
+          expect(readFirst.prototype).toBe(prototype);
+          expect(Object.getPrototypeOf(prototype)).toBe(Later.prototype);
+          readFirst.mockReset();
+          expect(Object.getPrototypeOf(prototype)).toBe(isVitest ? parent : Object.prototype);
+
+          const resetFirst = fresh().mockImplementation(Later).mockReset();
+          expect(Object.getPrototypeOf(resetFirst.prototype)).toBe(isVitest ? parent : Object.prototype);
+        });
+
+        test("spyOn", () => {
+          const mocked = fresh();
+          const spy = spyOn(mocked, "prototype", "get").mockReturnValue("spied");
+          expect(mocked.prototype).toBe("spied");
+          spy.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({
+            value: expect.any(Object),
+            ...attributes,
+          });
+          expect(mocked.prototype.constructor).toBe(mocked);
+
+          const other = fresh();
+          const both = spyOn(other, "prototype");
+          expect(other.prototype.constructor).toBe(other);
+          expect(both).toHaveBeenCalledTimes(1);
+          both.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(other, "prototype")).toEqual({
+            value: expect.any(Object),
+            ...attributes,
+          });
+        });
+
+        test("in code that has seen both kinds", () => {
+          const read = mocked => mocked.prototype;
+          const write = (mocked, value) => {
+            mocked.prototype = value;
+          };
+          const assigned = {};
+          for (let i = 0; i < 2000; i++) {
+            const mocked = fresh();
+            expect(read(mocked)).toBe(read(mocked));
+            expect(read(mocked).constructor).toBe(mocked);
+            const written = fresh();
+            write(written, assigned);
+            write(written, assigned);
+            expect(read(written)).toBe(assigned);
+          }
+        });
+
+        test("survives garbage collection", () => {
+          const mocks = Array.from({ length: 200 }, fresh);
+          Bun.gc(true);
+          const prototypes = mocks.map(mocked => mocked.prototype);
+          Bun.gc(true);
+          expect(
+            mocks.every((mocked, i) => mocked.prototype === prototypes[i] && prototypes[i].constructor === mocked),
+          ).toBe(true);
+        });
+      });
+    });
+
+    describe.each(flavors)(
+      "%s: *AllMocks() finds a mock each time something has been done to it",
+      (_, isVitest, fn, spy) => {
+        test("clearAllMocks()", () => {
+          const called = fn();
+          const untouched = fn();
+          for (let round = 0; round < 3; round++) {
+            called(round);
+            expect(called.mock.calls).toEqual([[round]]);
+            jest.clearAllMocks();
+            expect(called).not.toHaveBeenCalled();
+            expect(called.mock).toEqual({
+              calls: [],
+              contexts: [],
+              instances: [],
+              invocationCallOrder: [],
+              results: [],
+            });
+            expect(untouched).not.toHaveBeenCalled();
+          }
+        });
+
+        test("clearAllMocks() after `mock` was only read, and written to", () => {
+          const mocked = fn();
+          for (let round = 0; round < 3; round++) {
+            const state = mocked.mock;
+            const { calls, contexts, instances, invocationCallOrder, results } = state;
+            calls.push(["written"]);
+            jest.clearAllMocks();
+            expect(mocked.mock === state).toBe(isVitest);
+            expect(mocked.mock.calls).toEqual([]);
+            expect(mocked.mock.calls).not.toBe(calls);
+            expect(mocked.mock.contexts).not.toBe(contexts);
+            expect(mocked.mock.instances).not.toBe(instances);
+            expect(mocked.mock.invocationCallOrder).not.toBe(invocationCallOrder);
+            expect(mocked.mock.results).not.toBe(results);
+          }
+        });
+
+        test("clearAllMocks() keeps the implementations, which resetAllMocks() still finds", () => {
+          const configured = fn().mockReturnValue("configured");
+          const named = fn().mockName("named");
+          const made = fn(() => "initial");
+          const once = fn().mockReturnValueOnce("once");
+          jest.clearAllMocks();
+          jest.clearAllMocks();
+          expect([configured(), named.getMockName(), made()]).toEqual(["configured", "named", "initial"]);
+          jest.resetAllMocks();
+          expect([configured(), made(), once()]).toEqual([undefined, isVitest ? "initial" : undefined, undefined]);
+          expect(named.getMockName()).toBe(fn === mock ? "named" : fn().getMockName());
+        });
+
+        test("resetAllMocks()", () => {
+          const mocked = fn(() => "initial");
+          const object = { method: () => "original" };
+          const spied = spy(object, "method");
+          const initial = isVitest ? ["initial", "original"] : [undefined, undefined];
+          for (let round = 0; round < 3; round++) {
+            mocked.mockReturnValue(round);
+            spied.mockReturnValue(round);
+            expect([mocked(), object.method()]).toEqual([round, round]);
+            jest.resetAllMocks();
+            expect(mocked).not.toHaveBeenCalled();
+            expect(spied).not.toHaveBeenCalled();
+            expect([mocked(), object.method()]).toEqual(initial);
+          }
+          for (const configure of [
+            mocked => mocked.mockImplementation(() => 1),
+            mocked => mocked.mockImplementationOnce(() => 1),
+            mocked => mocked.mockReturnValueOnce(1),
+            mocked => mocked.mockReturnThis(),
+            mocked => mocked.mockResolvedValue(1),
+            mocked => mocked.mockResolvedValueOnce(1),
+            mocked => mocked.mockRejectedValue(1),
+            mocked => mocked.mockRejectedValueOnce(1),
+            mocked => mocked.mockThrow(1),
+            mocked => mocked.mockThrowOnce(1),
+          ]) {
+            configure(mocked);
+            jest.resetAllMocks();
+            expect(mocked()).toBe(initial[0]);
+          }
+          spied.mockRestore();
+        });
+
+        test("resetAllMocks() after a withImplementation() whose callback threw", () => {
+          const mocked = fn(() => "initial");
+          jest.resetAllMocks();
+          expect(() =>
+            mocked.withImplementation(
+              () => "temporary",
+              () => {
+                throw new Error("thrown by the callback");
+              },
+            ),
+          ).toThrow("thrown by the callback");
+          expect(mocked()).toBe("temporary");
+          jest.resetAllMocks();
+          expect(mocked()).toBe(isVitest ? "initial" : undefined);
+        });
+
+        test("the mocks are collected all the same", () => {
+          const { heapStats } = require("bun:jsc");
+          const count = () => (Bun.gc(true), heapStats().objectTypeCounts.Mock ?? 0);
+          const before = count();
+          (function () {
+            for (let i = 0; i < 500; i++) {
+              const object = { method() {} };
+              fn(() => {}).mockReturnValue(1)();
+              spy(object, "method")();
+            }
+          })();
+          expect(count() - before).toBeLessThan(100);
+        });
+      },
+    );
+
+    test("mock.instances of calls that were made before it was first read", () => {
+      for (const [, , fn] of flavors) {
+        const mocked = fn();
+        const first = {};
+        mocked.call(first);
+        mocked.call(5);
+        mocked();
+        expect(mocked.mock.instances).toEqual([first, 5, undefined]);
+        expect(mocked.mock.instances[0]).toBe(first);
+        expect(mocked.mock.instances).not.toBe(mocked.mock.contexts);
+        const instances = mocked.mock.instances;
+        mocked.call(first);
+        const instance = new mocked();
+        expect(mocked.mock.instances).toBe(instances);
+        expect(instances).toEqual([first, 5, undefined, first, instance]);
+        expect(mocked.mock.contexts).toEqual([first, 5, undefined, first, instance]);
+
+        const constructedFirst = fn();
+        constructedFirst.call(first);
+        const constructed = new constructedFirst();
+        constructedFirst.call(first);
+        expect(constructedFirst.mock.instances).toEqual([first, constructed, first]);
+        expect(constructedFirst.mock.instances[1]).toBe(constructed);
+      }
+    });
+
+    test("a result that the implementation has changed the shape of is still completed", () => {
+      for (const [, , fn] of flavors) {
+        for (const change of [
+          result => Object.freeze(result),
+          result => (result.extra = 1),
+          result => Object.defineProperty(result, "value", { enumerable: false }),
+          result => Object.setPrototypeOf(result, null),
+          result => delete result.type,
+        ]) {
+          const mocked = fn(() => {
+            change(mocked.mock.results[0]);
+            return "returned";
+          });
+          mocked();
+          const { type, value } = mocked.mock.results[0];
+          expect({ type, value }).toEqual({ type: "return", value: "returned" });
+        }
+      }
+    });
+
+    test("code that has read the incomplete result of a call sees the complete one", () => {
+      const read = result => result.type + ":" + result.value;
+      const seen = new Set();
+      const mocked = vi.fn(() => {
+        const { results } = mocked.mock;
+        seen.add(read(results[results.length - 1]));
+        return "returned";
+      });
+      for (let i = 0; i < 3000; i++) {
+        mocked();
+        seen.add(read(mocked.mock.results[i]));
+      }
+      expect([...seen]).toEqual(["incomplete:undefined", "return:returned"]);
+    });
+
+    test("resetAllMocks() does nothing to a mock that is as resetting leaves it", () => {
+      let reads = 0;
+      const implementation = new Proxy(function () {}, {
+        get(target, key, receiver) {
+          if (key === "prototype") reads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const mocked = vi.fn(implementation);
+      mocked.prototype;
+      mocked.mockReturnValue(1);
+      reads = 0;
+      vi.resetAllMocks();
+      expect(reads).toBe(1);
+      vi.resetAllMocks();
+      vi.resetAllMocks();
+      expect(reads).toBe(1);
+    });
+
+    test("clearAllMocks() does nothing to a mock that nothing was done to since the last one", () => {
+      const mocked = vi.fn();
+      const state = mocked.mock;
+      vi.clearAllMocks();
+      const { calls } = state;
+      vi.clearAllMocks();
+      expect(state.calls).toBe(calls);
+      mocked();
+      vi.clearAllMocks();
+      expect(state.calls).not.toBe(calls);
+    });
+
+    describe("restoreAllMocks()", () => {
+      test.each(flavors)(
+        "%s: the others are restored when one throws, and that one the next time",
+        (_, isVitest, fn, spy) => {
+          const objects = [{ method() {} }, { method() {} }, { method() {} }];
+          let shouldThrow = false;
+          const proxy = new Proxy(objects[1], {
+            defineProperty(target, key, descriptor) {
+              if (shouldThrow) throw new Error("thrown by the trap");
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          });
+          spy(objects[0], "method");
+          spy(proxy, "method");
+          spy(objects[2], "method");
+          const mocked = () => objects.map(object => jest.isMockFunction(object.method));
+          expect(mocked()).toEqual([true, true, true]);
+
+          shouldThrow = true;
+          expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
+          expect(mocked()).toEqual([false, true, false]);
+          expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
+          expect(() => objects[1].method.mockRestore()).toThrow("thrown by the trap");
+          expect(mocked()).toEqual([false, true, false]);
+
+          shouldThrow = false;
+          jest.restoreAllMocks();
+          expect(mocked()).toEqual([false, false, false]);
+        },
+      );
+
+      test.each(flavors)("%s: a spy that is made while it runs", (_, isVitest, fn, spy) => {
+        const other = { method: () => "original" };
+        let armed = false;
+        const proxy = new Proxy(
+          { method() {} },
+          {
+            defineProperty(target, key, descriptor) {
+              if (armed) {
+                armed = false;
+                spy(other, "method").mockReturnValue("spied");
+              }
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          },
+        );
+        spy(proxy, "method");
+        armed = true;
+        jest.restoreAllMocks();
+        expect(other.method()).toBe("spied");
+        jest.restoreAllMocks();
+        expect(other.method()).toBe("original");
+        expect(jest.isMockFunction(other.method)).toBe(false);
+      });
+    });
+
+    test("restoring a native accessor that was made non-configurable meanwhile", () => {
+      const original = Object.getOwnPropertyDescriptor(Response.prototype, "redirected");
+      const spied = spyOn(Response.prototype, "redirected", "get").mockReturnValue("spied");
+      expect(new Response().redirected).toBe("spied");
+      Object.defineProperty(Response.prototype, "redirected", { configurable: false });
+      spied.mockRestore();
+      expect(new Response().redirected).toBe(false);
+      expect(Object.getOwnPropertyDescriptor(Response.prototype, "redirected")).toEqual(original);
+    });
+
+    test("vi.mockObject() of a prototype whose Symbol.toStringTag getter needs an instance", () => {
+      class Tagged {
+        #tag = "Tagged";
+        get [Symbol.toStringTag]() {
+          return this.#tag;
+        }
+        method() {
+          return "real";
+        }
+      }
+      expect(() => Tagged.prototype[Symbol.toStringTag]).toThrow(TypeError);
+      const { Tagged: Mocked } = vi.mockObject({ Tagged });
+      expect(jest.isMockFunction(Mocked.prototype.method)).toBe(true);
+      expect(new Mocked().method()).toBeUndefined();
+
+      const sqlite = vi.mockObject(require("bun:sqlite"));
+      expect(jest.isMockFunction(sqlite.Database)).toBe(true);
+      expect(jest.isMockFunction(sqlite.Statement.prototype.finalize)).toBe(true);
+    });
+
+    describe("an array that is nearly all holes", () => {
+      const last = 2 ** 32 - 2;
+
+      test("vi.mockObject(array, { spy: true })", () => {
+        const array = [() => "first"];
+        array[last] = () => "last";
+        const mocked = vi.mockObject({ array }, { spy: true }).array;
+        expect(mocked.length).toBe(last + 1);
+        expect(Object.keys(mocked)).toEqual(["0", String(last)]);
+        expect([mocked[0](), mocked[last]()]).toEqual(["first", "last"]);
+        expect(mocked[last]).toHaveBeenCalledTimes(1);
+      });
+
+      test("mock.settledResults", () => {
+        const mocked = jest.fn(() => "first");
+        mocked();
+        mocked.mock.results[last] = { type: "throw", value: "last" };
+        const settled = mocked.mock.settledResults;
+        expect(settled.length).toBe(last + 1);
+        expect(Object.keys(settled)).toEqual(["0", String(last)]);
+        expect([settled[0], settled[last]]).toEqual([
+          { type: "fulfilled", value: "first" },
+          { type: "rejected", value: "last" },
+        ]);
+      });
+    });
+
+    test("mock.lastCall when the last call is a getter that throws", () => {
+      const mocked = jest.fn();
+      mocked();
+      Object.defineProperty(mocked.mock.calls, 0, {
+        get() {
+          throw new Error("thrown by the getter");
+        },
+      });
+      expect(() => mocked.mock.lastCall).toThrow("thrown by the getter");
     });
   });
 }

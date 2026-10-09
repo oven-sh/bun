@@ -18,7 +18,7 @@ use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment,
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
 use bun_paths::platform;
@@ -664,6 +664,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--environment <STR>              Globals test files run with: 'node' (default), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
+    ),
+    parse_param!(
+        "--globals <STR>                  Where the globals 'test', 'expect', ... come from: 'bun' (default: \"vitest\" in a file that imports from it, else \"bun:test\") or 'vitest' (in every file)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -2046,6 +2049,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         };
         ctx.test_options.environment = Some(environment);
     }
+    if let Some(name) = args.option(b"--globals") {
+        let Some(globals) = TestGlobals::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --globals expects 'bun' or 'vitest', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.globals = Some(globals);
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
@@ -2095,7 +2108,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(seed_str) = args.option(b"--seed") {
-        ctx.test_options.randomize = true;
+        // A --parallel worker always gets the seed, and --randomize apart from it.
+        ctx.test_options.randomize |= !ctx.test_options.test_worker;
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {

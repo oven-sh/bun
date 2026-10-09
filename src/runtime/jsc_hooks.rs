@@ -101,6 +101,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// The innermost matcher of `expect()` whose body is running.
+    pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
 }
 
 thread_local! {
@@ -347,6 +349,7 @@ unsafe fn init_runtime_state(
         },
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        matcher_pass: Cell::new(ptr::null()),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1682,9 +1685,11 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         }
         return;
     }
+    // Fake-timer state lives in the per-thread `timer::All`, not in the realm whose script has now run for the last time.
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
+        (*state).timer.fake_timers.forget_realm((*vm).global());
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
     }
 }
@@ -1767,27 +1772,11 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
 /// [`bun_jsc::AbortHandle`] (Node's `HandleWrap` list) is closed natively now,
 /// while the VM is alive, rather than by a GC finalizer during `~VM`.
 fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
-    // Fake-timer state lives in the per-thread `timer::All`, not the JS
-    // global, so a file that leaves it active routes every later file's
-    // `setTimeout` into the never-driven fake heap. Leave the heap itself
-    // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
-    // next, which walks both heaps and releases `TimeoutObject` pins and
-    // discards `AbortSignalTimeout` timers at a point where no user JS can
-    // touch the outgoing signals.
-    {
-        let all = timer_all();
-        // SAFETY: single JS thread, no re-entry while we hold the field borrow.
-        if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
-            let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
-            unsafe { (*all).fake_timers.reset_for_isolation(global) };
-        }
-        if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
-            // reaches the heap through `timer_all()` (disjoint-field access).
-            unsafe { (*all).event_loop_delay.disable() };
-        }
+    let all = timer_all();
+    if !all.is_null() {
+        // SAFETY: single JS thread; `disable` borrows only `event_loop_delay` and
+        // reaches the heap through `timer_all()` (disjoint-field access).
+        unsafe { (*all).event_loop_delay.disable() };
     }
     vm.stop_context_handles(reason)
 }
@@ -3010,6 +2999,7 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+                let depends_on_more_than_source = parse_result.ast.depends_on_more_than_source;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3234,6 +3224,7 @@ fn transpile_source_code_inner(
                     source_code,
                     source_url: input_specifier.create_if_different(path.text),
                     is_commonjs_module,
+                    depends_on_more_than_source,
                     module_info,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
@@ -3546,22 +3537,28 @@ impl CssModuleFile {
         }
     }
 
-    /// Gives `contents` the path and the parser options the bundler gives the file at `path_text`.
+    /// Parses `contents` as the bundler parses the file at `path_text`, but skips what is invalid, as a browser does.
     fn parse(
         jsc_vm: *mut VirtualMachine,
+        global: &JSGlobalObject,
         bump: &'static bun_alloc::Arena,
         source_index: usize,
         path_text: &[u8],
         contents: Option<&'static [u8]>,
         log: &mut bun_ast::Log,
     ) -> crate::Result<CssModuleFile> {
-        let path = bun_bundler::generic_path_with_pretty_initialized(
-            &Fs::Path::init(intern_transpile_path(path_text)),
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            unsafe { &*jsc_vm }.transpiler.options.target,
-            Fs::FileSystem::get().top_level_dir,
-            bump,
-        )?;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let mut path = Fs::Path::init(intern_transpile_path(path_text));
+        // The pretty path is made in path buffers: at most "../" per directory of `top_level_dir`, then `path_text`.
+        if path_text.len() + 2 * top_level_dir.len() < bun_paths::MAX_PATH_BYTES {
+            path = bun_bundler::generic_path_with_pretty_initialized(
+                &path,
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                unsafe { &*jsc_vm }.transpiler.options.target,
+                top_level_dir,
+                bump,
+            )?;
+        }
         let mut file = CssModuleFile {
             source: bun_ast::Source {
                 path,
@@ -3576,7 +3573,8 @@ impl CssModuleFile {
         };
         file.source.contents = std::borrow::Cow::Borrowed(contents);
 
-        let mut options = bun_css::ParserOptions::default(Some(&mut *log));
+        let mut options = bun_css::ParserOptions::default(Some(log));
+        options.error_recovery = true;
         if bun_css::css_modules::is_module_path(path.pretty) {
             options.filename = path.pretty;
             options.css_modules = Some(bun_css::css_modules::Config::default());
@@ -3593,10 +3591,8 @@ impl CssModuleFile {
                 file.symbols = extra.symbols;
                 Ok(file)
             }
-            Err(err) => {
-                let _ = err.add_to_logger(log, &file.source);
-                Err(crate::Error::ParseError)
-            }
+            // With error recovery, the parser only fails for lack of stack.
+            Err(_) => Err(global.throw_stack_overflow().into()),
         }
     }
 }
@@ -3618,22 +3614,19 @@ impl bun_css::css_modules::ComposesGraph for CssModuleGraph {
 }
 
 impl CssModuleGraph {
-    /// Parses the CSS module at `path_text` and every file it reaches through `composes: name from "file"`.
-    /// `virtual_source`: what a plugin supplied in place of the file's contents.
+    /// Parses `contents`, the CSS module at `path_text`, and every file it reaches through `composes: name from "file"`.
     fn load(
         &mut self,
         jsc_vm: *mut VirtualMachine,
+        global: &JSGlobalObject,
         bump: &'static bun_alloc::Arena,
         path_text: &[u8],
-        virtual_source: Option<&bun_ast::Source>,
+        contents: &'static [u8],
         log: &mut bun_ast::Log,
     ) -> crate::Result<()> {
-        let contents = match virtual_source {
-            Some(source) => &*bump.alloc_slice_copy(&source.contents),
-            None => CssModuleFile::read(bump, path_text, log)?,
-        };
         self.0.push(CssModuleFile::parse(
             jsc_vm,
+            global,
             bump,
             0,
             path_text,
@@ -3649,32 +3642,16 @@ impl CssModuleGraph {
                 if record.kind != ImportKind::Composes {
                     continue;
                 }
-                let specifier = record.path.text;
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let resolved = unsafe {
-                    (*jsc_vm).transpiler.resolver.resolve(
-                        file.source.path.source_dir(),
-                        specifier,
-                        record.kind,
-                    )
-                };
-                let Ok(mut resolved) = resolved else {
-                    log.add_resolve_error_with_text_dupe(
-                        Some(&file.source),
-                        record.range,
-                        format_args!(
-                            "Could not resolve: \"{}\"{}",
-                            bstr::BStr::new(specifier),
-                            if bun_paths::is_package_path(specifier) {
-                                ". Maybe you need to \"bun install\"?"
-                            } else {
-                                ""
-                            },
-                        ),
-                        specifier,
-                        record.kind,
-                    );
-                    continue;
+                let resolver = unsafe { &mut (*jsc_vm).transpiler.resolver };
+                let vm_log =
+                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(&mut *log));
+                let resolved =
+                    resolver.resolve(file.source.path.source_dir(), record.path.text, record.kind);
+                resolver.log = vm_log;
+                let mut resolved = match resolved {
+                    Ok(resolved) => resolved,
+                    Err(_) => continue,
                 };
                 if resolved.flags.is_external() {
                     continue;
@@ -3693,13 +3670,16 @@ impl CssModuleGraph {
                         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                         let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
                         let contents = if loader_for_path(&path, loaders) == Some(Loader::Css) {
-                            Some(CssModuleFile::read(bump, path.text, log)?)
+                            match CssModuleFile::read(bump, path.text, log) {
+                                Ok(contents) => Some(contents),
+                                Err(_) => continue,
+                            }
                         } else {
                             None
                         };
                         let index = self.0.len();
                         self.0.push(CssModuleFile::parse(
-                            jsc_vm, bump, index, path.text, contents, log,
+                            jsc_vm, global, bump, index, path.text, contents, log,
                         )?);
                         index
                     }
@@ -3707,31 +3687,28 @@ impl CssModuleGraph {
                 self.0[source_index].import_records[record_index].source_index =
                     bun_ast::Index::init(composed_index);
             }
-            bun_css::css_modules::check_composes_from(&*self, source_index as u32, log);
             source_index += 1;
-        }
-        if log.has_errors() {
-            return Err(crate::Error::ParseError);
         }
         Ok(())
     }
 
-    /// Each local of the first file with the string the bundler exports for it, up to the first error.
-    fn exports(&self, scratch: &bun_alloc::Arena, log: &mut bun_ast::Log) -> Vec<(&[u8], Vec<u8>)> {
+    /// Each local of the first file with the string the bundler exports for it, less what cannot be composed.
+    fn exports(
+        &self,
+        global: &JSGlobalObject,
+        scratch: &bun_alloc::Arena,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<Vec<(&[u8], Vec<u8>)>> {
         use bun_css::css_modules::{ComposesVisitor, ExportedName, scoped_name};
 
         let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let mut visitor = ComposesVisitor::new(self);
         let mut exports = Vec::with_capacity(sheet.local_scope.count());
         for (local_name, local) in sheet.local_scope.iter() {
-            let names = visitor.exported_names(sheet, local.ref_, 0, log);
-            if log.has_errors() {
-                break;
-            }
             let mut value = Vec::new();
-            for name in names {
+            for name in visitor.exported_names(sheet, local.ref_, 0, log) {
                 if !value.is_empty() {
                     value.push(b' ');
                 }
@@ -3749,13 +3726,19 @@ impl CssModuleGraph {
                     ExportedName::Global(name) => value.extend_from_slice(name),
                 }
             }
+            if visitor.out_of_stack {
+                return Err(global.throw_stack_overflow().into());
+            }
             exports.push((&**local_name, value));
         }
-        exports
+        Ok(exports)
     }
 }
 
+bun_core::declare_scope!(CssModule, hidden);
+
 /// The object `Bun.build` makes the default export of the CSS module at `path_text`.
+/// `virtual_source`: what a plugin supplied in place of the file's contents.
 #[cold]
 #[inline(never)]
 fn css_module_exports(
@@ -3766,21 +3749,25 @@ fn css_module_exports(
     log: &mut bun_ast::Log,
 ) -> crate::Result<JSValue> {
     let arena = bun_alloc::Arena::new();
-    // SAFETY: `arena` owns every file's bytes; only `graph` and `arena_log` borrow from it and, declared later, drop first.
+    // SAFETY: `arena` owns every file's bytes; only `graph` and `skipped` borrow from it and, declared later, drop first.
     let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
     let mut graph = CssModuleGraph(Vec::new());
-    let mut arena_log = bun_ast::Log::init();
+    let mut skipped = bun_ast::Log::init();
 
-    let exports = graph
-        .load(jsc_vm, bump, path_text, virtual_source, &mut arena_log)
-        .map(|()| graph.exports(bump, &mut arena_log));
-    let exports = match exports {
-        Ok(exports) if !arena_log.has_errors() => exports,
-        _ => {
-            arena_log.append_to_with_recycled(log, false);
-            return Err(crate::Error::ParseError);
-        }
+    let contents = match virtual_source {
+        Some(source) => &*bump.alloc_slice_copy(&source.contents),
+        None => CssModuleFile::read(bump, path_text, log)?,
     };
+    graph.load(jsc_vm, global, bump, path_text, contents, &mut skipped)?;
+    let exports = graph.exports(global, bump, &mut skipped)?;
+    for msg in &skipped.msgs {
+        bun_core::scoped_log!(
+            CssModule,
+            "{}: skipped: {}",
+            bstr::BStr::new(path_text),
+            bstr::BStr::new(&msg.data.text),
+        );
+    }
 
     let object = JSValue::create_empty_object(global, exports.len());
     for (name, value) in &exports {
@@ -4213,6 +4200,11 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let mut loader: Option<Loader> =
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let attribute_loader = type_attribute_str.and_then(Loader::from_string);
+    let suffix = match attribute_loader {
+        Some(_) => None,
+        None => options::ImportSuffix::find(query, loader),
+    };
 
     // Synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
@@ -4295,16 +4287,15 @@ unsafe fn get_loader_and_virtual_source<'a>(
             }
             None => return Err(crate::Error::BlobNotFound),
         }
+    } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
+        *virtual_source_to_use = Some(module);
+        virtual_source = virtual_source_to_use.as_ref();
+        path = Fs::Path::init(specifier);
     }
 
-    if query == b"?raw" {
-        loader = Some(Loader::Text);
-    }
-    if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
-    }
+    loader = attribute_loader
+        .or_else(|| suffix.map(options::ImportSuffix::loader))
+        .or(loader);
 
     // SAFETY: per fn contract.
     let is_main = specifier == unsafe { &*jsc_vm }.main();
@@ -4570,6 +4561,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             )
         };
         if !had_blob
+            && lr.virtual_source.is_none()
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

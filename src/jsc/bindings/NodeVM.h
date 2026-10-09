@@ -105,8 +105,8 @@ public:
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     // `contextifiedObject` is null for vm.constants.DONT_CONTEXTIFY.
-    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options, JSValue importer, JSObject* contextifiedObject);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
+    static NodeVMGlobalObject* create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer, JSObject* contextifiedObject);
+    static Structure* createStructure(JSC::VM& vm);
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
     DECLARE_INFO;
@@ -132,6 +132,7 @@ public:
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
+    static bool setPrototype(JSObject*, JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
@@ -145,7 +146,6 @@ private:
 
 // Helper functions to create vm contexts and run code
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject*);
-Structure* createNodeVMGlobalObjectStructure(JSC::VM&);
 void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
 
 // VM module functions

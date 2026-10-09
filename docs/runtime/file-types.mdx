@@ -495,6 +495,8 @@ import styles from "./styles.module.css";
 console.log(styles.button); // "button_123"
 ```
 
+At runtime, CSS that the bundler would reject does not fail the import: invalid rules and declarations are skipped, as in a browser.
+
 ### `sh` loader
 
 **Bun Shell loader**. Default for `.sh` files

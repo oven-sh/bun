@@ -46,6 +46,56 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   expect(c2).toBe(0);
 });
 
+test.each([
+  ["--parallel=2", ["a.test.js", "b.test.js", "c.test.js"], /^(1,1,1,1|2,2,2,2)$/],
+  // The serial fallback.
+  ["--parallel=1", ["a.test.js", "b.test.js"], /^1,1,1,1$/],
+  ["--parallel=4", ["a.test.js"], /^1,1,1,1$/],
+])("%s: VITEST_POOL_ID and VITEST_WORKER_ID are the worker's index too", async (flag, files, ids) => {
+  const fixture = `console.log("IDS=" + [process.env.JEST_WORKER_ID, process.env.VITEST_POOL_ID, process.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID]);`;
+  using dir = tempDir("parallel-vitest-ids", Object.fromEntries(files.map(file => [file, fixture])));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", flag],
+    // What the environment has is replaced.
+    env: { ...bunEnv, VITEST_POOL_ID: "inherited", VITEST_WORKER_ID: "inherited" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = [...(stdout + stderr).matchAll(/IDS=(.*)/g)].map(match => match[1]);
+  expect(seen).toEqual(files.map(() => expect.stringMatching(ids)));
+  expect(exitCode).toBe(0);
+});
+
+test.each([[[]], [["--isolate"]]])(
+  "without --parallel VITEST_POOL_ID and VITEST_WORKER_ID are 1 and JEST_WORKER_ID is not set: %j",
+  async flags => {
+    const fixture = `console.log("IDS=" + JSON.stringify([process.env.JEST_WORKER_ID, process.env.BUN_TEST_WORKER_ID, process.env.VITEST_POOL_ID, process.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID]));`;
+    using dir = tempDir("serial-vitest-ids", { "a.test.js": fixture, "b.test.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags],
+      env: {
+        ...bunEnv,
+        JEST_WORKER_ID: undefined,
+        BUN_TEST_WORKER_ID: undefined,
+        VITEST_POOL_ID: "inherited",
+        VITEST_WORKER_ID: "inherited",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const seen = [...(stdout + stderr).matchAll(/IDS=(.*)/g)].map(match => JSON.parse(match[1]));
+    expect(seen).toEqual([
+      [null, null, "1", "1", "1"],
+      [null, null, "1", "1", "1"],
+    ]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("--parallel runs files across workers and aggregates totals", async () => {
   using dir = tempDir("parallel-basic", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a1",()=>expect(1).toBe(1)); test("a2",()=>expect(1).toBe(1));`,

@@ -59,8 +59,16 @@ export const globalsToPrefix = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
+  "BigInt64Array",
+  "BigUint64Array",
   "Buffer",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
   "Infinity",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -70,7 +78,10 @@ export const globalsToPrefix = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
+  "Uint16Array",
+  "Uint32Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "String",
   "RegExp",
   "WritableStream",
@@ -84,6 +95,15 @@ replacements.push({
   from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"),
   to: "extends __no_intrinsic__%1",
 });
+
+/** The defines of `globalsToPrefix` cannot see through `const { Buffer } = globalThis`. */
+export function assertNoDestructuredGlobalThis(bundled: string, file: string) {
+  if (/}\s*=\s*globalThis\b/.test(bundled)) {
+    throw new Error(
+      `${file}: do not destructure globalThis. Write the bare name (\`Buffer\`): the bundler turns those of globalsToPrefix in src/codegen/replacements.ts into reads that script cannot reach`,
+    );
+  }
+}
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts

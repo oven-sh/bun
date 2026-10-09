@@ -1391,6 +1391,9 @@ interface ImportMeta {
    * ```ts
    * import.meta.env === process.env
    * ```
+   *
+   * Under `bun test` it is a view of `process.env` that also has Vite's `MODE`,
+   * `DEV`, `PROD`, `SSR` and `BASE_URL`.
    */
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 

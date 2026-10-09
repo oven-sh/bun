@@ -50,6 +50,7 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    bool m_dependsOnMoreThanSource { false };
     // Bun__hashPluginContents() of what a plugin supplied, for a provider IsolatedModuleCache holds that was not made from the file.
     uint64_t m_pluginContentsHash { 0 };
 
@@ -62,6 +63,7 @@ private:
         , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
+        , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {

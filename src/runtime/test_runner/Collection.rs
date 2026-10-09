@@ -251,10 +251,14 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
+        if !matches!(data, RefDataValue::Collection { .. }) {
+            // Not of the describe() callback that happens to be running.
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        }
         self.active_scope_mut().failed = true;
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1

@@ -1,98 +1,55 @@
-// `import.meta.glob()` depends on the file system: the dev server bundles the importer again when the matches change.
+// `import.meta.glob()` is expanded each time the file that calls it is bundled.
+import { writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
-devTest("import.meta.glob follows files that appear and disappear", {
+const index = (label: string) => `
+  const eager = import.meta.glob("./modules/*.ts", { eager: true, import: "default" });
+  const lazy = import.meta.glob("./modules/*.ts", { import: "default" });
+  const loaded = await Promise.all(Object.values(lazy).map(load => load()));
+  console.log("${label} " + JSON.stringify(eager) + " " + loaded.join());
+`;
+
+devTest("import.meta.glob in a client bundle", {
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
       scripts: ["index.ts"],
     }),
-    "index.ts": `
-      const eager = import.meta.glob("./modules/*.ts", { eager: true, import: "default" });
-      const lazy = import.meta.glob("./modules/*.ts", { import: "default" });
-      const loaded = await Promise.all(Object.values(lazy).map(load => load()));
-      console.log(JSON.stringify(eager) + " " + loaded.join());
-    `,
+    "index.ts": index("first"),
     "modules/a.ts": `export default "a";`,
     "modules/b.ts": `export default "b";`,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage(`{"./modules/a.ts":"a","./modules/b.ts":"b"} a,b`);
+    await c.expectMessage(`first {"./modules/a.ts":"a","./modules/b.ts":"b"} a,b`);
 
+    writeFileSync(dev.join("modules/c.ts"), `export default "c";`);
     await c.expectReload(async () => {
-      await dev.write("modules/c.ts", `export default "c";`);
+      await dev.write("index.ts", index("second"));
     });
-    await c.expectMessage(`{"./modules/a.ts":"a","./modules/b.ts":"b","./modules/c.ts":"c"} a,b,c`);
-
-    await c.expectReload(async () => {
-      await dev.delete("modules/b.ts");
-    });
-    await c.expectMessage(`{"./modules/a.ts":"a","./modules/c.ts":"c"} a,c`);
-
-    await c.expectNoWebSocketActivity(async () => {
-      await dev.write("modules/notes.txt", "does not match");
-    });
-
-    await c.expectReload(async () => {
-      await dev.write("modules/d.ts", `export default "d";`);
-    });
-    await c.expectMessage(`{"./modules/a.ts":"a","./modules/c.ts":"c","./modules/d.ts":"d"} a,c,d`);
-
-    await c.expectReload(async () => {
-      await dev.write("index.ts", `console.log("no glob");`);
-    });
-    await c.expectMessage("no glob");
-    await c.expectNoWebSocketActivity(async () => {
-      await dev.write("modules/e.ts", `export default "e";`);
-    });
+    await c.expectMessage(`second {"./modules/a.ts":"a","./modules/b.ts":"b","./modules/c.ts":"c"} a,b,c`);
   },
 });
 
-devTest("import.meta.glob follows a directory that nothing is imported from", {
+const route = (label: string) => `
+  export default function () {
+    return new Response("${label} " + Object.keys(import.meta.glob(["../modules/**/*.ts", "!**/skip.ts"])).join());
+  }
+`;
+
+devTest("import.meta.glob in a server bundle", {
   framework: minimalFramework,
   files: {
-    "routes/index.ts": `
-      export default function () {
-        return new Response(Object.keys(import.meta.glob(["../modules/**/*.ts", "!**/skip.ts"])).join());
-      }
-    `,
+    "routes/index.ts": route("first"),
     "modules/a.ts": `throw new Error("not imported");`,
     "modules/nested/b.ts": `throw new Error("not imported");`,
-    "modules/nothing/here/.gitkeep": "",
-    "empty/.gitkeep": "",
-    "routes/empty.ts": `
-      export default function () {
-        return new Response("[" + Object.keys(import.meta.glob("../empty/*.ts")).join() + "]");
-      }
-    `,
+    "modules/nested/skip.ts": `throw new Error("not imported");`,
   },
   async test(dev) {
-    await dev.fetch("/").equals("../modules/a.ts,../modules/nested/b.ts");
-    await dev.write("modules/c.ts", "");
-    await dev.fetch("/").equals("../modules/a.ts,../modules/c.ts,../modules/nested/b.ts");
-    await dev.write("modules/nested/d.ts", "");
-    await dev.fetch("/").equals("../modules/a.ts,../modules/c.ts,../modules/nested/b.ts,../modules/nested/d.ts");
-    await dev.write("modules/nested/skip.ts", "");
-    await dev.fetch("/").equals("../modules/a.ts,../modules/c.ts,../modules/nested/b.ts,../modules/nested/d.ts");
-    await dev.delete("modules/a.ts");
-    await dev.fetch("/").equals("../modules/c.ts,../modules/nested/b.ts,../modules/nested/d.ts");
+    await dev.fetch("/").equals("first ../modules/a.ts,../modules/nested/b.ts");
 
-    await dev.fetch("/empty").equals("[]");
-    await dev.write("empty/first.ts", "");
-    await dev.fetch("/empty").equals("[../empty/first.ts]");
-
-    // Directories that hold no match yet.
-    await dev.write("modules/nothing/here/e.ts", "");
-    await dev
-      .fetch("/")
-      .equals("../modules/c.ts,../modules/nested/b.ts,../modules/nested/d.ts,../modules/nothing/here/e.ts");
-    await dev.mkdir("modules/later");
-    await dev.write("modules/later/f.ts", "");
-    await dev
-      .fetch("/")
-      .equals(
-        "../modules/c.ts,../modules/later/f.ts,../modules/nested/b.ts,../modules/nested/d.ts,../modules/nothing/here/e.ts",
-      );
+    writeFileSync(dev.join("modules/nested/c.ts"), `throw new Error("not imported");`);
+    await dev.write("routes/index.ts", route("second"));
+    await dev.fetch("/").equals("second ../modules/a.ts,../modules/nested/b.ts,../modules/nested/c.ts");
   },
 });

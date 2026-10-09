@@ -201,6 +201,17 @@ environment = "happy-dom"
 
 Equivalent CLI flag: `--environment`, which overrides the `bunfig.toml` value.
 
+### `test.globals`
+
+Where `test`, `expect` and the other globals of a file come from. With `"bun"`, the default, that is `"vitest"` for a file that imports anything from `"vitest"`, and `"bun:test"` for any other. With `"vitest"` it is `"vitest"` for every file, as in a Vitest project with `globals: true`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+globals = "vitest"
+```
+
+Equivalent CLI flag: `--globals`, which overrides the `bunfig.toml` value.
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
@@ -352,6 +363,17 @@ retry = 3
 ```
 
 The `--retry` CLI flag overrides this setting.
+
+### `test.clearMocks`
+
+Clear the calls and results of every mock function before each test. Default `false`, and `true` for tests imported from `"vitest"`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+clearMocks = true
+```
+
+`mockReset`, `restoreMocks`, `unstubEnvs` and `unstubGlobals` do the same with `vi.resetAllMocks()`, `vi.restoreAllMocks()`, `vi.unstubAllEnvs()` and `vi.unstubAllGlobals()`. Default `false`.
 
 ### `test.concurrentTestGlob`
 

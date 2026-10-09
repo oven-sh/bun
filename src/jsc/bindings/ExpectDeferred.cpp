@@ -40,6 +40,23 @@ extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObjec
     return JSValue::encode(thrown);
 }
 
+// `error.cause ??= cause`. What that throws is dropped: `error` is what matters.
+extern "C" void ExpectDeferred__setCauseIfNone(JSGlobalObject* globalObject, EncodedJSValue error, EncodedJSValue cause)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* object = JSValue::decode(error).getObject();
+    if (!object)
+        return;
+    JSValue existing = object->get(globalObject, vm.propertyNames->cause);
+    if (!scope.exception() && existing.isUndefinedOrNull()) {
+        PutPropertySlot slot(object);
+        object->methodTable()->put(object, globalObject, vm.propertyNames->cause, JSValue::decode(cause), slot);
+    }
+    if (scope.exception())
+        (void)scope.tryClearException();
+}
+
 extern "C" bool ExpectDeferred__isHandled(EncodedJSValue promise)
 {
     return uncheckedDowncast<JSPromise>(JSValue::decode(promise))->isHandled();

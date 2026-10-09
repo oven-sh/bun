@@ -1304,6 +1304,7 @@ impl EventLoop {
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
+    /// `after_call` runs between the call and the microtasks.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,
@@ -1311,11 +1312,14 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
+        after_call: impl FnOnce(),
     ) -> JsResult<JSValue> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let result = callback.call(global_object, this_value, arguments)?;
+        let result = callback.call(global_object, this_value, arguments);
+        after_call();
+        let result = result?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)

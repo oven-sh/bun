@@ -3613,7 +3613,72 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
+      test("Bun.deepMatch compares an object that occurs twice with each of its patterns", () => {
+        const shared = { v: 1 };
+        expect(Bun.deepMatch({ a: { v: 1 }, b: { v: 2 } }, { a: shared, b: shared })).toBe(false);
+        expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 2 } })).toBe(false);
+        expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 1 } })).toBe(true);
+      });
     }
+    test("compares an object that occurs twice with each of its patterns", () => {
+      const shared = { v: 1 };
+      expect({ a: shared, b: shared }).not.toMatchObject({ a: { v: 1 }, b: { v: 2 } });
+      expect({ a: { v: 1 }, b: { v: 2 } }).not.toMatchObject({ a: shared, b: shared });
+      expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
+      expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
+    });
+    test("ends on cycles", () => {
+      const received = { v: 1, other: { v: 2 } };
+      received.self = received;
+      received.other.back = received;
+      const same = { v: 1, other: { v: 2 } };
+      same.self = same;
+      same.other.back = same;
+      expect(received).toMatchObject(same);
+      const different = { v: 1, other: { v: 2 } };
+      different.self = different;
+      different.other.back = { v: 3 };
+      expect(received).not.toMatchObject(different);
+    });
+    test("leaves the received object as it is", () => {
+      class Point {
+        x = 1;
+        get y() {
+          return 2;
+        }
+      }
+      const received = Object.freeze({
+        a: 1,
+        nested: Object.freeze({ b: "x", list: Object.freeze([1, Object.freeze({ c: 2 })]) }),
+        point: new Point(),
+        wrong: 1,
+      });
+      const before = structuredClone({ ...received, point: { ...received.point } });
+      const matching = {
+        a: expect.any(Number),
+        nested: { b: expect.any(String), list: [expect.any(Number), { c: expect.anything() }] },
+        point: { x: expect.any(Number), y: expect.any(Number) },
+      };
+      expect(received).toMatchObject(matching);
+      expect(() => expect(received).not.toMatchObject(matching)).toThrow();
+      let message = "";
+      try {
+        expect(received).toMatchObject({ ...matching, wrong: 2 });
+      } catch (error) {
+        message = Bun.stripANSI(error.message);
+      }
+      // What has matched an asymmetric matcher is not part of the difference.
+      expect(message.split("\n").filter(line => /^[-+] /.test(line))).toEqual([
+        '-   "point": {',
+        '+   "point": Point {',
+        '-   "wrong": 2,',
+        '+   "wrong": 1,',
+        "- Expected  - 2",
+        "+ Received  + 2",
+      ]);
+      expect({ ...received, point: { ...received.point } }).toEqual(before);
+      expect(Object.keys(received.point)).toEqual(["x"]);
+    });
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

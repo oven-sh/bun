@@ -122,6 +122,65 @@ describe("vi.stubEnv", () => {
     }
   });
 
+  describe("Vite's variables in import.meta.env", () => {
+    const names = ["MODE", "BASE_URL", "DEV", "PROD", "SSR"] as const;
+    const read = (env: Record<string, unknown>) => names.map(name => env[name]);
+    const defaults = ["test", "/", true, false, true];
+    const absent = [undefined, undefined, undefined, undefined, undefined];
+
+    test("are what is stubbed, DEV, PROD and SSR as booleans, and have their defaults again afterwards", () => {
+      expect([read(import.meta.env), read(process.env)]).toEqual([defaults, absent]);
+      vi.stubEnv("MODE", "production");
+      expect([read(import.meta.env), read(process.env)]).toEqual([
+        ["production", "/", true, false, true],
+        ["production", undefined, undefined, undefined, undefined],
+      ]);
+      vi.stubEnv("BASE_URL", "/app/").stubEnv("DEV", false).stubEnv("PROD", true).stubEnv("SSR", false);
+      expect([read(import.meta.env), read(process.env)]).toEqual([
+        ["production", "/app/", false, true, false],
+        ["production", "/app/", "", "1", ""],
+      ]);
+      vi.unstubAllEnvs();
+      expect([read(import.meta.env), read(process.env)]).toEqual([defaults, absent]);
+      expect(names.filter(name => name in process.env)).toEqual([]);
+    });
+
+    test("stubbed with undefined have their defaults", () => {
+      vi.stubEnv("MODE", "production").stubEnv("DEV", false);
+      vi.stubEnv("MODE", undefined).stubEnv("DEV", undefined);
+      expect([read(import.meta.env), read(process.env)]).toEqual([defaults, absent]);
+    });
+
+    test("an original that import.meta.env assigned is restored", () => {
+      import.meta.env.DEV = false as any;
+      try {
+        vi.stubEnv("DEV", true);
+        expect<unknown>([import.meta.env.DEV, process.env.DEV]).toEqual([true, "1"]);
+        vi.unstubAllEnvs();
+        expect<unknown>([import.meta.env.DEV, process.env.DEV]).toEqual([false, ""]);
+      } finally {
+        delete import.meta.env.DEV;
+      }
+    });
+
+    test("follow a process.env that was replaced", () => {
+      const original = process.env;
+      try {
+        process.env = { ...original };
+        vi.stubEnv("PROD", true).stubEnv("VI_UTILS_NEW", "value");
+        expect<unknown>([import.meta.env.PROD, import.meta.env.VI_UTILS_NEW, original.PROD]).toEqual([
+          true,
+          "value",
+          undefined,
+        ]);
+        vi.unstubAllEnvs();
+        expect<unknown>([import.meta.env.PROD, "VI_UTILS_NEW" in import.meta.env]).toEqual([false, false]);
+      } finally {
+        process.env = original;
+      }
+    });
+  });
+
   test("unstubAllEnvs without stubs does nothing", () => {
     expect(vi.unstubAllEnvs()).toBe(vi);
   });
@@ -232,6 +291,37 @@ describe("vi.stubGlobal", () => {
       delete globalThis.viUtilsDescriptor;
     }
   });
+
+  test("the others are restored when one cannot be", async () => {
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts", "./c.test.ts"], {
+      "a.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("a", () => {
+          Object.assign(globalThis, { viUtilsFirst: "original", viUtilsStuck: "original", viUtilsLast: "original" });
+          for (const name of ["viUtilsFirst", "viUtilsStuck", "viUtilsLast", "viUtilsNew"]) vi.stubGlobal(name, "stub");
+          Object.defineProperty(globalThis, "viUtilsStuck", { configurable: false, writable: false });
+          expect(() => vi.unstubAllGlobals()).toThrow(TypeError);
+          expect([viUtilsFirst, viUtilsStuck, viUtilsLast, "viUtilsNew" in globalThis]).toEqual(["original", "stub", "original", false]);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("b", () => {
+          Object.assign(globalThis, { viUtilsFirst: "original", viUtilsStuckToo: "original", viUtilsLast: "original" });
+          for (const name of ["viUtilsFirst", "viUtilsStuckToo", "viUtilsLast"]) vi.stubGlobal(name, "stub");
+          Object.defineProperty(globalThis, "viUtilsStuckToo", { configurable: false, writable: false });
+        });
+      `,
+      "c.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("c", () => expect([viUtilsFirst, viUtilsStuckToo, viUtilsLast]).toEqual(["original", "stub", "original"]));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: ["(pass) a", "(pass) b", "(pass) c"],
+      exitCode: 1,
+    });
+  });
 });
 
 describe.concurrent("stubs do not outlive their test file", () => {
@@ -289,6 +379,206 @@ describe.concurrent("stubs do not outlive their test file", () => {
     );
     expect(stderr).toContain("error: thrown while loading");
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) b"], exitCode: 1 });
+  });
+});
+
+describe.concurrent("what a preload stubs is there for every test file", () => {
+  const seen = `[typeof viUtilsStub, typeof fetch, process.env.VI_UTILS_EXISTING, process.env.VI_UTILS_NEW, process.env.VI_UTILS_GONE]`;
+  const stubbed = `["function", "string", "stub", "stub", undefined]`;
+  const files = {
+    "preload.ts": `
+      import { vi } from "bun:test";
+      vi.stubGlobal("viUtilsStub", class {});
+      vi.stubGlobal("fetch", "stub");
+      vi.stubEnv("VI_UTILS_EXISTING", "stub");
+      vi.stubEnv("VI_UTILS_NEW", "stub");
+      vi.stubEnv("VI_UTILS_GONE", undefined);
+    `,
+    "a.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("a", () => expect(${seen}).toEqual(${stubbed}));
+    `,
+    "b.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("b", () => {
+        expect(${seen}).toEqual(${stubbed});
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+      });
+      test("b, after it has undone them", () => expect(${seen}).toEqual(["undefined", "function", "original", undefined, "original"]));
+    `,
+    "c.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("c", () => {
+        expect(${seen}).toEqual(${stubbed});
+        vi.stubGlobal("viUtilsStub", 1);
+        vi.stubGlobal("fetch", 1);
+        vi.stubEnv("VI_UTILS_EXISTING", "c");
+        vi.stubEnv("VI_UTILS_NEW", undefined);
+        vi.stubEnv("VI_UTILS_GONE", "c");
+      });
+    `,
+    "d.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("d", () => {
+        expect(${seen}).toEqual(${stubbed});
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+        expect(${seen}).toEqual(["undefined", "function", "original", undefined, "original"]);
+      });
+    `,
+  };
+  const env = { VI_UTILS_EXISTING: "original", VI_UTILS_GONE: "original" };
+  const testFiles = ["./a.test.ts", "./b.test.ts", "./c.test.ts", "./d.test.ts"];
+
+  test.each(["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"])(
+    "bun test %s",
+    async flags => {
+      const { stderr, exitCode } = await run(
+        ["test", "--preload", "./preload.ts", ...flags.split(" "), ...testFiles],
+        files,
+        env,
+      );
+      expect({ results: [...new Set(results(stderr))], exitCode }).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) b, after it has undone them", "(pass) c", "(pass) d"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("in a beforeAll() of the preload, which runs once", async () => {
+    const { stderr, exitCode } = await run(
+      ["test", "--preload", "./preload.ts", ...testFiles],
+      {
+        ...files,
+        "preload.ts": `
+          import { beforeAll, vi } from "bun:test";
+          beforeAll(() => {
+            ${files["preload.ts"].replace(/import .*/, "")}
+          });
+        `,
+      },
+      env,
+    );
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: ["(pass) a", "(pass) b", "(pass) b, after it has undone them", "(pass) c", "(pass) d"],
+      exitCode: 0,
+    });
+  });
+
+  test("not what the preload has undone itself, but what a hook of it undoes after a test", async () => {
+    const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {
+      "preload.ts": `
+        import { afterEach, vi } from "bun:test";
+        vi.stubGlobal("viUtilsUndone", 1);
+        vi.stubEnv("VI_UTILS_UNDONE", "1");
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+        vi.stubGlobal("viUtilsStub", 1);
+        vi.stubEnv("VI_UTILS_NEW", "1");
+        afterEach(() => {
+          vi.unstubAllGlobals();
+          vi.unstubAllEnvs();
+        });
+      `,
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        const seen = () => [globalThis.viUtilsUndone, process.env.VI_UTILS_UNDONE, globalThis.viUtilsStub, process.env.VI_UTILS_NEW];
+        test("first", () => expect(seen()).toEqual([undefined, undefined, 1, "1"]));
+        test("second", () => expect(seen()).toEqual([undefined, undefined, undefined, undefined]));
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        const seen = () => [globalThis.viUtilsUndone, process.env.VI_UTILS_UNDONE, globalThis.viUtilsStub, process.env.VI_UTILS_NEW];
+        test("first of the next file", () => expect(seen()).toEqual([undefined, undefined, 1, "1"]));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: ["(pass) first", "(pass) second", "(pass) first of the next file"],
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent("a global that Bun's own modules use is stubbed", () => {
+  const url = `URL {
+  href: 'http://a/',
+  origin: 'http://a',
+  protocol: 'http:',
+  username: '',
+  password: '',
+  host: 'a',
+  hostname: 'a',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+}
+`;
+
+  test.each(["undefined", `{ platform: "win32" }`])(
+    "process = %s, and a value with a custom inspector is printed",
+    async stub => {
+      const { stdout, stderr, exitCode } = await run(["test", "./stub.test.ts"], {
+        "stub.test.ts": `
+        import { test, vi } from "bun:test";
+        test("prints", () => {
+          vi.stubGlobal("process", ${stub});
+          console.log(new URL("http://a/"));
+        });
+      `,
+      });
+      expect({ stdout: stdout.slice(stdout.indexOf("URL")), results: results(stderr), exitCode }).toEqual({
+        stdout: url,
+        results: ["(pass) prints"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("process, and an assertion that fails prints such a value", async () => {
+    const { stderr, exitCode } = await run(["test", "./stub.test.ts"], {
+      "stub.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("fails", () => {
+          vi.stubGlobal("process", { platform: "win32" });
+          expect(new URL("http://a/")).toBe(1);
+        });
+      `,
+    });
+    expect(stderr).toContain("Expected: 1\nReceived: URL {");
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) fails"], exitCode: 1 });
+  });
+
+  test("process, outside of bun test", async () => {
+    const { stdout, exitCode } = await run(["./script.ts"], {
+      "script.ts": `
+        globalThis.process = undefined;
+        console.log(new URL("http://a/"));
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: url, exitCode: 0 });
+  });
+
+  test.each(["Symbol", "Object"])("%s: node:util cannot be loaded until it is back", async name => {
+    const { stdout, exitCode } = await run(["./script.ts"], {
+      "script.ts": `
+        const original = globalThis.${name};
+        const url = new URL("http://a/");
+        globalThis.${name} = undefined;
+        let error;
+        try {
+          Bun.inspect(url);
+        } catch (thrown) {
+          error = thrown;
+        }
+        globalThis.${name} = original;
+        console.log(error instanceof TypeError);
+        console.log(url);
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n" + url, exitCode: 0 });
   });
 });
 
@@ -350,6 +640,287 @@ describe.concurrent("vi.setConfig", () => {
     expect(() => vi.setConfig({ testTimeout: "10" })).toThrow(
       `The "config.testTimeout" argument must be of type number. Received type string ('10')`,
     );
+  });
+
+  test("hookTimeout is for the hooks registered after it, testTimeout for the tests", async () => {
+    const { stderr, exitCode } = await run(["test", "./config.test.ts"], {
+      "config.test.ts": `
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, onTestFinished, setDefaultTimeout, test, vi } from "bun:test";
+        const slow = () => Bun.sleep(40);
+        for (const [name, hook] of Object.entries({ beforeAll, beforeEach, afterEach, afterAll })) {
+          describe(name, () => {
+            vi.setConfig({ hookTimeout: 10 });
+            hook(slow);
+            vi.resetConfig();
+            test("test", () => {});
+          });
+        }
+        test("onTestFinished", () => {
+          vi.setConfig({ hookTimeout: 10 });
+          onTestFinished(slow);
+          vi.resetConfig();
+        });
+        describe("a timeout of its own", () => {
+          vi.setConfig({ hookTimeout: 10 });
+          beforeEach(slow, 5000);
+          vi.resetConfig();
+          test("test", () => {});
+        });
+        describe("hookTimeout is not for tests", () => {
+          vi.setConfig({ hookTimeout: 10 });
+          test("test", slow);
+          vi.resetConfig();
+        });
+        describe("testTimeout is not for hooks", () => {
+          vi.setConfig({ testTimeout: 10 });
+          beforeEach(slow);
+          vi.resetConfig();
+          test("test", () => {});
+        });
+        describe("set when the hook is registered already", () => {
+          beforeAll(() => vi.setConfig({ hookTimeout: 10 }));
+          beforeEach(slow);
+          afterAll(() => vi.resetConfig());
+          test("test", () => {});
+        });
+        describe("over setDefaultTimeout(), which resetConfig() leaves alone", () => {
+          setDefaultTimeout(10);
+          vi.setConfig({ hookTimeout: 0, testTimeout: Infinity });
+          beforeAll(slow);
+          test("no timeout", slow);
+          vi.resetConfig();
+          test("the timeout of setDefaultTimeout()", slow);
+          setDefaultTimeout(5000);
+        });
+        describe("a config that is refused sets nothing", () => {
+          expect(() => vi.setConfig({ testTimeout: 10, hookTimeout: "10" })).toThrow(
+            \`The "config.hookTimeout" argument must be of type number. Received type string ('10')\`,
+          );
+          test("test", slow);
+        });
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: [
+        "(fail) beforeAll > (unnamed)",
+        "(fail) beforeEach > test",
+        "(fail) afterEach > test",
+        "(pass) afterAll > test",
+        "(fail) afterAll > (unnamed)",
+        "(fail) onTestFinished",
+        "(pass) a timeout of its own > test",
+        "(pass) hookTimeout is not for tests > test",
+        "(pass) testTimeout is not for hooks > test",
+        "(pass) set when the hook is registered already > test",
+        "(pass) over setDefaultTimeout(), which resetConfig() leaves alone > no timeout",
+        "(fail) over setDefaultTimeout(), which resetConfig() leaves alone > the timeout of setDefaultTimeout()",
+        "(pass) a config that is refused sets nothing > test",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("the hooks of vitest have ten seconds unless --timeout gives them more", async () => {
+    const file = (module: string) => `
+      import { beforeEach, test } from "${module}";
+      beforeEach(() => Bun.sleep(40));
+      test("test", () => {}, 5000);
+    `;
+    const { stderr, exitCode } = await run(["test", "--timeout=10"], {
+      "bun.test.ts": file("bun:test"),
+      "vitest.test.ts": file("vitest"),
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) test", "(pass) test"], exitCode: 1 });
+  });
+
+  test("maxConcurrency", async () => {
+    const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts", "--max-concurrency=4"], {
+      "concurrent.ts": `
+        import { describe, test } from "bun:test";
+        export function concurrent(name) {
+          describe.concurrent(name, () => {
+            let started = 0;
+            for (let i = 0; i < 4; i++) {
+              test("test " + i, async () => {
+                started++;
+                await new Promise(resolve => setImmediate(resolve));
+                if (i === 0) console.log(name + ":", started, "tests have started");
+              });
+            }
+          });
+        }
+      `,
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        import { concurrent } from "./concurrent.ts";
+        vi.setConfig({ maxConcurrency: 2 });
+        concurrent("two");
+      `,
+      "b.test.ts": `
+        import { concurrent } from "./concurrent.ts";
+        concurrent("the next file");
+      `,
+    });
+    expect({
+      stdout: stdout.split("\n").filter(line => line.endsWith("tests have started")),
+      passed: results(stderr).filter(line => line.startsWith("(pass)")).length,
+      exitCode,
+    }).toEqual({
+      stdout: ["two: 2 tests have started", "the next file: 4 tests have started"],
+      passed: 8,
+      exitCode: 0,
+    });
+  });
+
+  describe("what is undone before each test", () => {
+    const file = (module: string, config = "") => `
+      import { beforeAll, beforeEach, test, vi } from "${module}";
+      ${config}
+      const fn = vi.fn(() => "original");
+      const object = { method: () => "original" };
+      fn("top level");
+      beforeAll(() => { fn("beforeAll"); });
+      beforeEach(() => { fn("beforeEach"); });
+      test("first", () => {
+        fn("first");
+        fn.mockReturnValue("changed");
+        vi.spyOn(object, "method").mockReturnValue("spied");
+        vi.stubEnv("STUBBED", "1");
+        vi.stubGlobal("stubbed", 1);
+      });
+      test("second", () => {
+        console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), env: process.env.STUBBED, global: typeof stubbed }));
+      });
+    `;
+    const seen = async (
+      module: string,
+      options: Record<string, boolean>,
+      through: "bunfig" | "setConfig" | "preload",
+      args: string[] = [],
+    ) => {
+      const setConfig = `vi.setConfig(${JSON.stringify(options)});`;
+      const { stdout, stderr, exitCode } = await run(
+        ["test", ...args, ...(through === "preload" ? ["--preload=./preload.ts"] : [])],
+        {
+          "a.test.ts": file(module, through === "setConfig" ? setConfig : ""),
+          "preload.ts": `import { vi } from "bun:test"; ${setConfig}`,
+          "bunfig.toml":
+            through === "bunfig"
+              ? "[test]\n" +
+                Object.entries(options)
+                  .map(([name, value]) => `${name} = ${value}\n`)
+                  .join("")
+              : "",
+        },
+      );
+      expect({ stderr: results(stderr), exitCode }).toEqual({ stderr: ["(pass) first", "(pass) second"], exitCode: 0 });
+      return JSON.parse((stdout + stderr).split("\n").find(line => line.startsWith("{"))!);
+    };
+    const nothing = {
+      calls: ["top level", "beforeAll", "beforeEach", "first", "beforeEach"],
+      returns: "changed",
+      method: "spied",
+      env: "1",
+      global: "number",
+    };
+    const cleared = { calls: ["beforeEach"] };
+
+    test.each([
+      ["bun:test", nothing],
+      ["@jest/globals", nothing],
+      ["vitest", { ...nothing, ...cleared }],
+    ])("by default, for a test of %j", async (module, expected) => {
+      expect(await seen(module, {}, "bunfig")).toEqual(expected);
+    });
+
+    describe.each(["bunfig", "setConfig", "preload"] as const)("through %s", through => {
+      test.each([
+        [{ clearMocks: true }, cleared],
+        [{ mockReset: true }, { ...cleared, returns: "original", method: "original" }],
+        [{ restoreMocks: true }, { method: "original" }],
+        [{ unstubEnvs: true }, { env: undefined }],
+        [{ unstubGlobals: true }, { global: "undefined" }],
+        [
+          { clearMocks: true, mockReset: true, restoreMocks: true, unstubEnvs: true, unstubGlobals: true },
+          { ...cleared, returns: "original", method: "original", env: undefined, global: "undefined" },
+        ],
+      ])("%j", async (options, difference) => {
+        expect(await seen("bun:test", options, through)).toEqual({ ...nothing, ...difference });
+      });
+
+      test("clearMocks: false, for a test of vitest", async () => {
+        expect(await seen("vitest", { clearMocks: false }, through)).toEqual(nothing);
+      });
+    });
+
+    test("in the workers of --parallel", async () => {
+      expect(await seen("bun:test", { clearMocks: true, unstubEnvs: true }, "bunfig", ["--parallel=1"])).toEqual({
+        ...nothing,
+        ...cleared,
+        env: undefined,
+      });
+    });
+
+    test("before each attempt, not for a test that is skipped, until resetConfig() or the end of the file", async () => {
+      const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+        "shared.ts": `import { vi } from "bun:test"; export const fn = vi.fn();`,
+        "a.test.ts": `
+          import { afterAll, beforeAll, describe, test, vi } from "bun:test";
+          import { fn } from "./shared.ts";
+          const calls = name => console.log(name + ":", fn.mock.calls.join());
+          describe("on", () => {
+            beforeAll(() => vi.setConfig({ clearMocks: true }));
+            let attempts = 0;
+            test("retried", () => { calls("attempt"); fn("attempt " + ++attempts); if (attempts < 2) throw new Error("again"); }, { retry: 1 });
+            test("repeated", () => { calls("run"); fn("run"); }, { repeats: 1 });
+            test.skip("skipped", () => {});
+            describe("nested", () => { beforeAll(() => calls("beforeAll")); test("test", () => calls("test")); });
+            afterAll(() => { fn("afterAll"); vi.resetConfig(); });
+          });
+          test("after resetConfig()", () => { calls("after resetConfig()"); vi.setConfig({ clearMocks: true }); });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          import { fn } from "./shared.ts";
+          fn("while it loads");
+          test("the next file", () => console.log("the next file:", fn.mock.calls.join()));
+        `,
+      });
+      expect({
+        stdout: stdout.split("\n").filter(line => line.includes(":")),
+        results: results(stderr),
+        exitCode,
+      }).toEqual({
+        stdout: [
+          "attempt: ",
+          "attempt: ",
+          "run: ",
+          "run: ",
+          "beforeAll: run",
+          "test: ",
+          "after resetConfig(): afterAll",
+          "the next file: while it loads",
+        ],
+        results: [
+          "(pass) on > retried (attempt 2)",
+          "(pass) on > repeated (run 2)",
+          "(skip) on > skipped",
+          "(pass) on > nested > test",
+          "(pass) after resetConfig()",
+          "(pass) the next file",
+        ],
+        exitCode: 0,
+      });
+    });
+
+    test("bunfig.toml wants a boolean", async () => {
+      const { stderr, exitCode } = await run(["test"], {
+        "a.test.ts": `import { test } from "bun:test"; test("test", () => {});`,
+        "bunfig.toml": `[test]\nclearMocks = "yes"\n`,
+      });
+      expect(stderr).toContain("expected boolean but received string");
+      expect(exitCode).toBe(1);
+    });
   });
 });
 

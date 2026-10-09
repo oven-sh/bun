@@ -30,6 +30,7 @@ pub(crate) fn print_in_message(
             host: &mut *formatter,
             out: Vec::new(),
             min: true,
+            shadow_roots: false,
             max_depth,
             max_width,
             // A UTF-16 code unit is at most 3 bytes of UTF-8.
@@ -69,11 +70,13 @@ pub(crate) fn print_in_snapshot(
         return Ok(false);
     }
     let indent = formatter.indent;
+    let format = formatter.snapshot_format;
     let mut printer = Printer {
         global: formatter.global_this,
         host: formatter,
         out: Vec::new(),
         min: false,
+        shadow_roots: format == super::snapshot::Format::Vitest,
         max_depth: u32::MAX,
         max_width: u32::MAX,
         give_up_at: usize::MAX,
@@ -82,7 +85,7 @@ pub(crate) fn print_in_snapshot(
         return Ok(false);
     }
     let out = printer.out;
-    let extra_line_breaks = indent == 0 && strings::contains_char(&out, b'\n');
+    let extra_line_breaks = indent == 0 && !format.is_pretty_format() && strings::contains_char(&out, b'\n');
     if extra_line_breaks {
         let _ = writer.write_all(b"\n");
     }
@@ -246,7 +249,7 @@ fn compare_code_units(a: &String, b: &String) -> Ordering {
         .unwrap_or_else(|| a.len.cmp(&b.len))
 }
 
-fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
+pub(super) fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
     Ok(match list.get(global, "length")? {
         Some(length) if length.is_number() => length.as_number() as u32,
         _ => 0,
@@ -254,7 +257,7 @@ fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
 }
 
 /// The items `Array.from(list)` has: what its iterator yields, or its indexes when it has none.
-fn for_each_item(
+pub(super) fn for_each_item(
     global: &JSGlobalObject,
     list: JSValue,
     each: &mut dyn FnMut(JSValue) -> JsResult<()>,
@@ -305,6 +308,8 @@ struct Printer<'a> {
     out: Vec<u8>,
     /// pretty-format's `min` option: everything on one line.
     min: bool,
+    /// Vitest's `printShadowRoot` option.
+    shadow_roots: bool,
     max_depth: u32,
     max_width: u32,
     /// With this many bytes in `out`, it is too long to be used and the rest of it does not matter.
@@ -426,6 +431,9 @@ impl Printer<'_> {
 
         let end_of_open_tag = self.out.len();
         self.out.push(b'>');
+        if self.shadow_roots && has_attributes {
+            self.print_shadow_root(node, indent + 1, depth)?;
+        }
         let mut children = node
             .get(self.global, "childNodes")?
             .filter(|list| list.is_object());
@@ -460,6 +468,25 @@ impl Printer<'_> {
             self.out.extend_from_slice(b"</");
             self.out.extend_from_slice(tag);
             self.out.push(b'>');
+        }
+        Ok(())
+    }
+
+    fn print_shadow_root(&mut self, host: JSValue, indent: u32, depth: u32) -> JsResult<()> {
+        let Some(shadow_root) = host.get(self.global, "shadowRoot")?.filter(|root| root.is_object()) else {
+            return Ok(());
+        };
+        let Some(children) = shadow_root.get(self.global, "children")?.filter(|list| list.is_object()) else {
+            return Ok(());
+        };
+        for i in 0..length_of(self.global, children)? {
+            if i == 0 {
+                self.line(indent);
+                self.out.extend_from_slice(b"#shadow-root");
+            }
+            self.line(indent + 1);
+            let child = children.get_index(self.global, i)?;
+            self.print_value(child, indent + 1, depth)?;
         }
         Ok(())
     }

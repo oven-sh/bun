@@ -8,7 +8,6 @@ use crate::tsconfig_json::TSConfigJSON;
 bun_js_parser::link_impl_ImportMetaGlobHost! {
     Resolver for Resolver<'static> => |this| {
         resolve_alias(importer_dir, glob) => (*this).import_meta_glob_alias(importer_dir, glob),
-        did_scan(scan) => drop(scan),
     }
 }
 

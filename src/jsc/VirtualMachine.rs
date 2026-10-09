@@ -1812,14 +1812,17 @@ impl VirtualMachine {
     /// Every ref on the loop counts as a poll too.
     #[cfg(not(windows))]
     fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
+        let rare = self.rare_data.as_deref();
         // The only socket of a `--parallel` worker's group is the one to its coordinator.
-        let has_coordinator = self
-            .rare_data
-            .as_deref()
-            .is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.is_null());
-        let not_the_programs = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator);
+        let has_coordinator =
+            rare.is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.is_null());
+        // `process.stdout` on a pipe, for one, with nothing left to write.
+        let disarmed = rare
+            .and_then(|rare| rare.file_polls.as_deref())
+            .map_or(0, bun_io::Store::disarmed_count);
+        let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
-            .is_some_and(|h| h.num_polls > not_the_programs)
+            .is_some_and(|h| h.num_polls > fires_nothing)
     }
 
     /// `uv_loop_alive` cannot leave out the timers' ref, nor the pipe to a `--parallel` worker's coordinator.
@@ -5328,6 +5331,7 @@ impl VirtualMachine {
             source,
             query_string.as_deref_mut(),
             mode,
+            false,
         )? {
             return Ok(resolved);
         }
@@ -5341,19 +5345,24 @@ impl VirtualMachine {
         )
     }
 
-    /// What the answer of an `onResolve` about `specifier` resolves to. `None` when none answers.
+    /// What the answer of an `onResolve` about `specifier` resolves to. `None` when none answers,
+    /// or, if `same_is_no_answer`, with `specifier`.
     pub(crate) fn resolve_with_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
         let answer = match run_on_resolve(global, specifier, source)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
             Some(Ok(answer)) => answer,
         };
+        if same_is_no_answer && answer.eql(specifier) {
+            return Ok(None);
+        }
         if let Some(name) = global.resolve_virtual_module(&answer, source) {
             return Ok(Some(Ok(name)));
         }
@@ -5929,8 +5938,7 @@ impl VirtualMachine {
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped while their close handlers
     /// can still run (dropping their JS-side Strongs, which otherwise pin the
-    /// outgoing global) before the blind socket-group close below. It also
-    /// resets the high tier's fake-timer state, which this crate cannot reach.
+    /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
@@ -5957,6 +5965,12 @@ impl VirtualMachine {
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
         }
+        // A macro that ran on this thread is a function of the outgoing global, which runs nothing from now on.
+        for callback in self.macros.values() {
+            callback.unprotect();
+        }
+        self.macros.clear_retaining_capacity();
+        self.transpiler.macro_context = None;
         let _ = self.event_loop_mut().drain_microtasks();
 
         let _ = self.auto_killer.kill();
@@ -7392,11 +7406,19 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
+                // Nor for what it holds, as for the properties of an Error.
+                let prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                formatter.disable_inspect_custom = true;
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
                 } else {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
+                formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                // What printing it throws is not what is being reported.
+                if global_ref.has_exception() && global_ref.clear_exception_except_termination() {
+                    pretty_write!(writer, "<r><d>[threw while it was printed]<r>")?;
+                }
                 writer.write_all(b"\n")?;
             }
         }
@@ -7909,25 +7931,34 @@ fn run_on_resolve(
             if namespace_str.eq_ascii(b"node") {
                 break 'brk bun_core::String::static_("node");
             }
+            if namespace_str.index_of_ascii_char(0).is_some() {
+                return Err(global.throw_invalid_argument_property_value(
+                    b"namespace",
+                    Some("a string without null bytes"),
+                    namespace_value,
+                ));
+            }
             break 'brk namespace_str;
         }
         break 'brk bun_core::String::static_("file");
     };
 
-    if user_namespace.eq_ascii(b"file") {
-        if file_path.starts_with_ascii(b"file://") {
-            let path = bun_url::path_from_file_url(&file_path);
-            if !path.is_dead() {
-                return Ok(Some(Ok(path)));
-            }
-        }
-        return Ok(Some(Ok(file_path)));
+    let key = if !user_namespace.eq_ascii(b"file") {
+        bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path))
+    } else if file_path.starts_with_ascii(b"file://") {
+        let path = bun_url::path_from_file_url(&file_path);
+        if path.is_dead() { file_path } else { path }
+    } else {
+        file_path
+    };
+    if key.index_of_ascii_char(0).is_some() {
+        return Err(global.throw_invalid_argument_property_value(
+            b"path",
+            Some("a string without null bytes"),
+            path_value,
+        ));
     }
-
-    Ok(Some(Ok(bun_core::String::create_format(format_args!(
-        "{}:{}",
-        user_namespace, file_path
-    )))))
+    Ok(Some(Ok(key)))
 }
 
 /// See [`VirtualMachine::enter_context`].

@@ -97,6 +97,8 @@ impl ApiSet {
             | 1 << Api::ClearTimeout as u16
             | 1 << Api::SetInterval as u16
             | 1 << Api::ClearInterval as u16
+            | 1 << Api::RequestAnimationFrame as u16
+            | 1 << Api::CancelAnimationFrame as u16
             | 1 << Api::Date as u16
             | 1 << Api::Performance as u16
             | 1 << Api::Hrtime as u16,
@@ -334,6 +336,24 @@ impl Drop for Firing {
     }
 }
 
+/// While it lives, getters of the globals may run, and `useFakeTimers()` and `useRealTimers()` throw.
+struct ReadingGlobals;
+
+impl ReadingGlobals {
+    fn begin() -> ReadingGlobals {
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+        unsafe { (*timer_all()).fake_timers.reading_globals = true };
+        ReadingGlobals
+    }
+}
+
+impl Drop for ReadingGlobals {
+    fn drop(&mut self) {
+        // SAFETY: as in `begin`.
+        unsafe { (*timer_all()).fake_timers.reading_globals = false };
+    }
+}
+
 /// What is left of a call of an `…Async` function. An event loop task runs at most one fake timer of it.
 enum Drive {
     /// How much further the call moves the clock. `None`: as far as the last timer that is pending at the first step.
@@ -372,6 +392,13 @@ impl AsyncDrive {
             None => self.promise.resolve(global, self.result.get()),
         }
     }
+
+    fn settle_all(global: &JSGlobalObject, drives: Vec<AsyncDrive>) -> JsResult<()> {
+        for drive in drives {
+            drive.settle(global)?;
+        }
+        Ok(())
+    }
 }
 
 enum Step {
@@ -400,6 +427,8 @@ pub(crate) struct FakeTimers {
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
+    /// A [`ReadingGlobals`] is alive.
+    reading_globals: bool,
     ticks: VecDeque<Tick>,
     drives: Vec<AsyncDrive>,
     last_drive_id: u32,
@@ -423,6 +452,7 @@ impl Default for FakeTimers {
             date_now_offset: 0.0,
             loop_limit: 0,
             replaced: Vec::new(),
+            reading_globals: false,
             ticks: VecDeque::new(),
             drives: Vec::new(),
             last_drive_id: AUTO_STEP,
@@ -639,20 +669,16 @@ impl FakeTimers {
         }
     }
 
-    /// Restore real timers without draining the fake heap. Used by the
-    /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
-    /// `cancel_all_timeout_objects` (which runs after the outgoing global's
-    /// JS has stopped) can walk the still-populated fake heap and release
-    /// `TimeoutObject` pins and discard `AbortSignalTimeout` timers. The
-    /// outgoing global keeps its fake functions: it goes away with them.
-    pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
-        self.forget_installation(global);
+    /// `global` has run script for the last time (`--isolate` swap, VM teardown). The heap is left to `cancel_all_timeout_objects`.
+    pub(crate) fn forget_realm(&mut self, global: &JSGlobalObject) {
+        // The mocked time is the process's: a Worker that ends leaves alone what another thread mocks.
+        if self.active {
+            self.forget_installation(global);
+        }
         self.replaced.clear();
         self.ticks.clear();
-        for drive in core::mem::take(&mut self.drives) {
-            // The swap drains the microtasks of the outgoing file once more; VM teardown drops them.
-            let _ = drive.settle(global);
-        }
+        self.drives.clear();
+        self.auto_step_posted = false;
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
@@ -707,6 +733,16 @@ impl FakeTimers {
         self.timers.peek().is_none() && self.ticks.is_empty()
     }
 
+    /// The faked `setImmediate` to run first. It is the next timer, unless it was queued while a timer of this instant ran.
+    fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let next = self.timers.peek()?;
+        // SAFETY: `next` is the heap root; live while linked.
+        if unsafe { (*next).tag } == EventLoopTimerTag::ImmediateObject {
+            return Some(next);
+        }
+        self.timers.first_immediate()
+    }
+
     fn pop_due(&mut self, until: &Timespec) -> Option<*mut EventLoopTimer> {
         let next = self.timers.peek()?;
         // SAFETY: `next` is the heap root; live while linked.
@@ -716,69 +752,91 @@ impl FakeTimers {
         self.timers.delete_min()
     }
 
-    /// Without fake timers it still ends `setSystemTime()`'s override.
-    fn uninstall(global: &JSGlobalObject, restore: Restore) -> JsResult<()> {
+    /// Without fake timers it still ends `setSystemTime()`'s override. Settling what it returns runs script; `Restore::Always` runs none.
+    fn uninstall(global: &JSGlobalObject, restore: Restore) -> Vec<AsyncDrive> {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-        let deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
+        let mut deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
         deactivated.cleared.release(global.bun_vm_ptr());
-        for Replaced {
-            api,
-            original,
-            fake,
-        } in deactivated.replaced
-        {
-            let owner = api.owner(global);
-            if restore == Restore::Always || owner.get(global, api.name())? == Some(fake.get()) {
-                owner.put(global, api.name().as_bytes(), original.get());
-            }
+        if restore == Restore::WhereStillInstalled {
+            let _reading = ReadingGlobals::begin();
+            deactivated.replaced.retain(|replaced| {
+                match replaced.api.owner(global).get(global, replaced.api.name()) {
+                    Ok(installed) => installed == Some(replaced.fake.get()),
+                    Err(err) => {
+                        crate::dispatch::fold(Err(err));
+                        false
+                    }
+                }
+            });
         }
-        for drive in deactivated.drives {
-            drive.settle(global)?;
+        for Replaced { api, original, .. } in deactivated.replaced {
+            api.owner(global)
+                .put(global, api.name().as_bytes(), original.get());
         }
-        Ok(())
+        deactivated.drives
     }
 
-    fn install(global: &JSGlobalObject, options: &Options, date_now: f64) -> JsResult<()> {
+    /// Script runs before anything changes, so what it throws leaves the timers as they were. Returns as `uninstall`.
+    fn install(
+        global: &JSGlobalObject,
+        options: &Options,
+        date_now: f64,
+    ) -> JsResult<Vec<AsyncDrive>> {
         bun_jsc::cpp::Bun__FakeTimers__loadNodeTimers(global)?;
+        let replaced = Self::fakes(global, options.faked)?;
+        let drives = Self::uninstall(global, Restore::Always);
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe {
             (*timer_all())
                 .fake_timers
                 .activate(global, options, date_now)
         };
-        for api in Api::FUNCTIONS {
-            if !options.faked.contains(api) {
-                continue;
-            }
-            if let Err(err) = Self::replace(global, api) {
-                // Nothing is scheduled or pending yet, so this only puts the functions back: it cannot throw over `err`.
-                let _ = Self::uninstall(global, Restore::Always);
-                return Err(err);
-            }
+        for Replaced { api, fake, .. } in &replaced {
+            api.owner(global)
+                .put(global, api.name().as_bytes(), fake.get());
         }
+        // SAFETY: as above.
+        unsafe { (*timer_all()).fake_timers.replaced = replaced };
         Self::set_tick_mode(options.tick_mode);
-        Ok(())
+        Ok(drives)
     }
 
-    fn replace(global: &JSGlobalObject, api: Api) -> JsResult<()> {
-        let owner = api.owner(global);
-        let original = owner.get(global, api.name())?.unwrap_or(JSValue::UNDEFINED);
-        // Only a DOM library has these two.
-        if matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
-            && !original.is_callable()
-        {
-            return Ok(());
+    /// A new fake for each function of `faked`, with what `uninstall(Restore::Always)` leaves in its place.
+    fn fakes(global: &JSGlobalObject, faked: ApiSet) -> JsResult<Vec<Replaced>> {
+        let _reading = ReadingGlobals::begin();
+        let mut fakes = Vec::new();
+        for api in Api::FUNCTIONS {
+            if !faked.contains(api) {
+                continue;
+            }
+            // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+            let replaced_now = unsafe { &(*timer_all()).fake_timers.replaced }
+                .iter()
+                .find(|replaced| replaced.api == api)
+                .map(|replaced| replaced.original.get());
+            let original = match replaced_now {
+                Some(original) => original,
+                None => api
+                    .owner(global)
+                    .get(global, api.name())?
+                    .unwrap_or(JSValue::UNDEFINED),
+            };
+            // Only a DOM library has these two.
+            if matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
+                && !original.is_callable()
+            {
+                continue;
+            }
+            fakes.push(Replaced {
+                api,
+                original: Strong::create(original, global),
+                fake: Strong::create(
+                    bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
+                    global,
+                ),
+            });
         }
-        let fake = bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?;
-        owner.put(global, api.name().as_bytes(), fake);
-        let replaced = Replaced {
-            api,
-            original: Strong::create(original, global),
-            fake: Strong::create(fake, global),
-        };
-        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-        unsafe { (*timer_all()).fake_timers.replaced.push(replaced) };
-        Ok(())
+        Ok(fakes)
     }
 
     // Below, a `JSValue` result is what a callback threw, or empty. `Err` is the VM's own: its termination.
@@ -943,7 +1001,7 @@ impl FakeTimers {
         let limit = unsafe { (*all).fake_timers.loop_limit };
         for _ in 0..limit {
             // SAFETY: as above.
-            let Some(immediate) = (unsafe { (*all).fake_timers.timers.first_immediate() }) else {
+            let Some(immediate) = (unsafe { (*all).fake_timers.first_immediate() }) else {
                 return Ok(JSValue::ZERO);
             };
             // SAFETY: as above; `immediate` is linked in this heap.
@@ -954,7 +1012,7 @@ impl FakeTimers {
             }
         }
         // SAFETY: as above.
-        if unsafe { (*all).fake_timers.timers.first_immediate() }.is_none() {
+        if unsafe { (*all).fake_timers.first_immediate() }.is_none() {
             return Ok(JSValue::ZERO);
         }
         loop_limit_error(global, limit)
@@ -1014,15 +1072,15 @@ impl FakeTimers {
         id: u32,
     ) -> Option<Option<*mut EventLoopTimer>> {
         let now = self.now;
-        let to_last = self.timers.find_max().map(|last| {
-            // SAFETY: `last` is reachable in the heap and live while linked.
-            unsafe { (*last).next }.duration(&now)
-        });
         let index = self.drives.iter().position(|drive| drive.id == id)?;
         let Drive::Tick(remaining) = self.drives[index].drive else {
             return None;
         };
-        let until = plus(now, remaining.or(to_last).unwrap_or(Timespec::EPOCH));
+        let to_last = || {
+            // SAFETY: `last` is reachable in the heap and live while linked.
+            Some(unsafe { (*self.timers.find_max()?).next }.duration(&now))
+        };
+        let until = plus(now, remaining.or_else(to_last).unwrap_or(Timespec::EPOCH));
         let Some(timer) = self.pop_due(&until) else {
             self.advance_clock_to(global, until);
             return Some(None);
@@ -1124,6 +1182,10 @@ impl FakeTimers {
 
     /// The event loop task `Bun__FakeTimers__postStep` posts.
     pub(crate) fn run_step(global: &JSGlobalObject, id: u32) -> JsResult<()> {
+        // Posted by a test file whose realm `--isolate` has retired since.
+        if !core::ptr::eq(global, global.bun_vm().global()) {
+            return Ok(());
+        }
         if id == AUTO_STEP {
             return Self::run_auto_step(global);
         }
@@ -1289,6 +1351,16 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     )))
 }
 
+fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
+    // SAFETY: per-thread `timer::All`, live for the VM lifetime.
+    if !unsafe { (*timer_all()).fake_timers.reading_globals } {
+        return Ok(());
+    }
+    Err(global.throw(format_args!(
+        "useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace."
+    )))
+}
+
 /// `vi` or `jest`, for calls to chain. `frame.this()` itself is a scope object when the function is called by a bare name.
 fn chainable_this(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     bun_jsc::cpp::JSMock__strictThis(global, frame.this())
@@ -1312,14 +1384,16 @@ fn use_fake_timers(
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),
         Flavor::Jest => JSMock__getCurrentUnixTimeMs(),
     });
-    FakeTimers::uninstall(global, Restore::Always)?;
-    FakeTimers::install(global, &options, date_now)?;
+    error_if_reading_globals(global)?;
+    let ended = FakeTimers::install(global, &options, date_now)?;
+    AsyncDrive::settle_all(global, ended)?;
     Ok(chainable_this(global, frame))
 }
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    FakeTimers::uninstall(global, Restore::Always)?;
+    error_if_reading_globals(global)?;
+    AsyncDrive::settle_all(global, FakeTimers::uninstall(global, Restore::Always))?;
     Ok(chainable_this(global, frame))
 }
 
@@ -1398,11 +1472,11 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     if !mocked || from_preload {
         return;
     }
-    // What waits for an `…Async` call goes on while this is still the file it belongs to.
     // SAFETY: the live event loop of the per-thread VM.
     let _entered =
         unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-    crate::dispatch::fold(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
+    // The promises of its `…Async` calls stay pending, as all that is pending when a file ends.
+    drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
 }
 
 pub(crate) fn is_active() -> bool {

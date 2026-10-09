@@ -193,6 +193,8 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
+        /// Those are the exports of "vitest" in every file.
+        pub vitest_globals: bool,
 
         pub no_macros: bool,
 
@@ -286,6 +288,7 @@ pub mod Runtime {
                 allow_runtime: true,
                 inlining: false,
                 inject_jest_globals: false,
+                vitest_globals: false,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
@@ -359,7 +362,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 18] = [
+            let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -378,6 +381,7 @@ pub mod Runtime {
                 self.lower_using,
                 self.repl_mode,
                 self.inject_jest_globals,
+                self.vitest_globals,
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -1228,6 +1232,9 @@ pub struct ExprIn {
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+
+    /// The parent is `Object.keys(x)`.
+    pub(crate) is_object_keys_argument: bool,
 }
 
 /// This function exists to tie all of these checks together in one place

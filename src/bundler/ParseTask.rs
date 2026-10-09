@@ -204,24 +204,6 @@ pub(crate) struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
-
-    /// For the dev server, which looks again when a directory changes.
-    pub(crate) import_meta_globs: Vec<js_parser::ImportMetaGlobScan>,
-}
-
-/// Keeps what the `import.meta.glob()` calls of a file looked for.
-struct DevServerGlobs {
-    resolver: *mut Resolver<'static>,
-    scans: Vec<js_parser::ImportMetaGlobScan>,
-}
-
-js_parser::link_impl_ImportMetaGlobHost! {
-    DevServerParseTask for DevServerGlobs => |this| {
-        resolve_alias(importer_dir, glob) => {
-            (*(*this).resolver).import_meta_glob_alias(importer_dir, glob)
-        },
-        did_scan(scan) => (*this).scans.push(scan),
-    }
 }
 
 pub(crate) struct ResultError {
@@ -2522,18 +2504,8 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
-        let mut dev_server_globs = DevServerGlobs {
-            resolver,
-            scans: Vec::new(),
-        };
-        // SAFETY: both outlive the parse, which only calls them from this thread.
-        opts.import_meta_glob = Some(unsafe {
-            if topts.has_dev_server() {
-                js_parser::ImportMetaGlobHost::of(&raw mut dev_server_globs)
-            } else {
-                js_parser::ImportMetaGlobHost::of(resolver)
-            }
-        });
+        // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+        opts.import_meta_glob = Some(unsafe { js_parser::ImportMetaGlobHost::of(resolver) });
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
@@ -2768,7 +2740,6 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
-            import_meta_globs: dev_server_globs.scans,
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,

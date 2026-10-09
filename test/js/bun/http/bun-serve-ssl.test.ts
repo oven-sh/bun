@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -279,5 +280,60 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       defaultResumed: "HTTP/1.1 200 OK",
       gatedResumed: "connection closed without a response",
     });
+  });
+});
+
+// Bun.serve reads the members of its `tls` object through the generated TLSOptions
+// dictionary. Each member is read with a lookup that stops at Object.prototype, so a
+// polluted Object.prototype cannot supply a member the caller did not pass.
+//
+// The case runs in its own process: Object.prototype is global state.
+describe("Bun.serve Object.prototype pollution", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+
+  test("does not take tls.rejectUnauthorized from Object.prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // The server requests a client certificate. It does not pass
+        // rejectUnauthorized, so the default (reject) applies.
+        const serve = () => Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: {
+            key: process.env.FIXTURE_KEY,
+            cert: process.env.FIXTURE_CERT,
+            ca: process.env.FIXTURE_CA,
+            requestCert: true,
+          },
+          fetch: () => new Response("admin"),
+        });
+        // The client presents no certificate.
+        const probe = url =>
+          fetch(url, { tls: { rejectUnauthorized: false } }).then(
+            response => "HTTP " + response.status,
+            () => "rejected",
+          );
+        Object.prototype.rejectUnauthorized = false;
+        const server = serve();
+        delete Object.prototype.rejectUnauthorized;
+        console.log(await probe(server.url));
+        server.stop(true);
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        FIXTURE_KEY: readFileSync(join(tlsFixtures, "agent10-key.pem"), "utf8"),
+        FIXTURE_CERT: readFileSync(join(tlsFixtures, "agent10-cert.pem"), "utf8"),
+        FIXTURE_CA: readFileSync(join(tlsFixtures, "ca5-cert.pem"), "utf8"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "rejected", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });

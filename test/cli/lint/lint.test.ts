@@ -144,9 +144,12 @@ describe.concurrent("bun lint", () => {
     const codes = ["let x = 1;\nconst", "export var", "for (const of a);", "class extends A {}", "class A extends {}"];
     const files = Object.fromEntries(codes.map((code, i) => [`a${i}.js`, code + "\n"]));
     const { stdout, exitCode } = await lint({ [name]: text, ...files }, ["-f", "unix", ...Object.keys(files)]);
-    expect(stdout.split("\n").filter(line => / Parsing error: /.test(line)).map(line => line.match(/a\d\.js/)?.[0])).toEqual(
-      Object.keys(files),
-    );
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => / Parsing error: /.test(line))
+        .map(line => line.match(/a\d\.js/)?.[0]),
+    ).toEqual(Object.keys(files));
     expect(exitCode).toBe(1);
   });
 

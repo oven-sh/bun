@@ -348,6 +348,10 @@ impl Parser<'_> {
                         .cast::<VerbatimLine>()
                         .read_unaligned()
                 };
+                // A reference definition starts with `[`
+                if li == 0 && self.ch(vline.beg) != b'[' {
+                    break;
+                }
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }

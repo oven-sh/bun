@@ -19,6 +19,11 @@ export const tree = {
   "proj/src/other/o.ts": "export default 'other';",
   "proj/src/[id]/(group)/{x}/p.ts": "export default 'p';",
   "proj/src/[id]/(group)/{x}/q.ts": "export default 'q';",
+  "proj/src/üñí/é.ts": "export default 'e-acute';",
+  "proj/src/üñí/日本.ts": "export default 'nihon';",
+  "proj/src/üñí/😀.ts": "export default 'emoji';",
+  "proj/src/üñí/a b.ts": "export default 'space';",
+  "proj/src/üñí/it's.ts": "export default 'apostrophe';",
   "proj/src/harness.js": `
     const plain = v => (v && v[Symbol.toStringTag] === "Module" ? { ...v } : v);
     export async function describeGlob(object) {
@@ -109,4 +114,7 @@ export const cases: Case[] = [
   ['import.meta.glob("./**/q.ts")', [["./[id]/(group)/{x}/q.ts", "lazy", {"default":"q"}]]],
   ['Object.fromEntries(Object.keys(import.meta.glob("./dir/[ab].ts")).map(key => [key, 1]))', [["./dir/a.ts", "eager", 1], ["./dir/b.ts", "eager", 1]]],
   ['Object.fromEntries(Object.values(import.meta.glob("./dir/[ab].ts", { eager: true, import: "name" })).map(name => [name, 1]))', [["a", "eager", 1], ["b", "eager", 1]]],
+  ['import.meta.glob("./üñí/*.ts")', [["./üñí/a b.ts", "lazy", {"default":"space"}], ["./üñí/it's.ts", "lazy", {"default":"apostrophe"}], ["./üñí/é.ts", "lazy", {"default":"e-acute"}], ["./üñí/日本.ts", "lazy", {"default":"nihon"}], ["./üñí/😀.ts", "lazy", {"default":"emoji"}]]],
+  ['import.meta.glob("./üñí/*.ts", { eager: true, import: "default" })', [["./üñí/a b.ts", "eager", "space"], ["./üñí/it's.ts", "eager", "apostrophe"], ["./üñí/é.ts", "eager", "e-acute"], ["./üñí/日本.ts", "eager", "nihon"], ["./üñí/😀.ts", "eager", "emoji"]]],
+  ['import.meta.glob("./*/日*.ts")', [["./üñí/日本.ts", "lazy", {"default":"nihon"}]]],
 ];

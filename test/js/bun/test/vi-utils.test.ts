@@ -1155,6 +1155,10 @@ describe("a function that returns `this` for chaining", () => {
       ["vi", vi, "unstubAllGlobals"],
       ["vi", vi, "stubEnv", "VI_UTILS_CALLED_BY_BARE_NAME", "1"],
       ["vi", vi, "unstubAllEnvs"],
+      ["jest", jest, "mock", "vi-utils-called-by-bare-name", () => ({})],
+      ["jest", jest, "doMock", "vi-utils-called-by-bare-name", () => ({})],
+      ["jest", jest, "unmock", "vi-utils-called-by-bare-name"],
+      ["jest", jest, "dontMock", "vi-utils-called-by-bare-name"],
       ["mock", mock, "restore"],
       ["mock", mock, "clearAllMocks"],
     ] as [owner: string, object: object, name: string, ...args: unknown[]][]
@@ -1193,9 +1197,12 @@ describe("a function that returns `this` for chaining", () => {
     expect((() => [getter(), results.length])()).toEqual([undefined, 1]);
   });
 
-  test.concurrent("no function of the test module lets a scope object out", async () => {
-    const { stdout, stderr, exitCode } = await run(["test", "./sweep.test.ts"], {
-      "sweep.test.ts": `
+  // Hundreds of calls, most of which throw: seconds in a debug build that validates exception checks.
+  test.concurrent(
+    "no function of the test module lets a scope object out",
+    async () => {
+      const { stdout, stderr, exitCode } = await run(["test", "--timeout=60000", "./sweep.test.ts"], {
+        "sweep.test.ts": `
         import * as bunTest from "bun:test";
         import * as vitest from "vitest";
         import * as jestGlobals from "@jest/globals";
@@ -1216,7 +1223,7 @@ describe("a function that returns `this` for chaining", () => {
               swept.add(callee);
               for (const fake of [false, true]) {
                 for (const args of [[], [0], ["sweep", 1]]) {
-                  fake ? bunTest.vi.useFakeTimers() : bunTest.vi.useRealTimers();
+                  if (bunTest.vi.isFakeTimers() !== fake) fake ? bunTest.vi.useFakeTimers() : bunTest.vi.useRealTimers();
                   let result;
                   try {
                     result = byBareName(callee, ...args);
@@ -1238,10 +1245,12 @@ describe("a function that returns `this` for chaining", () => {
           console.log(JSON.stringify({ escaped, swept: calls > 100 }));
         });
       `,
-    });
-    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
-      stdout: '{"escaped":[],"swept":true}\n',
-      exitCode: 0,
-    });
-  });
+      });
+      expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+        stdout: '{"escaped":[],"swept":true}\n',
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
 });

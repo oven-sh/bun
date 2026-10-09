@@ -216,19 +216,19 @@ declare module "bun:test" {
      * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
      * otherwise a copy of the module in which every function is a mock.
      */
-    function mock(id: string, factory?: ModuleMockFactory): void | Promise<void>;
+    function mock(id: string, factory?: ModuleMockFactory): typeof jest;
     /**
      * Like {@link mock}, but the call stays where it is written.
      */
-    function doMock(id: string, factory?: ModuleMockFactory): void | Promise<void>;
+    function doMock(id: string, factory?: ModuleMockFactory): typeof jest;
     /**
      * The module `id` is not mocked any more. The call is moved above the imports of the file.
      */
-    function unmock(id: string): void;
+    function unmock(id: string): typeof jest;
     /**
      * Like {@link unmock}, but the call stays where it is written.
      */
-    function dontMock(id: string): void;
+    function dontMock(id: string): typeof jest;
     /**
      * `require()` the module `id` itself, whether or not it is mocked.
      */
@@ -449,9 +449,14 @@ declare module "bun:test" {
     mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
     /**
      * Like `vi.mock`, but the call stays where it is written: it applies to the imports that run after it.
+     *
+     * Disposing of what it returns removes the mock: `using _ = vi.doMock("./math", factory)`.
      */
-    doMock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): void | Promise<void>;
-    doMock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
+    doMock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): Disposable | (Disposable & Promise<void>);
+    doMock<T>(
+      module: Promise<T>,
+      factory?: ModuleMockFactory<T> | ModuleMockOptions,
+    ): Disposable | (Disposable & Promise<void>);
     /**
      * The module is not mocked any more. The call is moved above the imports of the file.
      */

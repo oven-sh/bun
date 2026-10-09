@@ -440,8 +440,8 @@ const AUTO_STEP: u32 = 0;
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
-/// move, so `performance.timeOrigin` follows the rebased offset. No-op when
-/// fake timers are inactive. A NaN `ms` is the "clear override" sentinel:
+/// move, so `performance.timeOrigin` follows the rebased offset. Without fake
+/// timers, only who set the time is noted. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]

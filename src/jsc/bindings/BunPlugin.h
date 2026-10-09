@@ -158,14 +158,12 @@ class SourceCode;
 namespace Bun {
 JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
-// What runVirtualModule returned for a module mock, once its factory settled, or a promise for it. Anything else is returned as it is.
-// Unless `synchronous`, a mock that imports its original is returned at once: the ES module it is loaded as calls the factory.
+// The module mock, or a promise for it. Its factory has settled, unless the ES module it is loaded as is to call it (never if `synchronous`).
 JSC::JSValue runModuleMock(Zig::GlobalObject*, JSC::JSValue moduleMock, bool synchronous);
 // What the factory made: the exports, or a CommonJS module that has them as `module.exports`. Null until it settled.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 JSC::SourceCode sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
-// `importer` imports or requires the module `key` while runningModuleMocks is not empty. What a factory loads gets the
-// original of the module it mocks, and its own copy of a module that waits for the mock.
+// What a factory that is running loads gets the original of the module being mocked, and its own copy of a module that waits for the mock.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 // The object a module mock's factory returned, if the export `name` is read from it. Null otherwise.
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);

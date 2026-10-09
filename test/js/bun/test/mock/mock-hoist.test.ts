@@ -81,6 +81,42 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load side", "mocked"]]);
   });
 
+  // What babel-jest does with each.
+  test.each([
+    [`jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, true],
+    [
+      `jest.unmock("./side").mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`,
+      true,
+    ],
+    [`await jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, true],
+    [`jest.mock("./mod", () => ({ value: "mocked" })).doMock("./other", () => ({ other: "mocked" }))`, false],
+    [`jest.doMock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, false],
+    [
+      `jest.mock("./mod", () => ({ value: "mocked" })).useRealTimers().mock("./other", () => ({ other: "mocked" }))`,
+      false,
+    ],
+    [
+      `jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" })).dontMock("./side")`,
+      false,
+    ],
+    [
+      `const same = jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`,
+      false,
+    ],
+  ])("a chain: %s", async (chain, isHoisted) => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { value } from "./mod";
+          import { other } from "./other";
+          ${chain};
+          events.push(value, other);
+          ${print}
+        `,
+      }),
+    ).toEqual([isHoisted ? ["mocked", "mocked"] : ["load mod", "load other", "real", "other"]]);
+  });
+
   test.each([
     ["hoist.test.js", ["load other", "load side", "mocked"]],
     ["hoist.test.mjs", ["load other", "load side", "mocked"]],
@@ -142,7 +178,7 @@ describe.concurrent("hoisting", () => {
         "mocked",
         true,
         { def: "mocked default", value: "mocked" },
-        ["default", "quoted name", "value"],
+        ["default", "value", "quoted name"],
       ],
     ]);
   });

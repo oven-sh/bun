@@ -333,7 +333,34 @@ test("partial mock", () => {
 
 Outside a factory, `await vi.importActual("./math")` and `jest.requireActual("./math")` load the original of a mocked module.
 
-The original cannot be loaded for its own factory when one of the modules it imports also imports the mocked module. The import then fails with a `Circular import` error that lists the modules.
+This also works when the mocked module is part of an import cycle: the modules that import it get the mock, and the original is evaluated before the factory is called.
+
+While a factory runs, what it loads with `import()`, `require()` or `vi.importActual()` gets the original of the module being mocked instead of waiting for the mock.
+
+### Getters and Missing Exports
+
+Exports are read from the object the factory returned every time they are used, so a getter stays live.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+import { enabled } from "./flags";
+
+const state = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("./flags", () => ({
+  get enabled() {
+    return state.enabled;
+  },
+}));
+
+test("getter", () => {
+  expect(enabled).toBe(false);
+  state.enabled = true;
+  expect(enabled).toBe(true);
+});
+```
+
+A module that imports a name the factory did not return still loads. Using that name throws an error that says which export is missing from which mock.
 
 ### Mocking Without a Factory
 
@@ -362,6 +389,7 @@ test("automock", () => {
 | Function                                                   |                                                                   |
 | ---------------------------------------------------------- | ----------------------------------------------------------------- |
 | `vi.unmock`, `vi.doUnmock`, `jest.unmock`, `jest.dontMock` | The module is not mocked any more                                 |
+| `using _ = vi.doMock(path, factory)`                       | The same, at the end of the block                                 |
 | `vi.resetModules`, `jest.resetModules`                     | The next `import()` or `require()` of a module evaluates it again |
 
 Mocked modules stay mocked after `resetModules()`. `jest.resetModules()` also calls their factories again.
@@ -592,10 +620,12 @@ test("vitest compatibility", () => {
 
 For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule` and `resetModules`.
 
-Two differences from Vitest remain:
+These differences from Vitest remain:
 
-- An accessor in a factory's exports (`get flag() {}`) is called once, when the export is first read. `require()` returns the factory's own object, where it stays live.
-- A module that was imported before it is mocked is updated in place: its existing exports change, and exports that only the mock has are not added.
+- A module that was imported before it is mocked is updated in place: its existing exports change, exports that only the mock has are not added, and getters are read once.
+- In an import cycle, every module that imports the mocked module gets the mock. In Vitest, one that is first loaded while the factory loads the original gets the original.
+- A factory that is given the original is called after the original is evaluated, not before.
+- `export * from` a module whose factory is given the original re-exports the names of the original.
 
 ## Implementation Details
 

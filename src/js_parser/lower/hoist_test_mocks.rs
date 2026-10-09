@@ -59,25 +59,38 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     }
 
     /// The `vi` and `mock` of `vi.mock(...)` or `await vi.mock(...)`, before the visit pass.
+    /// `jest.mock()` returns `jest`: of `jest.mock(...).unmock(...)`, the `jest` and `unmock`.
     fn unvisited_top_level_mock_call(&self, expr: Expr) -> Option<(MockApi, &'a [u8])> {
-        let call = match expr.data {
+        let mut callee = match expr.data {
             ExprData::EAwait(awaited) => awaited.value,
             _ => expr,
         };
-        let ExprData::ECall(call) = call.data else {
-            return None;
-        };
-        let ExprData::EDot(dot) = call.target.data else {
-            return None;
-        };
-        let ExprData::EIdentifier(id) = dot.target.data else {
-            return None;
-        };
-        if call.optional_chain.is_some() || dot.optional_chain.is_some() {
-            return None;
+        let mut last_name = None;
+        loop {
+            let ExprData::ECall(call) = callee.data else {
+                return None;
+            };
+            let ExprData::EDot(dot) = call.target.data else {
+                return None;
+            };
+            if call.optional_chain.is_some() || dot.optional_chain.is_some() {
+                return None;
+            }
+            let is_chain = last_name.is_some();
+            // Like babel-jest: one call that is not hoisted keeps the whole chain in its place.
+            if is_chain && !matches!(dot.name.slice(), b"mock" | b"unmock") {
+                return None;
+            }
+            let last_name = *last_name.get_or_insert(dot.name.slice());
+            match dot.target.data {
+                ExprData::EIdentifier(id) => {
+                    let api = self.mock_api(self.unvisited_top_level_symbol(id.ref_)?)?;
+                    return (!is_chain || matches!(api, MockApi::Jest)).then_some((api, last_name));
+                }
+                ExprData::ECall(_) => callee = dot.target,
+                _ => return None,
+            }
         }
-        let api = self.mock_api(self.unvisited_top_level_symbol(id.ref_)?)?;
-        Some((api, dot.name.slice()))
     }
 
     fn is_hoisted_mock_stmt(&self, stmt: &Stmt) -> bool {

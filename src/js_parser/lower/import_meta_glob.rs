@@ -101,9 +101,11 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
     }
 }
 
-fn join(dir: &[u8], path: &[u8]) -> Vec<u8> {
+/// `None` when it is too long for a path.
+fn join(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
     let mut buf = path_buffer_pool::get();
-    resolve_path::join_abs_string_buf::<platform::Auto>(dir, &mut buf[..], &[path]).to_vec()
+    resolve_path::join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
+        .map(<[u8]>::to_vec)
 }
 
 fn with_posix_separators(path: &[u8]) -> Vec<u8> {
@@ -123,8 +125,8 @@ fn relative(from: &[u8], to: &[u8]) -> Vec<u8> {
 }
 
 impl Pattern {
-    /// `text` is relative to `dir`.
-    fn new(negated: bool, dir: &[u8], text: &[u8]) -> Pattern {
+    /// `text` is relative to `dir`. `None` when it is too long for a path.
+    fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let mut buf = vec![0u8; text.len() + 1];
         let normalized: &[u8] = resolve_path::normalize_string_generic_t::<u8, true, false>(
             text,
@@ -142,11 +144,11 @@ impl Pattern {
             plain += end + 1;
         }
 
-        Pattern {
+        Some(Pattern {
             negated,
-            dir: join(dir, &normalized[..plain]),
+            dir: join(dir, &normalized[..plain])?,
             glob: normalized[plain..].to_vec(),
-        }
+        })
     }
 
     fn matches(&self, file: &[u8]) -> bool {
@@ -341,9 +343,16 @@ impl<'a> Arguments<'a, '_> {
             return None;
         }
         let base_dir = match options.base {
-            [] => importer_dir.unwrap_or(root).to_vec(),
+            [] => Some(importer_dir.unwrap_or(root).to_vec()),
             [b'/', base @ ..] => join(root, base),
             base => join(importer_dir.unwrap_or(root), base),
+        };
+        let Some(base_dir) = base_dir else {
+            self.error(
+                loc,
+                format_args!("The \"import.meta.glob\" option \"base\" is too long for a path"),
+            );
+            return None;
         };
 
         let mut scan = ImportMetaGlobScan {
@@ -357,35 +366,41 @@ impl<'a> Arguments<'a, '_> {
                 [b'!', glob @ ..] => (true, glob),
                 _ => (false, glob),
             };
-            scan.patterns
-                .push(if let Some(from_root) = glob.strip_prefix(b"/") {
-                    Pattern::new(negated, root, from_root)
-                } else if glob.starts_with(b"./") || glob.starts_with(b"../") {
-                    Pattern::new(negated, &base_dir, glob)
-                } else if glob.starts_with(b"**") {
-                    if negated {
-                        Pattern {
-                            negated,
-                            dir: Vec::new(),
-                            glob: glob.to_vec(),
-                        }
-                    } else {
-                        Pattern::new(negated, root, glob)
-                    }
-                } else if let Some((dir, glob)) =
-                    host.resolve_alias(importer_dir.unwrap_or(root), glob)
-                {
-                    Pattern::new(negated, &dir, &glob)
+            let pattern = if let Some(from_root) = glob.strip_prefix(b"/") {
+                Pattern::new(negated, root, from_root)
+            } else if glob.starts_with(b"./") || glob.starts_with(b"../") {
+                Pattern::new(negated, &base_dir, glob)
+            } else if glob.starts_with(b"**") {
+                if negated {
+                    Some(Pattern {
+                        negated,
+                        dir: Vec::new(),
+                        glob: glob.to_vec(),
+                    })
                 } else {
-                    self.error(
-                        glob_loc,
-                        format_args!(
-                            "Expected a glob pattern to start with \"/\", \"./\", \"../\", \"**\" or a path alias, but got \"{}\"",
-                            bstr::BStr::new(glob)
-                        ),
-                    );
-                    return None;
-                });
+                    Pattern::new(negated, root, glob)
+                }
+            } else if let Some((dir, glob)) = host.resolve_alias(importer_dir.unwrap_or(root), glob)
+            {
+                Pattern::new(negated, &dir, &glob)
+            } else {
+                self.error(
+                    glob_loc,
+                    format_args!(
+                        "Expected a glob pattern to start with \"/\", \"./\", \"../\", \"**\" or a path alias, but got \"{}\"",
+                        bstr::BStr::new(glob)
+                    ),
+                );
+                return None;
+            };
+            let Some(pattern) = pattern else {
+                self.error(
+                    glob_loc,
+                    format_args!("The glob pattern is too long for a path"),
+                );
+                return None;
+            };
+            scan.patterns.push(pattern);
         }
 
         scan.files = match scan.find_files() {

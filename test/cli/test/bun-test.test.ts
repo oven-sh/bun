@@ -2309,10 +2309,10 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  const mockWaitsForItsOriginal = {
+  const mockNeverSettles = {
     "a.test.ts": `
       import { test, mock } from "bun:test";
-      mock.module("./a.ts", async () => ({ ...(await import("./a.ts?actual")), a: "mocked" }));
+      mock.module("./a.ts", async () => ({ ...(await import("./a.ts?actual")), a: await new Promise(() => {}) }));
       await import("./b.ts");
       test("never registered", () => {});
     `,
@@ -2328,9 +2328,9 @@ describe.concurrent("a test file that can never finish loading", () => {
     `,
   };
 
-  test("a mock.module() factory that waits for the module it mocks, in an import cycle", async () => {
+  test("a mock.module() factory that never settles, for a module in an import cycle", async () => {
     const { stderr, counts, exitCode } = await runFiles(
-      { ...mockWaitsForItsOriginal, "b.test.ts": passes },
+      { ...mockNeverSettles, "b.test.ts": passes },
       "./a.test.ts",
       "./b.test.ts",
     );
@@ -2341,7 +2341,7 @@ describe.concurrent("a test file that can never finish loading", () => {
   test("the next file gets the real modules of that cycle", async () => {
     const { counts, exitCode } = await runFiles(
       {
-        ...mockWaitsForItsOriginal,
+        ...mockNeverSettles,
         "b.test.ts": `
           import { test, expect } from "bun:test";
           import { viaA } from "./b.ts";

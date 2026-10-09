@@ -213,6 +213,18 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
+  test.each([
+    [`"./${"a/".repeat(5000)}*.ts"`, "The glob pattern is too long for a path"],
+    [`"./*.ts", { base: "./${"a/".repeat(5000)}" }`, 'The "import.meta.glob" option "base" is too long for a path'],
+  ])("text that is too long for a path", async (args, message) => {
+    const { stdout, stderr, exitCode } = await runEntry(`console.log(import.meta.glob(${args}));`);
+    expect({ stdout, stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
+      stdout: "",
+      stderr: ["error: " + message],
+      exitCode: 1,
+    });
+  });
+
   test("bun -e", async () => {
     expect(
       await runEntry("", {}, ["-e", `console.log(JSON.stringify(Object.keys(import.meta.glob("./src/dir/[ab].ts"))))`]),

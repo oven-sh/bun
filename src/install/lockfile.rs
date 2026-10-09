@@ -2329,6 +2329,24 @@ impl Lockfile {
         None
     }
 
+    /// Is this a package that a git ref, a URL or a path names? To resolve its
+    /// dependency again is to ask that ref, URL or path again, which can give
+    /// other bytes than the lockfile holds.
+    pub(crate) fn is_git_or_tarball_package(&self, package_id: PackageID) -> bool {
+        self.packages
+            .items_resolution()
+            .get(package_id as usize)
+            .is_some_and(|resolution| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Git
+                        | ResolutionTag::Github
+                        | ResolutionTag::LocalTarball
+                        | ResolutionTag::RemoteTarball
+                )
+            })
+    }
+
     /// The loaded package with this resolution: the same URL, path or commit.
     #[cold]
     pub(crate) fn loaded_package_with_resolution(

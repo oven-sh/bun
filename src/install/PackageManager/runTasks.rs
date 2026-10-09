@@ -1775,7 +1775,13 @@ fn do_flush_dependency_queue(this: &mut PackageManager) {
         while i < end {
             let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
             let resolution = this.lockfile.buffers.resolutions[i as usize];
-            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
+            // A row that kept its git, github: or tarball package when its
+            // package.json was parsed again has nothing to resolve
+            // (`keep_git_and_tarball_resolutions`).
+            if !this.lockfile.is_git_or_tarball_package(resolution) {
+                let _ =
+                    enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
+            }
             i += 1;
         }
     }

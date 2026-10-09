@@ -361,7 +361,14 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             .get_package_id(package.name_hash, Some(version), &package.resolution)
     {
         package.meta.id = existing_id;
+        let before = *manager.lockfile.packages.get(existing_id as usize);
         manager.lockfile.packages.set(existing_id as usize, package);
+        crate::package_manager_real::package_manager_enqueue::keep_git_and_tarball_resolutions(
+            manager,
+            existing_id,
+            before.dependencies,
+            before.resolutions,
+        );
         return Ok(*manager.lockfile.packages.get(existing_id as usize));
     }
 

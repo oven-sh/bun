@@ -765,6 +765,50 @@ fn is_update_target(
         }
 }
 
+/// A package.json that is parsed again gives its package a new set of rows,
+/// all unresolved. A row that declares the same dependency as a row before
+/// keeps the git, github: or tarball package that row resolved to: to resolve
+/// it again is to ask the ref, the URL or the path again. `bun update` still
+/// resolves its targets.
+#[cold]
+pub(crate) fn keep_git_and_tarball_resolutions(
+    this: &mut PackageManager,
+    package_id: PackageID,
+    dependencies_before: Lockfile::DependencySlice,
+    resolutions_before: Lockfile::PackageIDSlice,
+) {
+    let before = dependencies_before.off as usize
+        ..(dependencies_before.off as usize).saturating_add(dependencies_before.len as usize);
+    if resolutions_before.off != dependencies_before.off
+        || before.end > this.lockfile.buffers.resolutions.len()
+        || !this.lockfile.buffers.resolutions[before.clone()]
+            .iter()
+            .any(|&resolved| this.lockfile.is_git_or_tarball_package(resolved))
+    {
+        return;
+    }
+    let now = this.lockfile.packages.items_dependencies()[package_id as usize];
+    for id in now.off..now.off.saturating_add(now.len) {
+        let Some(dependency) = this.lockfile.buffers.dependencies.get(id as usize).cloned() else {
+            return;
+        };
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        let kept = before.clone().find_map(|before_id| {
+            let resolved = this.lockfile.buffers.resolutions[before_id];
+            (this.lockfile.is_git_or_tarball_package(resolved)
+                && dependency.eql(&this.lockfile.buffers.dependencies[before_id], buf, buf))
+            .then_some(resolved)
+        });
+        let Some(resolved) = kept else { continue };
+        let name = this.lockfile.packages.items_name()[resolved as usize];
+        let name_hash = this.lockfile.packages.items_name_hash()[resolved as usize];
+        if is_update_target(this, &dependency, id, name_hash, name) {
+            continue;
+        }
+        this.lockfile.buffers.resolutions[id as usize] = resolved;
+    }
+}
+
 /// The integrity that the fetch of a URL or `file:` tarball is verified
 /// against when its dependency has no package yet: the pin of the package the
 /// loaded lockfile holds for the same URL or path.

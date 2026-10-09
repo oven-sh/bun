@@ -1418,6 +1418,34 @@ impl Diff {
                         continue;
                     }
                 }
+                // The line moved to another group of package.json. It is the
+                // same dependency, so a row that a git, github: or tarball
+                // package resolved keeps that package. `bun update` still
+                // resolves its targets again.
+                if let Some(mapping) = id_mapping.as_deref_mut() {
+                    let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+                    let is_update_target = update_requests.is_some_and(|updates| {
+                        updates.is_empty()
+                            || (named_update_here
+                                && pm.is_update_request(
+                                    from_dep.name_hash,
+                                    from_dep.name.slice(from_buf),
+                                ))
+                    });
+                    if !is_update_target
+                        && from_lockfile.is_git_or_tarball_package(from_resolutions[i])
+                    {
+                        let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+                        if let Some(moved_to) = to_deps!()
+                            .iter()
+                            .position(|to_dep| Dependency::eql(to_dep, from_dep, to_buf, from_buf))
+                        {
+                            if mapping[moved_to] == invalid_package_id {
+                                mapping[moved_to] = i as PackageID;
+                            }
+                        }
+                    }
+                }
                 summary.remove += 1;
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);

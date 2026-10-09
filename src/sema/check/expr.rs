@@ -3588,9 +3588,13 @@ impl<'p, 's> Checker<'p, 's> {
                 let spread = self.type_of_expr(file, prop.value);
                 let spread = self.reduced(spread);
                 // 2698 and `spread = c.errorType`. `check_spread` reports it, but not for a target
-                // that is destructured: the walk does not check that one as an expression.
+                // that is destructured: the walk does not check that one as an expression. Nor
+                // where only `CheckModeInferential` gives the reference such a type:
+                // `getNarrowableTypeForReference` substitutes no constraints then.
                 if !self.is_valid_spread_type(spread) {
-                    if self.is_definite_assignment_target(file, e)
+                    if self.check_mode().contains(CheckMode::INFERENTIAL) {
+                        self.report_spread_in_inference(file, e, p);
+                    } else if self.is_definite_assignment_target(file, e)
                         && self.is_target_of_assignment_in_progress(file, e)
                     {
                         self.error(file, p, 2698, &[]);

@@ -755,9 +755,9 @@ The renamed symbols are then used during final code generation to produce output
 - A chunk prints its files in the order of one entry point (`findAllImportedPartsInJSOrder.rs`). Files on an import cycle run in an order that depends on where the load enters the cycle, so another entry point that can load the chunk first (`EntryLoadGraph::load_class`) can need another order
 - A file is contested when the code that it runs at load can read a binding of a file of the same chunk (along `part.dependencies`, through functions and values too), and that file has run by then under one such entry point and not under another. Off a cycle this cannot happen, so a build without import cycles pays for one strongly-connected-components pass
 - A wrapped file runs when some code calls `init_x()`, and an unwrapped one when its chunk loads, which is earlier. Two rules keep each load in order, and apply until nothing is added:
-  - a file that imports a wrapped file is wrapped, also a file that tree shaking dropped (an `export *` barrel with `"sideEffects": false`), which brings it back
-  - a file that some load runs after a wrapped file is wrapped, unless loading it runs nothing (`"sideEffects": false`, data), which cannot be seen
-- An entry point that no file imports is not wrapped: it is alone in its chunk and the last file of its load, and prints each `init_x()` in place
+  - a file that imports a wrapped file is wrapped, also a file that tree shaking dropped (an `export *` barrel with `"sideEffects": false`), which brings it back, with the files with side effects that only it imports
+  - a live file that some load runs after a wrapped file is wrapped, unless loading it runs nothing (`"sideEffects": false`, data), which cannot be seen
+- An entry point that no file imports, and no page loads as a script, is not wrapped: it is alone in its chunk and the last file of its load, and prints each `init_x()` in place
 - The order of a load counts an `import` statement that nothing uses, as the unbundled program runs it. One that names a wrapped file is kept, and prints `init_x()`
 - Wrapping does what `scanImportsAndExports()` does for a file that it wraps (wrapper part, `init_` name, a use of the wrapper in each part that imports the file). `link()` then marks live parts and entry bits again
 

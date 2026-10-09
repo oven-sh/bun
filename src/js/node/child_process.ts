@@ -1297,7 +1297,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {}, "libuv-handle");
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

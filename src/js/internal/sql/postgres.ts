@@ -391,7 +391,8 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
   /// fast: nothing is listening, and probes/healthchecks rely on the
   /// immediate error. Real server errors (authentication, ErrorResponse
   /// during startup) and closes of established connections are not retried
-  /// here.
+  /// here. For the latter the pool dials a new connection when callers are
+  /// queued (BaseSQLAdapter.connectionClosed).
   protected isConnectFailureError(err: Error | null): boolean {
     return err instanceof PostgresError && (err as any).code === "ERR_POSTGRES_CONNECTION_FAILED";
   }
@@ -410,8 +411,8 @@ class PostgresAdapter
       $ZigGeneratedClasses.PostgresSQLQuery
     >
 {
-  protected createPooledConnection(): PooledPostgresConnection {
-    return new PooledPostgresConnection(this.connectionInfo, this);
+  protected createPooledConnection(dialLater?: boolean): PooledPostgresConnection {
+    return new PooledPostgresConnection(this.connectionInfo, this, dialLater);
   }
 
   escapeIdentifier(str: string) {

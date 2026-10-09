@@ -368,7 +368,7 @@ function connectionListenerHTTP1(server, socket, options) {
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
     kMustCloseConnection,
-  } = http1ServerPipeline;
+  } = http1ServerPipeline as Required<typeof http1ServerPipeline>;
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};

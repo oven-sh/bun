@@ -244,7 +244,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       // For other queries, we can check if there are multiple statements and use db.run() if so
       if (parsedInfo.canReturnRows) {
         // SELECT queries must use prepared statements for results
-        const stmt = db.prepare(sql);
+        const stmt = db.prepare<unknown, any>(sql);
         let result: unknown[] | undefined;
 
         try {
@@ -268,7 +268,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$call(db, sql, values);
+        const changes = db.run.$call(db, sql, values as any);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);

@@ -347,7 +347,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kColorInspectOptions = { colors: true };
   const kNoColorInspectOptions = {};
 
-  Object.defineProperties((Console.prototype = {}), {
+  Object.defineProperties((Console.prototype = {} as $AnyObject), {
     [kBindStreamsEager]: {
       ...consolePropAttributes,
       // Eager version for the Console constructor

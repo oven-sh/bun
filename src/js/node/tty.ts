@@ -113,7 +113,7 @@ Object.defineProperty(ReadStream, "prototype", {
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as any;
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);

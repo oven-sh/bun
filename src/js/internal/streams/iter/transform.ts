@@ -22,7 +22,7 @@ const Uint8ArraySlice = Uint8Array.prototype.slice;
 
 // Matches node's internal/errors genericNodeError().
 function genericNodeError(message, options) {
-  const error: NodeJS.ErrnoException = new Error(message);
+  const error = new Error(message) as NodeJS.ErrnoException;
   error.errno = options.errno;
   error.code = options.code;
   return error;

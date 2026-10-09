@@ -448,7 +448,7 @@ class Database implements SqliteTypes.Database {
 
   #internalFlags = 0;
   #handle;
-  #queryCache: Map<string, Statement> = new Map();
+  #queryCache: Map<string, Statement<any>> = new Map();
   filename;
   get handle() {
     return this.#handle;
@@ -589,7 +589,7 @@ class Database implements SqliteTypes.Database {
     const max = Database.MAX_QUERY_CACHE_SIZE;
     if (max > 0) {
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
-      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value!);
       cache.$set(query, stmt);
     }
     return stmt;

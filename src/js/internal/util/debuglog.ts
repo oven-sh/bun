@@ -6,7 +6,7 @@ const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;
 
 const StringPrototypePadStart = String.prototype.padStart;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: $StringPrototypeSplit = String.prototype.split;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const MathFloor = Math.floor;
 const NumberCtor = Number;

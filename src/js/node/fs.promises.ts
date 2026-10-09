@@ -216,11 +216,11 @@ function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
     fs.closeSync(held.fd);
   } catch {}
   const suffix = held.path !== undefined ? ` (${held.path})` : "";
-  const err: NodeJS.ErrnoException = new Error(
+  const err = new Error(
     "A FileHandle object was closed during garbage collection. This used to be allowed " +
       "with a deprecation warning but is now considered an error. Please close FileHandle " +
       `objects explicitly. File descriptor: ${held.fd}${suffix}`,
-  );
+  ) as NodeJS.ErrnoException;
   err.code = "ERR_INVALID_STATE";
   process.nextTick(() => {
     throw err;
@@ -802,7 +802,7 @@ function asyncWrap(fn: any, name: string) {
         ondone();
       }
 
-      const readable = new ReadableStream({
+      const readable = new (ReadableStream as unknown as $ReadableStreamConstructor)({
         type: "bytes",
         autoAllocateChunkSize: 16384,
 

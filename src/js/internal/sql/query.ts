@@ -300,6 +300,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return result;
   }
 
+  catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null): Promise<T | TResult>;
   catch() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw this[_adapter].notTaggedCallError();

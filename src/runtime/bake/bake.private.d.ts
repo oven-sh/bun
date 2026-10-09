@@ -37,7 +37,7 @@ interface Config {
  * Removed using --drop=ASSERT in releases.
  */
 declare namespace DEBUG {
-  declare function ASSERT(condition: any, message?: string): asserts condition;
+  function ASSERT(condition: any, message?: string): asserts condition;
 }
 
 /** All modules for the initial bundle. */
@@ -90,10 +90,10 @@ declare module "react-server-dom-bun/client.browser" {
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {
-  import type { ReactClientManifest } from "bun:bake/server";
+  import type { SSRManifest } from "bun:bake/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
-    moduleMap: ReactClientManifest;
+    moduleMap: SSRManifest;
     moduleLoading?: ModuleLoading;
   }
   export interface ModuleLoading {
@@ -109,7 +109,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
 }
 
 declare module "react-server-dom-bun/server.node.unbundled.js" {
-  import type { ReactServerManifest } from "bun:bake/server";
+  import type { ServerManifest } from "bun:bake/server";
   import type { ReactElement } from "react";
 
   export interface PipeableStream<T> {
@@ -120,7 +120,7 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 
   export function renderToPipeableStream<T = any>(
     model: ReactElement,
-    webpackMap: ReactServerManifest,
+    webpackMap: ServerManifest,
     options?: RenderToPipeableStreamOptions,
   ): PipeableStream<T>;
 

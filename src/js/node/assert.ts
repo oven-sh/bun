@@ -41,7 +41,7 @@ const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: $StringPrototypeSplit = String.prototype.split;
 
 type nodeAssert = typeof import("node:assert");
 
@@ -122,7 +122,7 @@ function Assert(options) {
 
 // Functions compiled as builtins have no automatic `.prototype`; assign one
 // explicitly (same pattern as EventEmitter in node/events.ts).
-Assert.prototype = {};
+Assert.prototype = {} as $AnyObject;
 ObjectDefineProperty(Assert.prototype, "constructor", {
   __proto__: null,
   value: Assert,

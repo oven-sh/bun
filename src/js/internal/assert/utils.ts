@@ -7,6 +7,7 @@ function loadAssertionError() {
   }
 }
 
+export function innerOk(fn, argLen, ...args: unknown[]): void;
 export function innerOk(fn, argLen, value, message) {
   if (!value) {
     let generatedMessage = false;

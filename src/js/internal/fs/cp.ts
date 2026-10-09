@@ -86,7 +86,7 @@ function getStats(src, dest, opts) {
     PromisePrototypeThen.$call(statFunc(dest), undefined, err => {
       if (err.code === "ENOENT") return null;
       throw err;
-    }),
+    }) as Promise<import("node:fs").BigIntStats | null>,
   ]);
 }
 

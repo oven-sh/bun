@@ -154,7 +154,7 @@ class ReadableFromWeb extends Readable {
 const encoder = new TextEncoder();
 
 // Collect all negative (error) ZLIB codes and Z_NEED_DICT
-const ZLIB_FAILURES: Set<string | undefined> = new SafeSet([
+const ZLIB_FAILURES: Set<string | number | undefined> = new SafeSet([
   ...ArrayPrototypeFilter.$call(
     ArrayPrototypeMap.$call(ObjectEntries(constants_zlib), ({ 0: code, 1: value }) => (value < 0 ? code : null)),
     Boolean,
@@ -517,7 +517,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
       ? { highWaterMark }
       : (options.strategy ?? new (objectMode ? CountQueuingStrategy : ByteLengthQueuingStrategy)({ highWaterMark }));
   }
-  const readableStream = new ReadableStream(underlyingSource, strategy);
+  const readableStream = new (ReadableStream as unknown as $ReadableStreamConstructor)(underlyingSource, strategy);
 
   // When adapting a Duplex as a ReadableStream, readable completion should not
   // wait for a half-open writable side to finish as well.

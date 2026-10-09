@@ -495,7 +495,7 @@ function getUserOptions(ctx, isCrossContext) {
  * Echos the value of any input. Tries to print the value out
  * in the best way possible given the different types.
  * @param {any} value The value to print out.
- * @param {object} opts Optional options object that alters the output.
+ * @param {object} [opts] Optional options object that alters the output.
  */
 /* Legacy: value, showHidden, depth, colors */
 function inspect(value, opts) {

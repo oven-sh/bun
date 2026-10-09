@@ -97,13 +97,14 @@ export function loadAndResolvePluginsForServe(
       if (!pluginModule) throw new InvalidBundlerPluginError(plugins[i], "default export is missing");
       if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(plugins[i], "name is missing");
       if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(plugins[i], "setup() is missing");
-      onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
+      onstart_promises_array = await runSetupFn.$call(
+        bundlerPlugin,
         pluginModule.setup,
         config,
         onstart_promises_array,
         i === plugins.length - 1,
         false,
-      ]);
+      );
     }
     if (onstart_promises_array !== undefined) {
       await Promise.all(onstart_promises_array);
@@ -428,7 +429,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
+          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : "",
           kind,
           // pluginData
         });

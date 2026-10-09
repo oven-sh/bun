@@ -1194,7 +1194,7 @@ const ServerHandlers = {
     if (self._requestCert) {
       if (verifyError) {
         self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
+        self.authorizationError = (verifyError.code as string) || verifyError.message;
         if (self._rejectUnauthorized) {
           // The connection is refused: report the verification result through
           // tlsClientError before tearing down. When the connection is kept

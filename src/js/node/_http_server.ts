@@ -49,7 +49,6 @@ const {
   emitCloseNT,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
-  isTlsSymbol,
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
   drainMicrotasks,
@@ -321,7 +320,8 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
-  this[tlsSymbol] = null;
+  // Called again on an https.Server, it stays one: Node's http.Server does not touch the state of tls.Server.
+  if (this[tlsSymbol] === undefined) this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
     callback = options;
@@ -333,37 +333,36 @@ function Server(options, callback): void {
     options = { ...options };
     const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
 
-    // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
-    let tlsOptions = options;
-    if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
-    }
+    let cert, key, ca;
+    if (tlsHelpers) {
+      // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
+      // them into plain key/cert/ca so the native TLS config sees PEM material.
+      let tlsOptions = options;
+      if (options.pfx) {
+        tlsOptions = tlsHelpers.processPfxOptions(options);
+      }
 
-    let cert = tlsOptions.cert;
-    if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
-    }
+      cert = tlsOptions.cert;
+      if (cert) {
+        tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
+      }
 
-    let key = tlsOptions.key;
-    if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
-    }
+      key = tlsOptions.key;
+      if (key) {
+        tlsHelpers.throwOnInvalidTLSArray("options.key", key);
+      }
 
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
-    if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
+      ca = tlsOptions.ca;
+      // PKCS#12-embedded CAs extend the trust set; the server path hands raw
+      // {key, cert, ca} to the native config and has no addCACert hook, so fold
+      // them into `ca` (mirrors tls.Server.setSecureContext).
+      const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+      if (pfxExtraCAs?.length) {
+        ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+      }
+      if (ca) {
+        tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
+      }
     }
 
     let passphrase = options.passphrase;
@@ -381,7 +380,7 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
-    if (this[isTlsSymbol]) {
+    if (tlsHelpers) {
       const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
@@ -409,8 +408,6 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
-    } else {
-      this[tlsSymbol] = null;
     }
   }
 

@@ -150,7 +150,7 @@ function validateBaseConsumerOptions(options) {
       throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", encoding);
     }
     try {
-      new TextDecoder(encoding);
+      new (TextDecoder as $TextDecoderConstructor)(encoding);
     } catch {
       throw $ERR_INVALID_ARG_VALUE_RangeError("options.encoding", encoding);
     }
@@ -202,7 +202,7 @@ function bytesSync(source, options = kNullPrototype) {
 function textSync(source, options = kNullPrototype) {
   validateSyncConsumerOptions(options);
   const data = concatBytes(collectSync(source, options.limit));
-  const decoder = new TextDecoder(options.encoding ?? "utf-8", {
+  const decoder = new (TextDecoder as $TextDecoderConstructor)(options.encoding ?? "utf-8", {
     __proto__: null,
     fatal: true,
   });
@@ -257,7 +257,7 @@ async function text(source, options = kNullPrototype) {
   validateConsumerOptions(options);
   const chunks = await collectAsync(source, options.signal, options.limit);
   const data = concatBytes(chunks);
-  const decoder = new TextDecoder(options.encoding ?? "utf-8", {
+  const decoder = new (TextDecoder as $TextDecoderConstructor)(options.encoding ?? "utf-8", {
     __proto__: null,
     fatal: true,
   });

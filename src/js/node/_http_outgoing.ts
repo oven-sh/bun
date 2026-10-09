@@ -105,7 +105,7 @@ function isContentDispositionField(s) {
   return s.length === 19 && s.toLowerCase() === "content-disposition";
 }
 
-function OutgoingMessage(options) {
+function OutgoingMessage(options?) {
   Stream.$call(this, options);
 
   // Queue that holds all currently pending data, until the response will be

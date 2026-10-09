@@ -48,20 +48,21 @@ impl Parser {
 
 /// The parser that Prettier infers from the name of a file. `None` if it is not a style sheet.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
-    const EXTENSIONS: [(&[u8], Parser); 5] = [
+    const EXTENSIONS: [(&[u8], Parser); 6] = [
+        (b".scss", Parser::Scss),
         (b".css", Parser::Css),
         (b".wxss", Parser::Css),
         (b".pcss", Parser::Css),
         (b".postcss", Parser::Css),
         (b".less", Parser::Less),
     ];
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(b".scss") {
-        return Some(Parser::Scss);
-    }
     EXTENSIONS
         .iter()
-        .find(|(extension, _)| lower.ends_with(extension))
+        .find(|(extension, _)| {
+            path.len()
+                .checked_sub(extension.len())
+                .is_some_and(|at| path[at..].eq_ignore_ascii_case(extension))
+        })
         .map(|(_, parser)| *parser)
 }
 

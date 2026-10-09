@@ -260,7 +260,7 @@ describe("dns", () => {
     });
 
     test("valid triple should succeed", () => {
-      expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
+      expect(() => (dns as any).setServers([[4, "8.8.8.8", 53]])).not.toThrow();
     });
   });
 

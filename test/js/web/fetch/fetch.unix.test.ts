@@ -130,12 +130,12 @@ if (process.platform === "linux" || process.platform === "darwin") {
   });
 }
 
-let server_unix: Server,
+let server_unix: Server<undefined>,
   socketPath: string = "";
 
 function startServerUnix({ fetch, ...options }: ServeOptions): string {
   if (socketPath) {
-    server_unix.reload({ ...options, fetch });
+    server_unix.reload({ ...options, fetch } as ServeOptions);
     return socketPath;
   }
   const unix = `.${Math.random().toString(36).slice(2)}-socket`.slice(0, 103);
@@ -143,22 +143,22 @@ function startServerUnix({ fetch, ...options }: ServeOptions): string {
     ...options,
     fetch,
     unix,
-  });
+  } as ServeOptions);
   return (socketPath = unix);
 }
 
-let server: Server;
+let server: Server<undefined>;
 
 function startServer({ fetch, ...options }: ServeOptions) {
   if (server) {
-    server.reload({ ...options, fetch });
+    server.reload({ ...options, fetch } as ServeOptions);
     return;
   }
   server = serve({
     ...options,
     fetch,
     port: 0,
-  });
+  } as ServeOptions);
 }
 
 afterAll(() => {
@@ -191,7 +191,7 @@ it("works with node:http", async () => {
     },
   });
 
-  const promises = [];
+  const promises: Promise<void>[] = [];
   for (let i = 0; i < 20; i++) {
     const { promise, resolve } = Promise.withResolvers<string>();
     const req = request(

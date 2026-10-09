@@ -128,7 +128,7 @@ describe("url", () => {
   });
 
   // Unicode 16 changed these code points' UTS #46 status; ICU 76 is the first release with that table.
-  it.skipIf(parseInt(process.versions.icu) < 76)("special-scheme hosts use the Unicode 16 IDNA table", () => {
+  it.skipIf(parseInt(process.versions.icu!) < 76)("special-scheme hosts use the Unicode 16 IDNA table", () => {
     expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
     expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
     expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");

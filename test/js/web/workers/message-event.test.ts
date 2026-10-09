@@ -30,7 +30,7 @@ describe("MessageEvent constructor", () => {
         lastEventId: "id",
         source: port1,
         ports: [port1],
-      }),
+      } as any),
     ).toMatchObject({
       type: "custom type",
       data: 123,

@@ -70,12 +70,7 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
   }
 }
 
-async function build(
-  srcDir: string,
-  tmpDir: string,
-  runtime: Runtime,
-  buildMode: BuildMode,
-): Promise<{ out: string; err: string; description: string }> {
+async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
   const build = spawn({
     cmd:
       runtime == Runtime.bun

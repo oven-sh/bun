@@ -66,7 +66,7 @@ describe("fs.write()/fs.writeSync() reject an offset past the end of the buffer"
   });
 
   test("writeSync(fd, buffer, { offset })", () => {
-    assert.throws(() => fs.writeSync(fd, buf, { offset: 6 }), offsetOutOfRange(5, 6));
+    assert.throws(() => fs.writeSync(fd, buf, { offset: 6 } as any), offsetOutOfRange(5, 6));
   });
 
   test("write() throws synchronously instead of invoking the callback", () => {

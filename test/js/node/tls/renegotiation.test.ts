@@ -9,7 +9,7 @@ import { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
 import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
-let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
+let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
 beforeAll(async () => {
   process = Bun.spawn(["node", join(import.meta.dir, "renegotiation-feature.js")], {
     stdout: "pipe",
@@ -193,7 +193,7 @@ it("pauseOnConnect acts on the first handshake only, not on a renegotiation", as
         outcome.reject(new Error(`closed after ${handshakes} handshake(s) with ${JSON.stringify(received)}`));
       },
     },
-  });
+  } as Bun.TCPSocketConnectOptions);
   try {
     expect(await outcome.promise).toEqual({ handshakes: 2, received: "firstsecond" });
   } finally {

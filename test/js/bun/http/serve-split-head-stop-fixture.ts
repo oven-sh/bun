@@ -61,7 +61,7 @@ const head =
   "\r\nX-Mark: " +
   Buffer.alloc(40, 0x4d).toString() +
   "\r\n\r\n";
-const socket = connect(server.port, "127.0.0.1");
+const socket = connect(server.port!, "127.0.0.1");
 socket.on("error", () => {});
 await new Promise(resolve => socket.once("connect", resolve));
 socket.setNoDelay(true);

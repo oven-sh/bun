@@ -1910,9 +1910,10 @@ it("URL credentials survive a same-origin redirect whose Location leaves them ou
 it("connection failures reject with an errno-style code that the message starts with", async () => {
   using dead = await deadPort();
   const refused = await fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
-  expect({ name: refused.name, code: refused.code, message: refused.message }).toEqual({
+  expect({ name: refused.name, code: refused.code, syscall: refused.syscall, message: refused.message }).toEqual({
     name: "TypeError",
     code: "ECONNREFUSED",
+    syscall: "connect",
     message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
   });
 

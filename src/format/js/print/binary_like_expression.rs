@@ -240,11 +240,7 @@ impl<'a> BinaryLikeExpression<'a> {
             && jsx_element.as_ref().is_some_and(|jsx| {
                 (f.comments()
                     .comments_before_iter(jsx.last_operand(f).span().start))
-                .any(|comment| {
-                    comment.is_line()
-                        && (!comment.preceded_by_newline()
-                            || any_line_comment_before_jsx_breaks_chain(f))
-                })
+                .any(|comment| comment.is_line() && !comment.preceded_by_newline())
             });
 
         let format_non_jsx_parts = format_with(|f| {
@@ -278,12 +274,6 @@ impl<'a> BinaryLikeExpression<'a> {
             None => write!(f, format_non_jsx_parts),
         }
     }
-}
-
-/// For oxfmt a line comment on a line of its own before a JSX element at the end of a chain breaks
-/// the chain too.
-fn any_line_comment_before_jsx_breaks_chain(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 /// An operand of a chain of binary expressions.

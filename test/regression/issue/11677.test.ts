@@ -75,7 +75,7 @@ test("toContainAnyKeys true string empty", () => {
 });
 
 test("toContainAnyKeys holey", () => {
-  expect([,]).not.toContainAnyKeys([,]);
+  expect([,]).not.toContainAnyKeys([,] as any);
 });
 
 test("NOT toContainAnyKeysEmpty", () => {

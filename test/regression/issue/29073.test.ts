@@ -80,7 +80,7 @@ async function rawH2cRequest(port: number) {
 
   const { promise, resolve, reject } = Promise.withResolvers<ReturnType<typeof parseFrames>>();
   let buf = Buffer.alloc(0);
-  sock.on("data", chunk => {
+  sock.on("data", (chunk: Buffer) => {
     buf = Buffer.concat([buf, chunk]);
     // Scan for stream 1's terminating frame: DATA or HEADERS with END_STREAM.
     let offset = 0;

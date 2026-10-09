@@ -197,7 +197,7 @@ async function connected(trigger: string, withTrailers: boolean) {
       third.resolve();
     }
   });
-  server.on("clientError", error => errors.push(String(error?.code ?? error)));
+  server.on("clientError", error => errors.push(String((error as NodeJS.ErrnoException)?.code ?? error)));
   process.on("uncaughtException", error => errors.push(String((error as any)?.code ?? error)));
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = await connect(server);

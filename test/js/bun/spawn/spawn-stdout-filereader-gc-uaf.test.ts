@@ -159,7 +159,7 @@ test.skipIf(isWindows)(
     // (duringLivePipe ~ 0), which is exactly the UAF precondition. The full
     // result object carries base/afterSpawn/streams for CI diagnostics.
     if (duringLivePipe < iters) {
-      expect({ duringLivePipe, ...result, stderr }).toEqual({
+      expect({ duringLivePipe, ...(result as object), stderr }).toEqual<unknown>({
         duringLivePipe: `>= ${iters}`,
       });
     }

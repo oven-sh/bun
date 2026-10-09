@@ -10,7 +10,7 @@ test("Listener.getsockname works with an object argument", () => {
   });
 
   const out: Record<string, unknown> = {};
-  const result = listener.getsockname(out);
+  const result = (listener as any).getsockname(out);
   expect(result).toBeUndefined(); // returns undefined, populates object in-place
   expect(out).toEqual(
     expect.objectContaining({

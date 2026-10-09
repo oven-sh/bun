@@ -1047,7 +1047,7 @@ function collectResponse(handler: (req: any, res: any) => void) {
       socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     });
     const chunks: Buffer[] = [];
-    socket.on("data", c => chunks.push(c));
+    socket.on("data", (c: Buffer) => chunks.push(c));
     socket.on("error", done.reject);
     socket.on("end", () => {
       server.close();
@@ -1887,7 +1887,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
       events.push(`request ${req.method} ${req.url}`);
       dispatched.resolve();
     });
-    server.httpAllowHalfOpen = true;
+    (server as any).httpAllowHalfOpen = true;
     server.on("clientError", (err: any, socket) => {
       events.push(`clientError ${err.code}`);
       socket.destroy();
@@ -1981,7 +1981,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
         res.end("ok");
       });
     });
-    server.httpAllowHalfOpen = true;
+    (server as any).httpAllowHalfOpen = true;
     server.on("clientError", (err: any, socket) => {
       events.push(`clientError ${err.code}`);
       socket.destroy();
@@ -2010,7 +2010,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
     await using server = createServer({ insecureHTTPParser: true }, async (req, res) => {
       events.push(`request ${req.method} ${req.url}`);
       // The recorded fin is the pushed EOF: wait for it before the first reader attaches.
-      while (!req._readableState.ended) {
+      while (!(req as any)._readableState.ended) {
         await new Promise<void>(resolve => setImmediate(resolve));
       }
       let body = "";
@@ -2021,7 +2021,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
         ended.resolve();
       });
     });
-    server.httpAllowHalfOpen = true;
+    (server as any).httpAllowHalfOpen = true;
     server.on("clientError", (err: any, socket) => {
       events.push(`clientError ${err.code}`);
       socket.destroy();
@@ -2061,7 +2061,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
       });
       events.push(`request ${req.method} ${req.url}`);
     });
-    server.httpAllowHalfOpen = true;
+    (server as any).httpAllowHalfOpen = true;
     server.on("clientError", (err: any, socket) => {
       events.push(`clientError ${err.code}`);
       socket.destroy();
@@ -2125,7 +2125,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
       events.push(`request ${req.method} ${req.url}`);
       req.on("end", () => events.push("end"));
     });
-    server.httpAllowHalfOpen = true;
+    (server as any).httpAllowHalfOpen = true;
     // llhttp takes its upgrade verdict before it looks at Transfer-Encoding: the tunnel starts and stays open.
     const { promise: tunnelData, resolve: onTunnelData } = Promise.withResolvers<void>();
     let tunnel: Duplex | undefined;
@@ -2409,7 +2409,7 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
     });
     const chunks: Buffer[] = [];
     let received = 0;
-    let headBytes = Buffer.alloc(0);
+    let headBytes: Buffer = Buffer.alloc(0);
     let headLength = -1;
     const settle = (closedByServer: boolean) => {
       const raw = Buffer.concat(chunks);

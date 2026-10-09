@@ -60,7 +60,7 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
       },
     });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     socket.setNoDelay(true);
     const upgraded = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<string>();

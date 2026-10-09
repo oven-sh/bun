@@ -42,7 +42,7 @@ async function switchLoop(opts: { handshakePlugin: string; switches: string[]; l
     socket.write(mysqlHandshakeV10({ authPlugin: opts.handshakePlugin }));
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!sawHandshakeResponse) {
           sawHandshakeResponse = true;
@@ -134,7 +134,7 @@ test("MySQL: caching_sha2 perform_full_authentication is honoured at most once",
     socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (phase === 0) {
           // HandshakeResponse41 → ask for full auth.
@@ -198,7 +198,7 @@ test.each([
     let phase = 0;
     socket.write(mysqlHandshakeV10({ authPlugin: handshake }));
     socket.on("error", () => {});
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (phase === 0) {
           phase = 1;

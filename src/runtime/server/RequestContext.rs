@@ -3224,7 +3224,10 @@ where
                             let resp = this.resp.get().expect("infallible: resp bound");
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
-                            if byte_stream.has_received_last_chunk.get() {
+                            // (A stored error goes through the attach path below instead.)
+                            if byte_stream.has_received_last_chunk.get()
+                                && !byte_stream.has_pending_error()
+                            {
                                 let mut byte_list = byte_stream.drain();
                                 this.blob.set(AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
@@ -3267,10 +3270,12 @@ where
                                     Self::drain_response_buffer_and_metadata_corked,
                                     this.as_ctx_ptr(),
                                 );
-                            } else if matches!(
-                                byte_stream.parent_const().producer.get(),
-                                WebCore::streams::SourceHandle::HTMLRewriter(_)
-                            ) {
+                            } else if byte_stream.has_pending_error()
+                                || matches!(
+                                    byte_stream.parent_const().producer.get(),
+                                    WebCore::streams::SourceHandle::HTMLRewriter(_)
+                                )
+                            {
                                 // Defer status/headers to the first chunk/end
                                 // so a pre-first-byte handler failure can
                                 // still reach `error()`.
@@ -3280,6 +3285,10 @@ where
                                     Self::render_metadata_corked,
                                     this.as_ctx_ptr(),
                                 );
+                            }
+                            // Runs `end_chunk`, which adopts the ref taken above and may free `this`.
+                            if byte_stream.end_sink_with_pending_error() {
+                                return;
                             }
                             // Wake the producer after the older bytes are queued.
                             byte_stream.signal_drained();
@@ -4146,7 +4155,7 @@ where
                 bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
-                let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
+                let buffered = bytes.buffered_len();
                 if bytes.buffer_action.get().is_some()
                     || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
                 {

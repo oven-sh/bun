@@ -1352,8 +1352,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        // The dispatch trampoline already closed the connecting socket; it is
-        // freed at end-of-tick, so detach before any user-visible callback.
+        // As in `on_close`.
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         Self::guarded(this, |t| t.on_connect_error());
@@ -1393,22 +1392,12 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        // A close while the connect/handshake is still in flight gets no
-        // socket event: uws skips the on_close dispatch for sockets whose
-        // connect never completed, and `disconnect()` only tears down
-        // connected sockets. Fail the connection directly so the JS onclose
-        // callback fires, pending queries are rejected, and the in-flight
-        // socket is torn down instead of completing the handshake after
-        // close.
+        // `disconnect()` only tears down connected sockets.
         if matches!(
             self.status.get(),
             Status::Connecting | Status::SentStartupMessage
         ) {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
-            // closing an in-flight connect dispatches no socket event, so the
-            // poll ref taken at creation is released here rather than in a
-            // socket callback
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else {
             self.disconnect();
         }
@@ -1499,14 +1488,29 @@ impl PostgresSQLConnection {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
+    /// `js_reason`: why the connection failed; `None` for a disconnect that was asked for.
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        let socket = self.socket.get();
+        if !socket.is_closed() {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            if js_reason.is_none() {
+                socket.close(uws::CloseKind::Normal);
+            } else {
+                // A failed connection does not wait for its peer, which `Normal` does over TLS
+                // (for a close_notify): a peer gone silent is one way connections fail. It still
+                // sends its own: an idle or expired connection has a healthy peer, which logs a
+                // close without one as an error.
+                socket.shutdown();
+                socket.close(uws::CloseKind::FastShutdown);
+                // Parked behind ciphertext the kernel would not take.
+                if !socket.is_closed() {
+                    socket.close(uws::CloseKind::Failure);
+                }
+            }
         }
 
         // cleanup requests
@@ -1889,6 +1893,11 @@ impl PostgresSQLConnection {
             let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
                 QueryStatus::Pending => {
+                    debug_assert!(
+                        offset == 0
+                            || self.requests.get()[offset - 1].status.get() != QueryStatus::Pending,
+                        "advance() passed a request that is not written yet"
+                    );
                     // Optimistically account for this request leaving Pending; the
                     // few paths below that keep it Pending (can't execute yet /
                     // Parse written but not Bind / statement still Parsing) undo
@@ -2246,10 +2255,9 @@ impl PostgresSQLConnection {
                                     return;
                                 }
                                 StatementStatus::Parsing => {
-                                    // we are still parsing, lets wait for it to be prepared or failed
+                                    // Replies go to the requests in queue order: write nothing past this one.
                                     self.note_request_pending();
-                                    offset += 1;
-                                    continue;
+                                    break;
                                 }
                             }
                         } else {
@@ -2427,7 +2435,7 @@ impl PostgresSQLConnection {
                         return Err(err);
                     }
                     let js_err = self.undecodable_row_error(err)?;
-                    request.on_undecodable_row(js_err, self.global());
+                    request.reject_in_flight(js_err, self.global());
                     return Ok(());
                 }
 
@@ -2451,7 +2459,7 @@ impl PostgresSQLConnection {
                     Ok(result) => result,
                     Err(err) => {
                         let js_err = self.undecodable_row_error(err)?;
-                        request.on_undecodable_row(js_err, self.global());
+                        request.reject_in_flight(js_err, self.global());
                         return Ok(());
                     }
                 };
@@ -2991,9 +2999,8 @@ impl PostgresSQLConnection {
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.
 
-                self.finish_request(&request);
                 self.update_ref();
-                request.on_js_error(js_err, self.global());
+                request.reject_in_flight(js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 reader.skip_message()?;

@@ -249,7 +249,7 @@ describe("web worker", () => {
     const worker = new Worker(new URL("worker-fixture-argv.js", import.meta.url).href, {
       argv: worker_argv,
       execArgv: worker_execArgv,
-    });
+    } as Bun.WorkerOptions);
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result).toEqual({
@@ -708,7 +708,7 @@ describe("worker_threads", () => {
   test("worker with process.exit", done => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
-    });
+    } as wt.WorkerOptions);
     worker.on("exit", code => {
       try {
         expect(code).toBe(2);
@@ -726,7 +726,7 @@ describe("worker_threads", () => {
     for (let i = 0; i < 10; i++) {
       const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url), {
         smol: true,
-      });
+      } as wt.WorkerOptions);
       worker.on("error", expect.unreachable);
       const code = await worker.terminate();
       expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
@@ -736,7 +736,7 @@ describe("worker_threads", () => {
   test("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
-    });
+    } as wt.WorkerOptions);
     // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.

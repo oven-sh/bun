@@ -99,7 +99,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     // The TLS record layer must reassemble across many tiny BIO reads.
     fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.alloc(512, "Z");
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -110,7 +110,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   test("send → short writes (1 byte) still deliver complete encrypted payload", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedTLSPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
     const payload = Buffer.alloc(512, "Y");
@@ -160,7 +160,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     // header and ciphertext across separate recv calls.
     fault.set({ syscall: "recv", action: "short", bytes: 5, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.alloc(256, "R");
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -333,7 +333,7 @@ describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {
         s.on("data", c => s.write(c));
       });
       p.client.on("error", () => {});
-      p.client.on("data", c => (echoed = Buffer.concat([echoed, c])));
+      p.client.on("data", (c: Buffer) => (echoed = Buffer.concat([echoed, c])));
 
       const plan = PLANS[Math.floor(rand() * PLANS.length)]!;
       fault.set({ ...plan, after: Math.floor(rand() * 2), repeat: -1 } as any);

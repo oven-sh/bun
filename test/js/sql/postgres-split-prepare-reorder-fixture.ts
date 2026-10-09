@@ -53,7 +53,7 @@ const server = net.createServer(socket => {
       }
     });
   };
-  socket.on("data", chunk => {
+  socket.on("data", (chunk: Buffer) => {
     pending = Buffer.concat([pending, chunk]);
     if (!sawStartup) {
       if (pending.length < 4) return;

@@ -131,11 +131,11 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
 
     expect(result.sync.threw).toBe(true);
     expect(result.sync.code).not.toBe("EFAULT");
-    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.sync.code);
+    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.sync.code!);
 
     expect(result.async.threw).toBe(true);
     expect(result.async.code).not.toBe("EFAULT");
-    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.async.code);
+    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.async.code!);
   } finally {
     try {
       execFileSync("icacls", [sub, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });

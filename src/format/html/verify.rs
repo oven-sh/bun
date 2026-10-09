@@ -26,33 +26,75 @@ struct Signature {
 
 struct Reader {
     structure: FxHasher,
-    letters: [u64; 26 + 128],
+    /// How often each byte is there, of those that count.
+    bytes: [u64; 256],
+}
+
+/// The bytes that do not always count, or next to which another does not.
+const IS_SPECIAL: [bool; 256] = {
+    let mut is_special = [false; 256];
+    let (bytes, mut at) = (b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF", 0);
+    while at < bytes.len() {
+        is_special[bytes[at] as usize] = true;
+        at += 1;
+    }
+    is_special
+};
+
+/// `/^[+-]?0+(?!\d)/.test(text)`
+fn is_zero(text: &[u8]) -> bool {
+    let digits = match text {
+        [b'+' | b'-', digits @ ..] => digits,
+        digits => digits,
+    };
+    let zeros = digits.iter().take_while(|&&byte| byte == b'0').count();
+    zeros > 0 && !digits.get(zeros).is_some_and(u8::is_ascii_digit)
 }
 
 impl Reader {
+    #[inline]
+    fn add(&mut self, byte: u8) {
+        let count = &mut self.bytes[usize::from(byte)];
+        *count = count.wrapping_add(1);
+    }
+
+    /// `byte` does not count, whether it has been added or is going to be.
+    fn take_back(&mut self, byte: u8) {
+        let count = &mut self.bytes[usize::from(byte)];
+        *count = count.wrapping_sub(1);
+    }
+
     fn count(&mut self, text: &[u8]) {
-        let (mut at, mut previous) = (0, 0);
-        while let Some(&byte) = text.get(at) {
-            match byte {
-                // The exponent of a number, which goes if it is zero.
-                b'e' | b'E' if previous == b'.' || previous.is_ascii_digit() => {}
-                // `\n` in a template with HTML in it is white space.
-                _ if previous == b'\\' => {}
-                b'a'..=b'z' => self.letters[usize::from(byte - b'a')] += 1,
-                b'A'..=b'Z' => self.letters[usize::from(byte - b'A')] += 1,
-                // In lower case, U+0130 is an `i` and U+0307.
-                0xC4 if text.get(at + 1) == Some(&0xB0) => {
-                    self.count(b"i\xCC\x87");
-                    at += 1;
-                }
-                0x80.. => match white_space_len(&text[at..]) {
-                    0 => self.letters[26 + usize::from(byte - 0x80)] += 1,
-                    len => at += len - 1,
-                },
-                _ => {}
+        for (at, &byte) in text.iter().enumerate() {
+            self.add(byte);
+            if IS_SPECIAL[usize::from(byte)] {
+                self.look_around(text, at);
             }
-            previous = byte;
-            at += 1;
+        }
+    }
+
+    /// Takes back what does not count because of the byte at `at`, which is one of `IS_SPECIAL`.
+    fn look_around(&mut self, text: &[u8], at: usize) {
+        let (before, rest) = text.split_at_checked(at).unwrap_or_default();
+        let previous = before.last().copied().unwrap_or(0);
+        match *rest {
+            // The exponent of a number, which goes if it is zero.
+            [byte @ (b'e' | b'E'), ref exponent @ ..] => {
+                if matches!(*before, [.., b'0'..=b'9'] | [.., b'0'..=b'9', b'.'])
+                    && is_zero(exponent)
+                {
+                    self.take_back(byte);
+                }
+            }
+            // `\n` in a template with HTML in it is white space.
+            [b'\\', next, ..] => self.take_back(next),
+            _ if previous == b'\\' => {}
+            // In lower case, U+0130 is an `i` and U+0307.
+            [0xC4, 0xB0, ..] => {
+                b"\xC4\xB0".iter().for_each(|&byte| self.take_back(byte));
+                b"i\xCC\x87".iter().for_each(|&byte| self.add(byte));
+            }
+            _ => (rest.iter().take(white_space_len(rest))).for_each(|&byte| self.take_back(byte)),
         }
     }
 
@@ -62,12 +104,21 @@ impl Reader {
         for entity in [&b"&quot;"[..], b"&apos;"] {
             let mut rest = value;
             while let Some(at) = bun_core::strings::index_of(rest, entity) {
-                for &byte in &entity[1..5] {
-                    self.letters[usize::from(byte - b'a')] -= 1;
-                }
+                entity.iter().for_each(|&byte| self.take_back(byte));
                 rest = &rest[at + entity.len()..];
             }
         }
+    }
+
+    /// How often each letter is there, and each byte of a character that is not ASCII.
+    fn letters(&self) -> [u64; 26 + 128] {
+        let mut letters = [0; 26 + 128];
+        for (count, lower) in letters.iter_mut().zip(b'a'..=b'z') {
+            let upper = lower.to_ascii_uppercase();
+            *count = self.bytes[usize::from(lower)].wrapping_add(self.bytes[usize::from(upper)]);
+        }
+        letters[26..].copy_from_slice(&self.bytes[0x80..]);
+        letters
     }
 
     fn name(&mut self, namespace: &[u8], name: &[u8]) {
@@ -119,7 +170,7 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     parse::parse(&content, front_matter_len, parser, &mut tree).ok()?;
     let mut reader = Reader {
         structure: FxHasher::default(),
-        letters: [0; 26 + 128],
+        bytes: [0; 256],
     };
     // What is in a node comes behind it.
     let root = tree.root;
@@ -141,7 +192,7 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     }
     Some(Signature {
         structure: reader.structure.finish(),
-        letters: reader.letters,
+        letters: reader.letters(),
     })
 }
 

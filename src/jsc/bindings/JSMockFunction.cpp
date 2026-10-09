@@ -36,6 +36,8 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsWaitFor);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsWaitUntil);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                \
     if (!thisObject) [[unlikely]] {                                      \
@@ -1495,6 +1497,31 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
 {
     JSMock__resetAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     return JSValue::encode(jsUndefined());
+}
+
+// Loads internal/test_runner/wait_for on the first call, so importing bun:test does not load it.
+static JSC::EncodedJSValue callWaitHelper(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ASCIILiteral name)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue helpers = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalTestRunnerWaitFor);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue helper = helpers.get(globalObject, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData callData = JSC::getCallData(helper);
+    ASSERT(callData.type != JSC::CallData::Type::None);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, helper, callData, jsUndefined(), JSC::ArgList(callframe))));
+}
+
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsWaitFor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return callWaitHelper(globalObject, callframe, "waitFor"_s);
+}
+
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsWaitUntil, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return callWaitHelper(globalObject, callframe, "waitUntil"_s);
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

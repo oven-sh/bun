@@ -200,7 +200,77 @@ declare module "bun:test" {
     getTimerCount: typeof jest.getTimerCount;
     clearAllTimers: typeof jest.clearAllTimers;
     isFakeTimers: typeof jest.isFakeTimers;
+    /**
+     * Calls `callback` until it returns without throwing, then resolves with
+     * the value it returned. When `callback` returns a promise, `waitFor`
+     * waits for it to settle before calling `callback` again, and treats a
+     * rejection like a throw.
+     *
+     * After `timeout` milliseconds, the returned promise rejects with the last
+     * error `callback` threw, or with "Timed out in waitFor!" when it never
+     * threw.
+     *
+     * Under fake timers, each check first advances the fake clock by
+     * `interval`, and `timeout` is measured on the fake clock.
+     *
+     * @param callback Called right away, then every `interval` milliseconds.
+     * @param options The `timeout` in milliseconds, or `{ timeout, interval }`.
+     * `timeout` defaults to 1000 and `interval` to 50.
+     *
+     * @example
+     * ```ts
+     * const server = await vi.waitFor(() => {
+     *   if (!isReady()) throw new Error("server is not ready");
+     *   return getServer();
+     * });
+     * ```
+     */
+    waitFor<T>(callback: () => T | PromiseLike<T>, options?: number | WaitForOptions): Promise<T>;
+    /**
+     * Calls `callback` until it returns a truthy value, then resolves with
+     * that value. When `callback` returns a promise, `waitUntil` waits for it
+     * to settle before calling `callback` again.
+     *
+     * Unlike `waitFor`, `waitUntil` rejects as soon as `callback` throws or
+     * its promise rejects. After `timeout` milliseconds without a truthy
+     * value, it rejects with "Timed out in waitUntil!".
+     *
+     * Under fake timers, each check first advances the fake clock by
+     * `interval`, and `timeout` is measured on the fake clock.
+     *
+     * @param callback Called right away, then every `interval` milliseconds.
+     * @param options The `timeout` in milliseconds, or `{ timeout, interval }`.
+     * `timeout` defaults to 1000 and `interval` to 50.
+     *
+     * @example
+     * ```ts
+     * const element = await vi.waitUntil(() => document.querySelector(".loaded"));
+     * ```
+     */
+    waitUntil<T>(
+      callback: () => T | PromiseLike<T>,
+      options?: number | WaitForOptions,
+    ): Promise<Exclude<T, false | 0 | 0n | "" | null | undefined>>;
   };
+
+  /**
+   * Options for `vi.waitFor` and `vi.waitUntil`.
+   */
+  export interface WaitForOptions {
+    /**
+     * How long to keep checking before the returned promise rejects, in
+     * milliseconds.
+     *
+     * @default 1000
+     */
+    timeout?: number | undefined;
+    /**
+     * How long to wait between checks, in milliseconds.
+     *
+     * @default 50
+     */
+    interval?: number | undefined;
+  }
 
   interface FunctionLike {
     readonly name: string;

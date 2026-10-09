@@ -10,7 +10,7 @@ describe("spawn with empty", () => {
     test(label + " for stdin", async () => {
       const proc = Bun.spawn({
         cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin,
+        stdin: stdin as Uint8Array | Blob,
         stdout: "pipe",
         stderr: "pipe",
         env: bunEnv,

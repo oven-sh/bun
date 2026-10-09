@@ -1,15 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import npmStringWidth from "string-width";
 
+declare module "bun:test" {
+  interface Matchers<T> {
+    toMatchNPMStringWidth(): void;
+    toMatchNPMStringWidthExcludeANSI(): void;
+  }
+}
+
 expect.extend({
-  toMatchNPMStringWidth(received: string) {
+  toMatchNPMStringWidth(received: any) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: true });
     const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: true });
     const pass = width === bunWidth;
     const message = () => `expected ${received} to have npm string width ${width} but got ${bunWidth}`;
     return { pass, message };
   },
-  toMatchNPMStringWidthExcludeANSI(received: string) {
+  toMatchNPMStringWidthExcludeANSI(received: any) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: false });
     const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: false });
     const pass = width === bunWidth;
@@ -1335,6 +1342,7 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
           else return k;
           break;
         case "inOscGotEsc":
+        // @ts-expect-error falls through
         case "needStGotEsc":
           // ESC \ is ST; any other byte follows an ESC that aborted the
           // payload and re-introduced a sequence, so process it in gotEsc.

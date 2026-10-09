@@ -265,7 +265,7 @@ if (isDockerEnabled()) {
         }
         {
           const [{ x }] =
-            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]), "INT")} as x`;
+            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]) as any, "INT")} as x`;
           expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
         }
       });
@@ -737,7 +737,7 @@ if (isDockerEnabled()) {
 
         // Every selected value shows up exactly once across the row's properties.
         const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
-        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+        expect(Object.values<number>(row).sort((a, b) => a - b)).toEqual(expectedValues);
       });
 
       for (let size of [50, 60, 62, 64, 70, 100]) {
@@ -813,7 +813,7 @@ if (isDockerEnabled()) {
     });
 
     test("Idle timeout is reset when a query is run", async () => {
-      const onClosePromise = Promise.withResolvers();
+      const onClosePromise = Promise.withResolvers<SQL.PostgresError>();
       const onclose = mock(err => {
         onClosePromise.resolve(err);
       });
@@ -1221,7 +1221,7 @@ if (isDockerEnabled()) {
           await sql
             .begin(async sql => {
               await sql`insert into test values(1)`;
-              await sql.savepoit("watpoint", async sql => {
+              await (sql as any).savepoit("watpoint", async sql => {
                 await sql`insert into test values(2)`;
                 throw new Error("fail");
               });
@@ -3007,7 +3007,7 @@ if (isDockerEnabled()) {
         try {
           await sql`select 1`;
           throw new Error("should not reach");
-        } catch (e) {
+        } catch (e: any) {
           expect(e).toBeInstanceOf(Error);
           expect(e).toBeInstanceOf(SQL.SQLError);
           expect(e).toBeInstanceOf(SQL.PostgresError);
@@ -11799,7 +11799,7 @@ CREATE TABLE ${table_name} (
         try {
           await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
           expect.unreachable();
-        } catch (e) {
+        } catch (e: any) {
           expect(e).toBeInstanceOf(SyntaxError);
           expect(e.message).toBe("Update needs to have at least one column");
         }
@@ -12018,7 +12018,7 @@ CREATE TABLE ${table_name} (
           const sql = new Bun.SQL("postgres://localhost:5432/testdb", {
             adapter: "sqlite",
             filename: ":memory:",
-          });
+          } as Bun.SQL.Options);
 
           // Verify it's actually SQLite by checking the adapter type
           expect(sql.options.adapter).toBe("sqlite");
@@ -12053,7 +12053,7 @@ CREATE TABLE ${table_name} (
           }
 
           expect(error).toBeInstanceOf(Error);
-          expect(error.message).toMatchInlineSnapshot(
+          expect((error as Error).message).toMatchInlineSnapshot(
             `"Invalid URL 'sqlite://:memory:' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
           );
           expect(sql).toBeUndefined();
@@ -12102,15 +12102,18 @@ CREATE TABLE ${table_name} (
 
         test("explicit adapter overrides even with conflicting connection string patterns", async () => {
           // Test that adapter explicitly set to sqlite works even with postgres-like connection info
-          const sql = new Bun.SQL(undefined as never, {
-            adapter: "sqlite",
-            filename: ":memory:",
-            hostname: "localhost", // These would normally suggest postgres
-            port: 5432,
-            username: "postgres",
-            password: "password",
-            database: "testdb",
-          });
+          const sql = new Bun.SQL(
+            undefined as never,
+            {
+              adapter: "sqlite",
+              filename: ":memory:",
+              hostname: "localhost", // These would normally suggest postgres
+              port: 5432,
+              username: "postgres",
+              password: "password",
+              database: "testdb",
+            } as Bun.SQL.Options,
+          );
 
           expect(sql.options.adapter).toBe("sqlite");
 
@@ -12385,7 +12388,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db`INSERT INTO users (email) VALUES ('test@example.com')`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.message).toContain("UNIQUE constraint failed");
@@ -12404,7 +12407,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db`SELCT * FROM nonexistent`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.message).toContain("syntax error");
@@ -12429,7 +12432,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db2`INSERT INTO test (id) VALUES (2)`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.code).toBe("SQLITE_BUSY");

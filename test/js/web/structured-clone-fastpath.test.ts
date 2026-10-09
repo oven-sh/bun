@@ -12,11 +12,11 @@ describe("Structured Clone Fast Path", () => {
     // The fast-path deserializer sized the clone with inline capacity 0 for an
     // empty source, so spreading it tripped JSC's hasInlineStorage() debug
     // assert once a property was added.
-    const x = structuredClone({});
+    const x: Record<string, number> = structuredClone({});
     x.a = 1;
     expect({ ...x }).toEqual({ a: 1 });
 
-    const [y] = structuredClone([{}]);
+    const [y]: Record<string, number>[] = structuredClone([{}]);
     y.b = 2;
     expect({ ...y }).toEqual({ b: 2 });
   });
@@ -186,7 +186,7 @@ describe("Structured Clone Fast Path", () => {
       { id: 2, name: "Bob" },
     ];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -228,7 +228,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [1, 2, 3, "hello", true];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -240,7 +240,7 @@ describe("Structured Clone Fast Path", () => {
 
   test("structuredClone of frozen array should produce a non-frozen clone", () => {
     const input = Object.freeze([1, 2, 3]);
-    const cloned = structuredClone(input);
+    const cloned = structuredClone(input) as number[];
     expect(cloned).toEqual([1, 2, 3]);
     expect(Object.isFrozen(cloned)).toBe(false);
     cloned[0] = 999;
@@ -261,7 +261,7 @@ describe("Structured Clone Fast Path", () => {
     delete (input as any)[1];
     const cloned = structuredClone(input);
     expect(cloned[0]).toBe(1);
-    expect(cloned[1]).toBe(undefined);
+    expect(cloned[1]).toBe<number | undefined>(undefined);
     expect(cloned[2]).toBe(3);
     expect(1 in cloned).toBe(false); // holes remain holes after structuredClone
   });
@@ -274,7 +274,7 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned[0]).toBe(1);
     expect(cloned[1]).toBe(2);
     expect(cloned[2]).toBe(3);
-    expect(cloned[3]).toBe(undefined);
+    expect(cloned[3]).toBe<number | undefined>(undefined);
   });
 
   test("structuredClone of single element arrays", () => {
@@ -343,7 +343,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [10, 20, 30, 40, 50];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -355,7 +355,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [1.1, 2.2, 3.3];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -380,7 +380,7 @@ describe("Structured Clone Fast Path", () => {
   });
 
   test("structuredClone of Array subclass loses subclass identity", () => {
-    class MyArray extends Array {
+    class MyArray extends Array<number> {
       customProp = "hello";
       sum() {
         return this.reduce((a: number, b: number) => a + b, 0);
@@ -514,8 +514,8 @@ describe("Structured Clone Fast Path", () => {
     const input = [{ a: 1 }, { b: { nested: true } }];
     const cloned = structuredClone(input);
     expect(cloned).toEqual(input);
-    cloned[1].b.nested = false;
-    expect(input[1].b.nested).toBe(true);
+    cloned[1].b!.nested = false;
+    expect(input[1].b!.nested).toBe(true);
   });
 
   test("fallback: array with Date object", () => {
@@ -550,7 +550,7 @@ describe("Structured Clone Fast Path", () => {
     const obj = Object.defineProperty({}, "x", { get: () => 42, enumerable: true, configurable: true });
     const input = [obj];
     const cloned = structuredClone(input);
-    expect(cloned[0].x).toBe(42);
+    expect((cloned[0] as any).x).toBe(42);
   });
 
   test("fallback: object with non-enumerable property in array", () => {
@@ -559,12 +559,12 @@ describe("Structured Clone Fast Path", () => {
     const cloned = structuredClone(input);
     expect(cloned[0].a).toBe(1);
     // non-enumerable property should not be cloned by structuredClone
-    expect(cloned[0].hidden).toBeUndefined();
+    expect((cloned[0] as any).hidden).toBeUndefined();
   });
 
   test("frozen objects in array produce non-frozen clones", () => {
     const input = [Object.freeze({ a: 1, b: "hello" }), Object.freeze({ a: 2, b: "world" })];
-    const cloned = structuredClone(input);
+    const cloned = structuredClone(input) as { a: number; b: string }[];
     expect(cloned).toEqual([
       { a: 1, b: "hello" },
       { a: 2, b: "world" },
@@ -607,7 +607,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [42, { x: "hello" }, true, { y: 3.14 }, null];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -619,7 +619,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [{}, {}, {}];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -805,8 +805,8 @@ describe("Structured Clone Fast Path", () => {
 
     const { promise: promise1, resolve: resolve1 } = Promise.withResolvers();
     const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
-    p1b.onmessage = (e: MessageEvent) => resolve1(e.data);
-    p2b.onmessage = (e: MessageEvent) => resolve2(e.data);
+    p1b.onmessage = e => resolve1(e.data);
+    p2b.onmessage = e => resolve2(e.data);
 
     // structuredClone for each postMessage creates separate serialized values,
     // but let's verify concurrent postMessage works
@@ -882,7 +882,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = Array.from({ length: 500 }, (_, i) => ({ id: i, name: `item-${i}` }));
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);
@@ -894,7 +894,7 @@ describe("Structured Clone Fast Path", () => {
     const { port1, port2 } = new MessageChannel();
     const input = [{ a: 1 }, { x: "hello", y: true }, { a: 2 }, { x: "world", y: false }];
     const { promise, resolve } = Promise.withResolvers();
-    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port2.onmessage = e => resolve(e.data);
     port1.postMessage(input);
     const result = await promise;
     expect(result).toEqual(input);

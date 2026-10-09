@@ -516,7 +516,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     let connections = 0;
     const redialed = Promise.withResolvers<void>();
     const redialClosed = Promise.withResolvers<void>();
-    using server = Bun.listen({
+    using server = Bun.listen<number>({
       hostname: "127.0.0.1",
       port: 0,
       socket: {

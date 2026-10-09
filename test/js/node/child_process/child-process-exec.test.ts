@@ -4,9 +4,11 @@ import { exec } from "node:child_process";
 
 const SIZE = 262145;
 
+type Output<T = string> = { stdout: T; stderr: T; err?: Error | null };
+
 // https://github.com/oven-sh/bun/issues/5319
 describe.concurrent("child_process.exec", () => {
-  const shell = Bun.which(isWindows ? "powershell" : "bash");
+  const shell = Bun.which(isWindows ? "powershell" : "bash")!;
 
   describe.each(["stdout", "stderr"])("%s", io => {
     let script;
@@ -25,7 +27,7 @@ describe.concurrent("child_process.exec", () => {
     }
 
     test("no encoding", async () => {
-      const { resolve, reject, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers<Output<Buffer>>();
       exec(script, { maxBuffer: 1024 * 1024 * 10, encoding: "buffer", shell }, (err, stdout, stderr) => {
         if (err) {
           reject(err);
@@ -42,7 +44,7 @@ describe.concurrent("child_process.exec", () => {
     });
 
     test("Infinity maxBuffer", async () => {
-      const { resolve, reject, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers<Output>();
       exec(script, { maxBuffer: Infinity, shell }, (err, stdout, stderr) => {
         if (err) {
           reject(err);
@@ -58,7 +60,7 @@ describe.concurrent("child_process.exec", () => {
     });
 
     test("large output", async () => {
-      const { resolve, reject, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers<Output>();
       exec(script, { maxBuffer: 1024 * 1024 * 10, shell }, (err, stdout, stderr) => {
         if (err) {
           reject(err);
@@ -74,13 +76,13 @@ describe.concurrent("child_process.exec", () => {
     });
 
     test("exceeding maxBuffer should throw", async () => {
-      const { resolve, reject, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers<Output>();
       exec(script, { maxBuffer: 1024 * 100, shell }, (err, stdout, stderr) => {
         resolve({ stdout, stderr, err });
       });
       const { stdout, stderr, err } = await promise;
-      expect(err.message).toContain("maxBuffer length exceeded");
-      expect(err.message).toContain(io);
+      expect(err!.message).toContain("maxBuffer length exceeded");
+      expect(err!.message).toContain(io);
       const out = io === "stdout" ? stdout : stderr;
       const other = io === "stdout" ? stderr : stdout;
       expect(out.trim()).toHaveLength(1024 * 100);
@@ -88,13 +90,13 @@ describe.concurrent("child_process.exec", () => {
     });
 
     test("exceeding maxBuffer should truncate output length", async () => {
-      const { resolve, reject, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers<Output>();
       exec(script, { maxBuffer: 1024 * 255 - 1, shell }, (err, stdout, stderr) => {
         resolve({ stdout, stderr, err });
       });
       const { stdout, stderr, err } = await promise;
-      expect(err.message).toContain("maxBuffer length exceeded");
-      expect(err.message).toContain(io);
+      expect(err!.message).toContain("maxBuffer length exceeded");
+      expect(err!.message).toContain(io);
       const out = (io === "stdout" ? stdout : stderr).trim();
       const other = (io === "stdout" ? stderr : stdout).trim();
       expect(out.length).toBeLessThanOrEqual(1024 * 255 - 1);
@@ -105,7 +107,7 @@ describe.concurrent("child_process.exec", () => {
 });
 
 test.concurrent("exec with verbatim arguments", async () => {
-  const { resolve, reject, promise } = Promise.withResolvers();
+  const { resolve, reject, promise } = Promise.withResolvers<Output>();
 
   const fixture = require.resolve("./fixtures/child-process-echo-argv.js");
   const child = exec(`${bunExe()} ${fixture} tasklist /FI "IMAGENAME eq chrome.exe"`, (err, stdout, stderr) => {

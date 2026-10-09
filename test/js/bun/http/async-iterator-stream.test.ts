@@ -18,8 +18,8 @@ describe.concurrent("Streaming body via", () => {
     });
 
     const res = await fetch(`${server.url}/`);
-    const chunks = [];
-    for await (const chunk of res.body) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.body!) {
       chunks.push(chunk);
     }
 
@@ -32,7 +32,7 @@ describe.concurrent("Streaming body via", () => {
     let i = 0;
     const text = await new Response({
       [Symbol.asyncIterator]: () => ({
-        next: () => Promise.resolve(i++ === 0 ? { value: "a", done: false } : { done: true }),
+        next: () => Promise.resolve(i++ === 0 ? { value: "a", done: false } : ({ done: true } as any)),
       }),
     }).text();
     expect(text).toBe("a");
@@ -171,7 +171,7 @@ describe.concurrent("Streaming body via", () => {
       },
       return: () => Promise.resolve({ done: true }),
     };
-    const text = await new Response({ [Symbol.asyncIterator]: () => iterator }).text();
+    const text = await new Response({ [Symbol.asyncIterator]: () => iterator as any }).text();
     expect(text).toBe("t0t1t2");
   });
 
@@ -243,7 +243,7 @@ describe.concurrent("Streaming body via", () => {
     });
     try {
       const res = await fetch(`${server.url}/`, { signal: aborter.signal });
-    } catch (e) {
+    } catch (e: any) {
       expect(e).toBeInstanceOf(DOMException);
       expect(e.name).toBe("AbortError");
     }
@@ -270,8 +270,8 @@ describe.concurrent("Streaming body via", () => {
     });
 
     const res = await fetch(`${server.url}/`);
-    const chunks = [];
-    for await (const chunk of res.body) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.body!) {
       chunks.push(chunk);
     }
 
@@ -294,7 +294,7 @@ describe.concurrent("Streaming body via", () => {
             return {
               async next() {
                 await Bun.sleep(30);
-                return results.shift();
+                return results.shift()!;
               },
             };
           },
@@ -303,8 +303,8 @@ describe.concurrent("Streaming body via", () => {
     });
 
     const res = await fetch(server.url);
-    const chunks = [];
-    for await (const chunk of res.body) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.body!) {
       chunks.push(chunk);
     }
 
@@ -353,7 +353,7 @@ describe.concurrent("Streaming body via", () => {
           return "SYNC-RETURN";
         },
       };
-      expect(await new Response(body).text()).toBe("s1");
+      expect(await new Response(body as any).text()).toBe("s1");
     });
 
     test("Bun.serve response body", async () => {
@@ -410,7 +410,7 @@ describe.concurrent("Streaming body via", () => {
         for (let [label, constructFn] of [
           ["Response", () => new Response(bodyInit)],
           ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
-        ]) {
+        ] as const) {
           for (let method of ["arrayBuffer", "bytes", "text"]) {
             test(`${label}(${method})`, async () => {
               const result = await constructFn()[method]();

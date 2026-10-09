@@ -18,6 +18,7 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
+pub mod io_thread_pool;
 pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]

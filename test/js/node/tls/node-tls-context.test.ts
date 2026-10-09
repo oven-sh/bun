@@ -396,7 +396,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
           authorized: socket.authorized,
           //@ts-ignore
           error: socket.authorizationError ?? null,
-          peer: socket.getPeerCertificate()?.subject?.CN ?? null,
+          peer: (socket.getPeerCertificate()?.subject?.CN as string) ?? null,
           resumed: socket.isSessionReused(),
         };
         socket.end(JSON.stringify(seen));

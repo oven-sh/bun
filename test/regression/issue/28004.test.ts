@@ -153,7 +153,7 @@ test("MySQL-compatible server without CLIENT_DEPRECATE_EOF returns rows correctl
     let state: "waiting_auth" | "ready" = "waiting_auth";
     let buf = Buffer.alloc(0);
 
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buf = Buffer.concat([buf, data]);
 
       // Process complete packets

@@ -87,8 +87,8 @@ describe.concurrent("Server", () => {
 
       const { promise, resolve } = Promise.withResolvers();
       Bun.connect({
-        hostname: server.hostname,
-        port: server.port,
+        hostname: server.hostname!,
+        port: server.port!,
 
         socket: {
           async open(socket) {
@@ -2015,7 +2015,7 @@ test.concurrent("should be able to async upgrade using custom protocol", async (
   const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
   using server = Bun.serve<unknown>({
     port: 0,
-    async fetch(req: Request, server: Server) {
+    async fetch(req: Request, server: Server<undefined>) {
       await Bun.sleep(1);
 
       if (server.upgrade(req)) return;
@@ -2119,8 +2119,8 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
     return;
   }
   await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     data: {
       state: 0,
       pending: null,
@@ -2134,6 +2134,62 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
   await aborted.promise;
   // The body iterator saw exactly the one chunk, then the truncated upload aborted it.
   expect(await handlerDone.promise).toEqual({ error: "AbortError", received: chunk.byteLength });
+});
+
+// Same failure, but delivered while nothing is reading: the handler takes
+// req.body (which creates the native stream) and only starts reading after the
+// client has gone away. The stored abort must surface from the first read; it
+// used to come out as a clean `{ done: true }`, indistinguishable from a
+// complete upload.
+test("reading an upload whose client went away before the first read rejects", async () => {
+  const bodyTaken = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const outcome = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = req.body!;
+      bodyTaken.resolve();
+      await clientClosed.promise;
+      try {
+        // The abort reaches the body on a later event-loop turn. Bun.inspect(req)
+        // lists the body stream while the body is still pending and stops listing
+        // it once the body holds the error; reading it to find out is the very
+        // thing under test.
+        const deadline = Date.now() + 10_000;
+        while (Bun.inspect(req).includes("ReadableStream")) {
+          if (Date.now() > deadline) throw new Error("the abort never reached the idle body");
+          await Bun.sleep(1);
+        }
+        outcome.resolve(
+          await body
+            .getReader()
+            .read()
+            .then(
+              result => `resolved: ${JSON.stringify(result)}`,
+              error => `rejected: ${(error as Error).name}`,
+            ),
+        );
+      } catch (error) {
+        outcome.reject(error);
+      }
+      return new Response("unreachable by the client");
+    },
+  });
+  const socket = await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial");
+      },
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+  await bodyTaken.promise;
+  socket.end();
+  expect(await outcome.promise).toBe("rejected: AbortError");
 });
 
 // This test is disabled because it can OOM the CI
@@ -2404,7 +2460,10 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("Hello World");
     }
 
-    function doHead(server: Server, path: string): Promise<{ statusLine: string; headers: string; body: string }> {
+    function doHead(
+      server: Server<undefined>,
+      path: string,
+    ): Promise<{ statusLine: string; headers: string; body: string }> {
       const { promise, resolve, reject } = Promise.withResolvers<{
         statusLine: string;
         headers: string;
@@ -2657,7 +2716,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // main route for upgrade
       routes: {
-        "/": (req: Request, server: Server) => {
+        "/": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2669,7 +2728,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // Generic route for upgrade
       routes: {
-        "/*": (req: Request, server: Server) => {
+        "/*": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2683,7 +2742,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/ws": {
-          GET: (req: Request, server: Server) => {
+          GET: (req: Request, server: Server<undefined>) => {
             if (server.upgrade(req)) return;
             return new Response("Forbidden", { status: 403 });
           },
@@ -2701,12 +2760,12 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
       },
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2718,7 +2777,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
@@ -2729,7 +2788,7 @@ describe.concurrent("websocket and routes test", () => {
     },
     // fetch only
     {
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2751,7 +2810,7 @@ describe.concurrent("websocket and routes test", () => {
             ws.send(`recv: ${message}`);
           },
         },
-      });
+      } as Bun.Serve.Options<undefined>);
 
       {
         const { promise, resolve, reject } = Promise.withResolvers();

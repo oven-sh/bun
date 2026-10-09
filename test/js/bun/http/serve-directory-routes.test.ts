@@ -28,7 +28,7 @@ const canInjectOpenat2Error =
   }).exitCode === 0;
 
 describe("Bun.serve() directory routes", () => {
-  let server: Server | undefined;
+  let server: Server<undefined> | undefined;
 
   afterEach(() => {
     server?.stop(true);
@@ -44,7 +44,7 @@ describe("Bun.serve() directory routes", () => {
     let buf = "";
     const sock = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server!.port,
+      port: server!.port!,
       socket: {
         data(_s, chunk) {
           buf += chunk.toString("latin1");

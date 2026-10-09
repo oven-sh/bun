@@ -130,7 +130,7 @@ describe("Bun.serve() cookies", () => {
     routes: {
       "/tester": {
         POST: async req => {
-          const body: [string, string | null, { domain?: string; path?: string } | undefined][] = await req.json();
+          const body = (await req.json()) as [string, string | null, { domain?: string; path?: string } | undefined][];
           for (const [key, value, options] of body) {
             if (value == null) {
               req.cookies.delete({

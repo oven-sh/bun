@@ -72,7 +72,7 @@ use bun_jsc::{
     JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use crate::cli::open::Editor;
+use crate::cli::open::{BatchArg, Editor, OpenError};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -985,16 +985,44 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             return Err(global_this.throw(format_args!("No file path specified")));
         }
 
-        if let Err(err) = editor.open(
+        match editor.open(
             edit.path,
             path.slice(),
             line.as_ref().map(|s| s.slice()),
             column.as_ref().map(|s| s.slice()),
         ) {
-            return Err(global_this.throw(format_args!("Opening editor failed {}", err.name(),)));
+            Ok(()) => Ok(JSValue::UNDEFINED),
+            Err(OpenError::BatchEditor(editor)) => Err(global_this
+                .err(
+                    jsc::ErrCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The editor path contains a cmd.exe special character and cannot be safely passed to cmd.exe, which runs a .bat/.cmd editor. Received {}",
+                        bun_core::fmt::quote(editor)
+                    ),
+                )
+                .throw()),
+            Err(OpenError::BatchArg { editor, arg, value }) => {
+                let name = match arg {
+                    BatchArg::Path => "argument 'path'",
+                    BatchArg::Line => "property 'options.line'",
+                    BatchArg::Column => "property 'options.column'",
+                };
+                Err(global_this
+                    .err(
+                        jsc::ErrCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The {} contains a cmd.exe special character and cannot be safely passed to the .bat/.cmd editor {}. Received {}",
+                            name,
+                            bun_core::fmt::quote(editor),
+                            bun_core::fmt::quote(value)
+                        ),
+                    )
+                    .throw())
+            }
+            Err(OpenError::Failed(err)) => {
+                Err(global_this.throw(format_args!("Opening editor failed {}", err.name(),)))
+            }
         }
-
-        Ok(JSValue::UNDEFINED)
     })
 }
 

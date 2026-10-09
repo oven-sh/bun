@@ -2476,6 +2476,31 @@ describe("bundler", () => {
     ],
   });
 
+  // The same for what a wrapper imports: y.js and z.js are in chunks of their own, because c.js
+  // and d.js load them too, and a.js evaluates both after p.js.
+  itBundled("splitting/SharedChunkOrderConflictDependencyInAnotherChunk", {
+    files: {
+      "/a.js": `import "./p.js"; import "./q.js"; console.log("a");`,
+      "/b.js": `import "./q.js"; import "./p.js"; console.log("b");`,
+      "/c.js": `import "./y.js"; console.log("c");`,
+      "/d.js": `import "./z.js"; console.log("d");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `import "./y.js"; console.log("q");`,
+      "/y.js": `import "./z.js"; console.log("y");`,
+      "/z.js": `console.log("z");`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "p\nz\ny\nq\na" },
+      { file: "/out/b.js", stdout: "z\ny\nq\np\nb" },
+      { file: "/out/c.js", stdout: "z\ny\nc" },
+      { file: "/out/d.js", stdout: "z\nd" },
+    ],
+  });
+
   // main.js loads base.js before either page can load, so base.js keeps its place in a chunk
   // that main.js imports. Only what the pages can be the first to load is wrapped.
   itBundled("splitting/SharedChunkOrderConflictPreloadedChunk", {

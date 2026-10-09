@@ -74,6 +74,14 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
         self.0.read_dir_info_ignore_error(path)
     }
+    #[inline]
+    fn real_path_of(
+        &self,
+        dir: &bun_resolver::DirInfo,
+        entry: &Fs::Entry,
+    ) -> bun_resolver::RealPath {
+        self.0.real_path_of(dir, entry)
+    }
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`

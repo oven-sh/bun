@@ -137,6 +137,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
+    /// The lexical path, in the spelling of the first lookup that filled it. `Resolver::real_path_of` gives the real one.
     pub abs_path: Interned,
 }
 
@@ -179,17 +180,6 @@ impl Entry {
     #[inline]
     pub fn dir(&self) -> &'static [u8] {
         self.dir
-    }
-
-    /// `Interned` is `Copy`.
-    #[inline]
-    pub fn abs_path(&self) -> Interned {
-        self.abs_path
-    }
-
-    #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
     }
 
     /// Stat-on-first-use.

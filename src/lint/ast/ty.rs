@@ -539,6 +539,12 @@ impl<'a> EntityName<'a> {
             .map(move |name| file.ident(name.text, name.pos()))
     }
 
+    /// The file, and what the HIR calls the names between the dots.
+    #[inline]
+    pub(crate) fn ids(self) -> (&'a File<'a>, impl Iterator<Item = hir::NameId>) {
+        (self.file, self.names.iter())
+    }
+
     /// The name at `i`, counted from the left.
     #[inline]
     pub fn get(self, i: usize) -> Option<Ident<'a>> {

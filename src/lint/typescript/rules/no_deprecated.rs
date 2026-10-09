@@ -239,8 +239,8 @@ impl NoDeprecated {
     }
 
     fn check_entity_name<'a>(&self, name: EntityName<'a>, cx: &mut Cx<'a, Self>) {
-        for part in name.parts() {
-            self.check_plain(IdentifierLike::of_ident(part, cx.file()), cx);
+        for (part, node) in name.parts().zip(name.ts_nodes()) {
+            self.check_plain(IdentifierLike::new(node, part.span(), part.bytes()), cx);
         }
     }
 

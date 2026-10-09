@@ -2,9 +2,9 @@
 
 use super::{Signature, TsNode, TsSymbol, Type};
 use crate::ast::{
-    Alias, Case, Class, Enum, EnumMember, Export, ExportSpec, Expr, File, Func, Ident, Import,
-    ImportEquals, ImportSpec, Interface, Member, Module, Node, Param, Pat, PatElem, PatProp, Prop,
-    Stmt, TupleElem, TypeNode, TypeParam, VarDecl,
+    Alias, Case, Class, EntityName, Enum, EnumMember, Export, ExportSpec, Expr, File, Func, Ident,
+    Import, ImportEquals, ImportSpec, Interface, Member, Module, Node, Param, Pat, PatElem,
+    PatProp, Prop, Stmt, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use bun_sema::check::services::{Location, Row};
 use bun_sema::node::Part;
@@ -52,6 +52,15 @@ impl<'a> Locate<'a> for Ident<'a> {
     #[inline]
     fn locate(self, file: &'a File<'a>) -> TsNode<'a> {
         Location::from(Row::NameAt(self.start())).locate(file)
+    }
+}
+
+impl<'a> EntityName<'a> {
+    /// `services.esTreeNodeToTSNodeMap.get(name)` of each of [`EntityName::parts`]. That of an [`Ident`] is looked for from
+    /// the top of the file, these are known.
+    pub fn ts_nodes(self) -> impl Iterator<Item = TsNode<'a>> {
+        let (file, names) = self.ids();
+        names.map(move |name| Location::from(Row::Name(name)).locate(file))
     }
 }
 

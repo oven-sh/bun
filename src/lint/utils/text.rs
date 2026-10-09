@@ -13,6 +13,7 @@
 //! | `String(n)` | [`number_to_string`] |
 //! | `Number(s)` | [`string_to_number`] |
 //! | `JSON.stringify(s)` | [`json_stringify`] |
+//! | `s.toWellFormed()` | [`to_well_formed`] |
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`push_code_point`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`compare`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
@@ -418,6 +419,29 @@ pub fn json_stringify(text: &[u8]) -> Vec<u8> {
     }
     out.push(b'"');
     out
+}
+
+/// `text.toWellFormed()`: half of a surrogate pair, which is three bytes here, is U+FFFD. That is also
+/// what is printed for it.
+pub fn to_well_formed(text: &[u8]) -> Cow<'_, [u8]> {
+    let is_half = |at: usize| matches!(code_point_at(text, at), (0xD800..=0xDFFF, 3));
+    let mut candidates = strings::index_of_char_usize(text, 0xED);
+    let (mut out, mut written) = (Vec::new(), 0);
+    while let Some(at) = candidates {
+        let mut next = at + 1;
+        if is_half(at) {
+            out.extend_from_slice(&text[written..at]);
+            out.extend_from_slice("\u{FFFD}".as_bytes());
+            next = at + 3;
+            written = next;
+        }
+        candidates = strings::index_of_char_usize(&text[next..], 0xED).map(|found| next + found);
+    }
+    if written == 0 {
+        return Cow::Borrowed(text);
+    }
+    out.extend_from_slice(&text[written..]);
+    Cow::Owned(out)
 }
 
 /// Appends the code point `c` to `text`. Half of a surrogate pair is the three bytes that its code

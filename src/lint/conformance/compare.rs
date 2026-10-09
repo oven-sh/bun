@@ -6,6 +6,7 @@ use bun_lint::fix::Fix;
 use bun_lint::linter::{LintMessage, RuleId, Utf16Offsets};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
+use bun_lint::utils::text::to_well_formed;
 
 /// What is reported for the code of a case, and the code after one pass of fixes.
 pub struct Outcome {
@@ -110,6 +111,13 @@ fn text_of(json: &Json, key: &[u8]) -> BString {
     string_of(json, key).unwrap_or_default().into()
 }
 
+/// A message as it is printed: here it is valid UTF-8 from the start.
+fn message_of(json: &Json, key: &[u8]) -> BString {
+    to_well_formed(string_of(json, key).unwrap_or_default())
+        .into_owned()
+        .into()
+}
+
 fn number_of(json: &Json, key: &[u8]) -> Option<u32> {
     match json.get(key)? {
         Json::Number(n) => Some(*n as u32),
@@ -141,7 +149,7 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
             .get(b"ruleId")
             .map(|id| id.as_str().unwrap_or_default().into()),
         message_id: text_of(it, b"messageId"),
-        message: text_of(it, b"message"),
+        message: message_of(it, b"message"),
         line: number_of(it, b"line").unwrap_or(0),
         column: number_of(it, b"column").unwrap_or(0),
         end: number_of(it, b"endLine").zip(number_of(it, b"endColumn")),
@@ -153,7 +161,7 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
             .iter())
         .map(|it| Suggested {
             message_id: text_of(it, b"messageId"),
-            desc: text_of(it, b"desc"),
+            desc: message_of(it, b"desc"),
             fix: expected_edit(it),
             output: text_of(it, b"output"),
         })

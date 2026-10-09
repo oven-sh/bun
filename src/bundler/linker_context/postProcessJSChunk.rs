@@ -313,8 +313,7 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // The printer does not know about top-level await, so derive that flag from
-    // the AST. Where the linker makes an `await` of a wrapper, it sets the flag
-    // itself. The JSC module loader decides sync vs async evaluation from
+    // the AST. The JSC module loader decides sync vs async evaluation from
     // JSModuleRecord::hasTLA(), which is set from this bit when the record is
     // constructed from module_info (BunAnalyzeTranspiledModule). Without it, a
     // bytecode-compiled module that contains TLA gets evaluated on the sync path
@@ -829,7 +828,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     arena: &'a Arena,
     temp_arena: &Arena,
     r: js_printer::renamer::Renamer<'a, 'a>,
-    mut module_info: Option<&'a mut ModuleInfo>,
+    module_info: Option<&'a mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
@@ -867,9 +866,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                 _ => {
                     if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
                         if flags.is_async_or_has_async_dependency {
-                            if let Some(module_info) = module_info.as_deref_mut() {
-                                module_info.flags.has_tla = true;
-                            }
                             // "await init_foo();"
                             stmts.push(Stmt::alloc(
                                 S::SExpr {

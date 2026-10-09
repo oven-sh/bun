@@ -15,26 +15,18 @@ bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 /// `export * from` / `export {} from` (the re-exports are tracked separately),
 /// the linker's empty entry-point part, and a text loader's `export default "…"`.
 pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
-    part.can_be_removed_if_unused
-        || part.stmts.slice().iter().all(|stmt| {
-            stmt_only_declares(stmt)
-                || matches!(&stmt.data, bun_ast::StmtData::SLazyExport(expr)
-                    if bun_ast::expr::Tag::is_primitive_literal(expr.tag()))
-        })
-}
-
-/// What the statement declares is in place before any file runs.
-pub(crate) fn stmt_only_declares(stmt: &bun_ast::Stmt) -> bool {
     use bun_ast::StmtData;
-    matches!(
-        stmt.data,
-        StmtData::SImport(_)
+    part.can_be_removed_if_unused
+        || part.stmts.slice().iter().all(|stmt| match &stmt.data {
+            StmtData::SImport(_)
             | StmtData::SExportStar(_)
             | StmtData::SExportFrom(_)
             | StmtData::SExportClause(_)
             | StmtData::SFunction(_)
-            | StmtData::SEmpty(_)
-    )
+            | StmtData::SEmpty(_) => true,
+            StmtData::SLazyExport(expr) => bun_ast::expr::Tag::is_primitive_literal(expr.tag()),
+            _ => false,
+        })
 }
 
 impl LinkerContext<'_> {

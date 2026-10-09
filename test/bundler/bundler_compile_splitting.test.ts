@@ -779,48 +779,5 @@ describe("bundler", () => {
       const run = await buildAndRun(String(dir), ["./src/index.ts", "./src/tool.ts"], isWindows ? "src" : "index");
       expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
     });
-
-    // main.js evaluates p, q, a and worker.js evaluates q, p, a, each in a realm of its own.
-    test.concurrent("shared chunk order conflict between the main script and a worker", async () => {
-      using dir = tempDir("compile-splitting-order-conflict", {
-        "main.js": `import("./a.js").then(m => { console.log("ok", m.a); new Worker("./worker.js"); });`,
-        "worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
-        "a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
-        "p.js": `globalThis.P = { v: "P" };`,
-        "q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
-      });
-      const run = await buildAndRun(String(dir), ["./main.js", "./worker.js", "--outfile", "app"], "app");
-      expect(run).toEqual({ stdout: "ok aqP\nworker q-noP aq-noP\n", stderr: "", exitCode: 0 });
-    });
-
-    // With --bytecode the bundler makes the module record of each chunk, and the record says whether the chunk has a
-    // top-level await. t.js is a wrapper, so the only one in main.js is the `await __esmWait(init_t)` that the linker makes.
-    test.concurrent("the await of a wrapper is in the module record of the importer", async () => {
-      using dir = tempDir("compile-splitting-order-conflict-await", {
-        "main.js": `import "./p.js"; import { x } from "./t.js"; console.log("main", x);`,
-        "worker.js": `import { x } from "./t.js"; import "./p.js"; console.log("worker", x);`,
-        "t.js": `export const x = await Promise.resolve(1);`,
-        "p.js": `console.log("p");`,
-      });
-      const args = ["--bytecode", "--format=esm", "./main.js", "./worker.js", "--outfile", "app"];
-      expect(await buildAndRun(String(dir), args, "app")).toEqual({ stdout: "p\nmain 1\n", stderr: "", exitCode: 0 });
-    });
-
-    // d.js is a wrapper and an `import()` target, so its own chunk ends with `await __esmWait(init_d)`.
-    test.concurrent("the await of a wrapper is in the module record of its entry chunk", async () => {
-      using dir = tempDir("compile-splitting-order-conflict-entry-await", {
-        "main.js": `const m = await import("./d.js"); console.log("main", m.x);`,
-        "w1.js": `import "./d.js"; console.log("w1");`,
-        "w2.js": `import "./g.js"; console.log("w2");`,
-        "d.js": `
-          import { g } from "./g.js";
-          export const d = "d" + g;
-          export const x = await new Promise(resolve => setImmediate(() => resolve(1)));
-        `,
-        "g.js": `import { d } from "./d.js"; export const g = "g"; export const read = () => d;`,
-      });
-      const args = ["--bytecode", "--format=esm", "./main.js", "./w1.js", "./w2.js", "--outfile", "app"];
-      expect(await buildAndRun(String(dir), args, "app")).toEqual({ stdout: "main 1\n", stderr: "", exitCode: 0 });
-    });
   });
 });

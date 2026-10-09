@@ -18,6 +18,7 @@ use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_or
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
 use super::merge_small_chunks::merge_small_chunks;
+use super::split_chunks_by_evaluation_order::split_chunks_by_evaluation_order;
 
 #[inline(always)]
 fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
@@ -281,6 +282,11 @@ pub(crate) fn compute_chunks(
         let min_chunk_size = this.options.min_chunk_size;
         merge_small_chunks(this, temp, min_chunk_size)?;
     }
+    let run_of_file: Vec<u32> = if code_splitting {
+        split_chunks_by_evaluation_order(this)?
+    } else {
+        Vec::new()
+    };
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 
@@ -327,8 +333,13 @@ pub(crate) fn compute_chunks(
                         if !contributes_code.is_set(source_index.get() as usize) {
                             continue;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let entry_bits_key = entry_bits.bytes(this.graph.entry_points.len());
+                        let js_chunk_key: &[u8] = match run_of_file.get(source_index.get() as usize)
+                        {
+                            None | Some(0) => temp.alloc_slice_copy(entry_bits_key),
+                            Some(run) => temp
+                                .alloc_slice_copy(&[entry_bits_key, &run.to_le_bytes()].concat()),
+                        };
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {

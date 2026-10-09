@@ -42,10 +42,9 @@ The LinkerContext operates in several main phases:
 2. Computes source map data if needed
 3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
 4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
-5. `resolveChunkOrderConflicts()` and `findWrappersBehindImports()` - Wrap the shared files that need more than one order, and find the wrapper calls that no `import` prints
-6. **Phase 3**: `computeChunks()` - Creates the final chunk structure
-7. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
-8. Follows symbol references to ensure consistency
+5. **Phase 3**: `computeChunks()` - Creates the final chunk structure
+6. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
+7. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
 
@@ -721,34 +720,6 @@ The renamed symbols are then used during final code generation to produce output
 
 ### Chunk Computation Phase
 
-#### `resolveChunkOrderConflicts.rs`
-
-**Purpose**: With code splitting, wraps the files that no printed order can serve. Runs after tree shaking has assigned `File.entry_bits` and before `computeChunks()`.
-
-**Key functions**:
-
-- Groups the live, unwrapped files outside of the entry points' own chunks by load condition (`EntryLoadGraph::load_class`, shared with `mergeSmallChunks.rs`). What is left of a key after that reduction is the set of entry points that can each be the first to load the files: two user entry points are two programs, and either of two `import()` targets can come first
-- Walks the import graph once per such entry point, over the same edges as `EntryWalk` (`for_each_edge`), and compares the order in which each evaluates what runs when the group loads: the files with side effects, the wrapped files that the group's files call at their top level, and, inside an import cycle, every file that initializes a binding
-- A group whose first loaders disagree becomes lazy: `wrap_files_as_esm` turns each file into `var init_x = __esm(() => { ... })` and every `import` of it into a call, as `scanImportsAndExports()` does for a file that is wrapped from the start
-- An `import` of a chunk runs ahead of the code that makes those calls. So a group becomes lazy too when an entry point that can be the first to load it evaluates one of its files after a file of a lazy group
-- `compute_entry_bits` runs again afterwards: the wrappers use `__esm` from the runtime. An `import` of a `"sideEffects": false` file loaded nothing and the call of its wrapper does, so when such a file was wrapped, who loads what has changed and the pass looks again
-- The `await` of an unwrapped file holds up the calls that print after it. So a file that reaches a top-level await becomes lazy when a lazy file comes after it, also in the chunk of the one entry point that loads it
-- A file that calls a split `require()` at load has started by then: it is listed ahead of what it requires. When what it requires is lazy, it becomes lazy: its chunk can run ahead of the chunk that has the wrapper
-- A file that an HTML file names in a `<script src>` stays unwrapped, with what comes ahead of it: an HTML file prints nothing for the tag, so nothing would call the wrapper. So does a file with no symbol for a wrapper (`AstBuilder`)
-
-#### `findWrappersBehindImports.rs`
-
-**Purpose**: Finds the calls of ESM wrappers that no `import` of the wrapped file prints. Runs after `resolveChunkOrderConflicts.rs`, with or without code splitting.
-
-**Key functions**:
-
-- An `import` statement runs its target, or when the target does not run with the importer (`runs_with`), what the `import` statements of the target run. The order model (`EvaluationOrder`) and the printed calls (`for_each_file_run_by_import`) both go by `runs_with` and `for_each_edge`
-- An unwrapped file runs when its chunk loads, so it does not need a call. A wrapper does. It has none when tree shaking dropped the `"sideEffects": false` barrel that re-exports it, or dropped the `import` statement
-- Records those wrappers per import record (`LinkerGraph.wrappers_behind_import`), makes the part depend on their symbols, and marks it live
-- A `__commonJS` wrapper cannot wait, so an `import` that tree shaking dropped from one does not call an async wrapper
-- A file prints `init_x()` where each `import` is, and one `await` of the async wrappers after the last. Records those wrappers per file (`LinkerGraph.awaited_wrappers`), which is what the file prints, and what the `await` adds to the file: `__promiseAll` when it waits for several
-- An async wrapper in a cycle of such calls ends before the wrapper where the cycle started. So a file outside of the cycle also waits for the wrappers where the cycle can start. An `import()` is not such a call: it starts nothing until it runs
-
 #### `computeChunks.rs`
 
 **Purpose**: Determines the final chunk structure based on entry points and code splitting.
@@ -774,6 +745,18 @@ The renamed symbols are then used during final code generation to produce output
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 
+#### `splitChunksByEvaluationOrder.rs`
+
+**Purpose**: Keeps files out of one chunk when the entry points that load them run them in different orders. A chunk prints its files in one order, and each chunk imports the other chunks in its own order. Runs after `mergeSmallChunks.rs`, on the entry bits that it leaves.
+
+**Key functions**:
+
+- Groups the files by chunk key (`File.entry_bits`). Only the entry points that can be the first to load a group count (`EntryLoadGraph::load_class`)
+- Only a file that runs something when it loads has an order that can be observed (`loading_file_has_no_side_effects`), and a file of the group that imports such a file
+- A group with such a file in an import cycle stays as it is: chunks import each other for the bindings that they use, which in a cycle is not the order in which the files run
+- Walks the imports of each such entry point (`for_each_edge`), in parallel, for the order in which it evaluates those files
+- Files that every order has back to back, in the same order, are a run. `computeChunks()` adds the number of the run to the chunk key when a group has several. The other files of the group keep the key as it is
+
 #### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.
@@ -792,9 +775,8 @@ The renamed symbols are then used during final code generation to produce output
 **Key functions**:
 
 - Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
-- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Where another entry point can load the chunk first and evaluates it in another order, the files are wrappers by now (`resolveChunkOrderConflicts.rs`) and their order in the chunk does not matter. Without code splitting, each chunk is owned by its own entry point
+- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
-- An ESM wrapper runs only what it calls. So a file that the walk reaches through a wrapper that does not run it (`runs_with`) is not placed there: the walk goes through it, as `findWrappersBehindImports.rs` does, and places it where an `import` runs it. A file that no `import` runs (the entry point reads a binding that the wrapper re-exports) stays where the walk first reached it
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 

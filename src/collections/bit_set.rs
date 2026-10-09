@@ -1042,6 +1042,11 @@ macro_rules! auto_forward {
 }
 
 impl AutoBitSet {
+    #[inline(always)]
+    pub fn needs_dynamic(bit_length: usize) -> bool {
+        bit_length > AutoBitSetStatic::BIT_LENGTH
+    }
+
     pub fn init_empty(bit_length: usize) -> Result<AutoBitSet, AllocError> {
         if bit_length <= AutoBitSetStatic::BIT_LENGTH {
             Ok(AutoBitSet::Static(AutoBitSetStatic::init_empty()))

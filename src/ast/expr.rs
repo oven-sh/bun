@@ -1683,6 +1683,14 @@ impl Data {
         }
     }
     #[inline]
+    pub fn e_call_mut(&mut self) -> Option<&mut E::Call> {
+        if let Data::ECall(v) = self {
+            Some(&mut **v)
+        } else {
+            None
+        }
+    }
+    #[inline]
     pub fn e_dot(&self) -> Option<StoreRef<E::Dot>> {
         if let Data::EDot(v) = *self {
             Some(v)
@@ -1734,6 +1742,14 @@ impl Data {
     pub fn e_template(&self) -> Option<StoreRef<E::Template>> {
         if let Data::ETemplate(v) = *self {
             Some(v)
+        } else {
+            None
+        }
+    }
+    #[inline]
+    pub fn e_await_mut(&mut self) -> Option<&mut E::Await> {
+        if let Data::EAwait(v) = self {
+            Some(&mut **v)
         } else {
             None
         }

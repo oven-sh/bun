@@ -122,13 +122,10 @@ pub mod linker_context {
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
 
-    #[path = "findWrappersBehindImports.rs"]
-    pub(crate) mod find_wrappers_behind_imports;
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
-
-    #[path = "resolveChunkOrderConflicts.rs"]
-    pub(crate) mod resolve_chunk_order_conflicts;
+    #[path = "splitChunksByEvaluationOrder.rs"]
+    pub(crate) mod split_chunks_by_evaluation_order;
 
     #[path = "crossChunkNames.rs"]
     pub mod cross_chunk_names;

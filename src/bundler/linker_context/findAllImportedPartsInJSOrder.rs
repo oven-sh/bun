@@ -266,6 +266,14 @@ impl WalkPlan {
                     plan.chunk_of_file[file] = chunk_index;
                 }
             }
+            // Several chunks can have one key (`split_chunks_by_evaluation_order`).
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                if matches!(chunk.content, chunk::Content::Javascript(_)) {
+                    for &file in chunk.files_with_parts_in_chunk.keys() {
+                        plan.chunk_of_file[file as usize] = chunk_index as u32;
+                    }
+                }
+            }
         }
 
         // The entry point that loads first among the chunk's entry points owns the chunk.
@@ -498,21 +506,12 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 #[derive(Clone, Copy)]
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
-    /// `wrapper`: the ESM wrapper whose `import` leads here, or `NO_WRAPPER`. It runs only what it calls.
-    Enter {
-        source_index: IndexInt,
-        loader: u32,
-        wrapper: IndexInt,
-    },
+    Enter { source_index: IndexInt, loader: u32 },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
-    /// The same for a whole file that a wrapper leads to and does not run. It stays unless an `import` runs the file.
-    PlaceUnlessImported { source_index: IndexInt, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
 }
-
-const NO_WRAPPER: IndexInt = IndexInt::MAX;
 
 struct OwnedChunk {
     chunk_index: u32,
@@ -587,36 +586,15 @@ impl EntryWalk {
                 .then(|| plan.slot_of_chunk[chunk_index as usize])
         };
 
-        // Per file: the last wrapper that led to it and does not run it.
-        let mut passed: HashMap<IndexInt, IndexInt> = HashMap::default();
-        // (slot, index in `runs`, file) of each `PlaceUnlessImported`.
-        let mut provisional_runs: Vec<(u32, usize, IndexInt)> = Vec::new();
-
         debug_assert!(stack.is_empty());
         stack.push(WalkFrame::Enter {
             source_index: root,
             loader: entry_id,
-            wrapper: NO_WRAPPER,
         });
         while let Some(frame) = stack.pop() {
-            let (source_index, loader, wrapper) = match frame {
+            let (source_index, loader) = match frame {
                 WalkFrame::Place { run, slot } => {
                     self.owned[slot as usize].runs.push(run);
-                    continue;
-                }
-                WalkFrame::PlaceUnlessImported { source_index, slot } => {
-                    if !seen.is_set(source_index as usize) {
-                        let runs = &mut self.owned[slot as usize].runs;
-                        provisional_runs.push((slot, runs.len(), source_index));
-                        runs.push(PartRun {
-                            source_index,
-                            begin: 0,
-                            end: u32::MAX,
-                        });
-                        if c.graph.code_splitting {
-                            self.entered.push(source_index);
-                        }
-                    }
                     continue;
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
@@ -633,35 +611,9 @@ impl EntryWalk {
                 WalkFrame::Enter {
                     source_index,
                     loader,
-                    wrapper,
-                } => (source_index, loader, wrapper),
+                } => (source_index, loader),
             };
             if seen.is_set(source_index as usize) {
-                continue;
-            }
-            // The file goes where an `import` runs it. The wrapper calls what is behind it (`find_wrappers_behind_imports`).
-            if wrapper != NO_WRAPPER && !c.runs_with(wrapper, source_index) {
-                let last_wrapper = passed.insert(source_index, wrapper);
-                if last_wrapper != Some(wrapper) {
-                    let mark = stack.len();
-                    for_each_edge(c, source_index, false, |_, edge| {
-                        if let Edge::Import(other) = edge
-                            && css[other as usize].is_none()
-                        {
-                            stack.push(WalkFrame::Enter {
-                                source_index: other,
-                                loader,
-                                wrapper,
-                            });
-                        }
-                    });
-                    if last_wrapper.is_none()
-                        && let Some(slot) = slot_of(source_index)
-                    {
-                        stack.push(WalkFrame::PlaceUnlessImported { source_index, slot });
-                    }
-                    stack[mark..].reverse();
-                }
                 continue;
             }
             seen.set(source_index as usize);
@@ -675,16 +627,11 @@ impl EntryWalk {
             let runs = slot.is_some() || loads(source_index, loader);
             // Wrapped files can't be split because they are all inside the wrapper
             let splits = slot.is_some() && flags[source_index as usize].wrap == Wrap::None;
-            let wrapper = if runs && flags[source_index as usize].wrap == Wrap::Esm {
-                source_index
-            } else {
-                NO_WRAPPER
-            };
             let mut begin = 0;
             let mark = stack.len();
 
             // The parts ahead of the one that imports `other` print before `other` does.
-            let mut import = |part_index: u32, other: IndexInt, loader: u32, wrapper: IndexInt| {
+            let mut import = |part_index: u32, other: IndexInt, loader: u32| {
                 if other == Index::RUNTIME.value() || seen.is_set(other as usize) {
                     return;
                 }
@@ -729,19 +676,15 @@ impl EntryWalk {
                     _ => WalkFrame::Enter {
                         source_index: other,
                         loader,
-                        wrapper,
                     },
                 });
             };
 
             for_each_edge(c, source_index, runs, |part_index, edge| match edge {
-                Edge::Import(other) => import(part_index, other, loader, wrapper),
-                Edge::LoadNow(other) => import(
-                    part_index,
-                    other,
-                    plan.entry_id_of_file[other as usize],
-                    NO_WRAPPER,
-                ),
+                Edge::Import(other) => import(part_index, other, loader),
+                Edge::LoadNow(other) => {
+                    import(part_index, other, plan.entry_id_of_file[other as usize])
+                }
                 Edge::LoadLater(_) => {}
             });
             if let Some(slot) = slot {
@@ -755,15 +698,6 @@ impl EntryWalk {
                 });
             }
             stack[mark..].reverse();
-        }
-
-        // From the last, so that the indices of the others hold.
-        for &(slot, run_index, source_index) in provisional_runs.iter().rev() {
-            if seen.is_set(source_index as usize) {
-                self.owned[slot as usize].runs.remove(run_index);
-            } else {
-                seen.set(source_index as usize);
-            }
         }
     }
 }
@@ -922,6 +856,10 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
+    // The file of an entry point is in another chunk when another entry point imports it.
+    if chunk.entry_point.is_entry_point() {
+        roots.insert(0, chunk.entry_point.source_index());
+    }
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
@@ -955,7 +893,7 @@ fn reached_chunks_in_order(
             visited.set(source_index as usize);
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
-                entry_bits.eql(&file_entry_bits[source_index as usize])
+                chunk_of_file[source_index as usize] == chunk_index
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

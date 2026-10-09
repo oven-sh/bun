@@ -1018,5 +1018,143 @@
  ],
  "no-this-alias/allow-names": [
   "a.ts:2:7 typescript(no-this-alias)"
- ]
+ ],
+ "class-methods-use-this/ignore-classes-with-implements-public-fields": [
+  "a.ts:1:39 eslint(class-methods-use-this)",
+  "a.ts:1:56 eslint(class-methods-use-this)"
+ ],
+ "max-params/count-this": [
+  "a.ts:2:11 eslint(max-params)"
+ ],
+ "max-params/count-this-always": [
+  "a.ts:1:11 eslint(max-params)"
+ ],
+ "no-div-regex/quantifier": [
+  "a.js:10:5 eslint(no-div-regex)",
+  "a.js:11:5 eslint(no-div-regex)",
+  "a.js:12:5 eslint(no-div-regex)",
+  "a.js:1:5 eslint(no-div-regex)",
+  "a.js:2:5 eslint(no-div-regex)",
+  "a.js:9:5 eslint(no-div-regex)"
+ ],
+ "no-lonely-if/else-if": [
+  "a.js:12:3 eslint(no-lonely-if)",
+  "a.js:14:5 eslint(no-lonely-if)",
+  "a.js:3:3 eslint(no-lonely-if)"
+ ],
+ "prefer-function-type/where": [
+  "a.ts:10:24 typescript(prefer-function-type)",
+  "a.ts:10:45 typescript(prefer-function-type)",
+  "a.ts:13:22 typescript(prefer-function-type)",
+  "a.ts:15:23 typescript(prefer-function-type)",
+  "a.ts:16:24 typescript(prefer-function-type)",
+  "a.ts:17:19 typescript(prefer-function-type)",
+  "a.ts:3:19 typescript(prefer-function-type)",
+  "a.ts:4:19 typescript(prefer-function-type)",
+  "a.ts:5:19 typescript(prefer-function-type)",
+  "a.ts:7:17 typescript(prefer-function-type)",
+  "a.ts:8:17 typescript(prefer-function-type)"
+ ],
+ "prefer-as-const/literals": [
+  "a.ts:1:46 typescript(prefer-as-const)",
+  "a.ts:1:60 typescript(prefer-as-const)",
+  "a.ts:2:15 typescript(prefer-as-const)",
+  "a.ts:2:29 typescript(prefer-as-const)",
+  "a.ts:2:43 typescript(prefer-as-const)",
+  "a.ts:3:23 typescript(prefer-as-const)",
+  "a.ts:3:69 typescript(prefer-as-const)"
+ ],
+ "no-misleading-character-class/written": [
+  "a.js:2:18 eslint(no-misleading-character-class)",
+  "a.js:3:18 eslint(no-misleading-character-class)",
+  "a.js:5:7 eslint(no-misleading-character-class)"
+ ],
+ "no-use-before-define/key-of-type": [
+  "a.ts:3:19 eslint(no-use-before-define)"
+ ],
+ "no-constant-binary-expression/relational": [
+  "a.js:1:5 eslint(no-constant-binary-expression)",
+  "a.js:2:14 eslint(no-constant-binary-expression)",
+  "a.js:3:5 eslint(no-constant-binary-expression)",
+  "a.js:4:5 eslint(no-constant-binary-expression)",
+  "a.js:5:5 eslint(no-constant-binary-expression)",
+  "a.js:7:5 eslint(no-constant-binary-expression)",
+  "a.js:8:5 eslint(no-constant-binary-expression)"
+ ],
+ "no-constant-binary-expression/relational-off": [],
+ "no-shadow-restricted-names/namespace": [
+  "a.ts:1:19 eslint(no-shadow-restricted-names)",
+  "b.ts:1:11 eslint(no-shadow-restricted-names)",
+  "c.ts:1:14 eslint(no-shadow-restricted-names)",
+  "c.ts:2:17 eslint(no-shadow-restricted-names)",
+  "c.ts:2:39 eslint(no-shadow-restricted-names)",
+  "c.ts:2:59 eslint(no-shadow-restricted-names)",
+  "d.d.ts:1:20 eslint(no-shadow-restricted-names)"
+ ],
+ "explicit-function-return-type/ancestor": [
+  "a.ts:5:15 typescript(explicit-function-return-type)",
+  "a.ts:5:38 typescript(explicit-function-return-type)",
+  "a.ts:7:10 typescript(explicit-function-return-type)"
+ ],
+ "no-console/computed": [
+  "a.js:2:1 eslint(no-console)",
+  "a.js:3:1 eslint(no-console)",
+  "a.js:5:1 eslint(no-console)"
+ ],
+ "default-case/comment-pattern": [
+  "a.js:9:1 eslint(default-case)"
+ ],
+ "no-implicit-coercion/template": [
+  "a.js:3:5 eslint(no-implicit-coercion)"
+ ],
+ "no-implicit-coercion/template-on": [
+  "a.js:1:5 eslint(no-implicit-coercion)",
+  "a.js:2:5 eslint(no-implicit-coercion)"
+ ],
+ "preserve-caught-error/place": [
+  "a.js:12:3 eslint(preserve-caught-error)",
+  "a.js:4:3 eslint(preserve-caught-error)"
+ ],
+ "max-lines/place": [
+  "a.js:4:5 eslint(max-lines)",
+  "b.js:3:4 eslint(max-lines)"
+ ],
+ "no-regex-spaces/place": [
+  "a.js:1:7 eslint(no-regex-spaces)",
+  "a.js:2:7 eslint(no-regex-spaces)",
+  "a.js:3:18 eslint(no-regex-spaces)"
+ ],
+ "no-underscore-dangle/place": [
+  "a.js:1:7 eslint(no-underscore-dangle)",
+  "a.js:2:10 eslint(no-underscore-dangle)",
+  "a.js:3:17 eslint(no-underscore-dangle)",
+  "a.js:4:12 eslint(no-underscore-dangle)",
+  "a.js:4:16 eslint(no-underscore-dangle)",
+  "a.js:5:7 eslint(no-underscore-dangle)",
+  "a.js:6:22 eslint(no-underscore-dangle)",
+  "a.js:6:8 eslint(no-underscore-dangle)",
+  "a.js:7:11 eslint(no-underscore-dangle)",
+  "a.js:7:19 eslint(no-underscore-dangle)",
+  "a.js:7:27 eslint(no-underscore-dangle)",
+  "a.js:8:7 eslint(no-underscore-dangle)"
+ ],
+ "prefer-named-capture-group/place": [
+  "a.js:1:7 eslint(prefer-named-capture-group)",
+  "a.js:2:16 eslint(prefer-named-capture-group)",
+  "a.js:2:6 eslint(prefer-named-capture-group)",
+  "a.js:3:18 eslint(prefer-named-capture-group)"
+ ],
+ "func-name-matching/place": [
+  "a.js:1:38 eslint(func-name-matching)",
+  "a.js:2:20 eslint(func-name-matching)",
+  "a.js:3:14 eslint(func-name-matching)",
+  "a.js:4:16 eslint(func-name-matching)"
+ ],
+ "no-redeclare/place": [
+  "a.ts:1:18 eslint(no-redeclare)",
+  "a.ts:3:6 eslint(no-redeclare)",
+  "b.js:1:5 eslint(no-redeclare)",
+  "b.js:2:5 eslint(no-redeclare)"
+ ],
+ "no-useless-concat/parentheses": []
 }

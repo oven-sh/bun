@@ -889,6 +889,8 @@ struct Legacy<'r, 'l, 'c> {
     defaults: Json,
     /// The major version of typescript-eslint that is installed, if it is before 8.
     typescript_eslint: Option<u32>,
+    /// How often something has been extended.
+    extended: usize,
 }
 
 impl<'c> Legacy<'_, '_, 'c> {
@@ -1088,6 +1090,14 @@ impl<'c> Legacy<'_, '_, 'c> {
             return Err(ConfigError::new(&[
                 &context.name,
                 b":\n\tToo many levels of \"extends\".",
+            ]));
+        }
+        // Files that each extend the next one twice are read 2^n times. ESLint reads them.
+        self.extended += 1;
+        if self.extended > 4096 {
+            return Err(ConfigError::new(&[
+                &context.name,
+                b":\n\tToo many files in \"extends\".",
             ]));
         }
         let referenced = |message: &[u8]| {
@@ -1944,6 +1954,11 @@ impl Eslint8 {
         }
     }
 
+    /// Whether the rules of typescript-eslint stand in for those of a version before 8, which is installed.
+    pub fn has_typescript_eslint_before_8(&self) -> bool {
+        self.typescript_eslint.is_some()
+    }
+
     /// Whether ESLint has no definition of the rule called `id`. `js_plugins`: the plugins of the configuration of which it is known
     /// what is in them.
     pub(crate) fn lacks_rule(&self, id: &[u8], js_plugins: &[Arc<js_plugin::Plugin>]) -> bool {
@@ -2150,6 +2165,7 @@ impl Config {
             elements: Vec::new(),
             defaults,
             typescript_eslint: None,
+            extended: 0,
         };
         // What ESLint lints of a directory. An override adds its patterns.
         let extensions: Vec<Json> = match options.extensions {

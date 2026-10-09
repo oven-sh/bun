@@ -883,6 +883,25 @@ exports.format = async (text, options) => {
       expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
     });
 
+    // The first pattern that is compiled starts JavaScriptCore too, on the thread that formats the file.
+    test("beside files for which a pattern of the configuration is compiled", async () => {
+      const sorter = "@ianvs/prettier-plugin-sort-imports";
+      const result = await format(
+        {
+          ...files,
+          [`node_modules/${sorter}/package.json`]: `{ "name": "${sorter}", "version": "4.0.0" }`,
+          ".prettierrc": `{\n  "plugins": ["prettier-plugin-svelte", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
+          "c.ts": 'import a from "a";\nimport b from "b";\n',
+          "d.ts": 'import a from "a";\nimport b from "b";\n',
+        },
+        [],
+        { reads: ["a.svelte", "c.ts", "d.ts"] },
+      );
+      const sorted = 'import b from "b";\nimport a from "a";\n';
+      expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
+      expect(result.exitCode).toBe(0);
+    });
+
     test("what Prettier throws is shown as it shows it", async () => {
       const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
       expect(result.files["a.svelte"]).toBe("broken\n");

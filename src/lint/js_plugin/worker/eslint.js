@@ -112,7 +112,24 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
   }
   for (const object of added) configs.push(await reviveOverride(object));
   await configs.normalize?.();
-  return configs;
+  if (configs.getConfig === undefined) return configs;
+  return Object.assign([], { getConfig: name => withoutProcessor(configs.getConfig(name)) });
+}
+
+// By configuration: the same without its `processor`.
+const withoutProcessors = new WeakMap();
+
+// The other side calls the processors, as it does for the files that it lints itself: the `Linter` would call them once more.
+function withoutProcessor(config) {
+  if (config?.processor === undefined) return config;
+  if (!withoutProcessors.has(config)) {
+    const get = (_, key) => {
+      const value = key === "processor" ? undefined : config[key];
+      return typeof value === "function" ? value.bind(config) : value;
+    };
+    withoutProcessors.set(config, new Proxy(config, { get }));
+  }
+  return withoutProcessors.get(config);
 }
 
 // The configuration of a file. `object`: what is configured for it, as far as that is JSON. `plugins`: by prefix

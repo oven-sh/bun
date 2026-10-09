@@ -260,6 +260,13 @@ pub(crate) fn unary_argument_has_comments<'a>(
     argument: Expr<'a>,
     f: &Formatter<'a>,
 ) -> bool {
+    // Prettier attaches no comment to a `ChainExpression`, so what is in it has them.
+    if !f.options().flavor.is_oxfmt()
+        && !f.context().has_tree_of_babel()
+        && crate::js::ast_nodes::is_chain_root(argument)
+    {
+        return false;
+    }
     let (outer, inner) = (unary.span(), argument.span());
     let is_leading =
         |comment: &Comment| comment.start() >= outer.start && comment.end() <= inner.start;

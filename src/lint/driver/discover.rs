@@ -398,7 +398,15 @@ pub(crate) fn find_files(
         patterns: Vec::new(),
     }];
     let mut add = |base_path: Vec<u8>, wanted: Wanted| {
-        let dotfiles = dotfiles_for(&wanted.raw);
+        // It means nothing to other configurations: their arguments are searched for together.
+        let is_for_eslint_8 = |base_path: &[u8]| {
+            let loaded = loader.for_directory(base_path);
+            loaded.is_ok_and(|it| it.flavor == Flavor::EslintRc)
+        };
+        let dotfiles = match dotfiles_for(&wanted.raw) {
+            Dotfiles::Linted if is_for_eslint_8(&base_path) => Dotfiles::Linted,
+            _ => Dotfiles::AsConfigured,
+        };
         let at = searches
             .iter()
             .position(|it| it.base_path == base_path && it.dotfiles == dotfiles)

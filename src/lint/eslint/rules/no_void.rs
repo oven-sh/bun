@@ -27,7 +27,11 @@ impl Rule for NoVoid {
             {
                 return;
             }
-            cx.report(e, NO_VOID);
+            let report = cx.report(e, NO_VOID);
+            // What oxlint suggests.
+            if cx.language().is_oxlint {
+                report.fix(|fixer| fixer.replace(e, "undefined"));
+            }
         });
     }
 }

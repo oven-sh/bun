@@ -11,7 +11,9 @@ const UNDEF: Message = Message::new("undef", "Do not throw undefined.");
 fn check_as_oxlint<'a>(argument: Expr<'a>, cx: &mut Cx<'a, NoThrowLiteral>) {
     let inner = argument.skip_type_wrappers();
     if matches!(inner.tag(), ExprTag::String | ExprTag::Template) {
-        cx.report(argument.outer_span(), OBJECT);
+        let whole = argument.outer_span();
+        cx.report(whole, OBJECT)
+            .fix(|fixer| fixer.replace(whole, [&b"new Error("[..], fixer.file().slice(whole), b")"].concat()));
     } else if inner.is_ident("undefined") && ast_utils::is_global_reference(inner) {
         cx.report(argument.outer_span(), UNDEF);
     } else if !ast_utils::could_be_error(inner) {

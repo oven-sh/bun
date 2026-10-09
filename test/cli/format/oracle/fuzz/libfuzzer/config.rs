@@ -1,6 +1,9 @@
 //! `bun format --check .` and `bun lint .` as a whole, in a directory whose configuration file is the input: how configuration
 //! files, ignore files and `.editorconfig` are found, read and applied, the globs of overrides, the options of rules.
 //!
+//! After a line `-----` in the configuration: the text of `base.json`, for the first to extend. With the second flag of the input
+//! the command writes: `bun format --write .`, after which `bun format --check .` has to find nothing, and `bun lint --fix .`.
+//!
 //! The directory is in `FUZZ_DIRECTORY`, which should be in memory, or in the directory for temporary files. Nothing is written
 //! but there. A configuration that is a program is not run, and no plugin is loaded.
 
@@ -81,6 +84,18 @@ fn directory() -> &'static PathBuf {
     })
 }
 
+fn format(how: &[u8], environment: &Environment) -> Option<Outcome> {
+    let options = bun_lint_driver::fmt::cli::Options::parse(&[b"--threads=1", how, b"."]).ok()?;
+    Some(bun_lint_driver::fmt::run(&options, environment))
+}
+
+fn lint(more: &[&[u8]], environment: &Environment) -> Option<Outcome> {
+    let mut arguments: Vec<&[u8]> = vec![b"--threads=1", b"."];
+    arguments.extend_from_slice(more);
+    let options = bun_lint_driver::cli::Options::parse(&arguments).ok()?;
+    Some(bun_lint_driver::run(&options, environment))
+}
+
 fn run(data: &[u8]) {
     let Some(input) = Input::new(data) else {
         return;
@@ -94,10 +109,26 @@ fn run(data: &[u8]) {
         Some(at) => (&input.text[..at], &input.text[at + separator.len()..]),
         None => (input.text, SOURCES[0].1.as_bytes()),
     };
+    // What it can extend follows a line of five `-`.
+    let separator = b"\n-----\n";
+    let at = config.windows(separator.len()).position(|it| it == separator);
+    let (config, base) = match at {
+        Some(at) => (&config[..at], Some(&config[at + separator.len()..])),
+        None => (config, None),
+    };
     let _ = std::fs::write(directory.join(name), config);
     let _ = std::fs::write(directory.join("a.ts"), source);
+    if let Some(base) = base {
+        let _ = std::fs::write(directory.join("base.json"), base);
+    }
+    let writes = input.has(1);
     let mut run = Run::new(data);
-    run.how = format!("{} with {name}", if is_for_lint { "bun lint ." } else { "bun format --check ." });
+    run.how = match (is_for_lint, writes) {
+        (true, true) => format!("bun lint --fix . with {name}"),
+        (true, false) => format!("bun lint . with {name}"),
+        (false, true) => format!("bun format --write . with {name}"),
+        (false, false) => format!("bun format --check . with {name}"),
+    };
     if shows() {
         show(&run.how, config);
     }
@@ -113,20 +144,48 @@ fn run(data: &[u8]) {
         js_engine: &NoEngine,
         version: b"0.0.0-fuzz",
     };
+    let has_parsing_error = |it: &Outcome| [&it.stdout, &it.stderr].iter().any(|it| it.windows(13).any(|it| it == b"Parsing error"));
+    // Whether all files are parsed before anything is fixed.
+    let parsed_before = (writes && is_for_lint)
+        .then(|| run.guarded(|| lint(&[], &environment)).flatten())
+        .flatten()
+        .is_some_and(|it| !has_parsing_error(&it));
     let outcome: Option<Outcome> = run.guarded(|| match is_for_lint {
         true => {
-            let mut arguments: Vec<&[u8]> = vec![b"--threads=1", b"."];
+            let mut more: Vec<&[u8]> = Vec::new();
             if input.has(0) {
-                arguments.push(b"--fix-dry-run");
+                more.push(b"--fix-dry-run");
             }
-            bun_lint_driver::cli::Options::parse(&arguments).ok().map(|it| bun_lint_driver::run(&it, &environment))
+            if writes {
+                more.push(b"--fix");
+            }
+            lint(&more, &environment)
         }
-        false => bun_lint_driver::fmt::cli::Options::parse(&[b"--threads=1", b"--check", b"."])
-            .ok()
-            .map(|it| bun_lint_driver::fmt::run(&it, &environment)),
+        false => format(if writes { b"--write" } else { b"--check" }, &environment),
     })
     .flatten();
+    // What has been written is formatted. Not a text of the fuzzer's: Prettier itself does not always print what it leaves alone.
+    if let Some(first) = outcome.as_ref().filter(|it| writes && !is_for_lint && it.exit_code == 0 && source == SOURCES[0].1.as_bytes())
+        && let Some(Some(second)) = run.guarded(|| format(b"--check", &environment))
+        && second.exit_code != 0
+    {
+        let detail = [&first.stdout[..], &first.stderr, b"\n", &second.stdout, &second.stderr].concat();
+        run.report("not-formatted-after-write", name, &String::from_utf8_lossy(&detail));
+    }
+    // No fix that is written makes a text that is not parsed of one that was.
+    if parsed_before
+        && let Some(Some(after)) = run.guarded(|| lint(&[], &environment))
+        && has_parsing_error(&after)
+    {
+        run.report("fix-breaks-the-syntax", name, &String::from_utf8_lossy(&[&after.stdout[..], &after.stderr].concat()));
+    }
     let _ = std::fs::remove_file(directory.join(name));
+    let _ = std::fs::remove_file(directory.join("base.json"));
+    if writes {
+        for (name, text) in SOURCES {
+            let _ = std::fs::write(directory.join(name), text);
+        }
+    }
     let Some(outcome) = outcome else {
         return;
     };

@@ -77,6 +77,14 @@ impl NoExplicitAny {
         }
         let parent = ty.parent();
         let report = cx.report(ty, UNEXPECTED_ANY);
+        // oxlint suggests nothing, and knows no `PropertyKey`.
+        if cx.language().is_oxlint {
+            if self.fixes_to_unknown {
+                let unknown = if is_rest_element_in_function(parent) { "unknown[]" } else { "unknown" };
+                report.fix(|fixer| fixer.replace(ty, unknown));
+            }
+            return;
+        }
         if let Node::Type(keyof) = parent
             && keyof.tag() == TypeTag::Keyof
         {

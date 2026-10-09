@@ -129,6 +129,20 @@ describe.concurrent("sortTailwindcss", () => {
     expect(result).toMatchObject({ stderr: "", files: [sorted, reversed], exitCode: 0 });
   });
 
+  test.each([".pnpm", ".bun"])(
+    "a package that only another package of the workspace depends on is found in %s",
+    async store => {
+      const hoisted = Object.fromEntries(
+        Object.entries(version4).map(([name, text]) => [
+          name.replace("node_modules/", `node_modules/${store}/node_modules/`),
+          text,
+        ]),
+      );
+      const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', ...hoisted, "apps/desktop/a.jsx": input };
+      expect(await format(files, ["apps/desktop/a.jsx"])).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
+    },
+  );
+
   test("without the package it is an error, and the files with classes are left as they are", async () => {
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" };
     const result = await format(files, ["a.jsx", "b.js"]);

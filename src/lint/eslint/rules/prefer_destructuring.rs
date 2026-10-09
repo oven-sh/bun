@@ -141,6 +141,26 @@ impl Config {
             _ => declaration.span(),
         };
         let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
+        // oxlint's port also fixes `let x = a["x"]`, does not look for comments, and leaves most parentheses.
+        if is_port_of_oxlint {
+            if kind == "object" && has_same_name && declaration.ty().is_none() {
+                report.fix(|fixer| {
+                    let file = fixer.file();
+                    let name = match property {
+                        Property::Name(name) => name.bytes(),
+                        Property::Computed(index) => file.slice(index.span().shrink(1, 1)),
+                    };
+                    let needs_no_parentheses = !object.is_chain_root()
+                        && matches!(
+                            object.tag(),
+                            ExprTag::Call | ExprTag::Ident | ExprTag::Dot | ExprTag::Index | ExprTag::This
+                        );
+                    let object = if needs_no_parentheses { object.span() } else { object.outer_span() };
+                    fixer.replace(declaration, [&b"{"[..], name, b"} = ", file.slice(object)].concat())
+                });
+            }
+            return;
+        }
         // Only `let x = a.x` is fixed.
         if can_fix
             && kind == "object"

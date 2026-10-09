@@ -272,6 +272,8 @@ struct Rc<'r, 'l> {
     options: Vec<(Vec<u8>, Json)>,
     /// `plugins` of all files, without those of overrides.
     plugins_of_files: Vec<Vec<u8>>,
+    /// How often a file was extended.
+    extended: usize,
 }
 
 /// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
@@ -489,6 +491,11 @@ impl Rc<'_, '_> {
             return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
         }
         if is_extended {
+            // Files that each extend the next one twice are read 2^n times. oxlint reads them.
+            self.extended += 1;
+            if self.extended > 4096 {
+                return Err(ConfigError::new(&[b"Too many files in \"extends\"."]));
+            }
             shape::check(json)?;
         }
         // A plugin that an override names is known everywhere.
@@ -980,6 +987,7 @@ impl Config {
             overrides: Vec::new(),
             options: Vec::new(),
             plugins_of_files: Vec::new(),
+            extended: 0,
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),

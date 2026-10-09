@@ -16,13 +16,20 @@ impl Rule for NoEqNull {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.exprs([ExprTag::Binary], |_, e, cx| {
             if let ExprKind::Binary {
-                op: BinOp::EqEq | BinOp::NotEq,
+                op: op @ (BinOp::EqEq | BinOp::NotEq),
                 left,
                 right,
             } = e.kind()
                 && (right.tag() == ExprTag::Null || left.tag() == ExprTag::Null)
             {
-                cx.report(e, UNEXPECTED);
+                let report = cx.report(e, UNEXPECTED);
+                // oxlint's fix takes the place of all that is between the operands.
+                if cx.language().is_oxlint {
+                    let operator = if op == BinOp::EqEq { " === " } else { " !== " };
+                    report.fix_dangerously(|fixer| {
+                        fixer.replace(left.outer_span().between(right.outer_span()), operator)
+                    });
+                }
             }
         });
     }

@@ -1,38 +1,5 @@
 [
  {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "eslint",
-  "options": [],
-  "extension": "cjs",
-  "code": "var a; a ||= 1;",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "eslint",
-  "options": [],
-  "extension": "cjs",
-  "code": "var a; a &&= 1;",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "eslint",
-  "options": [],
-  "extension": "cjs",
-  "code": "var a; a ??= 1;",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
   "cause": "reportUsedIgnorePattern",
   "suite": "eslint",
   "options": [
@@ -50,39 +17,6 @@
   ]
  },
  {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nvar a;\na ||= 1;\n      ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nvar a;\na &&= 1;\n      ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nvar a;\na ??= 1;\n      ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
   "cause": "what is not exported in a declared namespace or module",
   "suite": "typescript-eslint",
   "options": [],
@@ -94,17 +28,6 @@
   "ours": []
  },
  {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\ndeclare module 'foo' {\n  type Test = 1;\n  const x: Test = 1;\n  export = x;\n}\n    ",
-  "oxlint": [
-   "4:19"
-  ],
-  "ours": []
- },
- {
   "cause": "what is not exported in a declared namespace or module",
   "suite": "typescript-eslint",
   "options": [],
@@ -112,50 +35,6 @@
   "code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n    }\n  }\n}\n    ",
   "oxlint": [
    "6:15"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nlet foo = 1;\nfoo ??= 2;\n    ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nlet foo = 1;\nfoo &&= 2;\n    ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nlet foo = 1;\nfoo ||= 2;\n    ",
-  "oxlint": [
-   "2:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "d.ts",
-  "code": "\nexport namespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export default function foo(): Bar;\n}\n      ",
-  "oxlint": [
-   "6:3"
   ],
   "ours": []
  },
@@ -191,50 +70,6 @@
   "ours": [
    "2:11"
   ]
- },
- {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "d.ts",
-  "code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n\n  export default bar;\n}\n      ",
-  "oxlint": [
-   "6:3"
-  ],
-  "ours": []
- },
- {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "d.ts",
-  "code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n  export const bazz: number;\n\n  export default bar;\n}\n      ",
-  "oxlint": [
-   "7:3"
-  ],
-  "ours": []
- },
- {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "d.ts",
-  "code": "\nexport namespace Foo {\n  const foo: string;\n  export const bar: number;\n\n  export * from '...';\n}\n      ",
-  "oxlint": [
-   "6:3"
-  ],
-  "ours": []
- },
- {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "d.ts",
-  "code": "\nnamespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export = Bar;\n}\n      ",
-  "oxlint": [
-   "6:3"
-  ],
-  "ours": []
  },
  {
   "cause": "what is not exported in a declared namespace or module",
@@ -274,39 +109,6 @@
   "ours": []
  },
  {
-  "cause": "a read that a sequence discards",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "\n        function foo(a) { return (a, 0); }\n        foo(1);\n        ",
-  "oxlint": [
-   "2:22"
-  ],
-  "ours": []
- },
- {
-  "cause": "a logical assignment as a statement is no use for oxlint",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "let a = 1; a ||= 2;",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "a read that a sequence discards",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "let a = 0; let b = (a, 0) + 1; f(b);",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
   "cause": "React and names with a colon in JSX",
   "suite": "oxc",
   "options": [],
@@ -337,17 +139,6 @@
   "options": [],
   "extension": "tsx",
   "code": "let a = 0; flag && a++;",
-  "oxlint": [
-   "1:5"
-  ],
-  "ours": []
- },
- {
-  "cause": "?",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "let a = 0; (flag && a++, 0);",
   "oxlint": [
    "1:5"
   ],
@@ -427,17 +218,6 @@
   "code": "const a = class {}; new (a ??= Fallback, Other)();",
   "oxlint": [
    "1:7"
-  ],
-  "ours": []
- },
- {
-  "cause": "?",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "let a = class {}; new (a ??= Fallback, Other)();",
-  "oxlint": [
-   "1:5"
   ],
   "ours": []
  },

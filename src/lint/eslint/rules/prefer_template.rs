@@ -80,13 +80,24 @@ fn starts_with_template_curly(mut e: Expr<'_>) -> bool {
     while let Some(Operands { left, .. }) = as_binary_expression(e) {
         e = left;
     }
-    !ast_utils::is_string_literal(e)
+    has_curly_at(e, |_| 0)
 }
 
 fn ends_with_template_curly(e: Expr<'_>) -> bool {
     match as_binary_expression(e) {
         Some(Operands { right, .. }) => starts_with_template_curly(right),
-        None => !ast_utils::is_string_literal(e),
+        None => has_curly_at(e, |template| template.exprs().len()),
+    }
+}
+
+/// For an `e` that is no `BinaryExpression`. In oxlint the range of a `TemplateElement` is that of its text: `quasi`
+/// says which one is asked for.
+fn has_curly_at<'a>(e: Expr<'a>, quasi: fn(Template<'a>) -> usize) -> bool {
+    match e.kind() {
+        ExprKind::Template(template) if e.file().language().is_oxlint => {
+            !template.exprs().is_empty() && template.raw(quasi(template)).is_empty()
+        }
+        _ => !ast_utils::is_string_literal(e),
     }
 }
 
@@ -244,11 +255,16 @@ impl<'a> TemplateWriter<'a> {
         } else {
             Join::Sum
         };
+        // For oxlint an operand is as long as its parentheses.
+        let (before, after) = match self.file.language().is_oxlint {
+            true => (left.outer_span(), right.outer_span()),
+            false => (left.span(), right.span()),
+        };
         let concatenation = Concatenation {
             right,
             join,
-            text_before_plus: get_text_between(self.file, left.span(), plus),
-            text_after_plus: get_text_between(self.file, plus, right.span()),
+            text_before_plus: get_text_between(self.file, before, plus),
+            text_after_plus: get_text_between(self.file, plus, after),
         };
         Some((left, concatenation))
     }
@@ -331,8 +347,9 @@ impl PreferTemplate {
             if has_octal_or_non_octal_decimal_escape_sequence(e) {
                 return None;
             }
-            let needs_semicolon =
-                ast_utils::is_start_of_expression_statement(e) && ast_utils::needs_preceding_semicolon(e);
+            let needs_semicolon = !fixer.file().language().is_oxlint
+                && ast_utils::is_start_of_expression_statement(e)
+                && ast_utils::needs_preceding_semicolon(e);
             let mut writer = TemplateWriter::new(fixer.file(), e);
             if needs_semicolon {
                 writer.text.push(b';');

@@ -328,10 +328,14 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
+    // What is written as it is has no label. oxfmt does not look.
     if args.len() == 1
-        && args
-            .first()
-            .is_some_and(|only| has_embed_label_with_hug(only, f))
+        && args.first().is_some_and(|only| {
+            has_embed_label_with_hug(only, f)
+                && (f.is_quiet()
+                    || f.options().flavor.is_oxfmt()
+                    || !f.comments().is_suppressed(only.span().start))
+        })
     {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
     }

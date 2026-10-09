@@ -406,3 +406,8 @@
 "\"error\""
 "\"deny\""
 "\"allow\""
+"\x0a-----\x0a"
+"\"extends\":[\"./base.json\"]"
+"\"extends\":\"./base.json\""
+"\"prettier\":\"./base.json\""
+"extends: ./base.json\x0a"

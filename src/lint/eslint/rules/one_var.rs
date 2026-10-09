@@ -199,6 +199,13 @@ fn is_for_left(statement: Stmt<'_>) -> bool {
 fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, kind: VarKind) -> Option<Vec<Fix>> {
     previous_declarations(statement, kind)?;
     let file = fixer.file();
+    // oxlint joins nothing with a `declare`, and nothing that is exported.
+    let is_ambient = |it: Stmt| it.flags().contains(Flags::AMBIENT);
+    if file.language().is_oxlint
+        && (is_ambient(statement) || previous_statement(statement).is_some_and(is_ambient) || statement.is_exported())
+    {
+        return None;
+    }
     let keyword = file.first_token(statement)?;
     let before_keyword = file.token_before(keyword)?;
     let mut fixes = vec![match before_keyword.is(";") {

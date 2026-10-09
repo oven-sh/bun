@@ -351,11 +351,6 @@ impl ValueIdSet {
     }
 
     #[inline]
-    fn is_heap(&self) -> bool {
-        matches!(self, ValueIdSet::Spilled(_))
-    }
-
-    #[inline]
     fn as_slice(&self) -> &[ValueId] {
         match self {
             ValueIdSet::Inline { len, items } => &items[..usize::from(*len)],
@@ -439,6 +434,13 @@ impl ValueIdSet {
     }
 }
 
+impl Default for ValueIdSet {
+    #[inline]
+    fn default() -> Self {
+        ValueIdSet::new()
+    }
+}
+
 impl std::fmt::Debug for ValueIdSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(self.as_slice()).finish()
@@ -454,6 +456,56 @@ impl<'a> IntoIterator for &'a ValueIdSet {
     }
 }
 
+const CHUNK: usize = 64;
+
+/// A vector in chunks that its clones share until one of them writes to the chunk.
+#[derive(Clone)]
+struct ChunkedVec<T>(Vec<Rc<[T; CHUNK]>>);
+
+impl<T: Clone + Default> ChunkedVec<T> {
+    fn with_len(len: usize) -> Self {
+        let mut this = ChunkedVec(Vec::new());
+        this.grow(len.div_ceil(CHUNK));
+        this
+    }
+
+    fn grow(&mut self, chunks: usize) {
+        if chunks > self.0.len() {
+            let empty = Rc::new(std::array::from_fn(|_| T::default()));
+            self.0.resize(chunks, empty);
+        }
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> Option<&T> {
+        self.0.get(i / CHUNK).map(|chunk| &chunk[i % CHUNK])
+    }
+
+    #[inline]
+    fn get_mut(&mut self, i: usize) -> &mut T {
+        self.grow(i / CHUNK + 1);
+        &mut Rc::make_mut(&mut self.0[i / CHUNK])[i % CHUNK]
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.0.iter().flat_map(|chunk| chunk.iter())
+    }
+
+    /// `merge(mine, theirs)` at each index, but for the chunks that `other` shares. Whether any did.
+    fn merge_from(&mut self, other: &Self, mut merge: impl FnMut(&mut T, &T) -> bool) -> bool {
+        self.grow(other.0.len());
+        let mut changed = false;
+        for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
+            if !Rc::ptr_eq(mine, theirs) {
+                for (mine, theirs) in Rc::make_mut(mine).iter_mut().zip(theirs.iter()) {
+                    changed |= merge(mine, theirs);
+                }
+            }
+        }
+        changed
+    }
+}
+
 // =============================================================================
 // Variables — IdentifierId → ValueIdSet, dense or sparse
 // =============================================================================
@@ -462,102 +514,33 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 ///
 /// `IdentifierId` indexes `env.identifiers`, which is shared across the
 /// top-level component and all nested closures. For the top-level component
-/// (where most fixpoint time is spent) a flat `Vec` indexed by `IdentifierId`
-/// makes `clone()` one allocation + memcpy. For nested function expressions the
+/// it indexes a [`ChunkedVec`]. For nested function expressions the
 /// same Vec would be thousands of empty slots for a handful of live ids, so
 /// those keep a `HashMap`.
-///
-/// `any_heap` records whether any `Dense` slot has spilled past
-/// the inline capacity. While it stays `false` (the overwhelming
-/// common case) the slab is plain data — `Clone` is one `memcpy` and `Drop` is
-/// one deallocation, with no per-element loop.
+#[derive(Clone)]
 enum Variables {
-    Dense {
-        vec: Vec<ValueIdSet>,
-        any_heap: bool,
-    },
+    Dense(ChunkedVec<ValueIdSet>),
     Sparse(HashMap<IdentifierId, ValueIdSet>),
-}
-
-impl Clone for Variables {
-    fn clone(&self) -> Self {
-        match self {
-            Variables::Dense { vec, any_heap } => {
-                let len = vec.len();
-                let mut out = Vec::<ValueIdSet>::with_capacity(len);
-                let dst = out.as_mut_ptr();
-                // SAFETY: `dst` has `len` uninitialized slots. Inline cells are
-                // valid as bitcopies; heap cells are overwritten with a fresh
-                // reference via `ptr::write` (no drop of the bit-aliased
-                // pointer) before `set_len` makes `dst` droppable.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(vec.as_ptr(), dst, len);
-                    if *any_heap {
-                        for (i, src) in vec.iter().enumerate() {
-                            if src.is_heap() {
-                                dst.add(i).write(src.clone());
-                            }
-                        }
-                    }
-                    out.set_len(len);
-                }
-                Variables::Dense {
-                    vec: out,
-                    any_heap: *any_heap,
-                }
-            }
-            Variables::Sparse(m) => Variables::Sparse(m.clone()),
-        }
-    }
-}
-
-impl Drop for Variables {
-    #[inline]
-    fn drop(&mut self) {
-        if let Variables::Dense {
-            vec,
-            any_heap: false,
-        } = self
-        {
-            // SAFETY: every element is inline (no owned heap), so dropping
-            // them is a no-op; clearing `len` lets `Vec`'s own drop deallocate
-            // without the per-element `ValueIdSet::drop` loop.
-            unsafe { vec.set_len(0) };
-        }
-    }
 }
 
 impl Variables {
     #[inline]
     fn get(&self, id: IdentifierId) -> Option<&ValueIdSet> {
         match self {
-            Variables::Dense { vec, .. } => match vec.get(id.0 as usize) {
-                Some(set) if !set.is_empty() => Some(set),
-                _ => None,
-            },
+            Variables::Dense(sets) => sets.get(id.0 as usize).filter(|set| !set.is_empty()),
             Variables::Sparse(m) => m.get(&id),
         }
     }
 
     #[inline]
     fn is_defined(&self, id: IdentifierId) -> bool {
-        match self {
-            Variables::Dense { vec, .. } => vec.get(id.0 as usize).is_some_and(|s| !s.is_empty()),
-            Variables::Sparse(m) => m.contains_key(&id),
-        }
+        self.get(id).is_some()
     }
 
     fn insert(&mut self, id: IdentifierId, set: ValueIdSet) {
         debug_assert!(!set.is_empty());
         match self {
-            Variables::Dense { vec, any_heap } => {
-                *any_heap |= set.is_heap();
-                let i = id.0 as usize;
-                if i >= vec.len() {
-                    vec.resize_with(i + 1, ValueIdSet::new);
-                }
-                vec[i] = set;
-            }
+            Variables::Dense(sets) => *sets.get_mut(id.0 as usize) = set,
             Variables::Sparse(m) => {
                 m.insert(id, set);
             }
@@ -565,16 +548,13 @@ impl Variables {
     }
 
     /// Set-union `values` into the existing entry at `id`. No-op if `id` is
-    /// undefined. Only call site of the former `get_mut_defined`, folded in so
-    /// `any_heap` stays accurate.
+    /// undefined.
     fn extend_values(&mut self, id: IdentifierId, values: &ValueIdSet) {
         match self {
-            Variables::Dense { vec, any_heap } => {
-                let Some(prev) = vec.get_mut(id.0 as usize).filter(|s| !s.is_empty()) else {
-                    return;
-                };
-                prev.union_with(values);
-                *any_heap |= prev.is_heap();
+            Variables::Dense(sets) => {
+                if sets.get(id.0 as usize).is_some_and(|set| !set.is_empty()) {
+                    sets.get_mut(id.0 as usize).union_with(values);
+                }
             }
             Variables::Sparse(m) => {
                 let Some(prev) = m.get_mut(&id) else {
@@ -590,8 +570,8 @@ impl std::fmt::Debug for Variables {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
         match self {
-            Variables::Dense { vec, .. } => {
-                for (i, set) in vec.iter().enumerate() {
+            Variables::Dense(sets) => {
+                for (i, set) in sets.iter().enumerate() {
                     if !set.is_empty() {
                         map.entry(&i, set);
                     }
@@ -615,7 +595,7 @@ impl std::fmt::Debug for Variables {
 ///
 /// `values` is a dense Vec indexed by `ValueId.0` (pass-local, starts at 0) so
 /// `clone()` is a memcpy of small `Copy` cells and `merge_from()` is an
-/// elementwise loop. `variables` is dense (`Vec`) for the top-level function
+/// elementwise loop. `variables` is dense for the top-level function
 /// and sparse (`HashMap`) for nested function expressions — see [`Variables`].
 #[derive(Debug, Clone)]
 struct InferenceState {
@@ -631,12 +611,7 @@ impl InferenceState {
         let variables = if is_function_expression {
             Variables::Sparse(HashMap::default())
         } else {
-            let mut vec = Vec::with_capacity(identifier_capacity);
-            vec.resize_with(identifier_capacity, ValueIdSet::new);
-            Variables::Dense {
-                vec,
-                any_heap: false,
-            }
+            Variables::Dense(ChunkedVec::with_len(identifier_capacity))
         };
         InferenceState {
             values: Vec::new(),
@@ -817,29 +792,8 @@ impl InferenceState {
         }
 
         match (&mut self.variables, &other.variables) {
-            (
-                Variables::Dense {
-                    vec: this,
-                    any_heap,
-                },
-                Variables::Dense { vec: that, .. },
-            ) => {
-                if that.len() > this.len() {
-                    this.resize_with(that.len(), ValueIdSet::new);
-                }
-                for (i, other_values) in that.iter().enumerate() {
-                    if other_values.is_empty() {
-                        continue;
-                    }
-                    let this_values = &mut this[i];
-                    if this_values.is_empty() {
-                        *this_values = other_values.clone();
-                        changed = true;
-                    } else {
-                        changed |= this_values.union_with(other_values);
-                    }
-                    *any_heap |= this_values.is_heap();
-                }
+            (Variables::Dense(this), Variables::Dense(that)) => {
+                changed |= this.merge_from(that, ValueIdSet::union_with);
             }
             (Variables::Sparse(this), Variables::Sparse(that)) => {
                 for (id, other_values) in that {

@@ -454,9 +454,9 @@ describe.concurrent("bun lint with languages", () => {
             main: "index.js",
           }),
           "node_modules/eslint-plugin-html/index.js": `
-            require("eslint").Linter.prototype.verify = (text, configs) => {
+            require("eslint").Linter.prototype.verify = text => {
               const line = text.split("\\n").indexOf("<script>") + 1;
-              return [{ ruleId: "no-var", severity: 2, message: "a script, " + configs.length + " objects", line, column: 1 }];
+              return [{ ruleId: "no-var", severity: 2, message: "a script", line, column: 1 }];
             };`,
           "eslint.config.mjs": `
             import html from "eslint-plugin-html";
@@ -467,10 +467,70 @@ describe.concurrent("bun lint with languages", () => {
         ["-f", "unix", "a.html", "b.js"],
       );
       expect(result.stdout).toMatchInlineSnapshot(`
-        "<dir>/a.html:2:1: a script, 2 objects [Error/no-var]
+        "<dir>/a.html:2:1: a script [Error/no-var]
         <dir>/b.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
 
         2 problems"
+      `);
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // As @antfu/eslint-config for `.vue`: the export is a promise, and the processor forgets a file in `postprocess`.
+  test(
+    "the whole configuration file, which exports a promise, and a processor, which is called once",
+    async () => {
+      const result = await lint(
+        {
+          ...eslintPackage,
+          ...lines,
+          "node_modules/eslint/lib/config/flat-config-array.js": `
+            exports.FlatConfigArray = class extends Array {
+              constructor(configs) {
+                super();
+                this.push(...configs);
+              }
+              normalize() {}
+              getConfig(name) {
+                const found = [...this].filter(it => it.files?.some(pattern => name.endsWith(pattern.slice(4))));
+                return found.length === 0 ? undefined : Object.assign({}, ...found);
+              }
+            };`,
+          "node_modules/eslint/index.js": `
+            exports.Linter = class {
+              verify(text, configs, { filename }) {
+                const { processor, rules } = configs.getConfig(filename) ?? {};
+                if (rules === undefined) return [{ ruleId: null, severity: 1, message: "no configuration", line: 0, column: 0 }];
+                const message = { ruleId: "own/seen", severity: 2, message: Object.keys(rules).join(), line: 1, column: 1 };
+                return processor ? processor.postprocess(processor.preprocess(text, filename).map(() => [message]), filename) : [message];
+              }
+              getSuppressedMessages() {
+                return [];
+              }
+            };`,
+          "eslint.config.mjs": `
+            const known = new Set();
+            const processor = {
+              preprocess: (text, name) => (known.add(name), [text]),
+              postprocess(lists, name) {
+                if (!known.delete(name)) throw new Error("postprocess() without preprocess()");
+                return lists.flat();
+              },
+            };
+            const parser = { meta: { name: "vue-eslint-parser" }, parseForESLint() {} };
+            const own = { rules: { seen: { create: () => ({}) } }, processors: { processor } };
+            export default Promise.resolve([
+              { files: ["**/*.vue"], plugins: { own }, processor: "own/processor", languageOptions: { parser }, rules: { "own/seen": "error" } },
+            ]);`,
+          "c.vue": "<template />\n",
+        },
+        ["-f", "unix", "c.vue"],
+      );
+      expect(result.stdout).toMatchInlineSnapshot(`
+        "<dir>/c.vue:1:1: own/seen [Error/own/seen]
+
+        1 problem"
       `);
       expect(result.exitCode).toBe(1);
     },

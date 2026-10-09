@@ -109,7 +109,8 @@ fn fix<'a>(
                 None => interface.name().bytes(),
             };
             suggestion = [&b"type "[..], name, b" = ", &suggestion[..]].concat();
-            if has_semicolon {
+            // oxlint always ends the alias.
+            if has_semicolon || file.language().is_oxlint {
                 suggestion.push(b';');
             }
             let statement = interface.stmt();

@@ -64,9 +64,18 @@ struct Found {
 }
 
 fn find(directory: &[u8]) -> Option<Found> {
-    let root = paths::ancestors(directory)
-        .map(|it| paths::join(it, b"node_modules/tailwindcss"))
-        .find(|it| fs::is_file(&paths::join(it, b"package.json")))?;
+    // Only another package of the workspace may depend on it. pnpm and Bun's isolated linker still have one place for all
+    // packages of an installation.
+    let places: [&[u8]; 3] = [
+        b"node_modules/tailwindcss",
+        b"node_modules/.pnpm/node_modules/tailwindcss",
+        b"node_modules/.bun/node_modules/tailwindcss",
+    ];
+    let root = places.iter().find_map(|place| {
+        paths::ancestors(directory)
+            .map(|it| paths::join(it, place))
+            .find(|it| fs::is_file(&paths::join(it, b"package.json")))
+    })?;
     let names: [&[u8]; 4] = [
         b"tailwind.config.js",
         b"tailwind.config.cjs",

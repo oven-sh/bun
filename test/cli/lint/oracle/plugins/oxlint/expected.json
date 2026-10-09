@@ -4110,5 +4110,60 @@
   "a.ts:7:21 typescript(explicit-function-return-type)",
   "a.ts:8:21 typescript(explicit-function-return-type)",
   "a.ts:9:21 typescript(explicit-function-return-type)"
+ ],
+ "id-length/the-options-of-a-dynamic-import-max": [
+  "a.js:1:22 eslint(id-length)",
+  "a.js:1:30 eslint(id-length)",
+  "a.js:2:32 eslint(id-length)",
+  "a.js:3:22 eslint(id-length)",
+  "a.js:3:30 eslint(id-length)",
+  "a.js:8:22 eslint(id-length)",
+  "a.js:8:30 eslint(id-length)",
+  "a.js:8:43 eslint(id-length)"
+ ],
+ "id-length/the-options-of-a-dynamic-import-by-default": [
+  "a.js:8:30 eslint(id-length)",
+  "a.js:8:43 eslint(id-length)"
+ ],
+ "disable-comments/no-unnecessary-condition-case": [
+  "a.ts:13:11 typescript(no-unnecessary-condition)",
+  "a.ts:3:11 typescript(no-unnecessary-condition)"
+ ],
+ "no-unused-vars/what-only-a-logical-assignment-changes-or-a-comma-discards": [
+  "a.js:11:5 eslint(no-unused-vars)",
+  "a.js:14:5 eslint(no-unused-vars)",
+  "a.js:15:5 eslint(no-unused-vars)",
+  "a.js:17:5 eslint(no-unused-vars)",
+  "a.js:1:5 eslint(no-unused-vars)",
+  "a.js:20:5 eslint(no-unused-vars)",
+  "a.js:24:5 eslint(no-unused-vars)",
+  "a.js:25:5 eslint(no-unused-vars)",
+  "a.js:26:5 eslint(no-unused-vars)",
+  "a.js:27:5 eslint(no-unused-vars)",
+  "a.js:28:5 eslint(no-unused-vars)",
+  "a.js:2:5 eslint(no-unused-vars)",
+  "a.js:31:13 eslint(no-unused-vars)",
+  "a.js:31:17 eslint(no-unused-vars)",
+  "a.js:3:5 eslint(no-unused-vars)",
+  "a.js:4:5 eslint(no-unused-vars)",
+  "a.js:5:12 eslint(no-unused-vars)",
+  "a.js:7:5 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/what-a-comma-discards-with-all-arguments": [
+  "a.js:11:5 eslint(no-unused-vars)",
+  "a.js:14:5 eslint(no-unused-vars)",
+  "a.js:15:5 eslint(no-unused-vars)",
+  "a.js:17:5 eslint(no-unused-vars)",
+  "a.js:20:5 eslint(no-unused-vars)",
+  "a.js:24:5 eslint(no-unused-vars)",
+  "a.js:25:5 eslint(no-unused-vars)",
+  "a.js:26:5 eslint(no-unused-vars)",
+  "a.js:27:5 eslint(no-unused-vars)",
+  "a.js:28:5 eslint(no-unused-vars)",
+  "a.js:31:17 eslint(no-unused-vars)",
+  "a.js:3:5 eslint(no-unused-vars)",
+  "a.js:4:5 eslint(no-unused-vars)",
+  "a.js:5:12 eslint(no-unused-vars)",
+  "a.js:7:5 eslint(no-unused-vars)"
  ]
 }

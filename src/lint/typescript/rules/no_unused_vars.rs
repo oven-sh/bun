@@ -136,19 +136,19 @@ impl<'a> Visitor<'a> for Named {
 /// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
 /// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. `None` if there are none, as in most
 /// files.
-fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>) -> Option<SymbolSet> {
+///
+/// `discarded`: the left operands of the comma operators.
+fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Option<SymbolSet> {
     let mut named = Named::default();
-    for e in file.exprs_of_kind(ExprTag::Assign) {
-        if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
-            named.enter(Node::Expr(target));
+    // Few files have one.
+    let operators: [&[u8]; 3] = [b"||=", b"&&=", b"??="];
+    if operators.iter().any(|it| bun_core::strings::contains(file.text(), it)) {
+        for e in file.exprs_of_kind(ExprTag::Assign) {
+            if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
+                named.enter(Node::Expr(target));
+            }
         }
     }
-    let mut discarded: Vec<Expr<'a>> = (file.exprs_of_kind(ExprTag::Binary))
-        .filter_map(|e| match e.kind() {
-            ExprKind::Binary { op: BinOp::Comma, left, .. } => Some(left),
-            _ => None,
-        })
-        .collect();
     // Each is looked into once: not the `a` of `a, b, c`, which is in the `a, b`.
     utils::sort::sort_unstable_by_key(&mut discarded, |it| (it.span().start, u32::MAX - it.span().end));
     let mut end = 0;
@@ -161,15 +161,38 @@ fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>) -> Option<SymbolSet> {
     named.1.then_some(named.0)
 }
 
+/// [`oxlint_used_beside_infer`]
+fn can_be_hidden_by_type_parameter(def: Declaration) -> bool {
+    matches!(
+        def,
+        Declaration::TypeParam(_)
+            | Declaration::Module(_)
+            | Declaration::Enum(_)
+            | Declaration::ImportDefault(_)
+            | Declaration::ImportNamespace(_)
+            | Declaration::ImportSpec(_)
+            | Declaration::ImportEquals(_)
+    )
+}
+
 /// typescript-eslint has what an `infer` declares in scope in all of the conditional type. For oxlint, as for
 /// TypeScript, it is in scope where the condition holds: `type A<T> = B<T> extends { c: infer T } ? T : never` uses its
-/// parameter. These are the variables that are used in that way.
+/// parameter. And it takes the `A` of `A.B` for a type parameter that is called so, which can only be a namespace, an
+/// enum or an import: `type C<A> = A.B<A>`. These are the variables that are used in those ways.
 fn oxlint_used_beside_infer<'a>(file: &'a File<'a>) -> SymbolSet {
+    let is_qualified = |it: Reference| {
+        matches!(it.node(), Node::Type(ty) if matches!(ty.kind(), TypeKind::Ref { name, .. } if name.len() > 1))
+    };
     let mut used = SymbolSet::default();
     for symbol in file.symbols() {
         let Some(Declaration::TypeParam(param)) = symbol.declarations().next() else {
             continue;
         };
+        if symbol.references().any(is_qualified)
+            && let Some(outer) = symbol.scope().parent().and_then(|it| it.resolve_name(symbol.name()))
+        {
+            used.insert(outer);
+        }
         let Node::Type(infer) = param.parent() else {
             continue;
         };
@@ -698,6 +721,8 @@ pub struct State<'a> {
     is_definition_file: bool,
     /// That a node is in a `declare namespace`.
     declared: AncestorMemo<'a, ()>,
+    /// For oxlint: the left operands of the comma operators.
+    discarded: Vec<Expr<'a>>,
 }
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
@@ -1247,7 +1272,11 @@ impl NoUnusedVars {
             false => &[],
         };
         // What is unused for oxlint only.
-        let candidates = if file.language().is_oxlint { oxlint_may_be_unused_after_all(file) } else { None };
+        let discarded = std::mem::take(&mut cx.state.discarded);
+        let candidates = match file.language().is_oxlint {
+            true => oxlint_may_be_unused_after_all(file, discarded),
+            false => None,
+        };
         let is_added = |it: &Variable<'a>| {
             candidates.as_ref().is_some_and(|candidates| candidates.contains(it.symbol()))
                 && it.class_scope().is_none()
@@ -1280,7 +1309,7 @@ impl NoUnusedVars {
             if file.language().is_oxlint
                 && (oxlint_leaves_alone(unused_var)
                     || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types)
-                    || unused_var.defs().any(|it| matches!(it, Declaration::TypeParam(_)))
+                    || unused_var.defs().any(can_be_hidden_by_type_parameter)
                         && (used_beside_infer.get_or_insert_with(|| oxlint_used_beside_infer(file)))
                             .contains(unused_var.symbol()))
             {
@@ -1288,8 +1317,12 @@ impl NoUnusedVars {
             }
             let used_only_as_type =
                 unused_var.references().any(|it| is_type_only_reference(unused_var.symbol(), it));
+            // Before version 8, that was a use.
+            let is_a_use = (file.language().eslint_8.as_ref())
+                .is_some_and(|it| it.has_typescript_eslint_before_8());
             if used_only_as_type
-                && unused_var.defs().any(|def| def.kind() == Some(DeclarationKind::ImportBinding))
+                && (is_a_use
+                    || unused_var.defs().any(|def| def.kind() == Some(DeclarationKind::ImportBinding)))
             {
                 continue;
             }
@@ -1346,6 +1379,13 @@ impl Rule for NoUnusedVars {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Module], Self::check_module);
         on.finish(Self::check_program);
+        if file.language().is_oxlint {
+            on.binaries([BinOp::Comma], |_, e, cx| {
+                if let ExprKind::Binary { left, .. } = e.kind() {
+                    cx.state.discarded.push(left);
+                }
+            });
+        }
         let is_definition_file = is_definition_file(file.path());
         if is_definition_file {
             mark_ambient_declarations(file.body());
@@ -1353,6 +1393,7 @@ impl Rule for NoUnusedVars {
         State {
             is_definition_file,
             declared: AncestorMemo::default(),
+            discarded: Vec::new(),
         }
     }
 }

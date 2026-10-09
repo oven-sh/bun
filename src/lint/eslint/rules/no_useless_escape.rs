@@ -68,9 +68,9 @@ fn report<'a>(
     if cx.language().is_oxlint {
         // As Rust writes a `char`.
         let written: &[u8] = if character == b"'" { b"\\'" } else { character };
-        cx.report(Span::new(backslash, range.end + character.len() as u32), UNNECESSARY_ESCAPE)
-            .data("character", written)
-            .fix(|fixer| fixer.remove(range));
+        // The fix is as long: of two escapes side by side one pass takes the first.
+        let place = Span::new(backslash, range.end + character.len() as u32);
+        cx.report(place, UNNECESSARY_ESCAPE).data("character", written).fix(|fixer| fixer.replace(place, character));
         return;
     }
     let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character);

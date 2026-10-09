@@ -11,6 +11,8 @@ pub struct NoExtraneousClass {
 const EMPTY: Message = Message::new("empty", "Unexpected empty class.");
 const ONLY_CONSTRUCTOR: Message = Message::new("onlyConstructor", "Unexpected class with only a constructor.");
 const ONLY_STATIC: Message = Message::new("onlyStatic", "Unexpected class with only static properties.");
+/// What oxlint suggests.
+const REMOVE_CLASS: Message = Message::new("removeClass", "Remove the class.");
 
 impl NoExtraneousClass {
     /// For oxlint a constructor, a static block and an index signature are not static, and a class has only a
@@ -44,8 +46,17 @@ impl NoExtraneousClass {
                 (name, ONLY_STATIC, self.allow_static_only)
             }
         };
-        if !is_allowed {
-            cx.report(place, message);
+        if is_allowed {
+            return;
+        }
+        let report = cx.report(place, message);
+        // oxlint suggests to remove an empty class declaration without decorators, with its `export`.
+        if let Node::Stmt(statement) = class.owner()
+            && members.is_empty()
+            && class.decorators().next().is_none()
+        {
+            let export = statement.export_span().filter(|_| !statement.is_default_export());
+            report.suggest(REMOVE_CLASS, |fixer| fixer.remove(export.unwrap_or(whole)));
         }
     }
 

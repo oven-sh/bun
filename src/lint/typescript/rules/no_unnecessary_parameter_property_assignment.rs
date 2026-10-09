@@ -219,7 +219,15 @@ impl NoUnnecessaryParameterPropertyAssignment {
         for info in infos.values() {
             for (name, e) in &info.unnecessary_assignments {
                 if !info.assigned_before_constructor.contains(name) {
-                    cx.report(*e, UNNECESSARY_ASSIGN);
+                    let report = cx.report(*e, UNNECESSARY_ASSIGN);
+                    // oxlint suggests to remove the statement that it is.
+                    if cx.language().is_oxlint
+                        && !e.is_parenthesized()
+                        && let Node::Stmt(statement) = e.parent()
+                        && utils::is_expression_statement(statement)
+                    {
+                        report.fix(|fixer| fixer.remove(statement));
+                    }
                 }
             }
         }

@@ -437,18 +437,8 @@ impl DeclsIn<Growable> {
 }
 
 impl Decls<'_> {
-    /// `clone_in`, into the arena of another session.
-    pub fn copy_in<'s>(&self, arena: &'s Arena) -> Decls<'s> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(*decl),
-            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
-        }
-    }
-}
-
-impl<'s> Decls<'s> {
-    pub fn clone_in(&self, arena: &'s Arena) -> Decls<'s> {
+    /// `arena`: of any session.
+    pub fn clone_in<'s>(&self, arena: &'s Arena) -> Decls<'s> {
         match self {
             DeclsIn::None => DeclsIn::None,
             DeclsIn::One(decl) => DeclsIn::One(*decl),
@@ -2098,7 +2088,7 @@ impl Bound<'_> {
                 let copy = |symbol: &Symbol<'_>| Symbol {
                     name: symbol.name,
                     flags: symbol.flags,
-                    decls: symbol.decls.copy_in(arena),
+                    decls: symbol.decls.clone_in(arena),
                     value_declaration: symbol.value_declaration,
                     parent: symbol.parent,
                     exports: symbol.exports,

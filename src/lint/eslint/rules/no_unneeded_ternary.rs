@@ -75,6 +75,55 @@ fn is_boolean_expression(e: Expr) -> bool {
     )
 }
 
+/// What oxlint makes of `test ? true : false`, or with `is_inverted` of `test ? false : true`. It looks at how `test`
+/// is written: in parentheses it is nothing that it knows.
+fn boolean_of_oxlint(test: Expr, is_inverted: bool) -> Vec<u8> {
+    let file = test.file();
+    let written = file.slice(test.outer_span());
+    let kind = if test.is_parenthesized() || test.is_chain_root() { ExprKind::Missing } else { test.kind() };
+    match kind {
+        ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, .. } => {}
+        ExprKind::Binary { .. } | ExprKind::Unary { op: UnOp::Not, .. } if !is_inverted => return written.to_vec(),
+        ExprKind::Binary { op, left, right } => {
+            let inverse: &[u8] = match op {
+                BinOp::EqEq => b" != ",
+                BinOp::EqEqEq => b" !== ",
+                BinOp::NotEq => b" == ",
+                BinOp::NotEqEq => b" === ",
+                _ => return [&b"!("[..], written, b")"].concat(),
+            };
+            return [file.slice(left.outer_span()), inverse, file.slice(right.outer_span())].concat();
+        }
+        _ => {}
+    }
+    let prefix: &[u8] = if is_inverted { b"!" } else { b"!!" };
+    let needs_no_parentheses = test.is_chain_root() && !test.is_parenthesized()
+        || match kind {
+            ExprKind::Dot { name, .. } => !name.bytes().starts_with(b"#"),
+            ExprKind::Ident(_)
+            | ExprKind::Unary { .. }
+            | ExprKind::Await(_)
+            | ExprKind::Call(_)
+            | ExprKind::ImportCall { .. }
+            | ExprKind::New(_) => true,
+            _ => false,
+        };
+    match needs_no_parentheses {
+        true => [prefix, written].concat(),
+        false => [prefix, b"(", written, b")"].concat(),
+    }
+}
+
+/// `Expression::is_primary_expression`
+fn is_primary_expression(e: Expr) -> bool {
+    e.is_parenthesized()
+        || match e.kind() {
+            ExprKind::Fn(func) => !func.is_arrow(),
+            ExprKind::Ident(_) | ExprKind::This | ExprKind::Class(_) | ExprKind::Array(_) | ExprKind::Object(_) => true,
+            _ => ast_utils::is_literal(e),
+        }
+}
+
 impl Rule for NoUnneededTernary {
     const META: Meta = Meta::eslint("no-unneeded-ternary", Kind::Suggestion).fixable(Fixable::Code);
     type State<'a> = ();
@@ -95,6 +144,12 @@ impl Rule for NoUnneededTernary {
             let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
             if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
                 cx.report(e, UNNECESSARY_CONDITIONAL_EXPRESSION).fix(|fixer| {
+                    if is_oxlint {
+                        return Some(match consequent == alternate {
+                            true => fixer.replace(e, yes.text()),
+                            false => fixer.replace(e, boolean_of_oxlint(test, alternate)),
+                        });
+                    }
                     if consequent == alternate {
                         // Not `foo() ? true : true`, which calls `foo`.
                         return (test.tag() == ExprTag::Ident).then(|| fixer.replace(e, yes.text()));
@@ -112,6 +167,14 @@ impl Rule for NoUnneededTernary {
                 && tested == consequent
             {
                 cx.report(e, UNNECESSARY_CONDITIONAL_ASSIGNMENT).fix(|fixer| {
+                    if is_oxlint {
+                        let file = fixer.file();
+                        let (test, alternate) = (file.slice(test.outer_span()), file.slice(no.outer_span()));
+                        return fixer.replace(e, match is_primary_expression(no) {
+                            true => [test, b" || ", alternate].concat(),
+                            false => [test, b" || (", alternate, b")"].concat(),
+                        });
+                    }
                     let or_precedence = ast_utils::get_binary_operator_precedence(BinOp::Or);
                     let should_parenthesize_alternate = (ast_utils::get_precedence(no) < or_precedence
                         || ast_utils::is_coalesce_expression(no))

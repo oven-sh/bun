@@ -1293,8 +1293,12 @@ pub fn is_global_reference(e: Expr<'_>) -> bool {
     let (Some(name), file) = (e.as_ident(), e.file()) else {
         return false;
     };
-    (file.global_named(name).is_some() || file.language().eslint_8.is_some())
-        && e.reference().is_some_and(|it| it.global().is_some())
+    let goes_by_the_name = file.language().eslint_8.is_some();
+    (goes_by_the_name || file.global_named(name).is_some())
+        && e.reference().is_some_and(|it| match goes_by_the_name {
+            true => it.symbol().is_none(),
+            false => it.global().is_some(),
+        })
         && file.scope().get_name(name).is_none()
 }
 

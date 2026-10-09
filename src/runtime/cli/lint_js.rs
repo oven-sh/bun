@@ -532,6 +532,8 @@ impl Engine for Engines {
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {
+        // `bun format` has not: it needs no VM but for a language that only a plugin of Prettier reads.
+        start_javascriptcore(0);
         self.demand.expect(size, most);
     }
 

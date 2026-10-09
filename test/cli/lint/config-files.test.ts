@@ -312,7 +312,12 @@ describe.concurrent("an .oxlintrc.json", () => {
     [{ jasmine: true }, [1, 2, 3, 4, 5, 6]],
   ])("the environments are oxlint's: %j", async (env, lines) => {
     const { problems } = await lint({
-      ".oxlintrc.json": JSON.stringify({ plugins: [], categories: { correctness: "off" }, rules: { "no-undef": "error" }, env }),
+      ".oxlintrc.json": JSON.stringify({
+        plugins: [],
+        categories: { correctness: "off" },
+        rules: { "no-undef": "error" },
+        env,
+      }),
       "a.js":
         "QuotaExceededError;\nTemporal;\nnavigator;\n$0;\nBun;\nregisterProcessor;\nexpect;\nthrowUnless;\nexport {};\n",
     });
@@ -758,6 +763,15 @@ describe.concurrent("an .oxlintrc.json", () => {
   });
 
   // What oxlint 1.87 does with each.
+  test("files that each extend the next one twice are not read 2^n times", async () => {
+    const files: Record<string, string> = { "a.js": code, "d22.json": "{}" };
+    for (let i = 0; i < 22; i++)
+      files[i ? `d${i}.json` : ".oxlintrc.json"] = `{"extends":["./d${i + 1}.json","./d${i + 1}.json"]}`;
+    const { stdout, stderr, exitCode } = await lint(files, ["a.js"]);
+    expect(stdout + stderr).toContain('Too many files in "extends".');
+    expect(exitCode).toBe(1);
+  });
+
   test("`plugins` of an override count for that override alone", async () => {
     const files = Object.fromEntries(
       ["a.ts", "a.test.ts", "a.spec.test.ts"].map(name => [name, "beforeEach(() => {});\ntest('a', () => {});\n"]),
@@ -1360,6 +1374,12 @@ describe.concurrent("the configuration files of ESLint 8", () => {
     expect(old.exitCode).toBe(0);
     expect((await lint(installed("7.18.0"), ["--quiet", "."])).stderr).toContain("is installed.");
     expect((await lint(installed("5.62.0"))).problems).toEqual([]);
+    // What is only used as a type is reported since version 8.
+    const typeOnly = { "a.ts": "const a = 1;\nexport type A = typeof a;\n" };
+    expect((await lint({ ...installed("7.18.0"), ...typeOnly }, ["a.ts"])).problems).toEqual([]);
+    expect((await lint({ ...installed("8.0.0"), ...typeOnly }, ["a.ts"])).problems).toEqual([
+      "a.ts:1:7 @typescript-eslint/no-unused-vars",
+    ]);
     const current = await lint(installed("8.0.0"));
     expect(current.problems).toEqual(["a.js:1:21 @typescript-eslint/no-unused-vars"]);
     expect(current.stderr).not.toContain("is installed.");
@@ -1386,6 +1406,16 @@ describe.concurrent("the configuration files of ESLint 8", () => {
       expect(stderr).toContain("is invalid:");
       expect(exitCode).toBe(2);
     }
+  });
+
+  test("files that each extend the next one twice", async () => {
+    const files: Record<string, string> = { ".eslintrc.json": rc({ extends: "./d0.json" }), "a.js": "" };
+    for (let i = 0; i < 22; i++)
+      files[`d${i}.json`] = JSON.stringify({ extends: [`./d${i + 1}.json`, `./d${i + 1}.json`] });
+    files["d22.json"] = "{}";
+    const { stderr, exitCode } = await lint(files);
+    expect(stderr).toContain('Too many files in "extends".');
+    expect(exitCode).toBe(2);
   });
 
   test("--print-config has no settings that the files do not have", async () => {

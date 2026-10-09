@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::static_property_name;
 
 /// Require or disallow named `function` expressions.
 pub struct FuncNames {
@@ -26,6 +28,72 @@ impl Config {
 
 const UNNAMED: Message = Message::new("unnamed", "Unexpected unnamed {{name}}.");
 const NAMED: Message = Message::new("named", "Unexpected named {{name}}.");
+/// What oxlint suggests.
+const REMOVE_NAME: Message = Message::new("removeName", "Remove the name.");
+
+/// [`guess_function_name`], by what the function is in.
+type GuessedNames<'a> = AncestorMemo<'a, Option<Name<'a>>>;
+
+/// oxlint's `is_valid_identifier_name`.
+fn is_valid_identifier_name(name: &[u8]) -> bool {
+    let is_taken = matches!(
+        name,
+        b"let" | b"static" | b"implements" | b"interface" | b"package" | b"private" | b"protected" | b"public"
+            | b"await" | b"break" | b"case" | b"catch" | b"class" | b"const" | b"continue" | b"debugger" | b"default"
+            | b"delete" | b"do" | b"else" | b"enum" | b"export" | b"extends" | b"false" | b"finally" | b"for"
+            | b"function" | b"if" | b"import" | b"in" | b"instanceof" | b"new" | b"null" | b"return" | b"super"
+            | b"switch" | b"this" | b"throw" | b"true" | b"try" | b"typeof" | b"var" | b"void" | b"while" | b"with"
+            | b"yield" | b"Infinity" | b"NaN" | b"globalThis" | b"undefined" | b"arguments" | b"eval"
+            | b"constructor" | b"async"
+    );
+    !is_taken && text::is_identifier_name(name)
+}
+
+/// oxlint's `guess_function_name`: that of the first assignment, declarator, property or field around the function,
+/// however far out that is.
+fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Name<'a>> {
+    let found = known.find(func.into(), |_, parent| match parent {
+        Node::Expr(e) => match e.kind() {
+            ExprKind::Assign { target, .. } if !utils::is_assignment_target(e) => {
+                Some(target.as_ident().or_else(|| static_property_name(target)))
+            }
+            _ => None,
+        },
+        Node::VarDecl(declarator) if matches!(declarator.parent(), Node::Stmt(it) if it.tag() == StmtTag::Var) => {
+            Some(declarator.pat().as_ident())
+        }
+        Node::Prop(prop) if !prop.is_jsx_attribute() && prop.kind() != PropKind::Spread => {
+            let is_in_target = matches!(prop.parent(), Node::Expr(object) if utils::is_assignment_target(object));
+            (!is_in_target).then(|| prop.key().and_then(Key::name))
+        }
+        Node::Member(member)
+            if member.kind() == MemberKind::Property
+                && matches!(member.parent(), Node::Class(_))
+                && !member.flags().contains(Flags::ACCESSOR) =>
+        {
+            Some(member.key().and_then(Key::name))
+        }
+        _ => None,
+    });
+    found.flatten().filter(|name| is_valid_identifier_name(name.bytes()))
+}
+
+/// oxlint's fix: the function gets the name, unless that means something in the function.
+fn add_name<'a>(fixer: Fixer<'a>, func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Fix> {
+    let (name, scope) = (guess_function_name(func, known)?, func.scope()?);
+    let is_used_in_function = |symbol: Symbol<'a>| match scope.contains(symbol.scope()) {
+        true => symbol.references().next().is_some(),
+        false => scope.through().any(|it| it.symbol() == Some(symbol)),
+    };
+    if scope.resolve_name(name).is_some_and(is_used_in_function) {
+        return None;
+    }
+    let after = match func.type_params().first() {
+        Some(first) => fixer.file().token_before(first)?.span(),
+        None => func.params_span()?,
+    };
+    Some(fixer.insert_before(after, [b" ", name.bytes()].concat()))
+}
 
 fn is_identifier(pat: Pat) -> bool {
     pat.tag() == PatTag::Ident
@@ -94,13 +162,19 @@ impl FuncNames {
             true => (func.estree_span().start, utils::oxlint::get_function_name_with_kind(func)),
             false => (head.start, ast_utils::get_function_name_with_kind(func)),
         };
-        cx.report(Span::new(start, head.end), message).data("name", name);
+        let report = cx.report(Span::new(start, head.end), message).data("name", name);
+        if cx.language().is_oxlint {
+            match func.name() {
+                Some(name) => report.suggest(REMOVE_NAME, |fixer| fixer.remove(name)),
+                None => report.fix(|fixer| add_name(fixer, func, &mut cx.state)),
+            };
+        }
     }
 }
 
 impl Rule for FuncNames {
     const META: Meta = Meta::eslint("func-names", Kind::Suggestion);
-    type State<'a> = ();
+    type State<'a> = GuessedNames<'a>;
 
     fn new(options: &Options) -> Self {
         FuncNames {
@@ -109,7 +183,8 @@ impl Rule for FuncNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GuessedNames<'a> {
         on.funcs(Self::check);
+        GuessedNames::default()
     }
 }

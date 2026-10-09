@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::static_property_name_or_regex;
 
 /// Disallow the unary operators `++` and `--`.
 pub struct NoPlusplus {
@@ -40,7 +41,7 @@ impl Rule for NoPlusplus {
         on.exprs([ExprTag::Unary], |rule, e, cx| {
             let ExprKind::Unary {
                 op: op @ (UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec),
-                ..
+                operand,
             } = e.kind()
             else {
                 return;
@@ -48,7 +49,13 @@ impl Rule for NoPlusplus {
             if rule.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {
                 return;
             }
-            cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
+            let report = cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
+            // What oxlint suggests for a name, and for a property whose name is known.
+            let has_name = operand.tag() == ExprTag::Ident || static_property_name_or_regex(operand).is_some();
+            if cx.language().is_oxlint && has_name {
+                let operator: &[u8] = if matches!(op, UnOp::PreInc | UnOp::PostInc) { b" += 1" } else { b" -= 1" };
+                report.fix(|fixer| fixer.replace(e, [operand.text(), operator].concat()));
+            }
         });
         AncestorMemo::default()
     }

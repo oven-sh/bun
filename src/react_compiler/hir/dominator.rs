@@ -275,62 +275,30 @@ fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
 // Post-dominator frontier
 // =============================================================================
 
-/// Computes the post-dominator frontier of `target_id`. These are immediate
+/// Computes the post-dominator frontier of each `target_id`. These are immediate
 /// predecessors of nodes that post-dominate `target_id` from which execution may
 /// not reach `target_id`. Intuitively, these are the earliest blocks from which
 /// execution branches such that it may or may not reach the target block.
-pub fn post_dominator_frontier(
+pub fn post_dominator_frontiers(
     func: &HirFunction,
     post_dominators: &PostDominator,
-    target_id: BlockId,
-) -> HashSet<BlockId> {
-    let target_post_dominators = post_dominators_of(func, post_dominators, target_id);
-    let mut visited = HashSet::default();
-    let mut frontier = HashSet::default();
-
-    let mut to_visit: Vec<BlockId> = target_post_dominators.iter().copied().collect();
-    to_visit.push(target_id);
-
-    for block_id in to_visit {
-        if !visited.insert(block_id) {
-            continue;
-        }
-        if let Some(block) = func.body.blocks.get(&block_id) {
-            for &pred in &block.preds {
-                if !target_post_dominators.contains(&pred) {
-                    frontier.insert(pred);
+) -> IdMap<BlockId, HashSet<BlockId>> {
+    let mut frontiers: IdMap<BlockId, HashSet<BlockId>> = IdMap::default();
+    for (&block_id, block) in &func.body.blocks {
+        for &pred in &block.preds {
+            // `pred` is in the frontier of `block_id` and its post-dominators that are not `pred`'s.
+            let end = post_dominators.get(pred).unwrap_or(pred);
+            let mut target_id = block_id;
+            while target_id != end {
+                frontiers.entry(target_id).or_default().insert(pred);
+                match post_dominators.get(target_id) {
+                    Some(next) if next != post_dominators.exit => target_id = next,
+                    _ => break,
                 }
             }
         }
     }
-    frontier
-}
-
-/// Walks up the post-dominator tree to collect all blocks that post-dominate `target_id`.
-pub fn post_dominators_of(
-    func: &HirFunction,
-    post_dominators: &PostDominator,
-    target_id: BlockId,
-) -> HashSet<BlockId> {
-    let mut result = HashSet::default();
-    let mut visited = HashSet::default();
-    let mut queue = vec![target_id];
-
-    while let Some(current_id) = queue.pop() {
-        if !visited.insert(current_id) {
-            continue;
-        }
-        if let Some(block) = func.body.blocks.get(&current_id) {
-            for &pred in &block.preds {
-                let pred_post_dom = post_dominators.get(pred).unwrap_or(pred);
-                if pred_post_dom == target_id || result.contains(&pred_post_dom) {
-                    result.insert(pred);
-                }
-                queue.push(pred);
-            }
-        }
-    }
-    result
+    frontiers
 }
 
 // =============================================================================

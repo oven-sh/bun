@@ -164,6 +164,16 @@ impl BanTsComment {
             };
             match option {
                 DirectiveConfig::Allowed => {}
+                // For oxlint it is a fix, of what is in the comment, and of every `@ts-ignore` there.
+                DirectiveConfig::Banned if directive == "ignore" && cx.language().is_oxlint => {
+                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).fix(|fixer| {
+                        let value = comment.comment_value();
+                        let parts: Vec<&[u8]> = strings::split(value, TS_IGNORE).collect();
+                        let start = comment.start() + 2;
+                        let inside = Span::new(start, start + value.len() as u32);
+                        fixer.replace(inside, parts.join(&b"@ts-expect-error"[..]))
+                    });
+                }
                 DirectiveConfig::Banned if directive == "ignore" => {
                     cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest(
                         REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR,

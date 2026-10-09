@@ -68,7 +68,8 @@ for (const [key, list] of groups) {
     }
     for (const it of diagnostics) {
       const index = Number(/c(\d+)\./.exec(it.filename)![1]);
-      if (!it.code) found[name][index] = null;
+      // `TS(1049)` is an error of oxc's semantic analysis: it has not looked at the file.
+      if (!/^[a-z]/.test(it.code ?? "")) found[name][index] = null;
       else found[name][index]?.push(`${it.labels[0].span.line}:${it.labels[0].span.column}`);
     }
   }

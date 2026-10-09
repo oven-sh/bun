@@ -50,7 +50,9 @@ fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) 
 }
 
 fn is_merged_with_other_declaration<'a>(statement: Stmt<'a>, interface: Interface<'a>) -> bool {
-    let Some(symbol) = Node::Stmt(statement).scope().get_name(interface.name().name()) else {
+    // typescript-eslint looks in the scope of the type parameters if there are any, oxlint where the name is.
+    let around = if statement.file().language().is_oxlint { statement.parent() } else { Node::Stmt(statement) };
+    let Some(symbol) = around.scope().get_name(interface.name().name()) else {
         return false;
     };
     symbol.declarations().any(|declaration| match declaration {

@@ -22,9 +22,13 @@ const PREFER_RECORD_SUGGESTION: Message = Message::new(
 
 /// Whether there is a comment in `node` that is in none of `preserved`: a fix that only keeps the
 /// text of those would drop it.
+///
+/// oxlint does not look for them.
 fn has_unpreserved_comments<'a>(file: &'a File<'a>, node: Span, preserved: [Option<TypeNode<'a>>; 2]) -> bool {
-    file.comments_in(node)
-        .any(|comment| preserved.iter().flatten().all(|target| !target.span().contains(comment.span())))
+    !file.language().is_oxlint
+        && file
+            .comments_in(node)
+            .any(|comment| preserved.iter().flatten().all(|target| !target.span().contains(comment.span())))
 }
 
 /// The type alias that `ty` is part of, with no type annotation in between.
@@ -299,6 +303,7 @@ impl ConsistentIndexedObjectStyle {
         let should_fix = matches!(key.kind(), TypeKind::Keyword(Keyword::String | Keyword::Number | Keyword::Symbol));
         let fix_or_suggest = match should_fix && !has_unpreserved_comments(cx.file(), ty.span(), [Some(key), Some(value)]) {
             true => FixOrSuggest::Fix,
+            false if cx.language().is_oxlint => FixOrSuggest::None,
             false => FixOrSuggest::Suggest,
         };
         get_fix_or_suggest(

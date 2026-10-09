@@ -54,6 +54,7 @@
   "presets: eslint:all on more code": "messages",
   "presets: eslint:all, all its rules": "config",
   "presets: rules that ESLint 9 removed: require-jsdoc, valid-jsdoc": "exit",
+  "presets: rules that go by the name of a global: Promise, Symbol, BigInt, Reflect without env: no-async-promise-executor ..": "messages",
   "command-line: ~/.eslintrc.json, from beside ~": "messages",
   "command-line: ~/.eslintrc.yml": "messages",
   "command-line: ~/package.json#eslintConfig": "messages",

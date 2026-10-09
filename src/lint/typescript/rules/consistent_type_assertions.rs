@@ -86,6 +86,64 @@ fn is_as_parameter(node: Expr) -> bool {
     }
 }
 
+/// oxlint's `needs_parens_for_parent`, for a `node` that is not in parentheses.
+fn needs_parens_for_parent(node: Expr) -> bool {
+    match node.parent() {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Binary { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Await(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Satisfies { .. } => true,
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => call.callee() == node,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == node,
+            _ => false,
+        },
+        Node::Func(func) => func.is_arrow(),
+        _ => false,
+    }
+}
+
+/// What oxlint makes of `<cast>expression`, which is `node`.
+fn fix_as_oxlint<'a>(fixer: Fixer<'a>, node: Expr<'a>, expression: Expr<'a>, cast: &[u8]) -> Fix {
+    let needs_parentheses = !node.is_parenthesized() && needs_parens_for_parent(node);
+    let starts_a_statement = || match node.parent() {
+        Node::Stmt(parent) => utils::is_expression_statement(parent),
+        Node::Func(func) => func.is_arrow(),
+        _ => false,
+    };
+    let wraps_expression = !expression.is_parenthesized()
+        && match expression.kind() {
+            ExprKind::Binary { op, .. } => op == BinOp::Comma,
+            ExprKind::Fn(func) => func.is_arrow(),
+            ExprKind::Object(_) => !needs_parentheses && starts_a_statement(),
+            ExprKind::Assign { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Yield { .. }
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Satisfies { .. }
+            | ExprKind::Instantiation { .. } => true,
+            _ => false,
+        };
+    let open = |is_needed: bool| -> &'static [u8] { if is_needed { b"(" } else { b"" } };
+    let close = |is_needed: bool| -> &'static [u8] { if is_needed { b")" } else { b"" } };
+    let text = [
+        open(needs_parentheses),
+        open(wraps_expression),
+        fixer.file().slice(expression.outer_span()),
+        close(wraps_expression),
+        b" as ",
+        cast,
+        close(needs_parentheses),
+    ];
+    fixer.replace(node, text.concat())
+}
+
 impl ConsistentTypeAssertions {
     /// `ty` is `None` for `as const` and `<const>`.
     fn report_incorrect_assertion_type<'a>(
@@ -106,6 +164,9 @@ impl ConsistentTypeAssertions {
             }
             Style::As => {
                 cx.report(node, AS).data("cast", cast).fix(|fixer| {
+                    if fixer.file().language().is_oxlint {
+                        return fix_as_oxlint(fixer, node, expression, cast);
+                    }
                     let as_precedence = OperatorPrecedence::Relational;
                     let mut text = get_wrapped_code(
                         expression.text(),

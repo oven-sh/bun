@@ -33,13 +33,21 @@ fn break_after(e: Expr) -> Option<Span> {
     text::has_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
 }
 
+/// With `--fix-dangerously` oxlint puts a `;` before it.
+fn report<'a>(at: Span, message: Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
+    let report = cx.report(at, message);
+    if cx.language().is_oxlint {
+        report.fix_dangerously(|fixer| fixer.insert_before(at, ";"));
+    }
+}
+
 impl NoUnexpectedMultiline {
     fn check_index<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Index { obj, chain, .. } = e.kind()
             && chain != Chain::Start
             && let Some(open) = break_after(obj)
         {
-            cx.report(open, PROPERTY);
+            report(open, PROPERTY, cx);
         }
     }
 
@@ -49,7 +57,7 @@ impl NoUnexpectedMultiline {
             && !call.args().is_empty()
             && let Some(open) = break_after(call.callee())
         {
-            cx.report(open, FUNCTION);
+            report(open, FUNCTION, cx);
         }
     }
 
@@ -71,7 +79,7 @@ impl NoUnexpectedMultiline {
                 return;
             }
         }
-        cx.report(Span::new(template.start, template.start + 1), TAGGED_TEMPLATE);
+        report(Span::new(template.start, template.start + 1), TAGGED_TEMPLATE, cx);
     }
 
     /// `a / b / c` where `/ b /c` looks like a regular expression with the flags `c`.
@@ -108,7 +116,7 @@ impl NoUnexpectedMultiline {
                 _ => false,
             })
         {
-            cx.report(first_slash, DIVISION);
+            report(first_slash, DIVISION, cx);
         }
     }
 }

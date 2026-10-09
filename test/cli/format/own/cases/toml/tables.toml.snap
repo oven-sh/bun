@@ -88,40 +88,4 @@ w = 4
 [f."g h".'i']
 # a comment at the end
 
--------------------------------------
-{ endOfLine: "crlf", printWidth: 80 }
--------------------------------------
-[a]
-x = 1
-[b.c] # behind a header
-y = 2
-[b.c.d]
-z = 3
-
-
-[[e]]
-# a comment under a header
-w = 4
-[[e]] # again
-[f."g h".'i']
-# a comment at the end
-
---------------------------------------
-{ endOfLine: "crlf", printWidth: 100 }
---------------------------------------
-[a]
-x = 1
-[b.c] # behind a header
-y = 2
-[b.c.d]
-z = 3
-
-
-[[e]]
-# a comment under a header
-w = 4
-[[e]] # again
-[f."g h".'i']
-# a comment at the end
-
 ===================== End =====================

@@ -716,15 +716,18 @@ impl<'p, 's> Checker<'p, 's> {
         // of the literal. Without type variables there, or in a contextual type pushed for a part
         // along the way, no `const` type variable can be the contextual type further in.
         let (mut top, mut highest, mut may_be_expected) = (e, ExprId::NONE, false);
+        let is_pushed_with_type_variables = |info: &&ContextualInfo| {
+            info.file == file && info.t.is_some_and(|t| self.has_type_variables(t))
+        };
+        let pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
+            .filter(is_pushed_with_type_variables)
+            .map(|info| info.node)
+            .collect();
         loop {
             // `isValidConstAssertionArgument`: the contextual type is requested for nothing else.
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= self.contextual.iter().any(|info| {
-                    info.file == file
-                        && info.node == top
-                        && info.t.is_some_and(|t| self.has_type_variables(t))
-                });
+                may_be_expected |= pushed_with_type_variables.contains(&top);
             }
             top = match self.const_context_parent(file, top) {
                 ControlFlow::Continue(outer) => outer,

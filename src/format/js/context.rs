@@ -2,6 +2,7 @@
 
 use super::comments::{Comment, Comments};
 use super::source_text::SourceText;
+use super::utils::tailwindcss::TailwindContext;
 use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
 use crate::options::{FormatOptions, HtmlRoot, JavaScriptParser};
@@ -24,6 +25,8 @@ pub(crate) struct JsFormatContext<'a> {
     /// With `quoteProps: "consistent"`, whether the properties of the enclosing objects are
     /// quoted.
     quote_needed_stack: Vec<bool>,
+    /// See `utils/tailwindcss.rs`. The last is the one that counts.
+    tailwind_contexts: Vec<TailwindContext>,
     /// See `Formatter::is_quiet`.
     pub(crate) is_quiet: bool,
     pub(crate) cursor: CursorRegion,
@@ -63,6 +66,7 @@ impl<'a> JsFormatContext<'a> {
             comments: Comments::new(SourceText::new(source), comments),
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
+            tailwind_contexts: Vec::new(),
             is_quiet: false,
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
@@ -135,5 +139,26 @@ impl<'a> JsFormatContext<'a> {
 
     pub(crate) fn is_quote_needed(&self) -> bool {
         self.quote_needed_stack.last().copied().unwrap_or(false)
+    }
+
+    pub(crate) fn push_tailwind_context(&mut self, context: TailwindContext) {
+        self.tailwind_contexts.push(context);
+    }
+
+    pub(crate) fn pop_tailwind_context(&mut self) {
+        self.tailwind_contexts.pop();
+    }
+
+    #[inline]
+    pub(crate) fn tailwind_context(&self) -> Option<TailwindContext> {
+        self.tailwind_contexts.last().copied()
+    }
+
+    /// Says whether what is written is in a call of a function that does not take classes. Returns what was said before,
+    /// if there is a context.
+    #[inline]
+    pub(crate) fn disable_tailwind_context(&mut self, is_disabled: bool) -> Option<bool> {
+        let context = self.tailwind_contexts.last_mut()?;
+        Some(std::mem::replace(&mut context.is_disabled, is_disabled))
     }
 }

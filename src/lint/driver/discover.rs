@@ -109,6 +109,9 @@ struct Directory {
     /// The ignore files above it or, for the one that is searched, also those in it. They are only
     /// read where they count.
     ignores: Chain,
+    /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
+    /// alone about what it is nearest to.
+    is_hidden: bool,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -182,12 +185,15 @@ fn search(
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
         let inherited = loader.for_directory(&search.base_path)?;
         // From here on, a directory is only listed if it is not ignored.
-        if !inherited.config.is_directory_ignored(&search.base_path) {
+        let is_hidden = inherited.config.is_directory_ignored(&search.base_path);
+        let name = paths::basename(&search.base_path);
+        if !is_hidden || loader.looks_for_configurations_in(&inherited, name) {
             level.push(Directory {
                 path: search.base_path.clone(),
                 relative: Vec::new(),
                 ignores: loader.ignore_files_at(&search.base_path, &inherited),
                 inherited,
+                is_hidden,
             });
         }
     }
@@ -216,6 +222,7 @@ fn search(
                     return;
                 }
             };
+            let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
@@ -260,16 +267,22 @@ fn search(
                     false => paths::join(&directory.relative, &entry.name),
                 };
                 if entry.is_directory {
-                    if matchers.iter().any(|it| it.matches_partially(&relative))
-                        && !own.config.is_directory_ignored_in(&path)
-                    {
+                    if !matchers.iter().any(|it| it.matches_partially(&relative)) {
+                        continue;
+                    }
+                    let is_hidden = is_hidden || own.config.is_directory_ignored_in(&path);
+                    if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         directories.push(Directory {
                             path,
                             relative,
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),
+                            is_hidden,
                         });
                     }
+                    continue;
+                }
+                if is_hidden {
                     continue;
                 }
                 let mut matches = false;

@@ -510,6 +510,24 @@ describe.concurrent("bun lint", () => {
     });
 
     describe("like oxlint, with an .oxlintrc.json", () => {
+      test("--fix applies the fixes of a rule that is about several files", async () => {
+        const result = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              categories: { correctness: "off" },
+              plugins: ["import"],
+              rules: { "import/no-duplicates": "error", "no-var": "error" },
+            }),
+            "a.js": "import {a} from './foo';\nimport {c} from './foo';\nvar x = a + c;\nexport { x };\n",
+            "foo.js": "export const a = 1, c = 2;\n",
+          },
+          ["--fix", "-f", "unix"],
+          { reads: ["a.js"] },
+        );
+        expect(result.files["a.js"]).toStartWith("import {a,c} from './foo';\n");
+        expect(result.stdout).not.toContain("no-duplicates");
+      });
+
       test("--fix, --fix-suggestions, --fix-dangerously and --quiet change what oxlint's change", async () => {
         const files = {
           ".oxlintrc.json": JSON.stringify({

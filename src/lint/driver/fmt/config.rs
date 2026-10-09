@@ -8,7 +8,7 @@
 //! `.editorconfig` counts, and which files are ignored (`files.rs`).
 
 use super::cli::{Options, Precedence};
-use super::editorconfig;
+use super::{editorconfig, tailwind};
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
@@ -16,6 +16,7 @@ use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_lint::json::{self, Notation};
+use bun_lint::linter::config::FastGlob;
 use bun_lint::linter::{Glob, write_json};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -113,8 +114,24 @@ const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath
 /// that takes none has them, so that `"80"` is not 80.
 type Settings = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// What a pattern of an override is matched with.
+enum PatternGlob {
+    /// `micromatch`, as far as `minimatch` is the same.
+    Prettier(Glob),
+    Oxfmt(FastGlob),
+}
+
+impl PatternGlob {
+    fn matches(&self, path: &[u8]) -> bool {
+        match self {
+            PatternGlob::Prettier(glob) => glob.matches(path),
+            PatternGlob::Oxfmt(glob) => glob.matches(path),
+        }
+    }
+}
+
 struct Pattern {
-    glob: Glob,
+    glob: PatternGlob,
     /// As it is written.
     has_slash: bool,
 }
@@ -151,46 +168,27 @@ pub(crate) struct Scope {
     editorconfigs: Vec<Arc<editorconfig::File>>,
 }
 
-/// oxc's `GlobSet::new`: a pattern without a slash is for a name in any directory.
-pub(crate) fn glob_of_oxc(pattern: &[u8]) -> Glob {
-    // `{a}` is `a` there.
-    let mut without_single_braces = Vec::with_capacity(pattern.len());
-    let mut rest = pattern;
-    while let Some(open) = strings::index_of_char_usize(rest, b'{') {
-        let close = strings::index_of_char_usize(&rest[open..], b'}').map(|it| open + it);
-        match close.filter(|&close| strings::index_of_any(&rest[open + 1..close], b",{").is_none())
-        {
-            Some(close) => {
-                without_single_braces.extend_from_slice(&rest[..open]);
-                without_single_braces.extend_from_slice(&rest[open + 1..close]);
-                rest = &rest[close + 1..];
-            }
-            None => {
-                without_single_braces.extend_from_slice(&rest[..=open]);
-                rest = &rest[open + 1..];
-            }
-        }
-    }
-    without_single_braces.extend_from_slice(rest);
-    let pattern = &without_single_braces[..];
-    match pattern.strip_prefix(b"./") {
-        Some(rest) => Glob::new(rest),
-        None if strings::contains_char(pattern, b'/') => Glob::new(pattern),
-        None => Glob::new(&[b"**/", pattern].concat()),
+/// An element of oxc's `GlobSet`.
+pub(crate) fn glob_of_oxc(pattern: &[u8]) -> FastGlob {
+    FastGlob::new(pattern)
+}
+
+/// A string, or the strings of an array.
+fn texts_of(json: Option<&Json>) -> Vec<&[u8]> {
+    match json {
+        Some(Json::String(one)) => vec![one],
+        Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
+        _ => Vec::new(),
     }
 }
 
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
-    let all: Vec<&[u8]> = match json {
-        Some(Json::String(one)) => vec![one],
-        Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
-        _ => Vec::new(),
-    };
+    let all = texts_of(json);
     let pattern = |text: &&[u8]| Pattern {
         glob: if is_oxfmt {
-            glob_of_oxc(text)
+            PatternGlob::Oxfmt(glob_of_oxc(text))
         } else {
-            Glob::new(text)
+            PatternGlob::Prettier(Glob::new(text))
         },
         has_slash: strings::contains_char(text, b'/'),
     };
@@ -304,6 +302,11 @@ fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
     text
 }
 
+/// `experimentalTailwindcss` is the old name.
+fn is_tailwind(name: &[u8]) -> bool {
+    matches!(name, b"sortTailwindcss" | b"experimentalTailwindcss")
+}
+
 fn settings(json: &Json, is_oxfmt: bool) -> Settings {
     let mut settings = Vec::new();
     for (name, value) in json.as_object().unwrap_or_default() {
@@ -325,7 +328,8 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
             Json::Array(_) | Json::Object(_)
                 if name == b"plugins"
                     || name.starts_with(b"importOrder")
-                    || name.ends_with(b"ortImports") =>
+                    || name.ends_with(b"ortImports")
+                    || (is_oxfmt && is_tailwind(name)) =>
             {
                 let mut text = Vec::new();
                 write_json(&mut text, value);
@@ -420,20 +424,20 @@ pub(super) fn has_configuration_of_oxfmt(directory: &[u8]) -> bool {
 }
 
 /// Whether the `package.json` nearest to `directory` has oxfmt among its dependencies, or Vite+, which brings it, and
-/// not Prettier. That tells what a project without a configuration file is formatted with.
-fn depends_on_oxfmt_alone(directory: &[u8]) -> bool {
+/// whether it has Prettier. That tells what a project without a configuration file is formatted with.
+fn formatters_depended_on(directory: &[u8]) -> (bool, bool) {
     let nearest = paths::ancestors(directory)
         .find_map(|it| fs::read(&paths::join(it, b"package.json")).ok())
         .and_then(|text| json::parse(&text));
     let Some(json) = nearest else {
-        return false;
+        return (false, false);
     };
     let has = |name: &[u8]| {
         [&b"dependencies"[..], b"devDependencies"]
             .iter()
             .any(|key| json.get(key).is_some_and(|it| it.get(name).is_some()))
     };
-    (has(b"oxfmt") || has(b"vite-plus")) && !has(b"prettier")
+    (has(b"oxfmt") || has(b"vite-plus"), has(b"prettier"))
 }
 
 impl Config {
@@ -573,6 +577,8 @@ pub(crate) struct Configs<'c> {
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
     /// The options that are set, change what the tool prints, and have no effect here.
     pub(crate) unsupported_options: Guarded<Vec<Vec<u8>>>,
+    /// For `sortTailwindcss`.
+    pub(crate) classes: Arc<tailwind::Classes>,
 }
 
 impl<'c> Configs<'c> {
@@ -588,12 +594,20 @@ impl<'c> Configs<'c> {
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
             unsupported_options: Guarded::new(Vec::new()),
+            classes: Arc::default(),
         };
         let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
             Ok(scope) => match &scope.config {
                 Some(config) => config.is_oxfmt,
-                None => (options.is_like_oxfmt)
-                    .unwrap_or_else(|| depends_on_oxfmt_alone(&environment.cwd)),
+                None => options.is_like_oxfmt.unwrap_or_else(|| {
+                    let (has_oxfmt, has_prettier) = formatters_depended_on(&environment.cwd);
+                    if has_oxfmt && has_prettier {
+                        configs.warn(&[
+                            b"There is no configuration file, and the project depends on both oxfmt and prettier: files are formatted like Prettier does. --flavor oxfmt, or an .oxfmtrc.json, which bun format --init writes, changes that.",
+                        ]);
+                    }
+                    has_oxfmt && !has_prettier
+                }),
             },
             // The name of the one that cannot be used tells.
             Err(_) => paths::ancestors(&environment.cwd)
@@ -760,6 +774,18 @@ impl<'c> Configs<'c> {
         {
             return Err(fail(
                 b"\"overrides\" is not an array of objects with \"files\", a pattern or an array of patterns.",
+            ));
+        }
+        if is_oxfmt
+            && let Some(refusal) = (json.get(b"overrides").and_then(Json::as_array))
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|it| [it.get(b"files"), it.get(b"excludeFiles")])
+                .flat_map(texts_of)
+                .find_map(FastGlob::refusal)
+        {
+            return Err(Fatal(
+                [&b"Failed to parse configuration.\n"[..], &refusal[..]].concat(),
             ));
         }
         let ignored = json
@@ -1061,6 +1087,7 @@ impl<'c> Configs<'c> {
             let _ = resolved.options.set(b"sortPackageJson", b"true");
         }
         let mut sort_imports: Option<Vec<u8>> = None;
+        let mut sort_tailwindcss: Option<Vec<u8>> = None;
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt
             && !config.is_some_and(|it| it.names_other_plugins)
@@ -1096,7 +1123,14 @@ impl<'c> Configs<'c> {
                         ));
                     }
                 }
-                b"sortTailwindcss" | b"experimentalTailwindcss" if value != b"false" => {
+                // An override changes the keys that it has.
+                name if is_oxfmt && is_tailwind(name) => {
+                    sort_tailwindcss = Some(match &sort_tailwindcss {
+                        Some(before) => merged_objects(before, value),
+                        None => value.to_vec(),
+                    });
+                }
+                name if is_tailwind(name) && value != b"false" => {
                     let mut unsupported = self.unsupported_options.lock();
                     if !unsupported.iter().any(|it| it == name) {
                         unsupported.push(name.to_vec());
@@ -1135,6 +1169,11 @@ impl<'c> Configs<'c> {
             }
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
+        if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
+            let base = config.map_or(&self.environment.cwd[..], |it| paths::dirname(&it.path));
+            let tailwind = tailwind::for_file(&self.classes, &value, base, path);
+            resolved.options.tailwind = Some(Arc::new(tailwind));
+        }
         Ok(resolved)
     }
 

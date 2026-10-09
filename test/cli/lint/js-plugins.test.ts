@@ -393,13 +393,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(wrongOptions.stderr).toContain("demo/no-foo");
       expect(wrongOptions.stderr).toContain("nope");
-      expect(wrongOptions.exitCode).toBe(2);
+      expect(wrongOptions.exitCode).toBe(1);
       const unknown = await lint(
         { ...files, ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/nope": "error" } }) },
         [],
       );
       expect(unknown.stderr).toContain("Rule 'nope' not found in plugin 'demo'");
-      expect(unknown.exitCode).toBe(2);
+      expect(unknown.exitCode).toBe(1);
     },
     timeout,
   );
@@ -471,7 +471,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       Failed to load JS plugin: eslint-plugin-that-is-not-installed
         ResolveMessage: Cannot find module 'eslint-plugin-that-is-not-installed'"
     `);
-      for (const it of [syntax, throws, nameless, missing]) expect(it.exitCode).toBe(2);
+      for (const it of [syntax, throws, nameless, missing]) expect(it.exitCode).toBe(1);
     },
     timeout,
   );

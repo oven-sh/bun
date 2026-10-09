@@ -444,8 +444,7 @@ impl<'a> Parser<'a> {
     // inlines.rs — impl Parser:
     //   process_leaf_block, process_inline_content, enter_span, leave_span,
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
-    //   find_code_span_end, normalize_code_span_content, is_left_flanking,
-    //   is_right_flanking,
+    //   find_code_span_end, normalize_code_span_content, flanking,
     //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
     //   find_html_tag
     //

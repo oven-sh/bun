@@ -293,6 +293,11 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
     }
 }
 
+/// `a = class extends (⏎ b.C<D> ⏎) {}`. For Prettier the parentheses are around `b.C`, and `<D>` is behind them.
+fn type_arguments_of_super_class_are_in_its_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// The types after `implements`, or after the `extends` of an interface.
 pub(crate) struct FormatClassImplements<'a>(pub(crate) List<'a, TypeNode<'a>>);
 
@@ -406,7 +411,26 @@ impl<'a> Format<'a> for FormatClass<'a> {
             if let Some(extends) = super_class {
                 let format_super = format_with(|f| {
                     write!(f, format_leading_comments(extends.span()));
-                    let content = FormatNodeWithoutTrailingComments(&extends);
+                    let format_type_arguments = format_with(|f| {
+                        write!(f, FormatCommentsTrailingInHead(gaps.after_super_class));
+                        if let Some(span) = class.extends_args().angle_brackets_span() {
+                            write!(f, format_leading_comments(span));
+                            type_arguments(class.extends_args(), Node::Class(class))
+                                .write_without_comments(f);
+                            write!(
+                                f,
+                                FormatCommentsTrailingInHead(gaps.after_super_type_arguments)
+                            );
+                        }
+                    });
+                    let are_type_arguments_in_parentheses =
+                        type_arguments_of_super_class_are_in_its_parentheses(f);
+                    let content = format_with(|f| {
+                        write!(f, FormatNodeWithoutTrailingComments(&extends));
+                        if are_type_arguments_in_parentheses {
+                            write!(f, format_type_arguments);
+                        }
+                    });
 
                     // Prettier's `printSuperClass`.
                     if matches!(parent, AstNodes::AssignmentExpression(_)) {
@@ -425,15 +449,8 @@ impl<'a> Format<'a> for FormatClass<'a> {
                     } else {
                         content.fmt(f);
                     }
-                    write!(f, FormatCommentsTrailingInHead(gaps.after_super_class));
-                    if let Some(span) = class.extends_args().angle_brackets_span() {
-                        write!(f, format_leading_comments(span));
-                        type_arguments(class.extends_args(), Node::Class(class))
-                            .write_without_comments(f);
-                        write!(
-                            f,
-                            FormatCommentsTrailingInHead(gaps.after_super_type_arguments)
-                        );
+                    if !are_type_arguments_in_parentheses {
+                        write!(f, format_type_arguments);
                     }
                 });
 

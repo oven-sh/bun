@@ -224,33 +224,6 @@ fn without_global_ignores(json: Json, depth: usize) -> Json {
     }
 }
 
-/// Whether an element of `files` can match a file that is called like JavaScript or TypeScript: unless each of its patterns ends in
-/// other extensions.
-fn can_match_scripts(element: &Json) -> bool {
-    let can_match = |pattern: &Json| {
-        let Some(name) = pattern.as_str().map(paths::basename) else {
-            return true;
-        };
-        let Some(dot) = strings::last_index_of_char(name, b'.') else {
-            return true;
-        };
-        let mut extensions = name[dot + 1..]
-            .split(|it| !it.is_ascii_alphanumeric())
-            .filter(|it| !it.is_empty());
-        name.ends_with(b"*")
-            || extensions.any(|it| {
-                matches!(
-                    it,
-                    b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
-                )
-            })
-    };
-    match element {
-        Json::Array(all) => all.iter().all(can_match),
-        one => can_match(one),
-    }
-}
-
 /// The categories of oxlint's rules, but `nursery`.
 const CATEGORIES: [&[u8]; 6] = [
     b"correctness",
@@ -861,39 +834,25 @@ impl<'l> Loader<'l> {
                 let Some(other) = other.map(|it| (it.0, it.1)) else {
                     return Some(flavor);
                 };
-                if is_for_oxlint {
-                    return Some(Flavor::Oxlint);
+                // Who has both runs oxlint first, and ESLint for what oxlint does not have.
+                if !is_for_oxlint {
+                    let used = match flavor {
+                        Flavor::Oxlint => name,
+                        _ => other.0,
+                    };
+                    self.warn(&[
+                        b"Both ",
+                        name,
+                        b" and ",
+                        other.0,
+                        b" found in ",
+                        directory,
+                        b": using ",
+                        used,
+                        b". Use --flavor=eslint for the other.",
+                    ]);
                 }
-                // Where both tools are in use, ESLint is often left with what oxlint does not read.
-                let is_left_over = flavor == Flavor::Eslint
-                    && !self.has_rules_for_scripts(&paths::join(directory, name));
-                let (used, unused, why): (_, _, &[u8]) = match is_left_over {
-                    true => (
-                        other,
-                        (name, flavor),
-                        b", the other has no rules for JavaScript",
-                    ),
-                    false => ((name, flavor), other, b""),
-                };
-                let flag: &[u8] = match unused.1 {
-                    Flavor::Oxlint => b"oxlint",
-                    _ => b"eslint",
-                };
-                self.warn(&[
-                    b"Both ",
-                    name,
-                    b" and ",
-                    other.0,
-                    b" found in ",
-                    directory,
-                    b": using ",
-                    used.0,
-                    why,
-                    b". Use --flavor=",
-                    flag,
-                    b" for the other.",
-                ]);
-                return Some(used.1);
+                return Some(Flavor::Oxlint);
             }
             if wanted != Some(Flavor::Oxlint) && paths::ancestors(self.cwd()).any(eslintrc::has_one)
             {
@@ -905,8 +864,8 @@ impl<'l> Loader<'l> {
         })
     }
 
-    /// Without any configuration file: oxlint, if the nearest `package.json` that depends on one of the two tools depends on it and
-    /// not on ESLint.
+    /// Without any configuration file: oxlint, if the nearest `package.json` that depends on one of the two tools depends on it.
+    /// ESLint does not run without a configuration file.
     fn tool_of_the_package(&self) -> Option<Flavor> {
         let found = paths::ancestors(self.cwd()).find_map(|directory| {
             let path = paths::join(directory, b"package.json");
@@ -916,43 +875,17 @@ impl<'l> Loader<'l> {
                     .iter()
                     .any(|it| json.get(it).is_some_and(|it| it.get(name).is_some()))
             };
-            match (has(b"oxlint") || has(b"vite-plus"), has(b"eslint")) {
-                (false, false) => None,
-                (true, false) => Some(Some(Flavor::Oxlint)),
-                (false, true) => Some(None),
-                (true, true) => {
-                    self.warn(&[
-                        b"No configuration file found, and ",
-                        &path,
-                        b" has both eslint and oxlint: using the defaults for ESLint. Use --flavor=oxlint for the other.",
-                    ]);
-                    Some(None)
-                }
+            let (has_oxlint, has_eslint) = (has(b"oxlint") || has(b"vite-plus"), has(b"eslint"));
+            if has_oxlint && has_eslint {
+                self.warn(&[
+                    b"No configuration file found, and ",
+                    &path,
+                    b" has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
+                ]);
             }
+            (has_oxlint || has_eslint).then(|| has_oxlint.then_some(Flavor::Oxlint))
         });
         found.flatten()
-    }
-
-    /// Whether the `eslint.config.js` at `path` turns a rule on for files that can be JavaScript or TypeScript. Also if that cannot
-    /// be told.
-    fn has_rules_for_scripts(&self, path: &[u8]) -> bool {
-        let keeps = self.options.config_cache;
-        let Ok(json) = evaluate::evaluate(self.environment, evaluate::ESLINT, path, keeps) else {
-            return true;
-        };
-        let is_on = |it: &(Vec<u8>, Json)| {
-            let severity = it.1.as_array().map_or(Some(&it.1), |it| it.first());
-            severity.and_then(bun_lint::linter::severity_of) != Some(Severity::Off)
-        };
-        let objects = (json.as_array()).unwrap_or_else(|| std::slice::from_ref(&json));
-        objects.iter().any(|object| {
-            let language = object.get(b"language").and_then(Json::as_str);
-            let files = object.get(b"files").and_then(Json::as_array);
-            let rules = object.get(b"rules").and_then(Json::as_object);
-            language.is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
-                && files.is_none_or(|all| all.iter().any(can_match_scripts))
-                && rules.unwrap_or_default().iter().any(is_on)
-        })
     }
 
     /// Those of [`NAMES`] that count.
@@ -1202,6 +1135,15 @@ impl<'l> Loader<'l> {
             }
             _ => Ok(Arc::clone(inherited)),
         }
+    }
+
+    /// Whether a directory called `name`, which `loaded` ignores, can have a configuration file in it that counts. Nothing
+    /// of a project is in the directories of Git and Jujutsu.
+    pub(crate) fn looks_for_configurations_in(&self, loaded: &Loaded, name: &[u8]) -> bool {
+        loaded.flavor == Flavor::Oxlint
+            && !self.has_one_configuration()
+            && !self.options.disable_nested_config
+            && !matches!(name, b".git" | b".jj")
     }
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.

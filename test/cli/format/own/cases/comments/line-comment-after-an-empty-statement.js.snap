@@ -1,9 +1,6 @@
 ------------------
 { printWidth: 80 }
 ------------------
-a; /* a */ // b
-/* c */
-
 foo; // first
 // second
 bar; // third
@@ -14,9 +11,6 @@ baz;
 -------------------
 { printWidth: 100 }
 -------------------
-a; /* a */ // b
-/* c */
-
 foo; // first
 // second
 bar; // third

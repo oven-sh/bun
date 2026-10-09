@@ -44,7 +44,7 @@ function run(command, args) {
 // The rules that `bun lint` has: the harness lists them, Bun itself does with `--rules`.
 const rules = new Set(
   bin[1] === "cli"
-    ? JSON.parse(spawnSync(bin[0], ["linter", "rules"], { encoding: "utf8" }).stdout)
+    ? JSON.parse(spawnSync(bin[0], ["linter", "rules", "--oxlint"], { encoding: "utf8" }).stdout)
     : JSON.parse(spawnSync(bin[0], [...bin.slice(1), "--rules", "-f", "json"], { encoding: "utf8", cwd: project }).stdout).map(it =>
         it.scope === "eslint" ? it.value : it.scope === "typescript" ? `@typescript-eslint/${it.value}` : `${it.scope}/${it.value}`,
       ),

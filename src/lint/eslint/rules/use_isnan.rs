@@ -75,7 +75,8 @@ impl UseIsnan {
         } else {
             return;
         };
-        let report = cx.report(e, COMPARISON_WITH_NAN);
+        // oxlint points at the `NaN`.
+        let report = cx.report(if cx.language().is_oxlint { nan } else { e }, COMPARISON_WITH_NAN);
         let is_fixable = matches!(op, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq);
         if !is_fixable || is_sequence(nan) {
             return;
@@ -94,11 +95,11 @@ impl UseIsnan {
             return;
         };
         if is_nan_identifier(expr) {
-            cx.report(statement, SWITCH_NAN);
+            cx.report(if cx.language().is_oxlint { expr.span() } else { statement.span() }, SWITCH_NAN);
         }
         for case in cases {
-            if case.test().is_some_and(is_nan_identifier) {
-                cx.report(case, CASE_NAN);
+            if let Some(test) = case.test().filter(|&it| is_nan_identifier(it)) {
+                cx.report(if cx.language().is_oxlint { test.span() } else { case.span() }, CASE_NAN);
             }
         }
     }

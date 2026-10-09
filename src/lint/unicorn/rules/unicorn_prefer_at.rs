@@ -207,7 +207,8 @@ fn check_substring<'a>(e: Expr<'a>, call_expr: Call<'a>, property: Ident<'a>, cx
     }
     // `substring` takes a negative index for 0 and gives an empty string for what is out of bounds.
     report.suggest(USE_AT, |fixer| {
-        let between = fixer.file().slice(Span::new(property.span().end, arguments_span.start));
+        let (start, end) = (property.span().end, arguments_span.start);
+        let between = fixer.file().slice(Span::new(start, end));
         fixer.replace(
             Span::new(property.span().start, arguments_span.end),
             [b"at", between, fixer.file().slice(index.outer_span())].concat(),

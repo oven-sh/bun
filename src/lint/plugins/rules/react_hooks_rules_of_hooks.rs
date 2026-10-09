@@ -7,6 +7,7 @@ use bun_lint::source::ByName;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
+use std::collections::BinaryHeap;
 
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
@@ -312,6 +313,80 @@ struct Paths<'a> {
     outer: Option<Segment<'a>>,
 }
 
+/// The segments whose count from the start has come out as zero while one segment is asked for.
+///
+/// Upstream keeps no count that is zero, and counts anew each time: in a loop that takes twice as long with every `if`. A count is zero
+/// because all routes from the start to the segment lead through segments of the stack. Until the topmost of these leaves the stack it
+/// comes out as zero again, and counting it again finds nothing new to be in a cycle but the frames of the stack above the lowest of
+/// them. When the topmost leaves the stack with zero itself, the same holds with the segments that made it zero: its group takes over
+/// those that it owns.
+#[derive(Default)]
+struct Zeros {
+    /// The group of each segment, by its id.
+    group_of: FxHashMap<u32, usize>,
+    groups: Vec<ZeroGroup>,
+}
+
+struct ZeroGroup {
+    /// The group that has taken it over, or itself.
+    parent: usize,
+    /// `Frame::cyclic_from` of the frame that it was made for.
+    cyclic_from: usize,
+    /// Where in the stack the frame is that owns it.
+    owner: usize,
+    is_valid: bool,
+}
+
+impl Zeros {
+    fn find(&mut self, group: usize) -> usize {
+        let mut root = group;
+        while let Some(parent) = self.groups.get(root).map(|it| it.parent).filter(|it| *it != root) {
+            root = parent;
+        }
+        let mut at = group;
+        while let Some(it) = self.groups.get_mut(at).filter(|it| it.parent != root) {
+            at = std::mem::replace(&mut it.parent, root);
+        }
+        root
+    }
+
+    /// `cyclic_from` and `owner` of the group of `segment`, if its count is still known to be zero.
+    fn get(&mut self, segment: u32) -> Option<(usize, usize)> {
+        let group = *self.group_of.get(&segment)?;
+        let root = self.find(group);
+        self.groups.get(root).filter(|it| it.is_valid).map(|it| (it.cyclic_from, it.owner))
+    }
+
+    /// Makes a group for `segment`, which takes over the groups `owned`.
+    fn add(&mut self, segment: u32, cyclic_from: usize, owner: usize, owned: &[usize]) -> usize {
+        let group = self.groups.len();
+        self.groups.push(ZeroGroup {
+            parent: group,
+            cyclic_from,
+            owner,
+            is_valid: true,
+        });
+        for &it in owned {
+            let root = self.find(it);
+            if let Some(root) = self.groups.get_mut(root) {
+                root.parent = group;
+            }
+        }
+        self.group_of.insert(segment, group);
+        group
+    }
+
+    /// The frame that owns the groups `owned` has left the stack with a count that is not zero.
+    fn forget(&mut self, owned: &[usize]) {
+        for &it in owned {
+            let root = self.find(it);
+            if let Some(root) = self.groups.get_mut(root) {
+                root.is_valid = false;
+            }
+        }
+    }
+}
+
 type Segments<'a> = bun_lint::code_path::Segments<'a>;
 
 const INFINITY: u32 = u32::MAX;
@@ -337,10 +412,15 @@ impl<'a> Paths<'a> {
             sum: Count,
             /// The frames from this position in the stack up to this one are in a cycle.
             cyclic_from: usize,
+            /// Where in the stack the segments are that the routes from here have led back to. Only from the start.
+            met: BinaryHeap<usize>,
+            /// The groups of `zeros` that are zero as long as this frame is in the stack.
+            owned: Vec<usize>,
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
         // Where each segment of the stack is in it.
         let mut positions: FxHashMap<u32, usize> = FxHashMap::default();
+        let mut zeros = Zeros::default();
         let mut entering = Some(start);
         let mut returned = Count::ZERO;
         loop {
@@ -352,10 +432,19 @@ impl<'a> Paths<'a> {
                 if let Some(&at) = positions.get(&segment.id()) {
                     if let Some(top) = stack.last_mut() {
                         top.cyclic_from = top.cyclic_from.min(at + 1);
+                        if direction == Direction::FromStart {
+                            top.met.push(at);
+                        }
                     }
                     returned = Count::ZERO;
                 } else if let Some(&cached) = cache.get(&segment.id()) {
                     returned = cached;
+                } else if let Some((cyclic_from, owner)) = zeros.get(segment.id()) {
+                    if let Some(top) = stack.last_mut() {
+                        top.cyclic_from = top.cyclic_from.min(cyclic_from);
+                        top.met.push(owner);
+                    }
+                    returned = Count::ZERO;
                 } else {
                     let is_thrown = self.thrown.contains(&segment.id());
                     let neighbors = if is_thrown { Segments::new() } else { self.neighbors(segment, direction) };
@@ -366,6 +455,8 @@ impl<'a> Paths<'a> {
                         neighbors,
                         next: 0,
                         cyclic_from: usize::MAX,
+                        met: BinaryHeap::new(),
+                        owned: Vec::new(),
                     });
                     returned = Count::ZERO;
                 }
@@ -380,22 +471,41 @@ impl<'a> Paths<'a> {
                 entering = Some(neighbor);
                 continue;
             }
-            let (segment, sum, cyclic_from) = (top.segment, top.sum, top.cyclic_from);
-            stack.pop();
+            let Some(mut top) = stack.pop() else {
+                return returned;
+            };
+            let (segment, sum, position) = (top.segment, top.sum, stack.len());
             positions.remove(&segment.id());
-            if cyclic_from <= stack.len() {
+            if top.cyclic_from <= position {
                 self.cyclic.insert(segment.id());
                 if let Some(below) = stack.last_mut() {
-                    below.cyclic_from = below.cyclic_from.min(cyclic_from);
+                    below.cyclic_from = below.cyclic_from.min(top.cyclic_from);
                 }
             }
             match direction {
-                // There is a route from the start to a segment that can be reached: it was asked from inside a cycle.
-                Direction::FromStart if segment.is_reachable() && sum.is_zero => {
-                    self.from_start.remove(&segment.id());
-                }
                 Direction::FromStart => {
-                    self.from_start.insert(segment.id(), sum);
+                    while top.met.peek().is_some_and(|it| *it >= position) {
+                        top.met.pop();
+                    }
+                    // There is a route from the start to a segment that can be reached: it was asked from inside a cycle.
+                    if segment.is_reachable() && sum.is_zero {
+                        self.from_start.remove(&segment.id());
+                        match top.met.peek() {
+                            Some(&owner) => {
+                                let group = zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
+                                if let Some(frame) = stack.get_mut(owner) {
+                                    frame.owned.push(group);
+                                }
+                            }
+                            None => zeros.forget(&top.owned),
+                        }
+                    } else {
+                        self.from_start.insert(segment.id(), sum);
+                        zeros.forget(&top.owned);
+                    }
+                    if let Some(below) = stack.last_mut() {
+                        below.met.append(&mut top.met);
+                    }
                 }
                 Direction::ToEnd => {
                     self.to_end.insert(segment.id(), sum);

@@ -5,6 +5,7 @@ use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
     is_es5_identifier_name, is_simple_number,
 };
+use super::tailwindcss::{context_of_string, sorted_string_literal};
 use crate::ir::width::string_width;
 use crate::js::format::format_node;
 use crate::prelude::*;
@@ -88,6 +89,13 @@ fn printed_key<'a>(
             .clean_text(f)
             .into_text()
     };
+    if matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
+        && !source.starts_with(b"`")
+        && let Some(context) = context_of_string(source, f)
+    {
+        let place = (span, parent);
+        return Cow::Owned(sorted_string_literal(source, false, place, context, f));
+    }
     match key.kind() {
         KeyKind::Ident(name) if should_quote_keys(parent, f) => quoted(name.bytes(), f),
         KeyKind::Ident(_) | KeyKind::Private(_) | KeyKind::Computed(_) => Cow::Borrowed(source),

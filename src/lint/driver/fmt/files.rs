@@ -8,6 +8,7 @@ use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::linter::Glob;
+use bun_lint::linter::config::FastGlob;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::sync::Arc;
@@ -760,7 +761,10 @@ pub(crate) fn expand_as_oxfmt(
         let path = paths::resolve(&cwd, normalized);
         // What is there is not a pattern, whatever it looks like.
         match strings::index_of_any(normalized, b"*?[{").is_some() && !bun_sys::exists(&path) {
-            true => globs.push(glob_of_oxc(normalized)),
+            true => match FastGlob::refusal(normalized) {
+                Some(refusal) => return Err(Fatal(refusal)),
+                None => globs.push(glob_of_oxc(normalized)),
+            },
             false => targets.push(path),
         }
     }

@@ -1,7 +1,7 @@
 //! The formats of oxlint that programs read: `json`, `checkstyle`, `junit`, `gitlab`, `sarif`, and
 //! what `--rules` prints.
 //!
-//! The shape is oxlint's. The messages are ESLint's, and there is no `help`.
+//! The shape is oxlint's. The messages are ESLint's, and only the rules that say it as oxlint does have a `help`.
 
 use super::Meta;
 use crate::paths;
@@ -9,7 +9,7 @@ use crate::print_config::{object, text, write_indented};
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id, write_json_string};
+use bun_lint::linter::{LintMessage, Registry, parse_rule_id, write_json_string};
 use bun_lint::options::Json;
 use bun_lint::rule::Fixable;
 use std::io::Write;
@@ -25,12 +25,6 @@ pub(crate) struct Run {
 
 /// `eslint(no-debugger)`, `typescript(no-explicit-any)`
 fn code(message: &LintMessage) -> Option<Vec<u8>> {
-    // oxlint has one rule where typescript-eslint extends a rule of ESLint.
-    if let Some(RuleId::Known(meta)) = &message.rule_id
-        && let Some(base) = meta.extends_base_rule
-    {
-        return Some([b"eslint(", base.as_bytes(), b")"].concat());
-    }
     let id = message.rule_id.as_ref()?.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope(plugin), b"(", name, b")"].concat())
@@ -201,20 +195,43 @@ pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
             } else {
                 b",\"severity\": \"warning\""
             });
+            let details = message.details.as_deref();
+            let texts = details.map(|it| [("help", &it.help), ("note", &it.note)]);
+            for (key, text) in texts.into_iter().flatten() {
+                if !text.is_empty() {
+                    let _ = write!(out, ",\"{key}\": ");
+                    write_json_string(out, text.as_bytes());
+                }
+            }
             out.extend_from_slice(b",\"filename\": ");
             write_json_string(out, &name);
             out.extend_from_slice(b",\"labels\": [");
-            if message.line > 0 {
-                let (start, column) = offsets.at(message.line, message.column);
-                let end = message
-                    .end
-                    .map_or(start, |(line, column)| offsets.at(line, column).0);
+            let write_label = |out: &mut Vec<u8>,
+                               from: (u32, u32),
+                               to: Option<(u32, u32)>,
+                               text: &str| {
+                let (start, column) = offsets.at(from.0, from.1);
+                let end = to.map_or(start, |(line, column)| offsets.at(line, column).0);
                 let length = end.saturating_sub(start);
-                let line = message.line;
+                let line = from.0;
+                out.push(b'{');
+                if !text.is_empty() {
+                    out.extend_from_slice(b"\"label\": ");
+                    write_json_string(out, text.as_bytes());
+                    out.push(b',');
+                }
                 let _ = write!(
                     out,
-                    "{{\"span\": {{\"offset\": {start},\"length\": {length},\"line\": {line},\"column\": {column}}}}}"
+                    "\"span\": {{\"offset\": {start},\"length\": {length},\"line\": {line},\"column\": {column}}}}}"
                 );
+            };
+            if message.line > 0 {
+                let text = details.map_or("", |it| &*it.first_label);
+                write_label(out, (message.line, message.column), message.end, text);
+                for (from, to, text) in details.into_iter().flat_map(|it| &it.labels) {
+                    out.push(b',');
+                    write_label(out, *from, Some(*to), text);
+                }
             }
             out.extend_from_slice(b"]}");
         }

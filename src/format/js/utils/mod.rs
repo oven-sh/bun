@@ -15,6 +15,7 @@ pub(crate) mod operators;
 pub(crate) mod statement_body;
 pub(crate) mod string;
 pub(crate) mod suppressed;
+pub(crate) mod tailwindcss;
 pub(crate) mod typecast;
 pub(crate) mod typescript;
 

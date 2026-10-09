@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a// c
+: T = () => {
+  b();
+};
+const d/* c */ : T = 1;
+const e// c
+: T = 1;
+let f: T; // c
+function g(
+  h: T, // c
+) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a// c
+: T = () => {
+  b();
+};
+const d/* c */ : T = 1;
+const e// c
+: T = 1;
+let f: T; // c
+function g(
+  h: T, // c
+) {}
+
+===================== End =====================

@@ -80,36 +80,4 @@ too-long = { aaaaaaaaaaaaaaaaaaaaaaaa = "aaaaaaaaaaaaaaaaaaaaaaaa", bbbbbbbbbbbb
     "dddddddddddd"
 ] }
 
--------------------------------------
-{ endOfLine: "crlf", printWidth: 80 }
--------------------------------------
-empty = {}
-blanks = {}
-one = { a = 1 }
-two = { a = 1, b = 2 }
-nested = { a = { b = { c = 1 } }, d = [{ e = 1 }] }
-dotted = { a.b = 1 }
-trailing-comma = { a = 1 }
-on-lines = { a = 1, b = 2 }
-too-long = { aaaaaaaaaaaaaaaaaaaaaaaa = "aaaaaaaaaaaaaaaaaaaaaaaa", bbbbbbbbbbbbbbbbbbbbbbbb = [
-  "cccccccccccccccc",
-  "dddddddddddd",
-] }
-
---------------------------------------
-{ endOfLine: "crlf", printWidth: 100 }
---------------------------------------
-empty = {}
-blanks = {}
-one = { a = 1 }
-two = { a = 1, b = 2 }
-nested = { a = { b = { c = 1 } }, d = [{ e = 1 }] }
-dotted = { a.b = 1 }
-trailing-comma = { a = 1 }
-on-lines = { a = 1, b = 2 }
-too-long = { aaaaaaaaaaaaaaaaaaaaaaaa = "aaaaaaaaaaaaaaaaaaaaaaaa", bbbbbbbbbbbbbbbbbbbbbbbb = [
-  "cccccccccccccccc",
-  "dddddddddddd",
-] }
-
 ===================== End =====================

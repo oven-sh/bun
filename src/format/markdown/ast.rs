@@ -285,6 +285,38 @@ impl Tree {
         }
     }
 
+    /// Takes `child` out of its parent.
+    pub(crate) fn detach(&mut self, child: NodeId) {
+        let Some(&Node {
+            parent,
+            previous,
+            next,
+            ..
+        }) = self.get(child)
+        else {
+            return;
+        };
+        match self.get_mut(previous) {
+            Some(previous) => previous.next = next,
+            None => {
+                if let Some(parent) = self.get_mut(parent) {
+                    parent.first_child = next;
+                }
+            }
+        }
+        match self.get_mut(next) {
+            Some(next) => next.previous = previous,
+            None => {
+                if let Some(parent) = self.get_mut(parent) {
+                    parent.last_child = previous;
+                }
+            }
+        }
+        if let Some(child) = self.get_mut(child) {
+            (child.parent, child.previous, child.next) = (NONE, NONE, NONE);
+        }
+    }
+
     pub(crate) fn children(&self, id: NodeId) -> Children<'_> {
         Children {
             tree: self,

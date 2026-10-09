@@ -6,7 +6,6 @@
 //! What goes into the document is a reference to each line of it, in the order they are sorted
 //! into. Nothing is parsed again and no element is copied.
 
-mod glob;
 mod options;
 mod run;
 

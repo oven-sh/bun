@@ -9,6 +9,7 @@ path = "lib.rs"
 [dependencies]
 bun_lint.workspace = true
 bun_lint_oxlint.workspace = true
+bun_lint_react_compiler.workspace = true
 bun_core.workspace = true
 bstr.workspace = true
 smallvec.workspace = true

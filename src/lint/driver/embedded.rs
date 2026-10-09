@@ -379,6 +379,9 @@ impl Origin {
         message.comments_apply_at = message
             .comments_apply_at
             .map(|(start, end)| (self.position(start), self.position(end)));
+        for (start, end, _) in message.details.iter_mut().flat_map(|it| &mut it.labels) {
+            (*start, *end) = (self.position(*start), self.position(*end));
+        }
         message.fix.iter_mut().for_each(|it| self.fix(it));
         for suggestion in &mut message.suggestions {
             self.fix(&mut suggestion.fix);

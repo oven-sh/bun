@@ -4,27 +4,72 @@
 //!
 //! The oracle: real files, ended after a token or with a token taken out, through both tools.
 
-use super::{SyntaxError, espree};
-use crate::ast::File;
-use bun_sema::hir::{DiagnosticKind, Flags, VarKind};
+use super::{SyntaxError, espree, typescript_estree};
+use crate::ast::{Expr, File, Handle};
+use crate::tokens::token_len;
+use bun_sema::atom::{Atom, known};
+use bun_sema::hir::{ExprKind, Flags, FnKind, ModifierKind, PatKind, StmtKind, VarKind};
 
-/// The first of the errors that TypeScript's parser logs for the checker to report and that OXC has too. It has few of them.
-fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let of_grammar = file.hir.diagnostics.iter().filter(|it| {
-        it.kind == DiagnosticKind::Grammar
-            // "Variable declaration list cannot be empty."
-            && it.code == 1123
-            && !file.is_in_jsdoc(it.start)
-    });
-    let first = of_grammar.min_by_key(|it| it.start)?;
-    let mut message = Vec::new();
-    match bun_sema::messages::message(first.code) {
-        Some((_, text)) => bun_sema::messages::format(&mut message, text, &first.args),
-        None => message.extend_from_slice(b"Unexpected token"),
+/// What typescript-estree throws and OXC refuses too, by how the message starts. OXC lets most of the rest pass.
+const OF_TYPESCRIPT_ESTREE: [&str; 4] = [
+    "A class declaration without the 'default' modifier must have a name.",
+    "A variable declaration list must have at least one variable declarator.",
+    "JSDoc types can only be used inside documentation comments.",
+    "Only a single variable declaration is allowed in a 'for...",
+];
+
+/// A word that is reserved in strict code, where a name is read, declared or a label. For OXC a file is strict if it is a
+/// module, and nothing is reserved in what is only declared. Code that is strict for another reason is not looked at.
+fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    if file.is_declaration_file() || !espree::has_module_syntax(file) {
+        return None;
     }
+    let hir = &file.hir;
+    let is_reserved = |name: Atom| {
+        name.is_keyword_identifier() && name != known::eval && name != known::arguments
+    };
+    let read = hir.exprs.iter().enumerate().filter_map(|(i, it)| {
+        let is_name = matches!(it.kind, ExprKind::Ident(name) if is_reserved(name))
+            && file.expr_in_tree(i).is_some()
+            && !Expr::from_raw(file, i as u32).is_jsx_tag_name();
+        is_name.then_some(it.pos)
+    });
+    let declared = hir.pats.iter().enumerate().filter_map(|(i, it)| {
+        let is_name = matches!(it.kind, PatKind::Ident(name) if is_reserved(name))
+            && file.pat_in_tree(i).is_some();
+        is_name.then_some(it.pos)
+    });
+    let functions = (hir.fns.iter())
+        .filter(|it| matches!(it.kind, FnKind::Decl | FnKind::Expr) && is_reserved(it.name))
+        .map(|it| it.name_pos);
+    let classes = (hir.classes.iter())
+        .filter(|it| is_reserved(it.name))
+        .map(|it| it.name_pos);
+    let labels = hir.stmts.iter().filter_map(|it| {
+        matches!(it.kind, StmtKind::Labeled { label, .. } if is_reserved(label)).then_some(it.start)
+    });
+    let is_declare =
+        |it: &bun_sema::hir::Modifier| it.kind == ModifierKind::Keyword(Flags::AMBIENT);
+    let is_only_declared = |at: u32| {
+        hir.stmts.iter().any(|it| {
+            it.start <= at
+                && at < it.loc.end
+                && (hir.modifiers.get(it.modifiers.range()))
+                    .is_some_and(|modifiers| modifiers.iter().any(is_declare))
+        })
+    };
+    let at = read
+        .chain(declared)
+        .chain(functions)
+        .chain(classes)
+        .chain(labels)
+        .filter(|&at| !file.is_in_jsdoc(at) && !is_only_declared(at))
+        .min()?;
+    let word = file.text().get(at as usize..).unwrap_or_default();
+    let word = word.get(..token_len(word)).unwrap_or_default();
     Some(SyntaxError {
-        at: first.start,
-        message,
+        at,
+        message: [b"The keyword '", word, b"' is reserved"].concat(),
     })
 }
 
@@ -36,7 +81,6 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
     let (hir, bound) = (&file.hir, &file.bound);
     let is_in_loop_head = |statement: bun_sema::hir::StmtId| {
         use bun_sema::bind::Parent;
-        use bun_sema::hir::StmtKind;
         match bound.stmt_parent.get(statement.idx()) {
             Some(&Parent::Stmt(parent)) => matches!(
                 hir.stmts.get(parent.idx()).map(|it| it.kind),
@@ -64,14 +108,29 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
 
 /// The error for which OXC refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let early = espree::first_error_of_oxc(file);
+    first_of(file, espree::first_error_of_oxc(file))
+}
+
+/// The same for a formatter.
+pub(super) fn first_error_for_formatter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    first_of(file, espree::first_error_of_oxc_for_formatter(file))
+}
+
+/// `early`: the first of the early errors.
+fn first_of<'a>(file: &'a File<'a>, early: Option<SyntaxError>) -> Option<SyntaxError> {
+    let early = [early, reserved_word(file)];
     if file.is_javascript() {
-        return early;
+        return early.into_iter().flatten().min_by_key(|it| it.at);
     }
+    let is_refused = |it: &SyntaxError| {
+        (OF_TYPESCRIPT_ESTREE.iter()).any(|start| it.message.starts_with(start.as_bytes()))
+    };
+    let [early, reserved] = early;
     [
-        error_of_grammar(file),
         declaration_without_initializer(file),
+        typescript_estree::first_error(file, false).filter(is_refused),
         early,
+        reserved,
     ]
     .into_iter()
     .flatten()

@@ -244,6 +244,7 @@ impl Input<'_, '_> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            details: None,
         }
     }
 

@@ -297,7 +297,7 @@ impl Parser<'_> {
 
         // Phase 1: Collect and resolve emphasis delimiters
         let mut walk = Walk::default();
-        self.collect_emphasis_delimiters(cur, &brackets, base, walk);
+        self.collect_emphasis_delimiters(cur, &brackets, base, walk, false);
         self.resolve_emphasis_delimiters();
 
         // Take the resolved delimiters (label frames reuse emph_delims)
@@ -325,7 +325,7 @@ impl Parser<'_> {
                 });
                 base += parse.label_start;
                 cur = &cur[parse.label_start..parse.label_end];
-                self.collect_emphasis_delimiters(cur, &brackets, base, walk);
+                self.collect_emphasis_delimiters(cur, &brackets, base, walk, true);
                 self.resolve_emphasis_delimiters();
                 resolved = core::mem::take(&mut self.emph_delims);
                 i = 0;
@@ -370,13 +370,17 @@ impl Parser<'_> {
                         }
                         if emit_end - sp >= 2 {
                             // Also strip any trailing tabs/spaces before the space run
+                            let spaces = sp;
                             while sp > text_start
                                 && (content[sp - 1] == b' ' || content[sp - 1] == b'\t')
                             {
                                 sp -= 1;
                             }
-                            emit_end = sp;
-                            is_hard = true;
+                            is_hard = sp == spaces
+                                || !compat::tab_before_the_blanks_is_no_hard_break(&self.flags);
+                            if is_hard {
+                                emit_end = sp;
+                            }
                         }
                     }
                     flush_text!(emit_end);
@@ -907,6 +911,42 @@ impl Parser<'_> {
         content
     }
 
+    /// What the delimiter run from `run_start` to `run_end` of `content` has on its
+    /// two sides. Around a label there are brackets.
+    fn flanking(
+        &self,
+        content: &[u8],
+        run_start: usize,
+        run_end: usize,
+        is_label: bool,
+    ) -> Flanking {
+        let edge = if is_label {
+            Neighbor::Punctuation
+        } else {
+            Neighbor::Whitespace
+        };
+        let neighbor = |codepoint: u32| {
+            if codepoint > 0xFFFF && compat::astral_is_a_letter(&self.flags) {
+                Neighbor::Other
+            } else if helpers::is_unicode_whitespace(codepoint) {
+                Neighbor::Whitespace
+            } else if helpers::is_unicode_punctuation(codepoint) {
+                Neighbor::Punctuation
+            } else {
+                Neighbor::Other
+            }
+        };
+        let before = match run_start {
+            0 => edge,
+            _ => neighbor(helpers::decode_utf8_backward(content, run_start).codepoint),
+        };
+        let after = match run_end < content.len() {
+            true => neighbor(helpers::decode_utf8(content, run_end).codepoint),
+            false => edge,
+        };
+        Flanking::of(before, after)
+    }
+
     /// Collect emphasis delimiter runs from content, skipping code spans and
     /// HTML tags. `base` is the offset of `content` within the slice
     /// `brackets` was built for.
@@ -917,6 +957,8 @@ impl Parser<'_> {
         base: usize,
         // Where the scan that asks is: not behind the start of `content`.
         mut walk: Walk,
+        // `content` is between brackets.
+        is_label: bool,
     ) {
         self.emph_delims.clear();
         if self.marks_seen & MARK_DELIMITER == 0 {
@@ -970,7 +1012,7 @@ impl Parser<'_> {
                     i += 1;
                 }
                 let count = i - run_start;
-                let mut flanking = Flanking::of(content, run_start, i);
+                let mut flanking = self.flanking(content, run_start, i, is_label);
                 if compat::marker_next_to_marker_flanks(&self.flags) {
                     let is_marker = |at: Option<&u8>| matches!(at, Some(b'*' | b'_' | b'~'));
                     flanking.left |= is_marker(content.get(i));
@@ -980,8 +1022,8 @@ impl Parser<'_> {
                     pos: run_start,
                     count,
                     emph_char: c,
-                    can_open: flanking.can_open(c, content, run_start),
-                    can_close: flanking.can_close(c, content, i),
+                    can_open: flanking.can_open(c),
+                    can_close: flanking.can_close(c),
                     remaining: count,
                     ..Default::default()
                 });
@@ -995,13 +1037,13 @@ impl Parser<'_> {
                 }
                 let count = i - run_start;
                 if (count == 1 && !self.flags.no_single_tilde) || count == 2 {
-                    let flanking = Flanking::of(content, run_start, i);
+                    let flanking = self.flanking(content, run_start, i, is_label);
                     self.emph_delims.push(EmphDelim {
                         pos: run_start,
                         count,
                         emph_char: b'~',
-                        can_open: flanking.can_open(b'~', content, run_start),
-                        can_close: flanking.can_close(b'~', content, i),
+                        can_open: flanking.can_open(b'~'),
+                        can_close: flanking.can_close(b'~'),
                         remaining: count,
                         ..Default::default()
                     });
@@ -1433,48 +1475,12 @@ pub(crate) fn count_backticks(content: &[u8], start: usize) -> usize {
     pos - start
 }
 
-/// Check if a delimiter run is left-flanking per CommonMark spec.
-pub(crate) fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
-    // Not followed by Unicode whitespace
-    if run_end >= content.len() {
-        return false;
-    }
-    let after_cp = helpers::decode_utf8(content, run_end).codepoint;
-    if helpers::is_unicode_whitespace(after_cp) {
-        return false;
-    }
-    // Not followed by punctuation, OR preceded by whitespace/punctuation
-    if helpers::is_unicode_punctuation(after_cp) {
-        if run_start == 0 {
-            return true; // preceded by start of text
-        }
-        let before_cp = helpers::decode_utf8_backward(content, run_start).codepoint;
-        return helpers::is_unicode_whitespace(before_cp)
-            || helpers::is_unicode_punctuation(before_cp);
-    }
-    true
-}
-
-/// Check if a delimiter run is right-flanking per CommonMark spec.
-pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
-    // Not preceded by Unicode whitespace
-    if run_start == 0 {
-        return false;
-    }
-    let before_cp = helpers::decode_utf8_backward(content, run_start).codepoint;
-    if helpers::is_unicode_whitespace(before_cp) {
-        return false;
-    }
-    // Not preceded by punctuation, OR followed by whitespace/punctuation
-    if helpers::is_unicode_punctuation(before_cp) {
-        if run_end >= content.len() {
-            return true; // followed by end of text
-        }
-        let after_cp = helpers::decode_utf8(content, run_end).codepoint;
-        return helpers::is_unicode_whitespace(after_cp)
-            || helpers::is_unicode_punctuation(after_cp);
-    }
-    true
+/// What is next to a delimiter run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Neighbor {
+    Whitespace,
+    Punctuation,
+    Other,
 }
 
 /// Whether a delimiter run is left-flanking, right-flanking.
@@ -1482,35 +1488,31 @@ pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize
 struct Flanking {
     left: bool,
     right: bool,
+    before: Neighbor,
+    after: Neighbor,
 }
 
 impl Flanking {
-    fn of(content: &[u8], run_start: usize, run_end: usize) -> Flanking {
+    fn of(before: Neighbor, after: Neighbor) -> Flanking {
         Flanking {
-            left: is_left_flanking(content, run_start, run_end),
-            right: is_right_flanking(content, run_start, run_end),
+            // Not followed by whitespace, and not followed by punctuation OR preceded by whitespace/punctuation
+            left: after != Neighbor::Whitespace
+                && (after != Neighbor::Punctuation || before != Neighbor::Other),
+            // Not preceded by whitespace, and not preceded by punctuation OR followed by whitespace/punctuation
+            right: before != Neighbor::Whitespace
+                && (before != Neighbor::Punctuation || after != Neighbor::Other),
+            before,
+            after,
         }
     }
 
-    fn can_open(self, emph_char: u8, content: &[u8], run_start: usize) -> bool {
+    fn can_open(self, emph_char: u8) -> bool {
         // _ requires: left-flanking AND (not right-flanking OR preceded by punctuation)
-        self.left
-            && (emph_char != b'_'
-                || !self.right
-                || (run_start > 0
-                    && helpers::is_unicode_punctuation(
-                        helpers::decode_utf8_backward(content, run_start).codepoint,
-                    )))
+        self.left && (emph_char != b'_' || !self.right || self.before == Neighbor::Punctuation)
     }
 
-    fn can_close(self, emph_char: u8, content: &[u8], run_end: usize) -> bool {
+    fn can_close(self, emph_char: u8) -> bool {
         // _ requires: right-flanking AND (not left-flanking OR followed by punctuation)
-        self.right
-            && (emph_char != b'_'
-                || !self.left
-                || (run_end < content.len()
-                    && helpers::is_unicode_punctuation(
-                        helpers::decode_utf8(content, run_end).codepoint,
-                    )))
+        self.right && (emph_char != b'_' || !self.left || self.after == Neighbor::Punctuation)
     }
 }

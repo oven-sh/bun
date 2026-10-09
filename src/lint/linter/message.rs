@@ -170,6 +170,17 @@ pub struct LintMessage {
     /// shown: [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and only
     /// with a configuration of oxlint it counts.
     pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
+    pub details: Option<Box<Details>>,
+}
+
+/// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
+#[derive(Clone, Debug, Default)]
+pub struct Details {
+    pub first_label: Cow<'static, str>,
+    /// Where each starts, where it ends, and what it says.
+    pub labels: Vec<((u32, u32), (u32, u32), Cow<'static, str>)>,
+    pub help: Cow<'static, str>,
+    pub note: Cow<'static, str>,
 }
 
 impl Default for LintMessage {
@@ -189,6 +200,7 @@ impl Default for LintMessage {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            details: None,
         }
     }
 }
@@ -231,6 +243,7 @@ impl<'a> Locator<'a> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            details: None,
         }
     }
 }

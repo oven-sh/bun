@@ -5,7 +5,7 @@ use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
 use super::value_parser::{Before, ValueId, ValueKind, ValueRef};
-use crate::text::{self, is_next_line_empty};
+use crate::text::{self, has_newline_backwards, is_next_line_empty};
 
 /// `isAtWordPlaceholderNode`
 fn is_at_word_placeholder(node: ValueRef<'_>) -> bool {
@@ -247,6 +247,11 @@ impl<'a> Printer<'a, '_> {
         for (i, i_node) in node.groups().enumerate() {
             let prev_node = i.checked_sub(1).and_then(|at| node.group(at));
             let next_node = node.group(i + 1);
+
+            if i_node.id == self.comment_behind_comma {
+                self.comment_behind_comma = 0;
+                continue;
+            }
 
             let is_before_operator =
                 !is_math_operator(i_node) && next_node.is_some_and(is_math_operator);
@@ -642,6 +647,40 @@ impl<'a> Printer<'a, '_> {
         self.sink.end_group();
     }
 
+    /// For oxfmt a `//` comment on the line of a comma stays there. For Prettier it is the first of what follows the comma,
+    /// `next`, and on a line of its own. Returns whether it has been written.
+    fn print_comment_behind_comma(
+        &mut self,
+        statement: Statement<'_, 'a>,
+        next: Option<ValueRef<'_>>,
+    ) -> bool {
+        if !self.is_oxfmt {
+            return false;
+        }
+        let Some(comment) = next
+            .filter(|it| it.kind() == ValueKind::CommaGroup && it.groups().len() > 1)
+            .and_then(|it| it.group(0))
+            .filter(|it| is_inline_comment(*it))
+        else {
+            return false;
+        };
+        let is_on_line_of_comma = comment
+            .node()
+            .loc
+            .start_offset()
+            .is_some_and(|start| !has_newline_backwards(self.original_text(), start as usize));
+        if !is_on_line_of_comma {
+            return false;
+        }
+        self.sink.start_line_suffix();
+        self.sink.token(" ");
+        self.print_value(statement, comment.id, None);
+        self.sink.end_line_suffix();
+        self.sink.break_parent();
+        self.comment_behind_comma = comment.id;
+        true
+    }
+
     /// `isSCSSMapItemNode`, for `node`, which is in `self.value_stack`.
     fn is_scss_map_item(&self, statement: Statement<'_, 'a>, node: ValueRef<'_>) -> bool {
         if self.syntax() != Syntax::Scss {
@@ -760,16 +799,20 @@ impl<'a> Printer<'a, '_> {
                     self.sink.start_fill();
                 }
             }
+            let mut is_behind_comment = false;
             for (index, child) in node.groups().enumerate() {
                 if index > 0 {
-                    match force_hard_line {
-                        true => self.sink.hard_line(),
-                        false => self.sink.fill_separator(Separator::Line),
+                    match (force_hard_line, is_behind_comment) {
+                        (true, _) => self.sink.hard_line(),
+                        (false, true) => self.sink.fill_separator(Separator::HardLine),
+                        (false, false) => self.sink.fill_separator(Separator::Line),
                     }
                 }
                 self.print_child_value(statement, id, child.id);
                 if index + 1 < count {
                     self.sink.token(",");
+                    is_behind_comment =
+                        self.print_comment_behind_comma(statement, node.group(index + 1));
                 }
             }
             if !force_hard_line {
@@ -842,6 +885,7 @@ impl<'a> Printer<'a, '_> {
 
             if !is_last {
                 self.sink.token(",");
+                self.print_comment_behind_comma(statement, node.group(index + 1));
             } else {
                 // `printTrailingComma`
                 let has_comma = || {

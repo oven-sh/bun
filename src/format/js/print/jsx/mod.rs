@@ -7,6 +7,7 @@ mod opening_element;
 use self::element::AnyJsxTagWithChildren;
 pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
 use crate::js::format::format_node;
+use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -309,7 +310,10 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
         );
     }
     if let Some(value) = attribute.value() {
-        write!(f, ["=", FormatJsxChild(value)]);
+        let context = attribute
+            .key()
+            .and_then(|key| context_of_attribute(f.source_text().text_for(&key.span(f.file())), f));
+        write!(f, ["=", InTailwindContext(context, FormatJsxChild(value))]);
     }
 }
 

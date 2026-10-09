@@ -264,7 +264,24 @@ struct Walk<'a, 'f, const BY_ID: bool> {
     stack: bun_core::StackCheck,
     /// The formatter sorts imports.
     imports_can_move: bool,
+    /// The formatter sorts the classes of Tailwind CSS.
+    classes_can_move: bool,
     difference: Option<(&'static str, u32, u32)>,
+}
+
+/// Whether the same words are in `a` and in `b`, in whatever order and however often.
+#[cold]
+fn has_same_words(a: &[u8], b: &[u8]) -> bool {
+    let words = |text: &[u8]| -> Vec<Vec<u8>> {
+        let mut words: Vec<Vec<u8>> = (text.split(u8::is_ascii_whitespace))
+            .filter(|word| !word.is_empty())
+            .map(<[u8]>::to_vec)
+            .collect();
+        words.sort_unstable();
+        words.dedup();
+        words
+    };
+    words(a) == words(b)
 }
 
 /// Whether `after`, which is what formatting with `options` has made of `before`, is the same program.
@@ -288,6 +305,7 @@ pub fn compare<'f>(
         .sort_imports
         .as_deref()
         .is_some_and(|it| it.is_applied_by_format());
+    let classes_can_move = options.tailwind.is_some();
     scratch.atoms.clear();
     scratch.operands.0.clear();
     scratch.operands.1.clear();
@@ -301,6 +319,7 @@ pub fn compare<'f>(
         scratch,
         stack,
         imports_can_move,
+        classes_can_move,
         difference: None,
     };
     let is_same_by_id =
@@ -312,6 +331,7 @@ pub fn compare<'f>(
         scratch,
         stack,
         imports_can_move,
+        classes_can_move,
         difference: None,
     };
     match if is_same_by_id {
@@ -452,7 +472,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         if a.is_none() || b.is_none() {
             return a == b;
         }
-        let is_same = self.a.atoms.bytes(a) == self.b.atoms.bytes(b);
+        let (text, text2) = (self.a.atoms.bytes(a), self.b.atoms.bytes(b));
+        let is_same = text == text2;
+        // Allowed: classes are sorted, and one that is there twice is there once.
+        if !is_same && self.classes_can_move {
+            return has_same_words(text, text2);
+        }
         let (at, known) = (a.0 as usize, &mut self.scratch.atoms);
         if is_same && at < MOST_ATOMS {
             if known.len() <= at {
@@ -461,6 +486,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             known[at] = b.0;
         }
         is_same
+    }
+
+    /// Whether `b` is what sorting classes has made of `a`. They have passed for the same.
+    #[inline]
+    fn is_sorted(&self, a: Atom, b: Atom) -> bool {
+        self.classes_can_move && self.a.atoms.bytes(a) != self.b.atoms.bytes(b)
     }
 
     #[inline]
@@ -518,7 +549,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             }
             (PropKey::Name(x), PropKey::Name(y)) => {
                 self.atom(x, y, "a key")?;
-                self.name_as_written(at)
+                match self.is_sorted(x, y) {
+                    true => Ok(()),
+                    false => self.name_as_written(at),
+                }
             }
             (PropKey::Private(x), PropKey::Private(y)) => self.atom(x, y, "a key"),
             (PropKey::Computed(x), PropKey::Computed(y)) => self.expr(x, y),
@@ -693,10 +727,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// Allowed, if the formatter sorts imports: they, and the names in them, are in another order.
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
-            let mut all: Vec<_> = ids
-                .iter()
-                .map(|&id| import_as_text(program, id))
-                .collect();
+            let mut all: Vec<_> = ids.iter().map(|&id| import_as_text(program, id)).collect();
             all.sort_by(|x, y| x.0.cmp(&y.0));
             all
         };
@@ -1446,7 +1477,8 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     false => {
                         self.atom(p, q, "a string")?;
                         self.check(
-                            is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
+                            is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end))
+                                || self.is_sorted(p, q),
                             "how a string is written",
                         )
                     }
@@ -1763,6 +1795,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             .zip(texts2())
             .all(|(x, y)| with_one_kind_of_line_break(x).eq(with_one_kind_of_line_break(y)))
         {
+            return Ok(());
+        }
+        // Allowed: classes are sorted.
+        if self.classes_can_move && texts().zip(texts2()).all(|(x, y)| has_same_words(x, y)) {
             return Ok(());
         }
         self.check(
@@ -2139,10 +2175,7 @@ fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool 
         Some(b'[') => skip_trivia(program.text, at + 1),
         _ => at,
     };
-    let (x, y) = (
-        a.0.from(inside(a.0, a.1)),
-        b.0.from(inside(b.0, b.1)),
-    );
+    let (x, y) = (a.0.from(inside(a.0, a.1)), b.0.from(inside(b.0, b.1)));
     // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
     let is_without_quotes = |string: &[u8], other: &[u8]| {
         let content = string.get(1..string.len() - 1).unwrap_or_default();

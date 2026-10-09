@@ -1017,8 +1017,27 @@ fn includes_type(node: Expr, type_flag: TypeFlags) -> bool {
     union_constituents(node.ty()).iter().any(|ty| is_type_flag_set(ty, type_flag))
 }
 
+/// tsgolint's `isOrChainComparisonSafe`, which goes by what is written and not by its type.
+fn tsgolint_is_or_chain_comparison_safe(comparison_value: Expr, comparison_type: ComparisonType) -> bool {
+    let tag = comparison_value.tag();
+    let is_undefined = ast_utils::is_specific_id(comparison_value, "undefined");
+    let is_literal = matches!(
+        tag,
+        ExprTag::Number | ExprTag::String | ExprTag::True | ExprTag::False | ExprTag::Object | ExprTag::Array
+    );
+    match comparison_type {
+        ComparisonType::NotStrictEqual => is_literal || tag == ExprTag::Null,
+        ComparisonType::StrictEqual => is_undefined,
+        ComparisonType::NotEqual => is_literal,
+        ComparisonType::Equal => is_undefined || tag == ExprTag::Null,
+    }
+}
+
 /// `isValidAndLastChainOperand`, `isValidOrLastChainOperand`
 fn is_valid_last_chain_operand(operator: BinOp, comparison_value: Expr, comparison_type: ComparisonType) -> bool {
+    if operator == BinOp::Or && comparison_value.file().language().is_oxlint {
+        return tsgolint_is_or_chain_comparison_safe(comparison_value, comparison_type);
+    }
     let types = union_constituents(get_constrained_type_at_location(comparison_value));
     let some = |flags: TypeFlags| types.iter().any(|ty| is_type_flag_set(ty, flags));
     let every = |flags: TypeFlags| types.iter().all(|ty| is_type_flag_set(ty, flags));

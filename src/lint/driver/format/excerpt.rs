@@ -199,6 +199,34 @@ fn write_pretty_problem<'r>(
             ..Default::default()
         }),
     };
+    let mut notes = Vec::new();
+    if let Some(details) = &message.details {
+        let said = |text: &str| bun_ast::Data {
+            text: text.as_bytes().to_vec().into(),
+            location: None,
+        };
+        let texts = [&details.first_label, &details.help, &details.note];
+        notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
+        for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
+            let shown = result
+                .text
+                .as_deref()
+                .map(|it| lines(it, *line, *line, place));
+            let shown = shown
+                .and_then(|it| it.first().copied())
+                .filter(|it| it.len() <= 1000);
+            notes.push(bun_ast::Data {
+                location: Some(bun_ast::Location {
+                    file: display_path(&result.path, meta.cwd).into(),
+                    line: *line as i32,
+                    column: *column as i32,
+                    line_text: shown.map(|it| strings::replace_owned(it, b"\t", b" ").into()),
+                    ..Default::default()
+                }),
+                ..said(text)
+            });
+        }
+    }
     let message = bun_ast::Msg {
         kind: if problem.is_error() {
             bun_ast::Kind::Err
@@ -206,6 +234,7 @@ fn write_pretty_problem<'r>(
             bun_ast::Kind::Warn
         },
         data,
+        notes: notes.into(),
         ..Default::default()
     };
     let to = &mut bun_core::fmt::VecWriter(out);
@@ -380,6 +409,23 @@ fn write_agent_problem<'r>(
                 }
             }
             out.extend_from_slice(b"</source>\n");
+        }
+    }
+    if let Some(details) = &message.details {
+        let first = ((message.line, message.column), &details.first_label);
+        let others = details.labels.iter().map(|it| (it.0, &it.2));
+        for ((line, column), text) in std::iter::once(first).chain(others) {
+            if !text.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "<label line=\"{line}\" column=\"{column}\">{text}</label>"
+                );
+            }
+        }
+        for (tag, text) in [("help", &details.help), ("note", &details.note)] {
+            if !text.is_empty() {
+                let _ = writeln!(out, "<{tag}>{text}</{tag}>");
+            }
         }
     }
     for suggestion in &message.suggestions {

@@ -72,10 +72,9 @@ If the configuration file nearest to the working directory is one of these, `bun
 - `.prettierrc` files are not read.
 - `-c <path>` is `--config <path>`.
 - Which files are read goes by oxfmt's list of names, which tells upper case from lower case: `a.MD` is not Markdown.
-- A `.js` file with a `@flow` comment is not read as Flow.
 - A configuration file that cannot be used ends the run with exit code `1`.
 
-`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` is not supported yet: a run with it ends with an error that says so, or with a warning if you pass `--allow-unsupported`. Neither are Svelte files, which oxfmt formats if the configuration has `svelte`: they count as files in a language that is not supported.
+`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` sorts the classes in JavaScript and TypeScript files, in the order of the `tailwindcss` 4 that the project has installed. In CSS, HTML, Vue, Handlebars, and Markdown files it is not supported yet: a run with such a file that may have classes ends with an error that says so, or with a warning if you pass `--allow-unsupported`. Neither are Svelte files, which oxfmt formats if the configuration has `svelte`: they count as files in a language that is not supported.
 
 TOML files (`*.toml`, `*.toml.example`, `Pipfile`, `Cargo.toml.orig`) are formatted as oxfmt formats them: keys and values stay as they are written, white space, empty lines and the layout of arrays change. A file that is not valid TOML is an error and is left as it is, where oxfmt rewrites the rest of it.
 

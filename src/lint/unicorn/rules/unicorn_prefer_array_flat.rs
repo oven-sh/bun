@@ -151,15 +151,16 @@ fn is_array_reduce_case(call: Call) -> bool {
         && second.and_then(plain_identifier) == Some(second_parameter)
 }
 
-/// `[].concat(maybeArray)`, `[].concat(...array)`
+/// `[].concat(...array)`
 fn is_array_concat_case(call: Call) -> bool {
     call.args().len() == 1
+        && call.args().first().is_some_and(|it| it.tag() == ExprTag::Spread)
         && !call.is_optional()
         && as_member_expression(call.callee())
             .is_some_and(|it| !it.is_optional() && it.object().is_some_and(is_empty_array_expression))
 }
 
-/// `[].concat.apply([], array)`, `Array.prototype.concat.call([], maybeArray)`, `[].concat.call([], ...array)`
+/// `[].concat.apply([], array)`, `Array.prototype.concat.apply([], array)`, `[].concat.call([], ...array)`
 fn check_array_prototype_concat_case<'a>(e: Expr<'a>, call: Call<'a>, is_apply: bool, cx: &Cx<'a, PreferArrayFlat>) {
     let (Some(this_argument), Some(array)) = (call.args().first(), call.args().get(1)) else {
         return;
@@ -170,7 +171,7 @@ fn check_array_prototype_concat_case<'a>(e: Expr<'a>, call: Call<'a>, is_apply: 
     if call.args().len() != 2
         || call.is_optional()
         || !is_empty_array_expression(this_argument)
-        || is_apply && array.tag() == ExprTag::Spread
+        || is_apply == (array.tag() == ExprTag::Spread)
     {
         return;
     }

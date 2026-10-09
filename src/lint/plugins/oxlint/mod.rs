@@ -1,4 +1,4 @@
-//! Where oxlint's ports of these rules differ from the plugins. With a configuration of oxlint a rule does what oxlint 1.80 does, so
+//! Where oxlint's ports of these rules differ from the plugins. With a configuration of oxlint a rule does what oxlint 1.87 does, so
 //! that the comments and the baselines of a project stay valid.
 //!
 //! Each difference is behind a function that is named after what oxlint does, here or in [`bun_lint::modules::Flavor`], and has a

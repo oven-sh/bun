@@ -180,9 +180,10 @@ impl Rule for NoElseReturn {
             }
             // oxlint prints where the statement is that returns. Comments go by what is between the branches.
             let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
-                Some(returning) => cx
-                    .report(returning, UNEXPECTED)
-                    .comments_apply_at(Span::new(consequent.span().end, else_node.span().start)),
+                Some(returning) => {
+                    let (start, end) = (consequent.span().end, else_node.span().start);
+                    cx.report(returning, UNEXPECTED).comments_apply_at(Span::new(start, end))
+                }
                 None => cx.report(else_node, UNEXPECTED),
             };
             report.fix(|fixer| fix(fixer, else_node, consequent));

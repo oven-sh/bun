@@ -20,8 +20,8 @@ enum Matcher {
     PathAnywhere(Vec<u8>),
     /// `**/a/b/**`: what is in such a directory. With a `/` before and behind it.
     InsideAnywhere(Vec<u8>),
-    /// Anything else. What it matches starts with `prefix`. `is_for_names`: it has no slash, and so
-    /// is for a name in any directory.
+    /// Anything else: a pattern for `bun_glob`. What it matches starts with `prefix`. `is_for_names`:
+    /// it has no slash, and so is for a name in any directory.
     Pattern {
         prefix: Vec<u8>,
         pattern: Vec<u8>,
@@ -37,82 +37,36 @@ struct Pattern {
     is_for_directories: bool,
 }
 
-/// Whether the class that `pattern` starts with, behind its `[`, has `byte`, and what follows the
-/// class. `None`: it is not closed.
-fn class(pattern: &[u8], byte: u8) -> Option<(bool, &[u8])> {
-    let (is_negated, mut rest) = match pattern {
-        [b'!' | b'^', rest @ ..] => (true, rest),
-        rest => (false, rest),
-    };
-    let (mut has, mut is_first) = (false, true);
-    loop {
-        rest = match rest {
-            [b']', rest @ ..] if !is_first => return Some((has != is_negated, rest)),
-            [b'\\', from, b'-', to, rest @ ..] | [from, b'-', to, rest @ ..] if *to != b']' => {
-                has |= (*from..=*to).contains(&byte);
-                rest
-            }
-            [b'\\', one, rest @ ..] | [one, rest @ ..] => {
-                has |= *one == byte;
-                rest
-            }
-            [] => return None,
-        };
-        is_first = false;
+/// `pattern` for `bun_glob`, to which a `!` at the start negates and `\n` is a line break. `has_groups`: `{a,b}` is `a` or
+/// `b`. Otherwise braces are taken as they are.
+fn for_bun_glob(pattern: &[u8], has_groups: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pattern.len() + 2);
+    if pattern.starts_with(b"!") {
+        out.push(b'\\');
     }
-}
-
-/// Git's `wildmatch` with `WM_PATHNAME`: `*` and `?` stop at a `/`, `**` as a whole part of the
-/// path does not. `stars`: how many more may be tried.
-fn wildmatch(mut pattern: &[u8], mut text: &[u8], mut starts_part: bool, stars: u32) -> bool {
-    loop {
-        (pattern, text) = match (pattern, text) {
-            ([], text) => return text.is_empty(),
-            ([b'*', ..], _) if stars == 0 => return false,
-            // No directory, or any number of them.
-            ([b'*', b'*', b'/', rest @ ..], text) if starts_part => {
-                let mut from = Some(text);
-                while let Some(text) = from {
-                    if wildmatch(rest, text, true, stars - 1) {
-                        return true;
-                    }
-                    from = strings::index_of_char_usize(text, b'/').map(|slash| &text[slash + 1..]);
+    let mut rest = pattern;
+    while let [byte, after @ ..] = rest {
+        rest = after;
+        match (byte, after) {
+            (b'\\', [escaped, after @ ..]) => {
+                if !escaped.is_ascii_alphanumeric() {
+                    out.push(b'\\');
                 }
-                return false;
+                out.push(*escaped);
+                rest = after;
+                continue;
             }
-            // Everything in the directory.
-            ([b'*', b'*'], text) if starts_part => return !text.is_empty(),
-            ([b'*', rest @ ..], text) => {
-                let part = strings::index_of_char_usize(text, b'/').unwrap_or(text.len());
-                return (0..=part)
-                    .any(|skipped| wildmatch(rest, &text[skipped..], false, stars - 1));
-            }
-            ([b'?', pattern @ ..], [byte, text @ ..]) if *byte != b'/' => {
-                starts_part = false;
-                (pattern, text)
-            }
-            ([b'[', inside @ ..], [byte, text @ ..]) if *byte != b'/' => match class(inside, *byte)
-            {
-                Some((true, pattern)) => {
-                    starts_part = false;
-                    (pattern, text)
-                }
-                _ => return false,
-            },
-            ([b'\\', wanted, pattern @ ..], [byte, text @ ..])
-            | ([wanted, pattern @ ..], [byte, text @ ..])
-                if wanted == byte =>
-            {
-                starts_part = *byte == b'/';
-                (pattern, text)
-            }
-            _ => return false,
-        };
+            (b'{' | b'}', _) if !has_groups => out.push(b'\\'),
+            _ => {}
+        }
+        out.push(*byte);
     }
+    out
 }
 
 impl Pattern {
-    fn new(line: &[u8]) -> Pattern {
+    /// `has_groups`: `{a,b}` is `a` or `b`.
+    fn new(line: &[u8], has_groups: bool) -> Pattern {
         let (is_negated, pattern) = match line.strip_prefix(b"!") {
             Some(rest) => (true, rest),
             None => (false, line),
@@ -149,7 +103,7 @@ impl Pattern {
             // `**/a*` is `a*`.
             (true, false, middle) if !has_slash(middle) => Matcher::Pattern {
                 prefix: Vec::new(),
-                pattern: middle.to_vec(),
+                pattern: for_bun_glob(middle, has_groups),
                 is_for_names: true,
             },
             _ => Matcher::Pattern {
@@ -158,7 +112,7 @@ impl Pattern {
                 } else {
                     Vec::new()
                 },
-                pattern: from_here.to_vec(),
+                pattern: for_bun_glob(from_here, has_groups),
                 is_for_names: !has_slash(name),
             },
         };
@@ -185,10 +139,10 @@ impl Pattern {
                 pattern,
                 is_for_names: true,
                 ..
-            } => wildmatch(pattern, name, true, 64),
+            } => bun_glob::r#match(pattern, name).matches(),
             Matcher::Pattern {
                 prefix, pattern, ..
-            } => path.starts_with(prefix) && wildmatch(pattern, path, true, 64),
+            } => path.starts_with(prefix) && bun_glob::r#match(pattern, path).matches(),
         }
     }
 }
@@ -278,43 +232,19 @@ impl Ignores {
 
 pub(crate) type Chain = Option<Arc<Ignores>>;
 
-/// Adds `pattern` with each `{a,b}` in it replaced by one of `a` and `b`, in all ways.
-fn expand_braces(pattern: &[u8], into: &mut Vec<Vec<u8>>) {
-    let open = strings::index_of_char_usize(pattern, b'{')
-        .filter(|&at| at == 0 || pattern[at - 1] != b'\\');
-    let close =
-        open.and_then(|open| Some(open + strings::index_of_char_usize(&pattern[open..], b'}')?));
-    let (Some(open), Some(close), true) = (open, close, into.len() < 256) else {
-        into.push(pattern.to_vec());
-        return;
-    };
-    for alternative in strings::split(&pattern[open + 1..close], b",") {
-        expand_braces(
-            &[&pattern[..open], alternative, &pattern[close + 1..]].concat(),
-            into,
-        );
-    }
-}
-
 /// `chain` and the patterns in `text`, which are relative to `directory`.
 ///
 /// `is_for_oxc`: as oxlint and oxfmt read them: `{a,b}` is `a` or `b`. Otherwise as Prettier does, with the package
 /// `ignore`: the braces are taken as they are, and `readme.md` is `README.md` too.
 pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
     let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
-    let mut patterns: Vec<Pattern> = Vec::new();
-    for line in lines.filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#")) {
-        // The last pattern that matches decides, so one after the other is one or the other.
-        if !is_for_oxc {
-            patterns.push(Pattern::new(&line.to_ascii_lowercase()));
-        } else if strings::contains_char(line, b'{') {
-            let mut expanded = Vec::new();
-            expand_braces(line, &mut expanded);
-            patterns.extend(expanded.iter().map(|it| Pattern::new(it)));
-        } else {
-            patterns.push(Pattern::new(line));
-        }
-    }
+    let patterns: Vec<Pattern> = lines
+        .filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#"))
+        .map(|line| match is_for_oxc {
+            true => Pattern::new(line, true),
+            false => Pattern::new(&line.to_ascii_lowercase(), false),
+        })
+        .collect();
     if patterns.is_empty() {
         return chain;
     }

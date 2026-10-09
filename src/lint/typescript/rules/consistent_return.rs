@@ -1,7 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_flag_set;
 use bun_lint::types::{TsNode, Type, TypeFlags, tsutils};
-use bun_lint_eslint::rules::consistent_return::{check, has_return_value, is_relevant};
+use bun_lint_eslint::rules::consistent_return::{
+    MISSING_RETURN, MISSING_RETURN_VALUE, UNEXPECTED_RETURN_VALUE, check, has_return_value, is_relevant,
+};
 use std::cell::OnceCell;
 
 /// Require `return` statements to either always or never specify values.
@@ -54,6 +56,35 @@ impl ConsistentReturn {
             Some(has_return_value(argument, self.treat_undefined_as_unspecified))
         });
     }
+
+    /// The rule of tsgolint 7.0. A function that can return `void` may end without a `return`, as may one in which a
+    /// `return` has been reported. It makes no exception for constructors, and points at the whole function.
+    fn check_as_tsgolint<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
+        let returns_void = OnceCell::new();
+        let allows_void = || *returns_void.get_or_init(|| is_return_void_or_thenable_void(func));
+        let (mut expected, mut has_mismatch) = (None, false);
+        for statement in func.returns() {
+            let StmtKind::Return(argument) = statement.kind() else {
+                continue;
+            };
+            if argument.is_none() && allows_void() {
+                continue;
+            }
+            let has_value = argument.is_some_and(|value| {
+                !self.treat_undefined_as_unspecified
+                    || value.ty().flags() != TypeFlags::UNDEFINED && !ast_utils::is_specific_id(value, "undefined")
+            });
+            if *expected.get_or_insert(has_value) != has_value {
+                has_mismatch = true;
+                let message = if has_value { UNEXPECTED_RETURN_VALUE } else { MISSING_RETURN_VALUE };
+                let name = ast_utils::get_function_name_with_kind(func);
+                cx.report(statement, message).data("name", text::upper_case_first(&name).into_owned());
+            }
+        }
+        if expected == Some(true) && !has_mismatch && func.is_end_reachable() && !allows_void() {
+            cx.report(func.span(), MISSING_RETURN).data("name", ast_utils::get_function_name_with_kind(func));
+        }
+    }
 }
 
 impl Rule for ConsistentReturn {
@@ -69,9 +100,14 @@ impl Rule for ConsistentReturn {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_relevant(file) {
-            on.funcs(|rule, func, cx| rule.check(func.into(), cx));
-            on.finish(|rule, cx| rule.check(cx.file().into(), cx));
+        if !is_relevant(file) {
+            return;
         }
+        if file.language().is_oxlint {
+            on.funcs(|rule, func, cx| rule.check_as_tsgolint(func, cx));
+            return;
+        }
+        on.funcs(|rule, func, cx| rule.check(func.into(), cx));
+        on.finish(|rule, cx| rule.check(cx.file().into(), cx));
     }
 }

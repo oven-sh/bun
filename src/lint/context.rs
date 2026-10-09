@@ -33,8 +33,28 @@ pub struct Diagnostic {
     pub end_position: Option<Position>,
     /// [`Report::comments_apply_at`]
     pub comments_apply_at: Option<Span>,
+    /// [`Report::first_label`], [`Report::label`], [`Report::help`], [`Report::note`]
+    pub details: Option<Box<Details>>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
+}
+
+/// What a diagnostic of oxlint has besides its message and its place. A text that is empty is not there.
+#[derive(Clone, Debug, Default)]
+pub struct Details {
+    /// What is said at the place of the report.
+    pub first_label: Cow<'static, str>,
+    /// The other places that are marked, and what is said at each.
+    pub labels: Vec<(Span, Cow<'static, str>)>,
+    pub help: Cow<'static, str>,
+    pub note: Cow<'static, str>,
+}
+
+impl Details {
+    fn len(&self) -> usize {
+        let labels = self.labels.iter().map(|it| it.1.len());
+        self.first_label.len() + self.help.len() + self.note.len() + labels.sum::<usize>()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +146,7 @@ impl<'a, R: Rule> Cx<'a, R> {
             start_position: None,
             end_position: None,
             comments_apply_at: None,
+            details: None,
             fix: None,
             suggestions: Vec::new(),
         };
@@ -228,6 +249,44 @@ impl<'a> Report<'a> {
         self
     }
 
+    fn details(&mut self) -> Option<&mut Details> {
+        let diagnostic = self.diagnostic.as_mut()?;
+        Some(&mut **diagnostic.details.get_or_insert_default())
+    }
+
+    /// For a port of a rule of oxlint: what oxlint says at the place of the report. Like [`Report::label`], [`Report::help`]
+    /// and [`Report::note`] it is shown by the formats that oxlint has, and by those that show the code.
+    pub fn first_label(mut self, text: impl Into<Cow<'static, str>>) -> Self {
+        if let Some(details) = self.details() {
+            details.first_label = text.into();
+        }
+        self
+    }
+
+    /// One more place that oxlint marks, and what it says there.
+    pub fn label(mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) -> Self {
+        if let Some(details) = self.details() {
+            details.labels.push((at.span(), text.into()));
+        }
+        self
+    }
+
+    /// oxlint's `help`: what to do about it.
+    pub fn help(mut self, text: impl Into<Cow<'static, str>>) -> Self {
+        if let Some(details) = self.details() {
+            details.help = text.into();
+        }
+        self
+    }
+
+    /// oxlint's `note`
+    pub fn note(mut self, text: impl Into<Cow<'static, str>>) -> Self {
+        if let Some(details) = self.details() {
+            details.note = text.into();
+        }
+        self
+    }
+
     /// How to fix it, as ESLint's `fix`. `fix` returns a [`Fix`], an `Option` of one, or several
     /// in an array or a `Vec`, which must not overlap and are applied together.
     ///
@@ -312,6 +371,7 @@ impl Drop for Report<'_> {
                 .iter()
                 .map(|it| it.message.len() + it.fix.text.len());
             let size = diagnostic.message.len()
+                + diagnostic.details.as_deref().map_or(0, Details::len)
                 + diagnostic.fix.as_ref().map_or(0, |it| it.text.len())
                 + suggested.sum::<usize>();
             let mut bytes = self.file.sink.bytes.borrow_mut();

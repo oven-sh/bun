@@ -38,9 +38,20 @@ fn is_getter(func: Func) -> bool {
 }
 
 impl GetterReturn {
+    /// oxlint reports a function once, and points at it.
+    fn check_as_oxlint<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
+        let returns_nothing = |it: Stmt| matches!(it.kind(), StmtKind::Return(None));
+        if func.is_end_reachable() || !self.allows_implicit && func.returns().any(returns_nothing) {
+            cx.report(func.estree_span(), EXPECTED).data("name", ast_utils::get_function_name_with_kind(func));
+        }
+    }
+
     fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !is_getter(func) {
             return;
+        }
+        if cx.language().is_oxlint {
+            return self.check_as_oxlint(func, cx);
         }
         if !self.allows_implicit {
             for statement in func.returns() {

@@ -1,4 +1,7 @@
-use bun_lint_oxlint::ast_util::{get_declaration_of_variable, get_inner_expression, get_member_expr, is_computed, is_method_call};
+use bun_lint_oxlint::ast_util::{
+    get_declaration_of_variable, get_inner_expression, get_member_expr, is_computed, is_global_reference_name,
+    is_method_call,
+};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -71,5 +74,5 @@ fn is_set(maybe_set: Expr) -> bool {
 }
 
 fn is_new_set(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::New(new) if new.callee().is_ident("Set") && !new.callee().is_parenthesized())
+    matches!(e.kind(), ExprKind::New(new) if is_global_reference_name(new.callee(), "Set"))
 }

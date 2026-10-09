@@ -10,7 +10,7 @@
 //
 // - Some tests build their cases with functions and macros, which the scanner of `extract-oxc.ts` cannot read. These cases were
 //   written out: `--more <dir>` adds the cases of `<dir>/<plugin>/<rule>.json`, a fixture, to those of the source. `oxlint/` of the
-//   bundle, extracted, is such a directory.
+//   bundle, extracted, is such a directory. So were the cases that are called `own #n`: oxlint has few for some rules.
 // - A message is where the first label of the diagnostic is, which is where oxlint prints it. It has no id.
 // - oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
 //   and `outputDangerously` after these and `--fix-dangerously`, each `null` if it is the code before it in this list.

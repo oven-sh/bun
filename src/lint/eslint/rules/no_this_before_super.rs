@@ -148,7 +148,7 @@ impl NoThisBeforeSuper {
         });
     }
 
-    fn on_code_path_end<'a>(&self, code_path: CodePath<'a>, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_end<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if !cx.state.func_infos.pop().is_some_and(|it| it.is_constructor_of_derived_class) {
             return;
         }
@@ -157,14 +157,19 @@ impl NoThisBeforeSuper {
         // it, so one that is marked for what precedes it is not looked at, marked or not.
         // In a `finally` block a node belongs to several segments.
         let mut reported = FxHashSet::default();
+        // oxlint reports a constructor once, and points at it.
+        let constructor = match node {
+            Node::Func(func) if cx.language().is_oxlint => Some(func.span()),
+            _ => None,
+        };
         code_path.traverse_segments(|segment, controller| {
             let Some(info) = cx.state.seg_info_map.get(&segment.id()) else {
                 return;
             };
             for invalid_node in &info.invalid_nodes {
-                if reported.insert(*invalid_node) {
+                if reported.insert(*invalid_node) && (constructor.is_none() || reported.len() == 1) {
                     let kind = if invalid_node.tag() == ExprTag::Super { "super" } else { "this" };
-                    cx.report(*invalid_node, NO_BEFORE_SUPER).data("kind", kind);
+                    cx.report(constructor.unwrap_or_else(|| invalid_node.span()), NO_BEFORE_SUPER).data("kind", kind);
                 }
             }
             if info.super_called {

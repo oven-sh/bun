@@ -43,13 +43,21 @@ impl DotNotation {
         {
             return true;
         }
+        // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 asks for no index signature: `(a as any)["b"]`.
+        let file = obj.file();
+        let needs_no_index_signature = || {
+            let options = file.type_checker().compiler_options();
+            file.language().is_oxlint
+                && is_compiler_option_enabled(options, CompilerOption::NoPropertyAccessFromIndexSignature)
+        };
         property_symbol.is_none()
             && allow_index_signature_property_access
-            && obj
-                .ty()
-                .get_non_nullable_type()
-                .get_index_infos()
-                .any(|info| info.key_type().has_flags(TypeFlags::STRING_LIKE))
+            && (needs_no_index_signature()
+                || obj
+                    .ty()
+                    .get_non_nullable_type()
+                    .get_index_infos()
+                    .any(|info| info.key_type().has_flags(TypeFlags::STRING_LIKE)))
     }
 
     fn check_computed<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

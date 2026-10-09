@@ -10,6 +10,9 @@ use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::push_with_normalized_newlines;
+use crate::js::utils::tailwindcss::{
+    InTailwindContext, context_of_function, has_white_space, sorted_template_text,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -37,14 +40,18 @@ pub(crate) fn write_template_literal<'a>(
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if !can_be_in_another_language(e, f)
-        || (!embed::write_template(e, template, f)
-            && !crate::graphql::embed::write_template(e, template, f)
-            && !crate::html::in_js::write_template(e, template, f)
-            && !crate::markdown::embed::write_template(e, template, f))
-    {
-        TemplateLike::TemplateLiteral(template).fmt(f);
-    }
+    let context = f.context().tailwind_context();
+    let content = format_with(|f| {
+        if !can_be_in_another_language(e, f)
+            || (!embed::write_template(e, template, f)
+                && !crate::graphql::embed::write_template(e, template, f)
+                && !crate::html::in_js::write_template(e, template, f)
+                && !crate::markdown::embed::write_template(e, template, f))
+        {
+            TemplateLike::TemplateLiteral(template).fmt(f);
+        }
+    });
+    InTailwindContext(context.map(|it| it.in_template(e)), content).fmt(f);
 }
 
 /// `${e}` at `i` in a template that is written as the language in it. Prettier's
@@ -108,10 +115,13 @@ pub(crate) fn write_tagged_template_expression<'a>(
         return;
     };
     // Without a header it is not a table.
-    match is_test_each_pattern(call.callee()) && !template.raw(0).trim_ascii().is_empty() {
-        true => EachTemplateTable::from_template(template, f).fmt(f),
-        false => write_template_literal(quasi, template, f),
-    }
+    let content = format_with(|f| {
+        match is_test_each_pattern(call.callee()) && !template.raw(0).trim_ascii().is_empty() {
+            true => EachTemplateTable::from_template(template, f).fmt(f),
+            false => write_template_literal(quasi, template, f),
+        }
+    });
+    InTailwindContext(context_of_function(call.callee(), f), content).fmt(f);
 }
 
 /// `` `a${B}c` `` in a type
@@ -239,9 +249,29 @@ impl<'a> TemplateLike<'a> {
 impl<'a> Format<'a> for TemplateLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, [line_suffix_boundary(), "`"]);
-        let mut expressions = self.expressions(false, f);
-        for i in 0..self.quasi_count() {
-            let raw = self.raw(i);
+        let context = f.context().tailwind_context();
+        // The line breaks between classes go, so they say nothing about where a `${` is.
+        let collapses_line_breaks = context.is_some_and(|it| !it.preserves_whitespace);
+        let mut expressions = self
+            .expressions(false, f)
+            .map(|it| match collapses_line_breaks {
+                true => FormatTemplateExpression {
+                    place: Place::After(TemplateElementIndention::default()),
+                    ..it
+                },
+                false => it,
+            });
+        let count = self.quasi_count();
+        for i in 0..count {
+            let source = self.raw(i);
+            let sorted = context
+                .filter(|_| has_white_space(source))
+                .and_then(|context| {
+                    let tailwind = f.options().tailwind.as_deref()?;
+                    let place = (i == 0, i + 1 == count);
+                    Some(sorted_template_text(source, place, context, tailwind))
+                });
+            let raw = sorted.as_deref().unwrap_or(source);
             around_node_at(
                 || self.content_span(i),
                 f,
@@ -250,7 +280,9 @@ impl<'a> Format<'a> for TemplateLike<'a> {
                     false => write!(f, text(raw)),
                 },
             );
-            write!(f, expressions.next());
+            let inner = (context.filter(|_| i + 1 < count))
+                .map(|it| it.in_template_expression(source, self.raw(i + 1)));
+            write!(f, InTailwindContext(inner, expressions.next()));
         }
         write!(f, "`");
     }

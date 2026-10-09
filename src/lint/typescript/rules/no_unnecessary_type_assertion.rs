@@ -577,6 +577,24 @@ fn has_parent_to_skip(node: Expr) -> bool {
     }
 }
 
+/// tsgolint's `isPropertyInInferredCallbackReturn`: `a.map(b => ({ c: "d" as C }))`. What the callback returns is
+/// inferred from the type of the property.
+fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
+    let Node::Prop(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != PropKind::Init || parent.value() != Some(node) {
+        return false;
+    }
+    let Node::Expr(object) = parent.parent() else {
+        return false;
+    };
+    object.tag() == ExprTag::Object
+        && matches!(object.parent(), Node::Func(callback)
+            if callback.is_arrow() && matches!(callback.body(), FnBody::Expr(body) if body == object))
+        && is_in_generic_context(node)
+}
+
 fn should_skip_contextual_type_fallback(assertion: Assertion, cast_is_any: bool) -> bool {
     let Assertion { node, expression, .. } = assertion;
     if cast_is_any {
@@ -599,6 +617,7 @@ fn should_skip_contextual_type_fallback(assertion: Assertion, cast_is_any: bool)
         || is_assignment_in_non_statement_context(node)
         || is_right_hand_side_of_logical_assignment(node)
         || is_argument_to_overloaded_function(assertion)
+        || node.file().language().is_oxlint && tsgolint_is_property_in_inferred_callback_return(node)
     {
         return true;
     }

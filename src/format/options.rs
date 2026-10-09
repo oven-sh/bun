@@ -91,6 +91,8 @@ pub struct FormatOptions {
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
     /// oxfmt's `jsdoc`: how JSDoc comments are formatted, if they are.
     pub jsdoc: Option<JsdocOptions>,
+    /// oxfmt's `sortTailwindcss`: how the classes of Tailwind CSS are sorted, if they are.
+    pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
@@ -765,4 +767,3 @@ pub enum EmbeddedLanguageFormatting {
     Auto,
     Off,
 }
-

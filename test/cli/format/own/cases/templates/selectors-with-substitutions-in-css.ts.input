@@ -1,0 +1,27 @@
+const A = styled.div`
+  [dir="rtl"]
+  &:hover:not(:disabled)[data-state="checked"]
+  ${Thumb} {
+    color: red;
+  }
+`;
+
+const b = (props) => css`
+  .${Helper.nodeInsertion},
+  .${Helper.insertion}:not([class^="component-"]),
+  .${Helper.insertion}   >   * {
+    color: ${props.theme.inserted};
+  }
+
+  td.${Helper.nodeInsertion}, th.${Helper.nodeInsertion} {
+    color: red;
+  }
+
+  &:hover ${A}, &:focus-within ${A} {
+    opacity: 1;
+  }
+
+  a, b ${A} {
+    opacity: 1;
+  }
+`;

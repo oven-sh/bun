@@ -29,6 +29,27 @@ pub(crate) fn marker_next_to_marker_flanks(flags: &Flags) -> bool {
     flags.micromark
 }
 
+/// micromark looks at UTF-16 code units: half of a surrogate pair is no
+/// punctuation and no white space, whatever the character is.
+///
+/// ```markdown
+/// 😀_a_
+/// ```
+pub(crate) fn astral_is_a_letter(flags: &Flags) -> bool {
+    flags.micromark
+}
+
+/// Two blanks at the end of a line are a hard break. To micromark they are not
+/// if there is a tab in the white space before them.
+///
+/// ```markdown
+/// a→␠␠
+/// b
+/// ```
+pub(crate) fn tab_before_the_blanks_is_no_hard_break(flags: &Flags) -> bool {
+    flags.micromark
+}
+
 /// remark-parse 8 with the option `blocks` as Prettier sets it: a line that
 /// starts with any tag, whatever its name, with dots in it or without one,
 /// starts HTML, also in a paragraph.

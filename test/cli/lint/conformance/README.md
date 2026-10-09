@@ -27,12 +27,14 @@ of oxlint's port of the rule: see `extract-plugins.ts`.
 | `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
 
 `oxlint/` has the tests of the rules that are ports of the rules in oxlint's own plugins (`unicorn`, `oxc`, `react`, `jsx-a11y`,
-`nextjs`, `import`, `promise`, ..): the cases in oxlint's sources, each with what the **executable of oxlint 1.80.0** reports for it.
+`nextjs`, `import`, `promise`, ..): the cases in oxlint's sources, each with what the **executable of oxlint 1.87.0** reports for it.
 See `extract-oxlint.ts`. They differ from the others in this:
 
 - A case is linted with an `.oxlintrc.json`: only that rule, the plugins in `plugins`, and what is in `oxlintrc` (`settings`, `env`,
   `globals`).
-- A message has no id, and is where the first label of oxlint's diagnostic is. `oxlint.labels` and `oxlint.help` are not compared.
+- A message has no id, and is where the first label of oxlint's diagnostic is. Compared are the number of messages and, of each, the
+  text, the line, the column, the end line and the end column. Not compared: `help`, the labels after the first, the severity, what a
+  suggestion says, and the suggestions of a report after the first.
 - oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
   `outputDangerously` after these and `--fix-dangerously`: each is `null` if it is the same as the one before.
 - `oxlint-import-project/` has the files that the cases of `import/*` are next to.

@@ -21,7 +21,7 @@ use bun_ast::{
 use bun_lint::ast::{
     BinOp, Call, Chain, Class, Expr, ExprKind, File, FnBody, FnKind, Func, Ident, Jsx, Key,
     KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind, Stmt,
-    StmtKind, Template, UnOp, VarDecl, VarKind,
+    StmtKind, StmtTag, Template, UnOp, VarDecl, VarKind,
 };
 use bun_lint::semantic::{Declaration, Symbol};
 use bun_lint::span::Span;
@@ -32,16 +32,23 @@ use rustc_hash::FxHashMap;
 /// along chains such as `a + b + c`, which the parser reads in a loop.
 const MAX_DEPTH: u32 = 192;
 
-/// How many nodes the tree can have. Some passes of the compiler call themselves along the blocks of
-/// the control flow graph, and some take time that grows with the square of what a function
-/// declares.
-const MAX_NODES: usize = 1 << 16;
+/// How much of each the tree can have. Passes of the compiler take time and memory that grow with the
+/// square or the cube of the blocks of the control flow graph, of the functions in a function and of
+/// what it declares, and with the fourth power of the arguments of a call. With these a function
+/// that is made to be slow takes a second or two.
+const MAX_NODES: usize = 1 << 14;
+const MAX_BRANCHES: u32 = 512;
+const MAX_FUNCTIONS: u32 = 512;
+const MAX_ARGUMENTS: usize = 64;
 
 /// Why there is no tree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Refusal {
     TooDeep,
-    TooLarge,
+    TooManyNodes,
+    TooManyBranches,
+    TooManyFunctions,
+    TooManyArguments,
     /// `using`, which oxlint's compiler leaves alone without a word.
     Using,
 }
@@ -97,6 +104,8 @@ pub(crate) struct Converter<'a, 'x> {
     fragment: Ref,
     implicit_arguments: Vec<Span>,
     clock_reads: Vec<Span>,
+    branches: u32,
+    functions: u32,
     depth: u32,
     stack: bun_core::StackCheck,
 }
@@ -121,6 +130,8 @@ pub(crate) fn convert<'a>(
         fragment: Ref::NONE,
         implicit_arguments: Vec::new(),
         clock_reads: Vec::new(),
+        branches: 0,
+        functions: 0,
         depth: 0,
         stack: bun_core::StackCheck::init(),
     };
@@ -151,11 +162,20 @@ impl<'a> Converter<'a, '_> {
 
     fn loc(&mut self, span: Span) -> Converts<Loc> {
         if self.spans.len() >= MAX_NODES {
-            return Err(Refusal::TooLarge);
+            return Err(Refusal::TooManyNodes);
         }
         let index = self.spans.len() as i32;
         self.spans.push(span);
         Ok(Loc { start: index })
+    }
+
+    /// Counts what makes blocks in the control flow graph.
+    fn branch(&mut self) -> Converts<()> {
+        self.branches += 1;
+        match self.branches > MAX_BRANCHES {
+            true => Err(Refusal::TooManyBranches),
+            false => Ok(()),
+        }
     }
 
     /// Calls `then` one level further down.
@@ -297,7 +317,7 @@ impl<'a> Converter<'a, '_> {
 
     fn arg(&mut self, param: Param<'a>) -> Converts<G::Arg> {
         let binding = self.binding(param.pat())?;
-        let default = param.default().map(|it| self.expr(it)).transpose()?;
+        let default = self.default(param.default())?;
         Ok(G::Arg {
             binding,
             default,
@@ -337,7 +357,16 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
+    fn count_function(&mut self) -> Converts<()> {
+        self.functions += 1;
+        match self.functions > MAX_FUNCTIONS {
+            true => Err(Refusal::TooManyFunctions),
+            false => Ok(()),
+        }
+    }
+
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
+        self.count_function()?;
         self.nested(|this| {
             let loc = this.loc(func.estree_span())?;
             let name = match func.name() {
@@ -371,6 +400,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
+        self.count_function()?;
         self.nested(|this| {
             let loc = this.loc(func.estree_span())?;
             let (args, has_rest_arg) = this.args(func)?;
@@ -402,6 +432,14 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── patterns ─────────────────────────────
 
+    fn default(&mut self, value: Option<Expr<'a>>) -> Converts<Option<JsExpr>> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        self.branch()?;
+        Ok(Some(self.expr(value)?))
+    }
+
     fn binding(&mut self, pat: Pat<'a>) -> Converts<Binding> {
         self.nested(|this| {
             let loc = this.loc(pat.span())?;
@@ -429,7 +467,7 @@ impl<'a> Converter<'a, '_> {
                         };
                         items.push(ArrayBinding {
                             binding,
-                            default_value: element.default().map(|it| this.expr(it)).transpose()?,
+                            default_value: this.default(element.default())?,
                         });
                     }
                     let array = B::Array {
@@ -454,7 +492,7 @@ impl<'a> Converter<'a, '_> {
                             flags,
                             key,
                             value: this.binding(prop.value())?,
-                            default_value: prop.default().map(|it| this.expr(it)).transpose()?,
+                            default_value: this.default(prop.default())?,
                         });
                     }
                     let object = B::Object {
@@ -681,6 +719,23 @@ impl<'a> Converter<'a, '_> {
             return self.function_expr(func, span);
         }
         let loc = self.loc(span)?;
+        let is_branch = match expr.kind() {
+            ExprKind::Cond { .. } => true,
+            ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. } => {
+                matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+            }
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain == Chain::Start,
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                if call.args().len() > MAX_ARGUMENTS {
+                    return Err(Refusal::TooManyArguments);
+                }
+                call.chain() == Chain::Start
+            }
+            _ => false,
+        };
+        if is_branch {
+            self.branch()?;
+        }
         Ok(match expr.kind() {
             ExprKind::Missing => JsExpr::init(E::Missing {}, loc),
             ExprKind::Ident(name) => {
@@ -1049,6 +1104,18 @@ impl<'a> Converter<'a, '_> {
             let value = StoreStr::new(value);
             return Ok(JsStmt::alloc(S::Directive { value }, loc));
         }
+        if matches!(
+            stmt.tag(),
+            StmtTag::If
+                | StmtTag::For
+                | StmtTag::ForIn
+                | StmtTag::ForOf
+                | StmtTag::While
+                | StmtTag::DoWhile
+                | StmtTag::Try
+        ) {
+            self.branch()?;
+        }
         Ok(match stmt.kind() {
             StmtKind::Empty => JsStmt::alloc(S::Empty {}, loc),
             StmtKind::Debugger => JsStmt::alloc(S::Debugger {}, loc),
@@ -1185,6 +1252,7 @@ impl<'a> Converter<'a, '_> {
                 let test = self.expr(expr)?;
                 let mut converted: AstVec<Case> = AstAlloc::vec_with_capacity(cases.len());
                 for case in cases {
+                    self.branch()?;
                     converted.push(Case {
                         loc: self.loc(case.span())?,
                         value: case.test().map(|it| self.expr(it)).transpose()?,

@@ -622,6 +622,7 @@ impl Reader<'_> {
             is_legacy: semantics.is_legacy,
             prefers_typescript_rules: self.prefers_typescript_rules,
             options_of_oxlint: Vec::new(),
+            printed_for_oxlint: Vec::new(),
             notes: self.notes,
             unknown_rules: self.unknown_rules,
             js_plugins: self.js_plugins,

@@ -11,7 +11,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { bunLint, random, report, runBunLint } from "./shared.mjs";
 
 const oxlint = resolve(process.env.OXLINT ?? "oxlint");
-const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules"]).toString()));
+const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules", "--oxlint"]).toString()));
 
 // A line for each rule, and one that `eqeqeq` reports unless it has the option "smart".
 const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}", "@typescript-eslint/no-this-alias": "const self = this;", "no-array-constructor": "new Array(1, 2);" };

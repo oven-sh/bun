@@ -8,21 +8,15 @@ import { join } from "node:path";
 import { cases, fixtures } from "./cases.json";
 
 type Files = Record<string, string | { link: string }>;
-const command = [bunExe(), "format"];
-// What `bun format` does not do as oxfmt does yet.
-const notYet = new Set([
-  // A pattern that is not well formed is an error.
-  "glob_patterns/8",
-  "oxfmtrc_overrides_invalid/3",
-]);
+// A fixture has `experimentalTailwindcss`, which has no effect here. That `bun format` says so is tested elsewhere.
+const command = [bunExe(), "format", "--allow-unsupported"];
 const env = { NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
 describe.concurrent("bun format does what oxfmt does", () => {
   for (const it of cases) {
     const files = { ...(fixtures as Record<string, Files>)[it.name], ...it.gitignore } as Files;
     const links = Object.entries(files).filter(([, file]) => typeof file !== "string") as [string, { link: string }][];
-    const run = notYet.has(`${it.name}/${it.index}`) ? test.todo : test.skipIf(isWindows && links.length > 0);
-    run(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
+    test.skipIf(isWindows && links.length > 0)(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
       // Without a configuration file `bun format` is like Prettier. An empty one above the fixtures makes it like oxfmt.
       using dir = tempDir("oxfmt-cli", {
@@ -45,6 +39,7 @@ describe.concurrent("bun format does what oxfmt does", () => {
         return after === text ? [] : [[name, after]];
       });
       const named = (stdout + stderr)
+        .replace(/\x1b\[[0-9;]*m/g, "")
         .split("\n")
         .flatMap(line => (line.startsWith("[warn] ") ? [line.slice(7)] : [line]));
       expect({

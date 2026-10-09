@@ -13,6 +13,7 @@ use super::Config;
 use super::parser::{
     BLANK_AFTER, CONCISE, Kind, MUST_BREAK, Node, QUOTED, REWRITTEN, Tree, UNQUOTED,
 };
+use crate::ir::width::string_width;
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::{IndentStyle, QuoteStyle};
 use crate::text::make_string;
@@ -285,6 +286,12 @@ impl Writer<'_, '_> {
     /// What is not written as it is in the source, which is `source`, or not always.
     #[inline(never)]
     fn rare_scalar(&mut self, node: &Node, source: &[u8]) {
+        // What follows a name of several lines is behind the last of them.
+        if node.width == MUST_BREAK
+            && let Some(line_break) = bun_core::strings::last_index_of_char(source, b'\n')
+        {
+            self.column = string_width(&source[line_break + 1..]);
+        }
         match node.kind {
             Kind::Hole if self.config.is_stringify() => self.out.extend_from_slice(b"null"),
             Kind::Template if self.config.is_stringify() => {

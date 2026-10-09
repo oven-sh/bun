@@ -383,16 +383,33 @@ pub(super) fn first_error<'a>(
     checks.first.map(|it| it.1)
 }
 
+/// Whether the file has an `import` or an `export`.
+pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
+    file.body().iter().any(|it| is_module_syntax(&it))
+}
+
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
 /// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    first_error_of_oxc_among(file, None)
+}
+
+/// The same for a formatter, for which nobody has listed the expressions of the file by kind.
+pub(super) fn first_error_of_oxc_for_formatter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    first_error_of_oxc_among(file, Some(&Candidates::of(file)))
+}
+
+fn first_error_of_oxc_among<'a>(
+    file: &'a File<'a>,
+    candidates: Option<&Candidates>,
+) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
-        candidates: None,
+        candidates,
         tops: Tops::default(),
         first: None,
         noticed: 0,
-        is_all_strict: file.body().iter().any(|it| is_module_syntax(&it)),
+        is_all_strict: has_module_syntax(file),
         // Nothing is asked of the scopes, to which a file is a module whatever is in it.
         is_whole: false,
         is_babel: false,

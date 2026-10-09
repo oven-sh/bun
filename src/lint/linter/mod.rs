@@ -53,8 +53,8 @@ pub use fixer::{
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
-    LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets, write_json,
-    write_json_string,
+    Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
+    write_json, write_json_string,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
@@ -64,13 +64,12 @@ pub use registry::{
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, not_in_a_project, parse_error, refusal_of_prettier,
-    refused_by_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, not_in_a_project, parse_error, refusal_of_oxfmt,
+    refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
-use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::Meta;
@@ -495,23 +494,24 @@ impl Linter {
             .collect();
         let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         problems.reserve(diagnostics.len());
-        // What the fixes of the last rule and `messageId` that had one count as.
-        let mut fix_kind = (None, None);
+        // What becomes of what the last rule and `messageId` change that change something.
+        let mut changes = (None, config::OxlintChanges::default());
         for diagnostic in diagnostics {
             let Some(rule) = running.get(diagnostic.rule as usize) else {
                 continue;
             };
-            let is_fixed = diagnostic.fix.is_some() && file.language().is_oxlint;
+            let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
+            let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
-            if is_fixed && fix_kind.0 != key {
-                fix_kind = (
+            if follows_oxlint && changes.0 != key {
+                changes = (
                     key,
-                    config::oxlint_fix_kind(rule.reported_as, diagnostic.message_id),
+                    config::oxlint_changes(rule.reported_as, diagnostic.message_id),
                 );
             }
             let mut message = to_message(diagnostic, rule.reported_as, &locator);
-            if let Some(kind) = fix_kind.1.filter(|_| is_fixed) {
-                demote_fix(&mut message, kind);
+            if follows_oxlint {
+                change_as_oxlint(&mut message, changes.1);
             }
             problems.push(message);
         }
@@ -700,9 +700,21 @@ fn suppress_closing_like_the_rest(
     }
 }
 
-/// Makes a suggestion of the fix, which says what the report says.
-fn demote_fix(message: &mut LintMessage, kind: SuggestionKind) {
-    if let Some(fix) = message.fix.take() {
+/// A fix that becomes a suggestion says what the report says.
+fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
+    if changes.are_dropped {
+        message.fix = None;
+        message.suggestions.clear();
+        return;
+    }
+    if let Some(kind) = changes.suggestions {
+        for suggestion in &mut message.suggestions {
+            suggestion.kind = kind;
+        }
+    }
+    if let Some(kind) = changes.fix
+        && let Some(fix) = message.fix.take()
+    {
         let suggestion = Suggestion {
             message_id: Cow::Borrowed(""),
             message: message.message.clone(),
@@ -737,6 +749,18 @@ fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) ->
         suppressions: Vec::new(),
         comments_apply_at: (diagnostic.comments_apply_at)
             .map(|it| (locator.position(it.start), locator.position(it.end))),
+        details: diagnostic.details.map(|it| {
+            let place = |(span, text): (Span, Cow<'static, str>)| {
+                let (start, end) = (locator.position(span.start), locator.position(span.end));
+                (start, end, text)
+            };
+            Box::new(Details {
+                first_label: it.first_label,
+                labels: it.labels.into_iter().map(place).collect(),
+                help: it.help,
+                note: it.note,
+            })
+        }),
     }
 }
 
@@ -755,6 +779,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
         suggestions: (report.suggestions.into_iter().map(Into::into)).collect(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        details: None,
     }
 }
 
@@ -797,6 +822,7 @@ fn js_failure(
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        details: None,
     })
 }
 

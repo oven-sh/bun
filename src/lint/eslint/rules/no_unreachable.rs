@@ -12,6 +12,8 @@ pub struct State {
     range: Option<Span>,
     /// For each of the constructors around the current node, whether a `super()` has been seen.
     constructors: Vec<bool>,
+    /// With a configuration of oxlint: the last `catch` block that cannot be reached.
+    catch_block: Option<Span>,
 }
 
 type Context<'a> = Cx<'a, NoUnreachable>;
@@ -32,7 +34,8 @@ fn add_unreachable(node: Span, cx: &mut Context) {
     if range.contains(node) {
         return;
     }
-    if cx.file().token_before(node).is_some_and(|before| range.contains(before.span())) {
+    // oxlint reports each statement.
+    if !cx.language().is_oxlint && cx.file().token_before(node).is_some_and(|before| range.contains(before.span())) {
         cx.state.range = Some(range.to(node));
         return;
     }
@@ -61,6 +64,20 @@ fn is_listened(stmt: Stmt) -> bool {
         | StmtKind::ImportEquals(_) => stmt.is_exported(),
         _ => true,
     }
+}
+
+/// What cannot be reached and oxlint says nothing about: the declaration of a class, which is no statement for it, and
+/// a `catch` block, which it takes for reachable whatever the `try` block is.
+fn oxlint_passes_over<'a>(stmt: Stmt<'a>, cx: &mut Context<'a>) -> bool {
+    if cx.state.catch_block.is_some_and(|it| it.contains(stmt.span())) {
+        return true;
+    }
+    let is_catch_block = matches!(stmt.parent(), Node::Stmt(parent)
+        if matches!(parent.kind(), StmtKind::Try { handler: Some(handler), .. } if handler == stmt));
+    if is_catch_block {
+        cx.state.catch_block = Some(stmt.span());
+    }
+    is_catch_block || stmt.tag() == StmtTag::Class
 }
 
 /// Whether there can be a subclass whose constructor does not call `super()`.
@@ -92,6 +109,9 @@ impl NoUnreachable {
         };
         let is_reachable = stmt.is_reachable();
         if is_reachable && cx.state.range.is_none() || !is_listened(stmt) {
+            return;
+        }
+        if !is_reachable && cx.language().is_oxlint && oxlint_passes_over(stmt, cx) {
             return;
         }
         match is_reachable {
@@ -162,7 +182,9 @@ impl Rule for NoUnreachable {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
-        if !file.has_unreachable_statements() && !has_constructor_without_super_call(file) {
+        // oxlint says nothing about the fields of a class.
+        let looks_at_fields = !file.language().is_oxlint && has_constructor_without_super_call(file);
+        if !file.has_unreachable_statements() && !looks_at_fields {
             return State::default();
         }
         on.enter(
@@ -199,9 +221,11 @@ impl Rule for NoUnreachable {
             Self::enter_statement,
         );
         on.enter(NodeTags::FUNC, Self::enter_function);
-        on.enter(NodeTags::MEMBER, Self::enter_member);
-        on.exit(NodeTags::MEMBER, Self::exit_member);
-        on.enter(ExprTag::Super, Self::enter_super);
+        if looks_at_fields {
+            on.enter(NodeTags::MEMBER, Self::enter_member);
+            on.exit(NodeTags::MEMBER, Self::exit_member);
+            on.enter(ExprTag::Super, Self::enter_super);
+        }
         on.finish(|_, cx| report_range(None, cx));
         State::default()
     }

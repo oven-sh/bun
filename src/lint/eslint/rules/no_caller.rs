@@ -23,7 +23,9 @@ impl Rule for NoCaller {
                 let prop = name.bytes();
                 let prop = prop.strip_prefix(b"#").unwrap_or(prop);
                 if matches!(prop, b"callee" | b"caller") && obj.is_ident("arguments") && ast_utils::is_member_expression(e) {
-                    cx.report(e, UNEXPECTED).data("prop", prop);
+                    // oxlint points at the property.
+                    let place = if cx.language().is_oxlint { name.span() } else { e.span() };
+                    cx.report(place, UNEXPECTED).data("prop", prop);
                 }
             });
         }

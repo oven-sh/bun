@@ -10,6 +10,7 @@ path = "lib.rs"
 bun_lint.workspace = true
 bun_lint_oxlint.workspace = true
 bun_core.workspace = true
+bun_semver.workspace = true
 bstr.workspace = true
 smallvec.workspace = true
 rustc-hash = "2"

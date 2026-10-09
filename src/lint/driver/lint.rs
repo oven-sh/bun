@@ -243,19 +243,26 @@ impl Context<'_, '_> {
             again: Some(again),
             ..How::default()
         };
-        let linted = match Framework::of(&path).filter(|_| config.language.is_oxlint) {
+        let framework = Framework::of(&path).filter(|_| config.language.is_oxlint);
+        let linted = match framework {
             // Its scripts are linted one by one, so all rules run once more.
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
             None => self.verify_as(&path, &text, &config, how),
         };
-        let had_types = result.had_types;
-        *result = self.result(
-            std::mem::take(&mut result.path),
-            linted,
-            text,
-            result.is_fixed,
-            &config,
-        );
+        let (had_types, was_fixed) = (result.had_types, result.is_fixed);
+        let shown = std::mem::take(&mut result.path);
+        // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
+        let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
+        *result = match self.fixes() && !had_types && fixable.any(|it| self.should_fix(it)) {
+            true => self.verify_text_by(shown, &path, text, &config, &|_| (), &mut |text| {
+                match framework {
+                    Some(framework) => self.verify_scripts(framework, &path, text, &config),
+                    None => self.verify(&path, text, &config),
+                }
+            }),
+            false => self.result(shown, linted, text, was_fixed, &config),
+        };
+        result.is_fixed |= was_fixed;
         result.had_types = had_types;
         Ok(())
     }

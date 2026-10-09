@@ -966,6 +966,7 @@ pub(crate) type PathParts<'p> = SmallVec<[&'p [u8]; 16]>;
 
 /// A path to match patterns with.
 pub(crate) struct SplitPath<'p> {
+    whole: &'p [u8],
     /// The path, if its parts are separated by one slash each.
     text: Option<&'p [u8]>,
     parts: PathParts<'p>,
@@ -974,9 +975,15 @@ pub(crate) struct SplitPath<'p> {
 impl<'p> SplitPath<'p> {
     pub(crate) fn new(path: &'p [u8]) -> SplitPath<'p> {
         SplitPath {
+            whole: path,
             text: (!strings::contains(path, b"//")).then_some(path),
             parts: split_path(path),
         }
+    }
+
+    /// The path as it is.
+    pub(crate) fn whole(&self) -> &'p [u8] {
+        self.whole
     }
 }
 

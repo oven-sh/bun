@@ -28,6 +28,10 @@ function run(command: string, before: string[], cwd: string): string[] {
   } catch {
     throw new Error(`${command}: ${stderr || stdout}`);
   }
+  // A file that oxlint cannot read says nothing about a rule.
+  for (const it of diagnostics) {
+    if (!it.code && command === oxlint && !cwd.includes("syntax-error")) console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
+  }
   return diagnostics
     .filter((it: any) => it.code)
     .map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`)
@@ -37,7 +41,7 @@ function run(command: string, before: string[], cwd: string): string[] {
 let failed = 0;
 for (const project of projects) {
   if (names.length > 0 && !names.includes(project.name)) continue;
-  const cwd = mkdtempSync(join(tmpdir(), "oxlint-"));
+  const cwd = mkdtempSync(join(tmpdir(), `oxlint-${project.name.replaceAll("/", "-")}-`));
   try {
     const tsconfig = project.typed ? { "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] } }) } : {};
     const typed = project.typed ? ["--type-aware"] : [];

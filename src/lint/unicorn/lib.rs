@@ -1,4 +1,4 @@
-//! The rules of `unicorn` as oxlint has them: each is a port of the rule of the same name of oxlint 1.80, with the same options, the
+//! The rules of `unicorn` as oxlint has them: each is a port of the rule of the same name of oxlint 1.87, with the same options, the
 //! same messages, at the same places. They exist only with a configuration of oxlint.
 //! - https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 //! - which are ports of https://github.com/sindresorhus/eslint-plugin-unicorn (Copyright Sindre Sorhus, MIT License)

@@ -248,7 +248,13 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
             1 => " and another group".to_owned(),
             count => format!(" and other {count} groups"),
         };
-        cx.report(node, message)
+        // In a literal, oxlint points at the backreference.
+        let pattern_start = node.span().start + 1;
+        let place = match cx.language().is_oxlint && node.tag() == ExprTag::Regex {
+            true => Span::new(pattern_start + bref.start(), pattern_start + bref.end()),
+            false => node.span(),
+        };
+        cx.report(place, message)
             .data("bref", bref.raw().to_vec())
             .data("group", group.raw().to_vec())
             .data("otherGroups", other_groups);

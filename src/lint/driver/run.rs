@@ -773,6 +773,12 @@ impl Run<'_> {
         if let Some(file) = &options.print_config {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));
             let config = match loader.for_directory(paths::dirname(&path)) {
+                Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
+                    let printed = loaded.config.printed_for_oxlint();
+                    crate::print_config::write_indented(&mut self.out.stdout, &printed, 0);
+                    self.out.stdout.push(b'\n');
+                    return self.out;
+                }
                 Ok(loaded) => loaded.config.get(linter.registry(), &path),
                 Err(Fatal(error)) => return self.fail(&error),
             };

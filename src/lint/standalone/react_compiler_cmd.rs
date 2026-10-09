@@ -7,7 +7,7 @@ use crate::host::{self, output_line};
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::options::Json;
 use bun_lint::span::Span;
-use bun_lint_react_compiler::{Depth, Detail, Finding, Rendered, findings, render_all};
+use bun_lint_react_compiler::{Detail, Finding, Rendered, findings, render_all, want_everything};
 
 fn text(it: &str) -> Json {
     Json::String(it.as_bytes().to_vec())
@@ -87,10 +87,7 @@ fn rendered((it, rendered): (&Finding, Rendered)) -> Json {
 pub(crate) fn run(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let threads: usize = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(1);
-    let depth = match args.iter().any(|a| a == "--everything") {
-        true => Depth::Everything,
-        false => Depth::Validations,
-    };
+    let wants_everything = args.iter().any(|a| a == "--everything");
     let as_oxlint = args.iter().any(|a| a == "--oxlint");
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--")) {
@@ -108,14 +105,15 @@ pub(crate) fn run(args: &[String]) {
             return;
         };
         let line = crate::with_file(&path, &code, &language, |file| {
+            if wants_everything {
+                want_everything(file);
+            }
             let found = match file.has_parse_errors() {
                 true => Json::Null,
-                false if as_oxlint => Json::Array(
-                    render_all(file, findings(file, depth))
-                        .map(rendered)
-                        .collect(),
-                ),
-                false => Json::Array(findings(file, depth).iter().map(finding).collect()),
+                false if as_oxlint => {
+                    Json::Array(render_all(file, findings(file)).map(rendered).collect())
+                }
+                false => Json::Array(findings(file).iter().map(finding).collect()),
             };
             let mut line = Vec::new();
             let value = object([("path", text(&path)), ("findings", found)]);

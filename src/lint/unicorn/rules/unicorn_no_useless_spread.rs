@@ -17,7 +17,7 @@ const ITERABLE_TO_ARRAY: Message = Message::new(
     "`{{ctor_name}}` accepts an iterable, so it's unnecessary to convert the iterable to an array.",
 );
 
-const TYPED_ARRAYS: [&str; 11] = [
+const TYPED_ARRAYS: [&str; 12] = [
     "Int8Array",
     "Uint8Array",
     "Uint8ClampedArray",
@@ -25,6 +25,7 @@ const TYPED_ARRAYS: [&str; 11] = [
     "Uint16Array",
     "Int32Array",
     "Uint32Array",
+    "Float16Array",
     "Float32Array",
     "Float64Array",
     "BigInt64Array",
@@ -278,6 +279,8 @@ fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUse
 enum ValueHint {
     NewObject,
     NewArray,
+    /// `[...it]` is not a copy of it: it makes an array of it.
+    NewTypedArray,
     /// An iterable that is not an array.
     NewIterable,
     /// A promise of a new array.
@@ -285,12 +288,19 @@ enum ValueHint {
     Unknown,
 }
 
+/// How often what a method is called on is looked at in its turn, where it is more than another call of such a method.
+const MAX_DEPTH: u8 = 8;
+
 /// What is known of the value of `e`. Of `a ? b : c`: what is known of both `b` and `c`.
 fn const_eval(e: Expr) -> ValueHint {
+    const_eval_at(e, 0)
+}
+
+fn const_eval_at(e: Expr, depth: u8) -> ValueHint {
     let mut pending: SmallVec<[Expr; 4]> = smallvec![e];
     let mut known = None;
     while let Some(e) = pending.pop() {
-        let hint = match const_eval_unless_conditional(e) {
+        let hint = match const_eval_unless_conditional(e, depth) {
             Ok(hint) => hint,
             Err(branches) => {
                 pending.extend(branches);
@@ -308,7 +318,7 @@ fn const_eval(e: Expr) -> ValueHint {
 }
 
 /// `Err`: it is what `a ? b : c` is: the `b` and the `c`.
-fn const_eval_unless_conditional(e: Expr<'_>) -> Result<ValueHint, [Expr<'_>; 2]> {
+fn const_eval_unless_conditional(e: Expr<'_>, depth: u8) -> Result<ValueHint, [Expr<'_>; 2]> {
     let (mut at, mut is_awaited) = (e, false);
     loop {
         let Some(inner) = get_inner_expression_unless_chain(at) else {
@@ -334,7 +344,7 @@ fn const_eval_unless_conditional(e: Expr<'_>) -> Result<ValueHint, [Expr<'_>; 2]
             ExprKind::Cond { yes, no, .. } => return Err([yes, no]),
             ExprKind::Array(_) => ValueHint::NewArray,
             ExprKind::Object(_) => ValueHint::NewObject,
-            ExprKind::Call(call) => const_eval_call(call),
+            ExprKind::Call(call) => const_eval_call(call, depth),
             ExprKind::New(new) => const_eval_new(new),
             _ => ValueHint::Unknown,
         };
@@ -345,6 +355,8 @@ fn const_eval_unless_conditional(e: Expr<'_>) -> Result<ValueHint, [Expr<'_>; 2]
 fn const_eval_new(new: Call) -> ValueHint {
     if is_new_expression(new, &["Array"], None, None) {
         ValueHint::NewArray
+    } else if is_new_expression(new, &TYPED_ARRAYS, Some(1), None) {
+        ValueHint::NewTypedArray
     } else if is_new_expression(new, &["Map", "WeakMap", "Set", "WeakSet"], None, Some(1)) {
         ValueHint::NewIterable
     } else if is_new_expression(new, &["Object"], None, None) {
@@ -354,8 +366,11 @@ fn const_eval_new(new: Call) -> ValueHint {
     }
 }
 
-fn const_eval_call(call: Call) -> ValueHint {
-    if returns_new_array(call) {
+fn const_eval_call(call: Call, depth: u8) -> ValueHint {
+    let is_typed_array_from = is_method_call(call, Some(&TYPED_ARRAYS), Some(&["from"]), Some(1), Some(1));
+    if is_typed_array_from || is_typed_array_method(call, depth) {
+        ValueHint::NewTypedArray
+    } else if returns_new_array(call) {
         ValueHint::NewArray
     } else if is_method_call(call, Some(&["Promise"]), Some(&["all", "allSettled"]), Some(1), Some(1)) {
         ValueHint::Promise
@@ -366,8 +381,9 @@ fn const_eval_call(call: Call) -> ValueHint {
     }
 }
 
-fn returns_new_array(call: Call) -> bool {
-    const FUNCTIONAL_ARRAY_METHODS: [&str; 13] = [
+/// `a.map(..)` and the like: of an array it makes a new array.
+fn is_functional_array_method(call: Call) -> bool {
+    const FUNCTIONAL_ARRAY_METHODS: [&str; 12] = [
         "concat",
         "copyWithin",
         "filter",
@@ -376,15 +392,33 @@ fn returns_new_array(call: Call) -> bool {
         "map",
         "slice",
         "splice",
-        "split",
         "toReversed",
         "toSorted",
         "toSpliced",
         "with",
     ];
-    is_array_from(call)
-        || is_method_call(call, None, Some(&FUNCTIONAL_ARRAY_METHODS), None, None)
+    is_method_call(call, None, Some(&FUNCTIONAL_ARRAY_METHODS), None, None)
+}
+
+/// Such a method, called on a typed array: it makes a new typed array.
+fn is_typed_array_method(mut call: Call, depth: u8) -> bool {
+    loop {
+        let object = get_member_expr(call.callee()).and_then(Expr::object);
+        let Some(object) = object.filter(|_| is_functional_array_method(call)) else {
+            return false;
+        };
+        // A chain of such calls can be as long as the code.
+        match get_inner_expression_unless_chain(object).and_then(Expr::as_call) {
+            Some(inner) if is_functional_array_method(inner) => call = inner,
+            _ => return depth < MAX_DEPTH && const_eval_at(object, depth + 1) == ValueHint::NewTypedArray,
+        }
+    }
+}
+
+fn returns_new_array(call: Call) -> bool {
+    is_method_call(call, None, Some(&["split"]), None, None)
         || is_method_call(call, Some(&["Array"]), Some(&["from", "of"]), None, None)
+        || is_functional_array_method(call)
         || is_method_call(call, Some(&["Object"]), Some(&["keys", "values", "entries"]), None, None)
 }
 

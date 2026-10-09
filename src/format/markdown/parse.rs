@@ -4,7 +4,7 @@
 //! mdast is worked out here: micromark and mdast-util-from-markdown have their ways with line breaks and white
 //! space at the ends of containers.
 
-use super::ast::{Align, Kind, NONE, NodeId, ReferenceType, Str, Tree};
+use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
 use bun_md::root::{Options, render_with_extensions};
@@ -178,6 +178,7 @@ mod tag {
     pub(super) const EMAIL: u32 = 4;
     pub(super) const URL: u32 = 5;
     pub(super) const WWW: u32 = 6;
+    pub(super) const CHECK: u32 = 7;
 }
 
 /// The bytes that math, a wiki link, Liquid and a comment of MDX start with, and those that an address and a URL are
@@ -254,8 +255,31 @@ fn atext_start(start: &SpanStart<'_>, end: usize) -> usize {
 }
 
 /// The span that a byte of `SPAN_BYTES` is in, in the text of a paragraph, a heading or a cell.
-fn span_at(start: &SpanStart<'_>, is_mdx: bool, memo: &Cell<SpanMemo>) -> Option<ExtensionSpan> {
+/// `can_start_with_check`: see `Builder::can_start_with_check`.
+fn span_at(
+    start: &SpanStart<'_>,
+    syntax: Syntax,
+    can_start_with_check: bool,
+    memo: &Cell<SpanMemo>,
+) -> Option<ExtensionSpan> {
     let (bytes, index) = (start.content, start.pos);
+    // micromark-extension-gfm-task-list-item: `[ ]` or `[x]`, with white space and something else behind it.
+    if index == 0
+        && can_start_with_check
+        && let [b'[', value, b']', after, ..] = *bytes
+        && matches!(value, b' ' | b'\t' | b'\n' | b'x' | b'X')
+        && (after == b'\n' || (is_space(after) && bytes[3..].iter().any(|&byte| !is_space(byte))))
+    {
+        return Some(ExtensionSpan {
+            beg: 0,
+            end: 3,
+            tag: tag::CHECK,
+        });
+    }
+    if syntax == Syntax::Plain {
+        return None;
+    }
+    let is_mdx = syntax == Syntax::Mdx;
     let address = |index: usize| bytes.as_ptr().addr() + index;
     let mut known = memo.get();
     if known.serial != start.serial {
@@ -479,8 +503,11 @@ struct Builder<'t> {
     alt: Vec<u8>,
     /// Where the last part of it ends.
     alt_end: u32,
-    /// The paragraph that is open, if it is behind the `[x]` of a task and nothing has been seen of it.
-    behind_check: Option<NodeId>,
+    /// Whether the text that is read next is where the `[x]` of a task is looked for: that of a paragraph that is the
+    /// first thing in a list item, but for definitions.
+    can_start_with_check: &'t Cell<bool>,
+    /// The paragraph that is open starts with one.
+    starts_with_check: bool,
 }
 
 impl Builder<'_> {
@@ -768,34 +795,55 @@ impl Builder<'_> {
             }
         };
         self.spans.push(node);
-        self.start_behind_check(node, first.beg);
+        self.can_start_with_check
+            .set(setext_depth.is_none() && self.is_first_content_of_item(node));
     }
 
-    /// mdast-util-gfm-task-list-item: of the white space behind `[x]`, the first character is not part of the
-    /// paragraph, the rest is. `start`: where the parser says that the paragraph `node` starts.
-    fn start_behind_check(&mut self, node: NodeId, start: u32) {
-        let Some(item) = self.tree.get(self.parent()) else {
+    fn is_first_content_of_item(&self, paragraph: NodeId) -> bool {
+        if self.tree.kind(self.parent()) != Some(Kind::ListItem) {
+            return false;
+        }
+        let mut previous = self.tree.get(paragraph).map_or(NONE, |node| node.previous);
+        while let Some(sibling) = self.tree.get(previous) {
+            if sibling.kind != Kind::Definition {
+                return false;
+            }
+            previous = sibling.previous;
+        }
+        true
+    }
+
+    /// mdast-util-gfm-task-list-item: the first character of the white space behind `[x]` is not part of the
+    /// paragraph.
+    fn strip_space_after_check(&mut self, paragraph: NodeId) {
+        let head = self
+            .tree
+            .get(paragraph)
+            .map_or(NONE, |node| node.first_child);
+        let Some(&Node {
+            kind: Kind::Text,
+            value,
+            start,
+            ..
+        }) = self.tree.get(head)
+        else {
             return;
         };
-        if item.checked == 0 || item.first_child != node {
-            return;
+        let rest = self
+            .tree
+            .str(self.text, value)
+            .get(1..)
+            .unwrap_or_default()
+            .to_vec();
+        if rest.is_empty() {
+            return self.tree.detach(head);
         }
-        let mut check_end = start;
-        while check_end > 0 && is_space(self.text[check_end as usize - 1]) {
-            check_end -= 1;
+        let rest = self.tree.owned(|out| out.extend_from_slice(&rest));
+        if let Some(head) = self.tree.get_mut(head) {
+            (head.value, head.start) = (rest, start + 1);
         }
-        if check_end == start || check_end < 3 || self.text[check_end as usize - 1] != b']' {
-            return;
-        }
-        // Without text behind it, the paragraph starts with the `[`.
-        if let Some(node) = self.tree.get_mut(node) {
-            node.start = check_end - 3;
-        }
-        self.behind_check = Some(node);
-        if check_end + 1 < start {
-            self.place = (check_end + 1, start);
-            let text = self.text;
-            self.add_text(&text[check_end as usize + 1..start as usize], true);
+        if let Some(paragraph) = self.tree.get_mut(paragraph) {
+            paragraph.start = start + 1;
         }
     }
 
@@ -1280,11 +1328,6 @@ impl Builder<'_> {
                 if !is_as_written {
                     self.text_value.extend_from_slice(value);
                 }
-                if let Some(paragraph) = self.behind_check.take()
-                    && let Some(paragraph) = self.tree.get_mut(paragraph)
-                {
-                    paragraph.start = start;
-                }
             }
         }
     }
@@ -1292,7 +1335,6 @@ impl Builder<'_> {
     /// A node without anything in it at `self.place`.
     fn add_span(&mut self, kind: Kind) -> NodeId {
         self.end_text();
-        self.behind_check = None;
         let node = self.tree.add(kind, self.place.0, self.place.1);
         self.tree
             .append(self.spans.last().copied().unwrap_or(NONE), node);
@@ -1457,14 +1499,7 @@ impl RendererImpl for Builder<'_> {
                 if is_next_item {
                     self.before_container(marker, indent, marker_end, true);
                 }
-                let node = self.enter_container(Kind::ListItem, marker, marker_end);
-                if let Some(node) = self.tree.get_mut(node) {
-                    node.checked = match data as u8 {
-                        0 => 0,
-                        b' ' => 1,
-                        _ => 2,
-                    };
-                }
+                self.enter_container(Kind::ListItem, marker, marker_end);
             }
             BlockType::Hr => {
                 if let Some(line) = lines.first() {
@@ -1519,8 +1554,13 @@ impl RendererImpl for Builder<'_> {
             }
             BlockType::P | BlockType::H | BlockType::Table | BlockType::Th | BlockType::Td => {
                 self.end_text();
-                self.behind_check = None;
-                self.spans.pop();
+                self.can_start_with_check.set(false);
+                let node = self.spans.pop();
+                if std::mem::take(&mut self.starts_with_check)
+                    && let Some(paragraph) = node
+                {
+                    self.strip_space_after_check(paragraph);
+                }
             }
             BlockType::Tr => self.end_table_row(),
             _ => {}
@@ -1715,6 +1755,18 @@ impl RendererImpl for Builder<'_> {
     fn extension_span(&mut self, tag: u32, content: &[u8]) -> JsResult<()> {
         let (start, end) = self.place;
         let (kind, value) = match tag {
+            tag::CHECK => {
+                let item = self.parent();
+                if let Some(item) = self.tree.get_mut(item) {
+                    item.checked = if matches!(content.get(1), Some(b'x' | b'X')) {
+                        2
+                    } else {
+                        1
+                    };
+                }
+                self.starts_with_check = true;
+                return Ok(());
+            }
             tag::EMAIL => {
                 self.literal_autolink(b"mailto:", content);
                 return Ok(());
@@ -1781,6 +1833,8 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     let mut options = Options::default();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
+    // See `tag::CHECK`.
+    options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
     let leaf_memo = Cell::new(LeafMemo::default());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
@@ -1788,7 +1842,8 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         false => liquid_end(start, &leaf_memo),
     };
     let memo = Cell::new(SpanMemo::default());
-    let span = |start: &SpanStart<'_>| span_at(start, is_mdx, &memo);
+    let can_start_with_check = Cell::new(false);
+    let span = |start: &SpanStart<'_>| span_at(start, syntax, can_start_with_check.get(), &memo);
     let extensions = Extensions {
         leaf_bytes: match syntax {
             Syntax::Plain => b"",
@@ -1796,7 +1851,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
             Syntax::Markdown => b"{",
         },
         leaf: &leaf,
-        span_bytes: if is_plain { b"" } else { SPAN_BYTES },
+        span_bytes: if is_plain { b"[" } else { SPAN_BYTES },
         span: &span,
     };
     let mut builder = Builder {
@@ -1826,7 +1881,8 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         is_text_as_written: false,
         alt: Vec::new(),
         alt_end: 0,
-        behind_check: None,
+        can_start_with_check: &can_start_with_check,
+        starts_with_check: false,
     };
     render_with_extensions(
         &text[first_line..],

@@ -57,7 +57,7 @@ Rule names, options, messages, locations, fixes, and `eslint-disable` comments a
 
 ### Plugins
 
-The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks` and some of `import`, `n`, and `oxc`. They run as native code.
+The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks` and some of `import`, `n`, and `oxc`. They run as native code. With an `.oxlintrc.json`, so do [the rules of oxlint's plugins](#replace-oxlint).
 
 Every other plugin runs as it is. `bun lint` loads the plugins that your `eslint.config.js` has in `plugins`, and runs their rules in JavaScript, with the same `context`, `sourceCode`, scopes, and fixers that ESLint gives them.
 
@@ -153,7 +153,11 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 | `oxlint --rules`           | `bun lint --rules`           |
 | `oxlint --init`            | `bun lint --init`            |
 
-The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted). Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
+The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted).
+
+The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, and `vue`. These 522 rules do what oxlint 1.87 does, with its options, messages, and fixes. The rules of `jsdoc`, the 22 React Compiler rules of `react`, `promise/always-return`, and `promise/no-multiple-resolved` are not built in. With an `eslint.config.js` these names mean the plugins that the configuration imports.
+
+Where oxlint and ESLint disagree about a rule that both have, `bun lint` does what ESLint does, and the messages are ESLint's.
 
 ## What cannot be linted
 
@@ -186,7 +190,7 @@ If a directory has an `eslint.config.js` and an `.oxlintrc.json`, `bun lint` say
 bun lint --flavor=oxlint
 ```
 
-Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint` and not on `eslint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.
+Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.
 
 Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
 

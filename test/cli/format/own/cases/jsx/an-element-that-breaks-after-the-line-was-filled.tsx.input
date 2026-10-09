@@ -1,0 +1,48 @@
+const a = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and the following marks: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);
+const b = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and some of these other marks: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);
+const c = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and some of these other few marks: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);
+const d = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and some of these other few marks:: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);
+const e = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and some of these other few marks::: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);
+const f = (
+  <p>
+    The name
+    <br />
+    It has only letters, digits, and some of these other few marks:::: <code>-</code>,{" "}
+    <code>_</code>, <code>~</code>, <code>.</code>, <code>@</code>, <code>(</code>
+  </p>
+);

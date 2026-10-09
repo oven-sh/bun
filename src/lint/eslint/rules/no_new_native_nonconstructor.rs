@@ -35,7 +35,8 @@ impl Rule for NoNewNativeNonconstructor {
             if ast_utils::is_global_reference(callee)
                 || (!cx.is_javascript() && callee.symbol().is_none())
             {
-                cx.report(callee, NO_NEW_NONCONSTRUCTOR).data("name", name);
+                // oxlint points at the `new`.
+                cx.report(if cx.language().is_oxlint { e } else { callee }, NO_NEW_NONCONSTRUCTOR).data("name", name);
             }
         });
     }

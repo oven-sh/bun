@@ -790,8 +790,8 @@ impl<'d> Printer<'d> {
 
             for _ in 0..flat_pairs {
                 // A group in the item is measured again and may break. Then what has been
-                // measured from here on does not hold.
-                let may_break = !self.measured_group_fits;
+                // measured from here on does not hold. For oxfmt it holds all the same.
+                let may_break = !self.measured_group_fits && !self.options.flavor.is_oxfmt();
                 self.print_fill_item(PrintMode::Flat, PrintMode::Flat)?;
                 self.print_entry(PrintMode::Flat)?;
                 if may_break {

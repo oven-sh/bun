@@ -1,8 +1,10 @@
 //! What oxlint refuses in a configuration file before it looks at what the file says: a key that it does not know, and a value of
 //! another kind than it expects. The words are those of its reader.
 
+use super::fast_glob::FastGlob;
 use super::flat::ConfigError;
 use crate::options::Json;
+use bun_core::strings as bytes;
 
 const KEYS: &[&str] = &[
     "$schema",
@@ -116,7 +118,18 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
 /// A value that a file and an override can have.
 fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
     match key {
-        b"plugins" | b"ignorePatterns" | b"files" | b"excludeFiles" => strings(json),
+        b"plugins" | b"ignorePatterns" => strings(json),
+        b"files" | b"excludeFiles" => {
+            strings(json)?;
+            let patterns = json.as_array().unwrap_or_default().iter();
+            match patterns
+                .filter_map(Json::as_str)
+                .find_map(FastGlob::refusal)
+            {
+                Some(why) => Err(refusal(&[&bytes::replace_owned(&why, b"\\", b"\\\\")])),
+                None => Ok(()),
+            }
+        }
         b"jsPlugins" => sequence(json).map(|_| ()),
         b"rules" => {
             let expected = "Record<string, SeverityConf | [SeverityConf, ...any[]]>";

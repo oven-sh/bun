@@ -13,7 +13,9 @@
 
 use crate::finding::{Detail, Finding};
 use bun_core::strings;
-use bun_lint::ast::{Call, Expr, ExprKind, File, Func, Node, Param, StmtKind};
+use bun_lint::ast::{
+    BinOp, Call, Expr, ExprKind, ExprTag, File, Func, Name, Node, Param, StmtKind,
+};
 use bun_lint::semantic::Declaration;
 use bun_lint::span::Span;
 use bun_lint::utils::get_node_by_range_index;
@@ -168,9 +170,9 @@ pub fn render_all<'a, 'f>(
     file: &'a File<'a>,
     findings: impl IntoIterator<Item = &'f Finding>,
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
-    let mut said = FxHashSet::default();
+    let (mut said, mut memo) = (FxHashSet::default(), Memo::default());
     findings.into_iter().filter_map(move |finding| {
-        let rendered = render(file, finding);
+        let rendered = render(file, finding, &mut memo);
         let labels = || {
             rendered
                 .labels
@@ -188,7 +190,14 @@ fn is_said_once(finding: &Finding) -> bool {
     finding.category == ErrorCategory::Refs || finding.reason == LOCAL_FBT
 }
 
-fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
+/// What is found out about the file once, for all its diagnostics.
+#[derive(Default)]
+struct Memo<'a> {
+    /// Every `x.current`, in the order of the source.
+    currents: Option<Vec<Expr<'a>>>,
+}
+
+fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Rendered {
     let category = finding.category;
     // oxc's `diagnostic()`. What the compiler calls a hint is left out.
     let mut out = Rendered {
@@ -212,7 +221,7 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
         }
         ErrorCategory::Immutability => immutability(file, finding, &mut out),
         ErrorCategory::Globals => globals(&mut out),
-        ErrorCategory::Refs => refs(file, &mut out),
+        ErrorCategory::Refs => refs(file, &mut out, memo),
         ErrorCategory::EffectSetState => set_state_in_effect(file, &mut out),
         ErrorCategory::EffectDerivationsOfState => derived_state_in_effect(file, &mut out),
         ErrorCategory::ErrorBoundaries => jsx_in_try(file, &mut out),
@@ -320,6 +329,18 @@ fn declaration_of<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     reference.symbol()?.declarations().next()?.name_span()
 }
 
+/// Where the variable that is called `` `name` `` where `span` starts is declared. What is written at `span` can be another name
+/// for the same value, or more than a name.
+fn declaration_named<'a>(file: &'a File<'a>, span: Span, name: &str) -> Option<Span> {
+    let name = name.strip_prefix('`')?.strip_suffix('`')?;
+    let scope = match file.reference_at(span.start) {
+        Some(reference) => reference.scope(),
+        None => get_node_by_range_index(file, span.start).scope(),
+    };
+    let symbol = scope.resolve_bytes(name.as_bytes())?;
+    symbol.declarations().next()?.name_span()
+}
+
 /// The first `len` bytes of `span`.
 fn start_of(span: Span, len: u32) -> Span {
     Span::new(span.start, span.start.saturating_add(len).min(span.end))
@@ -349,18 +370,83 @@ fn function_head(func: Func) -> Span {
     Span::new(whole.start, end.min(whole.end))
 }
 
-/// The function that the value at `span` is: it is written there, or the name of a function declaration is, or of a variable that
-/// is declared with a function. oxc follows the loads and the stores of its HIR, also those of a later assignment.
-fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
-    let Some(reference) = file.reference_at(span.start).filter(|it| it.span() == span) else {
-        return function_at(file, span);
-    };
-    match reference.symbol()?.declarations().next()? {
-        Declaration::Fn(func) => Some(func),
+/// What a variable is declared with: the `init` of `const name = init`.
+fn initializer(declaration: Declaration) -> Option<Expr> {
+    match declaration {
         Declaration::Var(pat) => match pat.parent() {
-            Node::VarDecl(declaration) => declaration.init()?.as_fn(),
+            Node::VarDecl(declaration) => declaration.init(),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// The function that the value at `span` is: it is written there, or the name of a function declaration is, or of a variable that
+/// is declared with a function, with a `useCallback` of one, or with such a name. oxc follows the loads and the stores of its
+/// HIR, also those of a later assignment.
+fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
+    let Some(mut reference) = file.reference_at(span.start).filter(|it| it.span() == span) else {
+        return function_at(file, span);
+    };
+    // Names that stand for each other do not end.
+    for _ in 0..8 {
+        let declaration = reference.symbol()?.declarations().next()?;
+        if let Declaration::Fn(func) = declaration {
+            return Some(func);
+        }
+        let init = initializer(declaration)?;
+        let value = match init.as_call() {
+            Some(call) if called(call).is_some_and(|hook| hook.is("useCallback")) => {
+                call.args().first()?
+            }
+            _ => init,
+        };
+        if let Some(func) = value.as_fn() {
+            return Some(func);
+        }
+        reference = value.reference()?;
+    }
+    None
+}
+
+/// The name of what is called: `name(..)`, `object.name(..)`.
+fn called(call: Call) -> Option<Name> {
+    match call.callee().kind() {
+        ExprKind::Ident(name) => Some(name),
+        ExprKind::Dot { name, .. } => Some(name.name()),
+        _ => None,
+    }
+}
+
+/// The `object.name` or `object["name"]` that `object` is the object of, also as `object!`. `any_index`: or `object[index]`.
+fn member_around(mut object: Expr, any_index: bool) -> Option<Expr> {
+    loop {
+        let parent = object.parent().as_expr()?;
+        match parent.kind() {
+            ExprKind::NonNull(_) => object = parent,
+            ExprKind::Dot { obj, .. } if obj == object => return Some(parent),
+            ExprKind::Index { obj, index, .. }
+                if obj == object
+                    && (any_index || matches!(index.tag(), ExprTag::String | ExprTag::Number)) =>
+            {
+                return Some(parent);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Where the property of `member` is named, if `name` is its name.
+fn property_named(member: Expr, name: &[u8]) -> Option<Span> {
+    match member.kind() {
+        ExprKind::Dot { name: written, .. } => (written.bytes() == name).then(|| written.span()),
+        ExprKind::Index { index, .. } => {
+            let is_same = match index.kind() {
+                ExprKind::String(value) => value.bytes() == name,
+                _ => index.text() == name,
+            };
+            is_same.then(|| index.span())
+        }
         _ => None,
     }
 }
@@ -384,12 +470,8 @@ fn call_with_callback(func: Func) -> Option<Call> {
 /// The call of `useEffect` and the like in whose callback `span` is, not in a function in it.
 fn effect_around<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     let call = call_with_callback(enclosing_function(file, span)?)?;
-    let name = match call.callee().kind() {
-        ExprKind::Ident(name) => name,
-        ExprKind::Dot { name, .. } => name.name(),
-        _ => return None,
-    };
-    name.is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
+    called(call)?
+        .is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
         .then_some(call)
 }
 
@@ -557,15 +639,121 @@ fn preserve_manual_memo<'a>(file: &'a File<'a>, out: &mut Rendered) {
                 out.push(callback, "Manual memoization callback starts here");
             }
         }
-        // `preserve_memo_inferred_dependencies`. Where the dependency is inferred, which is a second label, only the compiler
-        // knows.
+        // `preserve_memo_inferred_dependencies`
         "Could not preserve existing manual memoization" => {
             if let Some(dependencies) = call.and_then(|call| call.args().get(1)) {
                 out.move_to(Some(dependencies.span()));
                 out.relabel("This dependency list does not match the dependencies inferred from the callback");
             }
+            let inferred = call.and_then(|call| inferred_dependency(call, &out.help));
+            out.also(inferred, "This dependency is inferred here");
         }
         _ => {}
+    }
+}
+
+/// Where the compiler comes by the dependency that `help` names for the first time in a reactive scope of the callback of `call`.
+/// oxc keeps that in its `ReactiveScopeDependency`: of `a.b.c` where the `c` is written, of a variable all of the `a.b.c` that is
+/// read of it there.
+///
+/// Where the scopes are only the compiler knows. All of the callback of a `useCallback` is in one, which is that of the function.
+/// That of a `useMemo` is a part of the component: see [`is_in_reactive_scope`].
+fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
+    const BEFORE: &[u8] = b"The inferred dependency was `";
+    let help = help.as_bytes();
+    let rest = help.get(strings::index_of(help, BEFORE)? + BEFORE.len()..)?;
+    let dependency = rest.get(..strings::index_of_char_usize(rest, b'`')?)?;
+    // `a?.b` is printed as it is written.
+    let mut names = strings::split(dependency, b".").map(|it| it.strip_suffix(b"?").unwrap_or(it));
+    let variable = names.next()?;
+    let path: Vec<&[u8]> = names.collect();
+
+    let callback = call.args().first()?;
+    let (func, whole) = (callback.as_fn()?, callback.span());
+    let is_one_scope = called(call)?.is("useCallback");
+    let symbol = callback.parent().scope().resolve_bytes(variable)?;
+    let (mut first, mut barren) = (None, Span::default());
+    for reference in symbol.references().filter(|it| whole.contains(it.span())) {
+        let Some((read, place)) = reference.expr().and_then(|it| read_of(it, &path)) else {
+            continue;
+        };
+        if is_one_scope || is_in_reactive_scope(read, func, &mut barren) {
+            return Some(place);
+        }
+        first.get_or_insert(place);
+    }
+    first
+}
+
+/// The `variable.a.b` that is read of `variable` if `path` is `a`, `b`, with where the `b` is written. Without a path all that is
+/// read of it, with where that is written.
+fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
+    let (mut read, mut place) = (variable, None);
+    for name in path {
+        read = member_around(read, false)?;
+        place = Some(property_named(read, name)?);
+    }
+    if let Some(place) = place {
+        return Some((read, place));
+    }
+    while let Some(member) = member_around(read, false) {
+        read = member;
+    }
+    Some((read, read.span()))
+}
+
+/// Whether `read` is in a reactive scope of the callback of a `useMemo`, as far as the syntax tells: it is a part of what makes an
+/// object, or of a `?:`, `&&`, `||` or `??` a part of which does. The test of `if (!a?.b) return` is not.
+///
+/// `barren`: the last `?:`, `&&`, `||` or `??` in which nothing makes an object.
+fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Span) -> bool {
+    if barren.contains(read.span()) {
+        return false;
+    }
+    let mut outermost = None;
+    for node in Node::Expr(read).ancestors() {
+        match node {
+            Node::Func(func) if func == callback => break,
+            _ if makes_an_object(node) => return true,
+            Node::Expr(e) => match e.kind() {
+                ExprKind::Cond { .. }
+                | ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                } => outermost = Some(e),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    let Some(outermost) = outermost else {
+        return false;
+    };
+    let mut rest = vec![Node::Expr(outermost)];
+    while let Some(node) = rest.pop() {
+        if makes_an_object(node) {
+            return true;
+        }
+        node.for_each_child(|child| rest.push(child));
+    }
+    *barren = outermost.span();
+    false
+}
+
+fn makes_an_object(node: Node) -> bool {
+    match node {
+        Node::Func(_) | Node::Class(_) => true,
+        Node::Expr(e) => matches!(
+            e.tag(),
+            ExprTag::Call
+                | ExprTag::New
+                | ExprTag::Array
+                | ExprTag::Object
+                | ExprTag::Jsx
+                | ExprTag::TaggedTemplate
+                | ExprTag::Regex
+        ),
+        _ => false,
     }
 }
 
@@ -602,7 +790,9 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
                 && variable.starts_with('`')
             {
                 let text = format!("{variable} originates here");
-                let origin = out.place().and_then(|at| declaration_of(file, at));
+                let origin = out
+                    .place()
+                    .and_then(|at| declaration_named(file, at, variable));
                 out.also(origin, text);
             }
         }
@@ -633,24 +823,26 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         "Cannot reassign variable after render completes" => {
             let variable = out.text().strip_prefix("Cannot reassign ");
             let variable = variable.and_then(|it| it.strip_suffix(" after render completes"));
-            let text = variable.map(|it| format!("{it} is declared here"));
-            declared_here(file, text, out);
+            let variable = variable.map(str::to_owned);
+            declared_here(file, variable.as_deref(), out);
         }
         // `reassigned_in_async_function`
         "Cannot reassign variable in async function" => {
             let variable = out.text().strip_prefix("Cannot reassign ");
-            let text = variable.map(|it| format!("{it} is declared here"));
-            declared_here(file, text, out);
+            let variable = variable.map(str::to_owned);
+            declared_here(file, variable.as_deref(), out);
         }
         "Cannot modify local variables after render completes" => known_mutable_function(file, out),
         _ => {}
     }
 }
 
-fn declared_here<'a>(file: &'a File<'a>, text: Option<String>, out: &mut Rendered) {
-    if let Some(text) = text {
-        let declaration = out.place().and_then(|at| declaration_of(file, at));
-        out.also(declaration, text);
+fn declared_here<'a>(file: &'a File<'a>, variable: Option<&str>, out: &mut Rendered) {
+    if let Some(variable) = variable {
+        let declaration = out
+            .place()
+            .and_then(|at| declaration_named(file, at, variable));
+        out.also(declaration, format!("{variable} is declared here"));
     }
 }
 
@@ -682,18 +874,83 @@ fn globals(out: &mut Rendered) {
     }
 }
 
-/// `ref_access` and what calls it. Where a function that is called accesses a ref, which is a second label, only the compiler
-/// knows.
-fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
+/// `ref_access` and what calls it.
+fn refs<'a>(file: &'a File<'a>, out: &mut Rendered, memo: &mut Memo<'a>) {
     out.help = Cow::Borrowed(
         "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in \
          event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not \
          to update as expected",
     );
-    // `ref_update`
-    if out.text() != "Cannot update ref during render" {
-        return;
+    match out.text() {
+        "Cannot update ref during render" => ref_update(file, out),
+        // `function_accesses_ref`
+        "This function accesses a ref value" => {
+            let func = out.place().and_then(|at| {
+                function_of_value(file, at).or_else(|| {
+                    let callee = find(file, at, |node| node.as_expr()?.callee())?;
+                    function_of_value(file, callee.span())
+                })
+            });
+            let access = func.and_then(|func| first_ref_access(file, func, memo));
+            out.also(access, "The ref is accessed here");
+        }
+        _ => {}
     }
+}
+
+/// Where oxc has the first error in `func`, which it keeps with the type of the function (`RefFnType::ref_access_span`), as far as
+/// the syntax tells: the first `ref.current` that is written in it, with all that is read of it but for a method that is called.
+/// What is assigned to is marked as [`ref_update`] does it.
+fn first_ref_access<'a>(file: &'a File<'a>, func: Func<'a>, memo: &mut Memo<'a>) -> Option<Span> {
+    let currents = memo.currents.get_or_insert_with(|| {
+        let is_current = |e: &Expr| {
+            e.member_name()
+                .is_some_and(|name| name.name().is("current"))
+        };
+        let mut all: Vec<_> = file
+            .exprs_of_kind(ExprTag::Dot)
+            .filter(is_current)
+            .collect();
+        all.sort_unstable_by_key(|e| e.span());
+        all
+    });
+    let whole = func.span();
+    let first = currents.partition_point(|e| e.span().start < whole.start);
+    let access = *(currents.get(first..)?.iter())
+        .take_while(|e| e.span().end <= whole.end)
+        .find(|e| e.object().is_some_and(is_ref))?;
+    let mut read = access;
+    while let Some(member) = member_around(read, true)
+        && member.parent().as_expr().and_then(Expr::callee) != Some(member)
+    {
+        read = member;
+    }
+    let is_assigned = matches!(
+        read.parent().as_expr().map(Expr::kind),
+        Some(ExprKind::Assign { op: None, target, .. }) if target == read
+    );
+    Some(match is_assigned {
+        true => Span::new(access.object()?.span().end, access.span().end),
+        false => read.span(),
+    })
+}
+
+/// It is called `ref` or `..Ref`, which the compiler takes for a ref, or it is declared with `useRef()`.
+fn is_ref(object: Expr) -> bool {
+    let name = match object.kind() {
+        ExprKind::Ident(name) => name,
+        ExprKind::Dot { name, .. } => name.name(),
+        _ => return false,
+    };
+    if name.is("ref") || name.bytes().ends_with(b"Ref") {
+        return true;
+    }
+    let hook = || called(initializer(object.symbol()?.declarations().next()?)?.as_call()?);
+    hook().is_some_and(|hook| hook.is("useRef"))
+}
+
+/// `ref_update`
+fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.relabel("Cannot update ref value during render");
     let Some(whole) = out.place() else {
         return;
@@ -938,7 +1195,8 @@ fn syntax<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
                 return;
             };
             out.relabel(format!("Cannot reassign {name}"));
-            if let Some(declaration) = out.place().and_then(|at| declaration_of(file, at)) {
+            if let Some(declaration) = out.place().and_then(|at| declaration_named(file, at, name))
+            {
                 out.push(declaration, format!("{name} is declared here"));
             }
         }

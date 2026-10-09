@@ -17,7 +17,7 @@ use bun_react_compiler::lowering::FunctionNode;
 
 /// How much of the compiler runs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Depth {
+pub(crate) enum Depth {
     /// All that can change what is reported in a category other than `Todo` and `Invariant`.
     Validations,
     Everything,
@@ -75,7 +75,7 @@ impl<'a> Compiler<'a> {
         let converted = match convert(self.file, &arena, func) {
             Ok(converted) => converted,
             Err(Refusal::Using) => return Ok(()),
-            Err(refusal) => return Err(vec![refused(refusal, func.estree_span())]),
+            Err(refusal) => return Err(vec![refused(refusal)]),
         };
         let host = LintHost::new(&converted, &arena, self.file.text());
         let node = match &converted.root {
@@ -124,19 +124,20 @@ fn implicit_arguments(span: Span) -> Finding {
     }
 }
 
-fn refused(refusal: Refusal, span: Span) -> Finding {
-    let reason = match refusal {
-        Refusal::TooDeep => "Support functions that are nested this deeply",
-        Refusal::TooLarge | Refusal::Using => "Support functions of this size",
+fn refused(refusal: Refusal) -> Finding {
+    let description = match refusal {
+        Refusal::TooDeep => "What is in it is nested too deeply",
+        Refusal::TooManyNodes | Refusal::Using => "It is too long",
+        Refusal::TooManyBranches => "It has too many branches",
+        Refusal::TooManyFunctions => "It has too many functions in it",
+        Refusal::TooManyArguments => "A call in it has too many arguments",
     };
+    // Without a place of its own: it is reported where the function starts.
     Finding {
         category: ErrorCategory::Todo,
-        reason: reason.to_owned(),
-        description: None,
-        details: vec![Detail::Error {
-            span: Some(span),
-            message: None,
-        }],
+        reason: "Support functions of this size".to_owned(),
+        description: Some(description.to_owned()),
+        details: Vec::new(),
         suggestions: Vec::new(),
         is_error_detail: true,
         function_span: None,

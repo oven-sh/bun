@@ -16,7 +16,9 @@ impl NoConstAssign {
                 return;
             };
             for reference in get_modifying_references(symbol.references()) {
-                cx.report(reference, CONST).data("name", reference.name());
+                // oxlint points at the declaration.
+                let place = if cx.language().is_oxlint { pat.span() } else { reference.span() };
+                cx.report(place, CONST).data("name", reference.name());
             }
         });
     }

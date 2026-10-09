@@ -7,12 +7,14 @@ pub mod cli;
 mod config;
 mod editorconfig;
 mod files;
+mod tailwind;
 
 use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
+use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_js_parser::sema::Summary;
@@ -30,6 +32,7 @@ use config::{Configs, Flavor, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
 use std::borrow::Cow;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 macro_rules! pretty {
@@ -475,7 +478,11 @@ fn print<'a>(
         true => TypesInJavaScript::Tolerated,
         false => TypesInJavaScript::Refused,
     };
-    if let Some(why) = bun_lint::linter::refusal_of_prettier(file, types) {
+    let refusal = match options.flavor.is_oxfmt() {
+        true => bun_lint::linter::refusal_of_oxfmt(file, types),
+        false => bun_lint::linter::refusal_of_prettier(file, types),
+    };
+    if let Some(why) = refusal {
         let at = file.position(why.at);
         return Err(Failure::Syntax(
             format!(
@@ -587,6 +594,8 @@ enum Done {
     Unchanged,
     /// It is not formatted. With `--write`, it was not.
     Different,
+    /// It has classes of Tailwind CSS whose order is not known yet.
+    PutAside,
     /// For the user. The exit code is 2.
     Failed(Vec<u8>),
 }
@@ -710,7 +719,7 @@ impl Run<'_> {
                         .then_some(options),
                 )
             });
-        let options = match found {
+        let mut options = match found {
             Ok(Some(options)) => options,
             Ok(None) => {
                 self.out.stdout = text;
@@ -735,15 +744,34 @@ impl Run<'_> {
             }
             return out;
         }
+        let kind = Kind::with_options(&path, &options.options);
+        tailwind::only_where_supported(&mut options.options, kind, &text);
         let names = Session::new();
-        match format(
-            &path,
-            &text,
-            &options,
-            (&Interner::new_in(&names), &names),
-            &mut Scratches::default(),
-            self.options.verify,
-        ) {
+        let verifies = self.options.verify;
+        let format_text = || {
+            format(
+                &path,
+                &text,
+                &options,
+                (&Interner::new_in(&names), &names),
+                &mut Scratches::default(),
+                verifies,
+            )
+        };
+        let mut formatted = format_text();
+        if let Some(tailwind) = options
+            .options
+            .tailwind
+            .as_deref()
+            .filter(|it| it.has_missed())
+        {
+            if let Err(error) = configs.classes.ask(self.environment) {
+                return self.fail(&error);
+            }
+            tailwind.has_missed.store(false, Ordering::Relaxed);
+            formatted = format_text();
+        }
+        match formatted {
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok((formatted, _)) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -863,14 +891,21 @@ impl Run<'_> {
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
         let mut results = Guarded::new(done);
-        pool.for_each(work.len(), 1, &|at| {
+        // By ending, how many files may have classes of Tailwind CSS and are in a language in which they are not sorted yet.
+        let mut unsorted: Guarded<Vec<(&[u8], usize)>> = Guarded::new(Vec::new());
+        // Tailwind cannot be asked, and that is allowed.
+        let leaves_classes = AtomicBool::new(false);
+        let format_at = |at: usize| {
             let (index, target) = work[at];
             let shown = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
             let result = (|| {
-                let options = configs
+                let mut options = configs
                     .options_for(&target.scope, &target.path)
                     .map_err(|error| error.0)?;
+                if leaves_classes.load(Ordering::Relaxed) {
+                    options.options.tailwind = None;
+                }
                 let text = fs::read_sized(&target.path, target.size).map_err(|error| {
                     [
                         b"Unable to read file \"",
@@ -880,6 +915,17 @@ impl Run<'_> {
                     ]
                     .concat()
                 })?;
+                let kind = Kind::with_options(&target.path, &options.options);
+                if tailwind::only_where_supported(&mut options.options, kind, &text) {
+                    let name = paths::basename(&target.path);
+                    let ending =
+                        strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
+                    let mut unsorted = unsorted.lock();
+                    match unsorted.iter_mut().find(|it| it.0 == ending) {
+                        Some(entry) => entry.1 += 1,
+                        None => unsorted.push((ending, 1)),
+                    }
+                }
                 // What a template would lose is known without a second look, and the second look at HTML is a short
                 // one, which only a file that changes gets.
                 let is_free = || {
@@ -897,6 +943,14 @@ impl Run<'_> {
                     self.options.verify && (!only_looks || is_free()),
                 )
                 .map_err(|failure| Self::describe(&shown, failure))?;
+                if options
+                    .options
+                    .tailwind
+                    .as_deref()
+                    .is_some_and(Tailwind::has_missed)
+                {
+                    return Ok(Done::PutAside);
+                }
                 if formatted == text {
                     return Ok(Done::Unchanged);
                 }
@@ -915,7 +969,19 @@ impl Run<'_> {
             })();
             scratches.lock().push(scratch);
             results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
-        });
+        };
+        pool.for_each(work.len(), 1, &format_at);
+        let put_aside: Vec<usize> = (0..work.len())
+            .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::PutAside)))
+            .collect();
+        let mut classes_are_unknown = None;
+        if !put_aside.is_empty() {
+            classes_are_unknown = configs.classes.ask(self.environment).err();
+            leaves_classes.store(classes_are_unknown.is_some(), Ordering::Relaxed);
+            if classes_are_unknown.is_none() || options.allow_unsupported {
+                pool.for_each(put_aside.len(), 1, &|at| format_at(put_aside[at]));
+            }
+        }
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
@@ -934,6 +1000,12 @@ impl Run<'_> {
                 Some(Done::Failed(error)) => {
                     failed += 1;
                     self.error(&error);
+                }
+                Some(Done::PutAside) => {
+                    failed += 1;
+                    classes_are_unknown.get_or_insert_with(|| {
+                        b"sortTailwindcss: The order of some classes cannot be found.".to_vec()
+                    });
                 }
                 Some(Done::Different) => {
                     different += 1;
@@ -1016,6 +1088,32 @@ impl Run<'_> {
             .concat();
             match options.allow_unsupported {
                 true => self.warn(&[&text[..], b"."].concat()),
+                false => {
+                    self.error(
+                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
+                    );
+                }
+            }
+        }
+        match classes_are_unknown {
+            Some(error) if options.allow_unsupported => self.warn(&error),
+            Some(error) => self.error(&error),
+            None => {}
+        }
+        let mut unsorted = std::mem::take(unsorted.get_mut());
+        if !unsorted.is_empty() {
+            unsorted.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
+            let kinds: Vec<Vec<u8>> = unsorted
+                .iter()
+                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
+                .collect();
+            let text = [
+                &b"sortTailwindcss is not supported yet in these languages, and has no effect there: "[..],
+                &kinds.join(&b", "[..]),
+            ]
+            .concat();
+            match options.allow_unsupported {
+                true => self.warn(&text),
                 false => {
                     self.error(
                         &[&text[..], b". With --allow-unsupported this is a warning."].concat(),

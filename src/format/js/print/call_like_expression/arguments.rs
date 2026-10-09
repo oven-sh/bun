@@ -354,6 +354,12 @@ fn arguments_grouped_layout<'a>(
     }
 }
 
+/// `setTimeout((() => { a(); }), 1)`, as minifiers write it: oxfmt looks for the `,` right behind the function, finds a `)`,
+/// and puts each argument on a line of its own. The parentheses go, so the second time it does not.
+fn function_in_parentheses_is_not_hugged(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Formatter<'a>) -> bool {
     // A function expression, or an arrow function with a block.
     match first.as_fn() {
@@ -361,6 +367,9 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         _ => return false,
     }
     if is_function_like(second) || matches!(second.kind(), ExprKind::Cond { .. }) {
+        return false;
+    }
+    if first.is_parenthesized() && function_in_parentheses_is_not_hugged(f) {
         return false;
     }
 

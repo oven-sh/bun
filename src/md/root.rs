@@ -20,7 +20,7 @@ pub struct RenderOptions {
 pub struct Options {
     pub tables: bool,
     pub(crate) strikethrough: bool,
-    pub(crate) tasklists: bool,
+    pub tasklists: bool,
     pub permissive_autolinks: bool,
     pub permissive_url_autolinks: bool,
     pub permissive_www_autolinks: bool,

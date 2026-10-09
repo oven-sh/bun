@@ -17,6 +17,7 @@ bun_lint_jest.workspace = true
 bun_lint_graph.workspace = true
 bun_lint_conformance.workspace = true
 bun_format.workspace = true
+bun_glob.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_js_parser.workspace = true

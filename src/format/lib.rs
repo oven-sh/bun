@@ -25,6 +25,7 @@ pub mod markdown;
 pub mod options;
 pub mod pragma;
 pub mod range;
+pub mod tailwind;
 mod text;
 pub mod toml;
 pub mod verify;

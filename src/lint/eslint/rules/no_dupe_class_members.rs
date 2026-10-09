@@ -13,9 +13,9 @@ const SET: u8 = 1 << 2;
 /// How far the three are shifted for a static member.
 const STATIC: u8 = 3;
 
-/// The names that the members of one class have defined so far, each with how. It is kept between
-/// classes only for its allocation.
-pub type Seen<'a> = Vec<(Cow<'a, [u8]>, u8)>;
+/// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint with
+/// the key of the last member that has the name. It is kept between classes only for its allocation.
+pub type Seen<'a> = Vec<(Cow<'a, [u8]>, u8, Span)>;
 
 /// With more names than this, they are looked up in a map.
 const SEARCHED: usize = 16;
@@ -40,6 +40,7 @@ pub fn check<'a, R: Rule>(
         return;
     }
     seen.clear();
+    let is_oxlint = cx.language().is_oxlint;
     // Where each name is in `seen`.
     let mut index_of: FxHashMap<Cow<'a, [u8]>, usize> = FxHashMap::default();
     for member in members {
@@ -87,17 +88,23 @@ pub fn check<'a, R: Rule>(
                 if !index_of.is_empty() {
                     index_of.insert(name.clone(), seen.len());
                 }
-                seen.push((name, 0));
+                seen.push((name, 0, Span::empty(0)));
                 seen.len() - 1
             }
         };
-        let Some((name, state)) = seen.get_mut(index) else {
+        let Some((name, state, last_key)) = seen.get_mut(index) else {
             continue;
         };
         let is_duplicate = *state & (conflicting << shift) != 0;
         *state |= own << shift;
-        if is_duplicate && let Some(key) = key_span(member) {
-            cx.report(key, UNEXPECTED).data("name", name.clone());
+        if (is_duplicate || is_oxlint)
+            && let Some(key) = key_span(member)
+        {
+            // oxlint points at the member before.
+            let before = std::mem::replace(last_key, key);
+            if is_duplicate {
+                cx.report(if is_oxlint { before } else { key }, UNEXPECTED).data("name", name.clone());
+            }
         }
     }
 }

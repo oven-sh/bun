@@ -507,12 +507,23 @@ fn oxlint_is_in_loop_body(statement: Stmt) -> bool {
     }
 }
 
-/// oxlint's `is_in_return_statement`: it is at the top of a function that is part of what is returned.
+/// oxlint's `is_in_return_statement`: it is at the top of a function that is part of what is returned. Declarations
+/// other than those of variables are no statements for oxc.
 fn oxlint_is_in_return_statement(statement: Stmt) -> bool {
     for node in Node::Stmt(statement).ancestors() {
         match node {
             Node::Stmt(it) if it.tag() == StmtTag::Return => return true,
-            Node::Stmt(it) if it.tag() == StmtTag::Expr => {}
+            Node::Stmt(it)
+                if matches!(
+                    it.tag(),
+                    StmtTag::Expr
+                        | StmtTag::Fn
+                        | StmtTag::Class
+                        | StmtTag::Interface
+                        | StmtTag::TypeAlias
+                        | StmtTag::Enum
+                        | StmtTag::Module
+                ) => {}
             Node::Stmt(_) | Node::File(_) => return false,
             Node::Func(func) if func.is_arrow() && matches!(func.body(), FnBody::Expr(_)) => return true,
             _ => {}

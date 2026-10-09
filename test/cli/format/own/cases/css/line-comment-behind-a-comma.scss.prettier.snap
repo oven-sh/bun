@@ -1,0 +1,79 @@
+------------------
+{ printWidth: 80 }
+------------------
+$map: (
+  "foo": 1,
+  // Comment
+  "bar": 2, // Comment
+);
+$list:
+  a,
+  // c
+  b;
+$paren: (
+  a,
+  // c
+  b
+);
+a {
+  transition:
+    a 1s,
+    // c
+    b 2s;
+  b: f(
+    a,
+    // c
+    b
+  );
+  @include m(
+    $a,
+    // c
+    $b
+  );
+}
+$own-line: (
+  "foo": 1,
+  // Comment
+  "bar": 2,
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+$map: (
+  "foo": 1,
+  // Comment
+  "bar": 2, // Comment
+);
+$list:
+  a,
+  // c
+  b;
+$paren: (
+  a,
+  // c
+  b
+);
+a {
+  transition:
+    a 1s,
+    // c
+    b 2s;
+  b: f(
+    a,
+    // c
+    b
+  );
+  @include m(
+    $a,
+    // c
+    $b
+  );
+}
+$own-line: (
+  "foo": 1,
+  // Comment
+  "bar": 2,
+);
+
+===================== End =====================

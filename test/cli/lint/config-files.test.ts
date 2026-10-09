@@ -386,6 +386,33 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
   });
 
+  test("a configuration file in a directory that one further up ignores counts", async () => {
+    const own = JSON.stringify({ ...noVar, categories: { correctness: "off" } });
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ ...JSON.parse(own), ignorePatterns: ["sub/", "other/", "third/**"] }),
+      "a.js": code,
+      "sub/.oxlintrc.json": own,
+      "sub/b.js": code,
+      "sub/deep/c.js": code,
+      "other/d.js": code,
+      "other/inner/.oxlintrc.json": own,
+      "other/inner/e.js": code,
+      "third/f.js": code,
+      "third/x/.oxlintrc.json": JSON.stringify({ ...JSON.parse(own), ignorePatterns: ["y"] }),
+      "third/x/g.js": code,
+      "third/x/y/h.js": code,
+    };
+    expect((await lint(files)).problems).toEqual([
+      "a.js:1:1 no-var",
+      "other/inner/e.js:1:1 no-var",
+      "sub/b.js:1:1 no-var",
+      "sub/deep/c.js:1:1 no-var",
+      "third/x/g.js:1:1 no-var",
+    ]);
+    expect((await lint(files, ["other"])).problems).toEqual(["other/inner/e.js:1:1 no-var"]);
+    expect((await lint(files, ["--disable-nested-config"])).problems).toEqual(["a.js:1:1 no-var"]);
+  });
+
   test("`files` of `overrides` have no `?(a|b)`", async () => {
     const { problems } = await lint({
       ".oxlintrc.json": JSON.stringify({
@@ -408,6 +435,13 @@ describe.concurrent("an .oxlintrc.json", () => {
     ],
     [{ overrides: [{ rules: {} }] }, "missing field `files`"],
     [{ overrides: [{ files: "*.js" }] }, ", expected a sequence"],
+    [
+      { overrides: [{ files: ["src/*.{js,ts"] }] },
+      "Invalid glob pattern `src/*.{js,ts`: unclosed brace expansion at byte 6; missing '}'",
+    ],
+    [{ overrides: [{ files: ["a{b{c}"] }] }, "unclosed brace expansion at byte 1;"],
+    [{ overrides: [{ files: ["*.js"], excludeFiles: ["{a,[}"] }] }, "unclosed character class at byte 3; missing ']'"],
+    [{ overrides: [{ files: ["[!]"] }] }, "unclosed character class at byte 0;"],
     [{ options: { nonsense: 1 } }, "unknown field `nonsense`, expected one of `typeAware`,"],
     [{ options: { maxWarnings: -1 } }, "invalid value: integer `-1`, expected usize"],
     [{ options: { typeAware: "yes" } }, ", expected a boolean"],
@@ -427,6 +461,29 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(stderr).toContain("Cannot use the configuration file <dir>/.oxlintrc.json:\n");
     expect(stderr).toContain(why);
     expect(exitCode).toBe(1);
+  });
+
+  test("patterns of `overrides` that are closed, or do not open anything", async () => {
+    const files = ["[]a]", "[!]]", "{[}]}", "\\{a", "a}", "{]}", "[{]", "a{b{c}}", "x\\"];
+    const config = { ...noVar, categories: { correctness: "off" }, overrides: [{ files, rules: {} }] };
+    const { problems } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
+    expect(problems).toEqual(["a.js:1:1 no-var"]);
+  });
+
+  test("a plugin in JavaScript cannot have the name of one that is built in", async () => {
+    const plugin = `export default { meta: { name: "unicorn" }, rules: {} };`;
+    const byItself = await lint(
+      { ".oxlintrc.json": JSON.stringify({ jsPlugins: ["./plugin.js"] }), "plugin.js": plugin, "a.js": code },
+      ["a.js"],
+    );
+    expect(byItself.stderr).toContain("Plugin name 'unicorn' is reserved, and cannot be used for JS plugins.");
+    expect(byItself.exitCode).toBe(1);
+    const jsPlugins = [{ name: "react", specifier: "./plugin.js" }];
+    const byAlias = await lint({ ".oxlintrc.json": JSON.stringify({ jsPlugins }), "plugin.js": plugin, "a.js": code }, [
+      "a.js",
+    ]);
+    expect(byAlias.stderr).toContain(`"jsPlugins": [{ "name": "react-js", "specifier": "eslint-plugin-react" }]`);
+    expect(byAlias.exitCode).toBe(1);
   });
 
   test("an override for no files is not refused", async () => {
@@ -803,12 +860,13 @@ describe.concurrent("whose configuration files count", () => {
     "sub/b.js": "var y = 1;\nif (y == 2) {}\n",
   };
 
-  test("of two side by side ESLint's, and a line says so", async () => {
+  test("of two side by side oxlint's, and a line says so", async () => {
     const { problems, stderr } = await lint(both, ["a.js", "sub/b.js"]);
-    expect(problems).toEqual(["a.js:1:1 no-var"]);
+    expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
     expect(stderr).toContain(
-      "Both eslint.config.js and .oxlintrc.json found in <dir>: using eslint.config.js. Use --flavor=oxlint for the other.",
+      "Both eslint.config.js and .oxlintrc.json found in <dir>: using .oxlintrc.json. Use --flavor=eslint for the other.",
     );
+    expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
 
   test.each([
@@ -836,7 +894,7 @@ describe.concurrent("whose configuration files count", () => {
     expect(allowed.exitCode).toBe(0);
   });
 
-  test("without a configuration file, the package.json tells: oxlint and not eslint", async () => {
+  test("without a configuration file, the package.json tells", async () => {
     const files = { "a.js": "debugger;\nvar a = 1;\nexport { a };\n", "sub/b.js": "debugger;\n" };
     const dependsOn = (...names: string[]) =>
       JSON.stringify({ devDependencies: Object.fromEntries(names.map(it => [it, "*"])) });
@@ -851,9 +909,12 @@ describe.concurrent("whose configuration files count", () => {
     expect(eslint.exitCode).toBe(1);
     const both = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") });
     expect(both.stderr).toContain(
-      "No configuration file found, and <dir>/package.json has both eslint and oxlint: using the defaults for ESLint. Use --flavor=oxlint for the other.",
+      "No configuration file found, and <dir>/package.json has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
     );
-    expect(both.exitCode).toBe(1);
+    expect(both.exitCode).toBe(0);
+    const chosen = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") }, ["--flavor=eslint", "."]);
+    expect(chosen.stderr).not.toContain("No configuration file found");
+    expect(chosen.exitCode).toBe(1);
     expect((await lint(files)).exitCode).toBe(1);
   });
 
@@ -861,22 +922,6 @@ describe.concurrent("whose configuration files count", () => {
     const { problems, stderr } = await lint(both, ["-D", "no-debugger", "a.js"]);
     expect(problems).toEqual(["a.js:2:13 no-debugger", "a.js:2:7 eqeqeq"]);
     expect(stderr).not.toContain("Both ");
-  });
-
-  test("an eslint.config.js without rules for JavaScript leaves it to the .oxlintrc.json beside it", async () => {
-    const { problems, stderr } = await lint({
-      ...both,
-      "eslint.config.js": `module.exports = [
-        { ignores: ["dist"] },
-        { rules: { "no-var": "off" } },
-        { files: ["**/*.json", "**/*.{yml,yaml}"], rules: { "no-var": "error" } },
-        { plugins: { p: { languages: { l: {} } } }, language: "p/l", rules: { "no-var": "error" } },
-      ];`,
-    });
-    expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
-    expect(stderr).toContain(
-      "Both eslint.config.js and .oxlintrc.json found in <dir>: using .oxlintrc.json, the other has no rules for JavaScript. Use --flavor=eslint for the other.",
-    );
   });
 });
 
@@ -947,6 +992,71 @@ describe.concurrent("the command line of oxlint", () => {
     const alone = await lint({ ...files, ".oxlintrc.json": oxlintrc }, ["--type-check"]);
     expect(alone.stderr).toContain("The `--type-check` option requires type-aware linting.");
     expect(alone.exitCode).toBe(1);
+  });
+
+  test("--print-config prints what oxlint prints", async () => {
+    using dir = tempDir("bun-lint-print-config", {
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["import", "typescript"],
+        categories: { style: "off", correctness: "off" },
+        rules: {
+          "no-var": "error",
+          eqeqeq: ["warn", "smart"],
+          "@typescript-eslint/no-explicit-any": 2,
+          "eslint/no-console": "off",
+          "unicorn/no-null": "error",
+        },
+        settings: { react: { version: "18.2.0" }, mine: 1 },
+        globals: { a: "readable", b: true, c: "off" },
+        extends: ["./base.json"],
+        overrides: [{ files: ["*.test.js", "./a.js", "src/*.js"], rules: { "no-var": "off", eqeqeq: [2, "always"] } }],
+      }),
+      "base.json": JSON.stringify({ plugins: ["react"], rules: { "no-alert": "error", "no-var": "off" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [...command, "--print-config", "-D", "no-eval"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { settings, ...printed } = JSON.parse(stdout);
+    expect(Object.entries(printed)).toEqual([
+      ["plugins", ["react", "typescript", "import"]],
+      ["categories", { correctness: "allow", style: "allow" }],
+      [
+        "rules",
+        {
+          eqeqeq: ["warn", ["smart"]],
+          "no-alert": "deny",
+          "no-console": "allow",
+          "no-eval": "deny",
+          "no-var": "deny",
+          "typescript/no-explicit-any": "deny",
+        },
+      ],
+      ["env", { builtin: true }],
+      ["globals", { a: "readonly", b: "writable", c: "off" }],
+      [
+        "overrides",
+        [
+          {
+            files: ["**/*.test.js", "a.js", "src/*.js"],
+            env: null,
+            globals: null,
+            plugins: null,
+            rules: { "no-var": "allow", eqeqeq: ["deny", ["always"]] },
+          },
+        ],
+      ],
+      ["ignorePatterns", []],
+      ["extends", ["./base.json"]],
+    ]);
+    expect(Object.keys(printed.rules)).toEqual(Object.keys(printed.rules).toSorted());
+    expect(Object.keys(settings)).toEqual(["jsx-a11y", "next", "react", "jsdoc", "vitest", "jest"]);
+    expect(settings.react.version).toBe("18.2.0");
+    expect(stdout.endsWith("\n}\n")).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("--threads=0", async () => {

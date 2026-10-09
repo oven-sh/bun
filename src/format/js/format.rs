@@ -1315,10 +1315,18 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
         return write(f);
     }
     let node = AstNodes::TSTypeAnnotation(ty);
-    if f.comments().has_comment_before(node.span().start) {
+    if f.comments().has_comment_before(node.span().start)
+        && !(comment_sticks_to_name_of_variable(f)
+            && matches!(node.parent(), AstNodes::VariableDeclarator(_)))
+    {
         write!(f, space());
     }
     format_node(node.span(), || node.parent(), f, write);
+}
+
+/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt.
+fn comment_sticks_to_name_of_variable(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 macro_rules! type_annotations {

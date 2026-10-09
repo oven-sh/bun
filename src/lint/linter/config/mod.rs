@@ -48,6 +48,7 @@
 mod brace_expansion;
 mod cache;
 mod eslintrc;
+mod fast_glob;
 mod flat;
 mod glob_part;
 mod merge;
@@ -71,12 +72,14 @@ use crate::runner::RuleEntry;
 use bun_core::strings;
 use cache::Cache;
 pub use eslintrc::{LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
+pub use fast_glob::FastGlob;
+use fast_glob::Matcher;
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
 use minimatch::{How, Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
-pub(crate) use rc::oxlint_fix_kind;
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category, oxlint_runs_on};
+pub(crate) use rc::{OxlintChanges, oxlint_changes};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -125,7 +128,7 @@ impl Glob {
 
 /// A pattern in `files` or `ignores`.
 struct Pattern {
-    matcher: Minimatch,
+    matcher: Matcher,
     /// It starts with `!`.
     is_negated: bool,
     /// `*`, `!..`, `../*`, `../**`: it does not make ESLint lint a file that nothing else matches.
@@ -141,12 +144,22 @@ impl Pattern {
             written => written.to_vec(),
         };
         Pattern {
-            matcher: Minimatch::new(&normalized),
+            matcher: Matcher::Minimatch(Minimatch::new(&normalized)),
             is_negated: normalized.starts_with(b"!"),
             is_universal: normalized == b"*"
                 || normalized.starts_with(b"!")
                 || normalized.ends_with(b"/*")
                 || normalized.ends_with(b"/**"),
+        }
+    }
+
+    /// An element of `files` or `excludeFiles` of an override of oxlint. A `!` at its start makes it match what it would not
+    /// match without, and takes nothing back. oxlint lints a file for what it is called, not because an override is for it.
+    fn of_oxlint(written: &[u8]) -> Pattern {
+        Pattern {
+            matcher: Matcher::FastGlob(FastGlob::new(written)),
+            is_negated: false,
+            is_universal: true,
         }
     }
 }
@@ -241,7 +254,7 @@ struct Listed {
 
 /// What a path starts with that all of `patterns` match. One of them that says so is enough.
 fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
-    (patterns.iter()).find_map(|it| it.matcher.heads().map(Vec::from_iter))
+    (patterns.iter()).find_map(|it| it.matcher.heads())
 }
 
 impl Heads {
@@ -317,6 +330,8 @@ pub struct Config {
     prefers_typescript_rules: bool,
     /// `options` of an `.oxlintrc.json` and of what it extends.
     options_of_oxlint: Vec<(Vec<u8>, Json)>,
+    /// [`Config::printed_for_oxlint`]
+    printed_for_oxlint: Vec<(Vec<u8>, Json)>,
     notes: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
@@ -395,6 +410,11 @@ impl Config {
     /// What could not be taken over from the configuration, for the user to read.
     pub fn notes(&self) -> &[Vec<u8>] {
         &self.notes
+    }
+
+    /// What oxlint's `--print-config` prints, if it is made of an `.oxlintrc.json`.
+    pub fn printed_for_oxlint(&self) -> Json {
+        Json::Object(self.printed_for_oxlint.clone())
     }
 
     /// `options[name]` of an `.oxlintrc.json`, or else of what it extends.

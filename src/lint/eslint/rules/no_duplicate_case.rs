@@ -2,7 +2,7 @@ use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::utils::token_key::TokenClasses;
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
@@ -55,23 +55,36 @@ fn equal<'a>(file: &'a File<'a>, a: Expr<'a>, b: Expr<'a>, is_text_enough: bool)
 /// What comparing each test with those before it by [`equal`] finds, in time in proportion to the text of the tests.
 fn check_many<'a>(cases: List<'a, Case<'a>>, is_text_enough: bool, cx: &Cx<'a, NoDuplicateCase>) {
     let is_espree = cx.language().parser == Parser::Espree;
-    let (mut texts, mut names) = (FxHashSet::default(), FxHashSet::default());
-    let mut classes = TokenClasses::default();
+    // Where the first of each is.
+    let (mut texts, mut names) = (FxHashMap::default(), FxHashMap::default());
+    let (mut classes, mut first_of_class) = (TokenClasses::default(), Vec::new());
     for case in cases {
         let Some(test) = case.test() else {
             continue;
         };
-        let known = classes.len();
-        let is_new = match test.as_ident() {
-            _ if is_text_enough => texts.insert(test.text()),
-            Some(name) if is_espree => names.insert(name),
-            Some(_) => texts.insert(test.text()),
-            None => classes.number_of(cx.file(), test) as usize == known,
+        let at = test.span();
+        let first = match test.as_ident() {
+            _ if is_text_enough => *texts.entry(test.text()).or_insert(at),
+            Some(name) if is_espree => *names.entry(name).or_insert(at),
+            Some(_) => *texts.entry(test.text()).or_insert(at),
+            None => {
+                let known = classes.len();
+                let class = classes.number_of(cx.file(), test) as usize;
+                if class == known {
+                    first_of_class.push(at);
+                }
+                first_of_class.get(class).copied().unwrap_or(at)
+            }
         };
-        if !is_new {
-            cx.report(case, UNEXPECTED);
+        if first != at {
+            report(case, first, cx);
         }
     }
+}
+
+/// oxlint points at the first test that is the same.
+fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
+    cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED);
 }
 
 impl Rule for NoDuplicateCase {
@@ -98,8 +111,8 @@ impl Rule for NoDuplicateCase {
                     continue;
                 };
                 let mut previous = cases.iter().take(i).filter_map(Case::test);
-                if previous.any(|it| equal(cx.file(), it, test, is_text_enough)) {
-                    cx.report(case, UNEXPECTED);
+                if let Some(first) = previous.find(|&it| equal(cx.file(), it, test, is_text_enough)) {
+                    report(case, first.span(), cx);
                 }
             }
         });

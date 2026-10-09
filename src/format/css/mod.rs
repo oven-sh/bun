@@ -270,6 +270,7 @@ fn parse_and_print<'o>(
         is_oxfmt: options.flavor.is_oxfmt(),
         is_html_style_attribute: options.in_html.is_style_attribute,
         value_stack: Vec::new(),
+        comment_behind_comma: 0,
         scratch: Vec::new(),
         has_failed: false,
         sink,

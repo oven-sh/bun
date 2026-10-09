@@ -1353,5 +1353,102 @@
   "a.js:6:5 eslint(no-unused-vars)",
   "a.js:7:5 eslint(no-unused-vars)"
  ],
- "prefer-for-of/the-index-in-the-array": []
+ "prefer-for-of/the-index-in-the-array": [
+  "a.ts:3:43 typescript(prefer-for-of)",
+  "a.ts:3:6 typescript(prefer-for-of)",
+  "a.ts:4:31 typescript(prefer-for-of)"
+ ],
+ "no-unreachable/each-statement": [
+  "a.js:1:24 eslint(no-unreachable)",
+  "a.js:1:29 eslint(no-unreachable)",
+  "a.js:2:25 eslint(no-unreachable)",
+  "a.js:2:39 eslint(no-unreachable)",
+  "a.js:4:24 eslint(no-unreachable)",
+  "a.js:4:45 eslint(no-unreachable)",
+  "a.js:6:45 eslint(no-unreachable)",
+  "a.js:6:50 eslint(no-unreachable)",
+  "a.js:8:22 eslint(no-unreachable)",
+  "a.js:8:27 eslint(no-unreachable)"
+ ],
+ "no-unused-vars/in-a-function-that-is-returned": [
+  "a.js:15:9 eslint(no-unused-vars)",
+  "a.js:9:7 eslint(no-unused-vars)"
+ ],
+ "await-thenable/place": [
+  "a.ts:2:9 typescript(await-thenable)",
+  "a.ts:3:9 typescript(await-thenable)",
+  "a.ts:4:19 typescript(await-thenable)",
+  "a.ts:5:25 typescript(await-thenable)",
+  "a.ts:6:22 typescript(await-thenable)"
+ ],
+ "no-unnecessary-type-assertion/callback-return": [
+  "a.ts:5:21 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:33 typescript(no-unnecessary-type-assertion)"
+ ],
+ "prefer-optional-chain/what-an-or-chain-ends-with": [
+  "a.ts:10:5 typescript(prefer-optional-chain)",
+  "a.ts:11:5 typescript(prefer-optional-chain)",
+  "a.ts:12:5 typescript(prefer-optional-chain)",
+  "a.ts:3:5 typescript(prefer-optional-chain)",
+  "a.ts:6:5 typescript(prefer-optional-chain)",
+  "a.ts:7:5 typescript(prefer-optional-chain)",
+  "a.ts:8:5 typescript(prefer-optional-chain)"
+ ],
+ "no-class-assign/place": [
+  "a.js:1:7 eslint(no-class-assign)",
+  "a.js:1:7 eslint(no-class-assign)",
+  "a.js:4:15 eslint(no-class-assign)",
+  "a.js:7:22 eslint(no-class-assign)"
+ ],
+ "no-const-assign/place": [
+  "a.js:1:7 eslint(no-const-assign)",
+  "a.js:1:7 eslint(no-const-assign)",
+  "a.js:4:16 eslint(no-const-assign)",
+  "a.js:4:9 eslint(no-const-assign)",
+  "a.js:7:12 eslint(no-const-assign)"
+ ],
+ "no-dupe-class-members/place": [
+  "a.js:2:3 eslint(no-dupe-class-members)",
+  "a.js:4:3 eslint(no-dupe-class-members)",
+  "a.js:5:10 eslint(no-dupe-class-members)",
+  "a.js:7:7 eslint(no-dupe-class-members)"
+ ],
+ "no-duplicate-case/place": [
+  "a.js:2:8 eslint(no-duplicate-case)",
+  "a.js:2:8 eslint(no-duplicate-case)",
+  "a.js:7:8 eslint(no-duplicate-case)"
+ ],
+ "no-dupe-else-if/place": [
+  "a.js:1:5 eslint(no-dupe-else-if)",
+  "a.js:2:12 eslint(no-dupe-else-if)",
+  "a.js:2:12 eslint(no-dupe-else-if)"
+ ],
+ "places/on-by-default": [
+  "a.js:10:5 eslint(use-isnan)",
+  "a.js:11:9 eslint(use-isnan)",
+  "a.js:12:19 eslint(use-isnan)",
+  "a.js:14:21 eslint(no-this-before-super)",
+  "a.js:15:21 eslint(no-this-before-super)",
+  "a.js:17:3 eslint(no-this-before-super)",
+  "a.js:1:5 eslint(no-new-native-nonconstructor)",
+  "a.js:22:8 eslint(no-empty-character-class)",
+  "a.js:23:10 eslint(no-empty-character-class)",
+  "a.js:24:6 eslint(no-useless-backreference)",
+  "a.js:25:9 eslint(no-useless-backreference)",
+  "a.js:26:12 eslint(getter-return)",
+  "a.js:27:12 eslint(getter-return)",
+  "a.js:28:16 eslint(getter-return)",
+  "a.js:29:38 eslint(getter-return)",
+  "a.js:2:5 eslint(no-new-native-nonconstructor)",
+  "a.js:30:9 eslint(no-useless-rename)",
+  "a.js:31:15 eslint(no-useless-rename)",
+  "a.js:32:10 eslint(no-useless-rename)",
+  "a.js:3:11 eslint(no-empty-static-block)",
+  "a.js:4:11 eslint(no-empty-static-block)",
+  "a.js:5:33 eslint(no-caller)",
+  "a.js:6:33 eslint(no-caller)",
+  "a.js:7:17 eslint(for-direction)",
+  "a.js:8:18 eslint(for-direction)",
+  "a.js:9:11 eslint(use-isnan)"
+ ]
 }

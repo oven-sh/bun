@@ -99,6 +99,8 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) is_html_style_attribute: bool,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<ValueId>,
+    /// Not 0: the comment at the start of what follows a comma that has been written behind the comma.
+    pub(crate) comment_behind_comma: ValueId,
     /// For a text that is made to be written.
     pub(crate) scratch: Vec<u8>,
     /// Prettier throws an error for the style sheet.
@@ -111,6 +113,29 @@ pub(crate) struct Printer<'a, 'o> {
 }
 
 /// `text.replace(/\s*!\s*important/i, " !important")`, and the same for other words.
+/// Whether the first of the selectors `selector` has what is in the place of a `${}` of JavaScript in it.
+fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
+    let Some(at) = bun_core::strings::index_of(selector, b"@prettier-placeholder-") else {
+        return false;
+    };
+    let (mut depth, mut quote) = (0u32, 0u8);
+    for &byte in &selector[..at] {
+        match byte {
+            _ if quote != 0 => {
+                if byte == quote {
+                    quote = 0;
+                }
+            }
+            b'"' | b'\'' => quote = byte,
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 fn normalize_bang(text: &[u8], word: &[u8], allows_space: bool) -> Vec<u8> {
     let mut from = 0;
     while let Some(bang) = text::index_of_char_from(text, b'!', from) {
@@ -501,7 +526,9 @@ impl<'a> Printer<'a, '_> {
                 && text::index_of_char_from(value, b':', 2).is_some()
         });
         self.unit(false, |printer| {
-            if let Some(selector) = node.selector {
+            if printer.is_oxfmt && has_placeholder_in_first_selector(&node.raw_selector) {
+                printer.print_lines_of_selector(&node.raw_selector);
+            } else if let Some(selector) = node.selector {
                 printer.print_selector(statement, selector, None, None);
             }
             if node.important {
@@ -521,6 +548,29 @@ impl<'a> Printer<'a, '_> {
         self.print_block(scope, raw, true, parsed);
         if is_detached_ruleset {
             self.sink.token(";");
+        }
+    }
+
+    /// What oxfmt does with selectors in JavaScript from the first that has a `${}` in it: the lines stay, each with one
+    /// blank where it has blanks, and none is indented.
+    fn print_lines_of_selector(&mut self, selector: &[u8]) {
+        let mut is_first = true;
+        for line in bun_core::strings::split(selector, b"\n") {
+            let mut words = bun_core::strings::split_any(line, b" \t\r\x0C")
+                .filter(|word| !word.is_empty())
+                .peekable();
+            if words.peek().is_none() {
+                continue;
+            }
+            if !std::mem::take(&mut is_first) {
+                self.sink.hard_line();
+            }
+            for (index, word) in words.enumerate() {
+                if index > 0 {
+                    self.sink.token(" ");
+                }
+                self.sink.text(word);
+            }
         }
     }
 

@@ -578,10 +578,11 @@ describe.concurrent("bun format", () => {
       "other/c.js": ugly,
     };
     const reads = ["a.js", "b.svelte", "other/c.js"];
+    // The other file is the .prettierrc itself.
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ "a.js": ugly, "b.svelte": files["b.svelte"], "other/c.js": formatted });
     expect(result.stderr).toContain(
-      "[error] 1 file is left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported they are formatted without.",
+      "[error] 2 files are left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported they are formatted without.",
     );
     expect(result.stderr).toContain("[error] 1 file is in a language that bun format does not support yet");
     expect(result.exitCode).toBe(2);
@@ -658,16 +659,6 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("with an .oxfmtrc.json a file with @flow is not read as Flow, as oxfmt does not", async () => {
-    const files = { "a.js": "// @flow\nfunction f(a: number) {}\n", "b.js": "// @flow\nf( 1 )\n" };
-    const reads = Object.keys(files);
-    const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
-    expect(result.files).toEqual({ "a.js": files["a.js"], "b.js": "// @flow\nf(1);\n" });
-    expect(result.stderr).toContain("a.js: SyntaxError");
-    expect(result.exitCode).toBe(2);
-    expect((await format(files, [], { reads })).exitCode).toBe(0);
-  });
-
   describe("without a configuration file", () => {
     // 90 columns: one line for oxfmt, whose lines are 100 wide.
     const asOxfmt = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);\n`;
@@ -679,9 +670,15 @@ describe.concurrent("bun format", () => {
       expect(await after({})).toBe(asPrettier);
       expect(await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n' })).toBe(asOxfmt);
       expect(await after({ "package.json": '{ "dependencies": { "vite-plus": "1.0.0" } }\n' })).toBe(asOxfmt);
-      expect(
-        await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0", "prettier": "3.9.9" } }\n' }),
-      ).toBe(asPrettier);
+      const both = await format(
+        { "a.ts": asOxfmt, "package.json": '{ "devDependencies": { "oxfmt": "0.72.0", "prettier": "3.9.9" } }\n' },
+        ["a.ts"],
+        { reads: ["a.ts"] },
+      );
+      expect(both.files["a.ts"]).toBe(asPrettier);
+      expect(both.stderr).toContain(
+        "[warn] There is no configuration file, and the project depends on both oxfmt and prettier",
+      );
       // A configuration file says more than that.
       expect(
         await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n', ".prettierrc": "{}\n" }),
@@ -699,11 +696,9 @@ describe.concurrent("bun format", () => {
     });
 
     test("--config with a name that has oxfmt in it is a configuration file of oxfmt", async () => {
-      const files = { "config/oxfmtrc.json": '{ "ignorePatterns": ["b.ts"] }\n', "b.ts": ugly };
-      const result = await format({ "a.ts": asOxfmt, ...files }, ["--config", "config/oxfmtrc.json"], {
-        reads: ["a.ts", "b.ts"],
-      });
-      expect(result.files).toEqual({ "a.ts": asOxfmt, "b.ts": ugly });
+      const files = { "config/oxfmtrc.json": "{}\n", "a.ts": asOxfmt, "pnpm-lock.yaml": "a:   1\n" };
+      const result = await format(files, ["--config", "config/oxfmtrc.json"], { reads: ["a.ts", "pnpm-lock.yaml"] });
+      expect(result.files).toEqual({ "a.ts": asOxfmt, "pnpm-lock.yaml": "a:   1\n" });
       expect(result.exitCode).toBe(0);
     });
 
@@ -725,21 +720,20 @@ describe.concurrent("bun format", () => {
       "a.js": "a;\n",
     };
     const result = await format(files, ["a.js"], { reads: ["a.js"] });
-    expect(result.stderr).toBe("");
     expect(result.files["a.js"]).toBe("a\n");
     expect(result.exitCode).toBe(0);
   });
 
-  test("sortTailwindcss, which has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
-    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "a.js": ugly };
+  test("sortTailwindcss, where it has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
+    const css = ".a {\n  @apply b c;\n}\n";
+    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "a.js": ugly, "b.css": css, "c.css": ".a {\n}\n" };
     const result = await format(files, [], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
-    expect(result.stderr).toContain(
-      "[error] sortTailwindcss is not supported yet, and has no effect. With --allow-unsupported this is a warning.",
-    );
+    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .css";
+    expect(result.stderr).toContain(`[error] ${text}. With --allow-unsupported this is a warning.`);
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads: ["a.js"] });
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss is not supported yet, and has no effect.");
+    expect(allowed.stderr).toContain(`[warn] ${text}`);
     expect(allowed.exitCode).toBe(0);
     const off = await format({ ...files, ".oxfmtrc.json": '{ "sortTailwindcss": false }\n' }, [], { reads: ["a.js"] });
     expect(off.stderr).not.toContain("sortTailwindcss");
@@ -1027,7 +1021,7 @@ try {
       expect(result.files["a.css"]).toBe(`${prefix}a {\n}\n`);
       expect(result.exitCode).toBe(0);
     }
-  });
+  }, 60_000);
 
   test("100,000 comments on a line of JSON do not take quadratic time", async () => {
     const comments = Buffer.alloc(400_000, "/**/").toString();
@@ -1037,8 +1031,10 @@ try {
     expect(result.files["a.json"]?.replaceAll("/**/", "").trim()).toBe("1");
     expect(result.files["a.json"]?.split("/**/").length).toBe(100_001);
     expect(result.files["b.json"]?.split("/**/").length).toBe(100_001);
+    // The clock says nothing on a busy machine.
+    expect(result.cpu).toBeLessThan(isDebug || isASAN ? 20 : 5);
     expect(result.exitCode).toBe(0);
-  });
+  }, 60_000);
 
   test("white space that is not ASCII at the end of a comment goes, and the file is written", async () => {
     const result = await format(

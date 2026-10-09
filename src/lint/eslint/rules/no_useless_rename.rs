@@ -31,7 +31,9 @@ fn name_of_key(key: Key<'_>) -> Option<Name<'_>> {
 impl NoUselessRename {
     fn report<'a>(cx: &Cx<'a, Self>, renamed: Renamed<'a>) {
         let Renamed { node, replacement, name, kind, is_fixable } = renamed;
-        cx.report(node, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
+        // Of an import and an export, oxlint points at the local name.
+        let place = if cx.language().is_oxlint && kind != "Destructuring assignment" { replacement } else { node };
+        cx.report(place, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
             let file = fixer.file();
             if !is_fixable || file.comments_in(node).len() > file.comments_in(replacement).len() {
                 return None;

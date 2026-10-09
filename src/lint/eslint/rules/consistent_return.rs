@@ -7,12 +7,12 @@ pub struct ConsistentReturn {
     treat_undefined_as_unspecified: bool,
 }
 
-const MISSING_RETURN: Message = Message::new(
+pub const MISSING_RETURN: Message = Message::new(
     "missingReturn",
     "Expected to return a value at the end of {{name}}.",
 );
-const MISSING_RETURN_VALUE: Message = Message::new("missingReturnValue", "{{name}} expected a return value.");
-const UNEXPECTED_RETURN_VALUE: Message =
+pub const MISSING_RETURN_VALUE: Message = Message::new("missingReturnValue", "{{name}} expected a return value.");
+pub const UNEXPECTED_RETURN_VALUE: Message =
     Message::new("unexpectedReturnValue", "{{name}} expected no return value.");
 
 /// Whether there can be anything to report in `file`.

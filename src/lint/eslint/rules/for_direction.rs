@@ -104,7 +104,12 @@ impl ForDirection {
                 && direction_of(last) == wrong
             {
                 let close_paren = skip_trivia(cx.text(), update.outer_span().end);
-                cx.report(Span::new(stmt.span().start, close_paren + 1), INCORRECT_DIRECTION);
+                // oxlint points at the test.
+                let place = match cx.language().is_oxlint {
+                    true => test.span(),
+                    false => Span::new(stmt.span().start, close_paren + 1),
+                };
+                cx.report(place, INCORRECT_DIRECTION);
             }
         }
     }

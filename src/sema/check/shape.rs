@@ -2752,6 +2752,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_base(&mut self, ty: TypeId, sym: Sym) -> bool {
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
+        // Those after the first 16.
+        let mut seen_later = crate::util::FxHashSet::<Sym>::default();
         // Depth first: the last one is the next.
         let mut todo: SmallVec<[TypeId; 16]> = smallvec![ty];
         while let Some(next) = todo.pop() {
@@ -2760,8 +2762,14 @@ impl<'p, 's> Checker<'p, 's> {
                     if target == sym {
                         return true;
                     }
-                    if !seen.contains(&target) {
-                        seen.push(target);
+                    let is_new = !seen.contains(&target)
+                        && if seen.len() < seen.inline_size() {
+                            seen.push(target);
+                            true
+                        } else {
+                            seen_later.insert(target)
+                        };
+                    if is_new {
                         todo.extend(self.base_types(target).iter().rev().copied());
                     }
                 }

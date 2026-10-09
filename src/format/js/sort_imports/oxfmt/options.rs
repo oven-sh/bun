@@ -1,7 +1,6 @@
 //! The value of `sortImports`: oxfmt's `to_sort_imports`, `SortImportsOptions::validate` and
 //! `GroupMatcher::new`.
 
-use super::glob::glob_match;
 use bun_lint::options::Json;
 
 /// What kind of import it is, or where it is from. In the order of their priority.
@@ -136,6 +135,11 @@ pub(crate) struct Options {
     /// not sorted.
     pub(super) regroups_side_effect: bool,
     pub(super) regroups_side_effect_style: bool,
+}
+
+/// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
+fn glob_match(pattern: &[u8], source: &[u8]) -> bool {
+    bun_glob::r#match(pattern, source).matches()
 }
 
 impl Options {

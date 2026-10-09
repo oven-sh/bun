@@ -7,9 +7,15 @@ use std::borrow::Cow;
 /// The source text of `span` as it is. The comments in it count as printed.
 pub(crate) struct FormatSuppressedNode(pub(crate) Span);
 
+/// For oxfmt a text over several lines breaks the groups around it, whatever it is. For Prettier what is not formatted is
+/// one string, which breaks nothing.
+fn text_over_several_lines_breaks_groups(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 impl<'a> Format<'a> for FormatSuppressedNode {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write_source(self.0, true, f);
+        write_source(self.0, !text_over_several_lines_breaks_groups(f), f);
         f.comments_mut().skip_comments_before(self.0.end);
     }
 }

@@ -968,10 +968,13 @@ pub(crate) fn run(args: &[String]) {
         Some("project") => project(&args[1..]),
         Some("diagnostics") => diagnostics(&args[1..]),
         Some("rules") => {
+            // Those that exist with a configuration of ESLint. `--oxlint`: with one of oxlint.
+            let is_for_oxlint = args.get(1).map(String::as_str) == Some("--oxlint");
             let ids = linter()
                 .registry()
                 .all()
                 .iter()
+                .filter(|it| is_for_oxlint || !it.meta.follows_oxlint)
                 .map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
             let mut out = Vec::new();
             testing::write_json(&mut out, &Json::Array(ids.collect()));

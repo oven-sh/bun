@@ -272,7 +272,8 @@ impl NoDupeElseIf {
                 operands.retain(|operand| !current_operands.iter().any(|it| is_subset(it, operand)));
             }
             if list_to_check.iter().any(|operands| operands.is_empty()) {
-                cx.report(test, UNEXPECTED);
+                // oxlint points at the test with which nothing is left.
+                cx.report(if cx.language().is_oxlint { current_test } else { test }, UNEXPECTED);
                 return;
             }
             match previous_if(current) {

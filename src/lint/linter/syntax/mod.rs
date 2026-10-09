@@ -121,6 +121,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        details: None,
     })
 }
 
@@ -195,6 +196,17 @@ pub struct Refusal {
 /// [`refused_by_prettier_with`], with the reason.
 pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
     refusal(file, types, true)
+}
+
+/// Why oxfmt refuses to format a file, which was parsed in the dialect of Babel: what Prettier refuses, and what OXC's parser
+/// does besides. Nothing is asked of the scopes of the file.
+pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
+    refusal_of_prettier(file, types).or_else(|| {
+        oxc::first_error_for_formatter(file).map(|it| Refusal {
+            message: it.message,
+            at: it.at,
+        })
+    })
 }
 
 /// [`refusal_of_prettier`] the long way, for a test to compare.
@@ -316,6 +328,7 @@ pub fn not_in_a_project(path: &[u8]) -> LintMessage {
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        details: None,
     }
 }
 

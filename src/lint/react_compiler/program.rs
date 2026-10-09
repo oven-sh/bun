@@ -869,14 +869,17 @@ fn find_functions_to_compile<'a>(file: &'a File<'a>, search: Search<'a>) -> Vec<
     walker.queue
 }
 
+/// A function is queued for a directive, or for a hook that it calls or JSX that it creates. `false`: the file has none of these.
+pub(crate) fn may_have_react_code(file: &File) -> bool {
+    file.mentions_name_of_hook()
+        || file.has_exprs([ExprTag::Jsx])
+        || file.mentions_any(&OPT_IN_DIRECTIVES)
+}
+
 /// Cheap, sound pre-check for [`find_functions_to_compile`]: `false` means the discovery walk cannot queue anything.
 /// Over-approximation is fine (the walk then finds an empty queue); a missed witness is not.
 fn may_have_functions_to_compile<'a>(file: &'a File<'a>, search: &mut Search<'a>) -> bool {
-    // A function is queued for a directive, or for a hook that it calls or JSX that it creates.
-    if !file.mentions_name_of_hook()
-        && !file.has_exprs([ExprTag::Jsx])
-        && !file.mentions_any(&OPT_IN_DIRECTIVES)
-    {
+    if !may_have_react_code(file) {
         return false;
     }
 

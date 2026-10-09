@@ -26,7 +26,6 @@ FAIL oxfmt css/format/css/prelude-keyword-case.css { printWidth: 100 }
 FAIL oxfmt css/format/css/prelude-string-requote.css { printWidth: 80 }
 FAIL oxfmt css/format/css/prelude-string-requote.css { printWidth: 100 }
 FAIL oxfmt css/format/css/signed-value-resplit.css { printWidth: 80 }
-FAIL oxfmt css/format/css/signed-value-resplit.css { printWidth: 100 }
 FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 80 }
 FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 100 }
 FAIL oxfmt css/format/css/token-soup-math-glue.css { printWidth: 80 }
@@ -57,7 +56,6 @@ FAIL oxfmt css/format/less/mixin-selector-list.less { printWidth: 80 }
 FAIL oxfmt css/format/less/mixin-selector-list.less { printWidth: 100 }
 FAIL oxfmt css/format/less/signed-value-args.less { printWidth: 80 }
 FAIL oxfmt css/format/less/signed-value-args.less { printWidth: 100 }
-FAIL oxfmt css/format/less/trailing-inline-comment-width.less { printWidth: 80 }
 FAIL oxfmt css/format/less/variable-value-comments.less { printWidth: 80 }
 FAIL oxfmt css/format/less/variable-value-comments.less { printWidth: 100 }
 FAIL oxfmt css/format/scss/at-rule-comment-before-block.scss { printWidth: 80 }
@@ -70,8 +68,6 @@ FAIL oxfmt css/format/scss/custom-property-raw-verbatim.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/custom-property-raw-verbatim.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/fill-break-position.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/fill-break-position.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/include-leading-comment.scss { printWidth: 80 }
@@ -103,8 +99,6 @@ FAIL oxfmt css/format/scss/media-query-operator-spacing.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/module-head-seams.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/nested-map-in-block.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/nested-map-in-block.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/paren-tail-own-line-comment.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/paren-tail-own-line-comment.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/progid-comments.scss { printWidth: 80 }
@@ -121,8 +115,6 @@ FAIL oxfmt css/format/scss/unknown-at-rule-edges.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/unknown-at-rule-edges.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 80 }
@@ -309,32 +301,22 @@ FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/class/issue-16259.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 100 }
-FAIL oxfmt ts/comments/binary-cast-own-line-comment.ts { printWidth: 80 }
-FAIL oxfmt ts/comments/binary-cast-own-line-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/if.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/if.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/method.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/method.ts { printWidth: 100 }
-FAIL oxfmt ts/comments/operator-eol-line-comment.ts { printWidth: 80 }
-FAIL oxfmt ts/comments/operator-eol-line-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/type-alias.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/type-alias.ts { printWidth: 100 }
-FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 80 }
-FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 100 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 80 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 100 }
 FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 80 }
 FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 100 }
 FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 80 }
 FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 100 }
-FAIL oxfmt ts/intersection-type/single-member.ts { printWidth: 80 }
-FAIL oxfmt ts/intersection-type/single-member.ts { printWidth: 100 }
-FAIL oxfmt ts/operator-position/intersection.ts { experimentalOperatorPosition: "start", printWidth: 80 }
-FAIL oxfmt ts/operator-position/intersection.ts { experimentalOperatorPosition: "start", printWidth: 100 }
 FAIL oxfmt ts/parenthesis/type-assertion-exponentiation.ts { printWidth: 80 }
 FAIL oxfmt ts/parenthesis/type-assertion-exponentiation.ts { printWidth: 100 }
 FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "as-needed" }
@@ -373,39 +355,13 @@ FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: false }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: false }
-FAIL oxfmt ts/union/leading-pipe-comments.ts { printWidth: 80 }
-FAIL oxfmt ts/union/leading-pipe-comments.ts { printWidth: 100 }
-FAIL oxfmt ts/union/paren-comments.ts { printWidth: 80 }
-FAIL oxfmt ts/union/paren-comments.ts { printWidth: 100 }
-FAIL oxfmt ts/union/single-member-comments.ts { printWidth: 80 }
-FAIL oxfmt ts/union/single-member-comments.ts { printWidth: 100 }
 FAIL prettier ts/union/suppression.ts { printWidth: 80 }
 FAIL prettier ts/union/suppression.ts { printWidth: 100 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 80 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 100 }
-FAIL oxfmt yaml/yaml/blank-lines.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/blank-lines.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/block-scalar-trailing-spaces.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/block-scalar-trailing-spaces.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/flow-comments.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/flow-comments.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/flow-multiline-pair.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/flow-multiline-pair.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/keep-chomped-eos-spaces-only.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/keep-chomped-eos-spaces-only.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/keep-chomped-eos-trailing-spaces.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/keep-chomped-eos-trailing-spaces.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/prose-wrap/more-indented.yaml { printWidth: 80, proseWrap: "always" }
-FAIL oxfmt yaml/yaml/prose-wrap/more-indented.yaml { printWidth: 100, proseWrap: "always" }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "always" }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "always" }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "never" }
-FAIL oxfmt yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "never" }
-FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
-FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
-FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
-FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
 as Prettier prints them: 1548/1570
 as oxfmt prints them, in its flavor: 1102/1498

@@ -12,6 +12,7 @@ function lazily(shapes: Record<string, () => string>): Record<string, string> {
   return made;
 }
 
+const hooksInConditions = (n: number) => seq(n, i => `if (c${i}) { useA${i}(); }\n`);
 const component = (body: string) =>
   `import React from "react";\nexport function App(props) {\nreturn (\n${body}\n);\n}\n`;
 const test = (body: string) => `it("a", async () => {\n${body}\n});\n`;
@@ -208,6 +209,24 @@ export function wide(n: number): Record<string, string> {
       'import { useState } from "react";\nfunction App() {\n' +
       seq(n, i => `const [a${i}, b${i}] = useState(0);\n`) +
       "return <div />;\n}",
+    // The routes from the start to a hook in a loop: 40 of these conditions were too many for react-hooks/rules-of-hooks.
+    "ox-react-hooks-conditions-in-loops-try.js": () =>
+      `class A {\nasync m() {\nwhile (a) {\nfor (;;) {\ntry {\n${hooksInConditions(n)}} catch (e) {\n${hooksInConditions(n)}break;\n}\n}\n}\n}\n}\n`,
+    "ox-react-hooks-conditions-in-loops-try-component.js": () =>
+      `function App() {\nwhile (a) {\nfor (;;) {\ntry {\n${hooksInConditions(n)}} catch (e) {\n${hooksInConditions(n)}break;\n}\n}\n}\n}\n`,
+    "ox-react-hooks-conditions-in-loops.js": () =>
+      `function useA() {\nfor (const a of b) {\ndo {\nwhile (c) {\n${hooksInConditions(n)}}\n} while (d);\n}\n}\n`,
+    "ox-react-hooks-conditions-in-loop-breaks.js": () =>
+      `function App() {\nfor (;;) {\nwhile (a) {\n${seq(n, i => `if (c${i}) { useA${i}(); break; }\nif (d${i}) continue;\n`)}}\n}\n}\n`,
+    "ox-react-hooks-queue.ts": () =>
+      "class A {\nasync run(count: number): Promise<boolean> {\nconst store = useStore();\ntry {\nwhile (this.items.length) {\n" +
+      "const item = this.items.pop()!;\nfor (let i = 0; i < count; i++) {\ntry {\n" +
+      seq(n, i => `if (item.a${i}) { await useStore().b${i}(item); }\nelse if (item.c${i}) { useOther().d(); }\n`) +
+      "} catch (error) {\n" +
+      seq(n, i => `if (error instanceof E${i}) { useDialog().show(error); }\n`) +
+      "break;\n} finally {\n" +
+      seq(n, i => `if (store.f${i}) { useStore().g${i} = null; }\n`) +
+      "}\n}\n}\n} finally {\nthis.busy = false;\n}\nreturn true;\n}\n}\n",
     "ox-react-forward-refs.jsx": () =>
       rep("forwardRef(a => <div />); React.forwardRef(function (a) { return null; });\n", n),
     "ox-react-prop-destructuring.jsx": () =>

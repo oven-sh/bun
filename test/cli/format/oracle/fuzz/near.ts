@@ -194,6 +194,8 @@ if (process.argv[2] == "--child") {
 
   // Ours: all of them at once, each set of options in a directory of its own.
   const root = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "near-"));
+  // Whose flavor a run has is up to the configuration that is nearest to where it is started.
+  if (isOxfmt) writeFileSync(join(root, ".oxfmtrc.json"), "{}");
   sets.forEach((set, index) => {
     mkdirSync(join(root, String(index)));
     // oxfmt's own width is 100.

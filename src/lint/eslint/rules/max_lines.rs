@@ -62,7 +62,12 @@ impl MaxLines {
             actual += 1;
         }
         if let Some(line) = first_excess {
-            cx.report(Span::new(file.line_span(line).start, file.span().end), EXCEED)
+            // oxlint points at the last byte of the file.
+            let place = match cx.language().is_oxlint {
+                true => Span::new(file.span().end.saturating_sub(1), file.span().end.saturating_sub(1)),
+                false => Span::new(file.line_span(line).start, file.span().end),
+            };
+            cx.report(place, EXCEED)
                 .data("max", self.max)
                 .data("actual", actual);
         }

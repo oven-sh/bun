@@ -116,9 +116,12 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
         DeclarationType::Builtin => REDECLARED_AS_BUILTIN,
         _ => REDECLARED_BY_SYNTAX,
     };
-    for &(declaration_type, span) in extra_declarations {
+    let is_oxlint = cx.language().is_oxlint;
+    for (&(previous_type, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
         let message = if declaration_type == first { REDECLARED } else { detail };
-        cx.report(span, message).data("id", name);
+        // oxlint points at the declaration before.
+        let is_before = is_oxlint && previous_type != DeclarationType::Builtin;
+        cx.report(if is_before { previous } else { span }, message).data("id", name);
     }
 }
 

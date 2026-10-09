@@ -36,7 +36,19 @@ impl Rule for ClassMethodsUseThis {
             });
             on.finish(|_, cx| {
                 for func in cx.state.methods_without_this() {
-                    cx.report(ts_utils::get_function_head_loc(func), MISSING_THIS)
+                    // oxlint points at the key.
+                    let key = match func.owner() {
+                        _ if !cx.language().is_oxlint => None,
+                        Node::Member(member) => member.key(),
+                        Node::Expr(value) => match value.parent() {
+                            Node::Member(member) => member.key(),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let head = || ts_utils::get_function_head_loc(func);
+                    let place = key.map_or_else(head, |it| it.inner_span(cx.file()));
+                    cx.report(place, MISSING_THIS)
                         .data("name", eslint_utils::get_function_name_with_kind(func, false));
                 }
             });

@@ -75,7 +75,15 @@ fn check_regex<'a>(
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
         }
-        let report = cx.report(node, REQUIRED).data("group", group.raw().to_vec());
+        // oxlint points at the group.
+        let place = match cx.language().is_oxlint && *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
+            true => {
+                let pattern_start = regex_node.span().start + 1;
+                Span::new(pattern_start + group.start(), pattern_start + group.end())
+            }
+            false => node.span(),
+        };
+        let report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
         if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
             let since = pattern.get(start..group.start() as usize).unwrap_or_default();
             utf16_start += regex::utf16_index(since, since.len()) as u32;

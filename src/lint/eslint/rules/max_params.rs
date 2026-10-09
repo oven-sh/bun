@@ -83,7 +83,9 @@ impl Config {
             {
                 head.end = only.span().start;
             }
-            cx.report(head, EXCEED)
+            // oxlint points at the parameters.
+            let params = func.params_span().filter(|_| cx.language().is_oxlint);
+            cx.report(params.unwrap_or(head), EXCEED)
                 .data("name", text::upper_case_first(&name).into_owned())
                 .data("count", count)
                 .data("max", max);

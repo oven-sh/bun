@@ -77,7 +77,9 @@ impl FuncNameMatching {
             (true, true) => NOT_MATCH_PROPERTY,
             (true, false) => NOT_MATCH_VARIABLE,
         };
-        cx.report(node, message).data("name", name).data("funcName", func_name);
+        // oxlint points at the name of the function.
+        let place = if cx.language().is_oxlint { func_name.span() } else { node.span() };
+        cx.report(place, message).data("name", name).data("funcName", func_name);
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

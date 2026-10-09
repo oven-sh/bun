@@ -64,7 +64,10 @@ fn check_regex<'a>(
             continue;
         }
         // TODO(api): the key `{length` is for `context::interpolate`, which takes the first `{{`.
-        cx.report(node_to_report, MULTIPLE_SPACES)
+        // oxlint points at the spaces.
+        let spaces = Span::new(raw_start + index as u32, raw_start + (index + length) as u32);
+        let is_at_spaces = cx.language().is_oxlint && pattern == raw;
+        cx.report(if is_at_spaces { spaces } else { node_to_report.span() }, MULTIPLE_SPACES)
             .data("length", length)
             .data("{length", format!("{{{length}"))
             .fix(|fixer| {

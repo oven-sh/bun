@@ -78,7 +78,9 @@ impl NoUnderscoreDangle {
             && self.is_unexpected(name.bytes())
             && func.has_body()
         {
-            cx.report(statement.span_without_export(), UNEXPECTED_UNDERSCORE).data("identifier", name);
+            // Here and below, oxlint points at the name.
+            let place = if cx.language().is_oxlint { name.span() } else { statement.span_without_export() };
+            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
         }
     }
 
@@ -88,7 +90,8 @@ impl NoUnderscoreDangle {
             && !param.is_parameter_property()
             && param.func().is_some_and(ast_utils::is_function_with_body)
         {
-            cx.report(param.span_without_modifiers(), UNEXPECTED_UNDERSCORE).data("identifier", name);
+            let place = if cx.language().is_oxlint { param.pat().span() } else { param.span_without_modifiers() };
+            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
         }
     }
 
@@ -98,7 +101,8 @@ impl NoUnderscoreDangle {
         let pat = declaration.pat();
         if let PatKind::Ident(name) = pat.kind() {
             if self.is_unexpected(name.bytes()) && is_declarator() {
-                cx.report(declaration, UNEXPECTED_UNDERSCORE).data("identifier", name);
+                let place = if cx.language().is_oxlint { pat.span() } else { declaration.span() };
+                cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
             }
             return;
         }
@@ -120,7 +124,8 @@ impl NoUnderscoreDangle {
                 _ => false,
             };
             if !is_allowed_here && !self.is_allowed(name.bytes()) {
-                cx.report(declaration, UNEXPECTED_UNDERSCORE).data("identifier", name);
+                let place = if cx.language().is_oxlint { binding.span() } else { declaration.span() };
+                cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
             }
         });
     }
@@ -139,7 +144,13 @@ impl NoUnderscoreDangle {
         {
             return;
         }
-        cx.report(e, UNEXPECTED_UNDERSCORE).data("identifier", identifier);
+        let place = match e.kind() {
+            ExprKind::Dot { name, .. } if cx.language().is_oxlint => name.span(),
+            // It says nothing about `a[_b]`.
+            ExprKind::Index { .. } if cx.language().is_oxlint => return,
+            _ => e.span(),
+        };
+        cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", identifier);
     }
 
     /// `A.b` after `implements`, or after the `extends` of an interface, is a `MemberExpression`
@@ -177,7 +188,8 @@ impl NoUnderscoreDangle {
             _ => return,
         };
         if self.is_unexpected(without_hash(name.bytes())) {
-            cx.report(at, UNEXPECTED_UNDERSCORE).data("identifier", name);
+            let place = if cx.language().is_oxlint { key.inner_span(cx.file()) } else { at };
+            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
         }
     }
 

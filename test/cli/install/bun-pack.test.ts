@@ -2,8 +2,18 @@ import { write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
+import { chmodSync, lchownSync, readdirSync, statSync, symlinkSync } from "fs";
 import { readdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+  type DirectoryTree,
+} from "harness";
 import { join } from "path";
 
 // Runs `bun pm pack` for the package in `dir`, from `cwd`.
@@ -1430,6 +1440,72 @@ describe.concurrent("bundledDependencies", () => {
       "package/node_modules/dep1/package.json",
     ]);
   });
+
+  test("a dependency of a bundled dependency that is not there is left out", async () => {
+    using dir = tempDir("pack-bundled-dep-absent", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-absent",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: {
+          "never-installed": "1.0.0",
+          "a-file": "1.0.0",
+          // longer than a directory entry can be
+          [Buffer.alloc(300, "a").toString()]: "1.0.0",
+        },
+      }),
+      "node_modules/dep1/node_modules/a-file": "not a directory",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-absent-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
+
+  test.skipIf(isWindows)("bundled dependencies that link to each other end the lookup", async () => {
+    using dir = tempDir("pack-bundled-dep-cycle", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-cycle",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: { dep2: "1.0.0" },
+      }),
+      "node_modules/dep1/node_modules": {},
+      "node_modules/dep2/package.json": JSON.stringify({
+        name: "dep2",
+        version: "1.0.0",
+        dependencies: { dep1: "1.0.0" },
+      }),
+      "node_modules/dep2/node_modules": {},
+    });
+    symlinkSync("../../dep2", join(dir, "node_modules", "dep1", "node_modules", "dep2"));
+    symlinkSync("../../dep1", join(dir, "node_modules", "dep2", "node_modules", "dep1"));
+
+    // Each level goes through one more link. The lookup ends where the OS refuses the path (ELOOP).
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual(
+      expect.arrayContaining([
+        "package/node_modules/dep1/package.json",
+        "package/node_modules/dep1/node_modules/dep2/package.json",
+      ]),
+    );
+  });
 });
 
 describe.concurrent("files", () => {
@@ -2139,6 +2215,247 @@ describe.concurrent("bins", () => {
       "package/bins/bin.js",
       "package/bins/what/what.js",
       "package/dist/hi.js",
+    ]);
+  });
+
+  // longer than a directory entry can be
+  const tooLong = Buffer.alloc(300, "a").toString();
+  const absentBinFiles = [
+    { what: "a bin that is not there", fields: { bin: "missing.js" } },
+    { what: "a bin below a file", fields: { bin: "index.js/cli.js" } },
+    { what: "a bin with a name of 300 bytes", fields: { bin: tooLong } },
+  ];
+  const absentBinDirectories = [
+    { what: "a directories.bin that is not there", fields: { directories: { bin: "missing" } } },
+    { what: "a directories.bin that is a file", fields: { directories: { bin: "index.js" } } },
+    { what: "a directories.bin with a name of 300 bytes", fields: { directories: { bin: tooLong } } },
+  ];
+  const absentBinTree = (fields: object, index = indexJs) => ({
+    "package.json": JSON.stringify({ name: "pack-bins-absent", version: "1.0.0", ...fields }),
+    "index.js": index,
+  });
+
+  test.each([...absentBinFiles, ...absentBinDirectories])("$what is left out", async ({ fields }) => {
+    using dir = tempDir("pack-bins-absent", absentBinTree(fields));
+
+    const { out, err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(out).toContain("Total files: 2");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bins-absent-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+  });
+
+  test.each(absentBinFiles)("$what is not counted by --dry-run", async ({ fields }) => {
+    using dir = tempDir("pack-bins-absent", absentBinTree(fields));
+
+    const { out, err, exitCode } = await runPack(dir, ["--dry-run"]);
+    expect(err).toBe("");
+    expect(out).toContain("Total files: 2");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun pm diff` reads a folder as pack would publish it.
+  test.each(absentBinFiles)("$what is left out by `bun pm diff`", async ({ fields }) => {
+    using dir = tempDir("pack-bins-absent-diff", {
+      a: absentBinTree(fields),
+      b: absentBinTree(fields, "console.log('changed')"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
+// there, so the scan must not continue as if it was not.
+describe.concurrent("an entry that is there and does not open", () => {
+  // Root opens a path of any mode. As root, the tree goes to uid 65534 and the child runs as that user.
+  function spawnWithoutRoot(dir: string): { uid?: number; gid?: number } {
+    if (process.getuid?.() !== 0) return {};
+    const nobody = 65534;
+    lchownSync(dir, nobody, nobody);
+    for (const entry of readdirSync(dir, { recursive: true }) as string[]) {
+      lchownSync(join(dir, entry), nobody, nobody);
+    }
+    return { uid: nobody, gid: nobody };
+  }
+
+  // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
+  async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
+    const spawnOptions = spawnWithoutRoot(dir);
+    const path = join(dir, locked);
+    const mode = statSync(path).mode & 0o777;
+    chmodSync(path, 0o000);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // `bun publish --dry-run` stops early when it has no credentials.
+        env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+        ...spawnOptions,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: normalizeBunSnapshot(stdout, dir), err: normalizeBunSnapshot(stderr, dir), exitCode };
+    } finally {
+      chmodSync(path, mode);
+    }
+  }
+
+  async function tarballs(dir: string) {
+    return (await readdir(dir)).filter(name => name.endsWith(".tgz"));
+  }
+
+  const manifest = (name: string, fields: object = {}) => JSON.stringify({ name, version: "1.0.0", ...fields });
+  const bundlesDep1 = manifest("pack-locked", { bundledDependencies: ["dep1"] });
+
+  const lockedDependencies: { what: string; locked: string; failsOn: string; tree: DirectoryTree }[] = [
+    {
+      what: "the nested copy of a dependency of a bundled dependency",
+      locked: "node_modules/dep1/node_modules/dep3",
+      failsOn: "node_modules/dep1/node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep1/node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+        "node_modules/dep3/package.json": manifest("dep3", { version: "9.9.9" }),
+      },
+    },
+    {
+      what: "the hoisted copy of a dependency of a bundled dependency",
+      locked: "node_modules/dep3",
+      failsOn: "node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+      },
+    },
+    {
+      // A nested copy can be in it. npm takes the hoisted copy here.
+      what: "the node_modules of a bundled dependency",
+      locked: "node_modules/dep1/node_modules",
+      failsOn: "node_modules/dep1/node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep1/node_modules": {},
+        "node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+      },
+    },
+    {
+      what: "the scope of a bundled dependency",
+      locked: "node_modules/@scope",
+      failsOn: "node_modules/@scope",
+      tree: {
+        "package.json": manifest("pack-locked", { bundledDependencies: ["@scope/dep", "plain"] }),
+        "node_modules/@scope/dep/package.json": manifest("@scope/dep"),
+        "node_modules/plain/package.json": manifest("plain"),
+      },
+    },
+    {
+      // npm leaves the dependency out here.
+      what: "the scope of a dependency of a bundled dependency",
+      locked: "node_modules/@scope",
+      failsOn: "node_modules/@scope/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { "@scope/dep3": "3.3.3" } }),
+        "node_modules/@scope/dep3/package.json": manifest("@scope/dep3", { version: "3.3.3" }),
+      },
+    },
+  ];
+
+  test.skipIf(isWindows).each(lockedDependencies)("$what", async ({ locked, failsOn, tree }) => {
+    using dir = tempDir("pack-locked-dep", tree);
+
+    const { out, err, exitCode } = await runWithout(dir, locked, ["pm", "pack"]);
+    expect(err).toBe(`EACCES: failed to open directory "${failsOn}" for packing`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await tarballs(dir)).toEqual([]);
+  });
+
+  // `bun publish` and `bun pm diff` run the same scan. The package is folder `b`, and `a` is a copy that opens.
+  const bins = [
+    {
+      what: "directories.bin",
+      fields: { directories: { bin: "bin" } },
+      locked: "b/bin",
+      message: 'EACCES: failed to open directory "bin" for packing',
+    },
+    {
+      what: "a bin file",
+      fields: { bin: "bin/cli.js" },
+      locked: "b/bin/cli.js",
+      message: 'EACCES: Permission denied: failed to open file: "bin/cli.js" (open)',
+    },
+  ];
+  const commands = [
+    { command: "bun pm pack", cmd: ["pm", "pack"], cwd: "b", banner: "bun pack <version> (<revision>)" },
+    {
+      command: "bun pm pack --dry-run",
+      cmd: ["pm", "pack", "--dry-run"],
+      cwd: "b",
+      banner: "bun pack <version> (<revision>)",
+    },
+    {
+      command: "bun publish --dry-run",
+      cmd: ["publish", "--dry-run"],
+      cwd: "b",
+      banner: "bun publish <version> (<revision>)",
+    },
+    { command: "bun pm diff", cmd: ["pm", "diff", "./a", "./b", "--name-only"], cwd: "", banner: "" },
+  ];
+
+  test.skipIf(isWindows).each(bins.flatMap(bin => commands.map(command => ({ ...bin, ...command }))))(
+    "$what, $command",
+    async ({ fields, locked, message, cmd, cwd, banner }) => {
+      const folder = {
+        "package.json": manifest("pack-locked", fields),
+        "index.js": indexJs,
+        "bin/cli.js": "#!/usr/bin/env bun\n",
+      };
+      using dir = tempDir("pack-locked-bin", { a: folder, b: folder });
+
+      const { out, err, exitCode } = await runWithout(dir, locked, cmd, join(dir, cwd));
+      expect(err).toBe(message);
+      expect(out).toBe(banner);
+      expect(exitCode).toBe(1);
+      expect(await tarballs(join(dir, "b"))).toEqual([]);
+    },
+  );
+
+  test.skipIf(isWindows)("a scope that no bundled dependency is in is not opened", async () => {
+    using dir = tempDir("pack-locked-other-scope", {
+      "package.json": manifest("pack-locked", { bundledDependencies: ["plain"] }),
+      "node_modules/plain/package.json": manifest("plain"),
+      "node_modules/@other/dep/package.json": manifest("@other/dep"),
+    });
+
+    const { err, exitCode } = await runWithout(dir, "node_modules/@other", ["pm", "pack"]);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-locked-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/plain/package.json",
     ]);
   });
 });

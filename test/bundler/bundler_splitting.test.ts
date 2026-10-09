@@ -1764,7 +1764,7 @@ describe("bundler", () => {
   });
 
   // Nothing uses what five.js imports from pkg, which has no side effects. Under e1.js that import is still the first
-  // one that leads to six.js, so six.js runs ahead of five.js.
+  // one that leads to six.js, so six.js runs ahead of five.js. k.js comes back with pkg/two.js, and runs in its turn.
   itBundled("splitting/ContestedCycleUnusedImport", {
     files: {
       "/e1.js": `import "./set1.js"; import "./zero.js"; console.log("e1");`,
@@ -1785,15 +1785,40 @@ describe("bundler", () => {
       `,
       "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
       "/node_modules/pkg/index.js": `export * from "./two.js";`,
-      "/node_modules/pkg/two.js": `import { six } from "../../six.js"; export const unused = () => six;`,
+      "/node_modules/pkg/two.js": `import { six } from "../../six.js"; import "../../k.js"; export const unused = () => six;`,
+      "/k.js": `console.log("k");`,
     },
     entryPoints: ["/e1.js", "/e2.js"],
     splitting: true,
     outdir: "/out",
     format: "esm",
     run: [
-      { file: "/out/e1.js", stdout: "six\nfive\nzero six\ne1" },
-      { file: "/out/e2.js", stdout: "five\nzero -\nsix\ne2 six+zero" },
+      { file: "/out/e1.js", stdout: "six\nk\nfive\nzero six\ne1" },
+      { file: "/out/e2.js", stdout: "k\nfive\nzero -\nsix\ne2 six+zero" },
+    ],
+  });
+
+  // pkg/index.js and effect.js come after the cycle under e1.js, and tree shaking drops both. They do not lead to the
+  // cycle, so they stay out.
+  itBundled("splitting/ContestedCycleDroppedFollower", {
+    files: {
+      "/e1.js": `import "./set1.js"; import { a } from "./a.js"; import { unused } from "pkg"; console.log("e1", a);`,
+      "/e2.js": `import "./set2.js"; import { b } from "./b.js"; console.log("e2", b);`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/a.js": `import { b } from "./b.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/effect.js": `console.log("effect");`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `import "../../effect.js"; export const unused = 1;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 a+b" },
+      { file: "/out/e2.js", stdout: "e2 b+a" },
     ],
   });
 

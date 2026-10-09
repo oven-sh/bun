@@ -2,10 +2,10 @@ import { describe, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
-/** Runs the scripts of a bundled page, one after the other. */
+/** Runs the bundled scripts of a page, one after the other. */
 async function runScriptsOf(api: BundlerTestBundleAPI, page: string) {
   const result = { stdout: "", stderr: "", exitCodes: [] as number[] };
-  for (const [, script] of api.readFile(page).matchAll(/src="([^"]+\.js)"/g)) {
+  for (const [, script] of api.readFile(page).matchAll(/src="(\.[^"]+\.js)"/g)) {
     await using proc = Bun.spawn({ cmd: [bunExe(), api.join("out/" + script)], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     result.stdout += stdout;
@@ -1117,6 +1117,52 @@ body {
         stderr: "",
         exitCodes: [0],
       });
+    },
+  });
+
+  // The page loads the external script itself: its bundle must not import it as a module.
+  itBundled("html/external-script", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<script src="https://cdn.example.com/script.js"></script>
+<script type="module" src="./local.js"></script>`,
+      "/local.js": `console.log("local");`,
+    },
+    entryPoints: ["/index.html"],
+    async onAfterBundle(api) {
+      api.expectFile("out/index.html").toContain(`<script src="https://cdn.example.com/script.js"></script>`);
+      expect(await runScriptsOf(api, "out/index.html")).toEqual({ stdout: "local\n", stderr: "", exitCodes: [0] });
+    },
+  });
+
+  // app.js is an entry point of its own and a script of a.html, so no JavaScript file imports it. It comes after the
+  // cycle under a.html, and is not alone in its chunk.
+  itBundled("html/splitting-contested-cycle-script-is-entry-point", {
+    files: {
+      "/a.html": /* html */ `
+        <!DOCTYPE html>
+        <script type="module" src="./set-a.js"></script>
+        <script type="module" src="./a.js"></script>
+        <script type="module" src="./app.js"></script>`,
+      "/b.html": /* html */ `
+        <!DOCTYPE html>
+        <script type="module" src="./set-b.js"></script>
+        <script type="module" src="./b.js"></script>`,
+      "/set-a.js": `globalThis.PAGE = "a";`,
+      "/set-b.js": `globalThis.PAGE = "b";`,
+      "/a.js": `import { b } from "./b.js"; export const a = globalThis.PAGE === "a" ? "a+" + b : "a"; globalThis.A = a;`,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.PAGE === "b" ? "b+" + a : "b";`,
+      "/app.js": `console.log("app", globalThis.A);`,
+    },
+    entryPoints: ["/a.html", "/b.html", "/app.js"],
+    splitting: true,
+    outdir: "out/",
+    format: "esm",
+    target: "browser",
+    async onAfterBundle(api) {
+      expect(await runScriptsOf(api, "out/a.html")).toEqual({ stdout: "app a+b\n", stderr: "", exitCodes: [0] });
     },
   });
 

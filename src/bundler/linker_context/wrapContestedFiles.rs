@@ -496,10 +496,14 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
         let has_no_load_effects = |file: IndexInt| {
             c.file_has_no_side_effects(file) && c.loading_file_has_no_side_effects(file)
         };
+        let loaders_of_files = c.parse_graph().input_files.items_loader();
         let mut importers: Vec<Vec<IndexInt>> = vec![Vec::new(); files_len];
+        let mut is_imported = AutoBitSet::init_empty(files_len)?;
         for source_index in c.graph.reachable_files.iter() {
             let file = source_index.get();
-            if !is_unwrapped_js(c, file) {
+            // A page imports its scripts, and never gets a wrapper.
+            let is_page = loaders_of_files[file as usize] == Loader::Html;
+            if !is_page && !is_unwrapped_js(c, file) {
                 continue;
             }
             let records = c.graph.ast.items_import_records()[file as usize].as_slice();
@@ -520,7 +524,10 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
                     }
                     let other = record.source_index.get();
                     if is_unwrapped_js(c, other) {
-                        importers[other as usize].push(file);
+                        is_imported.set(other as usize);
+                        if !is_page {
+                            importers[other as usize].push(file);
+                        }
                     }
                 }
             }
@@ -530,7 +537,7 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
         // its load, and prints each `init_x()` in place.
         let mut pinned = AutoBitSet::init_empty(files_len)?;
         for &file in c.graph.entry_points.items_source_index() {
-            if importers[file as usize].is_empty() {
+            if !is_imported.is_set(file as usize) {
                 pinned.set(file as usize);
             }
         }
@@ -547,6 +554,23 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
                     NONE => &entry_bits[source_index as usize],
                     class => &self.load_classes[class as usize],
                 });
+                // A dropped file comes back with its wrapper, and brings the files with side effects that only it imports.
+                if !c.graph.files_live.is_set(source_index as usize) {
+                    for record in c.graph.ast.items_import_records()[source_index as usize].iter() {
+                        if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                            continue;
+                        }
+                        let other = record.source_index.get();
+                        if is_unwrapped_js(c, other)
+                            && !c.graph.files_live.is_set(other as usize)
+                            && !c.file_has_no_side_effects(other)
+                            && !wrapped.is_set(other as usize)
+                        {
+                            wrapped.set(other as usize);
+                            worklist.push(other);
+                        }
+                    }
+                }
                 for &importer in &importers[source_index as usize] {
                     if !wrapped.is_set(importer as usize) && !pinned.is_set(importer as usize) {
                         wrapped.set(importer as usize);
@@ -562,6 +586,7 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
                     if wrapped.is_set(source_index as usize) {
                         seen_wrapped = true;
                     } else if seen_wrapped
+                        && c.graph.files_live.is_set(source_index as usize)
                         && !pinned.is_set(source_index as usize)
                         && !has_no_load_effects(source_index)
                     {

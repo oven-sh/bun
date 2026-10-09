@@ -516,6 +516,13 @@ impl<'a> LinkerContext<'a> {
                 {
                     return false;
                 }
+                // A page loads its external scripts itself.
+                if !record.source_index.is_valid()
+                    && self.parse_graph().input_files.items_loader()[source_index as usize]
+                        == Loader::Html
+                {
+                    return false;
+                }
             }
         }
 

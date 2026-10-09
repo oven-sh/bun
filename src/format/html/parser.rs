@@ -43,6 +43,7 @@ struct TreeBuilder<'a, 't, 'k> {
     is_nested_too_deeply: bool,
     /// How many elements, blocks and cases are around what is built.
     base_depth: usize,
+    stack_check: bun_core::StackCheck,
 }
 
 /// A name with its namespace: `:namespace:name`.
@@ -251,7 +252,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let last = self.index;
         let end = self.advance();
         let base_depth = self.base_depth + self.container_stack.len() + 1;
-        if base_depth > MAX_DEPTH {
+        if base_depth > MAX_DEPTH || !self.stack_check.is_safe_to_recurse() {
             self.is_nested_too_deeply = true;
             return None;
         }
@@ -280,6 +281,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             is_tag_name_case_sensitive: self.is_tag_name_case_sensitive,
             is_nested_too_deeply: false,
             base_depth,
+            stack_check: self.stack_check,
         };
         builder.build();
         let (errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
@@ -683,6 +685,7 @@ pub(crate) fn parse<'a>(
         is_tag_name_case_sensitive: is_case_sensitive,
         is_nested_too_deeply: false,
         base_depth: 0,
+        stack_check: bun_core::StackCheck::init(),
     };
     builder.build();
     errors.append(&mut builder.errors);

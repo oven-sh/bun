@@ -72,6 +72,9 @@ fn is_floating_point(text: &[u8]) -> bool {
     rest.is_empty()
 }
 
+/// A `srcset` whose candidates would take more bytes than this once they are lined up stays as it is.
+const MAX_SRCSET_SIZE: usize = 1 << 20;
+
 /// A candidate of a `srcset`: the address, and the descriptor with its unit.
 struct Candidate<'v> {
     url: &'v [u8],
@@ -645,6 +648,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             .map(|candidate| text::utf16_len(candidate.url) as usize)
             .max()
             .unwrap_or(0);
+        // Every candidate is made as wide as the widest. Of 140 KB, half of them one address, Prettier makes 800 MB.
+        if max_url_len.saturating_mul(candidates.len()) > MAX_SRCSET_SIZE {
+            return false;
+        }
         let max_descriptor_left_len = descriptors
             .iter()
             .map(|descriptor| left_len(descriptor))

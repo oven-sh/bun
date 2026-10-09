@@ -97,6 +97,7 @@ const shapes: Record<string, [string, (n: number) => string]> = {
   "classes": ["a.html", n => `<a class="${times("c ", n)}"></a>`],
   "a style attribute": ["a.html", n => `<a style="${times("b:c;", n)}"></a>`],
   "srcset": ["a.html", n => `<img srcset="${times("a 1x,", n)}b 2x">`],
+  "a long address in a srcset": ["a.html", n => `<img srcset="${times("a", n)} 1x, ${times("b 2x, ", n / 4)}c 3x">`],
   "quotes in a value": ["a.html", n => `<a b='${times('"', n)}'></a>`],
   "entities": ["a.html", n => times("&amp;", n)],
   "ampersands": ["a.html", n => times("&", n)],

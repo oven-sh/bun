@@ -98,52 +98,64 @@ function fromSource(path: string, rule: string): Case[] {
   return found;
 }
 
-const { flags, rest } = options(process.argv.slice(2));
-if (rest.length !== 2) throw new Error("usage: bun cases.ts <cases> <out directory> [--check=<jsonl>]");
-const [cases, out] = rest.map(path => resolve(path));
+export type Expectation = { rule: string; code: string; messages: Case["messages"] };
 
-const expected = new Map<string, { rule: string; messages: Case["messages"] }>();
-for (const [rule] of RULES) {
-  const source = join(cases, `${rule.replaceAll("-", "_")}.rs`);
-  const list = existsSync(source)
-    ? fromSource(source, rule)
-    : (JSON.parse(readFileSync(join(cases, `${rule}.json`), "utf8")) as { cases: Case[] }).cases;
-  list.forEach((item, index) => {
-    const inside = dirname(item.filename);
-    const name = `${String(index + 1).padStart(2, "0")}.${item.valid ? "valid" : "invalid"}${extname(item.filename)}`;
-    const path = inside === "." ? `${rule}/${name}` : `${rule}/${inside}/${name}`;
+/** The cases of all rules, by the path that each is written to. */
+export function casesOf(directory: string): Map<string, Expectation> {
+  const found = new Map<string, Expectation>();
+  for (const [rule] of RULES) {
+    const source = join(directory, `${rule.replaceAll("-", "_")}.rs`);
+    const list = existsSync(source)
+      ? fromSource(source, rule)
+      : (JSON.parse(readFileSync(join(directory, `${rule}.json`), "utf8")) as { cases: Case[] }).cases;
+    list.forEach((item, index) => {
+      const inside = dirname(item.filename);
+      const name = `${String(index + 1).padStart(2, "0")}.${item.valid ? "valid" : "invalid"}${extname(item.filename)}`;
+      const path = inside === "." ? `${rule}/${name}` : `${rule}/${inside}/${name}`;
+      found.set(path, { rule: `react/${rule}`, code: item.code, messages: item.messages });
+    });
+  }
+  return found;
+}
+
+if (import.meta.main) {
+  const { flags, rest } = options(process.argv.slice(2));
+  if (rest.length !== 2) throw new Error("usage: bun cases.ts <cases> <out directory> [--check=<jsonl>]");
+  const [cases, out] = rest.map(path => resolve(path));
+
+  const expected = casesOf(cases);
+  for (const [path, item] of expected) {
     mkdirSync(dirname(join(out, path)), { recursive: true });
     writeFileSync(join(out, path), item.code);
-    expected.set(path, { rule: `react/${rule}`, messages: item.messages });
-  });
-}
-console.log(`${expected.size} cases`);
-
-const check = flags.get("check");
-if (check !== undefined) {
-  let same = 0;
-  let others = 0;
-  const seen = new Set<string>();
-  for (const record of readJsonl<FileRecord>(resolve(check))) {
-    const item = expected.get(record.path);
-    if (item === undefined) continue;
-    seen.add(record.path);
-    const key = (message: string, line: number | undefined, column: number | undefined) =>
-      `${line}:${column} ${message}`;
-    const found = record.diagnostics.filter(diagnostic => diagnostic.rule === item.rule);
-    others += record.diagnostics.length - found.length;
-    const theirs = found.map(d => key(d.message, d.labels[0]?.line, d.labels[0]?.column)).sort();
-    const wanted = item.messages?.map(message => key(message.message, message.line, message.column)).sort();
-    if (wanted === undefined ? theirs.length > 0 : JSON.stringify(theirs) === JSON.stringify(wanted)) same++;
-    else
-      console.log(
-        `${record.path}\n  expected ${JSON.stringify(wanted ?? "any")}\n  reported ${JSON.stringify(theirs)}`,
-      );
   }
-  console.log(
-    table(
-      ["Cases", "In the lines", "The rule reports what the case expects", "Diagnostics of other rules"],
-      [[expected.size, seen.size, same, others]],
-    ),
-  );
+  console.log(`${expected.size} cases`);
+
+  const check = flags.get("check");
+  if (check !== undefined) {
+    let same = 0;
+    let others = 0;
+    const seen = new Set<string>();
+    for (const record of readJsonl<FileRecord>(resolve(check))) {
+      const item = expected.get(record.path);
+      if (item === undefined) continue;
+      seen.add(record.path);
+      const key = (message: string, line: number | undefined, column: number | undefined) =>
+        `${line}:${column} ${message}`;
+      const found = record.diagnostics.filter(diagnostic => diagnostic.rule === item.rule);
+      others += record.diagnostics.length - found.length;
+      const theirs = found.map(d => key(d.message, d.labels[0]?.line, d.labels[0]?.column)).sort();
+      const wanted = item.messages?.map(message => key(message.message, message.line, message.column)).sort();
+      if (wanted === undefined ? theirs.length > 0 : JSON.stringify(theirs) === JSON.stringify(wanted)) same++;
+      else
+        console.log(
+          `${record.path}\n  expected ${JSON.stringify(wanted ?? "any")}\n  reported ${JSON.stringify(theirs)}`,
+        );
+    }
+    console.log(
+      table(
+        ["Cases", "In the lines", "The rule reports what the case expects", "Diagnostics of other rules"],
+        [[expected.size, seen.size, same, others]],
+      ),
+    );
+  }
 }

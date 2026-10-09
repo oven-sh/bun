@@ -195,6 +195,11 @@ impl Rule for NoUnnecessaryBooleanLiteralCompare {
             && !self.allow_rule_to_run_without_strict_null_checks
         {
             on.finish(|_, cx| {
+                // tsgolint points at the start of the file.
+                if cx.language().is_oxlint {
+                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+                    return;
+                }
                 let line_zero = Position { line: 0, column: 0 };
                 cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(line_zero).end_at(line_zero);
             });

@@ -754,11 +754,16 @@ describe.concurrent("bun format", () => {
   });
 
   test("sortTailwindcss, where it has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
-    const css = ".a {\n  @apply b c;\n}\n";
-    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "a.js": ugly, "b.css": css, "c.css": ".a {\n}\n" };
+    const html = '<p class="b c"></p>\n';
+    const files = {
+      ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
+      "a.js": ugly,
+      "b.html": html,
+      "c.html": "<p></p>\n",
+    };
     const result = await format(files, [], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
-    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .css";
+    const text = "sortTailwindcss is not supported yet in these languages, and has no effect there: 1 .html";
     expect(result.stderr).toContain(`[error] ${text}. With --allow-unsupported this is a warning.`);
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads: ["a.js"] });
@@ -974,7 +979,7 @@ declare export function h(): void;
     ["a.d.ts", "export const a: string;"],
     ["a.ts", "export const a = /(/;"],
     ["a.ts", "export {};\nlet = 1;"],
-    ["a.js", "break;"],
+    ["a.js", "export {};\nstatic = 1;"],
     ["a.js", "for (const a of b);"],
   ])("with an .oxfmtrc.json what OXC's parser takes is formatted: %s: %j", async (name, code) => {
     const result = await format({ [name]: code + "\n", ".oxfmtrc.json": "{}\n" }, ["--check", name]);

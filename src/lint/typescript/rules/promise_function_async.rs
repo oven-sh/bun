@@ -57,6 +57,11 @@ fn add_async<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Option<Fix> {
     Some(fixer.insert_before(key_token, if insert_space { " async " } else { "async " }))
 }
 
+/// oxlint points at the function, from its first decorator or modifier.
+fn place<'a>(node: Func<'a>, cx: &Cx<'a, PromiseFunctionAsync>) -> Span {
+    if cx.language().is_oxlint { node.span() } else { get_function_head_loc(node) }
+}
+
 impl PromiseFunctionAsync {
     fn check<'a>(&self, node: Func<'a>, cx: &mut Cx<'a, Self>) {
         if node.is_async() || !node.has_body() {
@@ -98,7 +103,7 @@ impl PromiseFunctionAsync {
             && return_types.iter().any(|ty| is_type_flag_set(*ty, TypeFlags::ANY | TypeFlags::UNKNOWN))
         {
             // Without a fix: what is returned is unknown.
-            cx.report(get_function_head_loc(node), MISSING_ASYNC);
+            cx.report(place(node, cx), MISSING_ASYNC);
             return;
         }
 
@@ -115,7 +120,7 @@ impl PromiseFunctionAsync {
             true => MISSING_ASYNC_HYBRID_RETURN,
             false => MISSING_ASYNC,
         };
-        cx.report(get_function_head_loc(node), message).fix(|fixer| add_async(fixer, node));
+        cx.report(place(node, cx), message).fix(|fixer| add_async(fixer, node));
     }
 }
 

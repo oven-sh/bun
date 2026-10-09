@@ -48,6 +48,39 @@ fn check_and_lint(
     indices: &[usize],
     already_read: AlreadyRead,
 ) -> Vec<Option<Linted>> {
+    // oxlint lints JavaScript with types too, whatever `allowJs` says and whether or not a project includes it.
+    let is_script_for_oxlint = |index: usize| {
+        files[index].config.language.is_oxlint
+            && bun_sema::resolve::is_javascript(files[index].path)
+    };
+    let for_scripts =
+        (indices.iter().any(|&index| is_script_for_oxlint(index))).then(|| already_read.clone());
+    let mut linted = check_and_lint_as(context, environment, files, indices, already_read, false);
+    // In programs of their own: what the other files import from JavaScript is as their project says.
+    if let Some(already_read) = for_scripts {
+        let is_left = |at: &usize| linted[*at].is_none() && is_script_for_oxlint(indices[*at]);
+        let left: Vec<usize> = (0..indices.len()).filter(is_left).collect();
+        let scripts: Vec<usize> = left.iter().map(|&at| indices[at]).collect();
+        if !scripts.is_empty() {
+            let of_scripts =
+                check_and_lint_as(context, environment, files, &scripts, already_read, true);
+            for (at, of_script) in left.into_iter().zip(of_scripts) {
+                linted[at] = of_script;
+            }
+        }
+    }
+    linted
+}
+
+/// `are_entry_points`: see [`bun_sema_driver::Request::are_entry_points`].
+fn check_and_lint_as(
+    context: &Context,
+    environment: &Environment,
+    files: &[Typed],
+    indices: &[usize],
+    already_read: AlreadyRead,
+    are_entry_points: bool,
+) -> Vec<Option<Linted>> {
     let by_path: FxHashMap<Vec<u8>, usize> = indices
         .iter()
         .enumerate()
@@ -113,8 +146,7 @@ fn check_and_lint(
         build: false,
         errors: &[],
         paths: &paths,
-        // oxlint lints JavaScript with types too, whatever `allowJs` says and whether or not a project includes it.
-        are_entry_points: (indices.iter()).any(|&index| files[index].config.language.is_oxlint),
+        are_entry_points,
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],

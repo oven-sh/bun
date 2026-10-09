@@ -11,9 +11,9 @@
 //!
 //! The parser numbers the nodes of a list in the order of the source. So two trees of the same shape
 //! have the same ids, and most trees have the same shape before and after. That is tried first
-//! (`Walk<true>`): the nodes with the same id are compared one after the other, and in place of a walk
+//! (`Walk::by_id`): the nodes with the same id are compared one after the other, and in place of a walk
 //! down to a child its ids are compared. If all are the same, so are the trees. If not, nothing is known,
-//! and the trees are walked (`Walk<false>`).
+//! and the trees are walked.
 
 use super::Difference;
 use crate::js::utils::number::format_trimmed_number;
@@ -253,9 +253,9 @@ const MOST_ATOMS: usize = 1 << 22;
 /// `Err`: a difference has been found, and the walk is over.
 type Same = Result<(), ()>;
 
-/// `BY_ID`: an expression, a statement, a type or a pattern is the same as the one with the same id, and
-/// as no other.
-struct Walk<'a, 'f, const BY_ID: bool> {
+struct Walk<'a, 'f> {
+    /// An expression, a statement, a type or a pattern is the same as the one with the same id, and as no other.
+    by_id: bool,
     a: &'a Program<'a>,
     b: &'a Program<'a>,
     /// The program before, for questions about where a node is.
@@ -277,7 +277,7 @@ fn has_same_words(a: &[u8], b: &[u8]) -> bool {
             .filter(|word| !word.is_empty())
             .map(<[u8]>::to_vec)
             .collect();
-        words.sort_unstable();
+        crate::sort::sort(&mut words[..]);
         words.dedup();
         words
     };
@@ -312,7 +312,8 @@ pub fn compare<'f>(
     scratch.imports.0.clear();
     scratch.imports.1.clear();
     let stack = bun_core::StackCheck::init();
-    let mut by_id = Walk::<true> {
+    let mut by_id = Walk {
+        by_id: true,
         a: before,
         b: after,
         before: file,
@@ -324,7 +325,8 @@ pub fn compare<'f>(
     };
     let is_same_by_id =
         !imports_can_move && by_id.program().and_then(|()| by_id.all_nodes()).is_ok();
-    let mut walk = Walk::<false> {
+    let mut walk = Walk {
+        by_id: false,
         a: before,
         b: after,
         before: file,
@@ -368,8 +370,8 @@ macro_rules! both {
     };
 }
 
-impl Walk<'_, '_, true> {
-    /// Compares each expression, statement, type and pattern with the one that has the same id.
+impl Walk<'_, '_> {
+    /// Compares each expression, statement, type and pattern with the one that has the same id. With `by_id` only.
     fn all_nodes(&mut self) -> Same {
         let (a, b) = (self.a, self.b);
         let lengths = |it: &Program<'_>| {
@@ -398,7 +400,7 @@ impl Walk<'_, '_, true> {
     }
 }
 
-impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
+impl Walk<'_, '_> {
     #[cold]
     fn differ(&mut self, what: &'static str, before: u32, after: u32) -> Same {
         self.difference = Some((what, before, after));
@@ -691,7 +693,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         // What the parser reads twice is listed twice, and not where it is.
         let places = |program: &Program<'_>| {
             let mut places: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
-            places.sort_unstable();
+            crate::sort::sort(&mut places[..]);
             places.dedup();
             places
         };
@@ -728,7 +730,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
             let mut all: Vec<_> = ids.iter().map(|&id| import_as_text(program, id)).collect();
-            all.sort_by(|x, y| x.0.cmp(&y.0));
+            crate::sort::sort_by(&mut all[..], |x, y| x.0.cmp(&y.0));
             all
         };
         let (xs, ys) = (
@@ -782,10 +784,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     /// Allowed: empty statements in a list are left out.
+    #[inline]
     fn stmt_list(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
-        if BY_ID {
-            return Self::is_same_list(a, b);
+        match self.by_id {
+            true => Self::is_same_list(a, b),
+            false => self.stmt_list_in_depth(a, b),
         }
+    }
+
+    fn stmt_list_in_depth(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         let (mut i, mut j) = (0, 0);
         loop {
@@ -823,10 +830,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     #[inline]
+    #[inline]
     fn stmt(&mut self, a: StmtId, b: StmtId) -> Same {
-        if BY_ID {
-            return Self::is_same_id(a.0, b.0);
+        match self.by_id {
+            true => Self::is_same_id(a.0, b.0),
+            false => self.stmt_in_depth(a, b),
         }
+    }
+
+    fn stmt_in_depth(&mut self, a: StmtId, b: StmtId) -> Same {
         let (x, y) = both!(self, stmts, a, b, "a statement is missing");
         if !self.stack.is_safe_to_recurse() {
             return self.differ(
@@ -1181,10 +1193,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     // ───────────────────────────── patterns ─────────────────────────────
 
     #[inline]
+    #[inline]
     fn pat(&mut self, a: PatId, b: PatId) -> Same {
-        if BY_ID {
-            return Self::is_same_id(a.0, b.0);
+        match self.by_id {
+            true => Self::is_same_id(a.0, b.0),
+            false => self.pat_in_depth(a, b),
         }
+    }
+
+    fn pat_in_depth(&mut self, a: PatId, b: PatId) -> Same {
         let (x, y) = both!(self, pats, a, b, "a pattern is missing");
         let result = self.pat_kind(x.kind, y.kind);
         self.at(result, x.pos, y.pos)
@@ -1375,10 +1392,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
+    #[inline]
     fn expr_list(&mut self, a: IdList<ExprId>, b: IdList<ExprId>) -> Same {
-        if BY_ID {
-            return Self::is_same_list(a, b);
+        match self.by_id {
+            true => Self::is_same_list(a, b),
+            false => self.expr_list_in_depth(a, b),
         }
+    }
+
+    fn expr_list_in_depth(&mut self, a: IdList<ExprId>, b: IdList<ExprId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of expressions in a list")?;
         xs.iter()
@@ -1417,10 +1439,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     #[inline]
+    #[inline]
     fn expr(&mut self, a: ExprId, b: ExprId) -> Same {
-        if BY_ID {
-            return Self::is_same_id(a.0, b.0);
+        match self.by_id {
+            true => Self::is_same_id(a.0, b.0),
+            false => self.expr_in_depth(a, b),
         }
+    }
+
+    fn expr_in_depth(&mut self, a: ExprId, b: ExprId) -> Same {
         let (x, y) = both!(self, exprs, a, b, "an expression is missing");
         let result = self.expr_kind((a, &x), (b, &y));
         self.at(result, x.pos, y.pos)
@@ -1470,7 +1497,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 )?;
                 match is_a_template {
                     // It can be text in JSX that starts with a `` ` ``.
-                    true if BY_ID => self
+                    true if self.by_id => self
                         .atom(p, q, "a string")
                         .and_then(|()| self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY))),
                     true => self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY)),
@@ -1544,7 +1571,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 },
             ) => {
                 self.check(op == op2, "an operator")?;
-                if !BY_ID
+                if !self.by_id
                     && (self.a.logical_operator(right) == Some(op)
                         || self.b.logical_operator(right2) == Some(op))
                 {
@@ -1664,7 +1691,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     #[inline]
     fn has_stack_left(&mut self) -> Same {
-        match BY_ID || self.stack.is_safe_to_recurse() {
+        match self.by_id || self.stack.is_safe_to_recurse() {
             true => Ok(()),
             false => self.differ_somewhere("the code is nested too deeply to compare it"),
         }
@@ -1734,7 +1761,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 bun_core::strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1),
             );
             let mut flags = flags.to_vec();
-            flags.sort_unstable();
+            crate::sort::sort(&mut flags[..]);
             (pattern.to_vec(), flags)
         };
         self.check(parts(a) == parts(b), "a regular expression")
@@ -1802,7 +1829,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             return Ok(());
         }
         self.check(
-            !BY_ID && self.can_template_change(a, texts(), texts2()),
+            !self.by_id && self.can_template_change(a, texts(), texts2()),
             "the text of a template",
         )
     }
@@ -1895,10 +1922,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     // ───────────────────────────── types ─────────────────────────────
 
+    #[inline]
     fn type_list(&mut self, a: IdList<TypeNodeId>, b: IdList<TypeNodeId>) -> Same {
-        if BY_ID {
-            return Self::is_same_list(a, b);
+        match self.by_id {
+            true => Self::is_same_list(a, b),
+            false => self.type_list_in_depth(a, b),
         }
+    }
+
+    fn type_list_in_depth(&mut self, a: IdList<TypeNodeId>, b: IdList<TypeNodeId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of types in a list")?;
         xs.iter()
@@ -1907,10 +1939,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     #[inline]
+    #[inline]
     fn ty(&mut self, a: TypeNodeId, b: TypeNodeId) -> Same {
-        if BY_ID {
-            return Self::is_same_id(a.0, b.0);
+        match self.by_id {
+            true => Self::is_same_id(a.0, b.0),
+            false => self.ty_in_depth(a, b),
         }
+    }
+
+    fn ty_in_depth(&mut self, a: TypeNodeId, b: TypeNodeId) -> Same {
         let (x, y) = both!(self, types, a, b, "a type is missing");
         let result = self.type_kind((a, x.kind), (b, y.kind));
         self.at(result, x.pos, y.pos)
@@ -2164,7 +2201,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     self.a.without_lone_operator(a),
                     self.b.without_lone_operator(b),
                 );
-                match BY_ID || (inner, inner2) == (a, b) {
+                match self.by_id || (inner, inner2) == (a, b) {
                     true => self.differ_somewhere("the kind of a type"),
                     false => self.ty(inner, inner2),
                 }
@@ -2257,7 +2294,7 @@ fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, Expr
         .concat()
     })
     .collect();
-    names.sort();
+    crate::sort::sort(&mut names[..]);
     out.extend(names.concat());
     (
         out,

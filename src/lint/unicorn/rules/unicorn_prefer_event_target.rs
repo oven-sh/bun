@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::{get_declaration_of_variable, get_inner_expression, is_import_from_module};
+use crate::unicorn::static_string;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -11,12 +12,7 @@ const IGNORED_PACKAGES: [&str; 2] = ["@angular/core", "eventemitter3"];
 
 /// A string or a template without substitutions that names one of [`IGNORED_PACKAGES`].
 fn is_ignored_package(source: Expr) -> bool {
-    let source = match source.kind() {
-        ExprKind::String(value) => Some(value),
-        ExprKind::Template(template) => template.as_static(),
-        _ => None,
-    };
-    source.is_some_and(|it| it.is_any(&IGNORED_PACKAGES))
+    static_string(source).is_some_and(|it| it.is_any(&IGNORED_PACKAGES))
 }
 
 /// `require("eventemitter3")`, `await import("eventemitter3")`

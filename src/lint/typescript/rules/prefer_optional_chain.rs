@@ -961,6 +961,8 @@ impl PreferOptionalChain {
             match (is_member_based_expression(left), is_member_based_expression(right)) {
                 (true, false) => (left, right, Yoda::No),
                 (false, true) => (right, left, Yoda::Yes),
+                // tsgolint 7.0 leaves it alone: when the other side is evaluated would change.
+                (true, true) if operand.file().language().is_oxlint => return Operand::Invalid,
                 (true, true) => (left, right, Yoda::Unknown),
                 (false, false) => return Operand::Invalid,
             };

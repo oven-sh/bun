@@ -478,7 +478,7 @@ impl<'i> Parser<'i> {
         for index in first_blank..self.odd_blanks.partition_point(|at| *at < end) {
             self.edit(self.odd_blanks[index], Change::Put(b' '));
         }
-        self.edits.sort_unstable_by_key(|edit| {
+        crate::sort::sort_by_key(&mut self.edits[..], |edit| {
             let rank = match edit.change {
                 Change::EndArguments | Change::Close => 0,
                 Change::Open => 1,

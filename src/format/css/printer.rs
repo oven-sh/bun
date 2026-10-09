@@ -97,6 +97,8 @@ pub(crate) struct Printer<'a, 'o> {
     /// Prettier's `__isHTMLStyleAttribute`: the declarations are on one line if they fit. It is not in the key of the memo: the
     /// sink has to be `Sink::to_document()`, for which nothing is kept.
     pub(crate) is_html_style_attribute: bool,
+    /// oxfmt's `sortTailwindcss`, for the classes behind `@apply`.
+    pub(crate) tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<ValueId>,
     /// Not 0: the comment at the start of what follows a comma that has been written behind the comma.
@@ -919,7 +921,14 @@ impl<'a> Printer<'a, '_> {
                 {
                     self.sink.text(&adjust_strings(params, self.single_quote));
                 }
-                Params::Text(params) | Params::Unknown(params) => self.sink.text(params),
+                Params::Text(params) | Params::Unknown(params) => {
+                    let is_sorted = node.name == b"apply"
+                        && !node.has_block
+                        && !bun_core::strings::contains(params, b"/*");
+                    let sorted = (self.tailwind.as_deref().filter(|_| is_sorted))
+                        .and_then(|tailwind| tailwind.sorted_to_apply(params));
+                    self.sink.text(sorted.as_deref().unwrap_or(params));
+                }
                 Params::Media(list) => self.print_media(list, true),
                 Params::Value(value) => self.print_value(statement, *value, None),
             }

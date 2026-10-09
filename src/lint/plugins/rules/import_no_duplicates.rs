@@ -194,14 +194,14 @@ impl NextNewlines {
 
 fn brace_position(decl: Import, brace: &[u8]) -> Option<u32> {
     let span = decl.span();
-    find_next_token_within(decl.stmt().file(), span.start, span.end, brace)
+    find_next_token_within(decl.stmt().file(), span, brace)
 }
 
 /// `newlines`: one for what is asked about the comments before the imports, one for the ends of the imports.
 fn has_problematic_comments(decl: Import, [after_comment, after_import]: &mut [NextNewlines; 2]) -> bool {
     let (file, span) = (decl.stmt().file(), decl.span());
     // At most one `\n` is between it and the import.
-    let comment_before = file.comments_in(Span::new(0, span.start)).next_back().filter(|it| !it.text().starts_with(b"#!"));
+    let comment_before = file.comments_in(Span::before(0, span)).next_back().filter(|it| !it.text().starts_with(b"#!"));
     if comment_before.is_some_and(|it| after_comment.after(file, it.end())[1].is_none_or(|second| second >= span.start)) {
         return true;
     }
@@ -249,7 +249,7 @@ fn merge_imports_fix<'a>(fixer: Fixer<'a>, prefer_inline: bool, decls: &[Import<
         return None;
     }
     let first_span = first.span();
-    let braces = brace_position(first, b"{").and_then(|open| Some((open, find_next_token_within(file, open + 1, first_span.end, b"}")?)));
+    let braces = brace_position(first, b"{").and_then(|open| Some((open, find_next_token_within(file, Span::new(open + 1, first_span.end), b"}")?)));
     let has_open_brace = brace_position(first, b"{").is_some();
     let import_keyword_end = Span::empty(first_span.start + "import".len() as u32);
     let first_is_empty = first.named().is_empty();
@@ -265,7 +265,7 @@ fn merge_imports_fix<'a>(fixer: Fixer<'a>, prefer_inline: bool, decls: &[Import<
 
     let mut fixes = Vec::with_capacity(decls.len() + 1);
     if should_add_specifiers && should_inline_type_imports && first.is_type_only() {
-        if let Some(type_start) = find_next_token_within(file, first_span.start, first_span.end, b"type") {
+        if let Some(type_start) = find_next_token_within(file, first_span, b"type") {
             let type_end = type_start + 4;
             let has_space = file.text().get(type_end as usize) == Some(&b' ');
             fixes.push(fixer.remove(Span::new(type_start, type_end + u32::from(has_space))));

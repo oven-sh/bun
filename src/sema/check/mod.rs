@@ -56,6 +56,7 @@ mod flow;
 mod grammarchecks;
 mod infer;
 mod instantiate;
+pub mod jsdoc;
 mod jsx;
 mod late_bound;
 mod loop_cycles;

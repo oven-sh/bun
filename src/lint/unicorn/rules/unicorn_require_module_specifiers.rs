@@ -9,8 +9,8 @@ const EMPTY_SPECIFIER: Message = Message::new("", "Empty {{statement_type}} spec
 
 /// The first `{` and the next `}` in `span`, if there is nothing but whitespace between them.
 fn find_empty_braces_in_span<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
-    let open_brace = find_next_token_within(file, span.start, span.end, b"{")?;
-    let close_brace = find_next_token_within(file, open_brace + 1, span.end, b"}")?;
+    let open_brace = find_next_token_within(file, span, b"{")?;
+    let close_brace = find_next_token_within(file, Span::new(open_brace + 1, span.end), b"}")?;
     let between = file.slice(Span::new(open_brace + 1, close_brace));
     text::trim(between).is_empty().then(|| Span::new(open_brace, close_brace + 1))
 }
@@ -36,8 +36,8 @@ impl Rule for RequireModuleSpecifiers {
                 return;
             };
             cx.report(braces, EMPTY_SPECIFIER).data("statement_type", "import").fix(|fixer| {
-                let comma = find_next_token_within(file, span.start, span.end, b",")?;
-                let from = find_next_token_within(file, comma, span.end, b"from")?;
+                let comma = find_next_token_within(file, span, b",")?;
+                let from = find_next_token_within(file, Span::new(comma, span.end), b"from")?;
                 let default_part = file.slice(Span::new(span.start, comma));
                 let from_part = file.slice(Span::new(from, span.end));
                 Some(fixer.replace(span, [default_part, b" ", from_part].concat()))

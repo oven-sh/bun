@@ -212,6 +212,7 @@ The goal is to be faster per core than oxfmt and Biome.
 - `as_ast_nodes()`, `ast_parent()` are cheap but not free (a table lookup and a `match`). Ask once, keep the result in a `let`.
 - `memoized()`/`intern`/`capture` move nothing: the elements stay where they are written, behind a `FormatElement::Skip(len)`, and an `Interned` is a range of the one vector. What is formatted and thrown away stays there too.
 - Decide from the syntax first, look at the source text or the comments last.
+- Sort with `crate::sort` (`bun_collections::index_sort`), not with `slice::sort*`: each `sort_by` with a closure of its own is 4 to 30 KB of code in the binary. The standard sorts are for a sort that a profile shows to be hot.
 
 ## Conventions
 

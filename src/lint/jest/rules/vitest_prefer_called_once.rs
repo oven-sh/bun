@@ -46,7 +46,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferCalledOnc
             let file = fixer.file();
             // Without `Times`.
             let without_suffix = file.slice(Span::new(matcher_span.start, matcher_span.end.saturating_sub(5)));
-            let comma = find_next_token_within(file, called_times_value.span().end, call_end, b",");
+            let comma = find_next_token_within(file, Span::after(called_times_value.span(), call_end), b",");
             let mut fixes = vec![
                 fixer.replace(matcher_span, [without_suffix, b"Once".as_slice()].concat()),
                 fixer.remove(called_times_value),

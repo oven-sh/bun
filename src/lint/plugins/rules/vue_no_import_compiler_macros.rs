@@ -51,15 +51,15 @@ impl Rule for NoImportCompilerMacros {
                         (None, None) => Some(fixer.remove(stmt)),
                         // With the comma after it.
                         (_, Some(next)) if previous.is_none() => {
-                            let comma = find_next_token_within(file, span.end, next.span().start, b",")?;
+                            let comma = find_next_token_within(file, span.between(next.span()), b",")?;
                             Some(fixer.remove(Span::new(span.start, comma + 1)))
                         }
                         // With the comma before it, and with the braces if nothing is left in them.
                         (Some(prev), _) => {
-                            let comma = find_prev_token_within(file, prev.end, span.start, b",")?;
+                            let comma = find_prev_token_within(file, prev.between(span), b",")?;
                             let end = match previous {
                                 Some(_) => span.end,
-                                None => find_next_token_within(file, span.end, stmt.span().end, b"}")? + 1,
+                                None => find_next_token_within(file, Span::after(span, stmt.span().end), b"}")? + 1,
                             };
                             Some(fixer.remove(Span::new(comma, end)))
                         }
@@ -77,9 +77,9 @@ impl Rule for NoImportCompilerMacros {
     }
 }
 
-/// `LintContext::find_prev_token_within`: where the text `token` is the last time from `start` to `end`, outside the comments.
-fn find_prev_token_within<'a>(file: &'a File<'a>, start: u32, end: u32, token: &[u8]) -> Option<u32> {
-    let mut end = end;
+/// `LintContext::find_prev_token_within`: where the text `token` is the last time in `within`, outside the comments.
+fn find_prev_token_within<'a>(file: &'a File<'a>, within: Span, token: &[u8]) -> Option<u32> {
+    let Span { start, mut end } = within;
     loop {
         let at = start + strings::last_index_of(file.slice(Span::new(start, end)), token)? as u32;
         match file.comment_around(at) {

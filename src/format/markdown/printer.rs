@@ -133,7 +133,7 @@ fn max_continuous_count(text: &[u8], marker: u8) -> usize {
 /// Prettier's `getMinNotPresentContinuousCount`
 fn min_not_present_continuous_count(text: &[u8], marker: u8) -> usize {
     let mut present: smallvec::SmallVec<[usize; 8]> = runs_of(text, marker).collect();
-    present.sort_unstable();
+    crate::sort::sort(&mut present[..]);
     present.dedup();
     (1..)
         .zip(present.iter())

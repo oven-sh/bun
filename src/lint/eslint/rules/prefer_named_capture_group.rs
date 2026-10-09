@@ -77,6 +77,9 @@ fn check_regex<'a>(
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
         }
+        let since = pattern.get(start..group.start() as usize).unwrap_or_default();
+        utf16_start += regex::utf16_index(since, since.len()) as u32;
+        start += since.len();
         // oxlint points at the group, where it is written, or else at what the pattern is made of.
         let place = match cx.language().is_oxlint {
             true if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) => {
@@ -84,15 +87,12 @@ fn check_regex<'a>(
                 Span::new(pattern_start + group.start(), pattern_start + group.end())
             }
             true => (in_string.get_or_init(|| Written::new(regex_node)).as_ref())
-                .and_then(|it| it.span(group.utf16_start(), group.utf16_end()))
+                .and_then(|it| it.span(utf16_start, utf16_start + regex::utf16_index(group.raw(), group.raw().len()) as u32))
                 .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
         };
         let report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
         if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
-            let since = pattern.get(start..group.start() as usize).unwrap_or_default();
-            utf16_start += regex::utf16_index(since, since.len()) as u32;
-            start += since.len();
             // After the delimiter and the `(`.
             let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
             report

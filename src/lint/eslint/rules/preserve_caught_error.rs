@@ -239,7 +239,9 @@ impl PreserveCaughtError {
             }
             None => {
                 if self.requires_catch_parameter {
-                    cx.report(statement, MISSING_CATCH_ERROR_PARAM);
+                    // oxlint points at the `catch`.
+                    let place = try_statement.catch_clause_span().filter(|_| cx.language().is_oxlint);
+                    cx.report(place.unwrap_or_else(|| statement.span()), MISSING_CATCH_ERROR_PARAM);
                 }
                 return;
             }

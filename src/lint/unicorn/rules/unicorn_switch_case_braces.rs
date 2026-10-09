@@ -42,7 +42,7 @@ impl Rule for SwitchCaseBraces {
             }
             let (file, case_span) = (cx.file(), case.span());
             let test_end = case.test().map_or(case_span.start, |it| it.outer_span().end);
-            let Some(colon_pos) = find_next_token_within(file, test_end, case_span.end, b":") else {
+            let Some(colon_pos) = find_next_token_within(file, Span::new(test_end, case_span.end), b":") else {
                 return;
             };
             let span = Span::new(case_span.start, colon_pos + 1);

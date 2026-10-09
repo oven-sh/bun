@@ -35,7 +35,7 @@ impl Rule for NoMagicArrayFlatDepth {
             }
             // A comment between the parentheses explains the number.
             let (file, call_end) = (cx.file(), e.span().end);
-            if let Some(open_paren) = find_next_token_within(file, call.callee().outer_span().end, call_end, b"(")
+            if let Some(open_paren) = find_next_token_within(file, Span::after(call.callee().outer_span(), call_end), b"(")
                 && file.comments_in(Span::new(open_paren, call_end)).next().is_none()
             {
                 cx.report(depth, NO_MAGIC_ARRAY_FLAT_DEPTH);

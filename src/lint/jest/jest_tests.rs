@@ -1240,10 +1240,7 @@ pub(crate) mod prefer_todo {
                 1 => vec![fix],
                 _ => vec![
                     fix,
-                    fixer.remove(Span::new(
-                        title.span().end,
-                        node.span().end.saturating_sub(1),
-                    )),
+                    fixer.remove(Span::after(title.span(), node.span().end.saturating_sub(1))),
                 ],
             }
         });

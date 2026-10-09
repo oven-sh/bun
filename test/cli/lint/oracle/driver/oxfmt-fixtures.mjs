@@ -18,8 +18,8 @@ const bin = flag("bin").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
-// Commands that `bun format` does not have, and languages that it leaves alone.
-const leftOut = /^(init|migrate_|external_formatter|svelte|stdin_svelte|vite_|error_reports)/;
+// Commands that `bun format` does not have, languages that it leaves alone, and what `vp` tells oxfmt through the environment.
+const leftOut = /^(migrate_|svelte|stdin_svelte|vite_plus)/;
 const compared =
   /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
 

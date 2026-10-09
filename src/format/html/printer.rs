@@ -66,7 +66,7 @@ impl<'c> IgnoredAttributes<'c> {
                     names.push(&rest[..len]);
                     rest = text::trim_start(&rest[len..]);
                 }
-                names.sort_unstable();
+                crate::sort::sort(&mut names[..]);
                 IgnoredAttributes::Named(names)
             }
             _ => IgnoredAttributes::None,

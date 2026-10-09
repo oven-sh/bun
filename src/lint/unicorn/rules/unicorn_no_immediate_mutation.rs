@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
+use crate::unicorn::statements_around;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -46,14 +47,7 @@ impl Rule for NoImmediateMutation {
             }) else {
                 return;
             };
-            let statements = match statement.parent() {
-                Node::File(file) => Some(file.body()),
-                Node::Func(func) => func.body_statements(),
-                Node::Stmt(block) => block.as_block(),
-                Node::Case(case) => Some(case.body()),
-                _ => None,
-            };
-            let prev_stmt = statements.and_then(|it| it.before(statement.span().start));
+            let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
             if prev_stmt.and_then(get_prev_declaration) == Some((mutation.variable, mutation.init_type)) {
                 let report = cx.report(expr, mutation.message);
                 if let Some(method) = mutation.method {

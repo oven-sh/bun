@@ -12,6 +12,7 @@ mod conformance_cmd;
 mod driver_cmd;
 mod format_cmd;
 mod js_plugin_cmd;
+mod jsdoc_cmd;
 mod linter_cmd;
 mod parser_cmd;
 mod perf_cmd;
@@ -227,6 +228,7 @@ fn main() {
         Some("plugins") => plugins_cmd::run(&args[1..]),
         Some("react-compiler") => react_compiler_cmd::run(&args[1..]),
         Some("js_plugin") => js_plugin_cmd::run(&args[1..]),
+        Some("jsdoc") => jsdoc_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),
         Some("utils-ts") => utils_ts_cmd::run(&args[1..]),

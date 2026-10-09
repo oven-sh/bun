@@ -264,7 +264,7 @@ fn sorted_order(units: &[Unit], options: &Options) -> Vec<usize> {
     let mut sortable: Vec<usize> = (0..units.len())
         .filter(|index| !units[*index].is_ignored)
         .collect();
-    sortable.sort_by_key(|index| units[*index].group);
+    crate::sort::sort_by_key(&mut sortable[..], |index| units[*index].group);
     let mut start = 0;
     while start < sortable.len() {
         let group = units[sortable[start]].group;

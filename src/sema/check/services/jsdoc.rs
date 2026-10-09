@@ -1,9 +1,11 @@
 //! `symbol.getJsDocTags()`, as far as `@deprecated` goes.
 //!
-//! JSDoc comments of TypeScript files are not parsed. What is asked here is found in the text,
+//! JSDoc comments of TypeScript files are not kept. What is asked here is read from the text,
 //! where TypeScript's parser attaches the comments: before the first token of a declaration.
 
-use super::super::spans::{get_leading_comment_ranges, get_trailing_comment_ranges};
+use super::super::spans::{
+    get_leading_comment_ranges, get_trailing_comment_ranges, unescaped_identifier,
+};
 use super::*;
 
 bitflags::bitflags! {
@@ -157,79 +159,17 @@ fn tag_comment(text: &[u8]) -> Vec<u8> {
     comment
 }
 
-/// `isWhiteSpaceSingleLine`, as far as ASCII goes.
-fn is_space(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | 0x0b | 0x0c)
-}
-
-/// Where what is written in a line begins: behind white space, and if `has_asterisk` an asterisk and more white space.
-fn end_of_margin(text: &[u8], line: usize, has_asterisk: bool) -> usize {
-    let skip_space = |at: usize| at + text[at..].iter().take_while(|&&c| is_space(c)).count();
-    let at = skip_space(line);
-    match text.get(at) {
-        Some(b'*') if has_asterisk => skip_space(at + 1),
-        _ => at,
-    }
-}
-
-/// The tags of the comment `/** .. */`.
-fn parse_tags(comment: &[u8]) -> Tags {
+/// `jsDoc.tags` of the comment of `text` from `start` to `end`: a tag that is in another tag is not among them.
+fn parse_tags(text: &[u8], start: usize, end: usize, is_stack_low: &dyn Fn() -> bool) -> Tags {
     let mut tags = Tags::default();
-    let text = comment.strip_suffix(b"*/").unwrap_or(comment);
-    // Where each tag begins: at an `@` that is the first in its line, or that follows white space and is followed by
-    // something else (`scanJSDocCommentTextToken`). Not in a link, and in the text of a tag not between backticks.
-    let mut starts: SmallVec<[usize; 8]> = SmallVec::new();
-    let mut at = if text.starts_with(b"/**") { 3 } else { 0 };
-    let mut margin = end_of_margin(text, at, false);
-    let mut is_in_backticks = false;
-    while let Some(found) = bun_core::strings::index_of_any(&text[at..], b"@{`\n") {
-        at += found;
-        match text[at] {
-            b'@' => {
-                let is_in_text = || {
-                    is_space(text[at - 1])
-                        && text
-                            .get(at + 1)
-                            .is_none_or(|next| !next.is_ascii_whitespace())
-                };
-                if at == margin || !is_in_backticks && at > 0 && is_in_text() {
-                    starts.push(at);
-                    is_in_backticks = false;
-                }
-                at += 1;
-            }
-            b'`' => {
-                is_in_backticks = !is_in_backticks && !starts.is_empty();
-                at += 1;
-            }
-            b'\n' => {
-                at += 1;
-                margin = end_of_margin(text, at, true);
-                is_in_backticks = false;
-            }
-            _ if is_in_backticks => at += 1,
-            _ => {
-                let link = link_len(&text[at..]).max(1);
-                if let Some(line) =
-                    bun_core::strings::last_index_of_char(&text[at..at + link], b'\n')
-                {
-                    margin = end_of_margin(text, at + line + 1, true);
-                }
-                at += link;
-            }
-        }
-    }
-    for (index, &start) in starts.iter().enumerate() {
-        let end = starts.get(index + 1).copied().unwrap_or(text.len());
-        let tag = &text[start + 1..end];
-        let name_len = tag
-            .iter()
-            .take_while(|&&c| is_identifier_part(c) || c == b'-')
-            .count();
-        let (name, rest) = tag.split_at(name_len);
+    let rows = super::super::jsdoc::tags(text, start, end, is_stack_low);
+    for row in rows.iter().filter(|row| row.depth == 0) {
+        let (at, name_end, end) = (row.at as usize, row.name_end as usize, row.end as usize);
         tags.set |= TagSet::ANY;
-        match name {
-            b"deprecated" if tags.deprecated.is_none() => tags.deprecated = Some(tag_comment(rest)),
+        match &*unescaped_identifier(text.get(at + 1..name_end).unwrap_or_default()) {
+            b"deprecated" if tags.deprecated.is_none() => {
+                tags.deprecated = Some(tag_comment(text.get(name_end..end).unwrap_or_default()));
+            }
             b"inheritDoc" | b"inheritdoc" => tags.set |= TagSet::INHERIT_DOC,
             b"typedef" | b"callback" => tags.set |= TagSet::TYPEDEF,
             b"param" | b"arg" | b"argument" | b"return" | b"returns" => {
@@ -293,7 +233,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             comment.starts_with(b"/**") && comment.get(3) != Some(&b'/')
         };
         let &(start, end) = ranges.iter().rfind(is_js_doc)?;
-        Some(parse_tags(&text[start..end]))
+        Some(parse_tags(text, start, end, &|| self.c.is_stack_low()))
     }
 
     /// `getNextJSDocCommentLocation`

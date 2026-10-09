@@ -5,10 +5,11 @@
 //! the program ([`PROGRAM`]), a call (its kind), the answer to what it asked for (0). From a process: what it asks for (its
 //! kind), what a call returns ([`RESULT`]).
 
-use bun_lint::js_plugin::{Engine, Serve, Vm};
+use bun_lint::js_plugin::{Demand, Engine, Serve, Vm};
 use bun_threading::{Condition, Guarded};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
+use std::time::Instant;
 
 const PROGRAM: u32 = 100;
 const RESULT: u32 = 100;
@@ -33,6 +34,8 @@ struct Process {
     /// To write messages in.
     buffer: Vec<u8>,
     has_failed: bool,
+    /// When it was started, until it has been used for the first time.
+    started: Option<Instant>,
 }
 
 impl Process {
@@ -92,8 +95,9 @@ pub(crate) struct Processes<'e> {
     spawn: &'e Spawn<'e>,
     program: Vec<u8>,
     max: usize,
-    /// [`Engine::expect`]. 0: nobody has said.
-    expected: AtomicUsize,
+    /// Whether [`Engine::expect`] was called. Else there are as many as are asked for.
+    is_told: AtomicBool,
+    demand: Demand,
     state: Guarded<State>,
     is_idle: Condition,
 }
@@ -108,7 +112,8 @@ impl<'e> Processes<'e> {
                 .flat_map(|it| it.1.bytes())
                 .collect(),
             max: max.max(1),
-            expected: AtomicUsize::new(0),
+            is_told: AtomicBool::new(false),
+            demand: Demand::default(),
             state: Guarded::new(State::default()),
             is_idle: Condition::default(),
         }
@@ -124,6 +129,7 @@ impl<'e> Processes<'e> {
             channel: (self.spawn)()?,
             buffer: Vec::new(),
             has_failed: false,
+            started: Some(Instant::now()),
         };
         process.send(PROGRAM, &mut |out| out.extend_from_slice(&self.program))?;
         Ok(process)
@@ -146,11 +152,9 @@ impl Engine for Processes<'_> {
             if let Some(process) = state.idle.pop() {
                 break Some(process);
             }
-            let max = match self.expected.load(Ordering::Relaxed) {
-                0 => self.max,
-                expected => self.max.min(expected),
-            };
-            if state.count < max || is_within {
+            let is_worth_it =
+                !self.is_told.load(Ordering::Relaxed) || self.demand.is_worth_another(state.count);
+            if (state.count < self.max && is_worth_it) || is_within {
                 state.count += 1;
                 break None;
             }
@@ -163,7 +167,12 @@ impl Engine for Processes<'_> {
             None => self.start().inspect_err(|_| self.lose()),
         };
         let used = started.map(|mut process| {
+            let since = Instant::now();
             then(&mut process);
+            if !is_within {
+                let started = process.started.take();
+                (self.demand).note(since.elapsed(), started.map(|it| it.elapsed()));
+            }
             process
         });
         let mut state = self.state.lock();
@@ -177,12 +186,14 @@ impl Engine for Processes<'_> {
             self.lose();
         } else {
             state.idle.push(process);
-            self.is_idle.notify_one();
+            // Each of those that wait looks whether another one is worth it by now.
+            self.is_idle.notify_all();
         }
         Ok(())
     }
 
-    fn expect(&self, realms: usize) {
-        self.expected.store(realms, Ordering::Relaxed);
+    fn expect(&self, files: usize, most: usize) {
+        self.is_told.store(true, Ordering::Relaxed);
+        self.demand.expect(files, most);
     }
 }

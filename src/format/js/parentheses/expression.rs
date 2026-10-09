@@ -251,7 +251,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         }
         ExprKind::Binary { op, .. } => {
             matches!(parent, N::UpdateExpression(_))
-                || (op == BinOp::In && is_in_for_statement_initializer(e))
+                || (op == BinOp::In && is_in_for_statement_initializer(e, f))
                 || binary_or_cast_needs_parentheses(e, Some(op), parent, f)
         }
         ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
@@ -707,11 +707,38 @@ fn is_optional_member_expression_of_babel(mut e: Expr<'_>) -> bool {
 
 /// Prettier's `isPathInForStatementInitializer`: `in` would end the initializer of a `for`
 /// statement, `for (var a = (b in c); ; )`.
-fn is_in_for_statement_initializer(e: Expr<'_>) -> bool {
-    e.ast_ancestors().any(|ancestor| {
-        matches!(ancestor, N::ForStatement(statement)
-            if statement.for_init().is_some_and(|init| init.span().contains(e.span())))
-    })
+fn is_in_for_statement_initializer<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let ends_early = search_for_initializer_ends_at_statements(f);
+    for ancestor in e.ast_ancestors() {
+        let is_end = match ancestor {
+            N::ForStatement(statement) => {
+                if statement
+                    .for_init()
+                    .is_some_and(|init| init.span().contains(e.span()))
+                {
+                    return true;
+                }
+                true
+            }
+            N::ExpressionStatement(_) => !matches!(ancestor.parent(), N::FunctionBody(_)),
+            N::ForInStatement(_) => true,
+            _ => false,
+        };
+        if is_end && ends_early {
+            return false;
+        }
+    }
+    false
+}
+
+/// oxc's `is_in_for_initializer` looks no further than the first `for` statement of any kind, or the first expression
+/// statement that is not right in the body of a function. Prettier looks at everything around the expression.
+///
+/// ```js
+/// for (!(function () { if (a) b in c; })(); ; );      for (!(function () { if (a) (b in c); })(); ; );
+/// ```
+fn search_for_initializer_ends_at_statements(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `for (var a = (e) in b);`, which is only allowed in sloppy mode.

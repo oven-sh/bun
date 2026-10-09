@@ -301,7 +301,7 @@ fn sorted_by_import_order(
             index,
         ));
     }
-    grouped.sort_by_key(|it: &(usize, u32)| it.0);
+    crate::sort::sort_by_key(&mut grouped[..], |it: &(usize, u32)| it.0);
     for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
         let source = |index: u32| model.source_of(&model.declarations[index as usize]);
         stable_sort_by(group, |a, b| options.compare(source(a.1), source(b.1)));
@@ -437,7 +437,7 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
         }
     }
     let mut deferred = std::mem::take(&mut registry.deferred);
-    deferred.sort_by_key(|entry| entry.processing_priority);
+    crate::sort::sort_by_key(&mut deferred[..], |entry| entry.processing_priority);
     // The first specifier on a line.
     let specifier_on = |line: i32| {
         (output
@@ -470,9 +470,7 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
             ..entry
         });
     }
-    registry
-        .entries
-        .sort_by_key(|entry| entry.processing_priority);
+    crate::sort::sort_by_key(&mut registry.entries[..], |entry| entry.processing_priority);
     registry.entries
 }
 
@@ -699,7 +697,7 @@ pub(super) fn preprocess(
         .for_each(|it| remove_comments(&it.1));
     removed.extend(model.directives.iter().map(|it| it.span));
     removed.extend(model.interpreter.iter().map(|it| it.0));
-    removed.sort_unstable_by_key(|span| span.start);
+    crate::sort::sort_by_key(&mut removed[..], |span| span.start);
 
     let printer = Printer::new(model, b"with", end_of_line).generate(Prologue::Included, &nodes);
     if printer.has_failed {

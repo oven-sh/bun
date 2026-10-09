@@ -40,6 +40,11 @@ impl Rule for InitDeclarations {
                 cx.report(decl, found.message).data("idName", found.name);
                 return;
             }
+            // For oxlint the type annotation is part of it.
+            if cx.language().is_oxlint {
+                cx.report(decl.binding_span(), found.message).data("idName", found.name);
+                return;
+            }
             // Without the type annotation: as many columns as the name is long.
             let pat = decl.pat();
             let report = cx.report(pat, found.message).data("idName", found.name);

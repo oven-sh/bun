@@ -227,9 +227,8 @@ fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Op
     }
     let is_one = |it: Expr<'a>| as_number(it).is_some_and(|it| (it - 1.0).abs() < f64::EPSILON);
     let is_plus_one = |expression: Expr<'a>, index: Expr<'a>| {
-        matches!(get_inner_expression(expression).kind(), ExprKind::Binary { op: BinOp::Add, left, right }
-            if is_one(right) && is_same_inner_expression(left, index)
-                || is_one(left) && is_same_inner_expression(right, index))
+        matches!(get_inner_expression(expression).kind(), ExprKind::Binary { op: BinOp::Add, left: a, right: b }
+            if is_one(b) && is_same_inner_expression(a, index) || is_one(a) && is_same_inner_expression(b, index))
     };
     if is_plus_one(second, first) {
         return Some(first);

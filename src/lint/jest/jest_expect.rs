@@ -1735,8 +1735,7 @@ pub(crate) mod prefer_expect_assertions {
                 }
             }
             (Some(arg), _) => {
-                let extra_span =
-                    Span::new(arg.outer_span().end, first.span().end.saturating_sub(1));
+                let extra_span = Span::after(arg.outer_span(), first.span().end.saturating_sub(1));
                 (ctx.report(extra_span, ASSERTIONS_REQUIRES_ONE_ARGUMENT)
                     .data("prefix", prefix.to_vec()))
                 .suggest(REMOVE_EXTRA_ARGUMENTS, |fixer| fixer.remove(extra_span));
@@ -1754,25 +1753,20 @@ pub(crate) mod prefer_expect_assertions {
         in_loop: bool,
     }
 
-    impl BodyScanner<'_> {
-        /// What `node` adds to `expression_depth` and to `loop_depth`.
-        fn depths(node: Node) -> (u32, u32) {
-            match node {
-                Node::Func(func) => (
-                    u32::from(func.has_body() && func.kind() != FnKind::StaticBlock),
-                    0,
-                ),
-                Node::Stmt(statement) => (0, u32::from(statement.is_loop())),
-                _ => (0, 0),
-            }
-        }
+    /// Whether `node` adds to `expression_depth`.
+    fn is_function_with_body(node: Node) -> bool {
+        matches!(node, Node::Func(func) if func.has_body() && func.kind() != FnKind::StaticBlock)
+    }
+
+    /// Whether `node` adds to `loop_depth`.
+    fn is_loop(node: Node) -> bool {
+        matches!(node, Node::Stmt(statement) if statement.is_loop())
     }
 
     impl<'a> Visitor<'a> for BodyScanner<'_> {
         fn enter(&mut self, node: Node<'a>) {
-            let (functions, loops) = BodyScanner::depths(node);
-            self.expression_depth += functions;
-            self.loop_depth += loops;
+            self.expression_depth += u32::from(is_function_with_body(node));
+            self.loop_depth += u32::from(is_loop(node));
             if let Node::Expr(e) = node
                 && let Some(call_expr) = e.as_call()
                 && (self.expression_depth > 0 && !self.in_callback
@@ -1785,9 +1779,8 @@ pub(crate) mod prefer_expect_assertions {
         }
 
         fn exit(&mut self, node: Node<'a>) {
-            let (functions, loops) = BodyScanner::depths(node);
-            self.expression_depth -= functions;
-            self.loop_depth -= loops;
+            self.expression_depth -= u32::from(is_function_with_body(node));
+            self.loop_depth -= u32::from(is_loop(node));
         }
     }
 }

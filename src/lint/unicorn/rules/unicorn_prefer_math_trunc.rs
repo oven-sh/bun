@@ -1,4 +1,4 @@
-use crate::unicorn::{may_have_side_effects, pad_fix_with_token_boundary};
+use crate::unicorn::{is_number_0, may_have_side_effects, pad_fix_with_token_boundary};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -8,10 +8,6 @@ pub struct PreferMathTrunc;
 const PREFER_MATH_TRUNC: Message = Message::new("", "Prefer `Math.trunc()` over instead of `{{bad_op}} 0`.");
 
 const OPERATORS: [BinOp; 4] = [BinOp::BitOr, BinOp::Shr, BinOp::Shl, BinOp::BitXor];
-
-fn is_zero(e: Expr) -> bool {
-    !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
-}
 
 /// The `a` of `~a`.
 fn bitwise_not_argument(e: Expr<'_>) -> Option<Expr<'_>> {
@@ -63,7 +59,7 @@ impl Rule for PreferMathTrunc {
         });
         on.binaries(OPERATORS, |_, e, cx| {
             if let ExprKind::Binary { op, left, right } = e.kind()
-                && is_zero(right)
+                && is_number_0(right)
             {
                 let bad_op = match op {
                     BinOp::BitOr => "|",
@@ -76,7 +72,7 @@ impl Rule for PreferMathTrunc {
         });
         on.exprs([ExprTag::Assign], |_, e, cx| {
             if let ExprKind::Assign { op: Some(op), target, value } = e.kind()
-                && is_zero(value)
+                && is_number_0(value)
             {
                 let bad_op = match op {
                     BinOp::BitOr => "|=",

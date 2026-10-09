@@ -43,7 +43,51 @@ fn is_rest(class: &[u8]) -> bool {
     class == b"..." || class == "…".as_bytes()
 }
 
+/// What can follow the classes behind `@apply`.
+const IMPORTANT: [&[u8]; 4] = [
+    b"!important",
+    b"#{!important}",
+    b"#{'!important'}",
+    b"#{\"!important\"}",
+];
+
 impl Tailwind {
+    /// `params`, which are behind `@apply`, with the classes sorted. `None`: there are none. A port of oxfmt's
+    /// `write_apply_prelude`, which follows the plugin's `transformCss`.
+    pub fn sorted_to_apply(&self, params: &[u8]) -> Option<Vec<u8>> {
+        use crate::text::{trim, trim_end};
+        let params = trim(params);
+        // `~"a b"` of Less
+        let escaped = [b'"', b'\''].into_iter().find_map(|quote| {
+            let inner = params.strip_prefix(&[b'~', quote])?;
+            Some((quote, inner.strip_suffix(&[quote])?))
+        });
+        let important = IMPORTANT.into_iter().find_map(|tail| {
+            let classes = params.strip_suffix(tail)?;
+            (trim_end(classes).len() < classes.len()).then_some((classes, tail))
+        });
+        let (classes, tail) = match (escaped, important) {
+            (Some((_, inner)), _) => (inner, None),
+            (None, Some((classes, tail))) => (classes, Some(tail)),
+            (None, None) => (params, None),
+        };
+        let classes = trim(classes);
+        if classes.is_empty() {
+            return None;
+        }
+        let mut sorted = Vec::with_capacity(params.len());
+        if let Some((quote, _)) = escaped {
+            sorted.extend([b'~', quote]);
+        }
+        sorted.extend_from_slice(&self.sorted(classes));
+        sorted.extend(escaped.map(|it| it.0));
+        if let Some(tail) = tail {
+            sorted.push(b' ');
+            sorted.extend_from_slice(tail);
+        }
+        Some(sorted)
+    }
+
     /// Whether the order of some classes was not known, so that they have been left as they are, and what has been
     /// printed is of no use.
     pub fn has_missed(&self) -> bool {
@@ -99,7 +143,9 @@ impl Tailwind {
 
         // `sortClassList`
         let mut ordered: Vec<(&[u8], Rank)> = classes.into_iter().zip(ranks).collect();
-        ordered.sort_by(|a, z| is_rest(a.0).cmp(&is_rest(z.0)).then(a.1.cmp(&z.1)));
+        crate::sort::sort_by(&mut ordered[..], |a, z| {
+            is_rest(a.0).cmp(&is_rest(z.0)).then(a.1.cmp(&z.1))
+        });
         // Of a class that Tailwind knows, the first stays.
         let mut seen = FxHashSet::default();
         let is_removed: Vec<bool> = ordered

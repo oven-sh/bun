@@ -1019,6 +1019,34 @@ describe.concurrent("bun lint", () => {
         expect(found(raw, names)).toEqual(expected(names));
       });
 
+      // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
+      test("JavaScript is linted with types without allowJs, and is `any` to the TypeScript that imports it", async () => {
+        const { raw } = await lint(
+          {
+            ".oxlintrc.json": rc({
+              rules: { "typescript/no-floating-promises": "error", "typescript/no-unsafe-call": "error" },
+            }),
+            "tsconfig.json": JSON.stringify({
+              compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler" },
+              include: ["src"],
+            }),
+            "src/lib.js": `export async function later() {}\nlater();\n`,
+            "src/use.ts": `import { later } from "./lib.js";\nlater();\n`,
+            "scripts/out.mjs": `import { later } from "../src/lib.js";\nlater();\n`,
+            "scripts/out.cjs": `const { later } = require("../src/lib.js");\nlater();\n`,
+          },
+          ["-f", "json", "--type-aware"],
+        );
+        expect(found(raw, ["scripts", "src"])).toEqual({
+          scripts: [
+            "out.cjs:1:19 typescript(no-unsafe-call)",
+            "out.cjs:2:1 typescript(no-floating-promises)",
+            "out.mjs:2:1 typescript(no-floating-promises)",
+          ],
+          src: ["lib.js:2:1 typescript(no-floating-promises)", "use.ts:2:1 typescript(no-unsafe-call)"],
+        });
+      });
+
       test.each([false, true])("--fix changes what oxlint --fix changes (rules that need types: %p)", async typed => {
         // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
         const differs = (directory: string) => (fixDifferences as Record<string, string[]>)[directory]?.includes("fix");

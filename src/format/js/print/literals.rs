@@ -42,7 +42,7 @@ fn write_reg_exp_literal_with_unknown_flags<'a>(
         return write!(f, text(raw));
     };
     let mut characters: Vec<char> = characters.chars().collect();
-    characters.sort_by(|a, b| {
+    crate::sort::sort_by(&mut characters[..], |a, b| {
         a.encode_utf16(&mut [0; 2])
             .cmp(&b.encode_utf16(&mut [0; 2]))
     });
@@ -67,7 +67,7 @@ pub(crate) fn write_reg_exp_literal<'a>(e: Expr<'a>, regex: Regex<'a>, f: &mut F
         let start = out.len() + raw.len() - flags.len();
         out.extend_from_slice(raw);
         if let Some(flags) = out.get_mut(start..) {
-            flags.sort_unstable();
+            crate::sort::sort(flags);
         }
     });
 }

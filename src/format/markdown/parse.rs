@@ -620,7 +620,7 @@ impl Builder<'_> {
     fn add_definitions_before(&mut self, offset: u32) {
         // Those in front of a setext heading have come first.
         if !std::mem::replace(&mut self.are_definitions_sorted, true) {
-            self.definitions.sort_unstable_by_key(|it| it.0);
+            crate::sort::sort_by_key(&mut self.definitions[..], |it| it.0);
         }
         while let Some(&(start, node)) = self.definitions.get(self.next_definition)
             && start < offset

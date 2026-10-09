@@ -430,11 +430,11 @@ pub(crate) mod prefer_to_have_length {
         {
             ctx.report(matcher.span, USE_TO_HAVE_LENGTH).fix(|fixer| {
                 let file = fixer.file();
-                let open_paren =
-                    find_next_token_within(file, matcher.span.end, node.span().end, b"(")?;
+                let after_matcher = Span::after(matcher.span, node.span().end);
+                let open_paren = find_next_token_within(file, after_matcher, b"(")?;
                 // Everything up to the `(` is replaced.
                 if file
-                    .comments_in(Span::new(matcher.span.end, open_paren))
+                    .comments_in(Span::after(matcher.span, open_paren))
                     .next()
                     .is_some()
                 {

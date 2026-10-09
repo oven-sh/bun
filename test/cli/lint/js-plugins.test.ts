@@ -1049,15 +1049,16 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "there is one more engine for every 32 files with rules in JavaScript, with types and without",
+    "there are as many engines as pay, with types and without, and they report the same",
     async () => {
-      const engines = async (count: number, extension: string) => {
+      // What a file takes, in what the engine has taken until its first file.
+      const run = async (count: number, extension: string, share: number, threads: string) => {
         const files: Record<string, string> = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
           "eslint.config.mjs": `
             import demo from "./plugin.mjs";
             export default [
-              { files: ["src/*"], plugins: { demo }, rules: { "demo/no-foo": "error" } },
+              { files: ["src/*"], plugins: { demo }, rules: { "demo/slow": "error" } },
               {
                 files: ["**/*.ts"],
                 plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
@@ -1065,21 +1066,47 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                 rules: { "@typescript-eslint/no-floating-promises": "error" },
               },
             ];`,
-          "plugin.mjs": noFoo,
+          "plugin.mjs": `
+            let start = 0;
+            export default {
+              rules: {
+                slow: {
+                  create: context => ({
+                    Program(node) {
+                      start ||= performance.now();
+                      const until = performance.now() + start * ${share};
+                      while (performance.now() < until);
+                      context.report({ node, message: "seen" });
+                    },
+                  }),
+                },
+              },
+            };`,
         };
         for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = "foo;\n";
-        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", "8", "src"]);
-        // Once for each file, also for those that the engines are warmed up with.
-        expect(stdout.split("\n").filter(it => it.endsWith("[Error/demo/no-foo]"))).toHaveLength(count);
+        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);
-        return /JavaScript: (\d+) engines/.exec(stderr)?.[1];
+        return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      expect(await Promise.all([engines(9, "ts"), engines(40, "ts"), engines(9, "js"), engines(40, "js")])).toEqual([
-        "1",
-        "2",
-        "1",
-        "2",
+      const [quickWithTypes, quick, oneWithTypes, one, severalWithTypes, several] = await Promise.all([
+        run(20, "ts", 0, "8"),
+        run(20, "js", 0, "8"),
+        run(24, "ts", 0, "1"),
+        run(24, "js", 0, "1"),
+        run(24, "ts", 0.25, "4"),
+        run(24, "js", 0.25, "4"),
       ]);
+      // One, but for a hiccup of the machine.
+      expect(quickWithTypes.engines).toBeLessThanOrEqual(2);
+      expect(quick.engines).toBeLessThanOrEqual(2);
+      expect([oneWithTypes.engines, one.engines]).toEqual([1, 1]);
+      for (const it of [severalWithTypes, several]) {
+        expect(it.engines).toBeGreaterThan(1);
+        expect(it.engines).toBeLessThanOrEqual(4);
+      }
+      expect(severalWithTypes.stdout).toBe(oneWithTypes.stdout);
+      expect(several.stdout).toBe(one.stdout);
+      expect(one.stdout.split("\n").filter(it => it.endsWith(": seen [Error/demo/slow]"))).toHaveLength(24);
     },
     timeout,
   );

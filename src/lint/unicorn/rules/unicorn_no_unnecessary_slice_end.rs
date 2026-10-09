@@ -1,4 +1,4 @@
-use crate::unicorn::unnecessary_length_or_infinity_argument;
+use crate::unicorn::{UnnecessaryArgument, unnecessary_length_or_infinity_argument};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -23,8 +23,9 @@ impl Rule for NoUnnecessarySliceEnd {
         }
         on.exprs([ExprTag::Call], |_, e, cx| {
             if let Some(call) = e.as_call()
-                && let Some((first, second, arg_str)) = unnecessary_length_or_infinity_argument(call, METHODS)
+                && let Some(argument) = unnecessary_length_or_infinity_argument(call, METHODS)
             {
+                let UnnecessaryArgument { first, second, arg_str } = argument;
                 cx.report(second.outer_span(), UNNECESSARY_ARGUMENT)
                     .data("arg_str", arg_str)
                     .fix(|fixer| fixer.remove(Span::after(first.outer_span(), second.outer_span().end)));

@@ -23,17 +23,12 @@ FAIL oxfmt css/format/css/postcss-simple-vars/vars.css { printWidth: 80 }
 FAIL oxfmt css/format/css/postcss-simple-vars/vars.css { printWidth: 100 }
 FAIL oxfmt css/format/css/prelude-keyword-case.css { printWidth: 80 }
 FAIL oxfmt css/format/css/prelude-keyword-case.css { printWidth: 100 }
-FAIL oxfmt css/format/css/prelude-string-requote.css { printWidth: 80 }
-FAIL oxfmt css/format/css/prelude-string-requote.css { printWidth: 100 }
-FAIL oxfmt css/format/css/signed-value-resplit.css { printWidth: 80 }
 FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 80 }
 FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 100 }
 FAIL oxfmt css/format/css/token-soup-math-glue.css { printWidth: 80 }
 FAIL oxfmt css/format/css/token-soup-math-glue.css { printWidth: 100 }
 FAIL oxfmt css/format/css/unknown-qualified-rule.css { printWidth: 80 }
 FAIL oxfmt css/format/css/unknown-qualified-rule.css { printWidth: 100 }
-FAIL oxfmt css/format/css/value-semicolon-glue.css { printWidth: 80 }
-FAIL oxfmt css/format/css/value-semicolon-glue.css { printWidth: 100 }
 FAIL oxfmt css/format/css/word-glued-bracket.css { printWidth: 80 }
 FAIL oxfmt css/format/css/word-glued-bracket.css { printWidth: 100 }
 FAIL oxfmt css/format/less/escaped-string-gap.less { printWidth: 80 }
@@ -82,12 +77,6 @@ FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/map-item-parens.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/map-item-parens.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/map-paren-value-blank-lines.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/map-paren-value-blank-lines.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/media-query-operator-spacing.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/media-query-operator-spacing.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/module-head-seams.scss { printWidth: 80 }
@@ -103,8 +92,6 @@ FAIL oxfmt css/format/scss/terminator-gap.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/terminator-gap.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 80, trailingComma: "none" }
 FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 100, trailingComma: "none" }
-FAIL oxfmt css/format/scss/unknown-at-rule-edges.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/unknown-at-rule-edges.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
@@ -149,8 +136,6 @@ FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 80 }
 FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 100 }
 FAIL oxfmt js/comments/parenthesized-trailing-comment.js { printWidth: 80 }
 FAIL oxfmt js/comments/parenthesized-trailing-comment.js { printWidth: 100 }
-FAIL oxfmt js/comments/tagged-template-literal.js { printWidth: 80 }
-FAIL oxfmt js/comments/tagged-template-literal.js { printWidth: 100 }
 FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 80 }
 FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 100 }
 FAIL oxfmt js/comments/type-cast-comment-inside-added-parens.js { printWidth: 80 }

@@ -1,3 +1,4 @@
+use crate::unicorn::statements_around;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -25,14 +26,7 @@ impl Rule for PreferSingleCall {
             let Some((curr_call, curr_info)) = rule.classify_statement(curr_es) else {
                 return;
             };
-            let stmts = match curr_es.parent() {
-                Node::File(file) => Some(file.body()),
-                Node::Func(func) => func.body_statements(),
-                Node::Stmt(block) => block.as_block(),
-                Node::Case(case) => Some(case.body()),
-                _ => None,
-            };
-            let Some(prev_es) = stmts.and_then(|it| it.before(curr_es.span().start)) else {
+            let Some(prev_es) = statements_around(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
                 return;
             };
             let Some((prev_call, prev_info)) = rule.classify_statement(prev_es) else {

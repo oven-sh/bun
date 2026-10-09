@@ -94,11 +94,11 @@ impl NewlineAfterImport {
     fn check_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let body = cx.file().body();
         let mut previous_import = None;
-        for stmt in body {
+        for next in body {
             if let Some(import) = previous_import {
-                self.check(import, "import", stmt, is_import_statement(stmt), cx);
+                self.check(import, "import", next, is_import_statement(next), cx);
             }
-            previous_import = is_import_statement(stmt).then_some(stmt);
+            previous_import = is_import_statement(next).then_some(next);
         }
         let mut with_require = std::mem::take(&mut cx.state.with_require);
         with_require.sort_unstable();
@@ -114,11 +114,11 @@ impl NewlineAfterImport {
         if next_is_same_kind && !self.consider_comments {
             return;
         }
-        let (file, end, next_start) = (cx.file(), stmt.span().end, next_statement_start(next));
-        let line_difference = |to: u32| strings::count_char(file.slice(Span::new(end, to)), b'\n');
+        let (file, next_start) = (cx.file(), next_statement_start(next));
+        let line_difference = |to: u32| strings::count_char(file.slice(Span::after(stmt.span(), to)), b'\n');
         let expected_line_diff = self.count + 1;
         // The first: the others are further away.
-        let comment = (self.consider_comments.then(|| file.comments_in(Span::new(end, next_start))).into_iter().flatten())
+        let comment = (self.consider_comments.then(|| file.comments_in(Span::after(stmt.span(), next_start))).into_iter().flatten())
             .map(|it| it.start())
             .next()
             .filter(|&start| line_difference(start) <= expected_line_diff);

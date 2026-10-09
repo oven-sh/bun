@@ -61,7 +61,10 @@ impl JsxCurlyBracePresence {
         };
         for value in jsx.attrs().iter().filter_map(get_prop_value) {
             match value {
-                AttributeValue::ExpressionContainer(inner) => self.check_expression_container(inner, true, false, cx),
+                AttributeValue::ExpressionContainer(inner) => {
+                    let has_adjacent = false;
+                    self.check_expression_container(inner, true, has_adjacent, cx);
+                }
                 AttributeValue::Element(element) | AttributeValue::Fragment(element) => {
                     if self.prop_element_values == Mode::Always {
                         cx.report(element, NECESSARY)

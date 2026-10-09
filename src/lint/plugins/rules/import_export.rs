@@ -105,7 +105,7 @@ fn diagnose_duplicate_named_exports<'a>(module_record: &ModuleRecord<'a>, cx: &C
 fn is_named_export_specifier<'a>(export_entry: &ExportEntry<'a>, file: &'a File<'a>) -> bool {
     // What is made of an `import` and an `export { a }` has the place of the import, which can come later.
     export_entry.statement_span.start > export_entry.span.start
-        || find_next_token_within(file, export_entry.statement_span.start, export_entry.span.start, b"{").is_some()
+        || find_next_token_within(file, Span::before(export_entry.statement_span.start, export_entry.span), b"{").is_some()
 }
 
 /// The names that `module` exports, with those that it gets by `export *`. Nothing of what is in `visited`, or in a `node_modules`.

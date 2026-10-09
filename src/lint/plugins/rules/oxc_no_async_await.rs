@@ -36,7 +36,7 @@ impl Rule for NoAsyncAwait {
                 },
                 _ => whole,
             };
-            if let Some(start) = find_next_token_within(file, async_span.start, async_span.end, b"async") {
+            if let Some(start) = find_next_token_within(file, async_span, b"async") {
                 cx.report(Span::new(start, start + 5), NO_ASYNC);
             }
         });

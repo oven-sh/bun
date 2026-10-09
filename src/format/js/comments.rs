@@ -710,7 +710,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
     }
     if has_moved {
         // A moved comment comes before one that starts where it is.
-        comments.sort_by_key(|comment| (comment.start(), !comment.is_moved()));
+        crate::sort::sort_by_key(comments, |comment| (comment.start(), !comment.is_moved()));
     }
 }
 

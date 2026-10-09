@@ -222,9 +222,29 @@ fn without_final_newline(out: &mut Vec<u8>) {
     out.truncate(end);
 }
 
-/// For a block of code in Markdown: appends `code` formatted as the file at `path`. `false`: it cannot
-/// be, and stays as it is.
-fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+/// What formats a block of code in Markdown. `verifies`: a block that would not be the same program afterwards stays
+/// as it is.
+fn format_javascript(verifies: bool) -> bun_format::options::FormatJavaScript {
+    fn verified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+        format_block(path, code, options, out, true)
+    }
+    fn unverified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+        format_block(path, code, options, out, false)
+    }
+    match verifies {
+        true => verified,
+        false => unverified,
+    }
+}
+
+/// Appends `code` formatted as the file at `path`. `false`: it cannot be, and stays as it is.
+fn format_block(
+    path: &[u8],
+    code: &[u8],
+    options: &FormatOptions,
+    out: &mut Vec<u8>,
+    verifies: bool,
+) -> bool {
     let sort_imports = options.sort_imports.clone();
     let resolved = Resolved {
         options: FormatOptions {
@@ -240,7 +260,7 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
         &resolved,
         (&Interner::new_in(&names), &names),
         &mut Scratches::default(),
-        false,
+        verifies,
     );
     formatted
         .map(|(formatted, _)| out.extend_from_slice(&formatted))
@@ -567,7 +587,7 @@ pub fn format_for_tests(
 ) -> Result<(Vec<u8>, Option<u32>), Refusal> {
     let resolved = Resolved {
         options: FormatOptions {
-            format_javascript: Some(format_javascript),
+            format_javascript: Some(format_javascript(verifies)),
             parse_javascript: Some(parse_javascript),
             ..options.clone()
         },
@@ -1169,10 +1189,17 @@ impl Run<'_> {
             out.exit_code = 1;
             return out;
         }
-        match fs::write_new(
-            &paths::join(cwd, b".oxfmtrc.json"),
-            b"{\n  \"ignorePatterns\": []\n}\n",
-        ) {
+        let schema = &b"node_modules/oxfmt/configuration_schema.json"[..];
+        let text = match fs::is_file(&paths::join(cwd, schema)) {
+            true => [
+                b"{\n  \"$schema\": \"./",
+                schema,
+                b"\",\n  \"ignorePatterns\": []\n}\n",
+            ]
+            .concat(),
+            false => b"{\n  \"ignorePatterns\": []\n}\n".to_vec(),
+        };
+        match fs::write_new(&paths::join(cwd, b".oxfmtrc.json"), &text) {
             Ok(()) => {
                 self.out.stdout = b"Created `.oxfmtrc.json`.\n".to_vec();
                 self.out

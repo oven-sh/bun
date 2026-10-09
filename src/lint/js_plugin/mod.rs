@@ -28,7 +28,7 @@ mod scopes;
 mod tokens;
 mod wire;
 
-pub use engine::{Engine, Serve, Vm};
+pub use engine::{Demand, Engine, Serve, Vm};
 pub use host::{Failure, Host, Loading, Report, Suggested};
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};

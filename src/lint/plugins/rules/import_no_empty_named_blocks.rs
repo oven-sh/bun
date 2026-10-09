@@ -37,8 +37,8 @@ impl Rule for NoEmptyNamedBlocks {
             };
             // As oxlint: a `,` and a `from` anywhere in what follows, also in the specifier and in the attributes.
             let (start, end) = (specifier.span().end, stmt.span().end);
-            if let Some(comma) = find_next_token_within(cx.file(), start, end, b",")
-                && let Some(from) = find_next_token_within(cx.file(), comma, end, b"from")
+            if let Some(comma) = find_next_token_within(cx.file(), Span::new(start, end), b",")
+                && let Some(from) = find_next_token_within(cx.file(), Span::new(comma, end), b"from")
             {
                 cx.report(stmt, NO_EMPTY_NAMED_BLOCKS).fix(|fixer| fixer.replace(Span::new(start, from), " "));
             }

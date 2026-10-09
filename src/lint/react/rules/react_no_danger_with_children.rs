@@ -1,8 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, static_name};
-use crate::jsx::{Child, as_jsx_element, children};
-use crate::react::{FlagsOfVariables, Variables};
-use bun_lint_oxlint::text::is_whitespace;
-use bun_core::strings;
+use crate::jsx::{as_jsx_element, children};
+use crate::react::{FlagsOfVariables, Variables, is_padding_spaces};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -42,7 +40,7 @@ impl Rule for NoDangerWithChildren {
             }
             let props = props_of_element(jsx, &mut cx.state.props_of_variables);
             // Children are passed as `children={}` or are between the tags.
-            let has_children = || children(cx.file(), jsx).next().is_some_and(|first| !is_line_break(first));
+            let has_children = || children(cx.file(), jsx).next().is_some_and(|first| !is_padding_spaces(first));
             if props & DANGER != 0 && (props & CHILDREN != 0 || has_children()) {
                 cx.report(e, NO_DANGER_WITH_CHILDREN);
             }
@@ -77,10 +75,6 @@ impl Rule for NoDangerWithChildren {
         });
         State::default()
     }
-}
-
-fn is_line_break(child: Child) -> bool {
-    matches!(child, Child::Text(text) if is_whitespace(text) && strings::contains_char(text, b'\n'))
 }
 
 fn prop(name: &[u8]) -> u8 {

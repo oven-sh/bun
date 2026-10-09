@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{is_method_call, static_property_info, static_property_name};
-use crate::unicorn::outermost_wrapper;
+use crate::unicorn::{is_number_0, is_number_value, outermost_wrapper};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -38,14 +38,6 @@ impl Rule for PreferArrayFind {
 fn is_filter_call(call: Call) -> bool {
     is_method_call(call, None, Some(&["filter"]), Some(1), Some(2))
         && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
-}
-
-fn is_number_value(e: Expr, value: f64) -> bool {
-    !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if (n - value).abs() < f64::EPSILON)
-}
-
-fn is_number_0(e: Expr) -> bool {
-    !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
 }
 
 /// `[a]`, `[a = 1]`: not `[]`, `[,]`, `[...a]`, `[a, b]`.

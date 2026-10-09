@@ -87,13 +87,13 @@ impl Rule for JsxKey {
                 check_jsx_element_is_key_before_spread(jsx, cx);
             }
             if rule.warn_on_duplicates && cx.mentions("key") {
-                check_duplicate_keys(jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
+                check_duplicate_keys(&mut jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
             }
         });
         if self.warn_on_duplicates && file.mentions("key") {
             on.exprs([ExprTag::Array], |_, e, cx| {
                 if let ExprKind::Array(elements) = e.kind() {
-                    check_duplicate_keys(elements.iter().filter(|it| !it.is_parenthesized()), cx);
+                    check_duplicate_keys(&mut elements.iter().filter(|it| !it.is_parenthesized()), cx);
                 }
             });
         }
@@ -281,7 +281,7 @@ fn get_jsx_element_key_value(e: Expr<'_>) -> Option<(Cow<'_, [u8]>, Prop<'_>)> {
 }
 
 /// `elements`: of an array, or the children of an element.
-fn check_duplicate_keys<'a>(elements: impl Iterator<Item = Expr<'a>>, cx: &Cx<'a, JsxKey>) {
+fn check_duplicate_keys<'a>(elements: &mut dyn Iterator<Item = Expr<'a>>, cx: &Cx<'a, JsxKey>) {
     let keys: SmallVec<[(Cow<'a, [u8]>, Prop<'a>); 4]> =
         elements.filter(|it| it.tag() == ExprTag::Jsx).filter_map(get_jsx_element_key_value).collect();
     if keys.len() < 2 {

@@ -45,7 +45,7 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
             .iter()
             .map(|&it| (bstr::join(b"\n", lines(text_of(text, it))), it.0))
             .collect();
-        all.sort();
+        crate::sort::sort(&mut all[..]);
         all
     };
     let (xs, ys) = (sorted(before), sorted(after));

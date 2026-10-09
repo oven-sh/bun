@@ -70,7 +70,7 @@ fn fix<'a>(class: Class<'a>, fixer: Fixer<'a>) -> Option<Vec<Fix>> {
             Some(value) => {
                 // `static a() {};`
                 let next_start = members.peek().map_or_else(|| class.span().end, |it| it.span().start);
-                if let Some(semicolon) = find_next_token_within(file, member.span().end, next_start, b";") {
+                if let Some(semicolon) = find_next_token_within(file, Span::after(member.span(), next_start), b";") {
                     rule_fixes.push(fixer.remove(Span::new(semicolon, semicolon + 1)));
                 }
                 replacement.extend_from_slice(file.slice(value.span_from_params()));

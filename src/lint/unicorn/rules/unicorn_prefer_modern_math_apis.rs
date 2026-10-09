@@ -67,9 +67,9 @@ fn argument_of_math_method<'a>(call_expr: Call<'a>, method: &str) -> Option<Expr
 }
 
 /// `Math.log(x) * Math.LOG10E`, `Math.log(x) / Math.LN10`
-fn check_prefer_log<'a>(e: Expr<'a>, left: Expr<'a>, right: Expr<'a>, cx: &Cx<'a, PreferModernMathApis>) {
-    if plain(left).and_then(Expr::as_call).and_then(|it| argument_of_math_method(it, "log")).is_some()
-        && let Some(member_expr) = as_member_expression(right).filter(|it| is_math(*it))
+fn check_prefer_log<'a>(e: Expr<'a>, log: Expr<'a>, constant: Expr<'a>, cx: &Cx<'a, PreferModernMathApis>) {
+    if plain(log).and_then(Expr::as_call).and_then(|it| argument_of_math_method(it, "log")).is_some()
+        && let Some(member_expr) = as_member_expression(constant).filter(|it| is_math(*it))
         && let Some(good_method) = match static_property_name(member_expr).map(Name::bytes) {
             Some(b"LN2" | b"LOG2E") => Some("log2"),
             Some(b"LN10" | b"LOG10E") => Some("log10"),

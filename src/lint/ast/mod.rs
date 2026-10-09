@@ -36,6 +36,7 @@ mod decl;
 mod entities;
 mod expr;
 mod flow;
+pub mod jsdoc;
 mod list;
 mod name;
 mod node;
@@ -176,6 +177,7 @@ pub(crate) struct Lazy {
     pub(crate) lines: OnceCell<crate::source::Lines>,
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
+    pub(crate) jsdoc: OnceCell<bun_sema::check::jsdoc::Outline>,
     has_types_that_are_errors: OnceCell<bool>,
     /// Where the text has a `\u`, in order.
     unicode_escapes: OnceCell<Box<[u32]>>,

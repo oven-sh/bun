@@ -441,14 +441,18 @@ fn sort_tags_by_groups<'t, 'a>(tags: &'t [Tag<'a>]) -> Vec<(&'t Tag<'a>, &'a [u8
     for tag in tags {
         let kind = normalize_tag_kind(tag.kind);
         if is_tags_group_head(kind) && can_group_next_tags && sorted.len() > group_start {
-            sorted[group_start..].sort_by_key(|(_, kind)| tag_sort_priority(kind));
+            crate::sort::sort_by_key(&mut sorted[group_start..], |(_, kind)| {
+                tag_sort_priority(kind)
+            });
             group_start = sorted.len();
             can_group_next_tags = false;
         }
         can_group_next_tags |= is_tags_group_condition(kind);
         sorted.push((tag, kind));
     }
-    sorted[group_start..].sort_by_key(|(_, kind)| tag_sort_priority(kind));
+    crate::sort::sort_by_key(&mut sorted[group_start..], |(_, kind)| {
+        tag_sort_priority(kind)
+    });
     sorted
 }
 

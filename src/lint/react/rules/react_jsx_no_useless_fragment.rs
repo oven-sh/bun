@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{as_call_expression, get_identifier_name};
 use crate::jsx::{Child, children, is_jsx_fragment};
-use crate::react::is_jsx;
+use crate::react::{is_jsx, is_padding_spaces};
 use bun_lint_oxlint::text::is_whitespace;
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -99,11 +99,6 @@ fn can_fix<'a>(file: &'a File<'a>, jsx: Jsx<'a>, parent: Option<Jsx<'a>>) -> boo
     let is_lowercase =
         |name: Name| text::code_points(name.bytes()).all(|it| char::from_u32(it.1).is_some_and(char::is_lowercase));
     parent.is_fragment() || get_identifier_name(parent).is_some_and(is_lowercase) || is_jsx_fragment(parent)
-}
-
-/// Blanks with a line break in them.
-fn is_padding_spaces(child: Child) -> bool {
-    matches!(child, Child::Text(text) if is_whitespace(text) && strings::contains_char(text, b'\n'))
 }
 
 /// Its name starts with a small letter: `<a>`, `<a-b>`.

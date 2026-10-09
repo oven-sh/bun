@@ -15,10 +15,11 @@ use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
     virtual_machine::VirtualMachine,
 };
-use bun_lint_driver::js_plugin::{Engine, PROGRAM, Serve, Vm};
+use bun_lint_driver::js_plugin::{Demand, Engine, PROGRAM, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::Arc;
 use std::thread::ThreadId;
+use std::time::Instant;
 
 bun_core::declare_scope!(lint_js, hidden);
 
@@ -252,6 +253,9 @@ impl Vm for ThreadVm {
 /// With no more VMs than this, cores are left to compile and to collect garbage on while the VMs run.
 const FEW_VMS: usize = 4;
 
+/// So many files do not take more than a few VMs.
+const FEW_FILES: usize = 128;
+
 /// What a VM with a few plugins takes.
 const MEMORY_OF_A_VM: usize = 384 << 20;
 
@@ -323,8 +327,8 @@ impl Desk {
 #[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
-    /// How many engines there are going to be at most. 0: nobody knows.
-    expected: core::sync::atomic::AtomicUsize,
+    /// Whether there can be more than a few engines. Nobody knows if an engine is needed to find out.
+    is_for_few: core::sync::atomic::AtomicBool,
 }
 
 impl Start {
@@ -332,9 +336,8 @@ impl Start {
     fn start_vm(&self) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
-            let expected = self.expected.load(core::sync::atomic::Ordering::Relaxed);
             jsc::initialize(jsc::InitializeOptions {
-                vm_per_thread: expected == 0 || expected > FEW_VMS,
+                vm_per_thread: !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed),
                 ..Default::default()
             });
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
@@ -386,6 +389,7 @@ struct Borrowed<'e> {
     engines: &'e Engines,
     at: usize,
     desk: Arc<Desk>,
+    since: Instant,
     /// A caller further up has borrowed it, and gives it back.
     is_borrowed_further_up: bool,
 }
@@ -424,7 +428,9 @@ impl Drop for Borrowed<'_> {
         let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
         state.idle.push(self.at);
+        let started = state.all[self.at].1.take();
         drop(state);
+        (self.engines.demand).note(self.since.elapsed(), started.map(|it| it.elapsed()));
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -432,7 +438,8 @@ impl Drop for Borrowed<'_> {
 
 #[derive(Default)]
 struct State {
-    all: Vec<Arc<Desk>>,
+    /// With when it was started, until it is given back for the first time.
+    all: Vec<(Arc<Desk>, Option<Instant>)>,
     /// Which of them nobody has borrowed. The last one was given back last.
     idle: Vec<usize>,
     /// Who has borrowed which.
@@ -443,6 +450,7 @@ struct State {
 #[derive(Default)]
 pub(crate) struct Engines {
     start: Arc<Start>,
+    demand: Demand,
     state: Guarded<State>,
     is_idle: Condition,
 }
@@ -450,7 +458,7 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        for desk in core::mem::take(&mut self.state.lock().all) {
+        for (desk, _) in core::mem::take(&mut self.state.lock().all) {
             desk.say(Turn::End);
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
         }
@@ -465,7 +473,8 @@ impl Engines {
             return Ok(Borrowed {
                 engines: self,
                 at,
-                desk: Arc::clone(&state.all[at]),
+                desk: Arc::clone(&state.all[at].0),
+                since: Instant::now(),
                 is_borrowed_further_up: true,
             });
         }
@@ -473,15 +482,14 @@ impl Engines {
             if let Some(position) = state.idle.iter().rposition(|&at| at < among) {
                 break state.idle.remove(position);
             }
-            let expected = (self.start.expected).load(core::sync::atomic::Ordering::Relaxed);
-            if state.all.len() < expected.clamp(1, among.max(1)) {
+            if state.all.len() < among && self.demand.is_worth_another(state.all.len()) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
                 std::thread::Builder::new()
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                state.all.push(desk);
+                state.all.push((desk, Some(Instant::now())));
                 break at;
             }
             self.is_idle.wait_guarded(&mut state);
@@ -490,7 +498,8 @@ impl Engines {
         Ok(Borrowed {
             engines: self,
             at,
-            desk: Arc::clone(&state.all[at]),
+            desk: Arc::clone(&state.all[at].0),
+            since: Instant::now(),
             is_borrowed_further_up: false,
         })
     }
@@ -502,8 +511,10 @@ impl Engine for Engines {
         Ok(())
     }
 
-    fn expect(&self, realms: usize) {
-        (self.start.expected).store(realms, core::sync::atomic::Ordering::Relaxed);
+    fn expect(&self, files: usize, most: usize) {
+        let is_for_few = most <= FEW_VMS || files <= FEW_FILES;
+        (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
+        self.demand.expect(files, most);
     }
 
     /// Half of the memory is for them.

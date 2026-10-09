@@ -94,12 +94,12 @@ fn merge_and_sort_imports(imports: Vec<ImportInfo>) -> Vec<ImportInfo> {
         }
     }
     for import in &mut groups {
-        import.named_imports.sort_by(|a, b| {
+        crate::sort::sort_by(&mut import.named_imports[..], |a, b| {
             cmp_ascii_case_insensitive(import_specifier_sort_key(a), import_specifier_sort_key(b))
         });
     }
     // Packages come before relative paths.
-    groups.sort_by(|a, b| {
+    crate::sort::sort_by(&mut groups[..], |a, b| {
         let is_relative = |import: &ImportInfo| import.module_path.starts_with(b".");
         is_relative(a)
             .cmp(&is_relative(b))

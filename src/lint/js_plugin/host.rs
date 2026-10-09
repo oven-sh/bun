@@ -248,8 +248,8 @@ impl<'e> Host<'e> {
     }
 
     /// [`Engine::expect`]
-    pub fn expect(&self, realms: usize) {
-        self.engine.expect(realms);
+    pub fn expect(&self, files: usize, most: usize) {
+        self.engine.expect(files, most);
     }
 
     /// [`Engine::most_realms`]

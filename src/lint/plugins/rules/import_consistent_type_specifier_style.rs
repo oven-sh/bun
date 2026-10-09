@@ -56,7 +56,7 @@ impl ConsistentTypeSpecifierStyle {
             if mode == Mode::Inline && !is_declaration_file_import(import.spec().bytes()) {
                 cx.report(stmt, INLINE).fix(|fixer| {
                     let mut fixes: Vec<Fix> = named.iter().map(|it| fixer.insert_before(it, "type ")).collect();
-                    let keyword = find_next_token_within(fixer.file(), stmt.span().start, stmt.span().end, b"type");
+                    let keyword = find_next_token_within(fixer.file(), stmt.span(), b"type");
                     fixes.extend(keyword.map(|at| fixer.remove(Span::new(at, at + 4))));
                     fixes
                 });

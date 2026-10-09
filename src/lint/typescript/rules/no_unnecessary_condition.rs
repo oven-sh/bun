@@ -417,7 +417,8 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     } else {
         return;
     };
-    cx.report(node, message);
+    // oxlint points at what the type is of: the `a` of `!a`.
+    cx.report(if cx.language().is_oxlint { expression } else { node }, message);
 }
 
 fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
@@ -493,7 +494,11 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         || left_flags == TypeFlags::NULL && !is_comparable(right_type, TypeFlags::NULL)
         || right_flags == TypeFlags::NULL && !is_comparable(left_type, TypeFlags::NULL)
     {
-        cx.report(node, NO_OVERLAP_BOOLEAN_EXPRESSION);
+        // The first label of tsgolint 7.0 starts where the token before the left operand ends.
+        let operand = left.outer_span();
+        let start = cx.file().end_of_token_before(operand.start);
+        let place = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
+        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION);
     }
 }
 
@@ -588,7 +593,9 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if cx.slice(question_dot_operator) != b"?." {
         return;
     }
-    cx.report(question_dot_operator, NEVER_OPTIONAL_CHAIN)
+    // oxlint points at what is before the `?.`.
+    let place = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
+    cx.report(place, NEVER_OPTIONAL_CHAIN)
         .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));
 }
 
@@ -740,6 +747,11 @@ impl Rule for NoUnnecessaryCondition {
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
         {
             on.finish(|_, cx| {
+                // tsgolint points at the start of the file.
+                if cx.language().is_oxlint {
+                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+                    return;
+                }
                 let nowhere = Position { line: 0, column: 0 };
                 cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
             });

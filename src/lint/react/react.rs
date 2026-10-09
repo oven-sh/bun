@@ -8,6 +8,7 @@
 //! | `AstKind::ObjectProperty`, `MethodDefinition`, `PropertyDefinition` | [`as_object_property`], [`as_method_definition`], [`as_property_definition`] |
 //! | `ctx.nodes().ancestors(id)` from each of many nodes | [`AncestorWalk`], `bun_lint::utils::ancestor_memo::AncestorMemo` |
 
+use crate::jsx::Child;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -16,6 +17,7 @@ use bun_lint_oxlint::ast_util::{
     as_method_definition, as_object_property, as_property_definition, callee_name,
     get_inner_expression, static_name, static_property_name,
 };
+use bun_lint_oxlint::text::is_whitespace;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::hash::Hash;
@@ -24,6 +26,11 @@ use std::ops::ControlFlow;
 /// `ctx.source_type().is_jsx()`: oxlint reads JSX in every file of JavaScript and in `.tsx`.
 pub(crate) fn is_jsx(file: &File) -> bool {
     file.is_javascript() || file.path().ends_with(b".tsx")
+}
+
+/// Blanks with a line break in them, which React leaves out.
+pub(crate) fn is_padding_spaces(child: Child) -> bool {
+    matches!(child, Child::Text(text) if is_whitespace(text) && strings::contains_char(text, b'\n'))
 }
 
 pub(crate) fn is_create_element_call(call: Call) -> bool {

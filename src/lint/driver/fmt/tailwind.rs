@@ -130,12 +130,11 @@ pub(crate) fn only_where_supported(
     kind: Option<Kind>,
     text: &[u8],
 ) -> bool {
-    if options.tailwind.is_none() || matches!(kind, None | Some(Kind::Script)) {
+    if options.tailwind.is_none() || matches!(kind, None | Some(Kind::Script | Kind::Css(_))) {
         return false;
     }
     options.tailwind = None;
     match kind {
-        Some(Kind::Css(_)) => strings::contains(text, b"@apply"),
         Some(Kind::Html(_) | Kind::Handlebars | Kind::Markdown) => {
             strings::contains(text, b"class")
         }

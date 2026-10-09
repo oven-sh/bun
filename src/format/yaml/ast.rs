@@ -1468,7 +1468,9 @@ pub(crate) fn build<'a>(
         has_properties,
         ..
     } = context;
-    comments.sort_by_key(|&comment| nodes[comment.index()].position.start.offset);
+    crate::sort::sort_by_key(&mut comments[..], |&comment| {
+        nodes[comment.index()].position.start.offset
+    });
 
     // `attachComments`, if there are comments to attach.
     if comments

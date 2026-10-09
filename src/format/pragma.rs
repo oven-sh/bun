@@ -362,7 +362,9 @@ impl DocBlock {
                 None => pragmas.push(entry),
             }
         }
-        pragmas.sort_by_key(|(name, _)| as_array_index(name).map_or((1, 0), |index| (0, index)));
+        crate::sort::sort_by_key(&mut pragmas[..], |(name, _)| {
+            as_array_index(name).map_or((1, 0), |index| (0, index))
+        });
         let comments = trim_end(without_line_breaks_at_start(&comments)).to_vec();
         DocBlock { pragmas, comments }
     }

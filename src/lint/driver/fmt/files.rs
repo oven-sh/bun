@@ -185,7 +185,6 @@ fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 enum ForOxfmt {
     Kind(Kind),
-    Mdx,
     /// Only with `svelte` in the configuration.
     Svelte,
 }
@@ -294,7 +293,8 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
     };
     match extension {
         b"svelte" => Some(ForOxfmt::Svelte),
-        b"mdx" => Some(ForOxfmt::Mdx),
+        // It hands MDX to the Prettier that comes with it.
+        b"mdx" => Some(ForOxfmt::Kind(Kind::Mdx)),
         _ => by_name
             .or_else(by_ending)
             .or_else(by_extension)
@@ -329,7 +329,6 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
     match classify_for_oxfmt(path) {
         Some(ForOxfmt::Kind(_)) => Language::Supported,
-        Some(ForOxfmt::Mdx) => Language::Other,
         Some(ForOxfmt::Svelte) if formats_svelte => Language::Other,
         Some(ForOxfmt::Svelte) | None => Language::Unknown,
     }

@@ -67,17 +67,13 @@ pub fn file_extension(path: &[u8]) -> Option<&[u8]> {
         .map(|it| it.1)
 }
 
-/// `LintContext::find_next_token_within`: where the text `token` is next from `start`, before `end` and not in a
-/// comment. It looks at the text only: what is in a string counts.
-pub fn find_next_token_within<'a>(
-    file: &'a File<'a>,
-    start: u32,
-    end: u32,
-    token: &[u8],
-) -> Option<u32> {
-    let mut from = start;
+/// `LintContext::find_next_token_within`: where the text `token` is first in `within`, not in a comment. It looks at
+/// the text only: what is in a string counts.
+pub fn find_next_token_within<'a>(file: &'a File<'a>, within: Span, token: &[u8]) -> Option<u32> {
+    let mut from = within.start;
     loop {
-        let at = from + strings::index_of(file.slice(Span::new(from, end)), token)? as u32;
+        let rest = Span::new(from, within.end);
+        let at = from + strings::index_of(file.slice(rest), token)? as u32;
         match file.comment_around(at) {
             Some(comment) => from = comment.end().max(at + 1),
             None => return Some(at),

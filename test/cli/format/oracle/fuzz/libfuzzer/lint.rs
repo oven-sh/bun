@@ -13,7 +13,7 @@ use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
 use std::sync::OnceLock;
 
-const VARIANTS: [(&str, Parser, SourceType); 12] = [
+const VARIANTS: [(&str, Parser, SourceType); 20] = [
     ("a.js", Parser::Espree, SourceType::Module),
     ("a.js", Parser::Espree, SourceType::Script),
     ("a.js", Parser::Espree, SourceType::CommonJs),
@@ -26,6 +26,15 @@ const VARIANTS: [(&str, Parser, SourceType); 12] = [
     ("a.js", Parser::TypeScript, SourceType::Module),
     ("a.jsx", Parser::TypeScript, SourceType::Module),
     ("a.mjs", Parser::Espree, SourceType::Module),
+    // Some rules go by the name of the file.
+    ("a.test.js", Parser::Espree, SourceType::Module),
+    ("a.test.ts", Parser::TypeScript, SourceType::Module),
+    ("a.spec.tsx", Parser::TypeScript, SourceType::Module),
+    ("__tests__/a.jsx", Parser::Espree, SourceType::Module),
+    ("pages/a.jsx", Parser::Espree, SourceType::Module),
+    ("pages/_document.tsx", Parser::TypeScript, SourceType::Module),
+    ("app/layout.tsx", Parser::TypeScript, SourceType::Module),
+    ("a.stories.tsx", Parser::TypeScript, SourceType::Module),
 ];
 
 struct Setup {

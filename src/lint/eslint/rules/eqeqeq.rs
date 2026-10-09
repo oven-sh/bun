@@ -66,8 +66,10 @@ impl Eqeqeq {
             return;
         };
         let actual = bin_op_text(op);
+        // oxlint points at the whole of `a === null`.
+        let is_whole = cx.language().is_oxlint && matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
         let report = cx
-            .report(operator, UNEXPECTED)
+            .report(if is_whole { e.span() } else { operator }, UNEXPECTED)
             .data("expectedOperator", expected)
             .data("actualOperator", actual);
         // The change is safe if both sides are known to have the same type.

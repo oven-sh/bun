@@ -1122,7 +1122,7 @@ impl<'c> Configs<'c> {
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
         let _ = resolved.options.set(b"filepath", path);
-        resolved.options.format_javascript = Some(super::format_javascript);
+        resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
         if is_oxfmt {

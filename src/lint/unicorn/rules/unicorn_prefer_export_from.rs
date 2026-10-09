@@ -380,7 +380,7 @@ fn get_replace_span(statement: Stmt) -> Span {
         Node::File(file) => file.body().after(span.start),
         _ => None,
     };
-    Span::new(span.end, next.map_or(span.end, |it| it.span().start))
+    next.map_or(Span::empty(span.end), |it| span.between(it.span()))
 }
 
 fn format_export_names(violations: &[Violation]) -> Vec<u8> {
@@ -459,7 +459,7 @@ impl<'a> Group<'_, 'a> {
             let (last_specifier, span) = (re_export.items().last(), re_export.stmt().span());
             let end = match last_specifier {
                 Some(specifier) => specifier.span().end,
-                None => find_next_token_within(file, span.start, span.end, b"{")? + 1,
+                None => find_next_token_within(file, span, b"{")? + 1,
             };
             Some((re_export, last_specifier, Span::empty(end)))
         });

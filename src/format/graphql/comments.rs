@@ -66,5 +66,5 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
             placement,
         });
     }
-    attached.sort_by_key(|it| (it.node, it.comment));
+    crate::sort::sort_by_key(&mut attached[..], |it| (it.node, it.comment));
 }

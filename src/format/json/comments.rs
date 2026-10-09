@@ -219,7 +219,7 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         });
     }
     break_ties(&mut ties, attached);
-    attached.sort_unstable_by_key(|it| (it.owner, it.comment));
+    crate::sort::sort_by_key(&mut attached[..], |it| (it.owner, it.comment));
 }
 
 /// The comments of `owner`.

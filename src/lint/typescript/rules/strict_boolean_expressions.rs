@@ -602,8 +602,12 @@ impl StrictBooleanExpressions {
             return;
         };
 
-        let mut report =
-            cx.report(predicate_node, report_type.message()).data("context", "array predicate return type");
+        // oxlint points at the call.
+        let place = match predicate_node.parent() {
+            Node::Expr(call) if cx.language().is_oxlint => call.span(),
+            _ => predicate_node.span(),
+        };
+        let mut report = cx.report(place, report_type.message()).data("context", "array predicate return type");
         if let Some(function) = function {
             if let FnBody::Expr(body) = function.body() {
                 report = suggest_for_condition_error(report, body, report_type);
@@ -665,6 +669,11 @@ impl Rule for StrictBooleanExpressions {
             && !self.allow_rule_to_run_without_strict_null_checks
         {
             on.finish(|_, cx| {
+                // tsgolint points at the start of the file.
+                if cx.language().is_oxlint {
+                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+                    return;
+                }
                 let nowhere = Position { line: 0, column: 0 };
                 cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
             });

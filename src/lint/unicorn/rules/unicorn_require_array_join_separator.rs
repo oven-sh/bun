@@ -36,7 +36,7 @@ impl Rule for RequireArrayJoinSeparator {
                 None => {
                     if member.tag() == ExprTag::Dot && is_method_call(call, None, Some(&["join"]), Some(0), Some(0)) {
                         cx.report(Span::new(callee_end, call_end), REQUIRE_ARRAY_JOIN_SEPARATOR).fix(|fixer| {
-                            let open_paren = find_next_token_within(fixer.file(), callee_end, call_end, b"(")?;
+                            let open_paren = find_next_token_within(fixer.file(), Span::new(callee_end, call_end), b"(")?;
                             Some(fixer.insert_after(Span::empty(open_paren + 1), "\",\""))
                         });
                     }

@@ -148,7 +148,7 @@ fn sorted_by_import_order(
             .map_or(0, |span| utf16_len(model.file.slice(span)))
     };
     // `getSortedNodesGroup`, for each group.
-    grouped.sort_by_key(|it| it.0);
+    crate::sort::sort_by_key(&mut grouped[..], |it| it.0);
     for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
         stable_sort_by(group, |a, b| {
             let (a, b) = (
@@ -316,7 +316,7 @@ pub(super) fn preprocess(
                 .map(|it| model.comments[*it as usize].span),
         );
     }
-    removed.sort_unstable_by_key(|span| span.start);
+    crate::sort::sort_by_key(&mut removed[..], |span| span.start);
     let (text, code) = (model.text, printer.code());
     let mut out = Vec::with_capacity(model.rest_start as usize + code.len() + 64);
     let mut pieces: Vec<Piece> = Vec::with_capacity(printer.pieces.len());

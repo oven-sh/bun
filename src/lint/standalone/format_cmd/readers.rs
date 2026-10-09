@@ -3,6 +3,7 @@
 //! same rows with the same places, the same error, the same messages at the same places.
 //!
 //! `--measure=index|one-pass|none [--iterations=n]`: reads every file that often and drops the rows.
+//! `--records`: a file is many texts, with a line `@@@@` between them.
 
 use super::Args;
 use crate::host::{self, output_line};
@@ -10,9 +11,20 @@ use bun_lint::json::comparison::{describe, read_and_drop};
 
 pub(super) fn run(args: &Args) {
     let options = args.flag("options").unwrap_or("jsonc");
-    let texts: Vec<Vec<u8>> = (args.positional.iter())
+    let mut names = args.positional.clone();
+    let mut texts: Vec<Vec<u8>> = (args.positional.iter())
         .map(|path| host::read(path).expect("the file"))
         .collect();
+    if args.flag("records").is_some() {
+        let files = std::mem::take(&mut texts);
+        names.clear();
+        for (path, file) in args.positional.iter().zip(&files) {
+            for (index, text) in bun_core::strings::split(file, b"\n@@@@\n").enumerate() {
+                names.push(format!("{path}#{index}"));
+                texts.push(text.to_vec());
+            }
+        }
+    }
     if let Some(reader) = args.flag("measure") {
         let iterations = args
             .flag("iterations")
@@ -30,7 +42,7 @@ pub(super) fn run(args: &Args) {
         return;
     }
     let (mut same, mut different) = (0usize, 0usize);
-    for (path, text) in args.positional.iter().zip(&texts) {
+    for (path, text) in names.iter().zip(&texts) {
         let (expected, actual) = (
             describe(options, false, text),
             describe(options, true, text),

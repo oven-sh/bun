@@ -3,6 +3,7 @@ use bun_lint::types::tsutils::{get_well_known_symbol_property_of_type, is_thenab
 use bun_lint::types::{Locate, Type};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::get_function_name_with_kind;
+use bun_lint::utils::oxlint::tsgolint_function_head_loc;
 use bun_lint::utils::ts_utils::{
     get_function_head_loc, is_start_of_expression_statement, needs_preceding_semicolon,
     upper_case_first,
@@ -183,7 +184,11 @@ impl Rule for RequireAwait {
                     continue;
                 }
                 let name = get_function_name_with_kind(func, false);
-                cx.report(get_function_head_loc(func), MISSING_AWAIT)
+                let place = match cx.language().is_oxlint {
+                    true => tsgolint_function_head_loc(func),
+                    false => get_function_head_loc(func),
+                };
+                cx.report(place, MISSING_AWAIT)
                     .data("name", upper_case_first(&name).into_owned())
                     .suggest(REMOVE_ASYNC, |fixer| remove_async(fixer, func));
             }

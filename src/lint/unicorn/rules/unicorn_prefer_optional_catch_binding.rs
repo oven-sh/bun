@@ -58,9 +58,9 @@ impl Rule for PreferOptionalCatchBinding {
             cx.report(pat, PREFER_OPTIONAL_CATCH_BINDING).fix(|fixer| {
                 // From the `(`, which is the first that is not white space after the `catch`, to the block.
                 let after_catch = stmt.catch_clause_span()?.start + 5;
-                let before_param = fixer.file().slice(Span::new(after_catch, pat.span().start));
+                let before_param = fixer.file().slice(Span::before(after_catch, pat.span()));
                 let white_space = before_param.iter().position(|it| !it.is_ascii_whitespace()).unwrap_or(0);
-                Some(fixer.remove(Span::new(after_catch + white_space as u32, body.span().start)))
+                Some(fixer.remove(Span::before(after_catch + white_space as u32, body.span())))
             });
         });
     }

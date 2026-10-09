@@ -37,7 +37,7 @@ pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after
     {
         return;
     }
-    effective_tags[param_start..param_end].sort_by_cached_key(|(tag, _)| {
+    crate::sort::sort_by_key(&mut effective_tags[param_start..param_end], |(tag, _)| {
         let name = tag
             .type_name_comment()
             .1

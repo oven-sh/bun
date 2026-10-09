@@ -1,5 +1,6 @@
 use crate::unicorn::{
-    expression_uses_optional_chain, get_boolean_ancestor, is_boolean_node, pad_fix_with_token_boundary,
+    expression_uses_optional_chain, get_boolean_ancestor, is_boolean_node, is_number_value,
+    pad_fix_with_token_boundary,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -15,18 +16,14 @@ const NON_ZERO: Message =
     Message::new("", "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is not zero.");
 const ZERO: Message = Message::new("", "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is zero.");
 
-fn is_literal(e: Expr, value: f64) -> bool {
-    !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if (n - value).abs() < f64::EPSILON)
-}
-
 /// Whether `comparison` tells that a length is zero (`true`) or that it is not (`false`): `a.length == 0`,
 /// `1 <= a.length`.
 fn is_zero_length_check(comparison: Expr) -> Option<bool> {
     let ExprKind::Binary { op, left, right } = comparison.kind() else {
         return None;
     };
-    let (zero_right, one_right) = (is_literal(right, 0.0), is_literal(right, 1.0));
-    let (zero_left, one_left) = (is_literal(left, 0.0), is_literal(left, 1.0));
+    let (zero_right, one_right) = (is_number_value(right, 0.0), is_number_value(right, 1.0));
+    let (zero_left, one_left) = (is_number_value(left, 0.0), is_number_value(left, 1.0));
     match op {
         BinOp::EqEqEq | BinOp::EqEq if zero_right || zero_left => Some(true),
         BinOp::NotEqEq | BinOp::NotEq if zero_right || zero_left => Some(false),
@@ -52,7 +49,7 @@ impl ExplicitLengthCheck {
             (false, false) => (BinOp::Gt, "> 0"),
             (false, true) => (BinOp::NotEqEq, "!== 0"),
         };
-        if matches!(node.kind(), ExprKind::Binary { op, right, .. } if op == operator && is_literal(right, 0.0)) {
+        if matches!(node.kind(), ExprKind::Binary { op, right, .. } if op == operator && is_number_value(right, 0.0)) {
             return;
         }
         let Some(property) = member.member_name() else {

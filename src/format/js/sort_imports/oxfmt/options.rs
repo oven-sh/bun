@@ -96,7 +96,7 @@ impl GroupName {
             .into_iter()
             .map(Modifier::parse)
             .collect::<Option<Vec<Modifier>>>()?;
-        modifiers.sort_unstable();
+        crate::sort::sort(&mut modifiers[..]);
         modifiers.dedup();
         Some(GroupName {
             selector,
@@ -377,7 +377,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
             None => {}
         }
     }
-    predefined.sort_by(|a, b| {
+    crate::sort::sort_by(&mut predefined[..], |a, b| {
         (a.0.selector.cmp(&b.0.selector))
             .then_with(|| b.0.modifiers.len().cmp(&a.0.modifiers.len()))
             .then_with(|| a.0.modifiers.cmp(&b.0.modifiers))

@@ -36,7 +36,7 @@ impl Rule for CheckedRequiresOnchangeOrReadonly {
                 && *get_element_type(cx.file(), jsx) == *b"input"
             {
                 // The last `checked` counts.
-                rule.check(jsx.attrs().iter().filter_map(|it| Some((it, it.key()?.name()?))), true, cx);
+                rule.check(&mut jsx.attrs().iter().filter_map(|it| Some((it, it.key()?.name()?))), true, cx);
             }
         });
         if !file.mentions("createElement") {
@@ -52,7 +52,8 @@ impl Rule for CheckedRequiresOnchangeOrReadonly {
                 && let Some(ExprKind::Object(properties)) =
                     call.args().get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
             {
-                rule.check(properties.iter().filter_map(|it| Some((it, it.key().and_then(static_name)?))), false, cx);
+                let mut props = properties.iter().filter_map(|it| Some((it, it.key().and_then(static_name)?)));
+                rule.check(&mut props, false, cx);
             }
         });
     }
@@ -62,7 +63,7 @@ impl CheckedRequiresOnchangeOrReadonly {
     /// `props`: the attributes or the properties, with their names.
     fn check<'a>(
         &self,
-        props: impl Iterator<Item = (Prop<'a>, Name<'a>)>,
+        props: &mut dyn Iterator<Item = (Prop<'a>, Name<'a>)>,
         last_checked_counts: bool,
         cx: &Cx<'a, Self>,
     ) {

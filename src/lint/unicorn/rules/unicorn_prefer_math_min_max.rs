@@ -23,8 +23,8 @@ fn is_identifier(e: Expr) -> bool {
 }
 
 /// For oxlint what is in parentheses is the same as nothing.
-fn is_same<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
-    !left.is_parenthesized() && !right.is_parenthesized() && is_same_expression(left, right)
+fn is_same<'a>(operand: Expr<'a>, branch: Expr<'a>) -> bool {
+    !operand.is_parenthesized() && !branch.is_parenthesized() && is_same_expression(operand, branch)
 }
 
 impl Rule for PreferMathMinMax {

@@ -646,7 +646,7 @@ const FIELDS: &[(&str, Transform)] = &[
 ];
 
 fn sort_by_key(object: &mut Object<'_>) {
-    object.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    crate::sort::sort_by(&mut object[..], |(a, _), (b, _)| a.cmp(b));
 }
 
 fn sort_recursively(object: &mut Object<'_>) {
@@ -713,7 +713,7 @@ fn transform<'a>(value: Value<'a>, kind: Transform, options: SortPackageJson) ->
         }
         (SortedUnique, Value::Array(mut array)) => {
             array.retain(|it| it.as_string().is_some());
-            array.sort_unstable_by(|a, b| a.as_string().cmp(&b.as_string()));
+            crate::sort::sort_by(&mut array[..], |a, b| a.as_string().cmp(&b.as_string()));
             array.dedup_by(|a, b| a.as_string() == b.as_string());
             Value::Array(array)
         }
@@ -749,8 +749,8 @@ fn sort_fields<'a>(object: Object<'a>, options: SortPackageJson) -> Object<'a> {
             None => unknown.push((key, value)),
         }
     }
-    known.sort_unstable_by_key(|(index, ..)| *index);
-    unknown.sort_unstable_by(|(a, _), (b, _)| {
+    crate::sort::sort_by_key(&mut known[..], |(index, ..)| *index);
+    crate::sort::sort_by(&mut unknown[..], |(a, _), (b, _)| {
         a.starts_with(b"_")
             .cmp(&b.starts_with(b"_"))
             .then_with(|| a.cmp(b))

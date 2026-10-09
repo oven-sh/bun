@@ -82,7 +82,7 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript of a few files run on one thread. There is one more thread with JavaScript for every 32 files with such rules, 16 at most.
+- The rules in JavaScript run on one thread at first. More such threads are started, 16 at most, if the files that are left take long enough for that to pay: each has to load the plugins again.
 
 Three things are not there for a rule in JavaScript:
 

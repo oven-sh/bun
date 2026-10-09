@@ -208,7 +208,7 @@ impl<'a> Context<'a, '_> {
                 None => {
                     let second =
                         second.insert(self.angular_html_parser_parse(range, &options, false)?);
-                    second.errors.sort_unstable();
+                    crate::sort::sort(&mut second.errors[..]);
                     candidate = self.tree.first_child(second.root);
                     &*second
                 }

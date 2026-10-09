@@ -1,5 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr};
 use bun_lint_oxlint::codegen::print_string;
+use crate::unicorn::static_string;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};
@@ -26,12 +27,7 @@ fn is_reg_exp_with_global_flag(e: Expr) -> bool {
         _ if e.is_parenthesized() => return false,
         ExprKind::Regex(literal) => literal.flags(),
         ExprKind::New(new) if get_inner_expression(new.callee()).is_ident("RegExp") => {
-            let flags = new.args().get(1).filter(|it| !it.is_parenthesized()).and_then(|it| match it.kind() {
-                ExprKind::String(value) => Some(value),
-                ExprKind::Template(template) => template.as_static(),
-                _ => None,
-            });
-            match flags {
+            match new.args().get(1).filter(|it| !it.is_parenthesized()).and_then(static_string) {
                 Some(flags) if flags.bytes().iter().all(|it| strings::contains_char(b"gimsuydv", *it)) => flags.bytes(),
                 _ => return false,
             }

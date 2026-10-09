@@ -266,13 +266,51 @@ pub(crate) fn get_return_identifier_name(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// `array.method(start, array.length)`, `array.method(start, Infinity)`, for one of `methods`: the two arguments, and
-/// how a message calls the second. What `no-unnecessary-slice-end` and `no-unnecessary-array-splice-count` have in
-/// common.
+/// `Expression::is_number_value`. What is in parentheses is not a number there.
+pub(crate) fn is_number_value(e: Expr, value: f64) -> bool {
+    !e.is_parenthesized()
+        && matches!(e.kind(), ExprKind::Number(n) if (n - value).abs() < f64::EPSILON)
+}
+
+/// `Expression::is_number_0`
+pub(crate) fn is_number_0(e: Expr) -> bool {
+    !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
+}
+
+/// The value of a string, or of a template without substitutions.
+pub(crate) fn static_string(e: Expr<'_>) -> Option<Name<'_>> {
+    match e.kind() {
+        ExprKind::String(value) => Some(value),
+        ExprKind::Template(template) => template.as_static(),
+        _ => None,
+    }
+}
+
+/// The statements that `statement` is one of.
+pub(crate) fn statements_around(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
+    match statement.parent() {
+        Node::File(file) => Some(file.body()),
+        Node::Func(func) => func.body_statements(),
+        Node::Stmt(block) => block.as_block(),
+        Node::Case(case) => Some(case.body()),
+        _ => None,
+    }
+}
+
+/// The arguments of `array.method(first, second)`.
+pub(crate) struct UnnecessaryArgument<'a> {
+    pub(crate) first: Expr<'a>,
+    pub(crate) second: Expr<'a>,
+    /// How a message calls `second`.
+    pub(crate) arg_str: Cow<'a, [u8]>,
+}
+
+/// `array.method(start, array.length)`, `array.method(start, Infinity)`, for one of `methods`. What
+/// `no-unnecessary-slice-end` and `no-unnecessary-array-splice-count` have in common.
 pub(crate) fn unnecessary_length_or_infinity_argument<'a>(
     call: Call<'a>,
     methods: &[&str],
-) -> Option<(Expr<'a>, Expr<'a>, Cow<'a, [u8]>)> {
+) -> Option<UnnecessaryArgument<'a>> {
     let callee = call.callee();
     if call.is_optional()
         || !is_method_call(call, None, Some(methods), Some(2), Some(2))
@@ -308,7 +346,11 @@ pub(crate) fn unnecessary_length_or_infinity_argument<'a>(
         }
         _ => return None,
     };
-    Some((first, second, Cow::Borrowed(description)))
+    Some(UnnecessaryArgument {
+        first,
+        second,
+        arg_str: Cow::Borrowed(description),
+    })
 }
 
 pub(crate) const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];

@@ -107,10 +107,6 @@ pub(crate) struct Pool {
 /// hands out memory for compiled code.
 const MOST_ENGINES: usize = 16;
 
-/// There is one more engine for JavaScript for so many files that need one: to start it and to load the plugins takes as long as
-/// to lint them.
-const FILES_FOR_AN_ENGINE: usize = 32;
-
 /// What it takes to lint a file, beyond what is in this program.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Needs {
@@ -119,11 +115,6 @@ enum Needs {
     Engine,
     /// One for which the engine has to run the configuration file, with all that it imports.
     Configuration,
-}
-
-/// How many engines lint so many files.
-fn engines_for(files: usize) -> usize {
-    files.div_ceil(FILES_FOR_AN_ENGINE).max(1)
 }
 
 fn needs(target: &Target) -> Needs {
@@ -623,20 +614,11 @@ impl Run<'_> {
         }
         // One engine is enough to run the configuration file.
         let with_engine = (supported.iter()).filter(|it| needs(it) == Needs::Engine);
-        let engines = engines_for(1 + with_engine.count())
-            .min(pool.threads())
+        let most_engines = (pool.threads())
             .min(MOST_ENGINES)
             .min(context.js_plugins.most_realms());
-        context.js_plugins.expect(engines);
+        (context.js_plugins).expect(with_engine.count(), most_engines);
         if !with_types.is_empty() {
-            // The checker begins with one file and goes on with a few: the engines would load their plugins one after the other.
-            let first: Vec<&Target> = (with_types.iter().map(|it| it.0))
-                .filter(|it| needs(it) == Needs::Engine)
-                .take(engines)
-                .collect();
-            if first.len() > 1 {
-                pool.for_each(first.len(), 1, &|at| context.warm_up_an_engine(first[at]));
-            }
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.into_iter().zip(linted) {
@@ -668,14 +650,19 @@ impl Run<'_> {
             }
         };
         pool.for_each(pool.threads(), 1, &|worker| {
-            while worker < engines
-                && let Some(unit) = units.get(next_unit.fetch_add(1, Ordering::Relaxed))
-            {
-                unit.iter().for_each(|target| lint(target));
+            let lint_units = || {
+                while let Some(unit) = units.get(next_unit.fetch_add(1, Ordering::Relaxed)) {
+                    unit.iter().for_each(|target| lint(target));
+                }
+            };
+            // A thread can have to wait for an engine, so every other one begins with what needs none.
+            if worker % 2 == 0 {
+                lint_units();
             }
             while let Some(target) = plain.get(next_plain.fetch_add(1, Ordering::Relaxed)) {
                 lint(target);
             }
+            lint_units();
         });
         phases.linting = started.elapsed().as_secs_f64();
         if let Some(error) = failure.get_mut().take() {

@@ -573,6 +573,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_collections",
  "bun_core",
  "bun_glob",
  "bun_highway",

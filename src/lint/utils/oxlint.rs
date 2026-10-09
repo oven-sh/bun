@@ -8,7 +8,7 @@ use crate::ast::{
     MemberKind, ModuleName, Node, Prop, PropKind, Stmt, StmtKind, StmtTag, VarDecl, VarKind,
 };
 use crate::language::SourceType;
-use crate::semantic::{Scope, ScopeKind};
+use crate::semantic::{Declaration, Scope, ScopeKind, Symbol};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use smallvec::SmallVec;
@@ -151,6 +151,30 @@ pub fn tsgolint_function_head_loc(func: Func) -> Span {
         Some(end) if start <= end => Span::new(start, end),
         _ => whole,
     }
+}
+
+/// Whether all that declares `symbol` is namespaces with nothing but types in them. For oxc it is no
+/// value then.
+pub fn is_namespace_of_types(symbol: Symbol) -> bool {
+    let mut pending = Vec::new();
+    for declaration in symbol.declarations() {
+        let Declaration::Module(module) = declaration else {
+            return false;
+        };
+        pending.push(module);
+    }
+    let is_declared = !pending.is_empty();
+    while let Some(module) = pending.pop() {
+        for statement in module.innermost().body() {
+            match statement.kind() {
+                StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {}
+                StmtKind::ImportEquals(_) if !statement.flags().contains(Flags::EXPORT) => {}
+                StmtKind::Module(inner) => pending.push(inner),
+                _ => return false,
+            }
+        }
+    }
+    is_declared
 }
 
 /// `has_ambient_typescript_ancestor`, asked of many nodes of a file.

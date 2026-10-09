@@ -21,11 +21,15 @@ const SUGGEST_NOT_OBJECT_IS: Message = Message::new(
 );
 
 fn is_neg_zero(e: Expr) -> bool {
-    matches!(
-        e.kind(),
-        ExprKind::Unary { op: UnOp::Minus, operand }
-            if matches!(operand.kind(), ExprKind::Number(value) if value == 0.0)
-    )
+    let ExprKind::Unary { op: UnOp::Minus, operand } = e.kind() else {
+        return false;
+    };
+    match operand.kind() {
+        ExprKind::Number(value) => value == 0.0,
+        // For oxlint `-0n` is one too.
+        ExprKind::BigInt(value) => value.is("0") && e.file().language().is_oxlint,
+        _ => false,
+    }
 }
 
 /// Appends the text of `operand`, in parentheses where an argument needs them.

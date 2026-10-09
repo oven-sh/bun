@@ -452,12 +452,34 @@ pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8])
         && has_name(prop, name)
 }
 
+/// oxc's `get_tag_name`: the name that a tag starts with, `a` of `a.b(c)[d]`, whatever TypeScript has put around it. For
+/// oxfmt that name alone says which language is in the template.
+pub(crate) fn root_name_of_tag(mut tag: Expr<'_>) -> Option<&[u8]> {
+    loop {
+        tag = match tag.kind() {
+            ExprKind::Ident(_) => return Some(tag.text()),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::AsConst(expr) | ExprKind::NonNull(expr) => expr,
+            _ => return None,
+        };
+    }
+}
+
 /// Prettier's `isEmbedCss`. `e`: a template.
 pub(crate) fn is_embed_css(e: Expr<'_>) -> bool {
+    is_embed_css_for(e, Flavor::Prettier)
+}
+
+fn is_embed_css_for(e: Expr<'_>, flavor: Flavor) -> bool {
     let parent = e.ast_parent();
     match parent {
         AstNodes::TaggedTemplateExpression(tagged) => {
-            matches!(tagged.kind(), ExprKind::TaggedTemplate(call) if call.callee() != e && is_styled_tag(call.callee()))
+            matches!(tagged.kind(), ExprKind::TaggedTemplate(call) if call.callee() != e && match flavor.is_oxfmt() {
+                true => matches!(root_name_of_tag(call.callee()), Some(b"css" | b"styled")),
+                false => is_styled_tag(call.callee()),
+            })
         }
         AstNodes::JSXExpressionContainer(_) => match parent.parent() {
             // <style jsx>{`div{color:red}`}</style>
@@ -478,7 +500,7 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions
         options.embedded_language_formatting,
         EmbeddedLanguageFormatting::Auto
     ) && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
-        && is_embed_css(e)
+        && is_embed_css_for(e, options.flavor)
 }
 
 /// Whether `template` is written ` `` `.

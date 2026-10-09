@@ -1,5 +1,6 @@
 use super::max_depth::{Ancestor, AncestorCounter};
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::iter_outer_expressions;
 
 /// Enforce a maximum depth that callbacks can be nested.
 pub struct MaxNestedCallbacks {
@@ -16,6 +17,10 @@ const EXCEED: Message = Message::new(
 impl MaxNestedCallbacks {
     /// Whether the function expression `e` is an argument of a call.
     fn is_callback(&self, e: Expr) -> bool {
+        // For oxlint also what is called, and what is in `as T` and the like.
+        if e.file().language().is_oxlint {
+            return matches!(iter_outer_expressions(e).next(), Some(Node::Expr(it)) if it.tag() == ExprTag::Call);
+        }
         let Node::Expr(parent) = e.parent() else {
             return false;
         };

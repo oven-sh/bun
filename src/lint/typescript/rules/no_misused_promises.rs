@@ -800,7 +800,8 @@ impl NoMisusedPromises {
 
     fn check_spread_argument<'a>(argument: Expr<'a>, cx: &Cx<'a, Self>) {
         if is_sometimes_thenable(argument.ts_node()) {
-            cx.report(argument, SPREAD);
+            let dots = Span::before(argument.parent().span().start, argument.outer_span());
+            cx.report(argument, SPREAD).comments_apply_at(dots);
         }
     }
 

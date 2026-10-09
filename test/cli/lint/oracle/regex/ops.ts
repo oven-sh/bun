@@ -50,7 +50,7 @@ function check(batch: Request[]) {
     batch.map(([op, ...strings]) => [op, ...strings.map(hex)]),
   );
   batch.forEach((it, i) => {
-    if (answers[i]?.error || answers[i] === "limit") return;
+    if (answers[i]?.error) return;
     const wanted = expected(it);
     // Half of a surrogate pair on its own cannot be told from the bytes.
     if (JSON.stringify(wanted) !== JSON.stringify(wanted, (_, v) => (typeof v === "string" ? v.toWellFormed() : v))) return;

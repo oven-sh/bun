@@ -58,7 +58,9 @@ impl NoArrayDelete {
             return;
         }
         // oxlint points at the array.
+        let keyword = Span::new(node.span().start, node.span().start + "delete".len() as u32);
         cx.report(if cx.language().is_oxlint { object.outer_span() } else { node.span() }, NO_ARRAY_DELETE)
+            .comments_apply_at(keyword)
             .suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence));
     }
 }

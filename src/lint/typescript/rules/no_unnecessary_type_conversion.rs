@@ -65,6 +65,7 @@ fn report<'a>(cx: &Context<'a>, conversion: &Conversion<'a>) {
     };
     // oxlint points at what is converted.
     cx.report(if cx.language().is_oxlint { inner_node.outer_span() } else { loc }, UNNECESSARY_TYPE_CONVERSION)
+        .comments_apply_at(loc)
         .data("type", type_string)
         .data("violation", violation)
         .suggest(SUGGEST_REMOVE, |fixer| match statement {

@@ -2,7 +2,7 @@
 //! that match a file are merged. `@eslint/config-array` and `lib/config` of ESLint.
 //!
 //! - [`Config::from_flat_json`]: an `eslint.config.*` that has been evaluated.
-//! - [`Config::from_rc_json`]: `.oxlintrc.json`, `.eslintrc.json`.
+//! - [`Config::from_rc_json`]: an `.oxlintrc.json`.
 //! - [`Config::from_legacy`]: the files of ESLint 8, with all that they extend and the files above them.
 //! - [`Config::get`]: the configuration of a file.
 //!
@@ -49,6 +49,7 @@
 
 mod brace_expansion;
 mod cache;
+pub(crate) mod eslint8;
 mod eslintrc;
 mod fast_glob;
 mod flat;
@@ -75,14 +76,14 @@ use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
 use cache::Cache;
-pub use eslintrc::{LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
+pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
 pub use fast_glob::FastGlob;
 use fast_glob::Matcher;
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
 use minimatch::{How, Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
-pub use rc::{LoadPlugin, RcFlavor, oxlint_category, oxlint_runs_on};
+pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -336,6 +337,8 @@ pub struct Config {
     accepts_all_plugins: bool,
     /// It is made of the files of ESLint 8.
     is_legacy: bool,
+    /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
+    lints_all_that_is_named: bool,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     prefers_typescript_rules: bool,
     /// `options` of an `.oxlintrc.json` and of what it extends.
@@ -531,7 +534,10 @@ impl Config {
         if path::is_external(&relative) {
             return FileConfig::External;
         }
-        if self.is_directory_ignored(path::dirname(file)) || self.is_ignored_globally(&relative) {
+        let is_ignored = || {
+            self.is_directory_ignored(path::dirname(file)) || self.is_ignored_globally(&relative)
+        };
+        if !self.lints_all_that_is_named && is_ignored() {
             return FileConfig::Ignored;
         }
         // ESLint 8 lints what it is told to, whatever it is called.
@@ -704,10 +710,17 @@ impl Config {
             }
             let of_object = object.plugins.iter().chain(&object.foreign_plugins);
             plugins.extend(of_object.map(|it| &it[..]));
-            merge::deep_merge_into(&mut language_options, &object.language_options);
-            merge::deep_merge_into(&mut settings, &object.settings);
+            let merge_into = match self.is_legacy {
+                true => eslintrc::merge_into,
+                false => merge::deep_merge_into,
+            };
+            merge_into(&mut language_options, &object.language_options);
+            merge_into(&mut settings, &object.settings);
             linter.merge_json(&object.linter_options);
-            merge::merge_rules(&mut rules, &object.rules, self.keeps_options);
+            match self.is_legacy {
+                true => eslintrc::merge_rules(&mut rules, &object.rules),
+                false => merge::merge_rules(&mut rules, &object.rules, self.keeps_options),
+            }
             for plugin in &object.foreign_plugins {
                 if !config.foreign_plugins.contains(plugin) {
                     config.foreign_plugins.push(plugin.clone());
@@ -726,9 +739,14 @@ impl Config {
                 (config.processor_location).clone_from(&object.processor_location);
             }
         }
-        if self.is_legacy {
-            eslintrc::resolve_language_options(&mut language_options);
-        }
+        let eslint_8 = match (self.is_legacy).then(|| eslintrc::resolve(&mut language_options)) {
+            Some(Ok(eslint_8)) => Some(Arc::new(eslint_8)),
+            Some(Err(message)) => {
+                config.error = Some(message);
+                return config;
+            }
+            None => None,
+        };
         // Another language validates its own.
         if config.is_javascript() {
             config.validate_language_options(&language_options);
@@ -737,7 +755,7 @@ impl Config {
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
-        config.language.reads_env_comments = self.is_legacy;
+        config.language.eslint_8 = eslint_8;
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         config.linter = linter;
@@ -788,12 +806,22 @@ impl Config {
                     );
                 }
             }
+            // For ESLint 8 that is a message in every file.
+            let eslint_8 = config.language.eslint_8.as_ref();
+            if eslint_8.is_some_and(|it| it.lacks_rule(&setting.id, &self.js_plugins)) {
+                if setting.severity != Severity::Off {
+                    config.missing_rules.push(setting.id);
+                }
+                continue;
+            }
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             let js = find_js_rule(&self.js_plugins, &setting.id);
             // So does a plugin that is not the one which is implemented here under that name.
             let prefix = super::registry::parse_rule_id(&setting.id).0;
             let is_foreign = config.foreign_plugins.iter().any(|it| **it == *prefix);
-            let native = match is_foreign || js.is_some() && self.accepts_all_plugins {
+            let is_hidden =
+                js.is_some() && self.accepts_all_plugins && !config.prefers_native_rules_of(prefix);
+            let native = match is_foreign || is_hidden {
                 true => None,
                 false => config.find_rule(registry, &setting.id),
             };
@@ -801,7 +829,11 @@ impl Config {
                 (Some(entry), _) => entry,
                 (None, Some(Some(rule))) => {
                     let options: Arc<[Json]> = setting.options.into();
-                    let validated = schema::validate_js(rule, &options);
+                    // ESLint 8 has validated them already, and takes any for a rule without a schema.
+                    let validated = match self.is_legacy {
+                        true => Ok(schema::with_js_defaults(rule, &options)),
+                        false => schema::validate_js(rule, &options),
+                    };
                     if setting.severity != Severity::Off
                         && config.error.is_none()
                         && let Err(lines) = &validated
@@ -817,6 +849,7 @@ impl Config {
                         configured,
                         severity: setting.severity,
                         options,
+                        position: config.rules.len(),
                     });
                     continue;
                 }
@@ -832,7 +865,9 @@ impl Config {
                 }
             };
             let options: Arc<[Json]> = setting.options.into();
-            config.validate(entry, setting.severity, &options);
+            if !self.is_legacy {
+                config.validate(entry, setting.severity, &options);
+            }
             let instance = (setting.severity != Severity::Off).then(|| {
                 self.cache.rule(registry, entry, &options, || {
                     Arc::from((entry.build)(&Options::new(&options)))

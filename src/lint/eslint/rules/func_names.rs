@@ -53,7 +53,8 @@ fn has_inferred_name(e: Expr) -> bool {
 impl FuncNames {
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A method has no name of its own and never needs one.
-        if !matches!(func.kind(), FnKind::Expr | FnKind::Decl) || !func.has_body() {
+        // For oxlint `export default function (): void;` is a function like others.
+        if !matches!(func.kind(), FnKind::Expr | FnKind::Decl) || !func.has_body() && !cx.language().is_oxlint {
             return;
         }
         let config = match self.generators {
@@ -69,6 +70,17 @@ impl FuncNames {
             Node::Stmt(_) => UNNAMED,
             // It may be recursive.
             Node::Expr(_) if has_name => match func.symbol() {
+                // For oxlint the name is needed only where the function calls itself.
+                Some(symbol) if cx.language().is_oxlint => {
+                    let is_called = |e: Expr<'a>| {
+                        !e.is_parenthesized()
+                            && matches!(e.parent(), Node::Expr(it) if it.as_call().is_some_and(|it| it.callee() == e))
+                    };
+                    if symbol.references().any(|it| it.expr().is_some_and(is_called)) {
+                        return;
+                    }
+                    NAMED
+                }
                 Some(symbol) if symbol.references().next().is_some() => return,
                 _ => NAMED,
             },

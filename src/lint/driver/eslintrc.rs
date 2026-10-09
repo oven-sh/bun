@@ -1,13 +1,12 @@
 //! Finds and reads the configuration files of ESLint 8: `.eslintrc.*`, `eslintConfig` in a `package.json`, `.eslintignore`.
 //! `CascadingConfigArrayFactory` and `loadConfigFile` of `@eslint/eslintrc`.
 
-use crate::run::Fatal;
-use crate::{fs, paths};
+use crate::run::{Environment, Fatal};
+use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::{LegacyFile, LegacyKind};
+use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, write_json};
 use bun_lint::options::Json;
-use bun_lint::rule::Plugin;
 
 /// By priority: of several in a directory the first counts.
 pub(crate) const NAMES: [&[u8]; 7] = [
@@ -30,21 +29,146 @@ pub(crate) fn uses_flat_config() -> Option<bool> {
 }
 
 fn cannot_read(path: &[u8], why: &[u8]) -> Vec<u8> {
-    [b"Cannot read config file: ", path, b"\nError: ", why].concat()
+    let text = [b"Cannot read config file: ", path, b"\nError: ", why].concat();
+    match path.ends_with(b".json") {
+        // `failed-to-read-json`
+        true => [b"Failed to read JSON file at ", path, b":\n\n", &text].concat(),
+        false => text,
+    }
+}
+
+/// What `loadPackageJSONConfigFile` throws about the `package.json` at `path`, which has no `eslintConfig`.
+fn lacks_field(path: &[u8]) -> Vec<u8> {
+    let why: &[u8] = b"\nError: package.json file doesn't have 'eslintConfig' field.";
+    [b"Cannot read config file: ", path, why].concat()
+}
+
+/// It is there and cannot be used.
+fn failed(message: Vec<u8>) -> LegacyFailure {
+    LegacyFailure {
+        message,
+        is_missing: false,
+    }
 }
 
 fn is_program(path: &[u8]) -> bool {
     path.ends_with(b".js") || path.ends_with(b".cjs")
 }
 
-/// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`.
-fn read(path: &[u8]) -> Result<Option<Json>, Vec<u8>> {
+fn answer(entries: Vec<(&[u8], Json)>) -> Json {
+    let entries = entries.into_iter();
+    Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
+}
+
+/// What only a program can load: a file that is one, a package. `evaluate-eslintrc.js` does, for a file and all that it names.
+pub(crate) struct Modules<'m> {
+    pub(crate) environment: &'m Environment<'m>,
+    /// [`evaluate::evaluate`]
+    pub(crate) keeps: bool,
+    /// `--resolve-plugins-relative-to`, absolute.
+    pub(crate) plugins_from: Option<Vec<u8>>,
+    /// What stands for a file and cannot be read: its path, and what it says.
+    pub(crate) command_line: (Vec<u8>, Json),
+    /// What the script has printed, by the file that it was run for.
+    pub(crate) printed: Vec<(Vec<u8>, Json)>,
+}
+
+impl Modules<'_> {
+    /// `pluginBasePath`: where the plugins are looked for that `entry`, a file of the cascade, names, and what it extends. Not
+    /// where the file is that names them.
+    fn plugins_from<'p>(&'p self, entry: &'p [u8]) -> &'p [u8] {
+        let given = self.plugins_from.as_deref();
+        given.unwrap_or_else(|| paths::dirname(entry))
+    }
+
+    /// What the run for the file at `path` has printed at `keys`, each in what the one before it is the key of.
+    fn printed_at(&self, path: &[u8], keys: &[&[u8]]) -> Option<&Json> {
+        let printed = &self.printed.iter().find(|it| it.0 == path)?.1;
+        keys.iter().try_fold(printed, |json, key| json.get(key))
+    }
+
+    /// Runs the script for the file at `path`, which is `entry` or something that it extends.
+    fn run(&mut self, path: &[u8], entry: &[u8]) -> Result<(), Vec<u8>> {
+        let plugins_from = Json::String(self.plugins_from(entry).to_vec());
+        let mut argument = vec![
+            (&b"pluginsFrom"[..], plugins_from),
+            (b"cwd", Json::String(self.environment.cwd.clone())),
+        ];
+        if self.command_line.0 == path {
+            argument.push((b"content", self.command_line.1.clone()));
+        }
+        let mut text = Vec::new();
+        write_json(&mut text, &answer(argument));
+        let printed = evaluate::evaluate_with(
+            self.environment,
+            evaluate::ESLINTRC,
+            path,
+            &text,
+            self.keeps,
+        );
+        let printed = printed.map_err(|Fatal(why)| why)?;
+        self.printed.push((path.to_vec(), printed));
+        Ok(())
+    }
+
+    /// What the script prints at `keys`. One run for `entry`, a file of the cascade, has all that it names, and of a plugin the
+    /// configurations that it extends: the run for another file does not do. `from`: the file that names what is looked for,
+    /// which the script can know by another path than this program: of a link.
+    fn find(&mut self, keys: &[&[u8]], from: &[u8], entry: &[u8]) -> Result<Option<Json>, Vec<u8>> {
+        for path in [entry, from] {
+            if !self.printed.iter().any(|it| it.0 == path) {
+                self.run(path, entry)?;
+            }
+            if let Some(found) = self.printed_at(path, keys) {
+                return Ok(Some(found.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// What the script has loaded for `keys`.
+    fn loaded(
+        &mut self,
+        keys: [&[u8]; 3],
+        from: &[u8],
+        entry: &[u8],
+    ) -> Result<Json, LegacyFailure> {
+        match self.find(&keys, from, entry) {
+            Ok(Some(found)) => match error_of(&found) {
+                Some(why) => Err(LegacyFailure {
+                    message: why.to_vec(),
+                    is_missing: found.get(b"$missing").is_some(),
+                }),
+                None => Ok(found),
+            },
+            Ok(None) => Err(failed(NOT_LOADED.to_vec())),
+            Err(why) => Err(failed(why)),
+        }
+    }
+}
+
+/// `$error` of what the script has printed.
+fn error_of(found: &Json) -> Option<&[u8]> {
+    found.get(b"$error").and_then(Json::as_str)
+}
+
+/// The script has said nothing about what it was asked for.
+const NOT_LOADED: &[u8] = b"It was not loaded.";
+
+/// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`, a program that exports
+/// nothing.
+fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     let name = paths::basename(path);
     if is_program(name) {
-        return Err(cannot_read(
-            path,
-            b"A configuration of ESLint 8 that is a program is not supported yet.",
-        ));
+        return match modules.find(&[b"files", path], path, path)? {
+            Some(Json::Null) => Ok(None),
+            Some(found) => match error_of(&found) {
+                // All of the message.
+                Some(why) => Err(why.to_vec()),
+                None => Ok(Some(found)),
+            },
+            None => Err(cannot_read(path, NOT_LOADED)),
+        };
     }
     let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
     let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"It is not valid JSON."));
@@ -109,25 +233,33 @@ fn name_of(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 }
 
 /// The file at `path`, which `--config` names: its patterns are relative to the working directory.
-pub(crate) fn named(path: &[u8], cwd: &[u8]) -> Result<LegacyFile, Fatal> {
-    let json = read(path).map_err(Fatal)?;
+pub(crate) fn named(path: &[u8], cwd: &[u8], modules: &mut Modules) -> Result<LegacyFile, Fatal> {
+    let json = match read(path, modules).map_err(Fatal)? {
+        Some(json) => json,
+        None if paths::basename(path) == b"package.json" => {
+            return Err(Fatal(lacks_field(path)));
+        }
+        None => Json::Object(Vec::new()),
+    };
     Ok(LegacyFile {
         path: path.to_vec(),
         name: b"--config".to_vec(),
         base_path: cwd.to_vec(),
-        json: json.unwrap_or_else(|| Json::Object(Vec::new())),
+        json,
     })
 }
 
-/// `loadInDirectory`. `names`: those of [`NAMES`] that `directory` has.
-fn in_directory<'n>(
+/// `loadInDirectory`
+fn in_directory(
     directory: &[u8],
-    names: impl Iterator<Item = &'n [u8]>,
     cwd: &[u8],
+    modules: &mut Modules,
 ) -> Result<Option<LegacyFile>, Fatal> {
-    for name in names {
+    for name in NAMES {
         let path = paths::join(directory, name);
-        if let Some(json) = read(&path).map_err(Fatal)? {
+        if fs::is_file(&path)
+            && let Some(json) = read(&path, modules).map_err(Fatal)?
+        {
             return Ok(Some(LegacyFile {
                 name: name_of(&path, cwd),
                 path,
@@ -143,20 +275,44 @@ fn in_directory<'n>(
 pub(crate) fn has_one(directory: &[u8]) -> bool {
     let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
     NAMES.iter().any(|name| match *name {
-        b"package.json" => {
-            is_there(name) && matches!(read(&paths::join(directory, name)), Ok(Some(_)) | Err(_))
-        }
+        // One that cannot be read is found out when it is.
+        b"package.json" => fs::read(&paths::join(directory, name))
+            .is_ok_and(|it| json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())),
         _ => is_there(name),
     })
 }
 
+/// `os.homedir()`
+fn home() -> Option<Vec<u8>> {
+    let home = bun_core::env_var::HOME::get().filter(|it| !it.is_empty())?;
+    Some(paths::resolve(b"/", &paths::from_native(home)))
+}
+
+/// `loadInDirectory(os.homedir(), { name: "PersonalConfig" })`
+pub(crate) fn personal(cwd: &[u8], modules: &mut Modules) -> Result<Option<LegacyFile>, Fatal> {
+    let Some(home) = home() else {
+        return Ok(None);
+    };
+    let file = in_directory(&home, cwd, modules)?;
+    Ok(file.map(|it| LegacyFile {
+        name: b"PersonalConfig".to_vec(),
+        ..it
+    }))
+}
+
 /// `_loadConfigInAncestors`: the files that count for what is in `directory`, the outermost first.
-pub(crate) fn cascade(directory: &[u8], cwd: &[u8]) -> Result<Vec<LegacyFile>, Fatal> {
-    let mut files = Vec::new();
+pub(crate) fn cascade(
+    directory: &[u8],
+    cwd: &[u8],
+    modules: &mut Modules,
+) -> Result<Vec<LegacyFile>, Fatal> {
+    let (mut files, home) = (Vec::new(), home());
     for ancestor in paths::ancestors(directory) {
-        let names = NAMES.iter().copied();
-        let names = names.filter(|name| fs::is_file(&paths::join(ancestor, name)));
-        if let Some(file) = in_directory(ancestor, names, cwd)? {
+        // ESLint takes the home directory for the end of a project, unless it runs there.
+        if home.as_deref() == Some(ancestor) && cwd != ancestor {
+            break;
+        }
+        if let Some(file) = in_directory(ancestor, cwd, modules)? {
             let is_root = file.json.get(b"root").and_then(Json::as_bool) == Some(true);
             files.push(file);
             if is_root {
@@ -221,89 +377,60 @@ pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<Lega
     Ok(Some(patterns(b".eslintignore", file, cwd, lines.collect())))
 }
 
-/// The directory of the package `name`, as a module in `directory` finds it.
-fn find_package(directory: &[u8], name: &[u8]) -> Option<Vec<u8>> {
-    paths::ancestors(directory)
-        .map(|it| paths::join(&paths::join(it, b"node_modules"), name))
-        .find(|it| fs::kind(it) == Some(fs::Kind::Directory))
+/// The answer for what is implemented here and need not be loaded.
+fn built_in(request: &[u8]) -> Json {
+    answer(vec![(b"name", Json::String(request.to_vec()))])
 }
 
-fn answer(entries: Vec<(&[u8], Json)>) -> Json {
-    let entries = entries.into_iter();
-    Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
-}
-
-/// [`bun_lint::linter::LoadLegacy`]. `short`: the name of a plugin as the rules have it. `plugins_from`: where plugins are looked
-/// for, which is not where the file is that names them.
+/// [`bun_lint::linter::LoadLegacy`]. `short`: the name of a plugin as the rules have it.
 pub(crate) fn load(
     kind: LegacyKind,
     request: &[u8],
     short: &[u8],
     from: &[u8],
-    plugins_from: &[u8],
-) -> Result<Json, Vec<u8>> {
-    let directory = match kind {
-        LegacyKind::Plugin => plugins_from,
-        _ => paths::dirname(from),
-    };
+    entry: &[u8],
+    modules: &mut Modules,
+) -> Result<Json, LegacyFailure> {
     match kind {
-        LegacyKind::Config if request.starts_with(b".") || paths::is_absolute(request) => {
-            let exact = paths::resolve(directory, request);
-            let candidates = [&b""[..], b".js", b".json", b"/index.js", b"/index.json"];
-            let mut candidates = candidates.iter().map(|it| [&exact[..], it].concat());
-            let Some(file) = candidates.find(|it| fs::is_file(it)) else {
-                return Err([b"Failed to load config \"", request, b"\" to extend from."].concat());
-            };
-            let config = read(&file)?.unwrap_or_else(|| Json::Object(Vec::new()));
-            Ok(answer(vec![
-                (b"path", Json::String(file)),
-                (b"config", config),
-            ]))
-        }
-        LegacyKind::Config => Err(match find_package(directory, request) {
-            Some(_) => [
-                b"It extends \"",
-                request,
-                b"\". A configuration that is a package is not supported yet.",
-            ]
-            .concat(),
-            None => [
-                b"ESLint couldn't find the config \"",
-                request,
-                b"\" to extend from. Please check that the name of the config is correct.",
-            ]
-            .concat(),
-        }),
-        LegacyKind::Plugin if Plugin::of_prefix(short).is_some() => {
-            Ok(answer(vec![(b"name", Json::String(request.to_vec()))]))
-        }
-        LegacyKind::Plugin => Err(match find_package(directory, request) {
-            Some(_) => [
-                b"It uses the plugin \"",
-                request,
-                b"\". In a configuration of ESLint 8 a plugin that is not built in is not supported yet.",
-            ]
-            .concat(),
-            None => [b"ESLint couldn't find the plugin \"", request, b"\"."].concat(),
-        }),
-        LegacyKind::Parser => {
-            let is_known = matches!(
-                request,
-                b"espree" | b"@typescript-eslint/parser" | b"@babel/eslint-parser" | b"babel-eslint"
-            );
-            let is_file = (request.starts_with(b".") || paths::is_absolute(request))
-                && fs::is_file(&paths::resolve(directory, request));
-            if !is_known && !is_file && find_package(directory, request).is_none() {
-                return Err([
-                    b"Failed to load parser '",
-                    request,
-                    b"': Cannot find module '",
-                    request,
-                    b"'",
-                ]
-                .concat());
+        LegacyKind::Config => {
+            let is_path = request.starts_with(b".") || paths::is_absolute(request);
+            let file = paths::resolve(paths::dirname(from), request);
+            // It can be had without a program.
+            if is_path && fs::is_file(&file) && !is_program(&file) {
+                let Some(config) = read(&file, modules).map_err(failed)? else {
+                    return Err(failed(lacks_field(&file)));
+                };
+                return Ok(answer(vec![
+                    (b"path", Json::String(file)),
+                    (b"config", config),
+                ]));
             }
-            Ok(answer(vec![(b"name", Json::String(request.to_vec()))]))
+            modules.loaded([b"configs", from, request], from, entry)
+        }
+        LegacyKind::Plugin => {
+            let directory = modules.plugins_from(entry).to_vec();
+            let is_implemented_here = matches!(
+                short,
+                b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
+            );
+            match modules.loaded([b"plugins", &directory, request], from, entry) {
+                // What is installed comes before what is implemented here: it has configurations, too.
+                Err(failure) if failure.is_missing && is_implemented_here => Ok(built_in(request)),
+                loaded => loaded,
+            }
+        }
+        LegacyKind::Parser => {
+            // `evaluate-eslintrc.js` has the same list.
+            if matches!(
+                request,
+                b"espree"
+                    | b"@typescript-eslint/parser"
+                    | b"@babel/eslint-parser"
+                    | b"babel-eslint"
+            ) {
+                return Ok(built_in(request));
+            }
+            modules.loaded([b"parsers", from, request], from, entry)
         }
     }
 }

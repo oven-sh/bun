@@ -215,8 +215,13 @@ fn check_and_lint_in(
         already_read,
         ..Default::default()
     };
-    let diagnostics =
-        bun_sema_driver::check_provided_then(&request, provided, |report| report.diagnostics);
+    let (diagnostics, incomplete) =
+        bun_sema_driver::check_provided_then(&request, provided, |report| {
+            (report.diagnostics, report.incomplete)
+        });
+    // Of code that is nested too deeply for the parser the linter says so itself.
+    let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
+    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| it.path));
     let mut results = std::mem::take(results.get_mut());
     if context.checks_types {
         for diagnostic in diagnostics

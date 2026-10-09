@@ -226,6 +226,12 @@ mod fake_mimalloc {
         global_alloc(size, align, true)
     }
     #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_realloc(p: *mut c_void, size: usize) -> *mut c_void {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
+        unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, 16) }
+    }
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
         // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
         // requires.

@@ -706,6 +706,8 @@ impl<'a> Parser<'a> {
     pub(crate) fn checkpoint(&mut self) -> Checkpoint {
         // What is taken after this would be forgotten by `rollback`, and it is not scanned again.
         self.take_errors_of_scanner();
+        // First: a call after the others would have all of them wait on the stack.
+        let jsdoc = self.jsdoc_lens();
         Checkpoint {
             mark: self.lx.mark(),
             file: file_lens(&self.f),
@@ -715,7 +717,7 @@ impl<'a> Parser<'a> {
             classes_around: self.classes_around,
             has_top_level_await: self.has_top_level_await,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
-            jsdoc: self.jsdoc_lens(),
+            jsdoc,
         }
     }
 

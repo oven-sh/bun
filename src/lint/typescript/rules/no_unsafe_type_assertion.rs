@@ -49,6 +49,12 @@ impl NoUnsafeTypeAssertion {
         let asserted_type = type_annotation.ty();
         // oxlint points at the expression: `<A>b`.
         let place = if cx.language().is_oxlint { expression.outer_span() } else { node.span() };
+        // `as A`, `<A>`
+        let (operand, annotation) = (expression.outer_span(), type_annotation.outer_span());
+        let assertion = match node.span().start < operand.start {
+            true => Span::new(node.span().start, skip_trivia(cx.text(), annotation.end) + 1),
+            false => Span::new(skip_trivia(cx.text(), operand.end), annotation.end),
+        };
 
         if expression_type == asserted_type
             || expression_type.is_unresolved()
@@ -59,18 +65,20 @@ impl NoUnsafeTypeAssertion {
 
         // Asserting unknown ==> any.
         if is_type_any_type(asserted_type) && is_type_unknown_type(expression_type) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION).data("type", "`any`");
+            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION).comments_apply_at(assertion).data("type", "`any`");
             return;
         }
 
         if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
             cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
+                .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_expression_any.sender));
             return;
         }
 
         if let Some(unsafe_asserted_any) = is_unsafe_assignment(asserted_type, expression_type, None::<Expr<'a>>) {
             cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+                .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_asserted_any.sender));
             return;
         }
@@ -94,7 +102,7 @@ impl NoUnsafeTypeAssertion {
                 Some(_) => {}
             }
         }
-        cx.report(place, message).data("type", asserted_type.to_text());
+        cx.report(place, message).comments_apply_at(assertion).data("type", asserted_type.to_text());
     }
 }
 

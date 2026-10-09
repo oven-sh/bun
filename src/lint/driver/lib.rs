@@ -26,6 +26,7 @@ mod paths;
 mod print_config;
 mod processor;
 mod results;
+mod rulesdir;
 mod run;
 mod suppressions;
 mod typed;

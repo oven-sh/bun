@@ -2860,6 +2860,34 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    // Up to some depth the type is computed, beyond another the parser refuses the file. Between the two the check runs out
+    // of stack, and took hours to say so. Where that is depends on the platform and the build: so every depth.
+    test.skipIf(isDebug || isASAN).each([5_000, 6_000, 6_500, 7_000, 7_250, 7_500, 7_750, 8_000])(
+      "type arguments %d deep",
+      async depth => {
+        using dir = project({
+          "a.ts": `export type T = ${repeat("Array<", depth)}number${repeat(">", depth)};\nexport const wrong: number = "";\n`,
+        });
+        const { stdout, stderr, exitCode } = await check(dir, [], {}, 10_000);
+        const error = `a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+        expect([
+          { stdout: error, stderr: "Found 1 error in 1 file, checked 1 file [time]", exitCode: 1 },
+          {
+            stdout: error,
+            stderr: "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
+            exitCode: 1,
+          },
+          {
+            stdout: "",
+            stderr: "error: the code in a.ts is nested too deeply: errors in this file may be missing.",
+            exitCode: 1,
+          },
+        ]).toContainEqual({ stdout, stderr: stderr.split("\n")[0], exitCode });
+      },
+      // Longer than the child may take, which does not outlive the test then.
+      20_000,
+    );
+
     test("an import of a path with 30,000 segments", async () => {
       using dir = project({
         "a.ts": `import "./${repeat("a/", 30_000)}a";\nexport const wrong: number = "";\n`,

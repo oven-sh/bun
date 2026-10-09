@@ -22,10 +22,12 @@ fn safely_shadows_undefined(symbol: Symbol) -> bool {
         && symbol.references().all(|reference| !reference.is_write())
 }
 
-/// ESLint's `def.name`: typescript-eslint has the type annotation as a part of the `Identifier`.
+/// ESLint's `def.name`: typescript-eslint has the type annotation as a part of the `Identifier`, oxlint has not.
 fn name_span(declaration: Declaration) -> Option<Span> {
     match declaration {
-        Declaration::Var(pat) | Declaration::Param(pat) => Some(utils::estree_span(Node::Pat(pat))),
+        Declaration::Var(pat) | Declaration::Param(pat) if !pat.file().language().is_oxlint => {
+            Some(utils::estree_span(Node::Pat(pat)))
+        }
         _ => declaration.name_span(),
     }
 }
@@ -88,7 +90,8 @@ impl NoShadowRestrictedNames {
         {
             return;
         }
-        Self::report(utils::estree_span(Node::Pat(pat)), name, pat.symbol(), cx);
+        let place = if cx.language().is_oxlint { pat.span() } else { utils::estree_span(Node::Pat(pat)) };
+        Self::report(place, name, pat.symbol(), cx);
     }
 }
 

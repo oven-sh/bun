@@ -6,10 +6,10 @@
 //!
 //! - `parse <file>`: `literal|pattern|visit  strict  ecmaVersion  source  [flags]`. The AST of regexpp,
 //!   with absolute paths for `parent`, `resolved` and `references`, or `{"error": {message, index}}`.
-//! - `exec <file>`: `pattern  flags  text  lastIndex`. `{"error"}`, `null`, `"limit"`, or `{"indices": [[start, end] | null, ..],
+//! - `exec <file>`: `pattern  flags  text  lastIndex`. `{"error"}`, `null`, or `{"indices": [[start, end] | null, ..],
 //!   "groups": {name: [start, end] | null}}` as with the `d` flag.
 //! - `ops <file>`: `op  pattern  flags  text  [replacement]`, where `op` is `test`, `toString`, `search`, `match`, `matchAll`, `replace` or
-//!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices, or `"limit"`.
+//!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices.
 //! - `charset <file>`: `pattern  flags`. The characters `c` for which `^(?:pattern)$` matches the string of only `c`, as
 //!   `"first-last first-last .."` in hexadecimal.
 //! - `raw <file>`: `pattern  flags  text`, each as hexadecimal bytes, which need not be UTF-8. Parses, compiles and runs all
@@ -427,10 +427,9 @@ fn exec(line: &str) -> String {
         Ok(index) if index <= units.len() => regex::byte_offset(&text, index),
         _ => text.len() + 1,
     };
-    match regex.try_exec_at(&text, start) {
-        Err(_) => out.push_str("\"limit\""),
-        Ok(None) => out.push_str("null"),
-        Ok(Some(captures)) => {
+    match regex.exec_at(&text, start) {
+        None => out.push_str("null"),
+        Some(captures) => {
             out.push_str("{\"indices\":");
             indices(&mut out, &text, &captures);
             out.push_str(",\"groups\":{");
@@ -469,9 +468,6 @@ fn ops(line: &str) -> String {
         return out;
     };
     let text = bytes(&units(text));
-    if regex.try_exec_at(&text, 0).is_err() {
-        return "\"limit\"".to_owned();
-    }
     match *op {
         "test" => write!(out, "{}", regex.test(&text)).unwrap(),
         "toString" => quote(&mut out, regex.to_string().as_bytes()),
@@ -577,19 +573,13 @@ fn raw(line: &str) -> String {
         }
     }
     if let Ok(regex) = Regex::from_bytes(pattern, flags) {
-        // One search that is given up takes a second: that is enough of them.
-        let in_time = (0..=text.len() + 1).all(|start| {
-            let found = regex.try_exec_at(text, start);
-            let in_time = found.is_ok();
-            std::hint::black_box(found.map(|m| m.map(|m| (m.start(), m.end(), m.as_bytes().len()))))
-                .is_ok()
-                && in_time
-        });
-        if in_time {
-            std::hint::black_box(regex.find_iter(text).count());
-            std::hint::black_box(regex.split(text).len());
-            std::hint::black_box(regex.replace(text, b"[$1$&$<a>]").len());
+        for start in 0..=text.len() + 1 {
+            let found = regex.exec_at(text, start);
+            std::hint::black_box(found.map(|m| (m.start(), m.end(), m.as_bytes().len())));
         }
+        std::hint::black_box(regex.find_iter(text).count());
+        std::hint::black_box(regex.split(text).len());
+        std::hint::black_box(regex.replace(text, b"[$1$&$<a>]").len());
     }
     for offset in 0..=text.len() + 1 {
         std::hint::black_box(regex::byte_offset(text, regex::utf16_index(text, offset)));

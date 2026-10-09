@@ -395,7 +395,10 @@ impl UnboundMethod {
                 // tsgolint 7.0 asks for the symbol of the member, which has no declaration if the parts of a union or
                 // of an intersection declare it in different places, as in `window.print`. It points at the name.
                 if cx.language().is_oxlint {
-                    self.check_if_method_and_report(cx, name.span(), node.ts_symbol());
+                    let symbol = node.ts_symbol();
+                    if let Some(message) = symbol.and_then(|it| check_if_method(it, self.ignore_static)) {
+                        cx.report(name.span(), message).comments_apply_at(node);
+                    }
                     return;
                 }
                 self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty());

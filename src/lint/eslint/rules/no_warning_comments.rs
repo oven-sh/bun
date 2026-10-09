@@ -127,7 +127,9 @@ impl Rule for NoWarningComments {
                     continue;
                 }
                 let shown = comment_to_display(value);
-                for (term, _) in matches {
+                // oxlint says one thing about a comment.
+                let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
+                for (term, _) in matches.take(count) {
                     cx.report(comment, UNEXPECTED_COMMENT)
                         .data("matchedTerm", term.clone())
                         .data("comment", shown.clone());

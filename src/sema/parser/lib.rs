@@ -141,6 +141,15 @@ impl Scratch {
         self.recycled = file;
     }
 
+    /// The first error in the text that was refused last, if the parser had reported one before it
+    /// gave up.
+    pub fn error_before_refusal(&self) -> Option<&bun_sema::hir::Diagnostic> {
+        let errors = self.recycled.diagnostics.iter();
+        errors
+            .filter(|it| it.kind == bun_sema::hir::DiagnosticKind::Parse)
+            .min_by_key(|it| it.start)
+    }
+
     /// The atoms of the file with the text `text`, which [`parse_with_own_atoms`] has parsed last.
     pub fn atoms<'a>(&'a self, text: &'a [u8]) -> FileAtoms<'a> {
         self.names.of_file(text)

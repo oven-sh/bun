@@ -181,7 +181,7 @@ impl Parser<'_> {
                     {
                         p.f.exprs.pop();
                         (heritage.extends, heritage.extends_args) = (expr, type_args);
-                    } else if p.token() == T::LessThan {
+                    } else if p.is_at_type_arguments_of_heritage_element() {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }
                     p.check_js_type_arguments(heritage.extends_args);

@@ -237,7 +237,9 @@ pub(crate) type Chain = Option<Arc<Ignores>>;
 /// `is_for_oxc`: as oxlint and oxfmt read them: `{a,b}` is `a` or `b`. Otherwise as Prettier does, with the package
 /// `ignore`: the braces are taken as they are, and `readme.md` is `README.md` too.
 pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
-    let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+    // Git, the package `ignore` and the crate `ignore` pass over a byte order mark.
+    let lines = strings::split(strings::without_utf8_bom(text), b"\n")
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
     let patterns: Vec<Pattern> = lines
         .filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#"))
         .map(|line| match is_for_oxc {

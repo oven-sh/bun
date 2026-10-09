@@ -51,7 +51,7 @@ pub const PARAMS: &[Param] = &[
         "--max-warnings <n>              Exit with 1 if there are more warnings than this"
     ),
     clap::param!(
-        "-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>"
+        "-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>, <b>checkstyle<r>, <b>junit<r>, <b>gitlab<r>, <b>sarif<r>"
     ),
     clap::param!(
         "--all                           Show every problem <d>(<b>pretty<r><d> and <b>agent<r><d> group identical problems above 50)<r>"
@@ -100,6 +100,26 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"
     ),
+    clap::param!("--type-check                    With <b>--type-aware<r>: report type errors too"),
+    clap::param!(
+        "-A, --allow <rule>...           With an <b>.oxlintrc.json<r>: turn a rule or a category off"
+    ),
+    clap::param!("-W, --warn <rule>...            The same: make it a warning"),
+    clap::param!("-D, --deny <rule>...            The same: make it an error"),
+    clap::param!("--deny-warnings                 Exit with 1 if there are warnings"),
+    clap::param!("--silent                        Print no problems"),
+    clap::param!(
+        "--ignore-path <path>            A file with patterns to ignore, in place of <b>.eslintignore<r>"
+    ),
+    clap::param!(
+        "--disable-nested-config         Use the configuration file of the working directory for every file"
+    ),
+    clap::param!("--fix-suggestions               Apply suggestions, as oxlint does"),
+    clap::param!("--fix-dangerously               Apply every fix and suggestion, as oxlint does"),
+    clap::param!(
+        "--init                          Write an <b>.oxlintrc.json<r> with the defaults of oxlint"
+    ),
+    clap::param!("--rules                         List the rules that are built in"),
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core, at most 16 with plugins in JavaScript)<r>"
     ),
@@ -133,20 +153,8 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--env <name>..."),
     clap::param!("--rulesdir <path>..."),
     clap::param!("--resolve-plugins-relative-to <path>"),
-    clap::param!("--init"),
     clap::param!("--mcp"),
     // oxlint's.
-    clap::param!("-A, --allow <rule>..."),
-    clap::param!("-W, --warn <rule>..."),
-    clap::param!("-D, --deny <rule>..."),
-    clap::param!("--deny-warnings"),
-    clap::param!("--silent"),
-    clap::param!("--ignore-path <path>"),
-    clap::param!("--disable-nested-config"),
-    clap::param!("--fix-suggestions"),
-    clap::param!("--fix-dangerously"),
-    clap::param!("--type-check"),
-    clap::param!("--rules"),
     clap::param!("--lsp"),
     clap::param!("--disable-unicorn-plugin"),
     clap::param!("--disable-oxc-plugin"),
@@ -162,6 +170,61 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--promise-plugin"),
     clap::param!("--node-plugin"),
     clap::param!("--vue-plugin"),
+];
+
+/// The flags that ESLint has and oxlint has not, which tell whom a run stands in for.
+const ONLY_OF_ESLINT: [&[u8]; 36] = [
+    b"config-lookup",
+    b"rule",
+    b"global",
+    b"parser-options",
+    b"ext",
+    b"fix-dry-run",
+    b"fix-type",
+    b"warn-ignored",
+    b"stdin",
+    b"stdin-filename",
+    b"output-file",
+    b"color",
+    b"inline-config",
+    b"report-unused-inline-configs",
+    b"pass-on-no-patterns",
+    b"exit-on-fatal-error",
+    b"concurrency",
+    b"suppress-rule",
+    b"suppressions-location",
+    b"pass-on-unpruned-suppressions",
+    b"stats",
+    b"env-info",
+    b"parser",
+    b"plugin",
+    b"cache",
+    b"cache-file",
+    b"cache-location",
+    b"cache-strategy",
+    b"flag",
+    b"debug",
+    b"inspect-config",
+    b"mcp",
+    b"eslintrc",
+    b"env",
+    b"rulesdir",
+    b"resolve-plugins-relative-to",
+];
+
+/// The other way round, beside `--import-plugin` and the like.
+const ONLY_OF_OXLINT: [&[u8]; 11] = [
+    b"allow",
+    b"warn",
+    b"deny",
+    b"deny-warnings",
+    b"silent",
+    b"disable-nested-config",
+    b"fix-suggestions",
+    b"fix-dangerously",
+    b"type-check",
+    b"rules",
+    b"lsp",
 ];
 
 /// `--flavor`
@@ -188,6 +251,10 @@ pub struct Options {
     pub config: Option<Vec<u8>>,
     pub config_lookup: bool,
     pub flavor: Option<Tool>,
+    /// The command line has a flag that ESLint has and oxlint has not.
+    pub has_flag_of_eslint: bool,
+    /// The other way round.
+    pub has_flag_of_oxlint: bool,
     /// What a configuration file that is a program evaluates to is kept for the next run.
     pub config_cache: bool,
     pub ext: Option<Vec<Vec<u8>>>,
@@ -280,6 +347,8 @@ impl Default for Options {
             config: None,
             config_lookup: true,
             flavor: None,
+            has_flag_of_eslint: false,
+            has_flag_of_oxlint: false,
             config_cache: true,
             ext: None,
             global: Vec::new(),
@@ -402,6 +471,8 @@ impl Options {
     ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
+        self.has_flag_of_eslint |= ONLY_OF_ESLINT.contains(&name);
+        self.has_flag_of_oxlint |= ONLY_OF_OXLINT.contains(&name) || name.ends_with(b"-plugin");
         match name {
             b"config" => self.config = owned(),
             b"config-lookup" => self.config_lookup = is_on,
@@ -522,7 +593,7 @@ impl Options {
             b"allow-unsupported" => self.allow_unsupported = is_on,
             b"eslintrc" => self.eslintrc = is_on,
             b"env" => self.env.extend(list(text)),
-            b"rulesdir" => self.rulesdir.push(text.to_vec()),
+            b"rulesdir" => self.rulesdir.extend(list(text)),
             b"resolve-plugins-relative-to" => self.resolve_plugins_relative_to = owned(),
             b"fix-suggestions" => (self.fix, self.fix_suggestions) = (self.fix || is_on, is_on),
             b"fix-dangerously" => (self.fix, self.fix_dangerously) = (self.fix || is_on, is_on),

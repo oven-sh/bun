@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { existsSync, readFileSync, symlinkSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
@@ -1304,6 +1304,104 @@ describe.concurrent("bun lint", () => {
         });
       });
 
+      // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
+      describe("a file of two projects is to each what the options of the project make of it", () => {
+        const project = (more: object, include: string[]) =>
+          JSON.stringify({
+            compilerOptions: {
+              strict: true,
+              noEmit: true,
+              module: "esnext",
+              moduleResolution: "bundler",
+              target: "es2022",
+              types: [],
+              lib: ["es2022"],
+              ...more,
+            },
+            include,
+          });
+
+        // It has no `import` and no `export`: a script, whose variable `use.ts` sees, or a module all the same.
+        test.each([
+          ["moduleDetection", { moduleDetection: "force" }, { moduleDetection: "legacy" }, "p.ts", "1"],
+          ["jsx", { jsx: "react-jsx" }, { jsx: "preserve" }, "p.tsx", "<a />"],
+          ["the type of its package", { module: "nodenext", moduleResolution: "nodenext" }, {}, "p.ts", "1"],
+        ])("%s", async (_, asModule, asScript, name, value) => {
+          const run = async (a: object, b: object) => {
+            const { raw } = await lint(
+              {
+                ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+                "a/tsconfig.json": project(a, ["*.ts", `../shared/${name}`]),
+                "a/use.ts": "shared;\nexport {};\n",
+                "b/tsconfig.json": project(b, ["*.ts", `../shared/${name}`]),
+                "b/use.ts": "shared;\nexport {};\n",
+                "shared/package.json": `{ "type": "module" }`,
+                [`shared/${name}`]: `const shared = Promise.resolve(${value});\n`,
+              },
+              ["-f", "json", "--type-aware"],
+            );
+            return found(raw, ["a", "b", "shared"]);
+          };
+          const reported = ["use.ts:1:1 typescript(no-floating-promises)"];
+          expect(await Promise.all([run(asModule, asScript), run(asScript, asModule)])).toEqual([
+            { a: [], b: reported, shared: [] },
+            { a: reported, b: [], shared: [] },
+          ]);
+        });
+
+        // Each project imports the file of the other, which has the same text, before or after that project reads it itself.
+        test.each([
+          [
+            "experimentalDecorators",
+            {},
+            { experimentalDecorators: true },
+            "declare const dec: any;\nexport class C {\n  constructor(@dec x: number) {}\n}\n",
+            { a: ["own.ts:3:15 typescript(TS1206)"], b: [] },
+          ],
+          [
+            "useDefineForClassFields",
+            { useDefineForClassFields: true },
+            { useDefineForClassFields: false },
+            "const y = 1;\nexport class C {\n  x = y;\n  constructor(y: string) {}\n}\n",
+            { a: [], b: ["own.ts:3:7 typescript(TS2301)"] },
+          ],
+          [
+            "a target before ES2020",
+            {},
+            { target: "es2019" },
+            "declare const o: { x?: number } | undefined;\nexport function f(a = o?.x, b = () => a) {\n  var o = 1;\n  return [a, b, o];\n}\n",
+            {
+              a: [],
+              b: ["own.ts:2:23 typescript(TS2373)", "own.ts:2:23 typescript(TS2454)", "own.ts:2:26 typescript(TS2339)"],
+            },
+          ],
+          [
+            "a target before ES2017",
+            {},
+            { target: "es2016", lib: ["es2017"] },
+            "declare const o: { x: number };\nexport function f({ ...r } = o) {\n  var o = 1;\n  return [r, o];\n}\n",
+            {
+              a: [],
+              b: ["own.ts:2:24 typescript(TS2700)", "own.ts:2:30 typescript(TS2373)", "own.ts:2:30 typescript(TS2454)"],
+            },
+          ],
+        ])("%s", async (_, a, b, text, errors) => {
+          const { raw } = await lint(
+            {
+              ".oxlintrc.json": rc({ rules: {} }),
+              "a/tsconfig.json": project(a, ["*.ts"]),
+              "a/own.ts": text,
+              "a/use.ts": `import "../b/own";\n`,
+              "b/tsconfig.json": project(b, ["*.ts"]),
+              "b/own.ts": text,
+              "b/use.ts": `import "../a/own";\n`,
+            },
+            ["-f", "json", "--type-aware", "--type-check"],
+          );
+          expect(found(raw, ["a", "b"])).toEqual(errors);
+        });
+      });
+
       test.each([false, true])("--fix changes what oxlint --fix changes (rules that need types: %p)", async typed => {
         // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
         const differs = (directory: string) => (fixDifferences as Record<string, string[]>)[directory]?.includes("fix");
@@ -1476,13 +1574,130 @@ describe.concurrent("bun lint", () => {
       expect(result.files).toEqual({ "a.js": "var a = 1;\nif (a == 2) { debugger; }\n" });
     });
 
-    test.skipIf(isWindows)("keeps the mode of the file, and a link to it", async () => {
+    test.skipIf(isWindows)("keeps a link to the file", async () => {
       const result = await lint(files, ["--fix", "link.js"], {
         reads: ["a.js", "link.js"],
         before: dir => symlinkSync("a.js", join(dir, "link.js")),
       });
       expect(result.files["a.js"]).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
       expect(result.files["link.js"]).toBe(result.files["a.js"]);
+    });
+
+    // ESLint and oxlint write into the file (`fs.writeFile`, `fs::write`): all but its text stays as it is.
+    describe("the file that is written", () => {
+      const fixed = "let a = 1;\nif (a == 2) { debugger; }\n";
+      const isRoot = process.getuid?.() === 0;
+      /** `--fix` in `dir`, which is still there afterwards. `before`: what starts the command. */
+      async function fix(dir: string, args: string[], before: string[] = []) {
+        await using proc = Bun.spawn({
+          cmd: [...before, ...command, "--fix", ...args],
+          env,
+          cwd: dir,
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }
+      const read = (dir: string, name: string) => readFileSync(join(dir, name), "utf8");
+
+      test("is still the file that its other names stand for", async () => {
+        using dir = tempDir("bun-lint", files);
+        linkSync(join(String(dir), "a.js"), join(String(dir), "other-name.txt"));
+        await fix(String(dir), ["a.js"]);
+        expect([read(String(dir), "a.js"), read(String(dir), "other-name.txt")]).toEqual([fixed, fixed]);
+        expect(statSync(join(String(dir), "a.js")).nlink).toBe(2);
+        expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js", "eslint.config.js", "other-name.txt"]);
+      });
+
+      // What a new file gets is less, unless the mask of the process is 0.
+      test.skipIf(isWindows)("keeps its mode, whatever the mask of the process", async () => {
+        using dir = tempDir("bun-lint", { ...files, "b.js": files["a.js"] });
+        chmodSync(join(String(dir), "a.js"), 0o664);
+        chmodSync(join(String(dir), "b.js"), 0o777);
+        await fix(String(dir), ["a.js", "b.js"], ["sh", "-c", 'umask 077; exec "$0" "$@"']);
+        expect([read(String(dir), "a.js"), read(String(dir), "b.js")]).toEqual([fixed, fixed]);
+        expect(["a.js", "b.js"].map(name => statSync(join(String(dir), name)).mode & 0o7777)).toEqual([0o664, 0o777]);
+      });
+
+      // ESLint and oxlint write there. Nobody reads the links of a project that he has checked out.
+      test("is not one that a link leads to out of the repository", async () => {
+        const outside = { "outside/c/d.js": bad };
+        const git = "ref: refs/heads/main\n";
+        const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } });
+        const link = (dir: string) => symlinkSync(join(dir, "outside", "c"), join(dir, "project", "c"), "junction");
+        const options = { cwd: "project", before: link, reads: ["outside/c/d.js"] };
+        const [named, found, withoutRepository] = await Promise.all([
+          lint(
+            { ...outside, "project/.git/HEAD": git, "project/eslint.config.js": basic },
+            ["--fix", "c/d.js"],
+            options,
+          ),
+          lint({ ...outside, "project/.git/HEAD": git, "project/.oxlintrc.json": oxlintrc }, ["--fix"], options),
+          lint({ ...outside, "project/eslint.config.js": basic }, ["--fix", "c/d.js"], options),
+        ]);
+        expect([named.files, found.files, withoutRepository.files]).toEqual([outside, outside, outside]);
+        for (const { stdout, stderr } of [named, found, withoutRepository]) {
+          expect(stdout + stderr).toContain("Cannot write <dir>/project/c/d.js: A link leads out of the repository.");
+        }
+        expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 2, 2]);
+      });
+
+      test("can be one that a link leads to in the repository, or that is named outside of the working directory", async () => {
+        const files = {
+          ".git/HEAD": "ref: refs/heads/main\n",
+          "shared/d.js": bad,
+          "packages/a/eslint.config.js": basic,
+          "eslint.config.js": basic,
+        };
+        const link = (dir: string) =>
+          symlinkSync(join(dir, "shared"), join(dir, "packages", "a", "shared"), "junction");
+        const options = { cwd: "packages/a", before: link, reads: ["shared/d.js"] };
+        const [linked, named] = await Promise.all([
+          lint(files, ["--fix", "shared/d.js"], options),
+          lint(files, ["--fix", "../../shared/d.js"], options),
+        ]);
+        expect([linked.files, named.files]).toEqual([{ "shared/d.js": fixed }, { "shared/d.js": fixed }]);
+      });
+
+      // In a container, say, with the project of a user mounted into it.
+      test.skipIf(!isRoot)("keeps its owner if root fixes it", async () => {
+        using dir = tempDir("bun-lint", files);
+        chownSync(join(String(dir), "a.js"), 12345, 12345);
+        await fix(String(dir), ["a.js"]);
+        const { uid, gid } = statSync(join(String(dir), "a.js"));
+        expect([read(String(dir), "a.js"), uid, gid]).toEqual([fixed, 12345, 12345]);
+      });
+
+      // ESLint needs nothing of the directory.
+      test.skipIf(isWindows || isRoot)("can be in a directory that nothing can be added to", async () => {
+        using dir = tempDir("bun-lint", { "eslint.config.js": files["eslint.config.js"], "src/a.js": files["a.js"] });
+        chmodSync(join(String(dir), "src"), 0o555);
+        try {
+          const { stderr } = await fix(String(dir), ["src"]);
+          expect(stderr).not.toContain("Cannot write");
+          expect(read(String(dir), "src/a.js")).toBe(fixed);
+        } finally {
+          chmodSync(join(String(dir), "src"), 0o755);
+        }
+      });
+
+      // `fs.writeFile` fails with EACCES, on Windows with EPERM. A version control system that hands out files read-only until
+      // they are checked out means it.
+      test.skipIf(isRoot)("is not replaced if it is read-only, and that is an error", async () => {
+        using dir = tempDir("bun-lint", files);
+        chmodSync(join(String(dir), "a.js"), 0o444);
+        try {
+          const { stderr, exitCode } = await fix(String(dir), ["a.js"]);
+          expect(read(String(dir), "a.js")).toBe(files["a.js"]);
+          expect(stderr).toMatch(/Cannot write .*a\.js: (EACCES|EPERM)/);
+          expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js", "eslint.config.js"]);
+          expect(exitCode).toBe(2);
+        } finally {
+          chmodSync(join(String(dir), "a.js"), 0o666);
+        }
+      });
     });
 
     test("flags that contradict each other fail with 2", async () => {
@@ -1809,6 +2024,29 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
+    // Each pass takes away one assertion of each file, and both projects read both files.
+    test("--fix in two projects that import each other: each pass sees what the one before has made of both", async () => {
+      const result = await lint(
+        {
+          "eslint.config.js": files["eslint.config.js"],
+          "a/tsconfig.json": files["tsconfig.json"],
+          "a/x.ts": `import { text } from "../b/y";\nexport const a = text as string as string as string;\n`,
+          "b/tsconfig.json": files["tsconfig.json"],
+          "b/y.ts": `import type { a } from "../a/x";\nexport const text: string = "";\nexport const b = text as typeof a as string as typeof a;\n`,
+        },
+        ["--fix", "-f", "unix"],
+        { reads: ["a/x.ts", "b/y.ts"] },
+      );
+      expect(result).toMatchObject({
+        files: {
+          "a/x.ts": `import { text } from "../b/y";\nexport const a = text;\n`,
+          "b/y.ts": `import type { a } from "../a/x";\nexport const text: string = "";\nexport const b = text;\n`,
+        },
+        raw: "",
+        exitCode: 0,
+      });
+    });
+
     test("--no-type-aware skips them", async () => {
       const { raw, exitCode } = await lint(files, ["--no-type-aware"]);
       expect(raw).toBe("");
@@ -1920,6 +2158,75 @@ describe.concurrent("bun lint", () => {
       expect(stdout).toContain("--max-warnings");
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+describe.concurrent("regular expressions in a configuration", () => {
+  test("are JavaScript's on text that is not ASCII", async () => {
+    const { stdout, exitCode } = await lint(
+      {
+        "eslint.config.js": config({
+          "id-match": ["error", "^\\p{Ll}[\\p{L}\\p{N}]*$"],
+          "no-unused-vars": ["error", { varsIgnorePattern: "^größe" }],
+          "max-len": ["error", { code: 30, ignorePattern: "^// 💩.é" }],
+          "capitalized-comments": ["error", "always", { ignorePattern: "ünï|💩" }],
+          "no-restricted-imports": ["error", { patterns: [{ regex: "^@scope/(?!erlaubt/ü)" }] }],
+          // A character outside the BMP is one character with the `u` flag, and two without.
+          "no-restricted-syntax": ["error", "Identifier[name=/^.𝒳$/u]", "Literal[value=/^..$/]"],
+        }),
+        "a.js": [
+          `import "@scope/erlaubt/ü";`,
+          `import "@scope/erlaubt/u";`,
+          `// 💩xé is ignored however long it is`,
+          `// 💩xe is not ignored, and too long`,
+          `// ünï starts small`,
+          `// élan starts small too`,
+          `let größeDesFensters = 1;`,
+          `let Größe = 2;`,
+          `a𝒳("💩", "ab", "é");`,
+          ``,
+        ].join("\n"),
+      },
+      ["a.js"],
+    );
+    expect(stdout).toMatchInlineSnapshot(`
+      "<dir>/a.js
+        2:1   error  '@scope/erlaubt/u' import is restricted from being used by a pattern                  no-restricted-imports
+        4:1   error  This line has a length of 35. Maximum allowed is 30                                   max-len
+        6:1   error  Comments should not begin with a lowercase character                                  capitalized-comments
+        8:5   error  Identifier 'Größe' does not match the pattern '^/p{Ll}[/p{L}/p{N}]*$'                 id-match
+        8:5   error  'Größe' is assigned a value but never used. Allowed unused vars must match /^größe/u  no-unused-vars
+        9:1   error  Using 'Identifier[name=/^.𝒳$/u]' is not allowed                                      no-restricted-syntax
+        9:5   error  Using 'Literal[value=/^..$/]' is not allowed                                          no-restricted-syntax
+        9:11  error  Using 'Literal[value=/^..$/]' is not allowed                                          no-restricted-syntax
+
+      ✖ 8 problems (8 errors, 0 warnings)
+        1 error and 0 warnings potentially fixable with the \`--fix\` option."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("one is shared by all threads", async () => {
+    const files: Record<string, string> = {
+      // A quantified group: what a match of it can go back to is kept with the compiled pattern.
+      "eslint.config.js": config({ "id-match": ["error", "^(?:[a-z]+[A-Z]?)+\\d*$"] }),
+    };
+    for (let file = 0; file < 48; file++) {
+      let text = "";
+      for (let name = 0; name < 100; name++) {
+        text += `export const someName${Buffer.alloc(2 * (name % 7), "Of").toString()}${file}${name} = 0;\n`;
+      }
+      files[`f${file}.js`] = `${text}export const Wrong_${file} = 0;\n`;
+    }
+    const { raw, exitCode } = await lint(files, ["--threads=8", "--format=json"]);
+    const reported = (JSON.parse(raw) as { messages: { message: string }[] }[]).flatMap(it => it.messages);
+    expect(reported.map(it => it.message).sort()).toEqual(
+      Array.from(
+        { length: 48 },
+        (_, file) => `Identifier 'Wrong_${file}' does not match the pattern '^(?:[a-z]+[A-Z]?)+\\d*$'.`,
+      ).sort(),
+    );
+    expect(exitCode).toBe(1);
   });
 });
 

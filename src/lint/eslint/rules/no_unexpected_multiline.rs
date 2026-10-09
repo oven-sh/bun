@@ -101,7 +101,12 @@ impl NoUnexpectedMultiline {
         if let Some(after) = cx.file().token_after(second_slash)
             && after.kind() == TokenKind::Identifier
             && after.start() == second_slash.end
-            && after.value().iter().all(|c| matches!(c, b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y'))
+            && after.value().iter().all(|c| match c {
+                b'g' | b'i' | b'm' | b's' | b'u' | b'y' => true,
+                // oxlint does not know these flags.
+                b'd' | b'v' => !cx.language().is_oxlint,
+                _ => false,
+            })
         {
             cx.report(first_slash, DIVISION);
         }

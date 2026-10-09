@@ -158,6 +158,8 @@ pub(crate) struct Config {
     missing_plugins: Vec<Vec<u8>>,
     /// How the names of the files end that the plugins it names add to what Prettier reads.
     endings_of_plugins: Vec<&'static [u8]>,
+    /// The packages that it names as plugins: not paths, not objects.
+    packages_of_plugins: Vec<Vec<u8>>,
     /// `ignorePatterns` of oxfmt.
     pub(crate) ignores: Chain,
 }
@@ -513,6 +515,10 @@ impl Config {
                 .filter(|it| is_missing_plugin(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
+            packages_of_plugins: (plugins.iter().filter_map(Json::as_str))
+                .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
+                .map(<[u8]>::to_vec)
+                .collect(),
             endings_of_plugins: (plugins.iter())
                 .filter_map(|it| endings_of_plugin(it.as_str()?))
                 .flatten()
@@ -862,7 +868,7 @@ impl<'c> Configs<'c> {
         if json
             .get(b"plugins")
             .and_then(Json::as_array)
-            .is_some_and(|it| !it.iter().all(is_built_in))
+            .is_some_and(|it| (it.iter()).any(|it| it.as_str().is_none_or(is_missing_plugin)))
         {
             self.warn(&[
                 b"Plugins are not supported: \"plugins\" in ",
@@ -1061,6 +1067,32 @@ impl<'c> Configs<'c> {
             .flat_map(|config| &config.endings_of_plugins)
             .chain(of_flags)
             .any(|ending| path.ends_with(ending))
+    }
+
+    /// The plugin that adds the language of the file at `path`, which has `scope`, if Prettier reads it with one.
+    pub(crate) fn plugin_that_reads(&self, scope: &Scope, path: &[u8]) -> Option<&'static [u8]> {
+        PLUGINS_FOR_LANGUAGES
+            .iter()
+            .find(|it| it.1.iter().any(|ending| path.ends_with(ending)))
+            .filter(|_| self.is_read_by_plugin(scope, path))
+            .map(|it| it.0)
+    }
+
+    /// The packages that Prettier loads as plugins for the files that have `scope`.
+    pub(crate) fn packages_of_plugins<'s>(
+        &'s self,
+        scope: &'s Scope,
+    ) -> impl Iterator<Item = &'s [u8]> {
+        (self.config_of(scope).ok().flatten())
+            .into_iter()
+            .flat_map(|config| &config.packages_of_plugins)
+            .chain(&self.options.plugins)
+            .map(|it| &it[..])
+    }
+
+    /// The configuration file for the files that have `scope`.
+    pub(crate) fn path_of_config<'s>(&'s self, scope: &'s Scope) -> Option<&'s [u8]> {
+        (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
     }
 
     /// Whether the configuration of oxfmt has `svelte`, which turns on the formatting of `.svelte` files.

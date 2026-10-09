@@ -46,6 +46,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) js_plugins: &'c Host<'c>,
     /// The rules that comments turn on and that did not run: they are of plugins that are not loaded.
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
+    /// The files in which the type checker ran out of stack, so that the rules that need types may have missed something.
+    pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,

@@ -862,6 +862,16 @@ impl Parser<'_> {
         list
     }
 
+    /// `parseTypeArguments` does not rescan a `<<`. Babel's does.
+    #[inline]
+    pub(crate) fn is_at_type_arguments_of_heritage_element(&mut self) -> bool {
+        if self.token() == T::LessThanLessThan && self.options.dialect.babel {
+            self.lx.token = T::LessThan;
+            self.lx.end = self.lx.start + 1;
+        }
+        self.token() == T::LessThan
+    }
+
     /// `parseTypeArguments`, at the `<`: the list, and what `checkGrammarTypeArguments` reports
     /// about it where it is called.
     pub(crate) fn type_arguments_unchecked(

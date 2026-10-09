@@ -57,6 +57,30 @@ impl PreferPromiseRejectErrors {
         let Some(executor) = construction.args().first().and_then(ast_utils::as_function) else {
             return;
         };
+        // oxlint knows the second argument also as the `rest[1]` of `(...rest) => ..` and the `rest[0]` of
+        // `(resolve, ...rest) => ..`.
+        let params = executor.params();
+        if cx.language().is_oxlint
+            && params.len() <= 2
+            && let Some(rest) = params.last().filter(|it| it.is_rest())
+        {
+            let position = (2 - params.len()) as f64;
+            for reference in rest.pat().symbol().into_iter().flat_map(Symbol::references) {
+                if let Some(identifier) = reference.expr().filter(|it| !it.is_parenthesized())
+                    && let Node::Expr(member) = identifier.parent()
+                    && let ExprKind::Index { obj, index, .. } = member.kind()
+                    && obj == identifier
+                    && matches!(index.kind(), ExprKind::Number(it) if it == position)
+                    && !index.is_parenthesized()
+                    && let Node::Expr(parent) = member.parent()
+                    && let ExprKind::Call(call) = parent.kind()
+                    && call.callee() == member
+                {
+                    self.check_reject_call(parent, call, cx);
+                }
+            }
+            return;
+        }
         let Some(reject) = executor.params_with_this().nth(1) else {
             return;
         };

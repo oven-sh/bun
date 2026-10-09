@@ -225,7 +225,9 @@ impl Args {
             }
         }
         parsed.options.sort_imports = sort_imports::from_flags(&parsed.flags);
-        parsed.options.embedded_html = parsed.flags.contains_key("embeddedHtml");
+        // As the driver has it.
+        parsed.options.embedded_html =
+            (parsed.flags.get("embeddedHtml")).is_none_or(|it| it != "false");
         parsed
     }
 

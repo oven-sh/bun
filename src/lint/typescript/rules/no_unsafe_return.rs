@@ -29,6 +29,10 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     let Some(function_node) = get_parent_function_node(return_node) else {
         return;
     };
+    let keyword = match function_node.arrow_span() {
+        Some(arrow) if matches!(function_node.body(), FnBody::Expr(body) if body == return_node) => arrow,
+        _ => Span::new(reporting_node.start, reporting_node.start + "return".len() as u32),
+    };
     // oxlint points at what is returned.
     let reporting_node = if cx.language().is_oxlint { return_node.outer_span() } else { reporting_node };
     let return_node_type = return_node.ty();
@@ -100,7 +104,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
             AnyType::PromiseAny => "`Promise<any>`",
             _ => "`any[]`",
         };
-        cx.report(reporting_node, message).data("type", ty);
+        cx.report(reporting_node, message).comments_apply_at(keyword).data("type", ty);
         return;
     }
 
@@ -112,6 +116,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         return;
     };
     cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)
+        .comments_apply_at(keyword)
         .data("receiver", result.receiver.to_text())
         .data("sender", result.sender.to_text());
 }

@@ -22,8 +22,12 @@ use crate::json_stage2::is_exotic_whitespace;
 type PResult<T = ()> = crate::Result<T>;
 
 /// AN EXPERIMENT ON CYCLES, for a build or two. Bits: 1 the lines of a text are touched before it is
-/// read, 2 a branch on whether a string has 8 bytes, 4 the indentation is not guessed.
+/// read, 2 a branch on whether a string has 8 bytes, 4 the indentation is not guessed, 8 strings up to 32 bytes by `std::simd`.
 pub(crate) static VARIANT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// To tell one build from another.
+#[used]
+static BUILD: [u8; 25] = *b"json_reader experiment 11";
 
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
@@ -110,20 +114,23 @@ fn is_rare(c: u8) -> bool {
 /// With what a line starts.
 #[derive(Clone, Copy)]
 struct Indentation {
-    /// The first 8 bytes of the line.
-    bytes: u64,
-    /// How many of them are before the first token. 8 if that is not known, or if they are more.
+    /// The first 16 bytes of the line.
+    bytes: [u64; 2],
+    /// How many of them are before the first token. 16 if that is not known, or if they are more.
     len: usize,
 }
 
 impl Indentation {
-    const UNKNOWN: Indentation = Indentation { bytes: 0, len: 8 };
+    const UNKNOWN: Indentation = Indentation {
+        bytes: [0; 2],
+        len: 16,
+    };
 
     /// Of the line that starts at `start`, with `bytes`, and has its first token at `token`.
     #[inline(always)]
-    fn between(bytes: u64, start: usize, token: usize) -> Indentation {
+    fn between(bytes: [u64; 2], start: usize, token: usize) -> Indentation {
         match token - start {
-            len @ ..8 => Indentation { bytes, len },
+            len @ ..16 => Indentation { bytes, len },
             _ => Indentation::UNKNOWN,
         }
     }
@@ -168,6 +175,21 @@ fn short_plain_len(text: &[u8], quote: u8) -> usize {
     let in_first = special_bytes(first, quote).trailing_zeros() / 8;
     let in_second = special_bytes(second, quote).trailing_zeros() / 8;
     (in_first + if in_first == 8 { in_second } else { 0 }) as usize
+}
+
+/// The same for the first 32 bytes.
+#[inline(always)]
+fn short_plain_len_of_32(text: &[u8], quote: u8) -> usize {
+    use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+    use std::simd::u8x32;
+    let Some(bytes) = text.first_chunk::<32>() else {
+        return short_plain_len(text, quote);
+    };
+    let bytes = u8x32::from_array(*bytes);
+    let special = bytes.simd_eq(u8x32::splat(quote))
+        | bytes.simd_eq(u8x32::splat(b'\\'))
+        | bytes.simd_lt(u8x32::splat(0x20));
+    (special.to_bitmask() | (1 << 32)).trailing_zeros() as usize
 }
 
 #[inline(always)]
@@ -368,14 +390,21 @@ impl<'a, 's> Parser<'a, 's> {
     #[inline(always)]
     fn bump_comma(&mut self, p: usize, indentation: &mut Indentation) -> usize {
         let Indentation { bytes, len } = *indentation;
-        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 10)
-            && let Some(line) = line.first_chunk::<8>()
+        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 18)
+            && let Some((low, high)) = line.split_first_chunk::<8>()
+            && let Some(high) = high.first_chunk::<8>()
         {
-            let line = u64::from_le_bytes(*line);
-            if len < 8 && self.variant & 4 == 0 {
-                let other = (line ^ bytes) & ((1 << (8 * len)) - 1);
-                let first = (line >> (8 * len)) as u8;
-                if other == 0 && first > b' ' && first != b'/' {
+            let line = [u64::from_le_bytes(*low), u64::from_le_bytes(*high)];
+            if len < 16 && self.variant & 4 == 0 {
+                // The word that the token starts in, and whether the one before is the same.
+                let (word, known, is_same) = match len < 8 {
+                    true => (line[0], bytes[0], true),
+                    false => (line[1], bytes[1], line[0] == bytes[0]),
+                };
+                let bits = 8 * (len % 8);
+                let other = (word ^ known) & ((1 << bits) - 1);
+                let first = (word >> bits) as u8;
+                if is_same && other == 0 && first > b' ' && first != b'/' {
                     self.gap_start = p + 1;
                     self.at = p + 2 + len;
                     return p + 2 + len;
@@ -855,9 +884,10 @@ impl<'a, 's> Parser<'a, 's> {
         open: usize,
     ) -> PResult<(E::Str, bool, usize)> {
         let rest = &self.contents[open + 1..];
-        let len = match self.variant & 2 != 0 {
-            true => short_plain_len_with_a_branch(rest, b'"'),
-            false => short_plain_len(rest, b'"'),
+        let len = match self.variant & 10 {
+            0 => short_plain_len(rest, b'"'),
+            2 => short_plain_len_with_a_branch(rest, b'"'),
+            _ => short_plain_len_of_32(rest, b'"'),
         };
         if rest.get(len) == Some(&b'"') {
             let string = E::Str::new(&rest[..len]);

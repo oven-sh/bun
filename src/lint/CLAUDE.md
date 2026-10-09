@@ -12,7 +12,7 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/plugins/rules/*.rs`          | `bun_lint_plugins`     | Rules of plugins: `react-hooks`, `import`, `n`, and oxlint's `oxc`, `promise`, `node`, `import`, `vue`, `jsdoc`                                 |
 | `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, .. | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration only |
 | `src/lint/oxlint/`                     | `bun_lint_oxlint`      | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                        |
-| `src/lint/standalone/`                 | `bun_lint_standalone`  | `bun-lint`, the test harness. Links without the rest of Bun                                                                                    |
+| `src/lint/standalone/`                 | `bun_lint_standalone`  | `bun-lint`, the test harness. Links without the rest of Bun, but for JavaScriptCore's regular expressions                                      |
 | `src/lint/conformance/`                | `bun_lint_conformance` | Runs the test cases below, in `bun-lint` and in `bun lint --run-eslint-tests` (debug and canary builds)                                        |
 | `test/cli/lint/conformance/bundle.zst` |                        | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                      |
 
@@ -186,8 +186,10 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-bun bd --configure-only                                              # once: the generated files that the crates include
-cargo build --release -p bun_lint_standalone -p bun_sema_standalone  # bun-lint and bun-sema. A minute
+bun bd --configure-only                                              # once: the generated files that the crates include, and the flags of the C++
+bun scripts/build/lint-standalone-native.ts target/native --fetch    # once for each version of WebKit: 450 MB
+cargo build --release -p bun_sema_standalone                         # bun-sema
+cargo rustc --release -p bun_lint_standalone --bin bun-lint -- $(bun scripts/build/lint-standalone-native.ts target/native | sed 's/^/-Clink-arg=/')
 B=target/release/bun-lint
 bun test/cli/lint/conformance/sync.ts --extract "" /tmp/fixtures     # the test cases, out of bundle.zst
 $B conformance /tmp/fixtures --rule=eqeqeq --verbose

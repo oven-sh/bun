@@ -532,9 +532,11 @@ impl Parser<'_> {
                 }
                 T::QuestionQuestion => {
                     self.next();
-                    // `checkNullishCoalesceOperands` reports `a ?? b || c`.
-                    let takes_a_mix = self.recovers && !self.options.dialect.typescript_5;
-                    let right = self.binary_expression(match takes_a_mix {
+                    // `checkNullishCoalesceOperands` reports `a ?? b || c`, and who follows acorn or
+                    // Babel looks for it in the tree.
+                    let takes_a_mix = self.recovers;
+                    let is_as_or = takes_a_mix && !self.options.dialect.typescript_5;
+                    let right = self.binary_expression(match is_as_or {
                         // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
                         true => T::BarBar.binary_precedence(),
                         false => new_precedence,
@@ -1769,6 +1771,10 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn rescan_template_piece(&mut self) {
+        // Prettier lets Babel recover from them.
+        if self.options.dialect.babel {
+            return;
+        }
         match self.recovers {
             true => self.lx.rescan_template_without_tag(),
             false => self.report(),
@@ -1951,7 +1957,8 @@ impl Parser<'_> {
     /// `parseObjectLiteralExpression`
     pub(crate) fn object_literal(&mut self) -> ExprId {
         let start = self.pos();
-        self.next();
+        // Only `parseJSONText` is here at another token.
+        let open = self.expect(T::OpenBrace).then_some(start);
         let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
         let saved = self.enter_context(0, cleared);
         let base = self.s.props.len();
@@ -1968,7 +1975,7 @@ impl Parser<'_> {
         }
         self.lists = lists;
         self.context = saved;
-        self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start));
+        self.expect_matching((T::OpenBrace, T::CloseBrace), open);
         let props: Span<PropId> = take_span!(self, props, base);
         if self.reads_jsdoc {
             self.take_property_types(base, props);
@@ -2227,6 +2234,10 @@ impl Parser<'_> {
                 _ => target,
             }
         } else {
+            // In a script `{ await }` is a shorthand.
+            if self.recovers && key == PropKey::Name(known::r#await) {
+                self.note_await();
+            }
             self.expect(T::Colon);
             self.assignment_expression_allowing_in()
         };

@@ -24,9 +24,9 @@ mod call {
 
 /// The first byte of what a call returns, after those of `processor.rs`.
 const NEEDS_CONFIGURATION: u8 = b'4';
-const NOT_INSTALLED: u8 = b'5';
+pub(super) const NOT_INSTALLED: u8 = b'5';
 
-const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+pub(super) const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 

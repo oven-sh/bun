@@ -43,7 +43,7 @@ describe.concurrent("bun format does what oxfmt does", () => {
       const named = (stdout + stderr)
         .replace(/\x1b\[[0-9;]*m/g, "")
         .split("\n")
-        .flatMap(line => (line.startsWith("[warn] ") ? [line.slice(7)] : [line]));
+        .map(line => line.replace(/^\[warn\] | \(\d+ms\)$/g, ""));
       expect({
         changed: Object.fromEntries(changed),
         listed: it.listed && it.listed.filter(name => named.includes(name)),

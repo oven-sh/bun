@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::static_property_name;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 
 /// Disallow the use of `console`.
@@ -56,11 +57,8 @@ impl NoConsole {
         if !obj.is_ident("console") || self.is_allowed(member) || member.is_jsx_tag_name() {
             return;
         }
-        // oxlint says nothing about `console[a]`.
-        if cx.language().is_oxlint
-            && member.tag() == ExprTag::Index
-            && ast_utils::get_static_property_name(member).is_none()
-        {
+        // oxlint says nothing about `console[a]` and `console[0]`.
+        if cx.language().is_oxlint && member.tag() == ExprTag::Index && static_property_name(member).is_none() {
             return;
         }
         let Some(reference) = obj.reference() else {

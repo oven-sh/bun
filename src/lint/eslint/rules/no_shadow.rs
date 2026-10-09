@@ -57,11 +57,35 @@ struct Variable<'a> {
     definition: Declaration<'a>,
     /// The range of `identifiers[0]`.
     identifier: Span,
+    /// Where it is reported: for oxlint the name alone.
+    place: Span,
     /// `isValueVariable`
     is_value: bool,
     /// ESLint's `isDuplicatedClassNameVariable`: the name of a class declaration, in the scope of
     /// the class.
     is_duplicated_class_name: bool,
+}
+
+/// What has been found out about a file.
+struct Known<'a> {
+    /// The scopes of `declare global { }`.
+    global_augmentations: SmallVec<[Scope<'a>; 1]>,
+    /// [`functions_without_body`], with a configuration of oxlint that ignores what is declared in them.
+    without_body: Vec<Span>,
+    /// Whether the file uses what it imports only as a type.
+    only_types: FxHashMap<Symbol<'a>, bool>,
+    /// [`Known::is_namespace_of_types`]
+    namespaces_of_types: FxHashMap<Symbol<'a>, bool>,
+}
+
+impl<'a> Known<'a> {
+    /// For oxlint a namespace with nothing but types in it is no value.
+    fn is_namespace_of_types(&mut self, symbol: Symbol<'a>) -> bool {
+        symbol.file().language().is_oxlint
+            && symbol.declaration_kinds().contains(DeclarationKinds::TS_MODULE_NAME)
+            && *(self.namespaces_of_types.entry(symbol))
+                .or_insert_with(|| utils::oxlint::is_namespace_of_types(symbol))
+    }
 }
 
 /// The class of `class A<A> {}`, given the type parameter. For ESLint the two are one variable of the
@@ -81,7 +105,7 @@ fn class_declaration_with_the_name_of<'a>(definition: Declaration<'a>, name: Nam
 }
 
 impl<'a> Variable<'a> {
-    fn new(symbol: Symbol<'a>) -> Option<Self> {
+    fn new(symbol: Symbol<'a>, known: &mut Known<'a>) -> Option<Self> {
         let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
         // The name of an enum member in quotes is not an identifier.
         let mut with_identifier = symbol.declarations().find(|it| match it {
@@ -110,10 +134,44 @@ impl<'a> Variable<'a> {
             scope: symbol.scope(),
             definition,
             identifier,
-            is_value: class.is_some() || symbol.is_value_variable(),
+            place: match symbol.file().language().is_oxlint {
+                true => with_identifier.name_span()?,
+                false => identifier,
+            },
+            is_value: class.is_some() || symbol.is_value_variable() && !known.is_namespace_of_types(symbol),
             is_duplicated_class_name: class.is_some(),
         })
     }
+}
+
+/// Where the function types, the signatures and the functions without a body of the file are, in its order, without
+/// those that are in another of them.
+fn functions_without_body<'a>(file: &'a File<'a>) -> Vec<Span> {
+    let is_one = |scope: &Scope| match scope.kind() {
+        ScopeKind::FunctionType => true,
+        ScopeKind::Function => matches!(scope.node(), Node::Func(func) if !func.has_body()),
+        _ => false,
+    };
+    let mut all: Vec<Span> = file.scopes().filter(is_one).map(Scope::span).collect();
+    utils::sort::sort_unstable_by_key(&mut all, |it| (it.start, u32::MAX - it.end));
+    let mut end = 0;
+    all.retain(|it| {
+        let is_outermost = it.end > end;
+        end = end.max(it.end);
+        is_outermost
+    });
+    all
+}
+
+/// oxlint's `is_function_type_parameter_name_value_shadow`: whatever it is, it is declared in one of `all`, which are
+/// [`functions_without_body`]. The name of a function is not declared in that function.
+fn is_declared_in_function_without_body(variable: &Variable, all: &[Span]) -> bool {
+    let at = match variable.definition {
+        Declaration::Fn(func) => func.scope().map_or(variable.place.start, |it| it.span().start),
+        _ => variable.place.start,
+    };
+    let after = all.partition_point(|it| it.start < at);
+    after.checked_sub(1).and_then(|it| all.get(it)).is_some_and(|it| at < it.end)
 }
 
 /// The scope of a `declare global { }`.
@@ -496,18 +554,17 @@ impl Checker {
         symbol: Symbol<'a>,
         shadowed: Option<Symbol<'a>>,
         is_global_value: bool,
-        global_augmentations: &[Scope<'a>],
-        only_types: &mut FxHashMap<Symbol<'a>, bool>,
+        known: &mut Known<'a>,
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
             return;
         }
-        let Some(variable) = Variable::new(symbol) else {
+        let Some(variable) = Variable::new(symbol, known) else {
             return;
         };
         let shadowed = match shadowed {
-            Some(shadowed) => match Variable::new(shadowed) {
+            Some(shadowed) => match Variable::new(shadowed, known) {
                 Some(shadowed) => Some(shadowed),
                 // `arguments` or an enum member in quotes, which hide what is further out.
                 None => return,
@@ -515,31 +572,33 @@ impl Checker {
             None => None,
         };
         let file = cx.file();
-        if is_global_augmentation(variable.scope, global_augmentations)
+        if is_global_augmentation(variable.scope, &known.global_augmentations)
             || variable.is_duplicated_class_name
             || self.is_declare_in_dts_file(file, &variable)
             || self.is_type_value_shadow(&variable, shadowed.as_ref())
             || self.is_function_type_parameter_name_value_shadow(&variable, shadowed.as_ref(), is_global_value)
+            || is_declared_in_function_without_body(&variable, &known.without_body)
             || self.is_generic_of_a_static_method_shadow(&variable, shadowed.as_ref())
         {
             return;
         }
         let Some(shadowed) = shadowed else {
-            cx.report(variable.identifier, NO_SHADOW_GLOBAL).data("name", name);
+            cx.report(variable.place, NO_SHADOW_GLOBAL).data("name", name);
             return;
         };
         if is_function_name_initializer_exception(&variable, &shadowed)
             || (self.ignore_on_initialization && is_init_pattern_node(&variable, &shadowed))
             || self.is_in_tdz(&variable, &shadowed)
             || self.is_external_declaration_merging(&variable, &shadowed)
-            || file.language().is_oxlint && oxlint_is_import_used_only_as_type(&variable, &shadowed, only_types)
+            || file.language().is_oxlint
+                && oxlint_is_import_used_only_as_type(&variable, &shadowed, &mut known.only_types)
         {
             return;
         }
         let is_enum = self.dialect == Dialect::TypeScriptEslint
             && shadowed.symbol.declaration_kinds().contains(DeclarationKinds::TS_ENUM_NAME);
         let position = file.position(shadowed.identifier.start);
-        cx.report(variable.identifier, if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW })
+        cx.report(variable.place, if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW })
             .data("name", name)
             .data("shadowedLine", position.line)
             .data("shadowedColumn", position.column + 1);
@@ -553,8 +612,16 @@ impl Checker {
         if file.has_stmts([StmtTag::Module]) {
             global_augmentations.extend(file.scopes().filter(|it| is_scope_of_global_augmentation(*it)));
         }
-        // Whether the file uses what it imports only as a type.
-        let mut only_types = FxHashMap::default();
+        let without_body = match file.language().is_oxlint && self.ignore_function_type_parameter_name_value_shadow {
+            true => functions_without_body(file),
+            false => Vec::new(),
+        };
+        let mut known = Known {
+            global_augmentations,
+            without_body,
+            only_types: FxHashMap::default(),
+            namespaces_of_types: FxHashMap::default(),
+        };
         for scope in file.scopes() {
             let Some(upper) = scope.parent() else {
                 continue;
@@ -572,7 +639,7 @@ impl Checker {
                 // What TypeScript merges from several namespaces is listed in the scope of each.
                 if (shadowed.is_some() || global.is_some()) && symbol.scope() == scope {
                     let is_global_value = global.is_none_or(|it| it.is_value);
-                    self.check_variable(cx, symbol, shadowed, is_global_value, &global_augmentations, &mut only_types);
+                    self.check_variable(cx, symbol, shadowed, is_global_value, &mut known);
                 }
             }
         }

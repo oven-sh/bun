@@ -24,6 +24,11 @@ fn has_yield_from(statement: Stmt, from: u32) -> bool {
         .is_some_and(|func| func.yields().any(|it| within.contains(it.span())))
 }
 
+/// For oxlint the parentheses around a test are part of it.
+fn place(test: Expr) -> Span {
+    if test.file().language().is_oxlint { test.outer_span() } else { test.span() }
+}
+
 impl NoConstantCondition {
     fn check_loop<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // A `yield` in the `init` of a `for` is evaluated once, before the loop.
@@ -38,8 +43,10 @@ impl NoConstantCondition {
             StmtKind::For { test: Some(test), .. } => (test, test.span().start),
             _ => return,
         };
-        if ast_utils::is_constant(test, true) && !has_yield_from(statement, from) {
-            cx.report(test, UNEXPECTED);
+        // oxlint looks for a `yield` only with the default option.
+        let looks_for_yield = !cx.language().is_oxlint || self.check_loops == CheckLoops::AllExceptWhileTrue;
+        if ast_utils::is_constant(test, true) && !(looks_for_yield && has_yield_from(statement, from)) {
+            cx.report(place(test), UNEXPECTED);
         }
     }
 }
@@ -64,14 +71,14 @@ impl Rule for NoConstantCondition {
             if let ExprKind::Cond { test, .. } = e.kind()
                 && ast_utils::is_constant(test, true)
             {
-                cx.report(test, UNEXPECTED);
+                cx.report(place(test), UNEXPECTED);
             }
         });
         on.stmts([StmtTag::If], |_, statement, cx| {
             if let StmtKind::If { test, .. } = statement.kind()
                 && ast_utils::is_constant(test, true)
             {
-                cx.report(test, UNEXPECTED);
+                cx.report(place(test), UNEXPECTED);
             }
         });
         if self.check_loops != CheckLoops::None {

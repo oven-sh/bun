@@ -335,6 +335,7 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_line_suffix();
                 self.sink.token(" ");
             }
+            self.index_in_comma_group = i;
             self.value_stack.push(id);
             self.print_value(statement, i_node.id, prev_node.map(|it| it.id));
             self.value_stack.pop();
@@ -777,25 +778,27 @@ impl<'a> Printer<'a, '_> {
         .ends_with(b",")
     }
 
-    /// Writes the comments before the key of `item`, a pair of a key and a value in the list `list`, each on a line of its
-    /// own, where oxfmt has them: next to the pair, not in it.
+    /// Writes the comments before the key of `item`, a pair of a key and a value in the list `list`, where oxfmt has them: next
+    /// to the pair, not in it, and each on a line of its own if the pair takes more than one. Returns whether it has started
+    /// the group for that, which the caller ends behind the pair.
     fn print_comments_above_pair(
         &mut self,
         statement: Statement<'_, 'a>,
         list: ValueId,
         item: ValueRef<'_>,
-    ) {
+    ) -> bool {
         if !self.is_oxfmt
             || item.kind() != ValueKind::CommaGroup
             || !item.group(0).is_some_and(is_comment)
             || self.at_rule_around(statement).is_some()
         {
-            return;
+            return false;
         }
         let count = item.groups().take_while(|it| is_comment(*it)).count();
         if count == 0 || !item.group(count + 1).is_some_and(is_colon) {
-            return;
+            return false;
         }
+        self.sink.start_group(false);
         for comment in item.groups().take(count) {
             if comment.id == self.comment_behind_comma {
                 self.comment_behind_comma = 0;
@@ -804,9 +807,13 @@ impl<'a> Printer<'a, '_> {
             self.value_stack.push(list);
             self.print_child_value(statement, item.id, comment.id);
             self.value_stack.pop();
-            self.sink.hard_line();
+            match is_inline_comment(comment) {
+                true => self.sink.hard_line(),
+                false => self.sink.line(),
+            }
         }
         self.comments_above_item = (item.id, count);
+        true
     }
 
     /// For oxfmt a `//` comment on the line of a comma stays there. For Prettier it is the first of what follows the comma,
@@ -865,8 +872,20 @@ impl<'a> Printer<'a, '_> {
             return false;
         }
         let grandparent = self.value_ancestor(statement, 1);
-        let is_in_pair = grandparent.is_some_and(is_key_value_pair_in_paren_group);
-        if !is_key_value_pair_in_paren_group(node) && !is_in_pair {
+        // For oxfmt a map is a map with a comment before its first key too.
+        let starts_with_pair = |it: ValueRef<'_>| match self.is_oxfmt {
+            true => {
+                it.kind() == ValueKind::ParenGroup
+                    && it.group(0).is_some_and(|first| {
+                        let key = first.groups().take_while(|it| is_comment(*it)).count();
+                        first.kind() == ValueKind::CommaGroup
+                            && first.group(key + 1).is_some_and(is_colon)
+                    })
+            }
+            false => is_key_value_pair_in_paren_group(it),
+        };
+        let is_in_pair = grandparent.is_some_and(starts_with_pair);
+        if !starts_with_pair(node) && !is_in_pair {
             return false;
         }
         // `$map: (key: value, other-key: other-value)`
@@ -991,12 +1010,17 @@ impl<'a> Printer<'a, '_> {
                     .is_some_and(|value| text::eq_lower_case(value, b"var"))
         });
         let is_scss_map_item = self.is_scss_map_item(statement, node);
-        let index_in_parent = parent.and_then(|parent| {
-            parent
-                .groups()
-                .position(|it| it.id == id)
+        // What has written the group that this is in knows. There can be as many of these in it as the text is long.
+        let hint = self.index_in_comma_group;
+        let index_in_parent = parent
+            .filter(|it| it.kind() == ValueKind::CommaGroup)
+            .and_then(|parent| {
+                match parent.group(hint).is_some_and(|it| it.id == id) {
+                    true => Some(hint),
+                    false => parent.groups().position(|it| it.id == id),
+                }
                 .map(|index| (parent, index))
-        });
+            });
         // `isKeyInValuePairNode`
         let is_key = index_in_parent.is_some_and(|(parent, index)| {
             is_key_value_pair(parent) && parent.group(index + 1).is_some_and(is_colon)
@@ -1036,7 +1060,7 @@ impl<'a> Printer<'a, '_> {
                 self.sink.line();
             }
             // For oxfmt the comments before a key make no difference to what follows them.
-            self.print_comments_above_pair(statement, id, child);
+            let is_in_group_with_comments = self.print_comments_above_pair(statement, id, child);
             let key = match self.comments_above_item {
                 (item, count) if item == child.id => count,
                 _ => 0,
@@ -1059,6 +1083,9 @@ impl<'a> Printer<'a, '_> {
             self.comments_above_item = (0, 0);
             if is_dedented {
                 self.sink.end_indent();
+                self.sink.end_group();
+            }
+            if is_in_group_with_comments {
                 self.sink.end_group();
             }
 

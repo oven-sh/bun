@@ -39,12 +39,13 @@ fn plain_name(option: &[u8], parser: Parser) -> Option<&[u8]> {
 
 /// The plugin's `createMatcher`, asked about the attribute called `name`.
 fn value_of(name: &[u8], parser: Parser, tailwind: &Tailwind) -> Value {
-    let options = &tailwind.attributes;
+    let options = tailwind.attributes.names();
     let is_plain = |name: &[u8]| {
         name == b"class"
             || options
                 .iter()
                 .any(|it| plain_name(it, parser) == Some(name))
+            || tailwind.attributes.has_pattern_for(name)
     };
     match name_of_binding(name, parser) {
         None if is_plain(name) => Value::Classes,

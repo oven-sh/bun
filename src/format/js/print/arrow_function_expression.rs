@@ -1,5 +1,6 @@
 use super::function::{FormatContentWithCacheMode, FormatFunctionBody};
 use super::parameters::{FormatFormalParameters, comments_between, has_only_simple_parameters};
+use super::sequence_expression::span_that_comments_lead;
 use super::type_parameters::type_parameters;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
 use crate::js::trivia::comments_stay_between_head_and_body;
@@ -643,6 +644,11 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
     }
 }
 
+/// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier.
+fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
     if f.is_quiet() {
@@ -655,12 +661,31 @@ fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
         // The comments are outside of the parentheses.
         let span = body.span();
         let is_suppressed = f.comments().is_suppressed(span.start);
-        write!(f, [format_leading_comments(span), "("]);
-        match is_suppressed {
-            true => write!(f, FormatSuppressedNode(span)),
-            false => write_expression(body, ExprOptions::None, f),
-        }
-        return write!(f, ")");
+        let leading = span_that_comments_lead(body, f);
+        let content = format_with(|f| {
+            match f.comments().comments_before(span.start) {
+                // But for one that is about the parentheses behind it.
+                [others @ .., cast]
+                    if sequence_behind_comments_is_on_its_own_line(f)
+                        && f.comments().is_cast_parenthesis(span.start) =>
+                {
+                    let cast = FormatLeadingComments::Comments(std::slice::from_ref(cast));
+                    write!(f, [FormatLeadingComments::Comments(others), "(", cast]);
+                }
+                _ => write!(f, [format_leading_comments(leading), "("]),
+            }
+            match is_suppressed {
+                true => write!(f, FormatSuppressedNode(span)),
+                false => write_expression(body, ExprOptions::None, f),
+            }
+            write!(f, ")");
+        });
+        return match sequence_behind_comments_is_on_its_own_line(f)
+            && f.comments().has_comment_before(leading.start)
+        {
+            true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),
+            false => write!(f, content),
+        };
     }
     write!(f, body);
     // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.

@@ -2,7 +2,7 @@
 
 use super::expressions::{is_last_binary_operand_comment, unary_argument_has_comments};
 use crate::js::format::write_trailing_comments_of;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -79,7 +79,7 @@ impl<'a> BinaryLikeExpression<'a> {
         while let Some(right) = last.right_with_same_operator(f) {
             last = right;
         }
-        is_inlined_operand(last.right) && !is_cast_target(last.right, f)
+        is_inlined_operand(last.right) && !is_cast_target_that_hides_its_kind(last.right, f)
     }
 
     /// Whether `parent` indents it already.
@@ -340,7 +340,9 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             && let Some(right_logical) = binary_like_expression.right_with_same_operator(f)
         {
             if operands != Operands::Last {
-                write_trailing_comments_of_nested(binary_like_expression.left, f);
+                if !comment_behind_chain_leads_chain_in_parentheses(f) {
+                    write_trailing_comments_of_nested(binary_like_expression.left, f);
+                }
                 let right = right_logical.left;
                 write_operator(operator, right, is_inlined_operand(right), f);
                 match BinaryLikeExpression::new(right_logical.left)
@@ -442,6 +444,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
 }
 
 /// Whether `operator`, which is being written, is the `|` before a filter of Vue: a line is broken before it.
+/// `a || b || // comment⏎(c || d)`: for oxfmt the comment gets a line of its own before `c`.
+fn comment_behind_chain_leads_chain_in_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 fn is_before_vue_filter(operator: BinOp, f: &Formatter<'_>) -> bool {
     operator == BinOp::BitOr && f.context().is_vue_filter_sequence.get()
 }

@@ -14,12 +14,12 @@ use crate::cli::{Options, Tool};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
-use crate::{eslintrc, evaluate, fs, paths};
+use crate::{eslintrc, evaluate, fs, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::linter::{
-    Config, LegacyFile, LegacyOptions, Linter, RcFlavor, ResolvedConfig, oxlint_category_of_key,
+    Config, LegacyFile, LegacyOptions, Linter, ResolvedConfig, oxlint_category_of_key,
     oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
@@ -177,10 +177,12 @@ impl Loaded {
         Framework::of(path).filter(|_| self.flavor == Flavor::Oxlint)
     }
 
-    /// How the file at `path`, which has `config`, is linted. Only an `eslint.config.js` has processors.
+    /// How the file at `path`, which has `config`, is linted. oxlint has no processors.
     pub(crate) fn routes(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
         match config.route(path) {
-            Route::Processor if self.flavor != Flavor::Eslint => Route::Unsupported,
+            Route::Processor if !matches!(self.flavor, Flavor::Eslint | Flavor::EslintRc) => {
+                Route::Unsupported
+            }
             Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
             route => route,
         }
@@ -208,8 +210,12 @@ pub(crate) struct Loader<'l> {
     flat_config: Option<bool>,
     /// [`Loader::is_command_line_of_eslint_8`]
     is_legacy: OnceLock<bool>,
+    /// [`rulesdir::load`]: once, for the files of all directories.
+    rulesdir: OnceLock<Result<Json, Fatal>>,
     /// [`Loader::tool`]
     tool: OnceLock<Option<Flavor>>,
+    /// [`Loader::undecided`]
+    undecided: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
     wants_types: OnceLock<Option<bool>>,
     /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
@@ -351,6 +357,11 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
             oxlint_category_of_key(&oxlint_rule_key(it)).map(str::as_bytes) == Some(category)
         });
     }
+    let of_the_file = entries.iter().find(|it| it.0 == b"categories");
+    let of_the_file = of_the_file.map_or_else(|| Json::Object(Vec::new()), |it| it.1.clone());
+    if !filters.is_empty() {
+        entries.push((b"$categoriesOfTheFile".to_vec(), of_the_file));
+    }
     for (severity, name) in filters {
         if name == b"all" {
             if *severity == Severity::Off {
@@ -389,7 +400,9 @@ impl<'l> Loader<'l> {
             unsupported: Guarded::new(Vec::new()),
             flat_config: eslintrc::uses_flat_config(),
             is_legacy: OnceLock::new(),
+            rulesdir: OnceLock::new(),
             tool: OnceLock::new(),
+            undecided: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
         }
@@ -551,8 +564,8 @@ impl<'l> Loader<'l> {
         .map_err(|error| Fatal(error.message))
     }
 
-    /// An `.oxlintrc.json` or `.eslintrc.json`, with what the command line adds.
-    fn rc(&self, path: &[u8], mut json: Json, flavor: RcFlavor) -> Result<Config, Fatal> {
+    /// An `.oxlintrc.json`, with what the command line adds.
+    fn rc(&self, path: &[u8], mut json: Json) -> Result<Config, Fatal> {
         let options = self.options;
         if let Json::Object(entries) = &mut json {
             let mut put =
@@ -594,12 +607,8 @@ impl<'l> Loader<'l> {
             if last.len() > 1 {
                 put(b"overrides", vec![object(last)]);
             }
-            // oxlint's `--no-ignore` is about the command line and `.eslintignore` only.
-            if !options.ignore && flavor == RcFlavor::Eslint {
-                entries.retain(|it| it.0 != b"ignorePatterns");
-            }
             apply_filters(entries, &options.filters);
-            if flavor == RcFlavor::Oxlint && !options.plugins.is_empty() {
+            if !options.plugins.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
                     _ => [&b"unicorn"[..], b"typescript", b"oxc"]
@@ -618,22 +627,18 @@ impl<'l> Loader<'l> {
                 entries.retain(|it| it.0 != b"plugins");
                 entries.push((b"plugins".to_vec(), Json::Array(plugins)));
             }
-            let of_file = (entries
-                .iter()
-                .find(|it| it.0 == b"options")
-                .filter(|_| flavor == RcFlavor::Oxlint))
-            .and_then(|it| it.1.get(b"reportUnusedDisableDirectives"))
-            .and_then(|it| match it.as_str()? {
-                b"allow" | b"off" => Some(Severity::Off),
-                b"warn" => Some(Severity::Warn),
-                b"deny" | b"error" => Some(Severity::Error),
-                _ => None,
-            });
-            let unused = match (options.report_unused_disable_directives, flavor) {
+            let of_file = (entries.iter().find(|it| it.0 == b"options"))
+                .and_then(|it| it.1.get(b"reportUnusedDisableDirectives"))
+                .and_then(|it| match it.as_str()? {
+                    b"allow" | b"off" => Some(Severity::Off),
+                    b"warn" => Some(Severity::Warn),
+                    b"deny" | b"error" => Some(Severity::Error),
+                    _ => None,
+                });
+            let unused = match options.report_unused_disable_directives {
                 // oxlint warns.
-                (true, RcFlavor::Oxlint) => Some(Severity::Warn),
-                (true, RcFlavor::Eslint) => Some(Severity::Error),
-                (false, _) => options
+                true => Some(Severity::Warn),
+                false => options
                     .report_unused_disable_directives_severity
                     .or(of_file),
             };
@@ -645,49 +650,22 @@ impl<'l> Loader<'l> {
                 ));
             }
         }
-        // An `.eslintrc.json` that `--config` names is for the working directory, wherever it is. What
-        // it extends is next to it. The patterns of oxlint are from the directory of the file.
-        let base_path = if options.config.is_some() && flavor == RcFlavor::Eslint {
-            self.cwd()
-        } else {
-            paths::dirname(path)
-        };
-        let mut moved: Vec<(Vec<u8>, Vec<u8>)> =
-            vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
         let mut load = |directory: &[u8], name: &[u8]| {
-            // For oxlint it is a path if it looks like one: it has an extension. It does not know the names of packages.
+            // It is a path if it looks like one: it has an extension. oxlint does not know the names of packages.
             let has_extension = strings::last_index_of_char(paths::basename(name), b'.') > Some(0);
             if !name.starts_with(b".") && !paths::is_absolute(name) && !has_extension {
                 return None;
             }
-            // Where the reader takes a file to be, and where it is.
-            let real = moved
-                .iter()
-                .find(|it| it.0 == directory)
-                .map_or(directory, |it| &it.1[..]);
-            let file = paths::resolve(real, name);
-            let taken_for = paths::resolve(directory, name);
-            if taken_for != file {
-                moved.push((
-                    paths::dirname(&taken_for).to_vec(),
-                    paths::dirname(&file).to_vec(),
-                ));
-            }
-            bun_lint::json::parse(&fs::read(&file).ok()?)
+            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
         };
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
-            let directory = if directory == base_path {
-                paths::dirname(path)
-            } else {
-                directory
-            };
             self.js_plugins.load(directory, specifier, alias)
         };
+        // The patterns are from the directory of the file.
         Config::from_rc_json_with_plugins(
             self.linter.registry(),
-            base_path,
+            paths::dirname(path),
             &json,
-            flavor,
             &mut load,
             &mut load_plugin,
         )
@@ -709,7 +687,7 @@ impl<'l> Loader<'l> {
         if self.tool() == Some(Flavor::Oxlint) {
             let path = paths::join(self.cwd(), b".oxlintrc.json");
             return Ok(Arc::new(Loaded {
-                config: self.rc(&path, Json::Object(Vec::new()), RcFlavor::Oxlint)?,
+                config: self.rc(&path, Json::Object(Vec::new()))?,
                 flavor: Flavor::Oxlint,
                 wants_types: Some(false),
                 denies_warnings: false,
@@ -809,7 +787,7 @@ impl<'l> Loader<'l> {
             }
         }
         let config = match flavor {
-            Flavor::Eslint | Flavor::BuiltIn => {
+            Flavor::Eslint | Flavor::BuiltIn | Flavor::EslintRc => {
                 // ESLint throws.
                 if json == Json::Null {
                     return Err(Fatal(
@@ -837,8 +815,7 @@ impl<'l> Loader<'l> {
                     },
                 )?
             }
-            Flavor::Oxlint => self.rc(path, json, RcFlavor::Oxlint)?,
-            Flavor::EslintRc => self.rc(path, json, RcFlavor::Eslint)?,
+            Flavor::Oxlint => self.rc(path, json)?,
         };
         for note in config.notes() {
             self.warn(&[note]);
@@ -951,40 +928,41 @@ impl<'l> Loader<'l> {
                 Some((directory, found.0, found.1))
             });
             // Flags that only oxlint has, or a file that only it reads.
-            let is_for_oxlint = !options.filters.is_empty()
-                || !options.plugins.is_empty()
-                || options.deny_warnings
-                || options.disable_nested_config
-                || options.fix_suggestions
+            let is_for_oxlint = options.has_flag_of_oxlint
                 || (options.config.as_ref()).is_some_and(|it| {
                     is_written_for_oxlint(&paths::resolve(self.cwd(), &paths::from_native(it)))
                 });
-            if let Some((directory, name, flavor)) = found {
-                let mut others = names().filter(|it| it.1 != flavor);
-                let other = others.find(|it| is_there(directory, it.0));
-                let other = other.filter(|_| wanted.is_none() && options.config.is_none());
-                let Some(other) = other.map(|it| (it.0, it.1)) else {
-                    return Some(flavor);
+            if wanted.is_none() && options.config.is_none() {
+                let nearest = |flavor: Flavor| {
+                    paths::ancestors(self.cwd()).find_map(|directory| {
+                        let mut names = names().filter(|it| it.1 == flavor);
+                        let found = names.find(|it| is_there(directory, it.0))?;
+                        Some(paths::join(directory, found.0))
+                    })
                 };
-                // Who has both runs oxlint first, and ESLint for what oxlint does not have.
-                if !is_for_oxlint {
-                    let used = match flavor {
-                        Flavor::Oxlint => name,
-                        _ => other.0,
-                    };
-                    self.warn(&[
-                        b"Both ",
-                        name,
-                        b" and ",
-                        other.0,
-                        b" found in ",
-                        directory,
-                        b": using ",
-                        used,
-                        b". Use --flavor=eslint for the other.",
-                    ]);
+                let by_flags = match (is_for_oxlint, options.has_flag_of_eslint) {
+                    (true, false) => Some(Flavor::Oxlint),
+                    (false, true) => Some(Flavor::Eslint),
+                    _ => None,
+                };
+                // Who has both runs both. A run that stands in for the wrong one leaves the rules of the other out, in silence.
+                match (nearest(Flavor::Eslint), nearest(Flavor::Oxlint), by_flags) {
+                    (Some(_), Some(_), Some(flavor)) => return Some(flavor),
+                    (Some(_), None, Some(Flavor::Oxlint)) => return Some(Flavor::Oxlint),
+                    (Some(of_eslint), Some(of_oxlint), None) => {
+                        let _ = self.undecided.set((of_eslint, of_oxlint));
+                    }
+                    (Some(of_eslint), None, None) => {
+                        if let Some((package, true, _)) = self.tools_of_the_package() {
+                            let dependency = [&b"the dependency on oxlint in "[..], &package];
+                            let _ = self.undecided.set((of_eslint, dependency.concat()));
+                        }
+                    }
+                    _ => {}
                 }
-                return Some(Flavor::Oxlint);
+            }
+            if let Some((_, _, flavor)) = found {
+                return Some(flavor);
             }
             let can_be_legacy =
                 wanted == Some(Flavor::Eslint) || wanted.is_none() && !is_for_oxlint;
@@ -1001,7 +979,21 @@ impl<'l> Loader<'l> {
     /// ESLint does not run without a configuration file.
     /// `is_decided`: the command line has said which tool it is.
     fn tool_of_the_package(&self, is_decided: bool) -> Option<Flavor> {
-        let found = paths::ancestors(self.cwd()).find_map(|directory| {
+        let (path, has_oxlint, has_eslint) = self.tools_of_the_package()?;
+        if has_oxlint && has_eslint && !is_decided {
+            self.warn(&[
+                b"No configuration file found, and ",
+                &path,
+                b" has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
+            ]);
+        }
+        has_oxlint.then_some(Flavor::Oxlint)
+    }
+
+    /// The nearest `package.json` that depends on one of the two tools, and whether it depends on oxlint, which comes with Vite+, and on
+    /// ESLint.
+    fn tools_of_the_package(&self) -> Option<(Vec<u8>, bool, bool)> {
+        paths::ancestors(self.cwd()).find_map(|directory| {
             let path = paths::join(directory, b"package.json");
             let json = bun_lint::json::parse(&fs::read(&path).ok()?)?;
             let has = |name: &[u8]| {
@@ -1013,16 +1005,15 @@ impl<'l> Loader<'l> {
             if has(b"vite-plus") {
                 let _ = self.is_of_vite.set(true);
             }
-            if has_oxlint && has_eslint && !is_decided {
-                self.warn(&[
-                    b"No configuration file found, and ",
-                    &path,
-                    b" has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
-                ]);
-            }
-            (has_oxlint || has_eslint).then(|| has_oxlint.then_some(Flavor::Oxlint))
-        });
-        found.flatten()
+            (has_oxlint || has_eslint).then_some((path, has_oxlint, has_eslint))
+        })
+    }
+
+    /// A configuration of ESLint and one of oxlint that both count for the run, where nothing on the command line tells which of the
+    /// two tools it stands in for.
+    pub(crate) fn undecided(&self) -> Option<&(Vec<u8>, Vec<u8>)> {
+        self.tool();
+        self.undecided.get()
     }
 
     /// Those of [`NAMES`] that count.
@@ -1118,34 +1109,50 @@ impl<'l> Loader<'l> {
 
     fn read_legacy(&self, directory: Option<&[u8]>) -> Found {
         let (options, cwd) = (self.options, self.cwd());
-        if let Some(rules) = options.rulesdir.first() {
-            return Err(Fatal(
-                [b"--rulesdir ", &rules[..], b" is not supported."].concat(),
-            ));
-        }
+        let rules = (!options.rulesdir.is_empty()).then(|| {
+            self.rulesdir.get_or_init(|| {
+                rulesdir::load(self.environment, &options.rulesdir, options.config_cache)
+            })
+        });
+        let rules = rules
+            .map(|it| it.as_ref().map_err(Fatal::clone))
+            .transpose()?;
         let absolute = |path: &Vec<u8>| paths::resolve(cwd, &paths::from_native(path));
+        let plugins_from = options.resolve_plugins_relative_to.as_ref().map(absolute);
+        let command_line = paths::join(cwd, b"__placeholder__.js");
+        let mut modules = eslintrc::Modules {
+            environment: self.environment,
+            keeps: options.config_cache,
+            plugins_from: plugins_from.clone(),
+            command_line: (command_line.clone(), self.legacy_command_line()),
+            printed: Vec::new(),
+        };
         let mut files = match directory {
-            Some(directory) => eslintrc::cascade(directory, cwd)?,
+            Some(directory) => eslintrc::cascade(directory, cwd, &mut modules)?,
             None => Vec::new(),
         };
+        let cascade = files.len();
+        // `createCLIConfigArray`
+        if let Some(path) = &options.config {
+            files.push(eslintrc::named(&absolute(path), cwd, &mut modules)?);
+        }
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
             files.extend(eslintrc::ignore_file(path.as_deref(), cwd)?);
         }
-        if let Some(path) = &options.config {
-            files.push(eslintrc::named(&absolute(path), cwd)?);
+        // Only if no file says anything.
+        if files.is_empty() && options.eslintrc {
+            files.extend(eslintrc::personal(cwd, &mut modules)?);
         }
         files.push(LegacyFile {
-            path: paths::join(cwd, b"__placeholder__.js"),
+            path: command_line,
             name: b"CLIOptions".to_vec(),
             base_path: cwd.to_vec(),
-            json: self.legacy_command_line(),
+            json: modules.command_line.1.clone(),
         });
-        let plugins_from = options.resolve_plugins_relative_to.as_ref();
-        let plugins_from = plugins_from.map_or_else(|| cwd.to_vec(), absolute);
-        let mut load = |kind, request: &[u8], from: &[u8]| {
+        let mut load = |kind, request: &[u8], from: &[u8], entry: &[u8]| {
             let short = plugin_shorthand(request);
-            eslintrc::load(kind, request, &short, from, &plugins_from)
+            eslintrc::load(kind, request, &short, from, entry, &mut modules)
         };
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
@@ -1156,6 +1163,9 @@ impl<'l> Loader<'l> {
                 cwd,
                 ignore: options.ignore,
                 extensions: options.ext.as_deref(),
+                rules,
+                plugins_from: plugins_from.as_deref(),
+                cascade,
             },
             &files,
             &mut load,

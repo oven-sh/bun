@@ -281,7 +281,8 @@ fn write_file_as_oxlint(
         return;
     }
     bun_lint::utils::sort::sort_by_key(rows, |it| it.line);
-    let path = fs::real_path(&paths::resolve(cwd, filename)).unwrap_or_else(|| filename.to_vec());
+    let path = fs::real_path(&paths::resolve(cwd, filename))
+        .map_or_else(|| filename.to_vec(), paths::to_native);
     out.push(b'\n');
     styled_until_reset(out, color, &UNDERLINE, &path);
     out.push(b'\n');

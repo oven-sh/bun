@@ -1096,8 +1096,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         run(20, "js", 0, "8"),
         run(24, "ts", 0, "1"),
         run(24, "js", 0, "1"),
-        run(24, "ts", 0.25, "4"),
-        run(24, "js", 0.25, "4"),
+        run(24, "ts", 1, "4"),
+        run(24, "js", 1, "4"),
       ]);
       // One, but for a hiccup of the machine.
       expect(quickWithTypes.engines).toBeLessThanOrEqual(2);

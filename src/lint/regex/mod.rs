@@ -1,7 +1,8 @@
-//! JavaScript's regular expressions, without a JavaScript engine.
+//! JavaScript's regular expressions.
 //!
-//! - [`Regex`] matches. It is for the patterns that users write in the options of rules, and for the
-//!   regular expressions that the rules of ESLint and typescript-eslint use themselves:
+//! - [`Regex`] matches: it is the `RegExp` of JavaScriptCore, without a VM (`bun_yarr`). It is for the
+//!   patterns that users write in the options of rules, and for the regular expressions that the
+//!   rules of ESLint and typescript-eslint use themselves:
 //!   `static PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::literal("/^_/u"));`
 //! - [`parse_pattern`], [`parse_literal`], [`validate_pattern`], .. are `@eslint-community/regexpp`, for
 //!   the rules about regular expressions. See [`ast`].
@@ -9,9 +10,8 @@
 //! # Matching
 //!
 //! All of ECMAScript 2025: the flags `dgimsuvy`, lookbehind, named groups and duplicates of them,
-//! backreferences, modifiers, `\p{..}`, classes with the `v` flag, Annex B. The order in which
-//! alternatives are tried, what groups capture and what ignoring case means are as the
-//! specification says.
+//! backreferences, modifiers, `\p{..}`, classes with the `v` flag, Annex B. A pattern is validated
+//! here first, so what is wrong with it is said in the words of regexpp and V8.
 //!
 //! | JavaScript | Here |
 //! | --- | --- |
@@ -32,13 +32,15 @@
 //! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
 //! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape_string_regexp`](crate::utils::text::escape_string_regexp) |
 //!
-//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`]
-//! and [`Regex::find`] start at 0 whatever the flags.
+//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. Those that
+//! search with the same one at the same time take turns. [`Regex::test`] and [`Regex::find`] start at 0
+//! whatever the flags.
 //!
 //! # Text and positions
 //!
 //! Text is bytes: UTF-8, or WTF-8 if the JavaScript string has lone surrogates. Positions are byte
-//! offsets. [`utf16_index`] and [`byte_offset`] convert.
+//! offsets. [`utf16_index`] and [`byte_offset`] convert. ASCII is searched as it is, of other text a
+//! copy in UTF-16: one for each call, so [`Regex::exec_iter`] and not [`Regex::exec_at`] in a loop.
 //!
 //! With the `u` or `v` flag a character is a code point. Without them JavaScript matches UTF-16 code
 //! units, and so does this: a character outside the BMP, four bytes here, counts as two
@@ -49,31 +51,30 @@
 //!
 //! # Limits
 //!
-//! The machine backtracks, as those of JavaScript engines do, so there are patterns that take
-//! exponential time. A search is given up after 2^27 steps, about a second: it then counts as no
-//! match. [`Regex::try_exec_at`] tells the difference. Nothing recurses on the text.
+//! The engine backtracks, so there are patterns that take exponential time, and nothing stops a
+//! search after some time: `/.*.*.*.*x/` on 3,000 characters takes hours at least, here as in ESLint.
+//! A pattern is a part of the configuration, which is trusted.
+//!
+//! JavaScriptCore gives a search up after 10^8 attempts at quantified groups, which take seconds,
+//! or when it has 192 MB to go back to. That counts as no match, and cannot be told from it.
+//!
+//! It refuses a pattern of more than 2^20 characters or 2^15 groups, and `\p{Script=Hrkt}`. Its
+//! strings have less than 2^31 characters: in a longer text nothing is found.
 //!
 //! Groups and classes nest at most 250 deep: beyond that a pattern is a [`SyntaxError`], for the
 //! parser as well.
 //!
-//! Patterns that start with `^`, a literal or a small set of bytes skip to where a match can start
-//! with `bun_core::strings`, and `^_` on an identifier takes about 20 ns.
-//!
 //! The scripts in test/cli/lint/oracle/regex compare all of this with regexpp, JavaScriptCore and V8.
 
 pub mod ast;
-mod charset;
-mod compile;
-mod exec;
 mod parser;
-mod program;
+mod subject;
 mod unicode;
 mod unicode_tables;
 mod validator;
 mod wtf8;
 
 pub use ast::{Ast, Flags, Node};
-pub use exec::LimitExceeded;
 pub use parser::{parse_flags, parse_literal, parse_pattern};
 pub use validator::{
     Handler, Ignore, Mode, Options, SyntaxError, validate_flags, validate_literal, validate_pattern,
@@ -81,9 +82,14 @@ pub use validator::{
 pub use wtf8::{byte_offset, utf16_index};
 
 use bun_core::strings;
-use exec::{Machine, Slots};
-use program::{NONE, Program};
+use bun_yarr::{Compiled, NO_MATCH as NONE};
+use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::sync::OnceLock;
+use subject::Subject;
+
+/// The start and the end of the match and of each group.
+type Slots = SmallVec<[u32; 16]>;
 
 /// V8's `EscapeRegExpSource`.
 fn escape_source(pattern: &[u8]) -> Box<[u8]> {
@@ -127,6 +133,51 @@ fn escape_source(pattern: &[u8]) -> Box<[u8]> {
     out.into()
 }
 
+/// The names of the groups with the groups of each, in the order in which the names first appear.
+fn group_names(ast: &Ast<'_>) -> Vec<(Box<[u8]>, Vec<u32>)> {
+    let mut names: Vec<(Box<[u8]>, Vec<u32>)> = Vec::new();
+    for (index, group) in ast.capturing_groups().enumerate() {
+        let ast::Kind::CapturingGroup {
+            name: Some(name), ..
+        } = group.kind()
+        else {
+            continue;
+        };
+        let index = index as u32 + 1;
+        match names.iter_mut().find(|known| *known.0 == *name) {
+            Some(known) => known.1.push(index),
+            None => names.push((name.into(), vec![index])),
+        }
+    }
+    names
+}
+
+/// `pattern` is valid.
+fn compile(pattern: &[u8], flags: Flags) -> Result<Compiled, SyntaxError> {
+    use bun_yarr::flags as bit;
+    let bits = [
+        (flags.has_indices, bit::HAS_INDICES),
+        (flags.global, bit::GLOBAL),
+        (flags.ignore_case, bit::IGNORE_CASE),
+        (flags.multiline, bit::MULTILINE),
+        (flags.dot_all, bit::DOT_ALL),
+        (flags.unicode, bit::UNICODE),
+        (flags.unicode_sets, bit::UNICODE_SETS),
+        (flags.sticky, bit::STICKY),
+    ];
+    let bits = bits
+        .iter()
+        .filter(|it| it.0)
+        .fold(0u16, |all, it| all | it.1);
+    Compiled::new(Subject::new(pattern, false).text(), bits).map_err(|error| {
+        SyntaxError::unsupported(match error {
+            bun_yarr::Error::TooLarge => "Regular expression too large",
+            bun_yarr::Error::UnknownProperty => "Invalid property name",
+            bun_yarr::Error::Syntax => "JavaScriptCore does not accept it",
+        })
+    })
+}
+
 /// `String(regex)`: `/source/flags`
 impl std::fmt::Display for Regex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -142,9 +193,13 @@ const _: fn() = || {
 /// `new RegExp(pattern, flags)`
 #[derive(Debug)]
 pub struct Regex {
-    program: Program,
+    compiled: Compiled,
+    /// The same without the `y` flag, if it has it. Made when it is first asked for.
+    unsticky: OnceLock<Option<Compiled>>,
     flags: Flags,
     source: Box<[u8]>,
+    /// Groups, with the whole match as the first.
+    group_count: u32,
     /// The names of groups, and the groups that have each.
     names: Vec<(Box<[u8]>, Vec<u32>)>,
 }
@@ -164,10 +219,12 @@ impl Regex {
         };
         let ast = parse_pattern(pattern, mode, Options::default())?;
         Ok(Regex {
-            program: compile::compile(&ast, flags)?,
+            compiled: compile(pattern, flags)?,
+            unsticky: OnceLock::new(),
             flags,
             source: escape_source(pattern),
-            names: compile::group_names(&ast),
+            group_count: ast.capturing_groups().count() as u32 + 1,
+            names: group_names(&ast),
         })
     }
 
@@ -203,25 +260,76 @@ impl Regex {
         self.names.iter().map(|(name, _)| &**name)
     }
 
-    fn run(
+    /// Whether a character is a code point: the `u` or the `v` flag.
+    #[inline]
+    fn is_unicode(&self) -> bool {
+        self.flags.unicode || self.flags.unicode_sets
+    }
+
+    /// Whether `compiled` matches from the byte offset `start` on. If so `slots` has indices in `subject.text()`.
+    fn matches(
         &self,
-        text: &[u8],
+        compiled: &Compiled,
+        subject: &Subject<'_>,
         start: usize,
-        captures: bool,
-    ) -> Result<Option<Slots>, LimitExceeded> {
-        let Ok(start) = u32::try_from(start) else {
-            return Ok(None);
-        };
-        let mut machine = Machine::new(&self.program, text, captures);
-        Ok(machine
-            .search(start, self.flags.sticky)?
-            .then_some(machine.slots))
+        slots: &mut Slots,
+    ) -> bool {
+        if subject.is_too_long() || start > subject.bytes().len() {
+            return false;
+        }
+        slots.resize(compiled.offsets_len(), NONE);
+        if !self.is_unicode() {
+            return compiled.exec(subject.text(), subject.index_of(start), slots);
+        }
+        // JavaScriptCore's `RegExp::matchInlineAtCodePointBoundaries`: Yarr also tries between the halves of a surrogate pair.
+        let mut from = subject.index_of(subject.code_point_start(start));
+        while compiled.exec(subject.text(), from, slots) {
+            match slots.first() {
+                Some(&found) if found > from && subject.splits_pair(found) => from = found + 1,
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// The byte offsets of the first match of `compiled` from `start` on.
+    fn run(&self, compiled: &Compiled, subject: &Subject<'_>, start: usize) -> Option<Slots> {
+        let mut slots = Slots::new();
+        if !self.matches(compiled, subject, start, &mut slots) {
+            return None;
+        }
+        slots.truncate(self.group_count as usize * 2);
+        subject.to_offsets(&mut slots);
+        Some(slots)
+    }
+
+    fn find_in<'t>(&self, subject: &Subject<'t>, start: usize) -> Option<Match<'t>> {
+        let slots = self.run(&self.compiled, subject, start)?;
+        Some(Match {
+            text: subject.bytes(),
+            start: *slots.first()?,
+            end: *slots.get(1)?,
+        })
+    }
+
+    fn exec_in<'t>(
+        &self,
+        compiled: &Compiled,
+        subject: &Subject<'t>,
+        start: usize,
+    ) -> Option<Captures<'_, 't>> {
+        Some(Captures {
+            regex: self,
+            text: subject.bytes(),
+            slots: self.run(compiled, subject, start)?,
+        })
     }
 
     /// `regex.test(text)`, from the start of the text.
     #[inline]
     pub fn test(&self, text: &[u8]) -> bool {
-        matches!(self.run(text, 0, false), Ok(Some(_)))
+        let subject = Subject::new(text, false);
+        self.matches(&self.compiled, &subject, 0, &mut Slots::new())
     }
 
     /// `regex.exec(text)`, from the start of the text, when the groups are not needed.
@@ -232,31 +340,13 @@ impl Regex {
 
     /// The first match that starts at `start` or after it. With the `y` flag, only at `start`.
     pub fn find_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Match<'t>> {
-        let slots = self.run(text, start, false).ok()??;
-        Some(Match {
-            text,
-            start: *slots.first()?,
-            end: *slots.get(1)?,
-        })
+        self.find_in(&Subject::new(text, true), start)
     }
 
     /// `regex.lastIndex = start; regex.exec(text)` for a regular expression with the `g` or `y` flag.
     /// Without them JavaScript starts at 0.
     pub fn exec_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Captures<'_, 't>> {
-        self.try_exec_at(text, start).ok()?
-    }
-
-    /// [`Regex::exec_at`], or an error if the search takes too long.
-    pub fn try_exec_at<'t>(
-        &self,
-        text: &'t [u8],
-        start: usize,
-    ) -> Result<Option<Captures<'_, 't>>, LimitExceeded> {
-        Ok(self.run(text, start, true)?.map(|slots| Captures {
-            regex: self,
-            text,
-            slots,
-        }))
+        self.exec_in(&self.compiled, &Subject::new(text, true), start)
     }
 
     /// `text.search(regex)`
@@ -270,7 +360,7 @@ impl Regex {
             return index + 1;
         }
         index
-            + if self.program.unicode {
+            + if self.is_unicode() {
                 wtf8::code_point_at(text, index).1
             } else {
                 wtf8::unit_at(text, index).1
@@ -279,9 +369,10 @@ impl Regex {
 
     /// `text.match(regex)` with the `g` flag: all matches, whether it has the flag or not.
     pub fn find_iter<'r, 't>(&'r self, text: &'t [u8]) -> impl Iterator<Item = Match<'t>> {
+        let subject = Subject::new(text, true);
         let mut next = Some(0);
         std::iter::from_fn(move || {
-            let found = self.find_at(text, next?);
+            let found = self.find_in(&subject, next?);
             next = found.map(|m| {
                 if m.is_empty() {
                     self.advance(text, m.end())
@@ -295,9 +386,10 @@ impl Regex {
 
     /// `text.matchAll(regex)`: all matches, whether it has the `g` flag or not.
     pub fn exec_iter<'r, 't>(&'r self, text: &'t [u8]) -> impl Iterator<Item = Captures<'r, 't>> {
+        let subject = Subject::new(text, true);
         let mut next = Some(0);
         std::iter::from_fn(move || {
-            let found = self.exec_at(text, next?);
+            let found = self.exec_in(&self.compiled, &subject, next?);
             next = found.as_ref().map(|m| {
                 if m.start() == m.end() {
                     self.advance(text, m.end())
@@ -346,21 +438,18 @@ impl Regex {
     pub fn split<'t>(&self, text: &'t [u8]) -> Vec<&'t [u8]> {
         let mut parts = Vec::new();
         if text.is_empty() {
-            if !self.matches_at(text, 0) {
+            if !self.test(text) {
                 parts.push(text);
             }
             return parts;
         }
+        let compiled = self.unsticky();
+        let subject = Subject::new(text, true);
         let mut from = 0;
         let mut at = 0;
         while at < text.len() {
-            let Ok(Some(slots)) = self.run_unanchored(text, at) else {
+            let Some(captures) = self.exec_in(compiled, &subject, at) else {
                 break;
-            };
-            let captures = Captures {
-                regex: self,
-                text,
-                slots,
             };
             let end = captures.end().min(text.len());
             if captures.start() >= text.len() {
@@ -381,19 +470,19 @@ impl Regex {
         parts
     }
 
-    fn matches_at(&self, text: &[u8], start: u32) -> bool {
-        matches!(
-            Machine::new(&self.program, text, false).search(start, true),
-            Ok(true)
-        )
-    }
-
     /// `split` ignores the `y` flag.
-    fn run_unanchored(&self, text: &[u8], start: usize) -> Result<Option<Slots>, LimitExceeded> {
-        let mut machine = Machine::new(&self.program, text, true);
-        Ok(machine
-            .search(start as u32, false)?
-            .then_some(machine.slots))
+    fn unsticky(&self) -> &Compiled {
+        if !self.flags.sticky {
+            return &self.compiled;
+        }
+        let flags = Flags {
+            sticky: false,
+            ..self.flags
+        };
+        let made = self
+            .unsticky
+            .get_or_init(|| compile(&self.source, flags).ok());
+        made.as_ref().unwrap_or(&self.compiled)
     }
 }
 
@@ -469,7 +558,7 @@ impl<'t> Captures<'_, 't> {
     /// `match.length`: one more than there are groups.
     #[inline]
     pub fn len(&self) -> usize {
-        self.regex.program.group_count as usize
+        self.regex.group_count as usize
     }
 
     /// `match.index`, in bytes.

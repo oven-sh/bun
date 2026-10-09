@@ -17,6 +17,10 @@ fn is_shadowed(identifier: Expr) -> bool {
 /// `object`, which is in `call`, is `this` in the global scope, `window` or `globalThis`.
 fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a>) -> bool {
     match object.kind() {
+        // oxc has one scope for a file, whatever it takes it for.
+        ExprKind::This if call.file().language().is_oxlint => {
+            matches!(Node::Expr(call).scope().kind(), ScopeKind::Global | ScopeKind::Module)
+        }
         ExprKind::This => Node::Expr(call).scope().kind() == ScopeKind::Global,
         ExprKind::Ident(name) => match name.bytes() {
             b"window" => !is_shadowed(object),

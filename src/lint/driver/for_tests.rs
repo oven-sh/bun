@@ -61,6 +61,7 @@ impl Host for Tester<'_> {
             atoms: &Interner::new_in(&names),
             memory: &names,
             skipped_in_comments: &bun_threading::Guarded::new(Vec::new()),
+            out_of_stack: &bun_threading::Guarded::new(Vec::new()),
         };
         let config = Arc::new(case.config.clone());
         match case.place {

@@ -2324,7 +2324,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/format<
 <b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
   Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
 
-  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r>.
+  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r> and <b>oxlint<r>.
   Without a configuration file: <b>eslint:recommended<r>, and <b>typescript-eslint/recommended<r> for TypeScript.
 
 <b>Flags:<r>"

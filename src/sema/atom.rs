@@ -56,7 +56,46 @@ pub fn next_interner_number() -> u64 {
     NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-type Texts = AppendVec<Box<[u8]>>;
+type Texts = AppendVec<Text>;
+
+/// The text of an atom. Nearly all are short, and are where the list has them: a block for each would have to be freed
+/// one by one, by another thread than has made it.
+pub(crate) enum Text {
+    Short { len: u8, bytes: [u8; Text::SHORT] },
+    Long(Box<[u8]>),
+}
+
+impl Text {
+    /// As large as fits beside the other.
+    const SHORT: usize = 22;
+}
+
+const _: () = assert!(size_of::<Text>() == 24);
+
+impl From<&[u8]> for Text {
+    fn from(text: &[u8]) -> Text {
+        if text.len() > Text::SHORT {
+            return Text::Long(text.into());
+        }
+        let mut bytes = [0; Text::SHORT];
+        bytes[..text.len()].copy_from_slice(text);
+        Text::Short {
+            len: text.len() as u8,
+            bytes,
+        }
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match self {
+            Text::Short { len, bytes } => &bytes[..usize::from(*len)],
+            Text::Long(text) => text,
+        }
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct Interner<'s> {
@@ -75,9 +114,10 @@ struct Tables {
 }
 
 /// It compiles because an `Interner<'s>` is covariant in `'s`: one that outlives a program is an interner of the program.
-pub fn shortened<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
+fn shortened<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
     atoms
 }
+const _: fn(Interner<'static>) -> Interner<'static> = shortened;
 
 macro_rules! known_atoms {
     ($($name:ident = $text:literal,)*) => {

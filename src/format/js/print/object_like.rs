@@ -40,6 +40,18 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
+    /// `({⏎ a⏎}: {⏎ /* comment */⏎}) => {}`: for Prettier a type with nothing but block comments in it is no group
+    /// of its own where it is hugged.
+    fn breaks_with_pattern(&self, f: &Formatter<'a>) -> bool {
+        if f.options().flavor.is_oxfmt() || f.is_quiet() {
+            return false;
+        }
+        let comments = f.comments().comments_before_end_of(self.span());
+        !comments.is_empty()
+            && comments.iter().all(|comment| !comment.is_line())
+            && self.should_hug(f)
+    }
+
     fn first_member_start(&self) -> Option<u32> {
         match self {
             Self::ObjectExpression(_, props) => props.first().map(|it| it.span().start),
@@ -75,6 +87,8 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                 true => write!(f, inner),
                 false => write!(f, group(&inner).should_expand(should_expand)),
             }
+        } else if self.breaks_with_pattern(f) {
+            write!(f, soft_block_indent(&format_dangling_comments(self.span())));
         } else {
             write!(
                 f,

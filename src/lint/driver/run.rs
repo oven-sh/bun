@@ -711,7 +711,12 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (next_with_engine, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let (taken, first, last) = (
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        );
+        let next_plain = AtomicUsize::new(0);
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
@@ -721,10 +726,18 @@ impl Run<'_> {
             }
         };
         pool.for_each(pool.threads(), 1, &|worker| {
+            // An engine keeps the memory that its largest file took, and a thread the engine that it had. So few threads begin
+            // with the largest, and the others with the smallest, until they meet.
             let lint_with_engine = || {
-                let next = || next_with_engine.fetch_add(1, Ordering::Relaxed);
-                while let Some(target) = with_engine.get(next()) {
-                    lint(target);
+                while taken.fetch_add(1, Ordering::Relaxed) < with_engine.len() {
+                    let at = match worker % 4 {
+                        0 => Some(first.fetch_add(1, Ordering::Relaxed)),
+                        _ => (with_engine.len() - 1)
+                            .checked_sub(last.fetch_add(1, Ordering::Relaxed)),
+                    };
+                    if let Some(target) = at.and_then(|at| with_engine.get(at)) {
+                        lint(target);
+                    }
                 }
             };
             // A thread can have to wait for an engine, so every other one begins with what needs none.
@@ -791,6 +804,20 @@ impl Run<'_> {
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
         let loader = Loader::new(&linter, options, environment, &js_plugins);
+        if let Some((of_eslint, of_oxlint)) = loader.undecided() {
+            self.error(
+                &[
+                    b"Both ",
+                    &of_eslint[..],
+                    b" and ",
+                    &of_oxlint[..],
+                    b" are here. Say which one this run is for: --flavor=oxlint or --flavor=eslint.",
+                ]
+                .concat(),
+            );
+            self.out.exit_code = 2;
+            return self.out;
+        }
         // One that cannot be read is reported when a file is linted with it.
         let of_cwd = loader.for_directory(&environment.cwd).ok();
         let is_oxlint = of_cwd
@@ -822,9 +849,11 @@ impl Run<'_> {
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
-        let skipped_in_comments = Guarded::new(Vec::new());
+        let (skipped_in_comments, out_of_stack) =
+            (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
+            out_of_stack: &out_of_stack,
             memory: &memory,
             atoms: &atoms,
             linter: &linter,
@@ -884,6 +913,24 @@ impl Run<'_> {
                 b" in JavaScript did not run, only the built-in rules have types: ",
                 &ids.join(&b", "[..]),
             ]);
+        }
+        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *out_of_stack.lock());
+        if !incomplete.is_empty() {
+            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
+            incomplete.dedup();
+            let shown: Vec<Vec<u8>> = (incomplete.iter().take(3))
+                .map(|it| paths::relative(&environment.cwd, &paths::from_native(it)))
+                .collect();
+            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
+            self.warn(
+                &[
+                    b"The type checker ran out of stack in ",
+                    &shown.join(&b", "[..])[..],
+                    more,
+                    b". This is a bug in Bun: the rules that need types may have missed problems there.",
+                ]
+                .concat(),
+            );
         }
         let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
         if !in_comments.is_empty() {
@@ -960,18 +1007,11 @@ impl Run<'_> {
             let mut failure = Guarded::new(None);
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
-                if let Err(error) =
-                    fs::write_atomically(&result.path, result.written().unwrap_or_default())
-                {
-                    failure.lock().get_or_insert(
-                        [
-                            b"Cannot write ",
-                            &result.path[..],
-                            b": ",
-                            &fs::describe(&error),
-                        ]
-                        .concat(),
-                    );
+                let text = result.written().unwrap_or_default();
+                if let Err(why) = fs::write_atomically(&environment.cwd, &result.path, text) {
+                    failure
+                        .lock()
+                        .get_or_insert([b"Cannot write ", &result.path[..], b": ", &why].concat());
                 }
             });
             if let Some(error) = failure.get_mut().take() {

@@ -5,6 +5,8 @@ pub struct NoNewWrappers;
 
 const NO_CONSTRUCTOR: Message =
     Message::new("noConstructor", "Do not use {{fn}} as a constructor.");
+/// What oxlint says about `new Symbol()`.
+const NOT_A_CONSTRUCTOR: Message = Message::new("notAConstructor", "`{{fn}}` is not a constructor");
 
 impl Rule for NoNewWrappers {
     const META: Meta = Meta::eslint("no-new-wrappers", Kind::Suggestion);
@@ -15,7 +17,7 @@ impl Rule for NoNewWrappers {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["String", "Number", "Boolean"]) {
+        if !file.mentions_any(&["String", "Number", "Boolean", "Symbol"]) {
             return;
         }
         on.exprs([ExprTag::New], |_, e, cx| {
@@ -25,7 +27,8 @@ impl Rule for NoNewWrappers {
             let Some(name) = call.callee().as_ident() else {
                 return;
             };
-            if !name.is_any(&["String", "Number", "Boolean"]) {
+            let is_symbol = name.is("Symbol") && cx.language().is_oxlint;
+            if !name.is_any(&["String", "Number", "Boolean"]) && !is_symbol {
                 return;
             }
             if cx.file().global(name.bytes()).is_some()
@@ -36,7 +39,7 @@ impl Rule for NoNewWrappers {
                     true => e.span().to(call.callee().span()),
                     false => e.span(),
                 };
-                cx.report(place, NO_CONSTRUCTOR).data("fn", name);
+                cx.report(place, if is_symbol { NOT_A_CONSTRUCTOR } else { NO_CONSTRUCTOR }).data("fn", name);
             }
         });
     }

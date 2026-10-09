@@ -440,7 +440,8 @@ impl<'a> FormatExpr<'a> {
             write!(f, ")");
             return write_trailing_comments_of(node, f);
         }
-        format_leading_comments(span).fmt(f);
+        format_leading_comments(print::sequence_expression::span_that_comments_lead(expr, f))
+            .fmt(f);
         if is_suppressed {
             write_suppressed_expression(expr, is_chain_expression, f);
         } else {

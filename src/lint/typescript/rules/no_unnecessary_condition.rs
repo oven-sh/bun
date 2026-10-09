@@ -418,7 +418,7 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
         return;
     };
     // oxlint points at what the type is of: the `a` of `!a`.
-    cx.report(if cx.language().is_oxlint { expression } else { node }, message);
+    cx.report(if cx.language().is_oxlint { expression } else { node }, message).comments_apply_at(node);
 }
 
 fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
@@ -451,6 +451,12 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     cx.report(node, message);
 }
 
+/// The operator after `left`.
+fn operator_span(left: Expr, operator: BinOp) -> Span {
+    let start = skip_trivia(left.file().text(), left.outer_span().end);
+    Span::new(start, start + bin_op_text(operator).len() as u32)
+}
+
 /// Reports a comparison of two literal types, and one with `null` or `undefined` of what cannot be
 /// that, which TypeScript does not report: https://github.com/microsoft/TypeScript/issues/37160
 fn check_if_bool_expression_is_necessary_conditional<'a>(
@@ -469,6 +475,7 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
     };
     if let Some(condition_is_true) = condition_is_true {
         cx.report(node, COMPARISON_BETWEEN_LITERAL_TYPES)
+            .comments_apply_at(operator_span(left, operator))
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))
             .data("right", right_type.to_text())
@@ -498,7 +505,7 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         let operand = left.outer_span();
         let start = cx.file().end_of_token_before(operand.start);
         let place = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
-        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION);
+        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION).comments_apply_at(operator_span(left, operator));
     }
 }
 
@@ -627,6 +634,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     // oxlint points at what is before the `?.`.
     let place = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
     cx.report(place, NEVER_OPTIONAL_CHAIN)
+        .comments_apply_at(question_dot_operator)
         .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));
 }
 

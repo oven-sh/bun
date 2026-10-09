@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::is_global_reference_name;
 
 /// Disallow `Array` constructors.
 pub struct NoArrayConstructor;
@@ -19,6 +20,15 @@ pub fn as_array_call(e: Expr<'_>) -> Option<Call<'_>> {
         return None;
     };
     (call.callee().is_ident("Array") && call.type_args().is_empty()).then_some(call)
+}
+
+/// Whether oxlint reports `call`, which [calls `Array`](as_array_call): the name is not in parentheses and nothing
+/// declares it, the call is not optional, and it has not one argument, or ends with `...a`.
+pub fn is_reported_by_oxlint(call: Call) -> bool {
+    let ends_with_spread = call.args().last().is_some_and(|it| it.tag() == ExprTag::Spread);
+    is_global_reference_name(call.callee(), "Array")
+        && !call.is_optional()
+        && (call.args().len() != 1 || ends_with_spread)
 }
 
 /// ESLint's `getArgumentsText`: the text between the calling parentheses of `e`, which is `call`.

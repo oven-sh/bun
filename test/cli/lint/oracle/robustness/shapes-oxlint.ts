@@ -569,6 +569,25 @@ export function wide(n: number): Record<string, string> {
       seq(n, i => `function a${i}() { { function b() {} } b = 1; }\n`) + rep("b = 1;\n", n),
     "ox-script-vars-in-catches.js": () => rep("try {} catch (e) { var e; }\n", n) + rep("var e;\n", n),
     "ox-script-this-eval.js": () => rep('(function () { this.eval("a"); })();\nthis.eval("b");\n', n),
+    // What eslint's rules do otherwise with a configuration of oxlint.
+    "ox-loop-functions.js": () => "let a; var b;\nfor (;;) {\n" + rep("c(() => a + b); a = 1; b = 1;\n", n) + "}\n",
+    "ox-loops-with-functions.js": () => "let a; var b;\n" + rep("for (;;) { c(() => a + b); a = 1; b = 1; }\n", n),
+    "ox-loop-called-functions.js": () =>
+      "var a;\nfor (;;) {\n" + rep("(function () { (() => { a; })(); })();\n", n) + "}\n",
+    "ox-catches-that-throw.js": () =>
+      rep('try {} catch (e) { throw new Error("a"); }\ntry {} catch { throw new Error("a"); }\n', n) +
+      "try {} catch (e) {\n" +
+      rep('throw new Error("a", { cause: e });\n', n) +
+      "}\n",
+    "ox-accessors-same-name.js": () =>
+      "({\n" + rep("get a() { return 1; },\n", n) + "});\nclass A {\n" + rep("set a(b) {}\n", n) + "}\n",
+    "ox-function-types-same-name.ts": () =>
+      "type A = 1;\n" + seq(n, i => `type B${i} = <A>(A: A) => void;\ndeclare function c${i}<A>(A: A): void;\n`),
+    "ox-namespace-of-types.ts": () =>
+      "namespace A {\n" + seq(n, i => `interface B${i} {}\ntype C${i}<A> = A;\n`) + "}\n",
+    "ox-returns-at-the-end.js": () =>
+      "function a() {\n" + rep("if (b) { return; }\n", n) + "}\n" + seq(n, i => `function c${i}() { d(); return; }\n`),
+    "ox-imports-same-source.js": () => seq(n, i => `import { a${i} } from "a";\nimport * as b${i} from "a";\n`),
     "ox-export-consts.js": () => seq(n, i => `export const a${i} = 1;\n`),
     "ox-export-lets.js": () => seq(n, i => `export let a${i} = 1;\nexport var b${i} = 1;\n`),
     "ox-export-functions.js": () => seq(n, i => `export function a${i}() {}\nexport class B${i} {}\n`),
@@ -1642,6 +1661,19 @@ export function deep(n: number): Record<string, string> {
     "ox-deep-script-functions-in-blocks.js": () =>
       nest('function a() {\n{ function b() {} }\nb = 1; c = 1; this.eval("d");\n', "", "}\n"),
     "ox-deep-under-classes.js": () => under("class A { m() {\n", "class B { static c = 1; }\nthis.d;\n", "} }\n"),
+    "ox-deep-loops-with-functions.js": () =>
+      "let a; var b;\n" + nest("for (;;) { c(() => a + b);\n", "a = 1; b = 1;", "}\n"),
+    "ox-deep-loop-called-functions.js": () =>
+      "var a;\nfor (;;) {\n" + nest("(function () {\n", "a;", "})();\n") + "}\n",
+    "ox-deep-loops-in-functions.js": () => "var a;\n" + nest("for (;;) { b(function () { a;\n", "a = 1;", "}); }\n"),
+    "ox-deep-under-loops-functions.js": () =>
+      "let a; var b;\n" + under("for (;;) {\n", "c(() => a + b); a = 1; b = 1;\n", "}\n"),
+    "ox-deep-namespaces-of-types.ts": () => nest("namespace A {\n", "interface A {}", "}\n"),
+    "ox-deep-function-types.ts": () => "type A = " + nest("<A>(a: ", "A", ") => void") + ";\n",
+    "ox-deep-catches-that-throw.js": () => nest("try {} catch (e) {\n", 'throw new Error("a");', "}\n"),
+    "ox-deep-returns-at-the-end.js": () => "function a() {\n" + nest("if (b) {\n", "return;", "}\n") + "}\n",
+    "ox-deep-under-ifs-returns.js": () =>
+      "function a() {\n" + under("if (b) {\n", "if (c) { return; }\n", "}\n") + "}\n",
     "ox-deep-under-awaits.mjs": () => under("a(async () => {\n", "(await b).c; d.then(e => e);\n", "});\n"),
     "ox-deep-under-blocks-top-level.mjs": () => under("{\n", "a.then(b => b); (async () => {})();\n", "}\n"),
     "ox-deep-under-namespaces.ts": () =>

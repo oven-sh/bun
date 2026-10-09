@@ -10,6 +10,7 @@
 //! Here is what depends on the configuration, and the words. The rest is in [`early`].
 
 mod early;
+pub(super) mod editions;
 
 use super::SyntaxError;
 use crate::ast::{
@@ -397,6 +398,7 @@ pub(super) fn first_error<'a>(
         checks.error_of_parser(diagnostic, at);
         checks.at_sign_before(at);
     }
+    checks.editions();
     checks.typescript_syntax(false);
     checks.jsx();
     checks.returns();

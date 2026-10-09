@@ -418,6 +418,7 @@ fn check_node<'a>(
             None => type_parameter.span(),
         };
         cx.report(place, SOLE)
+            .comments_apply_at(type_parameter.span())
             .data("name", type_parameter.name())
             .data("descriptor", descriptor)
             .data("uses", uses)

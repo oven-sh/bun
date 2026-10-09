@@ -39,6 +39,9 @@ pub enum OutputMode {
     Lint,
 }
 
+/// The passes after the lowering take more stack for a level than it does, and nested `try` costs n^2.5.
+const MAX_NESTING: u32 = 256;
+
 pub struct Environment {
     // Counters
     pub next_block_id_counter: u32,
@@ -226,6 +229,14 @@ impl Environment {
             self.is_out_of_stack.set(true);
         }
         !self.is_out_of_stack.get()
+    }
+
+    /// [`Environment::has_stack`], and `level` is within [`MAX_NESTING`], which is the same on every platform.
+    pub(crate) fn can_nest(&self, level: u32) -> bool {
+        if level > MAX_NESTING {
+            self.is_out_of_stack.set(true);
+        }
+        self.has_stack()
     }
 
     pub fn next_block_id(&mut self) -> BlockId {

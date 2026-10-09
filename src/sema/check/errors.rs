@@ -181,6 +181,7 @@ impl Checker<'_, '_> {
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.refused_expressions.clear();
+        self.side_effect_free.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
         self.outermost_comparison = None;

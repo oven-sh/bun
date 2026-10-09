@@ -70,14 +70,19 @@ fn fix_comparison<'a>(fixer: Fixer<'a>, e: Expr<'a>, compared: Expr<'a>, negates
     fixer.replace(e, text)
 }
 
+/// [`is_nan_identifier`] for what is compared. There oxlint does not look at the end of a sequence.
+fn is_compared_nan(e: Expr) -> bool {
+    is_nan_identifier(e) && !(is_sequence(e) && e.file().language().is_oxlint)
+}
+
 impl UseIsnan {
     fn check_binary_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
-        let (nan, compared) = if is_nan_identifier(left) {
+        let (nan, compared) = if is_compared_nan(left) {
             (left, right)
-        } else if is_nan_identifier(right) {
+        } else if is_compared_nan(right) {
             (right, left)
         } else {
             return;
@@ -106,11 +111,11 @@ impl UseIsnan {
         let StmtKind::Switch { expr, cases } = statement.kind() else {
             return;
         };
-        if is_nan_identifier(expr) {
+        if is_compared_nan(expr) {
             cx.report(if cx.language().is_oxlint { expr.outer_span() } else { statement.span() }, SWITCH_NAN);
         }
         for case in cases {
-            if let Some(test) = case.test().filter(|&it| is_nan_identifier(it)) {
+            if let Some(test) = case.test().filter(|&it| is_compared_nan(it)) {
                 cx.report(if cx.language().is_oxlint { test.outer_span() } else { case.span() }, CASE_NAN);
             }
         }

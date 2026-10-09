@@ -71,9 +71,41 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
         } else if is_block || self.force_space {
             write!(f, [space(), content]);
         } else {
+            if has_line_comment_before_semicolon(body, f) {
+                write!(f, expand_parent());
+            }
             write!(f, soft_line_indent_or_space(&content));
         }
     }
+}
+
+/// `if (a) b() // comment⏎;[c].d()`: the `;` ends `b()`, so the comment is in the statement. oxfmt writes it behind the
+/// `;`, and what it is in breaks. Not after `return` and `throw`, which write such a comment themselves.
+fn has_line_comment_before_semicolon<'a>(body: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    if !f.options().flavor.is_oxfmt()
+        || f.is_quiet()
+        || matches!(body.kind(), StmtKind::Return(_) | StmtKind::Throw(_))
+    {
+        return false;
+    }
+    let span = body.span();
+    let mut end = span.end.saturating_sub(1);
+    if f.source_text().text_for(&Span::new(end, span.end)) != b";" {
+        return false;
+    }
+    for comment in f.comments().comments_in(span).iter().rev() {
+        let between = f
+            .source_text()
+            .text_for(&Span::new(comment.end().min(end), end));
+        if !between.trim_ascii().is_empty() {
+            return false;
+        }
+        if comment.is_line() && !comment.preceded_by_newline() {
+            return true;
+        }
+        end = comment.start();
+    }
+    false
 }
 
 struct FormatBodyAndItsComments<'a>(Stmt<'a>);

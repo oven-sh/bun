@@ -89,7 +89,8 @@ impl AwaitThenable {
         }
         // oxlint points at what is awaited.
         let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
-        cx.report(place, AWAIT).suggest(REMOVE_AWAIT, |fixer| {
+        let keyword = Span::new(node.span().start, node.span().start + "await".len() as u32);
+        cx.report(place, AWAIT).comments_apply_at(keyword).suggest(REMOVE_AWAIT, |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -141,8 +142,9 @@ impl AwaitThenable {
         // The suggestion breaks the code for a sync iterable of promises: the variable of the loop
         // is not awaited.
         // oxlint points at what is iterated over.
-        let place = if cx.language().is_oxlint { right.outer_span() } else { get_for_statement_head_loc(node) };
-        cx.report(place, FOR_AWAIT_OF_NON_ASYNC_ITERABLE)
+        let head = get_for_statement_head_loc(node);
+        cx.report(if cx.language().is_oxlint { right.outer_span() } else { head }, FOR_AWAIT_OF_NON_ASYNC_ITERABLE)
+            .comments_apply_at(head)
             .suggest(CONVERT_TO_ORDINARY_FOR, |fixer| remove_await_token(fixer, node.span()));
     }
 

@@ -835,6 +835,7 @@ impl<'s> Program<'s> {
             work: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
+            side_effect_free: Default::default(),
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
@@ -1658,6 +1659,8 @@ pub struct Checker<'p, 's> {
     work_trap: u64,
     /// The file, start and end of the expressions in which a query was refused for lack of native stack. See `refuse_for_lack_of_stack`.
     refused_expressions: Vec<(FileId, u32, u32)>,
+    /// `is_side_effect_free` of the binary expressions that have many on their left.
+    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
     /// `refuse_as_too_deep`.
     unwind_to: usize,

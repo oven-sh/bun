@@ -706,7 +706,7 @@ fn parse_directly(
         second.map(|it| it.file).map_err(|it| (it.why, it.at))
     };
     let is_flow = dialect.flow && is_js;
-    let is_alone = direct_mode() == DirectMode::Alone && !is_json;
+    let is_alone = direct_mode() == DirectMode::Alone && !(is_json && json == Json::Refused);
     let parsed = attempt(options, scratch).or_else(|refused| match is_alone && !is_flow {
         true => {
             let recovers = true;
@@ -730,15 +730,25 @@ fn parse_directly(
                 return None;
             }
             use bun_sema::hir::{Diagnostic, DiagnosticKind};
+            // The file is not looked at any further: its first error is all that is said about it.
+            let is_too_deep = why == bun_sema_parser::Refusal::TooDeep;
+            let error = match scratch.error_before_refusal() {
+                Some(error) => error.clone(),
+                None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
+            };
             return Some(bun_sema::hir::FileBuilder {
                 kind: bun_sema::hir::FileKind::Tsx,
                 is_js,
                 is_flow,
                 has_errors: true,
-                has_parse_diagnostics: true,
-                error_pos: at,
+                has_parse_diagnostics: !is_too_deep,
+                ran_out_of_stack: is_too_deep,
+                error_pos: error.start,
                 source_len: text.len() as u32,
-                diagnostics: vec![Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[])],
+                diagnostics: match is_too_deep {
+                    true => Vec::new(),
+                    false => vec![error],
+                },
                 ..Default::default()
             });
         }

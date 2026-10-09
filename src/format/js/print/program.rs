@@ -203,6 +203,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 {
                     f.lines_before(first.span) > 1
                 }
+                None if is_behind_semicolon_and_blanks(statement, f) => false,
                 _ => is_next_line_empty_after(previous_statement, f),
             };
             match is_next_line_empty {
@@ -243,6 +244,17 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             write!(f, empty_line());
         }
     }
+}
+
+/// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and over a `;` only if that is right before it.
+fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    f.options().flavor.is_oxfmt()
+        && (f.file().text().get(..statement.span().start as usize)).is_some_and(|before| {
+            let code = before.trim_ascii_end();
+            code.len() < before.len()
+                && code.ends_with(b";")
+                && bun_core::strings::index_of_any(&before[code.len()..], b"\r\n").is_none()
+        })
 }
 
 /// `a;⏎;// comment⏎b;`, as bundlers write it: with the empty statement gone the comment starts its line, and for oxfmt it

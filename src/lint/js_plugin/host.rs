@@ -632,7 +632,7 @@ impl<'e> Host<'e> {
     }
 }
 
-/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions }] }`. The rules are
+/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
 /// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
 fn plugin_of(
     described: &Json,
@@ -647,11 +647,13 @@ fn plugin_of(
         .get(b"rules")
         .and_then(Json::as_array)
         .unwrap_or_default();
+    // The rules of `--rulesdir` are those of a plugin without a name, and have no prefix.
+    let separator: &[u8] = if name.is_empty() { b"" } else { b"/" };
     let rule = |(i, it): (usize, &Json)| {
         Arc::new(Rule {
             id: [
                 name,
-                b"/",
+                separator,
                 it.get(b"name").and_then(Json::as_str).unwrap_or_default(),
             ]
             .concat()
@@ -674,6 +676,10 @@ fn plugin_of(
                 .and_then(Json::as_array)
                 .unwrap_or_default()
                 .to_vec(),
+            deprecated: it.get(b"deprecated").map(|deprecated| {
+                let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
+                Box::new((deprecated.clone(), replaced_by))
+            }),
             needs_the_configuration: needs_the_configuration && it.get(b"at").is_none(),
             location: it.get(b"at").map(|at| {
                 let mut written = Vec::new();

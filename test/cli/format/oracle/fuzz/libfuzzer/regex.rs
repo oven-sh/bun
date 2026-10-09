@@ -10,12 +10,11 @@ use bun_lint::regex::Regex;
 
 const FLAGS: [u8; 8] = *b"dgimsuvy";
 
-/// `null`, `limit`, or the start and the end of the match and of each group, `-` for a group that took no part.
+/// `null`, or the start and the end of the match and of each group, `-` for a group that took no part.
 fn written(regex: &Regex, text: &[u8], start: usize) -> String {
-    match regex.try_exec_at(text, start) {
-        Err(_) => "limit".to_owned(),
-        Ok(None) => "null".to_owned(),
-        Ok(Some(found)) => {
+    match regex.exec_at(text, start) {
+        None => "null".to_owned(),
+        Some(found) => {
             let groups = (0..found.len()).map(|index| match found.get(index) {
                 Some(it) => format!("{},{}", it.start(), it.end()),
                 None => "-".to_owned(),
@@ -65,9 +64,6 @@ fn run(data: &[u8]) {
         show("exec", first.as_bytes());
     }
     record([pattern, &flags, text, first.as_bytes()]);
-    if first == "limit" {
-        return;
-    }
     let key = format!("flags-{}", String::from_utf8_lossy(&flags));
     // What says the same in another way says the same.
     let _ = run.guarded(|| {

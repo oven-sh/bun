@@ -121,6 +121,10 @@ function exportedAt(exported, path) {
 
 // The plugin that an `eslint.config.js` has under `prefix`, and that is where `evaluate-eslint.js` says.
 async function locatedPlugin(location, prefix) {
+  // `--rulesdir`: a file for each rule, and no module that exports them all.
+  if (location.rules !== undefined) {
+    return { rules: Object.fromEntries(Object.entries(location.rules).map(([name, file]) => [name, require(file)])) };
+  }
   if (location.module !== undefined) {
     // As `require.cache` has it, which is where it was found.
     let found;
@@ -224,6 +228,8 @@ async function loadPlugin([location, position, firstRule]) {
         hasSuggestions: meta?.hasSuggestions === true,
         schema: asJson(meta?.schema),
         defaultOptions: asJson(meta?.defaultOptions),
+        deprecated: asJson(meta?.deprecated) || undefined,
+        replacedBy: asJson(meta?.replacedBy),
       });
     }
   });
@@ -804,6 +810,7 @@ function handle(kind) {
 }
 
 function respond(kind) {
+  if (kind >= FORMAT_WITH_PRETTIER) return handleForPrettier();
   if (kind >= LINT_WITH_ESLINT) return handleForEslint(kind);
   if (kind >= PREPROCESS) return handleForProcessor(kind);
   if (kind === LOAD_SETTINGS) {

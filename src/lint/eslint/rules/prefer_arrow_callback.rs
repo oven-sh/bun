@@ -23,8 +23,12 @@ fn is_outermost_with_value<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node
             op: BinOp::And | BinOp::Or | BinOp::Nullish,
             ..
         }) => true,
-        // The test of a conditional is never its value.
-        Some(ExprKind::Cond { test, .. }) => Node::Expr(test) != child,
+        // The test of a conditional is never its value. oxlint takes it for that.
+        Some(ExprKind::Cond { test, .. }) => Node::Expr(test) != child || parent.file().language().is_oxlint,
+        // oxlint goes on from the end of a sequence.
+        Some(ExprKind::Binary { op: BinOp::Comma, right, .. }) => {
+            Node::Expr(right) == child && parent.file().language().is_oxlint
+        }
         _ => false,
     };
     (!is_value_of_parent).then_some(child)

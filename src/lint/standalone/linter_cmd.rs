@@ -25,8 +25,9 @@ use bun_lint::context::Severity;
 use bun_lint::js_plugin::Host;
 use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
 use bun_lint::linter::{
-    Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig,
-    RuleId, TypesInJavaScript, Utf16Offsets, severity_of, testing,
+    Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage,
+    LintOptions, Linter, Registry, ResolvedConfig, RuleId, TypesInJavaScript, Utf16Offsets,
+    severity_of, testing,
 };
 use bun_lint::options::Json;
 use bun_sema::atom::Interner;
@@ -463,15 +464,44 @@ fn config_of(case: &Json, host: Option<&Host>) -> Result<Config, bun_lint::linte
                 registry,
                 base_path,
                 json,
-                RcFlavor::Oxlint,
                 &mut load,
                 &mut |directory, specifier, alias| host.load(directory, specifier, alias),
             ),
-            None => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
+            None => Config::from_rc_json(registry, base_path, json, &mut load),
         },
-        Some(b"eslintrc") => {
-            Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load)
-        }
+        // An `.eslintrc.json` in that directory.
+        Some(b"eslintrc") => Config::from_legacy(
+            registry,
+            &LegacyOptions {
+                root: b"/",
+                cwd: base_path,
+                ignore: true,
+                extensions: None,
+                rules: None,
+                plugins_from: None,
+                cascade: 1,
+            },
+            &[LegacyFile {
+                path: [base_path, b"/.eslintrc.json"].concat(),
+                name: b".eslintrc.json".to_vec(),
+                base_path: base_path.to_vec(),
+                json: json.clone(),
+            }],
+            &mut |kind, request, _, _| match (kind, load(base_path, request)) {
+                (LegacyKind::Config, Some(config)) => Ok(Json::Object(vec![
+                    (
+                        b"path".to_vec(),
+                        Json::String([base_path, b"/", request].concat()),
+                    ),
+                    (b"config".to_vec(), config),
+                ])),
+                _ => Err(LegacyFailure {
+                    message: [b"There is no ", request].concat(),
+                    is_missing: true,
+                }),
+            },
+            &mut |_, _| Err(Vec::new()),
+        ),
         _ => Config::from_flat_json(registry, base_path, json),
     }
 }

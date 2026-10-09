@@ -99,6 +99,7 @@ members = [
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
+  "src/yarr",
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
@@ -462,6 +463,7 @@ bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
+bun_yarr = { path = "src/yarr" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }

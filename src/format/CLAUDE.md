@@ -61,6 +61,19 @@ The printer for style sheets returns no documents. It writes operations (text, l
 - Nothing is kept of a declaration with a comment, a line break or a block, of one that failed, or of a style sheet that is written as a document. The style sheets of a file of HTML have a memo of their own, for that file.
 - After any change to how declarations are printed: `test/cli/format/oracle/fuzz/css-memo-orders.py` (all style sheets on one thread in three shuffled orders and once without the memo) and `css-memo-surroundings.py` (the same declarations in many surroundings). The first has found a key that was too short.
 
+## Syntax errors
+
+`[error] a.css: SyntaxError: This string is not closed (3:6)`, and under it the lines around the place as Prettier shows them. `syntax_error.rs`:
+
+- A parser **notes** why it refuses, `refusal.note(Message::UnclosedString, offset)`, which is `#[cold]`, and returns `Refused`, which has no size. An `Err` that carried the eight bytes itself changed what hot functions return, and cost style sheets 0.9 % of their instructions.
+- At the top it is `FormatError::SyntaxErrorAt(refusal.reason())`. The offset is a byte of the text as the file has it, not counting a byte order mark: what has parsed the result of `normalize_end_of_line` maps it back with `before_normalizing_end_of_line`.
+- `Message` is one enum for all languages. A text says what is wrong at the place that the offset points to, in our words: for something that is not closed, the place is where it was opened.
+- A parser that knows where it stands when it gives up needs no more than that: JSON's and YAML's CST parser keep their unit errors, and the message is made from the state afterwards.
+- Words that are made at run time do not fit: TOML's are those of Bun's own parser, which the driver asks a second time (`toml::syntax_error`), only for a file that has been refused.
+- Line, column (UTF-16 code units, as Prettier counts) and frame are the driver's: `syntax_error_in_words` in `src/lint/driver/fmt/mod.rs`, with `bun_lint::utils::code_frame`.
+- `FormatError::SyntaxError`, without a place, is for scripts: the driver has the parser's diagnostics.
+- `format.test.ts` has a row for each language and kind of refusal.
+
 ## HTML
 
 ```

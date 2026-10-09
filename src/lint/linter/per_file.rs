@@ -5,6 +5,7 @@ use super::directives::{self, ConfigComment, Label};
 use super::globals::{CommentGlobal, CommentVariables};
 use crate::ast::File;
 use crate::language::Global;
+use std::borrow::Cow;
 use std::cell::{Cell, OnceCell};
 
 /// Computed on demand, once.
@@ -22,10 +23,17 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
     for comment in comments {
         let value = file.slice(comment.value);
         match comment.label {
-            Label::Env if file.language().reads_env_comments => {
+            Label::Env => {
+                let Some(eslint_8) = &file.language().eslint_8 else {
+                    continue;
+                };
                 for name in parse_list_config(value) {
+                    let of_plugin = eslint_8.globals_of_environment(name);
+                    let of_plugin = of_plugin.map(|it| (Cow::Owned(it.0.to_vec()), it.1));
+                    variables.of_environments.extend(of_plugin);
                     let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
                     let all = super::globals::environment(name).into_iter().flatten();
+                    let all = all.map(|it| (Cow::Borrowed(it.0), it.1));
                     variables.of_environments.extend(all);
                 }
             }

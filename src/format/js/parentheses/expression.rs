@@ -646,8 +646,11 @@ fn binary_or_cast_needs_parentheses<'a>(
         | N::AwaitExpression(_)
         | N::TSNonNullExpression(_)
         | N::UpdateExpression(_) => return true,
-        // It writes parentheses around an argument with comments.
-        N::UnaryExpression(unary) => return !unary_argument_has_comments(unary, e, f),
+        // It writes parentheses around an argument with comments. For oxfmt `a as T` has its own in them.
+        N::UnaryExpression(unary) => {
+            return (is_binary_cast && f.options().flavor.is_oxfmt())
+                || !unary_argument_has_comments(unary, e, f);
+        }
         N::AssignmentExpression(assignment) | N::AssignmentTargetWithDefault(assignment) => {
             return operator.is_none() && assignment.left() == Some(e);
         }

@@ -1,5 +1,5 @@
 // `.eslintrc.json` as @eslint/eslintrc reads it (`overrides`, `ignorePatterns`, `env`, how rules merge)
-// against `Config::from_rc_json` with `RcFlavor::Eslint`.
+// against `Config::from_legacy`.
 
 import { execFileSync } from "node:child_process";
 import { bunLint, random, report, requireFromEslint, runBunLint } from "./shared.mjs";

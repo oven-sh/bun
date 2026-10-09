@@ -99,9 +99,25 @@ struct Search {
     raw_patterns: Vec<Vec<u8>>,
 }
 
+/// A directory on the way from where a search starts to one that is listed.
+struct Way {
+    /// Its path without links.
+    real: Vec<u8>,
+    /// The one that it was found in. `None`: the search starts here.
+    above: Option<Arc<Way>>,
+}
+
+impl Way {
+    /// Whether the directory at `real`, a path without links, is on the way.
+    fn has(&self, real: &[u8]) -> bool {
+        std::iter::successors(Some(self), |it| it.above.as_deref()).any(|it| it.real == real)
+    }
+}
+
 /// A directory to list.
 struct Directory {
     path: Vec<u8>,
+    way: Arc<Way>,
     /// From the directory that is searched. Empty for that one.
     relative: Vec<u8>,
     /// The configuration of the directory that it is in or, for the one that is searched, its own.
@@ -188,8 +204,13 @@ fn search(
         let is_hidden = inherited.config.is_directory_ignored(&search.base_path);
         let name = paths::basename(&search.base_path);
         if !is_hidden || loader.looks_for_configurations_in(&inherited, name) {
+            let real = fs::real_path(&search.base_path);
             level.push(Directory {
                 path: search.base_path.clone(),
+                way: Arc::new(Way {
+                    real: real.unwrap_or_else(|| search.base_path.clone()),
+                    above: None,
+                }),
                 relative: Vec::new(),
                 ignores: loader.ignore_files_at(&search.base_path, &inherited),
                 inherited,
@@ -245,15 +266,15 @@ fn search(
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
-                // oxlint follows links.
+                let mut real = None;
+                // oxlint follows links. As for the crate `ignore`, with which it walks, a loop is a link to one of the
+                // directories on the way from where the search starts.
                 if entry.is_link
                     && own.flavor == Flavor::Oxlint
                     && fs::kind(&path) == Some(fs::Kind::Directory)
                 {
-                    let is_loop = fs::real_path(&path).is_none_or(|real| {
-                        real == directory.path || paths::inside(&real, &directory.path).is_some()
-                    });
-                    if is_loop {
+                    real = fs::real_path(&path).filter(|real| !directory.way.has(real));
+                    if real.is_none() {
                         continue;
                     }
                     entry.is_directory = true;
@@ -272,8 +293,14 @@ fn search(
                     }
                     let is_hidden = is_hidden || own.config.is_directory_ignored_in(&path);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
+                        let real =
+                            real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
                         directories.push(Directory {
                             path,
+                            way: Arc::new(Way {
+                                real,
+                                above: Some(Arc::clone(&directory.way)),
+                            }),
                             relative,
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),

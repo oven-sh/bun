@@ -17,8 +17,10 @@ const TOO_DEEPLY: Message = Message::new(
 fn keyword_of(stmt: Stmt) -> Option<&'static str> {
     Some(match stmt.kind() {
         StmtKind::If { .. } => {
+            // For oxlint neither that of `if (a) if (b) ..`.
+            let is_oxlint = stmt.file().language().is_oxlint;
             let is_else_if = matches!(stmt.parent(), Node::Stmt(parent)
-                if matches!(parent.kind(), StmtKind::If { no: Some(no), .. } if no == stmt));
+                if matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(stmt) || is_oxlint));
             if is_else_if {
                 return None;
             }

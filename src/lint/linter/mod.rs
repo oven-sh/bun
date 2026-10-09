@@ -43,8 +43,8 @@ mod space;
 mod syntax;
 
 pub use config::{
-    Config, ConfigError, FileConfig, Glob, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy,
-    LoadLocatedPlugin, LoadPlugin, RcFlavor, oxlint_category,
+    Config, ConfigError, FileConfig, Glob, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions,
+    LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, max_fixed_len,
@@ -225,6 +225,16 @@ impl Named<'_> {
     }
 }
 
+impl<'c> Named<'c> {
+    /// The rule, if it is one of a JavaScript plugin.
+    fn js(self) -> Option<&'c js_plugin::Rule> {
+        match self {
+            Named::Native(_) => None,
+            Named::Js(rule) => Some(rule),
+        }
+    }
+}
+
 /// What the configuration has for a rule.
 #[derive(Copy, Clone)]
 enum Existing<'c> {
@@ -342,11 +352,16 @@ impl Linter {
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
             for comment in comments.iter().filter(is_understood) {
-                let message = quoted(&[
-                    b"'",
-                    file.slice(comment.span),
-                    b"' has no effect because you have 'noInlineConfig' setting in your config.",
-                ]);
+                let written = file.slice(comment.span);
+                let message = match &config.language.eslint_8 {
+                    Some(eslint_8) => eslint_8
+                        .has_no_effect(file.slice(comment.label_span), written.starts_with(b"/*")),
+                    None => quoted(&[
+                        b"'",
+                        written,
+                        b"' has no effect because you have 'noInlineConfig' setting in your config.",
+                    ]),
+                };
                 problems.push(locator.problem(comment.span, Severity::Warn, None, message));
             }
         } else if !comments.is_empty() && configures_in_comments {
@@ -365,6 +380,17 @@ impl Linter {
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
+        }
+
+        for id in &config.missing_rules {
+            problems.push(LintMessage {
+                rule_id: Some(RuleId::Unknown(id.clone())),
+                message: registry::missing_rule_message(id),
+                line: 1,
+                column: 1,
+                end: Some((1, 2)),
+                ..LintMessage::default()
+            });
         }
 
         // ESLint's `markExportedVariables`.
@@ -513,6 +539,13 @@ impl Linter {
             let mut message = to_message(diagnostic, rule.reported_as, &locator);
             if follows_oxlint {
                 change_as_oxlint(&mut message, changes.1);
+            }
+            if changes_something && file.language().eslint_8.is_some() {
+                let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as);
+                message.fix = message.fix.take().filter(|_| fixes);
+                if !suggests {
+                    message.suggestions.clear();
+                }
             }
             problems.push(message);
         }
@@ -866,15 +899,22 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         let config = self.config;
         let js = config.find_js_rule(id);
         let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
+        let lacks_it = config.lacks_rule(id);
         let found = match js {
+            _ if lacks_it => None,
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
-            Some(js) if config.skips_unknown_rules => js.map(Named::Js),
+            Some(js)
+                if config.skips_unknown_rules
+                    && !config.prefers_native_rules_of(registry::parse_rule_id(id).0) =>
+            {
+                js.map(Named::Js)
+            }
             Some(js) => native().or_else(|| js.map(Named::Js)),
             None => native(),
         };
         if found.is_none() {
             // All rules of a plugin that is loaded are known.
-            let is_known_to_be_missing = js.is_some() && !config.skips_unknown_rules;
+            let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
             if !is_known_to_be_missing && self.config.is_foreign(id) {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
@@ -897,7 +937,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     ) {
         match comment.label {
             Label::Rules => {}
-            Label::Env if self.file.language().reads_env_comments => return,
+            Label::Env if self.file.language().eslint_8.is_some() => return,
             Label::Env => {
                 return self.fatal(
                     comment,
@@ -925,6 +965,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Ok(rules) => rules,
             Err(message) => return self.fatal(comment, message),
         };
+        let eslint_8 = self.config.language.eslint_8.as_deref();
         for (id, value) in rules {
             let first = match &value {
                 Json::Array(items) => items.first(),
@@ -934,7 +975,16 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             let Some(rule) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
-            if self.configured.iter().any(|it| it.is(rule)) {
+            // In ESLint 8 a comment says all there is to say about a rule, and the last comment counts.
+            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
+                Some(Ok(setting)) => Json::Array(setting),
+                Some(Err(message)) => {
+                    self.error(comment, Some(rule.id()), message);
+                    continue;
+                }
+                None => value,
+            };
+            if eslint_8.is_none() && self.configured.iter().any(|it| it.is(rule)) {
                 let message = quoted(&[
                     b"Rule \"",
                     &id,
@@ -974,8 +1024,9 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
             };
             // A comment that has only a severity keeps the options of the configuration.
-            let options: &[Json] = match (inline.len(), existing) {
-                (1, Some(existing)) => existing.options(),
+            let keeps_options = inline.len() == 1 && eslint_8.is_none();
+            let options: &[Json] = match existing {
+                Some(existing) if keeps_options => existing.options(),
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {
@@ -990,8 +1041,8 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 );
             }
             // The options of a rule that the configuration enables are validated already.
-            let is_validated =
-                inline.len() == 1 && existing.is_some_and(|it| it.severity() != Severity::Off);
+            let is_validated = eslint_8.is_some()
+                || keeps_options && existing.is_some_and(|it| it.severity() != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             let validated = match is_validated || is_zero {
@@ -1022,7 +1073,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     let new = RunningJs {
                         severity,
                         configured: match existing {
-                            Some(Existing::Js(it)) if inline.len() == 1 => {
+                            Some(Existing::Js(it)) if keeps_options => {
                                 Cow::Borrowed(&it.configured)
                             }
                             _ => Cow::Owned(js_plugin::Configured::new(
@@ -1042,7 +1093,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 }
             };
             let shared = existing
-                .filter(|_| inline.len() == 1)
+                .filter(|_| keeps_options)
                 .and_then(ConfiguredRule::instance);
             let refusal = match shared {
                 Some(_) => existing

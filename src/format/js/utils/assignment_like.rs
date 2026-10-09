@@ -121,7 +121,12 @@ const MIN_OVERLAP_FOR_BREAK: u8 = 3;
 /// The width of what is written for the computed `key`, with its brackets, if that is one piece of
 /// text: there is no group in it and nothing that can break. Only such a key can be short. Prettier
 /// asks whether `cleanDoc(keyDoc)` is a string.
+///
+/// oxfmt takes what is written in the brackets, whatever it is, without the comments around it.
 fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
+    if f.options().flavor.is_oxfmt() {
+        return Some(f.source_text().span_width(key.inner_span(f.file())) + 2);
+    }
     if let KeyKind::Computed(e) = key.kind() {
         return Some(plain_expression_width(e, f)? + 2);
     }
@@ -744,6 +749,11 @@ enum LeadingComments {
     TypeCastOfLeftEdge,
 }
 
+/// `a = /** @type {T} */ (⏎/**⏎ * comment⏎ */⏎b)`: oxfmt looks at all comments before `b`.
+fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
     if f.is_quiet() {
         return LeadingComments::None;
@@ -754,6 +764,11 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
             true => LeadingComments::Break,
             false => LeadingComments::None,
         };
+    }
+    if block_comment_in_parentheses_of_cast_breaks(f)
+        && (f.comments().comments_before_iter(start)).any(|comment| comment.is_indentable_block())
+    {
+        return LeadingComments::Break;
     }
     for comment in f.comments().comments_before_iter(start) {
         if comment.followed_by_newline() || comment.is_indentable_block() {

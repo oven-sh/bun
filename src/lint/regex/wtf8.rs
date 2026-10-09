@@ -59,29 +59,6 @@ fn multibyte_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
     (REPLACEMENT, 1)
 }
 
-/// The code point that ends at `i` and its length in bytes. `i` must be greater than 0.
-#[inline]
-pub(crate) fn code_point_before(s: &[u8], i: usize) -> (u32, usize) {
-    let b = s.get(i.wrapping_sub(1)).copied().unwrap_or(0);
-    if b < 0x80 {
-        return (u32::from(b), 1);
-    }
-    for len in 2..=4 {
-        let Some(start) = i.checked_sub(len) else {
-            break;
-        };
-        let lead = s.get(start).copied().unwrap_or(0);
-        if lead & 0xC0 != 0x80 {
-            let (cp, found) = multibyte_at(s, start, lead);
-            if found == len {
-                return (cp, len);
-            }
-            break;
-        }
-    }
-    (REPLACEMENT, 1)
-}
-
 /// Where the code point starts that `i` is in the middle of. `i` itself if it is not.
 pub(crate) fn code_point_start(s: &[u8], i: usize) -> usize {
     (1..=3)
@@ -129,22 +106,6 @@ pub(crate) fn unit_at(s: &[u8], i: usize) -> (u32, usize) {
     }
     match multibyte_at(s, i, b) {
         (cp, 4) => (lead_surrogate(cp), 2),
-        other => other,
-    }
-}
-
-/// The UTF-16 code unit that ends at `i` and its length in bytes.
-#[inline]
-pub(crate) fn unit_before(s: &[u8], i: usize) -> (u32, usize) {
-    let b = s.get(i.wrapping_sub(1)).copied().unwrap_or(0);
-    if b < 0x80 {
-        return (u32::from(b), 1);
-    }
-    if let Some(cp) = astral_around(s, i) {
-        return (lead_surrogate(cp), 2);
-    }
-    match code_point_before(s, i) {
-        (cp, 4) => (trail_surrogate(cp), 2),
         other => other,
     }
 }

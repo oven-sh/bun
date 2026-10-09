@@ -5,7 +5,7 @@
 //
 // Prints the arguments for the linker, one a line, which has to be lld (`-fuse-ld=lld` is the first of them): the order of
 // archives does not matter to it, and it does not ask for symbols that only sections without a use want. With
-// `--gc-sections`, which rustc passes, what Yarr does not reach is dropped: all of JavaScriptCore is read, 1.3 MB of it stay.
+// `--gc-sections`, which rustc passes, what Yarr does not reach is dropped: all of JavaScriptCore is read, 1.6 MB of it stay.
 //
 // In <directory>/<WebKit's version>, made on first use and kept:
 // - the archives of the prebuilt WebKit of `scripts/build/deps/webkit.ts`, without debug information (which a linker copies
@@ -29,7 +29,7 @@ import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { fetchPrebuilt } from "./download.ts";
 
 /** Each is compiled by itself. What a function of theirs wants of the rest of Bun's C++ does not matter if nothing calls it. */
-const SOURCES = ["src/jsc/bindings/RegularExpression.cpp"];
+const SOURCES = ["src/jsc/bindings/RegularExpression.cpp", "src/lint/standalone/native.cpp"];
 const ARCHIVES = ["JavaScriptCore", "WTF", "bmalloc", "icui18n", "icuuc", "icudata"];
 
 const root = resolve(import.meta.dirname, "../..");
@@ -78,10 +78,12 @@ const link = ["-fuse-ld=lld"];
 let compiler = "clang++";
 
 for (const source of SOURCES) {
-  // All of Bun's C++ has the same flags: a source that the last configuration has not seen takes those of a neighbour.
+  // All of Bun's C++ has the same flags: a source that the last configuration has not seen takes those of a neighbour, one
+  // that is not part of Bun those of the first.
   const entry =
     commands.find(it => it.file.endsWith(`/${source}`)) ??
-    commands.find(it => it.file.endsWith(".cpp") && dirname(it.file).endsWith(`/${dirname(source)}`));
+    commands.find(it => it.file.endsWith(".cpp") && dirname(it.file).endsWith(`/${dirname(source)}`)) ??
+    commands.find(it => it.file.endsWith(`/${SOURCES[0]}`));
   if (entry === undefined) fail(`build/debug/compile_commands.json does not know ${source}: bun bd --configure-only`);
   // The build directory can be that of another checkout, linked here.
   const theirRoot = entry.file.slice(0, entry.file.lastIndexOf("/src/"));

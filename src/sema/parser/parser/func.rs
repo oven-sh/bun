@@ -219,6 +219,17 @@ impl Parser<'_> {
 
     // ───────────────────────────── parameters ─────────────────────────────
 
+    /// `checkGrammarTypeParameterList`, of a list from `less_than` to the token in which there is
+    /// something, but no parameter. The checker finds `<>` in the text.
+    #[cold]
+    #[inline(never)]
+    fn empty_type_parameters(&mut self, less_than: u32) {
+        if self.token() != T::GreaterThan || self.prev_end() != less_than + 1 {
+            let list = (less_than, self.pos() + 1);
+            self.flag(DiagnosticKind::Grammar, 1098, list, &[]);
+        }
+    }
+
     /// `parseTypeParameters`
     pub(crate) fn type_parameters(&mut self) -> Span<TypeParamId> {
         if self.token() != T::LessThan {
@@ -227,6 +238,7 @@ impl Parser<'_> {
         if self.is_flow {
             return self.flow_type_parameters();
         }
+        let less_than = self.pos();
         self.next();
         let base = self.s.type_params.len();
         let lists = self.enter_list(ListKind::TypeParameters);
@@ -283,6 +295,9 @@ impl Parser<'_> {
             }
         }
         self.lists = lists;
+        if self.recovers && self.s.type_params.len() == base {
+            self.empty_type_parameters(less_than);
+        }
         if self.options.is_javascript
             && let [first, .., last] | [first @ last] = self.s.type_params[base..]
         {

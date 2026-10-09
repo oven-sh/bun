@@ -6,6 +6,8 @@
 #   coverage  no fuzzing: -C instrument-coverage, to run a corpus and see what it reaches (coverage.sh)
 # KERNELS=<directory>: every *.o in it is linked too: Bun's SIMD kernels (src/jsc/bindings/highway_*.cpp and vendor/highway/hwy/targets.cc, compiled
 # as Bun compiles them, with -fsanitize=address for asan). They take the place of the plain loops in src/sema/standalone/native.rs, which are weak symbols.
+# NATIVE=<directory> (default: target/native): where scripts/build/lint-standalone-native.ts keeps what it makes: JavaScriptCore's regular expression engine, which has no stand-in. For
+# asan the variant of WebKit with AddressSanitizer and assertions. Once for each version of WebKit: bun scripts/build/lint-standalone-native.ts <directory> [--asan] --fetch
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../../../.." && pwd)
@@ -25,17 +27,17 @@ export "CARGO_TARGET_${triple}_LINKER=${CXX:-clang++}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/fuzz}/$mode"
 export INSTRUMENT RUSTC_WRAPPER="$here/rustc-wrapper.sh"
 cd "$here"
-if [ -n "$KERNELS" ]; then
-  # Only the programs are linked again.
-  objects=
-  for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
-  for program in fuzz_format fuzz_lint fuzz_parser fuzz_config fuzz_regex fuzz_glob fuzz_readers; do
-    # One that does not compile does not keep the others from being built.
-    RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects -Clink-arg=-lstdc++ || failed="$failed $program"
-  done
-else
-  RUSTFLAGS="$flags" cargo build --profile $profile --target "$host"
-fi
+variant=
+[ "$mode" = asan ] && variant=--asan
+# Arguments of the link alone: only the programs are linked again when one of them changes.
+objects=
+[ -n "$KERNELS" ] && for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
+native=$(bun "$root/scripts/build/lint-standalone-native.ts" "${NATIVE:-$root/target/native}" $variant)
+for argument in $native; do objects="$objects -Clink-arg=$argument"; done
+for program in $(sed -n 's/^name = "\(fuzz_[a-z_]*\)"$/\1/p' Cargo.toml); do
+  # One that does not compile does not keep the others from being built.
+  RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects || failed="$failed $program"
+done
 out="$CARGO_TARGET_DIR/$host/$profile"
 for language in options imports embedded html handlebars css yaml markdown md graphql json js; do
   ln -sf fuzz_format "$out/fuzz_$language"

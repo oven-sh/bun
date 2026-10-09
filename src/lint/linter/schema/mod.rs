@@ -149,6 +149,19 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     .map(drop)
 }
 
+/// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.
+pub(crate) fn schema_of(id: &[u8]) -> Option<Json> {
+    match find(id)? {
+        Json::Array(parts) => parts.into_iter().next(),
+        _ => None,
+    }
+}
+
+/// Validates `options` with `schema`, which is `meta.schema`, as ESLint 8 does: it knows no `meta.defaultOptions`.
+pub(crate) fn validate_as_eslint_8(schema: Option<&Json>, options: &[Json]) -> Result<(), Vec<u8>> {
+    validate_with(schema, &[], options).map(drop)
+}
+
 /// The same for a rule of a JavaScript plugin. `Ok`: ESLint's `context.options`, which are `options` with the default options of
 /// the rule, and with the defaults that its schema has.
 pub fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {

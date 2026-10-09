@@ -148,6 +148,7 @@ impl LintCommand {
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
+            super::lint_js::start_javascriptcore(0);
             run_and_exit(b"lint", None, |environment| Outcome {
                 exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
                     rest,
@@ -166,6 +167,7 @@ impl LintCommand {
             crate::cli::command::tag_print_help(crate::cli::command::Tag::LintCommand, true);
             Global::exit(0);
         }
+        super::lint_js::start_javascriptcore(options.threads);
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             bun_lint_driver::run(&options, environment)
         })

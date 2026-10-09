@@ -110,28 +110,32 @@ impl GroupedAccessorPairs {
         }
         let is_getter_first = getter.index < setter.index;
         let (former, latter) = if is_getter_first { (getter, setter) } else { (setter, getter) };
-        let message = if getter.index.abs_diff(setter.index) > 1 {
-            NOT_GROUPED
-        } else if self.order == Order::GetBeforeSet && !is_getter_first
-            || self.order == Order::SetBeforeGet && is_getter_first
-        {
-            INVALID_ORDER
-        } else {
-            return;
+        let is_oxlint = cx.language().is_oxlint;
+        let is_grouped = getter.index.abs_diff(setter.index) <= 1;
+        let is_in_order = match self.order {
+            Order::GetBeforeSet => is_getter_first,
+            Order::SetBeforeGet => !is_getter_first,
+            Order::Any => true,
         };
         // oxlint points at the getter.
-        let at = if cx.language().is_oxlint { getter.func } else { latter.func };
+        let at = if is_oxlint { getter.func } else { latter.func };
         let head = ast_utils::get_function_head_loc(at);
         // For oxlint it ends with the key: before the `]`.
-        let end = if cx.language().is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
-        // Of a pair that is not grouped oxlint names the getter first.
-        let (first, second) = match cx.language().is_oxlint && message.id == NOT_GROUPED.id {
-            true => (getter, setter),
-            false => (former, latter),
-        };
-        cx.report(Span::new(head.start, end), message)
-            .data("formerName", ast_utils::get_function_name_with_kind(first.func))
-            .data("latterName", ast_utils::get_function_name_with_kind(second.func));
+        let end = if is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
+        // oxlint says both of a pair that is neither grouped nor in order.
+        let says_order = !is_in_order && (is_grouped || is_oxlint);
+        for (is_said, message) in [(!is_grouped, NOT_GROUPED), (says_order, INVALID_ORDER)] {
+            // Of a pair that is not grouped oxlint names the getter first.
+            let (first, second) = match is_oxlint && message.id == NOT_GROUPED.id {
+                true => (getter, setter),
+                false => (former, latter),
+            };
+            if is_said {
+                cx.report(Span::new(head.start, end), message)
+                    .data("formerName", ast_utils::get_function_name_with_kind(first.func))
+                    .data("latterName", ast_utils::get_function_name_with_kind(second.func));
+            }
+        }
     }
 
     /// `TSMethodSignature`s

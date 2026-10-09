@@ -13,7 +13,7 @@ use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_format::FormatOptions;
-use bun_format::tailwind::{Orders, Rank, Tailwind};
+use bun_format::tailwind::{Names, Orders, Rank, Tailwind};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -270,8 +270,8 @@ pub(crate) fn for_file(
         stylesheet,
     });
     Tailwind {
-        functions: names(b"functions"),
-        attributes: names(b"attributes"),
+        functions: Names::new(names(b"functions")),
+        attributes: Names::new(names(b"attributes")),
         preserves_whitespace: is_on(b"preserveWhitespace"),
         preserves_duplicates: is_on(b"preserveDuplicates"),
         follows_plugin: is_on(b"followsPlugin"),

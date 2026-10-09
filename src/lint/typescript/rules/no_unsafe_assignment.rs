@@ -125,6 +125,24 @@ impl<'a> Destructured<'a> {
     }
 }
 
+/// tsgolint's `assignmentRelationRange`: the `=` or the `:` before what is assigned, in `whole`.
+fn relation_span(sender_node: Expr, whole: Span) -> Span {
+    let file = sender_node.file();
+    let sender = sender_node.jsx_container_span().unwrap_or_else(|| sender_node.outer_span());
+    let end = file.end_of_token_before(sender.start);
+    match file.text().get(end.wrapping_sub(1) as usize) {
+        Some(b'=' | b':') if end > whole.start => Span::new(end - 1, end),
+        _ => whole,
+    }
+}
+
+/// Where a report is shown, and where the comments that disable the rule apply to it. For oxlint these are two places.
+#[derive(Copy, Clone)]
+struct Place {
+    shown: Span,
+    of_comments: Span,
+}
+
 fn check_destructure<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
@@ -133,7 +151,10 @@ fn check_destructure<'a>(
     sender_node: Expr<'a>,
 ) {
     // oxlint points at what is assigned.
-    let place = |span: Span| if cx.language().is_oxlint { sender_node.outer_span() } else { span };
+    let place = |span: Span| Place {
+        shown: if cx.language().is_oxlint { sender_node.outer_span() } else { span },
+        of_comments: span,
+    };
     // Not by recursion: a pattern is nested as deeply as the parser allows. The last is the next.
     let mut parts = Vec::new();
     check_pattern(cx, receiver_node, place(receiver_span), sender_type, &mut parts);
@@ -144,7 +165,8 @@ fn check_destructure<'a>(
         };
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
-            cx.report(place(part.span), part.message)
+            cx.report(place(part.span).shown, part.message)
+                .comments_apply_at(part.span)
                 .data("sender", describe_sender(sender_type, cx));
         } else if !part.has_default {
             check_pattern(cx, part.target, place(part.target.span()), sender_type, &mut parts);
@@ -156,7 +178,7 @@ fn check_destructure<'a>(
 fn check_pattern<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Span,
+    receiver_span: Place,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
@@ -176,13 +198,14 @@ fn check_pattern<'a>(
 fn check_array_destructure<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Span,
+    receiver_span: Place,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
-        cx.report(receiver_span, UNSAFE_ARRAY_PATTERN)
+        cx.report(receiver_span.shown, UNSAFE_ARRAY_PATTERN)
+            .comments_apply_at(receiver_span.of_comments)
             .data("sender", describe_sender(sender_type, cx));
         return;
     }
@@ -271,6 +294,7 @@ fn report_any_assignment<'a>(
         false => reporting_node,
     };
     cx.report(place, message)
+        .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("sender", describe_sender(sender_type, cx));
 }
 
@@ -307,6 +331,7 @@ fn report_unsafe_assignment<'a>(
     };
     let place = if cx.language().is_oxlint { sender_node.outer_span() } else { reporting_node };
     cx.report(place, UNSAFE_ASSIGNMENT)
+        .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("receiver", in_backticks(result.receiver))
         .data("sender", in_backticks(result.sender));
     true
@@ -543,7 +568,9 @@ impl Rule for NoUnsafeAssignment {
             let rest_type = argument.ty();
             if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
                 let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
-                cx.report(place, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type, cx));
+                cx.report(place, UNSAFE_ARRAY_SPREAD)
+                    .comments_apply_at(node)
+                    .data("sender", describe_sender(rest_type, cx));
             }
         });
     }

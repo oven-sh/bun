@@ -1,5 +1,6 @@
 #![warn(unused_must_use)]
 #![feature(allocator_api)]
+#![cfg_attr(bun_sema_mimalloc, feature(portable_simd))]
 
 pub mod error;
 pub use error::{Error, Result};

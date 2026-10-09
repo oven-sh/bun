@@ -24,6 +24,12 @@ pub(crate) const ESLINT: &str = concat!(
     include_str!("evaluate-describe.js"),
     include_str!("evaluate-eslint.js")
 );
+/// For what the configuration files of ESLint 8 name.
+pub(crate) const ESLINTRC: &str = concat!(
+    include_str!("evaluate-track.js"),
+    include_str!("evaluate-describe.js"),
+    include_str!("evaluate-eslintrc.js")
+);
 /// For the configuration files of Prettier.
 pub(crate) const PRETTIER: &str = concat!(
     include_str!("evaluate-track.js"),
@@ -65,8 +71,9 @@ fn variable(name: &[u8]) -> Json {
 }
 
 /// What has to be the same for a result to be of any use.
-fn version(environment: &Environment, source: &str) -> Json {
-    let version = format!("{:016x}", hash(&[environment.version, source.as_bytes()]));
+fn version(environment: &Environment, source: &str, argument: &[u8]) -> Json {
+    let parts = [environment.version, source.as_bytes(), argument];
+    let version = format!("{:016x}", hash(&parts));
     Json::String(version.into_bytes())
 }
 
@@ -103,13 +110,24 @@ pub(crate) fn evaluate(
     path: &[u8],
     keeps: bool,
 ) -> Result<Json, Fatal> {
+    evaluate_with(environment, source, path, b"", keeps)
+}
+
+/// The same for a script that takes an `argument`: `process.argv.at(-3)`.
+pub(crate) fn evaluate_with(
+    environment: &Environment,
+    source: &'static str,
+    path: &[u8],
+    argument: &[u8],
+    keeps: bool,
+) -> Result<Json, Fatal> {
     let cache_file = if keeps { cache_file(path) } else { None };
     let kept = cache_file
         .as_ref()
-        .and_then(|file| kept_at(environment, source, file));
+        .and_then(|file| kept_with(environment, source, argument, file));
     match kept {
         Some(config) => Ok(config),
-        None => evaluate_at(environment, source, path, cache_file),
+        None => run(environment, source, path, argument, cache_file),
     }
 }
 
@@ -119,8 +137,18 @@ pub(crate) fn kept_at(
     source: &'static str,
     cache_file: &[u8],
 ) -> Option<Json> {
+    kept_with(environment, source, b"", cache_file)
+}
+
+/// The same of a run with `argument`.
+fn kept_with(
+    environment: &Environment,
+    source: &'static str,
+    argument: &[u8],
+    cache_file: &[u8],
+) -> Option<Json> {
     let kept = bun_lint::json::parse(&fs::read(cache_file).ok()?)?;
-    still_valid(&version(environment, source), kept)
+    still_valid(&version(environment, source, argument), kept)
 }
 
 /// Runs `source`, whatever is kept. `cache_file`: where the result is kept, if it is.
@@ -130,10 +158,22 @@ pub(crate) fn evaluate_at(
     path: &[u8],
     cache_file: Option<Vec<u8>>,
 ) -> Result<Json, Fatal> {
-    let version = version(environment, source);
+    run(environment, source, path, b"", cache_file)
+}
+
+/// `argument`: empty for a script that takes none.
+fn run(
+    environment: &Environment,
+    source: &'static str,
+    path: &[u8],
+    argument: &[u8],
+    cache_file: Option<Vec<u8>>,
+) -> Result<Json, Fatal> {
+    let version = version(environment, source, argument);
+    let arguments = [argument, MARKER, path];
     let script = Script {
         source,
-        arguments: &[MARKER, path],
+        arguments: &arguments[usize::from(argument.is_empty())..],
         cwd: paths::dirname(path),
     };
     let fail = |why: &[u8]| {

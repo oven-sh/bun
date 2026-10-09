@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::{is_global_reference, symbol_of};
 
 /// Disallow losing originally caught error when re-throwing custom errors.
 pub struct PreserveCaughtError {
@@ -279,6 +280,9 @@ impl PreserveCaughtError {
             _ => return,
         };
         let callee = call.callee();
+        if is_oxlint && callee.is_parenthesized() {
+            return;
+        }
         let (class_name, can_be_built_in) = match callee.kind() {
             ExprKind::Ident(name) if is_oxlint => (name, name.is_any(OXLINT_ERROR_TYPES)),
             ExprKind::Ident(name) => (name, name.is_any(BUILT_IN_ERROR_TYPES)),
@@ -286,15 +290,18 @@ impl PreserveCaughtError {
             _ => return,
         };
         let mut configured = self.error_class_names.iter().rev();
-        let configured = configured.find(|it| *it.0 == *class_name.bytes()).map(|it| it.1);
+        // oxlint has no such option.
+        let configured = configured.find(|it| *it.0 == *class_name.bytes() && !is_oxlint).map(|it| it.1);
         if !can_be_built_in && configured.is_none() {
             return;
         }
         let Some((try_statement, param)) = find_parent_catch(statement, &mut cx.state) else {
             return;
         };
+        // For oxlint what only declares a type does not hide the class.
+        let is_global = if is_oxlint { is_global_reference(callee) } else { ast_utils::is_global_reference(callee) };
         let (options_index, placeholders) =
-            match (can_be_built_in && ast_utils::is_global_reference(callee), configured) {
+            match (can_be_built_in && is_global, configured) {
                 (true, _) if class_name.is("AggregateError") => (2, AGGREGATE_ERROR_PLACEHOLDERS),
                 (true, _) => (1, ERROR_PLACEHOLDERS),
                 (false, Some(options_index)) => (options_index, NO_PLACEHOLDERS),
@@ -304,19 +311,23 @@ impl PreserveCaughtError {
         let param_span = param.map_or_else(Span::default, |param| param.pat().span());
         let caught = match param.map(|param| param.pat().kind()) {
             Some(PatKind::Ident(name)) => name,
+            // oxlint goes on as with a name, which nothing is the value of, and points at the statement.
+            Some(_) if is_oxlint => {
+                if !matches!(get_error_cause_as_oxlint(call.args(), options_index), Cause::Unknown) {
+                    cx.report(statement, PARTIALLY_LOST_ERROR);
+                }
+                return;
+            }
             Some(_) => {
                 if let Some(catch_clause) = try_statement.catch_clause_span() {
-                    // oxlint points at the statement.
-                    let place = if cx.language().is_oxlint { statement.span() } else { catch_clause };
-                    cx.report(place, PARTIALLY_LOST_ERROR);
+                    cx.report(catch_clause, PARTIALLY_LOST_ERROR);
                 }
                 return;
             }
             None => {
-                if self.requires_catch_parameter {
-                    // oxlint points at the `catch`.
-                    let place = try_statement.catch_clause_span().filter(|_| cx.language().is_oxlint);
-                    cx.report(place.unwrap_or_else(|| statement.span()), MISSING_CATCH_ERROR_PARAM);
+                // oxlint says it of the `catch`, whatever is thrown in it.
+                if self.requires_catch_parameter && !is_oxlint {
+                    cx.report(statement, MISSING_CATCH_ERROR_PARAM);
                 }
                 return;
             }
@@ -347,7 +358,8 @@ impl PreserveCaughtError {
         };
 
         let is_plain = matches!(property.kind(), PropKind::Init | PropKind::Shorthand);
-        if !(is_plain && value.as_ident() == Some(caught)) {
+        // oxlint does not look into parentheses.
+        if !(is_plain && value.as_ident() == Some(caught) && !(is_oxlint && value.is_parenthesized())) {
             let value_span = property.func().map_or_else(|| value.span(), Func::span_from_params);
             // oxlint points at the statement.
             let place = if cx.language().is_oxlint { statement.span() } else { value_span };
@@ -368,6 +380,13 @@ impl PreserveCaughtError {
             return;
         }
 
+        // For oxlint what only declares a type hides nothing.
+        if is_oxlint {
+            if symbol_of(value) != param.and_then(|it| it.pat().symbol()) {
+                cx.report(statement, CAUGHT_ERROR_SHADOWED);
+            }
+            return;
+        }
         let mut scopes = Node::Stmt(statement).scope().chain();
         let declaring = scopes.find(|scope| scope.get_name(caught).is_some());
         if !declaring.is_some_and(|it| it.kind() == ScopeKind::Catch && it.node() == Node::Stmt(try_statement)) {
@@ -400,8 +419,17 @@ impl Rule for PreserveCaughtError {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ParentCatches<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ParentCatches<'a> {
         on.stmts([StmtTag::Throw], Self::check);
+        if self.requires_catch_parameter && file.language().is_oxlint {
+            on.stmts([StmtTag::Try], |_, statement, cx| {
+                if matches!(statement.kind(), StmtKind::Try { param: None, .. })
+                    && let Some(catch_clause) = statement.catch_clause_span()
+                {
+                    cx.report(catch_clause, MISSING_CATCH_ERROR_PARAM);
+                }
+            });
+        }
         ParentCatches::default()
     }
 }

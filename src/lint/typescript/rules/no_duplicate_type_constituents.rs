@@ -379,7 +379,7 @@ fn report<'a>(
         Some((_, previous)) => previous.outer_span(),
         None => Span::new(constituent_node.span().start, end),
     };
-    let mut report = cx.report(place, message);
+    let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
         report = report.data("type", union_or_intersection).data("previous", previous.text());
     }

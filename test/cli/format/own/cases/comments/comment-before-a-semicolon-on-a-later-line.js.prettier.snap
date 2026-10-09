@@ -1,0 +1,81 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f() {
+  if (!a) return; // Goober reads window.__nonce__ every time it creates or accesses its style
+  b.c;
+}
+function g() {
+  if (!a) return x; // Goober reads window.__nonce__ every time it creates or accesses its style
+  // d
+  b.c;
+}
+function h() {
+  if (!a) throw x; // c
+  b.c;
+}
+function is(x, y) {
+  return (x === y && (x !== 0 || 1 / x === 1 / y)) || (x !== x && y !== y); // eslint-disable-line no-self-compare
+}
+function i() {
+  if (!a) j(); // c
+  b.c;
+  while (!a) j(); // c
+  b.c;
+  if (!a) j(); /* c */
+  b.c;
+  if (!a) {
+  } else j(); // c
+  b.c;
+  for (;;) {
+    if (!a) break; // c
+    b.c;
+    if (!a) var x = 1; // c
+    b.c;
+  }
+  if (!a)
+    j(); // c
+  else k();
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f() {
+  if (!a) return; // Goober reads window.__nonce__ every time it creates or accesses its style
+  b.c;
+}
+function g() {
+  if (!a) return x; // Goober reads window.__nonce__ every time it creates or accesses its style
+  // d
+  b.c;
+}
+function h() {
+  if (!a) throw x; // c
+  b.c;
+}
+function is(x, y) {
+  return (x === y && (x !== 0 || 1 / x === 1 / y)) || (x !== x && y !== y); // eslint-disable-line no-self-compare
+}
+function i() {
+  if (!a) j(); // c
+  b.c;
+  while (!a) j(); // c
+  b.c;
+  if (!a) j(); /* c */
+  b.c;
+  if (!a) {
+  } else j(); // c
+  b.c;
+  for (;;) {
+    if (!a) break; // c
+    b.c;
+    if (!a) var x = 1; // c
+    b.c;
+  }
+  if (!a)
+    j(); // c
+  else k();
+}
+
+===================== End =====================

@@ -157,6 +157,11 @@ extern "C" fn mi_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
     unsafe { allocate(null_mut(), size, align, true) }
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn mi_realloc(block: *mut c_void, size: usize) -> *mut c_void {
+    // SAFETY: no heap, and `block` is null or one of these blocks, as mimalloc requires.
+    unsafe { mi_heap_realloc_aligned(null_mut(), block, size, 16) }
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn mi_free(block: *mut c_void) {
     // SAFETY: null or one of these blocks, as mimalloc requires.
     unsafe { release(block) }

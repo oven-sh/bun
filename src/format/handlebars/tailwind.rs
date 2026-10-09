@@ -20,7 +20,7 @@ pub(super) fn sort_classes(tree: &mut Tree, source: &[u8], tailwind: &Tailwind) 
     for id in 0..tree.nodes.len() as NodeId {
         if let Kind::Attr { name, value } = tree.kind(id) {
             let name = tree.text(source, name);
-            if name == b"class" || tailwind.attributes.iter().any(|it| it == name) {
+            if name == b"class" || tailwind.attributes.has(name) {
                 let around = Around {
                     has_previous: false,
                     has_next: false,

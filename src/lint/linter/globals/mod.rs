@@ -85,6 +85,14 @@ pub fn environments() -> impl Iterator<Item = &'static str> {
     tables::ENVIRONMENTS.iter().map(|it| it.0)
 }
 
+/// The edition of the language whose variables are defined. ESLint 8 defines those of ES5 and leaves the others to `env`.
+fn edition_of_globals(language: &LanguageOptions) -> u32 {
+    match language.eslint_8 {
+        Some(_) => 5,
+        None => language.ecma_version,
+    }
+}
+
 /// ESLint's `configGlobals` in the order of its keys: what each version of ECMAScript adds, what `sourceType: "commonjs"` defines,
 /// `languageOptions.globals`. One that is there already keeps its place and gets the later setting. Those of
 /// `languageOptions.globals` are in the order of their names, which is not kept from the configuration.
@@ -101,12 +109,13 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         }
     };
     let versions = tables::ECMA_VERSIONS.iter();
-    if versions.clone().any(|it| it.0 == language.ecma_version) {
-        for &(_, start, len) in versions.filter(|it| it.0 <= language.ecma_version) {
+    let edition = edition_of_globals(language);
+    if versions.clone().any(|it| it.0 == edition) {
+        for &(_, start, len) in versions.filter(|it| it.0 <= edition) {
             add(start, len);
         }
     }
-    if language.source_type == SourceType::CommonJs {
+    if language.source_type == SourceType::CommonJs && language.eslint_8.is_none() {
         add(tables::COMMONJS.0, tables::COMMONJS.1);
     }
     let defined = all.len();
@@ -136,22 +145,21 @@ impl ConfigGlobals {
         let mut settings: Vec<(Cow<'static, [u8]>, Global)> =
             Vec::with_capacity(80 + language.globals.len());
         // ESLint has no table for a version that it does not know, and then defines nothing.
-        if tables::ECMA_VERSIONS
-            .iter()
-            .any(|it| it.0 == language.ecma_version)
-        {
-            for &(_, start, len) in tables::ECMA_VERSIONS
-                .iter()
-                .filter(|it| it.0 <= language.ecma_version)
-            {
+        let edition = edition_of_globals(language);
+        if tables::ECMA_VERSIONS.iter().any(|it| it.0 == edition) {
+            for &(_, start, len) in tables::ECMA_VERSIONS.iter().filter(|it| it.0 <= edition) {
                 settings.extend(
                     variables(start, len)
-                        .filter(|it| !language.is_oxlint || is_builtin_global_of_oxlint(it.0))
+                        .filter(|it| {
+                            !language.is_oxlint
+                                || is_builtin_global_of_oxlint(it.0)
+                                || language.has_temporal_in_env && it.0 == b"Temporal"
+                        })
                         .map(|(name, setting)| (Cow::Borrowed(name), setting)),
                 );
             }
         }
-        if language.source_type == SourceType::CommonJs {
+        if language.source_type == SourceType::CommonJs && language.eslint_8.is_none() {
             let (start, len) = tables::COMMONJS;
             settings.extend(
                 variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)),
@@ -255,7 +263,7 @@ pub(crate) struct CommentVariables {
     /// Where each is in `globals`.
     pub(crate) global_by_name: FxHashMap<Box<[u8]>, u32>,
     /// The variables of the environments that `/* eslint-env */` comments name.
-    pub(crate) of_environments: FxHashMap<&'static [u8], Global>,
+    pub(crate) of_environments: FxHashMap<Cow<'static, [u8]>, Global>,
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
     pub(crate) is_exported: FxHashSet<Box<[u8]>>,

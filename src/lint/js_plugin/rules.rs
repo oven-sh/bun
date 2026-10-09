@@ -22,7 +22,7 @@ pub enum Schema {
 /// A rule of a plugin.
 #[derive(Debug)]
 pub struct Rule {
-    /// ESLint's `ruleId`: `<plugin>/<rule>`.
+    /// ESLint's `ruleId`: `<plugin>/<rule>`, or `<rule>` of a plugin without a name.
     pub id: Box<[u8]>,
     /// `meta.type`
     pub kind: Option<Kind>,
@@ -33,6 +33,8 @@ pub struct Rule {
     pub schema: Schema,
     /// `meta.defaultOptions`
     pub default_options: Vec<Json>,
+    /// `meta.deprecated`, if that is true for JavaScript, and `meta.replacedBy`.
+    pub deprecated: Option<Box<(Json, Json)>>,
     /// No module exports the rule or its plugin: a realm has to run the whole configuration file to get at it.
     pub needs_the_configuration: bool,
     /// JSON: the module that exports the rule itself, if there is one. A realm loads that, and not the plugin.
@@ -62,7 +64,7 @@ impl Rule {
 impl Plugin {
     /// The rule that the plugin calls `name`.
     pub fn rule(&self, name: &[u8]) -> Option<&Arc<Rule>> {
-        let skipped = self.name.len() + 1;
+        let skipped = self.name.len() + usize::from(!self.name.is_empty());
         let at = self
             .rules
             .binary_search_by(|it| it.id.get(skipped..).unwrap_or_default().cmp(name));

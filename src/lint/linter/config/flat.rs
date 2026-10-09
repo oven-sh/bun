@@ -605,7 +605,8 @@ impl Reader<'_> {
     ) -> Result<(), ConfigError> {
         for (prefix, location) in &mut self.js_locations {
             let mut unknown = self.unknown_rules.iter();
-            if unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
+            // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
+            if prefix.is_empty() || unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
                 self.js_plugins.push(load(location, prefix).map_err(|why| {
                     ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])
                 })?);
@@ -629,6 +630,7 @@ impl Reader<'_> {
             keeps_options: semantics.keeps_options,
             accepts_all_plugins: semantics.accepts_all_plugins,
             is_legacy: semantics.is_legacy,
+            lints_all_that_is_named: false,
             prefers_typescript_rules: self.prefers_typescript_rules,
             options_of_oxlint: Vec::new(),
             printed_for_oxlint: Vec::new(),

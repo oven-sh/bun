@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow assignment operators in conditional expressions.
@@ -56,6 +57,16 @@ impl NoCondAssign {
         }
     }
 
+    /// With `"always"` oxlint says it once more of a test that is an assignment.
+    fn check_test_once_more<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((test, kind)) = test_of(node)
+            && let assignment = get_inner_expression(test)
+            && assignment.tag() == ExprTag::Assign
+        {
+            cx.report(place(assignment, cx), UNEXPECTED).data("type", kind);
+        }
+    }
+
     /// `"except-parens"`: a test that is an assignment, without parentheses of its own.
     fn check_test<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Some((test, _)) = test_of(node) else {
@@ -89,9 +100,16 @@ impl Rule for NoCondAssign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         if self.is_always {
             on.exprs([ExprTag::Assign], Self::check_assignment);
+            if file.language().is_oxlint {
+                on.stmts(
+                    [StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For],
+                    |rule, stmt, cx| rule.check_test_once_more(stmt.into(), cx),
+                );
+                on.exprs([ExprTag::Cond], |rule, e, cx| rule.check_test_once_more(e.into(), cx));
+            }
         } else {
             on.stmts(
                 [StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For],

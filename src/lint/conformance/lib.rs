@@ -28,7 +28,7 @@ use bun_core::strings;
 use bun_format_conformance::output_line;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, RcFlavor, ResolvedConfig, RuleId};
+use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
@@ -263,13 +263,9 @@ fn oxlint_config_of(
             )]),
         ),
     ]);
-    let config = Config::from_rc_json(
-        linter.registry(),
-        b"/",
-        &Json::Object(file),
-        RcFlavor::Oxlint,
-        &mut |_, _| None,
-    );
+    let config = Config::from_rc_json(linter.registry(), b"/", &Json::Object(file), &mut |_, _| {
+        None
+    });
     let absolute = [b"/", path.strip_prefix(b"/").unwrap_or(path)].concat();
     match config.ok()?.get(linter.registry(), &absolute) {
         FileConfig::Matched(config) => Some((*config).clone()),

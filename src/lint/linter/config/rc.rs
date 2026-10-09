@@ -1,5 +1,11 @@
-//! Reads `.oxlintrc.json` and `.eslintrc.json`, and turns them into the objects of a flat
-//! configuration.
+//! Reads an `.oxlintrc.json`, and turns it into the objects of a flat configuration.
+//!
+//! - The rules of the category `correctness` warn unless `categories` says otherwise.
+//! - A rule setting that is only a severity resets the options of the rule.
+//! - What is extended passes on its rules, categories, plugins and overrides only. All overrides
+//!   come after all rules, and their patterns are relative to the file that extends.
+//! - A rule of ESLint that typescript-eslint extends (`no-unused-vars`) understands TypeScript:
+//!   the extension runs in its place, and is reported under its own name.
 
 #[path = "oxlint_categories.rs"]
 mod categories;
@@ -18,21 +24,6 @@ use crate::rule::{Meta, Plugin};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-
-/// Whose file it is. The two agree on the format and differ in what some of it means.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum RcFlavor {
-    /// `.oxlintrc.json`:
-    /// - The rules of the category `correctness` warn unless `categories` says otherwise.
-    /// - A rule setting that is only a severity resets the options of the rule.
-    /// - What is extended passes on its rules, categories, plugins and overrides only. All overrides
-    ///   come after all rules, and their patterns are relative to the file that extends.
-    /// - A rule of ESLint that typescript-eslint extends (`no-unused-vars`) understands TypeScript:
-    ///   the extension runs in its place, and is reported under its own name.
-    Oxlint,
-    /// `.eslintrc.json`
-    Eslint,
-}
 
 /// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
 pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
@@ -161,14 +152,12 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
     b"vue",
 ];
 
-/// The files that are linted if nothing else says so.
-const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
-/// By oxlint, which lints the scripts in the last three.
-const LINTED_FILES_OF_OXLINT: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
+/// The files that are linted if nothing else says so. Of the last three the scripts.
+const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 
 /// `convertIgnorePatternToMinimatch` of `@eslint/compat`: a pattern of a `.gitignore` as a pattern
-/// for `ignores`. For oxlint `{a,b}` is one of the two.
-pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], flavor: RcFlavor) -> Vec<u8> {
+/// for `ignores`. `mean_nothing`: `{` and `(`, which mean nothing in a `.gitignore`. For oxlint `{a,b}` is one of the two.
+pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], mean_nothing: &[u8]) -> Vec<u8> {
     let (negation, pattern): (&[u8], _) = match pattern.strip_prefix(b"!") {
         Some(rest) => (b"!", rest),
         None => (b"", pattern),
@@ -188,7 +177,6 @@ pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], flavor: RcFlavor) -> V
     } else {
         pattern
     };
-    // Braces and parentheses mean nothing in a `.gitignore`.
     let mut escaped = Vec::with_capacity(without_slash.len());
     let mut at = 0;
     while at < without_slash.len() {
@@ -198,8 +186,7 @@ pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], flavor: RcFlavor) -> V
                 at += 2;
                 continue;
             }
-            b'{' if flavor == RcFlavor::Oxlint => {}
-            b'{' | b'(' => escaped.push(b'\\'),
+            byte if strings::contains_char(mean_nothing, byte) => escaped.push(b'\\'),
             _ => {}
         }
         escaped.push(without_slash[at]);
@@ -211,18 +198,6 @@ pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], flavor: RcFlavor) -> V
         b""
     };
     [negation, everywhere, &escaped, inside].concat()
-}
-
-/// A pattern of `overrides[].files`: one without a slash matches in every directory.
-fn override_pattern(pattern: &[u8], flavor: RcFlavor) -> Pattern {
-    if flavor == RcFlavor::Oxlint {
-        return Pattern::of_oxlint(pattern);
-    }
-    match pattern.strip_prefix(b"./") {
-        Some(rest) => Pattern::new(rest),
-        None if strings::contains_char(pattern, b'/') => Pattern::new(pattern),
-        None => Pattern::new(&[b"**/", pattern].concat()),
-    }
 }
 
 pub(super) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
@@ -265,13 +240,14 @@ pub type LoadPlugin<'l> =
 
 struct Rc<'r, 'l> {
     reader: Reader<'r>,
-    flavor: RcFlavor,
     /// Reads the file that `extends` names, relative to the directory given first.
     load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
     /// `None`: JavaScript plugins are skipped.
     load_plugin: Option<&'l mut LoadPlugin<'l>>,
     /// `categories`, the later entries overriding the earlier ones.
     categories: Vec<(Vec<u8>, Severity)>,
+    /// The same without what `-A`, `-W` and `-D` have made of them: `$categoriesOfTheFile`, where a file has that.
+    categories_of_files: Vec<(Vec<u8>, Severity)>,
     /// `plugins` of all files and overrides. A file without it stands for typescript, unicorn and oxc.
     plugins: Vec<Vec<u8>>,
     /// In oxlint the overrides of all files come after the rules of all files. With each, its `plugins`.
@@ -422,9 +398,7 @@ impl Rc<'_, '_> {
         };
         let mut rules = with_eslint_severities(rules);
         // All names of a rule are one rule, so what the file says last about it counts.
-        if self.flavor == RcFlavor::Oxlint
-            && let Json::Object(entries) = &mut rules
-        {
+        if let Json::Object(entries) = &mut rules {
             for (id, _) in entries {
                 if find_js_rule(&self.reader.js_plugins, id).is_none() {
                     *id = oxlint_rule_key(id);
@@ -498,7 +472,7 @@ impl Rc<'_, '_> {
         if depth > 32 {
             return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
         }
-        if is_extended && self.flavor == RcFlavor::Oxlint {
+        if is_extended {
             shape::check(json)?;
         }
         // A plugin that an override names is known everywhere.
@@ -524,7 +498,7 @@ impl Rc<'_, '_> {
             let Some(name) = extended.as_str() else {
                 continue;
             };
-            if self.flavor == RcFlavor::Oxlint && name.starts_with(b"eslint:") {
+            if name.starts_with(b"eslint:") {
                 return Err(ConfigError::new(&[
                     b"Unsupported named config \"",
                     name,
@@ -538,14 +512,6 @@ impl Rc<'_, '_> {
                 }
                 continue;
             }
-            let is_path = matches!(name, [b'.' | b'/', ..] | [_, b':', b'/' | b'\\', ..]);
-            if self.flavor == RcFlavor::Eslint && !is_path {
-                return Err(ConfigError::new(&[
-                    b"It extends \"",
-                    name,
-                    b"\". A configuration that is a package is not supported yet.",
-                ]));
-            }
             let Some(extended) = (self.load)(directory, name) else {
                 return Err(ConfigError::new(&[
                     b"Failed to load config \"",
@@ -555,37 +521,39 @@ impl Rc<'_, '_> {
             };
             let file = path::resolve(directory, name);
             let read = self.file(&extended, path::dirname(&file), true, depth + 1);
-            read.map_err(|error| match self.flavor {
-                RcFlavor::Oxlint => ConfigError::new(&[
+            read.map_err(|error| {
+                ConfigError::new(&[
                     b"invalid config file ",
                     directory,
                     b"/",
                     name,
                     b": ",
                     &error.message,
-                ]),
-                RcFlavor::Eslint => error,
+                ])
             })?;
         }
-        for (category, severity) in json
-            .get(b"categories")
-            .and_then(Json::as_object)
-            .unwrap_or_default()
-        {
-            let severity = match severity.as_str() {
-                Some(b"allow") => Some(Severity::Off),
-                Some(b"deny") => Some(Severity::Error),
-                _ => crate::linter::severity_of(severity),
-            };
-            let Some(severity) = severity else {
-                return Err(ConfigError::new(&[
-                    b"Key \"categories\": Key \"",
-                    category,
-                    b"\": Expected severity.",
-                ]));
-            };
-            self.categories.retain(|it| it.0 != *category);
-            self.categories.push((category.clone(), severity));
+        let categories = json.get(b"categories");
+        let of_the_file = json.get(b"$categoriesOfTheFile").or(categories);
+        for (written, all) in [
+            (categories, &mut self.categories),
+            (of_the_file, &mut self.categories_of_files),
+        ] {
+            for (category, severity) in written.and_then(Json::as_object).unwrap_or_default() {
+                let severity = match severity.as_str() {
+                    Some(b"allow") => Some(Severity::Off),
+                    Some(b"deny") => Some(Severity::Error),
+                    _ => crate::linter::severity_of(severity),
+                };
+                let Some(severity) = severity else {
+                    return Err(ConfigError::new(&[
+                        b"Key \"categories\": Key \"",
+                        category,
+                        b"\": Expected severity.",
+                    ]));
+                };
+                all.retain(|it| it.0 != *category);
+                all.push((category.clone(), severity));
+            }
         }
         let plugins = (self.plugin_names(json)?).unwrap_or_else(|| {
             [&b"typescript"[..], b"unicorn", b"oxc"]
@@ -594,24 +562,20 @@ impl Rc<'_, '_> {
         });
         self.plugins_of_files.extend_from_slice(&plugins);
         self.plugins.extend(plugins);
-        // oxlint takes all patterns relative to the file that extends.
-        let base_path = (self.flavor == RcFlavor::Eslint
-            && directory != &self.reader.base_path[..])
-            .then(|| directory.to_vec());
-        let passes_everything_on = !is_extended || self.flavor == RcFlavor::Eslint;
+        // All patterns are relative to the file that extends.
+        let passes_everything_on = !is_extended;
 
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
         if !ignore_patterns.is_empty() && passes_everything_on {
             self.reader.objects.push(ConfigObject {
-                base_path: base_path.clone(),
                 ignores: Some(
                     ignore_patterns
                         .iter()
-                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it, self.flavor)))
+                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it, b"(")))
                         .collect(),
                 ),
                 is_global_ignores: true,
-                ignores_inside_only: self.flavor == RcFlavor::Oxlint,
+                ignores_inside_only: true,
                 ..ConfigObject::default()
             });
         }
@@ -650,43 +614,28 @@ impl Rc<'_, '_> {
             .unwrap_or_default()
         {
             let files = strings_of(item.get(b"files"));
-            if files.is_empty() && self.flavor == RcFlavor::Eslint {
-                return Err(ConfigError::new(&[
-                    b"Key \"overrides\": Key \"files\": Expected value to be a non-empty array.",
-                ]));
-            }
-            let excluded = strings_of(
-                item.get(b"excludeFiles")
-                    .or_else(|| item.get(b"excludedFiles")),
-            );
+            let excluded = strings_of(item.get(b"excludeFiles"));
             let plugins = self.plugin_names(item)?.unwrap_or_default();
             self.plugins.extend_from_slice(&plugins);
             let object = ConfigObject {
-                base_path: base_path.clone(),
                 files: Some(
                     (files.iter())
-                        .map(|it| vec![override_pattern(it, self.flavor)])
+                        .map(|it| vec![Pattern::of_oxlint(it)])
                         .collect(),
                 ),
-                ignores: (!excluded.is_empty()).then(|| {
-                    (excluded.iter())
-                        .map(|it| override_pattern(it, self.flavor))
-                        .collect()
-                }),
+                ignores: (!excluded.is_empty())
+                    .then(|| excluded.iter().map(|it| Pattern::of_oxlint(it)).collect()),
                 language_options: self.language_options(item),
                 settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
                 rules: self.rules(item)?,
                 ..ConfigObject::default()
             };
-            match self.flavor {
-                RcFlavor::Oxlint => self.overrides.push((object, plugins)),
-                RcFlavor::Eslint => self.reader.objects.push(object),
-            }
+            self.overrides.push((object, plugins));
         }
         Ok(())
     }
 
-    /// `plugins` of `json`. oxlint refuses a name that it does not know. For ESLint it is a package, with rules that are not here.
+    /// `plugins` of `json`. oxlint refuses a name that it does not know.
     fn plugin_names(&self, json: &Json) -> Result<Option<Vec<Vec<u8>>>, ConfigError> {
         let Some(plugins) = json.get(b"plugins").and_then(Json::as_array) else {
             return Ok(None);
@@ -696,19 +645,11 @@ impl Rc<'_, '_> {
             let name = (written.strip_prefix(b"eslint-plugin-"))
                 .or_else(|| written.strip_prefix(b"oxlint-plugin-"))
                 .unwrap_or(written);
-            if self.flavor == RcFlavor::Oxlint && !PLUGIN_NAMES.contains(&name) {
+            if !PLUGIN_NAMES.contains(&name) {
                 return Err(ConfigError::new(&[
                     b"Failed to parse config with error Error(\"Unknown plugin: '",
                     written,
                     b"'.\", line: 0, column: 0)",
-                ]));
-            }
-            let scope = name.strip_suffix(b"/eslint-plugin").unwrap_or(name);
-            if self.flavor == RcFlavor::Eslint && Plugin::of_prefix(scope).is_none() {
-                return Err(ConfigError::new(&[
-                    b"It uses the plugin \"",
-                    written,
-                    b"\". In a configuration of ESLint 8 a plugin that is not built in is not supported yet.",
                 ]));
             }
             names.push(name.to_vec());
@@ -753,9 +694,13 @@ impl Rc<'_, '_> {
     }
 
     /// The rules that `categories` turns on, which everything else overrides. `of`: of which plugins.
-    fn category_rules(&self, of: &dyn Fn(Plugin) -> bool) -> Vec<RuleSetting> {
+    fn category_rules(
+        &self,
+        categories: &[(Vec<u8>, Severity)],
+        of: &dyn Fn(Plugin) -> bool,
+    ) -> Vec<RuleSetting> {
         let mut settings = Vec::new();
-        for (category, severity) in &self.categories {
+        for (category, severity) in categories {
             if let Some((_, lists)) = categories::CATEGORIES
                 .iter()
                 .find(|it| it.0.as_bytes() == &category[..])
@@ -768,7 +713,8 @@ impl Rc<'_, '_> {
 
     /// The overrides, as oxlint 1.87 applies them. The `plugins` of one count for it alone. Its `rules` can name their rules, which
     /// the `rules` of the files and of other overrides cannot. Where it applies, `categories` turn on the rules of its
-    /// plugins, if an override before it has not done so: but not if the files have no plugin at all.
+    /// plugins, if an override before it has not done so: but not if the files have no plugin at all, and not what the
+    /// command line says about a category.
     fn take_overrides(&mut self) -> Vec<ConfigObject> {
         let overrides = std::mem::take(&mut self.overrides);
         let have_categories = !self.plugins_of_files.iter().all(|it| it == b"eslint");
@@ -777,7 +723,7 @@ impl Rc<'_, '_> {
             (object.rules)
                 .retain(|it| (it.written_for).is_none_or(|it| self.has_plugin(it) || is_own(it)));
             if have_categories && !plugins.is_empty() {
-                let mut rules = self.category_rules(&is_own);
+                let mut rules = self.category_rules(&self.categories_of_files, &is_own);
                 rules.iter_mut().for_each(|it| it.yields = true);
                 rules.append(&mut object.rules);
                 object.rules = rules;
@@ -961,8 +907,7 @@ impl Rc<'_, '_> {
 }
 
 impl Config {
-    /// From `.oxlintrc.json` or `.eslintrc.json`. `base_path`: the directory that the file is in,
-    /// absolute.
+    /// From an `.oxlintrc.json`. `base_path`: the directory that the file is in, absolute.
     ///
     /// `load(directory, name)` reads a file that `extends` names, relative to `directory`.
     /// It is not asked for the configurations that ESLint and typescript-eslint publish:
@@ -973,10 +918,9 @@ impl Config {
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
-        flavor: RcFlavor,
         load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
     ) -> Result<Config, ConfigError> {
-        Self::from_rc(registry, base_path, json, flavor, load, None)
+        Self::from_rc(registry, base_path, json, load, None)
     }
 
     /// The same, with the plugins that `jsPlugins` names.
@@ -984,27 +928,26 @@ impl Config {
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
-        flavor: RcFlavor,
         load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
         load_plugin: &mut LoadPlugin<'_>,
     ) -> Result<Config, ConfigError> {
-        Self::from_rc(registry, base_path, json, flavor, load, Some(load_plugin))
+        Self::from_rc(registry, base_path, json, load, Some(load_plugin))
     }
 
     fn from_rc<'l>(
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
-        flavor: RcFlavor,
         load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
         load_plugin: Option<&'l mut LoadPlugin<'l>>,
     ) -> Result<Config, ConfigError> {
         let base_path = path::resolve(b"/", base_path);
+        let categories = vec![(b"correctness".to_vec(), Severity::Warn)];
         let mut rc = Rc {
             reader: Reader {
                 registry,
                 base_path: base_path.clone(),
-                prefers_typescript_rules: flavor == RcFlavor::Oxlint,
+                prefers_typescript_rules: true,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 unknown_rules: Vec::new(),
@@ -1013,43 +956,27 @@ impl Config {
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
             },
-            flavor,
             load,
             load_plugin,
-            categories: match flavor {
-                RcFlavor::Oxlint => vec![(b"correctness".to_vec(), Severity::Warn)],
-                RcFlavor::Eslint => Vec::new(),
-            },
+            categories: categories.clone(),
+            categories_of_files: categories,
             plugins: Vec::new(),
             overrides: Vec::new(),
             options: Vec::new(),
             plugins_of_files: Vec::new(),
         };
         rc.reader.objects.push(ConfigObject {
-            files: Some(vec![vec![Pattern::new(match flavor {
-                RcFlavor::Eslint => LINTED_FILES,
-                RcFlavor::Oxlint => LINTED_FILES_OF_OXLINT,
-            })]]),
+            files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
             ..ConfigObject::default()
         });
-        // What each ignores by itself. For ESLint these are patterns of a `.gitignore`.
-        let ignored: Vec<Vec<u8>> = match flavor {
-            RcFlavor::Eslint => [&b".*"[..], b"!.eslintrc.*", b"/**/node_modules/*"]
-                .iter()
-                .map(|it| ignore_pattern_to_minimatch(it, flavor))
-                .collect(),
-            // Not `node_modules`: a `.gitignore` has that.
-            RcFlavor::Oxlint => [
-                &b"**/.git/"[..],
-                b"**/.jj/",
-                b"**/*.min.*",
-                b"**/*-min.*",
-                b"**/*_min.*",
-            ]
-            .iter()
-            .map(|it| it.to_vec())
-            .collect(),
-        };
+        // What it ignores by itself. Not `node_modules`: a `.gitignore` has that.
+        let ignored: [&[u8]; 5] = [
+            b"**/.git/",
+            b"**/.jj/",
+            b"**/*.min.*",
+            b"**/*-min.*",
+            b"**/*_min.*",
+        ];
         rc.reader.objects.push(ConfigObject {
             ignores: Some(ignored.iter().map(|it| Pattern::new(it)).collect()),
             is_global_ignores: true,
@@ -1059,7 +986,8 @@ impl Config {
         let categories_at = rc.reader.objects.len();
         rc.reader.objects.push(ConfigObject::default());
         rc.file(json, &base_path, false, 0)?;
-        rc.reader.objects[categories_at].rules = rc.category_rules(&|it| rc.has_plugin(it));
+        rc.reader.objects[categories_at].rules =
+            rc.category_rules(&rc.categories, &|it| rc.has_plugin(it));
         let lacking = rc.lacking_rules();
         if !lacking.is_empty() {
             rc.reader.note(&[
@@ -1068,42 +996,37 @@ impl Config {
                 &lacking.join(&b", "[..]),
             ]);
         }
-        let printed_for_oxlint = match flavor {
-            RcFlavor::Oxlint => rc.printed(json, categories_at),
-            RcFlavor::Eslint => Vec::new(),
-        };
-        if flavor == RcFlavor::Oxlint {
-            // What is said about a rule of a plugin that oxlint does not have on has no effect.
-            let mut objects = std::mem::take(&mut rc.reader.objects);
-            for object in &mut objects {
-                (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
-            }
-            objects.append(&mut rc.take_overrides());
-            // Only with `import` does oxlint look at other files, which `oxc/no-barrel-file` has to know.
-            if !rc.has_plugin(Plugin::Import) {
-                objects.push(ConfigObject {
-                    settings: Json::Object(vec![(b"$withoutModules".to_vec(), Json::Bool(true))]),
-                    ..ConfigObject::default()
-                });
-            }
-            rc.reader.objects = objects;
-            let is_off = |id: &[u8]| {
-                let plugin = parse_rule_id(id).0;
-                PLUGIN_NAMES.contains(&plugin)
-                    && !(rc.plugins.iter()).any(|it| plugin_of_oxlint(it) == plugin)
-            };
-            let mut unknown_rules = std::mem::take(&mut rc.reader.unknown_rules);
-            unknown_rules.retain(|id| !is_off(id));
-            rc.reader.unknown_rules = unknown_rules;
-            let mut by_kind_of_file = rc.rules_by_kind_of_file();
-            rc.reader.objects.append(&mut by_kind_of_file);
+        let printed_for_oxlint = rc.printed(json, categories_at);
+        // What is said about a rule of a plugin that oxlint does not have on has no effect.
+        let mut objects = std::mem::take(&mut rc.reader.objects);
+        for object in &mut objects {
+            (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
         }
+        objects.append(&mut rc.take_overrides());
+        // Only with `import` does oxlint look at other files, which `oxc/no-barrel-file` has to know.
+        if !rc.has_plugin(Plugin::Import) {
+            objects.push(ConfigObject {
+                settings: Json::Object(vec![(b"$withoutModules".to_vec(), Json::Bool(true))]),
+                ..ConfigObject::default()
+            });
+        }
+        rc.reader.objects = objects;
+        let is_off = |id: &[u8]| {
+            let plugin = parse_rule_id(id).0;
+            PLUGIN_NAMES.contains(&plugin)
+                && !(rc.plugins.iter()).any(|it| plugin_of_oxlint(it) == plugin)
+        };
+        let mut unknown_rules = std::mem::take(&mut rc.reader.unknown_rules);
+        unknown_rules.retain(|id| !is_off(id));
+        rc.reader.unknown_rules = unknown_rules;
+        let mut by_kind_of_file = rc.rules_by_kind_of_file();
+        rc.reader.objects.append(&mut by_kind_of_file);
         let options_of_oxlint = std::mem::take(&mut rc.options);
         Ok(Config {
             options_of_oxlint,
             printed_for_oxlint,
             ..rc.reader.finish(Semantics {
-                keeps_options: flavor == RcFlavor::Eslint,
+                keeps_options: false,
                 accepts_all_plugins: true,
                 is_legacy: false,
             })

@@ -48,13 +48,13 @@ describe.concurrent("bun lint", () => {
       if (it.lacks) expect(stdout.match(it.lacks)?.[0]).toBeUndefined();
       if (it.reports) expect(countByRule(stdout)).toEqual(it.reports);
       if (it.matches) expect(it.matches.test(stdout)).toBe(true);
-      expect({ signal: proc.signalCode, exitCode, stderr: exitCode === it.exitCode ? "" : stderr.slice(-500) }).toEqual(
-        {
-          signal: null,
-          exitCode: it.exitCode,
-          stderr: "",
-        },
-      );
+      const allowed = [it.exitCode].flat();
+      const isAllowed = allowed.includes(exitCode);
+      expect({ signal: proc.signalCode, exitCode, stderr: isAllowed ? "" : stderr.slice(-500) }).toEqual({
+        signal: null,
+        exitCode: isAllowed ? exitCode : allowed[0],
+        stderr: "",
+      });
     },
     (seconds + 5) * 1000,
   );

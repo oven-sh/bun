@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_array_constructor::{as_array_call, get_arguments_text};
+use bun_lint_eslint::rules::no_array_constructor::{
+    as_array_call, get_arguments_text, is_reported_by_oxlint,
+};
 
 /// Disallow generic `Array` constructors.
 pub struct NoArrayConstructor;
@@ -14,7 +16,11 @@ impl NoArrayConstructor {
         let Some(call) = as_array_call(e) else {
             return;
         };
-        if call.args().len() == 1 {
+        let is_reported = match cx.language().is_oxlint {
+            true => is_reported_by_oxlint(call),
+            false => call.args().len() != 1,
+        };
+        if !is_reported {
             return;
         }
         cx.report(e, USE_LITERAL)

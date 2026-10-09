@@ -949,7 +949,7 @@ impl<'a> Parser<'a> {
         let mut end = false;
         let mut colon = false;
         let mut brackets: Vec<u8> = Vec::new();
-        let custom_property = !std::mem::take(&mut self.is_custom_property_set)
+        let mut custom_property = !std::mem::take(&mut self.is_custom_property_set)
             && self.text_of(start).starts_with(b"--");
 
         let mut next = Some(start);
@@ -962,6 +962,14 @@ impl<'a> Parser<'a> {
                 TokenKind::Control(control) if brackets.is_empty() => match control {
                     b';' if colon => return self.decl(tokens, custom_property),
                     b';' => break,
+                    // `postcss-less` starts the statement anew with the word that it has made of `@{a}`. It comes to the
+                    // same tokens and the same state, so here the statement goes on, which a selector with many of them
+                    // needs: starting anew takes time for all that is before.
+                    b'{' if self.syntax == Syntax::Less
+                        && self.less_rule_interpolation(tokens)? =>
+                    {
+                        custom_property = self.text_of(start).starts_with(b"--");
+                    }
                     b'{' => return self.rule(tokens),
                     b'}' => {
                         tokens.pop();
@@ -1523,19 +1531,24 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
-        if let [.., prev, last] = tokens[..]
-            && prev.kind == TokenKind::AtWord
-            && last.is(b'{')
-        {
-            self.tokenizer.back(Some(last));
-            if self.less_interpolation(prev)? {
-                for &token in tokens[..tokens.len() - 2].iter().rev() {
-                    self.tokenizer.back(Some(token));
-                }
-                return Ok(());
-            }
+    /// The first half of `rule`: whether `tokens` end with the `@{` of an interpolation. These two are taken from them then,
+    /// and the next token is the interpolation.
+    fn less_rule_interpolation(&mut self, tokens: &mut Vec<Token>) -> Result<bool, Refused> {
+        let [.., prev, last] = tokens[..] else {
+            return Ok(false);
+        };
+        if prev.kind != TokenKind::AtWord || !last.is(b'{') {
+            return Ok(false);
         }
+        self.tokenizer.back(Some(last));
+        let is_interpolation = self.less_interpolation(prev)?;
+        if is_interpolation {
+            tokens.truncate(tokens.len() - 2);
+        }
+        Ok(is_interpolation)
+    }
+
+    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         self.base_rule(tokens)?;
         let node = &mut self.nodes[self.last_node as usize];
         node.extend = has_extend(

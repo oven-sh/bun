@@ -4,7 +4,7 @@
 use crate::linter::globals::ConfigGlobals;
 use crate::options::Json;
 use bun_sema::resolve::{Dialect, ScriptKind};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// ESLint's `languageOptions.sourceType`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -70,6 +70,8 @@ pub struct LanguageOptions {
     pub globals: Vec<(Box<[u8]>, Global)>,
     /// The names that `globals` itself turns on, without those of an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
+    /// An `env` is on in which oxlint has `Temporal`, which is none of its built-in globals.
+    pub has_temporal_in_env: bool,
     pub parser: Parser,
     /// `parserOptions.ecmaFeatures.globalReturn`
     pub global_return: bool,
@@ -101,8 +103,9 @@ pub struct LanguageOptions {
     /// The configuration is one of oxlint: where a rule of oxlint does something else than the rule of ESLint or of the plugin
     /// that it is a port of, oxlint is followed.
     pub is_oxlint: bool,
-    /// The configuration is one of ESLint 8, where `/* eslint-env mocha */` defines the variables of an environment.
-    pub reads_env_comments: bool,
+    /// The configuration is one of ESLint 8: what only that has a say about. There `/* eslint-env mocha */` defines the variables of
+    /// an environment, and espree reads the edition of the language that is configured and no later one.
+    pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -257,6 +260,7 @@ impl LanguageOptions {
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         let mut written_globals: Vec<Box<[u8]>> = Vec::new();
+        let mut has_temporal_in_env = false;
         // `env` of an `.eslintrc` or an `.oxlintrc.json`.
         for (name, is_enabled) in language_options
             .get(b"$env")
@@ -265,6 +269,10 @@ impl LanguageOptions {
         {
             let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
             if is_enabled.as_bool() == Some(true) {
+                has_temporal_in_env |= matches!(
+                    name,
+                    b"browser" | b"node" | b"serviceworker" | b"shared-node-browser" | b"worker"
+                );
                 let variables = crate::linter::globals::environment(name)
                     .into_iter()
                     .flatten();
@@ -296,6 +304,7 @@ impl LanguageOptions {
             source_type,
             globals,
             written_globals,
+            has_temporal_in_env,
             parser,
             // ESLint turns it off for espree in a module.
             global_return: feature(b"globalReturn")
@@ -325,7 +334,7 @@ impl LanguageOptions {
                 .any(|key| is_truthy(parser_options.get(key))),
             refuses_what_parser_refuses: true,
             is_oxlint: false,
-            reads_env_comments: false,
+            eslint_8: None,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -374,9 +383,10 @@ impl LanguageOptions {
                     ScriptKind::Ts
                 }),
             },
+            // For the espree of ESLint 8 the name of a file says nothing.
             Parser::Espree => match by_name {
-                Some(_) => None,
-                None => Some(if self.jsx {
+                Some(_) if self.eslint_8.is_none() => None,
+                _ => Some(if self.jsx {
                     ScriptKind::Jsx
                 } else {
                     ScriptKind::Js
@@ -403,6 +413,7 @@ impl Default for LanguageOptions {
             source_type: SourceType::Module,
             globals: Vec::new(),
             written_globals: Vec::new(),
+            has_temporal_in_env: false,
             parser: Parser::Espree,
             global_return: false,
             implied_strict: false,
@@ -417,7 +428,7 @@ impl Default for LanguageOptions {
             wants_types: false,
             refuses_what_parser_refuses: true,
             is_oxlint: false,
-            reads_env_comments: false,
+            eslint_8: None,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

@@ -36,6 +36,12 @@ const b = css`
   ${j}
 `;
 
+const k = css`
+  --shadow:
+    0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft},
+    ${l};
+`;
+
 -------------------
 { printWidth: 100 }
 -------------------
@@ -72,6 +78,10 @@ const b = css`
   color: red;
   ${i};
   ${j}
+`;
+
+const k = css`
+  --shadow: 0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft}, ${l};
 `;
 
 ===================== End =====================

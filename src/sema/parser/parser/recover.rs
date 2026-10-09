@@ -184,12 +184,13 @@ impl Parser<'_> {
         if !self.recovers {
             return self.fail();
         }
-        // A loop that is not written for recovery yet can stay at a token for ever.
+        // A loop that is not written for recovery yet can stay at a token for ever. What is nested
+        // and not closed reports an error at one token for each level.
         match self.errors_at.0 == self.lx.start {
             true => self.errors_at.1 += 1,
             false => self.errors_at = (self.lx.start, 0),
         }
-        if self.errors_at.1 > 64 {
+        if self.errors_at.1 > 1 << 17 {
             return self.refuse(Refusal::Unsupported);
         }
         self.take_errors_of_scanner();

@@ -58,6 +58,8 @@ struct ContextIdentifierVisitor<'a> {
     inner_references: Vec<(Ref, u32)>,
     inner_reassignments: Vec<(Ref, u32)>,
     error: Option<CompilerError>,
+    /// How many statements, expressions and patterns are around what is walked.
+    level: u32,
 }
 
 impl<'a> ContextIdentifierVisitor<'a> {
@@ -137,9 +139,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
-        if !self.env.has_stack() {
+        if !self.env.can_nest(self.level) {
             return;
         }
+        self.level += 1;
         match &binding.data {
             B::BIdentifier(id) => self.record_decl(id.r#ref),
             B::BArray(arr) => {
@@ -163,6 +166,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             }
             B::BMissing(_) => {}
         }
+        self.level -= 1;
     }
 
     fn walk_args(&mut self, args: &[G::Arg]) {
@@ -233,9 +237,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
-        if !self.env.has_stack() {
+        if !self.env.can_nest(self.level) {
             return;
         }
+        self.level += 1;
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -381,6 +386,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | StmtData::SExportFrom(_)
             | StmtData::SExportStar(_) => {}
         }
+        self.level -= 1;
     }
 
     #[allow(
@@ -388,9 +394,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {
-        if !self.env.has_stack() {
+        if !self.env.can_nest(self.level) {
             return;
         }
+        self.level += 1;
         match &e.data {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
@@ -547,6 +554,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ESpecial(_)
             | Data::ENameOfSymbol(_) => {}
         }
+        self.level -= 1;
     }
 }
 
@@ -675,6 +683,7 @@ pub(crate) fn find_context_identifiers(
         inner_references: Vec::new(),
         inner_reassignments: Vec::new(),
         error: None,
+        level: 0,
     };
 
     // Walk params and body (like Babel's func.traverse())

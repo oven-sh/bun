@@ -4344,7 +4344,7 @@ impl<'s> TypeStore<'s> {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (task, link) in tasks.into_iter().zip(&links) {
             // The texts of the interner are not in an arena: see `atom::Tables`.
-            texts.push((task.atoms.map(|text| Box::<[u8]>::from(&*text)), link));
+            texts.push((task.atoms.map(|text| crate::atom::Text::from(&*text)), link));
             components.push((task.components, link));
             mappers.push((task.mappers, link));
             sigs.push((task.sigs, link));
@@ -4354,7 +4354,7 @@ impl<'s> TypeStore<'s> {
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         });
-        check_joined(atoms.halves().1, joined, |a, b| a == b);
+        check_joined(atoms.halves().1, joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
             components,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToString } from "react-dom/server";
@@ -1925,3 +1925,62 @@ test("white space is between the destination of a link and its title", () => {
   expect(Markdown.html('[a](<b>"c")\n')).toBe("<p>[a](<b>&quot;c&quot;)</p>\n");
   expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
 });
+
+// What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by
+// the time of the processor: that holds on a busy machine and in a debug build.
+test.each([
+  ["CommonMark", {}],
+  [
+    "every extension",
+    {
+      tables: true,
+      strikethrough: true,
+      tasklists: true,
+      autolinks: true,
+      wikiLinks: true,
+      latexMath: true,
+      underline: true,
+    },
+  ],
+])(
+  "rendering takes time in proportion to the size of the text: %s",
+  async (_, options) => {
+    const units = [
+      ..."a b c\n|a b\n\n|- a\n|- a\n\n|1. a\n|- a\n* a\n|1. a\n1) a\n|- |> |> a\n\n|> a\n|- [ ] a\n".split("|"),
+      ..."[a](b) ,[a][b] ,[a] ,![a](b) ,[,],![,[[a]] ,[[,[^a] ,[a]: b\n,[^a]: b\n\n".split(","),
+      ..."*a* ,**a** ,*,* a,_a,a_,~~a~~ ,~,`,`a` ,$a$ ,$,&,&amp; ,\\,\\* ".split(","),
+      ..."<,<a> ,<a ,<!-- a --> ,<!--,<!-- a -->\n\n,<div>\na\n</div>\n\n,<?,<![CDATA[".split(","),
+      ..."# a\n,a\n=\n,---\n\n,```\na\n```\n\n,```\n,    a\n\n,:-\n,a\n    - b\n".split(","),
+      ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
+      ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+    ];
+    const script = `
+      const count = ${isDebug || isASAN ? 2_000 : 40_000};
+      const texts = ${JSON.stringify(units)}.map(unit => unit.repeat(count) + "a\\n");
+      const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+      const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+      const plain = prose.repeat(Math.ceil(length / prose.length));
+      const time = texts => {
+        const before = process.cpuUsage();
+        for (const text of texts) Bun.markdown.html(text, ${JSON.stringify(options)});
+        const { user, system } = process.cpuUsage(before);
+        return user + system;
+      };
+      time([plain]);
+      console.log(time(texts) / time(texts.map(() => plain)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout)).toBeLessThan(6);
+    expect(exitCode).toBe(0);
+  },
+  90_000,
+);

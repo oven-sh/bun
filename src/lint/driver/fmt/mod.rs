@@ -7,6 +7,7 @@ pub mod cli;
 mod config;
 mod editorconfig;
 mod files;
+mod prettier;
 mod tailwind;
 
 use crate::run::{Environment, Fatal, Outcome, Pool};
@@ -36,7 +37,7 @@ use files::{Expanded, Ignored, Kind, Language, Target};
 use std::borrow::Cow;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 macro_rules! pretty {
     ($($arg:tt)*) => {
@@ -766,8 +767,8 @@ pub fn format_for_tests(
 /// What has become of a file.
 enum Done {
     Unchanged,
-    /// It is not formatted. With `--write`, it was not.
-    Different,
+    /// It is not formatted. With `--write`, it was not. And how long that took to find out.
+    Different(Duration),
     /// It has classes of Tailwind CSS whose order is not known yet.
     PutAside,
     /// For the user. The exit code is 2.
@@ -809,6 +810,55 @@ impl Run<'_> {
             self.out.stdout.extend_from_slice(text);
             self.out.stdout.push(b'\n');
         }
+    }
+
+    /// `src/a.js (1ms)`: how `oxfmt --check` names a file.
+    fn log_with_time(&mut self, shown: &[u8], took: Duration) {
+        if self.options.log_level >= LogLevel::Log {
+            pretty!(
+                &mut self.out.stdout,
+                self.colors(),
+                "<yellow>{}<r> ({}ms)\n",
+                BStr::new(shown),
+                took.as_millis()
+            );
+        }
+    }
+
+    /// What oxfmt says at the end of a run, in which so many files were not formatted, were, and could not be.
+    fn sum_up_as_oxfmt(&mut self, [different, unchanged, failed]: [usize; 3], threads: usize) {
+        let total = different + unchanged + failed;
+        let says_errors = self.options.log_level >= LogLevel::Error;
+        if failed > 0 {
+            if says_errors {
+                let text = b"Error occurred when checking code style in the above files.\n";
+                self.out.stderr.extend_from_slice(text);
+            }
+            return;
+        }
+        if total == 0 {
+            // Why there is none has been said.
+            if self.out.exit_code != 0 {
+                return;
+            }
+            if says_errors {
+                let text = b"No files found matching the given patterns.\n";
+                self.out.stderr.extend_from_slice(text);
+            }
+        } else if self.options.list_different {
+            return;
+        } else if self.options.check && different == 0 {
+            self.log(b"All matched files use the correct format.");
+        } else if self.options.check {
+            self.log(b"");
+            let text = format!(
+                "Format issues found in above {different} files. Run without `--check` to fix."
+            );
+            self.log(text.as_bytes());
+        }
+        let took = self.began.elapsed().as_millis();
+        let text = format!("Finished in {took}ms on {total} files using {threads} threads.");
+        self.log(text.as_bytes());
     }
 
     /// Prettier's `logger.warn`
@@ -887,6 +937,30 @@ impl Run<'_> {
         // The configuration of a file that is ignored is not even read.
         if ignored.ignores_file(&path, &None) {
             self.out.stdout = text;
+            return self.out;
+        }
+        // The language of a plugin: see `prettier.rs`.
+        if let Ok(scope) = configs.for_directory(paths::dirname(&path))
+            && language_of(configs, &scope, &path) == Language::Other
+            && !ignored.ignores_file(&path, configs.ignores_of(&scope))
+            && configs.plugin_that_reads(&scope, &path).is_some()
+            && [&b"prettier"[..]]
+                .into_iter()
+                .chain(configs.packages_of_plugins(&scope))
+                .all(|it| prettier::is_installed(&self.environment.cwd, it))
+        {
+            let size = (1, text.len() as u64);
+            let bridge = prettier::Prettier::new(self.environment, self.options, size);
+            match bridge.format(&path, configs.path_of_config(&scope), &text) {
+                Err(why) => self.error(&[name, b": ", &why].concat()),
+                Ok(formatted) if self.options.check || self.options.list_different => {
+                    if formatted != text {
+                        self.log(b"(stdin)");
+                        self.out.exit_code = 1;
+                    }
+                }
+                Ok(formatted) => self.out.stdout = formatted,
+            }
             return self.out;
         }
         let found = configs
@@ -982,8 +1056,12 @@ impl Run<'_> {
         let (options, cwd) = (self.options, &self.environment.cwd);
         // Files are written unless a flag says otherwise.
         let only_looks = (options.check || options.list_different) && !options.write;
+        let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if options.check {
             self.log(b"Checking formatting...");
+            if is_oxfmt {
+                self.log(b"");
+            }
         }
         let pool = Pool::new(options.threads);
         let dot = [b".".to_vec()];
@@ -1018,6 +1096,17 @@ impl Run<'_> {
             !target.is_named || !ignored.ignores_file(&target.path, of_config)
         };
         let mut work: Vec<(usize, &Target)> = Vec::new();
+        // What goes to the project's own Prettier, and the plugins that would have to be installed for more to go there.
+        let mut handed_over: Vec<(usize, &Target)> = Vec::new();
+        let mut not_installed: Vec<&[u8]> = Vec::new();
+        let mut packages: Vec<(&[u8], bool)> = Vec::new();
+        let mut has_package = |name| match packages.iter().find(|it| it.0 == name) {
+            Some(known) => known.1,
+            None => {
+                packages.push((name, prettier::is_installed(cwd, name)));
+                packages.last().is_some_and(|it| it.1)
+            }
+        };
         let mut done: Vec<Option<Done>> = Vec::with_capacity(expanded.len());
         for (index, it) in expanded.iter().enumerate() {
             done.push(None);
@@ -1039,7 +1128,29 @@ impl Run<'_> {
                     }
                 }
                 Language::Supported => work.push((index, target)),
+                Language::Other
+                    if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
+                        && [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.packages_of_plugins(&target.scope))
+                            .all(&mut has_package) =>
+                {
+                    handed_over.push((index, target));
+                }
                 Language::Other => {
+                    if configs
+                        .plugin_that_reads(&target.scope, &target.path)
+                        .is_some()
+                    {
+                        for package in [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.packages_of_plugins(&target.scope))
+                        {
+                            if !has_package(package) && !not_installed.contains(&package) {
+                                not_installed.push(package);
+                            }
+                        }
+                    }
                     let name = paths::basename(&target.path);
                     let kind =
                         strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
@@ -1062,7 +1173,7 @@ impl Run<'_> {
             }
         }
         if options.list_files {
-            for (_, target) in &work {
+            for (_, target) in work.iter().chain(&handed_over) {
                 self.out
                     .stdout
                     .extend_from_slice(&paths::relative(cwd, &target.path));
@@ -1082,6 +1193,7 @@ impl Run<'_> {
         let leaves_classes = AtomicBool::new(false);
         let format_at = |at: usize| {
             let (index, target) = work[at];
+            let began = Instant::now();
             let shown = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
             let result = (|| {
@@ -1136,17 +1248,11 @@ impl Run<'_> {
                     return Ok(Done::Unchanged);
                 }
                 if !only_looks {
-                    fs::write_atomically(&target.path, &formatted).map_err(|error| {
-                        [
-                            b"Unable to write file \"",
-                            &shown[..],
-                            b"\":\n",
-                            &fs::describe(&error),
-                        ]
-                        .concat()
+                    fs::write_atomically(cwd, &target.path, &formatted).map_err(|why| {
+                        [b"Unable to write file \"", &shown[..], b"\":\n", &why].concat()
                     })?;
                 }
-                Ok(Done::Different)
+                Ok(Done::Different(began.elapsed()))
             })();
             scratches.lock().push(scratch);
             results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
@@ -1162,6 +1268,23 @@ impl Run<'_> {
             if classes_are_unknown.is_none() || options.allow_unsupported {
                 pool.for_each(put_aside.len(), 1, &|at| format_at(put_aside[at]));
             }
+        }
+        if !handed_over.is_empty() {
+            let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
+            let bridge =
+                prettier::Prettier::new(self.environment, options, (handed_over.len(), size));
+            pool.for_each(handed_over.len(), 1, &|at| {
+                let (index, target) = handed_over[at];
+                let began = Instant::now();
+                let shown = paths::relative(cwd, &target.path);
+                let config = configs.path_of_config(&target.scope);
+                let file = (&target.path[..], target.size, &shown[..]);
+                results.lock()[index] = Some(match bridge.format_file(file, config, !only_looks) {
+                    Ok(true) => Done::Different(began.elapsed()),
+                    Ok(false) => Done::Unchanged,
+                    Err(error) => Done::Failed(error),
+                });
+            });
         }
         let formatting = started.elapsed();
 
@@ -1193,11 +1316,14 @@ impl Run<'_> {
                         [name, b": The order of some classes cannot be found."].concat()
                     });
                 }
-                Some(Done::Different) => {
+                Some(Done::Different(took)) => {
                     different += 1;
-                    match options.check {
-                        true => self.warn(&shown),
-                        false => self.log(&shown),
+                    match (is_oxfmt, options.check) {
+                        (true, true) => self.log_with_time(&shown, took),
+                        // oxfmt does not name the files that it writes.
+                        (true, false) if !options.list_different => {}
+                        (false, true) => self.warn(&shown),
+                        (_, false) => self.log(&shown),
                     }
                 }
             }
@@ -1212,7 +1338,9 @@ impl Run<'_> {
                 format!("{n} files")
             }
         };
-        if options.check {
+        if is_oxfmt {
+            self.sum_up_as_oxfmt([different, unchanged, failed], pool.threads());
+        } else if options.check {
             if failed > 0 {
                 self.log(
                     format!(
@@ -1222,10 +1350,7 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else if different == 0 {
-                self.log(match configs.flavor {
-                    Flavor::Prettier => &b"All matched files use Prettier code style!"[..],
-                    Flavor::Oxfmt => b"All matched files use the correct format.",
-                });
+                self.log(b"All matched files use Prettier code style!");
             } else if only_looks {
                 self.warn(
                     format!(
@@ -1241,7 +1366,8 @@ impl Run<'_> {
         if only_looks && different > 0 && self.out.exit_code == 0 {
             self.out.exit_code = 1;
         }
-        if options.log_level >= LogLevel::Log && !options.check && !options.list_different {
+        let sums_up = !is_oxfmt && !options.check && !options.list_different;
+        if options.log_level >= LogLevel::Log && sums_up {
             let colors = self.colors();
             let took = bun_core::output::Elapsed {
                 colors,
@@ -1256,6 +1382,18 @@ impl Run<'_> {
                 noun(different),
                 unchanged,
                 took
+            );
+        }
+        if options.log_level >= LogLevel::Log && !handed_over.is_empty() {
+            let noun = if handed_over.len() == 1 {
+                "file was"
+            } else {
+                "files were"
+            };
+            let _ = writeln!(
+                self.out.stderr,
+                "{} {noun} handed to the Prettier of the project, for a language that only a plugin reads.",
+                handed_over.len(),
             );
         }
         if options.timing {
@@ -1318,6 +1456,17 @@ impl Run<'_> {
                 "{count} {noun} in a language that bun format does not support yet, and left as they are: "
             );
             let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
+            if !not_installed.is_empty() {
+                let plugins = not_installed.join(&b", "[..]);
+                self.warn(
+                    &[
+                        &b"Not installed: "[..],
+                        &plugins,
+                        b". With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+                    ]
+                    .concat(),
+                );
+            }
             match options.allow_unsupported {
                 true => self.warn(&text),
                 false => {

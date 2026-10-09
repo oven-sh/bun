@@ -45,7 +45,6 @@ function expected([pattern, flags, text, lastIndex]: Case): unknown {
 
 let total = 0;
 let failed = 0;
-let limits = 0;
 let unsupported = 0;
 
 function check(batch: Case[]) {
@@ -56,7 +55,6 @@ function check(batch: Case[]) {
   );
   batch.forEach((it, i) => {
     let actual = answers[i];
-    if (actual === "limit") return void limits++;
     if (actual?.error?.message.includes("not supported")) return void unsupported++;
     if (actual?.error) actual = "error";
     const wanted = expected(it);
@@ -78,6 +76,6 @@ for (const source of sources) {
     if (batch.length >= 50000) check(batch.splice(0));
   }
   check(batch);
-  console.log(`${source.slice(0, 60)}: ${total - failed} of ${total} as RegExp so far (${limits} over the limit, ${unsupported} not supported)`);
+  console.log(`${source.slice(0, 60)}: ${total - failed} of ${total} as RegExp so far (${unsupported} not supported)`);
 }
 process.exit(failed ? 1 : 0);

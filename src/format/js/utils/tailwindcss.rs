@@ -132,13 +132,12 @@ pub(crate) fn context_of_string(source: &[u8], f: &Formatter<'_>) -> Option<Tail
 /// Whether the value of the JSX attribute called `name` is classes.
 fn is_class_attribute(name: &[u8], tailwind: &Tailwind) -> bool {
     matches!(name, b"class" | b"className")
-        || (!bun_core::strings::contains_char(name, b':')
-            && tailwind.attributes.iter().any(|it| it == name))
+        || (!bun_core::strings::contains_char(name, b':') && tailwind.attributes.has_name(name))
 }
 
 /// Whether the arguments of `callee` are classes: `cn`, `cn.a`, `cn()`. The plugin's `isSortableExpression`.
 fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
-    if tailwind.functions.is_empty() {
+    if tailwind.functions.names().is_empty() {
         return false;
     }
     let mut node = callee;
@@ -146,7 +145,7 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
         node = match node.kind() {
             ExprKind::Call(call) => call.callee(),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Ident(_) => return tailwind.functions.iter().any(|it| it == node.text()),
+            ExprKind::Ident(_) => return tailwind.functions.has_name(node.text()),
             _ => return false,
         };
     }

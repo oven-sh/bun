@@ -7,32 +7,83 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 pub(crate) fn write_return_statement<'a>(
-    _statement: Stmt<'a>,
+    statement: Stmt<'a>,
     argument: Option<Expr<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write_return_or_throw("return", argument, f);
+    write_return_or_throw("return", statement, argument, f);
 }
 
 pub(crate) fn write_throw_statement<'a>(
-    _statement: Stmt<'a>,
+    statement: Stmt<'a>,
     argument: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
-    write_return_or_throw("throw", Some(argument), f);
+    write_return_or_throw("throw", statement, Some(argument), f);
 }
 
 fn write_return_or_throw<'a>(
     keyword: &'static str,
+    statement: Stmt<'a>,
     argument: Option<Expr<'a>>,
     f: &mut Formatter<'a>,
 ) {
     write!(f, keyword);
+    let Some(content_end) = end_before_comments_that_count_for_the_width(statement, argument, f)
+    else {
+        if let Some(argument) = argument {
+            write!(f, [space(), FormatAdjacentArgument(argument)]);
+        }
+        return write!(f, OptionalSemicolon);
+    };
     if let Some(argument) = argument {
+        let previous_limit = f.comments_mut().limit_comments_up_to(content_end);
         write!(f, [space(), FormatAdjacentArgument(argument)]);
+        f.comments_mut().restore_view_limit(previous_limit);
     }
+    let comments = f.comments().comments_before(statement.span().end);
+    let on_the_line = (comments.iter())
+        .take_while(|comment| !comment.preceded_by_newline())
+        .count();
+    write!(
+        f,
+        [
+            OptionalSemicolon,
+            space(),
+            FormatDanglingComments::Comments {
+                comments: &comments[..on_the_line],
+                indent: DanglingIndentMode::None,
+            }
+        ]
+    );
+}
 
-    write!(f, OptionalSemicolon);
+/// `return a // comment⏎;`: the `;` is on a later line, so the comment is in the statement. oxfmt writes it behind the
+/// `;` as a text like another, which has to fit on the line. Returns where what is before the comment ends.
+fn end_before_comments_that_count_for_the_width<'a>(
+    statement: Stmt<'a>,
+    argument: Option<Expr<'a>>,
+    f: &Formatter<'a>,
+) -> Option<u32> {
+    if !f.options().flavor.is_oxfmt() || f.is_quiet() {
+        return None;
+    }
+    let span = statement.span();
+    let content_end = match argument {
+        Some(argument) => argument.outer_span().end,
+        None => span.start + "return".len() as u32,
+    };
+    let first = (f.comments())
+        .comments_in(Span::new(content_end, span.end.max(content_end)))
+        .first()?;
+    let is_right_behind = (f.source_text())
+        .text_for(&Span::new(content_end, first.start()))
+        .trim_ascii()
+        .is_empty();
+    (is_right_behind
+        && !first.preceded_by_newline()
+        && !f.comments().has_trailing_suppression_comment(content_end))
+    .then_some(content_end)
 }
 
 /// What has to start on the line of the keyword before it: the argument of `return` or `throw`.

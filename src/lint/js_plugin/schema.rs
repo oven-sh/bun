@@ -14,6 +14,7 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("code_path.js", include_str!("worker/code_path.js")),
     ("processor.js", include_str!("worker/processor.js")),
     ("eslint.js", include_str!("worker/eslint.js")),
+    ("prettier.js", include_str!("worker/prettier.js")),
     ("main.js", include_str!("worker/main.js")),
 ];
 

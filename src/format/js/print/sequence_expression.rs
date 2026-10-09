@@ -15,6 +15,29 @@ fn sequence_after_return_is_a_group_of_its_own(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `((/* comment */ a), b)`: the parentheses of `a` go, and for oxfmt the comment in them leads the sequence: it is written
+/// before the parentheses that the sequence gets. For Prettier it leads `a`. Returns what the comments before `e` are the
+/// comments before: oxc's `sequence_leading_comments_start`.
+pub(crate) fn span_that_comments_lead<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Span {
+    let span = e.span();
+    if !f.options().flavor.is_oxfmt()
+        || !matches!(
+            e.kind(),
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            }
+        )
+        // A type cast comment is about the parentheses behind it, which stay.
+        || f.comments().is_cast_parenthesis(span.start)
+    {
+        return span;
+    }
+    e.sequence()
+        .first()
+        .map_or(span, |first| Span::new(first.span().start, span.end))
+}
+
 /// `a, b, c`
 pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let parent = e.ast_parent();

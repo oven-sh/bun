@@ -427,8 +427,9 @@ impl PreferConst {
             let Some(name) = name else {
                 continue;
             };
-            // oxlint points at the declaration, also of what is assigned later.
+            // oxlint points at the declaration, also of what is assigned later, without its type annotation.
             let declared = match node {
+                Node::Pat(pat) if cx.language().is_oxlint => Some(pat.span()),
                 Node::Expr(e) if cx.language().is_oxlint => {
                     e.symbol().and_then(|it| it.declarations().next()?.name_span())
                 }

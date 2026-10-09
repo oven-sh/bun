@@ -232,7 +232,9 @@ impl ObjectShorthand {
             (PropKind::Init, ExprKind::Fn(func)) if self.applies_to_methods && func.name().is_none() => {
                 let name = ast_utils::get_static_key_name(key);
                 let name = name.as_deref();
-                if (self.ignores_constructors && name.is_some_and(is_constructor))
+                // oxlint takes only a key that is written as a name for that of a constructor.
+                let can_be_constructor = !file.language().is_oxlint || matches!(key.kind(), KeyKind::Ident(_));
+                if (self.ignores_constructors && can_be_constructor && name.is_some_and(is_constructor))
                     || (self.methods_ignore_pattern.as_ref())
                         .is_some_and(|pattern| name.is_some_and(|name| pattern.test(name)))
                     || (self.avoids_quotes && is_string_literal_key(key, file))

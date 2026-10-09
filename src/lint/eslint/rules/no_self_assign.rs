@@ -34,7 +34,10 @@ fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report
                 }
             }
         }
-        (ExprKind::Spread(l), ExprKind::Spread(r)) => each_self_assignment(l, r, props, report),
+        // oxlint does not look at what comes after `...`.
+        (ExprKind::Spread(l), ExprKind::Spread(r)) if !left.file().language().is_oxlint => {
+            each_self_assignment(l, r, props, report);
+        }
         (ExprKind::Object(targets), ExprKind::Object(values)) => {
             // A spread can overwrite the properties before it.
             let mut start = 0;

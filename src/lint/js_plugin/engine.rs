@@ -30,17 +30,21 @@ pub trait Engine: Sync {
     }
 }
 
-/// How much of the time that a realm takes to start it has to save. With 1, 0.5 and 0.25 mermaid-js/mermaid, where a realm takes
-/// 6 s and all files 30 s, has 2, 3 and 3 realms (4 are the fastest, 16 as slow as 1, with 8 times the memory), and 26,701 files
-/// with plugins that take 1.8 s have 7, 10 and 14 (16 are the fastest).
+/// How much of what a realm costs it has to save: time against memory. With 0.5 openlayers (8 MB) has 4 realms, mermaid (7 MB) 3
+/// and vscode (180 MB) 16, and none takes twice the memory of ESLint. With 1 they have 3, 2 and 13, with 0.25 6, 4 and 16.
 const SHARE_TO_SAVE: f64 = 0.5;
 
-/// After so many files it is known how long one takes.
+/// What a realm costs, in what it takes from its start to the end of its first file. It stays slow for a while: its code is not
+/// compiled yet, and each plugin fills caches of its own. That alone is 1.2 (vscode, mermaid) to 3.4 (openlayers), and the files
+/// by which the rest is judged are those that it is slow with.
+const COST_IN_STARTS: f64 = 4.0;
+
+/// After so many files it is known how long one takes, if they have taken as long as a start.
 const FILES_TO_MEASURE: u32 = 4;
 
-/// How many bytes are linted in the time that a realm takes to start, as long as that is not known: 0.5 to 1.4 MB with the
-/// configurations of openlayers, mermaid and vscode.
-const BYTES_IN_A_START: f64 = 1e6;
+/// How many bytes are linted in the time that a realm costs, as long as that is not known: 1.0 to 1.5 MB with the
+/// configurations of openlayers, vscode and mermaid, whose files take 7, 0.6 and 4 ms per KB.
+const BYTES_IN_THE_COST: f64 = 1e6;
 
 #[derive(Default)]
 struct Measured {
@@ -90,16 +94,17 @@ impl Demand {
         if realms == 0 || realms >= measured.most {
             return realms == 0;
         }
-        // How many times a realm could start while one lints the files that are left.
-        let starts = measured.bytes_left as f64
+        // What one realm takes for the files that are left, in what another one costs.
+        let left = measured.bytes_left as f64
             / match measured.start {
-                Some(start) if measured.files >= FILES_TO_MEASURE => {
-                    start.as_secs_f64() * measured.bytes as f64 / measured.time.as_secs_f64()
+                Some(start) if measured.files >= FILES_TO_MEASURE && measured.time >= start => {
+                    let rate = measured.bytes as f64 / measured.time.as_secs_f64();
+                    COST_IN_STARTS * start.as_secs_f64() * rate
                 }
-                _ => BYTES_IN_A_START,
+                _ => BYTES_IN_THE_COST,
             };
-        // Until it has started the others go on. Then they are one more.
+        // Until it is of use the others go on. Then they are one more.
         let realms = realms as f64;
-        (starts / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
+        (left / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
     }
 }

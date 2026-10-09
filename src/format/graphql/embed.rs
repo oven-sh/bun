@@ -124,6 +124,10 @@ pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
     let is_marked = match parent {
         AstNodes::TaggedTemplateExpression(tagged) => match tagged.kind() {
+            ExprKind::TaggedTemplate(call) if f.options().flavor.is_oxfmt() => matches!(
+                crate::css::embed::root_name_of_tag(call.callee()),
+                Some(b"gql" | b"graphql")
+            ),
             ExprKind::TaggedTemplate(call) => match call.callee().kind() {
                 ExprKind::Dot { obj, name, .. } => {
                     matches!(

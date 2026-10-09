@@ -77,6 +77,8 @@ fn check(literal: Span, cx: &Cx<'_, NoNonoctalDecimalEscape>) {
                 report(Span::new(start, start + 2), follows_null_escape, cx);
                 follows_null_escape = false;
             }
+            // oxlint reads no further than a line that is continued.
+            Some(b'\n') if cx.language().is_oxlint => return,
             escaped => follows_null_escape = escaped == Some(&b'0'),
         }
         at += 2;

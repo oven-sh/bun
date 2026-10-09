@@ -90,7 +90,8 @@ impl NoRestrictedGlobals {
             let Some(name) = get_static_property_name(access) else {
                 return;
             };
-            if *name != *reference.name().bytes() {
+            // oxlint goes no further than the first property.
+            if *name != *reference.name().bytes() || cx.language().is_oxlint {
                 break (access, name);
             }
             parent = access.parent();
@@ -117,7 +118,8 @@ impl NoRestrictedGlobals {
             }
             if self.checks_global_object
                 && self.global_objects.iter().any(|it| **it == *name.bytes())
-                && file.global(name.bytes()).is_some_and(|it| it.accepts(false))
+                // For oxlint nothing has to define it.
+                && (file.language().is_oxlint || file.global(name.bytes()).is_some_and(|it| it.accepts(false)))
             {
                 self.check_property_of_global_object(reference, cx);
             }

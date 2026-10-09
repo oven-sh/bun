@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::as_member_expression;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 
 /// Disallow the use of `Math.pow` in favor of the `**` operator.
@@ -152,6 +153,12 @@ impl PreferExponentiationOperator {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
             };
+            // oxlint wants two arguments, and `Math.pow` written out, with nothing in parentheses.
+            let object = as_member_expression(call.callee()).and_then(Expr::object);
+            let is_written_out = object.is_some_and(|it| !it.is_parenthesized() && !it.is_chain_root());
+            if cx.language().is_oxlint && !(is_written_out && call.args().len() == 2) {
+                continue;
+            }
             cx.report(node, USE_EXPONENTIATION).fix(|fixer| fix(fixer, node, call));
         }
     }

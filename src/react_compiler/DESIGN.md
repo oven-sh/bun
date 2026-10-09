@@ -145,6 +145,12 @@ with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
 
+A function that is nested too deeply bails out the same way, with the Todo "Support functions of this
+size". The first walk of the lowering (`find_context_identifiers`) counts the statements, expressions
+and patterns around each node and stops above `MAX_NESTING` (256) levels, on every platform. Every
+function of the lowering that calls itself also asks `Environment::has_stack()`, which says no earlier
+in a build with large frames.
+
 ## Hook placement
 
 The compiler runs **per-function, post-visit** at the `S::Function` /

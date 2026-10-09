@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 
 /// Disallow unnecessary calls to `.bind()`.
 pub struct NoExtraBind;
@@ -61,6 +62,21 @@ pub(crate) fn own_keywords(func: Func, class_scopes: bool) -> OwnKeywords {
     found
 }
 
+/// oxlint's `function_body_contains_this`: in the body alone, also as the name of a JSX element and in the fields and
+/// the static blocks of classes, but not in a type.
+fn body_contains_this_for_oxlint(func: Func) -> bool {
+    let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
+    while let Some(node) = pending.pop() {
+        match node {
+            Node::Expr(e) if e.tag() == ExprTag::This => return true,
+            Node::Type(_) => {}
+            Node::Func(inner) if !inner.is_arrow() && inner.kind() != FnKind::StaticBlock => {}
+            _ => node.for_each_child(|child| pending.push(child)),
+        }
+    }
+    false
+}
+
 /// ESLint's `isSideEffectFree`.
 fn is_side_effect_free(e: Expr) -> bool {
     match e.kind() {
@@ -114,21 +130,27 @@ impl Rule for NoExtraBind {
                 ExprKind::Index { obj, index, .. } => (obj, index.span()),
                 _ => return,
             };
-            let ExprKind::Fn(func) = function.kind() else {
+            // oxlint sees through `as T` and the like.
+            let is_oxlint = cx.language().is_oxlint;
+            let ExprKind::Fn(func) = (if is_oxlint { get_inner_expression(function) } else { function }).kind() else {
                 return;
             };
             let (Some(argument), 1) = (call.args().first(), call.args().len()) else {
                 return;
             };
+            let uses_this = || match is_oxlint {
+                true => body_contains_this_for_oxlint(func),
+                false => own_keywords(func, true).this,
+            };
             if argument.tag() == ExprTag::Spread
                 || !ast_utils::is_specific_member_access(member, None, Some("bind"))
-                // For oxlint the `this` of a field and of a static block of a class in it is its own.
-                || !func.is_arrow() && own_keywords(func, !cx.language().is_oxlint).this
+                || !func.is_arrow() && uses_this()
             {
                 return;
             }
             cx.report(property, UNEXPECTED).fix(|fixer| {
-                is_side_effect_free(argument).then(|| fix(fixer, e, member, function)).flatten()
+                let is_fixable = is_side_effect_free(argument) && function.tag() == ExprTag::Fn;
+                is_fixable.then(|| fix(fixer, e, member, function)).flatten()
             });
         });
     }

@@ -7,6 +7,7 @@
 pub mod plugin;
 
 use bun_core::strings;
+use bun_lint::regex::Regex;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,13 +21,64 @@ pub trait Orders: std::fmt::Debug + Send + Sync + std::panic::RefUnwindSafe {
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>>;
 }
 
+/// Names, and patterns for names, which are written `"/^tw/"`.
+#[derive(Debug, Default)]
+pub struct Names {
+    names: Vec<Vec<u8>>,
+    patterns: Vec<Regex>,
+}
+
+/// Nothing in it changes.
+impl std::panic::RefUnwindSafe for Names {}
+
+impl Names {
+    /// The plugin's `parseRegex`, for each of `list`.
+    pub fn new(list: Vec<Vec<u8>>) -> Names {
+        let mut all = Names::default();
+        for it in list {
+            let pattern = it.strip_prefix(b"/").and_then(|rest| {
+                let slash = strings::last_index_of_char(rest, b'/')?;
+                Regex::from_bytes(&rest[..slash], &rest[slash + 1..]).ok()
+            });
+            match pattern {
+                Some(pattern) => all.patterns.push(pattern),
+                None => all.names.push(it),
+            }
+        }
+        all
+    }
+
+    /// Those that are no patterns.
+    pub fn names(&self) -> &[Vec<u8>] {
+        &self.names
+    }
+
+    pub fn has_patterns(&self) -> bool {
+        !self.patterns.is_empty()
+    }
+
+    /// Whether `name` is one of the names. oxfmt's own rules know no patterns.
+    pub fn has_name(&self, name: &[u8]) -> bool {
+        self.names.iter().any(|it| it == name)
+    }
+
+    pub fn has_pattern_for(&self, name: &[u8]) -> bool {
+        self.patterns.iter().any(|it| it.test(name))
+    }
+
+    /// The plugin's `hasMatch`
+    pub fn has(&self, name: &[u8]) -> bool {
+        self.has_name(name) || self.has_pattern_for(name)
+    }
+}
+
 /// `sortTailwindcss`, for one file.
 #[derive(Debug)]
 pub struct Tailwind {
     /// The functions whose arguments are classes.
-    pub functions: Vec<Vec<u8>>,
+    pub functions: Names,
     /// The attributes whose values are classes, besides `class` and `className`.
-    pub attributes: Vec<Vec<u8>>,
+    pub attributes: Names,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
     /// It is the plugin of Prettier, which finds the classes of a program in another way than oxfmt: [`plugin`].

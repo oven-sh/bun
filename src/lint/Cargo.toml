@@ -16,6 +16,7 @@ bun_glob.workspace = true
 bun_parsers.workspace = true
 bun_paths.workspace = true
 bun_threading.workspace = true
+bun_yarr.workspace = true
 bstr.workspace = true
 bitflags.workspace = true
 smallvec.workspace = true

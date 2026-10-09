@@ -27,6 +27,8 @@ function scan() {
     };
     try {
       note(exports, []);
+      // Until ESLint 8 a rule can be a function.
+      if (typeof exports === "function" && !located.has(exports)) located.set(exports, { module, export: [] });
       for (const [name, value] of Object.entries(exports ?? {})) {
         note(value, [name]);
         if (name === "default") for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
@@ -135,6 +137,8 @@ function describe(name, plugin) {
       hasSuggestions: meta?.hasSuggestions === true,
       schema: asJson(meta?.schema),
       defaultOptions: asJson(meta?.defaultOptions),
+      deprecated: asJson(meta?.deprecated) || undefined,
+      replacedBy: asJson(meta?.replacedBy),
     };
   });
   return stringify({ name, rules });

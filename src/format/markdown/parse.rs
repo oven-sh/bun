@@ -30,6 +30,8 @@ pub(crate) enum Syntax {
     Markdown,
     /// The same with oxfmt's `:::` containers.
     WithDirectives,
+    /// The same, to see what two lines are: see `leaves_paragraph`, which is not asked again for them.
+    TwoLines,
     /// See [`parse_content`].
     Plain,
     /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
@@ -625,7 +627,7 @@ fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
     };
     let text = [first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
-    let Some(root) = parse_lines(&text, &mut tree, Syntax::WithDirectives, 0) else {
+    let Some(root) = parse_lines(&text, &mut tree, Syntax::TwoLines, 0) else {
         return false;
     };
     let first = tree.get(root).map_or(NONE, |root| root.first_child);
@@ -2115,11 +2117,12 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     let mut options = Options::default();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
-    options.directives = syntax == Syntax::WithDirectives;
+    let is_as_oxfmt_reads = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
+    options.directives = is_as_oxfmt_reads;
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
-    options.micromark_to_the_letter = syntax != Syntax::WithDirectives;
+    options.micromark_to_the_letter = !is_as_oxfmt_reads;
     let leaf_memo = Cell::new(LeafMemo::default());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
         true => es_syntax_end(start),
@@ -2132,7 +2135,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
         leaf_bytes: match syntax {
             Syntax::Plain => b"",
             Syntax::Mdx => b"ie",
-            Syntax::Markdown | Syntax::WithDirectives => b"{",
+            Syntax::Markdown | Syntax::WithDirectives | Syntax::TwoLines => b"{",
         },
         leaf: &leaf,
         span_bytes: if is_plain { b"[" } else { SPAN_BYTES },

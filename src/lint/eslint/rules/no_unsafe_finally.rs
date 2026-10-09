@@ -63,8 +63,11 @@ impl Rule for NoUnsafeFinally {
         on.stmts(
             [StmtTag::Return, StmtTag::Throw, StmtTag::Break, StmtTag::Continue],
             |_, statement, cx| {
+                let is_oxlint = cx.language().is_oxlint;
                 let (label, stops_at_loops, stops_at_switch, left) = match statement.kind() {
                     StmtKind::Break(None) => (None, true, true, &mut cx.state.left_by_break),
+                    // For oxlint a `continue` goes no further than the next loop, whatever its label is.
+                    StmtKind::Continue(label) if is_oxlint => (label, true, false, &mut cx.state.left_by_continue),
                     StmtKind::Continue(None) => (None, true, false, &mut cx.state.left_by_continue),
                     StmtKind::Break(label) | StmtKind::Continue(label) => (label, false, false, &mut cx.state.left),
                     _ => (None, false, false, &mut cx.state.left),

@@ -578,6 +578,7 @@ fn codegen_block_no_reset(
     cx: &mut Context,
     block: &ReactiveBlock,
 ) -> Result<Vec<Stmt>, CompilerError> {
+    debug_assert!(cx.env.has_stack(), "took more stack than the builder");
     let mut statements: Vec<Stmt> = Vec::new();
     for item in block {
         match item {

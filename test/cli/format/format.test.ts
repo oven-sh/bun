@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { existsSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const command = [bunExe(), "format"];
@@ -75,6 +75,135 @@ describe.concurrent("bun format", () => {
     expect(statSync(join(String(dir), "a.js")).mtimeMs).toBe(before);
   });
 
+  // Prettier and oxfmt write into the file (`fs.writeFile`, `fs::write`): all but its text stays as it is.
+  describe("the file that is written", () => {
+    const isRoot = process.getuid?.() === 0;
+    /** `bun format` in `dir`, which is still there afterwards. `before`: what starts the command. */
+    async function write(dir: string, args: string[], before: string[] = []) {
+      await using proc = Bun.spawn({
+        cmd: [...before, ...command, ...args],
+        env,
+        cwd: dir,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+    const read = (dir: string, name: string) => readFileSync(join(dir, name), "utf8");
+
+    test("is still the file that its other names stand for", async () => {
+      using dir = tempDir("bun-format", { "a.js": ugly });
+      linkSync(join(String(dir), "a.js"), join(String(dir), "other-name.txt"));
+      const { exitCode } = await write(String(dir), ["a.js"]);
+      expect([read(String(dir), "a.js"), read(String(dir), "other-name.txt")]).toEqual([formatted, formatted]);
+      expect(statSync(join(String(dir), "a.js")).nlink).toBe(2);
+      expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "other-name.txt"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // What a new file gets is less, unless the mask of the process is 0.
+    test.skipIf(isWindows)("keeps its mode, whatever the mask of the process", async () => {
+      using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
+      chmodSync(join(String(dir), "a.js"), 0o664);
+      chmodSync(join(String(dir), "b.js"), 0o777);
+      const { exitCode } = await write(String(dir), [], ["sh", "-c", 'umask 077; exec "$0" "$@"']);
+      expect([read(String(dir), "a.js"), read(String(dir), "b.js")]).toEqual([formatted, formatted]);
+      expect(["a.js", "b.js"].map(name => statSync(join(String(dir), name)).mode & 0o7777)).toEqual([0o664, 0o777]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Prettier and oxfmt write there. Nobody reads the links of a project that he has checked out.
+    test("is not one that a link leads to out of the repository", async () => {
+      const git = "ref: refs/heads/main\n";
+      const link = (dir: string) => symlinkSync(join(dir, "outside", "c"), join(dir, "project", "c"), "junction");
+      const options = { cwd: "project", before: link, reads: ["outside/c/d.js"] };
+      const [inRepository, inNone] = await Promise.all([
+        format({ "outside/c/d.js": ugly, "project/.git/HEAD": git }, ["c/d.js"], options),
+        format({ "outside/c/d.js": ugly, "project/a.js": formatted }, ["c/d.js"], options),
+      ]);
+      for (const result of [inRepository, inNone]) {
+        expect(result.files).toEqual({ "outside/c/d.js": ugly });
+        expect(result.stderr).toContain(
+          '[error] Unable to write file "c/d.js":\n[error] A link leads out of the repository.',
+        );
+        expect(result.exitCode).toBe(2);
+      }
+    });
+
+    test("can be one that a link leads to in the repository", async () => {
+      const result = await format(
+        { ".git/HEAD": "ref: refs/heads/main\n", "shared/d.js": ugly, "packages/a/a.js": formatted },
+        ["shared/d.js"],
+        {
+          cwd: "packages/a",
+          before: dir => symlinkSync(join(dir, "shared"), join(dir, "packages", "a", "shared"), "junction"),
+          reads: ["shared/d.js"],
+        },
+      );
+      expect(result.files).toEqual({ "shared/d.js": formatted });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // A name has 255 bytes at most, so no other file can be called after this one. On Windows the path is too long besides.
+    test.skipIf(isWindows)("can have a name that nothing can be added to", async () => {
+      const name = `${Buffer.alloc(246, "a")}.tsx`;
+      const result = await format({ [name]: ugly }, [], { reads: [name] });
+      expect(result.files).toEqual({ [name]: formatted });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // In a container, say, with the project of a user mounted into it.
+    test.skipIf(!isRoot)("keeps its owner if root formats it", async () => {
+      using dir = tempDir("bun-format", { "a.js": ugly });
+      chownSync(join(String(dir), "a.js"), 12345, 12345);
+      const { exitCode } = await write(String(dir), []);
+      const { uid, gid } = statSync(join(String(dir), "a.js"));
+      expect([read(String(dir), "a.js"), uid, gid]).toEqual([formatted, 12345, 12345]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Prettier needs nothing of the directory.
+    test.skipIf(isWindows || isRoot)("can be in a directory that nothing can be added to", async () => {
+      using dir = tempDir("bun-format", { "src/a.js": ugly });
+      chmodSync(join(String(dir), "src"), 0o555);
+      try {
+        const { stderr, exitCode } = await write(String(dir), []);
+        expect(stderr).not.toContain("[error]");
+        expect(read(String(dir), "src/a.js")).toBe(formatted);
+        expect(exitCode).toBe(0);
+      } finally {
+        chmodSync(join(String(dir), "src"), 0o755);
+      }
+    });
+
+    // `fs.writeFile` fails with EACCES, on Windows with EPERM. A version control system that hands out files read-only until
+    // they are checked out means it.
+    test.skipIf(isRoot)("is not replaced if it is read-only, and that is an error", async () => {
+      using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
+      chmodSync(join(String(dir), "a.js"), 0o444);
+      try {
+        const { stderr, exitCode } = await write(String(dir), ["a.js", "b.js"]);
+        expect([read(String(dir), "a.js"), read(String(dir), "b.js")]).toEqual([ugly, formatted]);
+        expect(stderr).toMatch(/\[error\] Unable to write file "a\.js":\r?\n(\[error\] )?(EACCES|EPERM)/);
+        expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js"]);
+        expect(exitCode).toBe(2);
+      } finally {
+        chmodSync(join(String(dir), "a.js"), 0o666);
+      }
+    });
+  });
+
+  test("a path that is longer than any system takes is not there", async () => {
+    // Linux takes 4,096 bytes, macOS 1,024, Windows 32,767 characters, which is also all that its command line has.
+    const long = Buffer.alloc(isWindows ? 30_000 : 40_000, "a/").toString() + "a.js";
+    const result = await format({ "a.js": ugly }, [long, "a.js"], { reads: ["a.js"] });
+    expect(result.stderr).toStartWith('[error] No files matching the pattern were found: "a/a/');
+    expect(result.files).toEqual({ "a.js": formatted });
+    expect(result.exitCode).toBe(2);
+  });
+
   test("--check writes nothing and exits with 1", async () => {
     const result = await format({ "a.js": ugly, "b.js": formatted, "c.js": ugly }, ["--check"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": ugly });
@@ -95,13 +224,41 @@ describe.concurrent("bun format", () => {
     `);
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
-    // In a project of oxfmt that is not what the files have.
-    const asOxfmt = await format({ "a.js": formatted, ".oxfmtrc.json": "{}\n" }, ["--check"]);
-    expect(asOxfmt.stdout).toMatchInlineSnapshot(`
-      "Checking formatting...
-      All matched files use the correct format."
-    `);
-    expect(asOxfmt.exitCode).toBe(0);
+  });
+
+  test("in a project of oxfmt, what is said about a run is what oxfmt says", async () => {
+    const files = { "a.js": ugly, "b.js": formatted, "src/c.js": ugly, ".oxfmtrc.json": "{}\n" };
+    const said = (text: string) => text.replace(/\d+ms/g, "0ms").replace(/\d+ threads/, "1 threads");
+    const check = await format(files, ["--check"]);
+    expect(said(check.raw)).toBe(
+      "Checking formatting...\n\na.js (0ms)\nsrc/c.js (0ms)\n\n" +
+        "Format issues found in above 2 files. Run without `--check` to fix.\n" +
+        "Finished in 0ms on 4 files using 1 threads.\n",
+    );
+    expect(check.stderr).toBe("");
+    expect(check.exitCode).toBe(1);
+    const clean = await format({ "b.js": formatted, ".oxfmtrc.json": "{}\n" }, ["--check"]);
+    expect(said(clean.raw)).toBe(
+      "Checking formatting...\n\nAll matched files use the correct format.\n" +
+        "Finished in 0ms on 2 files using 1 threads.\n",
+    );
+    expect(clean.exitCode).toBe(0);
+    const written = await format(files, [], { reads: ["a.js"] });
+    expect(said(written.raw)).toBe("Finished in 0ms on 4 files using 1 threads.\n");
+    expect(written.stderr).toBe("");
+    expect(written.files["a.js"]).toBe(formatted);
+    expect(written.exitCode).toBe(0);
+    const listed = await format(files, ["--list-different"]);
+    expect(listed.raw).toBe("a.js\nsrc/c.js\n");
+    expect(listed.stderr).toBe("");
+    expect(listed.exitCode).toBe(1);
+    const broken = await format({ ...files, "d.js": "d = (\n" }, ["--check"]);
+    expect(said(broken.raw)).toBe("Checking formatting...\n\na.js (0ms)\nsrc/c.js (0ms)\n");
+    expect(broken.stderr).toEndWith("Error occurred when checking code style in the above files.");
+    expect(broken.exitCode).toBe(2);
+    const none = await format(files, ["--check", "nothing.js"]);
+    expect(none.raw).toBe("Checking formatting...\n\n");
+    expect(none.exitCode).toBe(2);
   });
 
   test("--list-different", async () => {
@@ -665,6 +822,78 @@ describe.concurrent("bun format", () => {
     expect(allowed.exitCode).toBe(0);
   });
 
+  describe("a language that only a plugin of Prettier reads", () => {
+    // Stand-ins. This Prettier takes blanks away, and writes down what it is called with.
+    const packages = {
+      "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+      "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+exports.resolveConfig = async (file, { config }) => (config ? JSON.parse(fs.readFileSync(config, "utf8")) : null);
+exports.format = async (text, options) => {
+  fs.appendFileSync(__dirname + "/calls.txt", JSON.stringify(options) + "\\n");
+  if (text.includes("broken")) throw Object.assign(new SyntaxError("Unexpected token (1:2)"), { loc: {} });
+  return text.replace(/ +/g, " ");
+};
+`,
+      "node_modules/prettier-plugin-svelte/package.json": '{ "name": "prettier-plugin-svelte", "version": "4.0.0" }',
+    };
+    const config = { plugins: ["prettier-plugin-svelte"], svelteSortOrder: "none", semi: false };
+    const files = {
+      ...packages,
+      ".prettierrc": '{\n  "plugins": ["prettier-plugin-svelte"],\n  "svelteSortOrder": "none",\n  "semi": false\n}\n',
+      "a.svelte": "<p   >a</p>\n",
+      "b.js": "b  ;\n",
+    };
+    const reads = ["a.svelte", "b.js", "node_modules/prettier/calls.txt"];
+
+    test("goes to the project's own Prettier, with its configuration file and the flags", async () => {
+      const result = await format(files, ["--tab-width", "8"], { reads });
+      expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
+      expect(result.files["b.js"]).toBe("b\n");
+      const calls = result.files[reads[2]]!.trim().split("\n");
+      expect(calls.map(it => JSON.parse(it))).toEqual([
+        { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.svelte$/) },
+      ]);
+      expect(result.stderr).toContain("1 file was handed to the Prettier of the project");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("is checked, and listed", async () => {
+      const checked = await format(files, ["--check"], { reads });
+      expect(checked.files["a.svelte"]).toBe(files["a.svelte"]);
+      expect(checked.stderr).toContain("[warn] a.svelte");
+      expect(checked.exitCode).toBe(1);
+      expect(await different(files, [])).toEqual(["a.svelte", "b.js"]);
+      const fine = await format({ ...files, "a.svelte": "<p>a</p>\n", "b.js": "b\n" }, ["--check"]);
+      expect(fine.stdout).toContain("All matched files use Prettier code style!");
+      expect(fine.exitCode).toBe(0);
+    });
+
+    test("from standard input", async () => {
+      const result = await format(files, ["--stdin-filepath", "c.svelte"], { stdin: "<p   >c</p>\n" });
+      expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+      const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
+      expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+    });
+
+    test("what Prettier throws is shown as it shows it", async () => {
+      const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
+      expect(result.files["a.svelte"]).toBe("broken\n");
+      expect(result.stderr).toContain("[error] a.svelte: SyntaxError: Unexpected token (1:2)");
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("is left as it is if the plugin is not installed, and what would help is said", async () => {
+      const { "node_modules/prettier-plugin-svelte/package.json": _, ...rest } = files;
+      const result = await format(rest, [], { reads });
+      expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+      expect(result.stderr).toContain(
+        "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+      );
+      expect(result.stderr).toContain("and left as they are: 1 .svelte.");
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   test("with an .oxfmtrc.json TOML is formatted, and Svelte, which bun format cannot format, is named if the configuration has svelte", async () => {
     const files = {
       "a.svelte": "<p   >a</p>\n",
@@ -691,6 +920,27 @@ describe.concurrent("bun format", () => {
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
     expect(broken.stderr).toMatch(/b\.toml: SyntaxError: .+ \(1:\d+\)/);
     expect(broken.exitCode).toBe(0);
+  });
+
+  // Notepad and `Out-File -Encoding utf8` of Windows PowerShell write the mark. Git, Prettier 3.9.9 and oxfmt 0.72.0 pass over it.
+  test.each([
+    ["\\r\\n", (text: string) => text.replaceAll("\n", "\r\n")],
+    ["a byte order mark", (text: string) => "\uFEFF" + text],
+    ["both", (text: string) => "\uFEFF" + text.replaceAll("\n", "\r\n")],
+  ])("%s in a file with patterns to ignore", async (_, written) => {
+    const files = { "dist/a.js": ugly, "b.gen.js": ugly, "keep.gen.js": ugly, "sub/c.js": ugly, "d.js": ugly };
+    const patterns = written("dist\n# a comment\n\n*.gen.js\n!keep.gen.js\nsub/\n");
+    const results = await Promise.all([
+      different({ ...files, ".prettierignore": patterns }, []),
+      different({ ...files, ".gitignore": patterns }, []),
+      different({ ...files, "mine": patterns }, ["--ignore-path", "mine"]),
+      different({ ...files, ".oxfmtrc.json": "{}\n", ".prettierignore": patterns }, []),
+      different(
+        { ...files, ".oxfmtrc.json": "{}\n", ".git/HEAD": "ref: refs/heads/main\n", ".gitignore": patterns },
+        [],
+      ),
+    ]);
+    expect(results.map(it => it.sort())).toEqual(results.map(() => ["d.js", "keep.gen.js"]));
   });
 
   test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
@@ -1386,26 +1636,142 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  // A debug build is 30 times slower or more: a third of the size shows as much there.
-  const times = (text: string, count: number) => text.repeat(isDebug || isASAN ? count / 3 : count);
+  // What some part of reading or printing HTML once walked again for each repetition, and what is like it. All of it is weighed
+  // against as many bytes of ordinary HTML, by the time of the processor: that holds on a busy machine and in a debug build.
+  test("HTML, Vue and Angular take time in proportion to their size", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    // The ending of the name, what is before, what is repeated, what is behind.
+    const shapes: [string, string, string, string][] = [
+      ["html", "", "<p>a</p>\n", ""],
+      ["html", "", "<b>a</b> ", ""],
+      ["html", "", "<b>a</b>", ""],
+      ["html", "", "a ", ""],
+      ["html", "", "<br>", ""],
+      ["html", "", "<!-- a -->", ""],
+      ["html", "", "<!-- a -->\n", ""],
+      ["html", "", "<!-- prettier-ignore -->\n<p>a</p>\n", ""],
+      ["html", "", "&amp;", ""],
+      ["html", "", "&", ""],
+      ["html", "", "<", ""],
+      ["html", "", "< ", ""],
+      ["html", "", "</ ", ""],
+      ["html", "", "{{a}}", ""],
+      ["html", "", "{{", ""],
+      ["html", "", "\n", ""],
+      ["html", "", "<li>a", ""],
+      ["html", "", "<td>a", ""],
+      ["html", "<table>", "<tr><td>a</td></tr>", "</table>"],
+      ["html", "<select>", "<option>a", "</select>"],
+      ["html", "<div", " a", "></div>"],
+      ["html", "<div", ' a="b"', "></div>"],
+      ["html", '<div class="', "a ", '"></div>'],
+      ["html", '<div style="', "a: b; ", '"></div>'],
+      ["html", '<img srcset="', "a 1x, ", 'a 2x">'],
+      ["html", '<div a="', "&quot;", '"></div>'],
+      ["html", '<div a="', "\n", '"></div>'],
+      ["html", "<!-- prettier-ignore-attribute", " a", " -->\n<div a b></div>"],
+      ["html", "<pre>", "a\n", "</pre>"],
+      ["html", "<pre>", "<b>a</b>\n", "</pre>"],
+      ["html", "<textarea>", "a\n", "</textarea>"],
+      ["html", "<script>", "a;\n", "</script>"],
+      ["html", "<script>a = `", "</ ", "`;</script>"],
+      ["html", "<style>", "a { b: c }\n", "</style>"],
+      ["html", '<script type="text/template">', "<p>a</p>\n", "</script>"],
+      ["html", "<!--[if IE]>", "<p>a</p>", "<![endif]-->"],
+      ["html", "", "<!--[if IE]><p>a</p><![endif]-->", ""],
+      ["html", "---\n", "a: b\n", "---\n<p></p>"],
+      ["html", "<svg>", "<g/>", "</svg>"],
+      ["html", "", "é ", ""],
+      ["html", "", "😀", ""],
+      ["vue", "<template>", "<p>a</p>", "</template>"],
+      ["vue", "<template><pre>", "{{a}}", "</pre></template>"],
+      ["vue", "<template><p>", "{{ a }} ", "</p></template>"],
+      ["vue", "<template><a", ' :b="c"', "></a></template>"],
+      ["vue", "<template><a", ' @b="c"', "></a></template>"],
+      ["vue", '<template><a v-for="a', " ", 'b"></a></template>'],
+      ["vue", '<template><a v-for="(', "a, ", 'a) in b"></a></template>'],
+      ["vue", '<template><a :b="[', "c, ", ']"></a></template>'],
+      ["vue", '<template><a #b="{ ', "c, ", 'c }"></a></template>'],
+      ["vue", '<script lang="ts">\na = "', "</ ", '";\n</script>'],
+      ["vue", '<script setup generic="', "A, ", 'A"></script>'],
+      ["vue", "", "<i18n>a</i18n>\n", ""],
+      ["vue", "<docs>\n", "# a\n\n", "</docs>"],
+      ["vue", '<template lang="pug">\n', "p a\n", "</template>"],
+      ["component.html", "", "@if (a) {<p>b</p>}", ""],
+      ["component.html", "", "@let a = 1;", ""],
+      ["component.html", "", "@", ""],
+      ["component.html", "", "}", ""],
+      ["component.html", "@switch (a) {", "@case (1) {b}", "}"],
+      ["component.html", "", "{{ a | b }}", ""],
+      ["component.html", "{{ a", " + a", " }}"],
+      ["component.html", "{{ a", " | b", " }}"],
+      ["component.html", "{{ a", ".b", " }}"],
+      ["component.html", "{{ [", "a, ", "] }}"],
+      ["component.html", "<a", ' [b]="c"', "></a>"],
+      ["component.html", "<a", ' (b)="c()"', "></a>"],
+      ["component.html", '<a (b)="a()', "; a()", '"></a>'],
+      ["component.html", '<a *b="a', "; b c", '"></a>'],
+      ["component.html", '<a b="', "{{a}}", '"></a>'],
+      ["component.html", "", "{a, plural, =0 {b}}", ""],
+      ["component.html", "{a, plural, ", "=0 {b} ", "}"],
+    ];
+    const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary =
+      '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href="c">lazy dog</a>.</p>\n  <img src="d" alt="e" />\n</div>\n';
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    const run = (text: (index: number) => string) =>
+      format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), ["--check"]);
+    const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
+    // 3 when all is well.
+    expect(odd.cpu / plain.cpu).toBeLessThan(6);
+  }, 120_000);
+
+  // What some part of reading or printing Markdown once walked again for each repetition, or took a thousand times too
+  // long for, and what is like it. All of it is weighed against as many bytes of prose, by the time of the processor: that
+  // holds on a busy machine and in a debug build.
   test.each([
-    ["interpolations in <pre>", "a.vue", `<template><pre>${times("{{a}}", 30_000)}</pre></template>\n`],
-    [
-      "names after prettier-ignore-attribute",
-      "a.html",
-      `<!-- prettier-ignore-attribute${times(" a", 20_000)} -->\n<div${times(" b", 20_000)}></div>\n`,
-    ],
-    ["end tags in a string of TypeScript", "a.vue", `<script lang="ts">\na = "${times("</ ", 60_000)}";\n</script>\n`],
-    ["blanks in v-for", "a.vue", `<template><a v-for="a${times(" ", 60_000)}b"></a></template>\n`],
+    ["as Prettier prints it", "md", {}],
+    ["as oxfmt prints it", "md", { ".oxfmtrc.json": "{}\n" }],
+    ["MDX", "mdx", {}],
   ])(
-    "HTML does not take quadratic time: %s",
-    async (_, name, text) => {
-      const result = await format({ [name]: text }, ["--check", name]);
-      expect(result.stderr).not.toContain("[error]");
-      expect(result.cpu).toBeLessThan(5);
-      expect(result.exitCode).toBe(1);
+    "Markdown takes time in proportion to its size: %s",
+    async (_, extension, configuration) => {
+      const count = isDebug || isASAN ? 2_000 : 40_000;
+      const units = [
+        ..."a b c\n|a b\n\n|- a\n|- a\n\n|1. a\n|- a\n* a\n|1. a\n1) a\n|- a\n\n  ***\n* a\n\n  ***\n|> a\n\n|> a\n|- [ ] a\n".split(
+          "|",
+        ),
+        ..."[a](b) ,[a][b] ,[a] ,![a](b) ,[,],![,[[a]] ,[[,[^a] ,[a]: b\n,[^a]: b\n\n".split(","),
+        ..."*a* ,**a** ,*,* a,_a,a_,~~a~~ ,`,`a` ,$a$ ,$,{{ a }} ,{{,{% a %} ,&,&amp; ,\\,\\* ".split(","),
+        ..."<,<a> ,<a ,<!-- a --> ,<!-- a -->\n\n,<div>\na\n</div>\n\n,<!-- prettier-ignore -->\n- a\n\n,<<< a\n,<A-b />\n".split(
+          ",",
+        ),
+        ..."# a\n,a\n=\n,---\n\n,```\na\n```\n\n,```js\na\n```\n\n,```\n,    a\n\n,$$\na\n$$\n\n".split(","),
+        ...":::\n,:::a\n,:::a\nb\n:::\n\n,:-\n,a\n    - b\n,a\n    <!-- b -->\n,a\n    ```\n,a  \n    # b\n".split(","),
+        ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
+        ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+      ];
+      const each = (line: (index: number) => string) =>
+        Array.from({ length: count }, (_, index) => line(index)).join("");
+      const texts = [
+        ...units.map(unit => unit.repeat(count)),
+        each(index => `[a${index}]: b\n`) + each(index => `[a${index}] `),
+        `| a | b |\n| - | - |\n${"| c | d |\n".repeat(count)}`,
+        each(index => `${"  ".repeat(index % 40)}- a\n`),
+        each(index => `${"> ".repeat((index % 40) + 1)}a\n`),
+      ];
+      const prose = "The quick brown fox jumps over the lazy dog, and *then* it `rests` for a [while](u).\n\n";
+      const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+      const run = (text: (index: number) => string) =>
+        format(
+          { ...configuration, ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])) },
+          ["--check"],
+        );
+      const [shapes, plain] = [await run(index => texts[index]), await run(() => prose.repeat(length / prose.length))];
+      expect(shapes.stderr).not.toContain("[error]");
+      expect(shapes.cpu / plain.cpu).toBeLessThan(6);
     },
-    60_000,
+    120_000,
   );
 
   test("a syntax error in HTML is what Prettier says it is, with its place", async () => {

@@ -253,11 +253,26 @@ impl Vm for ThreadVm {
 /// With no more VMs than this, cores are left to compile and to collect garbage on while the VMs run.
 const FEW_VMS: usize = 4;
 
-/// So many files do not take more than a few VMs.
-const FEW_FILES: usize = 128;
-
 /// What a VM with a few plugins takes.
 const MEMORY_OF_A_VM: usize = 384 << 20;
+
+/// How many VMs there can be at a time: half of the memory is for them.
+fn most_vms() -> usize {
+    (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
+}
+
+/// Starts JavaScriptCore for `threads` threads (0: one for each core). The first start fixes the options, and the first regular expression of a
+/// configuration would be it (`bun_yarr`), before anybody knows how many VMs are needed: so this goes by how many there can be.
+pub(crate) fn start_javascriptcore(threads: usize) {
+    let threads = match threads {
+        0 => usize::from(bun_core::get_thread_count()),
+        threads => threads,
+    };
+    jsc::initialize(jsc::InitializeOptions {
+        vm_per_thread: threads.min(most_vms()) > FEW_VMS,
+        ..Default::default()
+    });
+}
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. With
 /// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
@@ -327,8 +342,6 @@ impl Desk {
 #[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
-    /// Whether there can be more than a few engines. Nobody knows if an engine is needed to find out.
-    is_for_few: core::sync::atomic::AtomicBool,
 }
 
 impl Start {
@@ -336,10 +349,6 @@ impl Start {
     fn start_vm(&self) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
-            jsc::initialize(jsc::InitializeOptions {
-                vm_per_thread: !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed),
-                ..Default::default()
-            });
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {
@@ -445,8 +454,8 @@ impl Drop for Borrowed<'_> {
 
 #[derive(Default)]
 struct State {
-    /// With when it was started, until it is given back for the first time.
-    all: Vec<(Arc<Desk>, Option<Instant>)>,
+    /// With when it was started, until it is given back for the first time, and who has borrowed it last.
+    all: Vec<(Arc<Desk>, Option<Instant>, ThreadId)>,
     /// Which of them nobody has borrowed. The last one was given back last.
     idle: Vec<usize>,
     /// Who has borrowed which.
@@ -465,7 +474,7 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        for (desk, _) in core::mem::take(&mut self.state.lock().all) {
+        for (desk, ..) in core::mem::take(&mut self.state.lock().all) {
             desk.say(Turn::End);
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
         }
@@ -487,19 +496,25 @@ impl Engines {
             });
         }
         let at = loop {
-            if let Some(at) = state.idle.pop() {
+            // The one that it had, which has grown by what this thread has given it.
+            let mine = (state.idle.iter()).rposition(|&at| state.all[at].2 == me);
+            if let Some(at) = mine
+                .map(|it| state.idle.remove(it))
+                .or_else(|| state.idle.pop())
+            {
+                state.all[at].2 = me;
                 break at;
             }
             if self.demand.is_worth_another(state.all.len()) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
-                // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
+                // SAFETY: no VM or JS state crosses: a number, a `Once`, and a `Desk`, whose turns are bytes. This
                 // thread has no VM. The new one makes its own, and frees it itself before `end_all` returns.
                 std::thread::Builder::new()
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                state.all.push((desk, Some(Instant::now())));
+                state.all.push((desk, Some(Instant::now()), me));
                 break at;
             }
             self.is_idle.wait_guarded(&mut state);
@@ -522,14 +537,11 @@ impl Engine for Engines {
         Ok(())
     }
 
-    fn expect(&self, files: usize, size: u64, most: usize) {
-        let is_for_few = most <= FEW_VMS || files <= FEW_FILES;
-        (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
+    fn expect(&self, _files: usize, size: u64, most: usize) {
         self.demand.expect(size, most);
     }
 
-    /// Half of the memory is for them.
     fn most_realms(&self) -> usize {
-        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
+        most_vms()
     }
 }

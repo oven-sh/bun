@@ -126,22 +126,7 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
     let mut options = options_for(path, dialect);
     options.recovers = recovers;
     options.reads_jsdoc = reads_jsdoc;
-    let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
-    // `parseSourceFileWorker`: only a module has an await context at its top level.
-    if let Ok(first) = &parsed
-        && first.has_top_level_await
-        && !every_file_is_a_module
-        && !first.file.has_module_syntax
-        && (dialect.script
-            || ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
-                .iter()
-                .any(|extension| path.ends_with(extension)))
-        && !(first.file.exprs.iter()).any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta))
-    {
-        options.await_is_a_name = true;
-        parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
-    }
-    match parsed {
+    match parse_as_file(path, text, options, &atoms, scratch) {
         Err(why) if is_refused_by_reference => {
             let first = reference.diagnostics.first();
             let first = first.map(|it| (it.kind, it.code, it.start));
@@ -183,6 +168,69 @@ fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) ->
             };
             scratch.recycle(parsed.file);
             outcome
+        }
+    }
+}
+
+/// `bun_sema_parser::parse`, and once more if the file turns out to be a script that uses `await`
+/// as a name (`parseSourceFileWorker`: only a module has an await context at its top level).
+fn parse_as_file(
+    path: &[u8],
+    text: &[u8],
+    mut options: Options,
+    atoms: &Interner<'_>,
+    scratch: &mut Scratch,
+) -> Result<bun_sema_parser::Parsed, Refused> {
+    let dialect = options.dialect;
+    let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
+    let parsed = bun_sema_parser::parse(text, options, atoms, scratch);
+    if let Ok(first) = &parsed
+        && first.has_top_level_await
+        && !every_file_is_a_module
+        && !first.file.has_module_syntax
+        && (dialect.script
+            || ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                .iter()
+                .any(|extension| path.ends_with(extension)))
+        && !(first.file.exprs.iter()).any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta))
+    {
+        options.await_is_a_name = true;
+        return bun_sema_parser::parse(text, options, atoms, scratch);
+    }
+    parsed
+}
+
+/// The parser that refuses a text at its first error against the parser that recovers. What the
+/// one accepts the other has no error in, and both make the same of it. "The reference" is the
+/// parser that recovers.
+fn agree_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> Outcome {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let mut options = options_for(path, how.dialect);
+    options.reads_jsdoc = how.reads_jsdoc;
+    options.recovers = true;
+    let general = parse_as_file(path, text, options, &atoms, scratch);
+    options.recovers = false;
+    let strict = parse_as_file(path, text, options, &atoms, scratch);
+    let error = match &general {
+        Ok(general) => (general.file.diagnostics.iter())
+            .find(|it| it.kind == DiagnosticKind::Parse)
+            .map(|it| format!("{:?}", (it.kind, it.code, it.start))),
+        Err(why) => Some(format!("NEITHER: {:?} at {}", why.why, why.at)),
+    };
+    match (strict, general, error) {
+        (Err(why), _, Some(error)) => Outcome::BothRefuse(why, error),
+        (Err(why), ..) => Outcome::Refused(why, None),
+        (Ok(_), _, Some(error)) => Outcome::Accepted(error),
+        (Ok(_), Err(_), None) => Outcome::Accepted(String::new()),
+        (Ok(strict), Ok(general), None) => {
+            let mut comparison = compare::Comparison::new(&general.file, &strict.file);
+            comparison.compares_jsdoc = how.reads_jsdoc;
+            comparison.run();
+            match comparison.difference.take() {
+                Some(difference) => Outcome::Different(difference),
+                None => Outcome::Identical(comparison.other_order),
+            }
         }
     }
 }
@@ -443,6 +491,7 @@ fn compare(args: &[String]) {
     let inputs = inputs_of(args);
     let decorators = args.iter().any(|arg| arg == "--decorators");
     let recovers = args.iter().any(|arg| arg == "--recover");
+    let agrees = args.iter().any(|arg| arg == "--agree");
     let reads_jsdoc = args.iter().any(|arg| arg == "--jsdoc");
     let mut totals = Guarded::new(Totals::default());
     bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
@@ -468,7 +517,10 @@ fn compare(args: &[String]) {
                 recovers,
                 reads_jsdoc,
             };
-            compare_one(input.path.as_bytes(), text, how, scratch)
+            match agrees {
+                true => agree_one(input.path.as_bytes(), text, how, scratch),
+                false => compare_one(input.path.as_bytes(), text, how, scratch),
+            }
         });
         totals.lock().add(&input.id, outcome);
     });

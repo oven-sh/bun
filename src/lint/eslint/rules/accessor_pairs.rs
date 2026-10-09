@@ -141,14 +141,23 @@ impl AccessorPairs {
             cx.report(place, message)
                 .data("name", ast_utils::get_function_name_with_kind(accessor.func));
         };
+        // Of several getters, or setters, of a name that is known oxlint keeps the last.
+        let is_oxlint = cx.language().is_oxlint;
+        let keeps_the_last = |accessor: Accessor<'a>| is_oxlint && accessor.key.name().is_some();
         let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =
             accessors.clone().take(MAX_KEYS_TO_COMPARE_IN_PAIRS + 1).collect();
         if few.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
-            for &accessor in &few {
+            for (i, &accessor) in few.iter().enumerate() {
                 let is_paired = |other: &Accessor<'a>| {
                     other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
                 };
-                if is_checked(accessor) && !few.iter().any(is_paired) {
+                let is_same = |other: &Accessor<'a>| {
+                    other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
+                };
+                if is_checked(accessor)
+                    && !few.iter().any(is_paired)
+                    && !(keeps_the_last(accessor) && few.iter().skip(i + 1).any(is_same))
+                {
                     report(accessor);
                 }
             }
@@ -157,14 +166,20 @@ impl AccessorPairs {
         let groups = key_groups(cx.file(), accessors.clone().map(|it| it.key));
         // Whether the group has a getter, and whether it has a setter.
         let mut kinds = vec![[false; 2]; groups.len()];
+        // Where the last getter of the group starts, and the last setter.
+        let mut last = vec![[0; 2]; groups.len()];
         for (accessor, &group) in accessors.clone().zip(&groups) {
-            if let Some(kinds) = kinds.get_mut(group as usize) {
+            if let (Some(kinds), Some(last)) = (kinds.get_mut(group as usize), last.get_mut(group as usize)) {
                 kinds[usize::from(accessor.is_getter)] = true;
+                last[usize::from(accessor.is_getter)] = accessor.key.inner_span(cx.file()).start;
             }
         }
         for (accessor, &group) in accessors.clone().zip(&groups) {
             let is_paired = kinds.get(group as usize).is_some_and(|it| it[usize::from(!accessor.is_getter)]);
-            if is_checked(accessor) && !is_paired {
+            let is_last = last
+                .get(group as usize)
+                .is_some_and(|it| it[usize::from(accessor.is_getter)] == accessor.key.inner_span(cx.file()).start);
+            if is_checked(accessor) && !is_paired && (is_last || !keeps_the_last(accessor)) {
                 report(accessor);
             }
         }
@@ -194,7 +209,8 @@ impl AccessorPairs {
         }
         let message = match (has_getter, has_setter) {
             (false, true) if self.set_without_get => MISSING_GETTER_IN_PROPERTY_DESCRIPTOR,
-            (true, false) if self.get_without_set => MISSING_SETTER_IN_PROPERTY_DESCRIPTOR,
+            // oxlint does not miss the setter of a descriptor.
+            (true, false) if self.get_without_set && !cx.language().is_oxlint => MISSING_SETTER_IN_PROPERTY_DESCRIPTOR,
             _ => return,
         };
         if ast_utils::is_property_descriptor(e) {

@@ -67,8 +67,6 @@ FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 100 }
-FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 80 }
-FAIL oxfmt css/format/scss/map-comment-block-value-comma.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 80 }

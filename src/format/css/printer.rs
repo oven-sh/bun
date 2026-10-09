@@ -104,6 +104,8 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) value_stack: Vec<ValueId>,
     /// Not 0: the comment at the start of what follows a comma that has been written behind the comma.
     pub(crate) comment_behind_comma: ValueId,
+    /// Which of a `value-comma_group` is being written.
+    pub(crate) index_in_comma_group: usize,
     /// An item of a list, and how many of the comments that it starts with have been written before it.
     pub(crate) comments_above_item: (ValueId, usize),
     /// For a text that is made to be written.
@@ -145,6 +147,8 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
 /// as in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier takes it for values all the same. Only what is on one line.
 fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
     let is_name_part = |byte: u8| text::is_word_character(byte) || byte == b'-' || byte >= 0x80;
+    // How many `(` are open.
+    let mut depth = 0u32;
     let mut at = 0;
     while let Some(&byte) = value.get(at) {
         let next = value.get(at + 1).copied();
@@ -161,15 +165,21 @@ fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
             }
             b':' | b'{' | b'}' | b'!' => break,
             b'<' | b'>' if syntax == Syntax::Css => break,
+            // What stands for a `${}` in a template of JavaScript is a value.
+            b'@' if value[at..].starts_with(b"@prettier-placeholder-") => {}
             b'@' if syntax != Syntax::Less || next == Some(b'{') => break,
             b'(' if at >= 3 && value[at - 3..at].eq_ignore_ascii_case(b"url") => {
                 at += bun_core::strings::index_of_char_usize(&value[at..], b')').unwrap_or(0);
             }
+            // In the parentheses of a function there can be others.
             b'(' if syntax != Syntax::Scss
+                && depth == 0
                 && !at.checked_sub(1).is_some_and(|it| is_name_part(value[it])) =>
             {
                 break;
             }
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
             _ => {}
         }
         at += 1;

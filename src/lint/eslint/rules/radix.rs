@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::is_reference_to_global_variable;
 
 /// Enforce the use of the radix argument when using `parseInt()`.
 pub struct Radix;
@@ -32,14 +33,26 @@ fn is_valid_radix(radix: Expr) -> bool {
     }
 }
 
+/// oxlint's `is_valid_radix`: an integer between 2 and 36, or a name other than `undefined`.
+fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
+    match radix.kind() {
+        _ if radix.is_parenthesized() => false,
+        ExprKind::Number(value) => is_valid_radix_value(value),
+        ExprKind::Ident(name) => !name.is("undefined"),
+        _ => false,
+    }
+}
+
 impl Radix {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
-        let callee = call.callee();
+        let (callee, is_oxlint) = (call.callee(), cx.language().is_oxlint);
         let global = match callee.kind() {
             ExprKind::Ident(name) if name.is("parseInt") => callee,
+            // oxlint knows `Number["parseInt"]` only as the whole of an optional chain.
+            ExprKind::Index { .. } if is_oxlint && !callee.is_chain_root() => return,
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
                 if ast_utils::is_specific_member_access(callee, Some("Number"), Some("parseInt")) =>
             {
@@ -47,11 +60,16 @@ impl Radix {
             }
             _ => return,
         };
-        if !ast_utils::is_global_reference(global) {
+        let is_global = match is_oxlint {
+            true => is_reference_to_global_variable(global),
+            false => ast_utils::is_global_reference(global),
+        };
+        if !is_global {
             return;
         }
+        // For oxlint `...a` is an argument like another, and no radix.
         let args = call.args();
-        if args.iter().take(2).any(|arg| arg.tag() == ExprTag::Spread) {
+        if !is_oxlint && args.iter().take(2).any(|arg| arg.tag() == ExprTag::Spread) {
             return;
         }
         match (args.first(), args.get(1)) {
@@ -67,9 +85,9 @@ impl Radix {
                 });
             }
             (Some(_), Some(radix)) => {
-                if !is_valid_radix(radix) {
+                if !(if is_oxlint { is_valid_radix_for_oxlint(radix) } else { is_valid_radix(radix) }) {
                     // oxlint points at the radix.
-                    cx.report(if cx.language().is_oxlint { radix.outer_span() } else { e.span() }, INVALID_RADIX);
+                    cx.report(if is_oxlint { radix.outer_span() } else { e.span() }, INVALID_RADIX);
                 }
             }
         }

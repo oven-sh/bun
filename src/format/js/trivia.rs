@@ -388,6 +388,12 @@ pub(crate) fn write_trailing_comments_before(
     own_line.is_empty() && same_line.last().is_some_and(|comment| comment.is_line())
 }
 
+/// oxfmt hands its document for a script of a Vue file to Prettier, whose printer takes away the blanks before a line
+/// break.
+fn is_printed_by_prettier_for_oxfmt(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt() && f.options().in_html.root != HtmlRoot::None
+}
+
 impl<'a> Format<'a> for Comment {
     /// Prettier's `printComment`.
     fn fmt(&self, f: &mut Formatter<'a>) {
@@ -401,7 +407,8 @@ impl<'a> Format<'a> for Comment {
         if self.is_indentable_block() {
             // In Markdown, two spaces at the end of a line are a line break.
             let is_jsdoc = content.starts_with(b"/**")
-                && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt());
+                && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt())
+                && !is_printed_by_prettier_for_oxfmt(f);
             let mut lines = lines(content).peekable();
             let first = lines.next().unwrap_or_default();
             write!(f, text(crate::text::trim_end(first)));

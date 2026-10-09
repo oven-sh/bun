@@ -69,6 +69,16 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
 /// The message for a file that ESLint's parser throws on. No rule runs on such a file.
 pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
     let parser = file.language().parser;
+    // It has no place.
+    if parser == Parser::Espree
+        && let Some(message) = espree::editions::refused_options(file)
+    {
+        return Some(LintMessage {
+            message: [b"Parsing error: ", &message[..]].concat(),
+            is_fatal: true,
+            ..LintMessage::default()
+        });
+    }
     let of_parser = error_of_parser(file).map(|diagnostic| {
         let mut message = Vec::new();
         match diagnostic.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {

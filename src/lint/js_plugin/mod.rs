@@ -22,6 +22,7 @@ mod engine;
 mod eslint;
 mod host;
 mod offsets;
+mod prettier;
 mod processor;
 mod rules;
 mod schema;

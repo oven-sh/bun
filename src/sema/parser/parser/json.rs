@@ -10,6 +10,8 @@ impl Parser<'_> {
     pub(crate) fn json_text(&mut self) -> StmtId {
         let start = self.pos();
         let base = self.s.ids.len();
+        // No list of statements is open.
+        self.lists = 0;
         while self.token() != T::Eof {
             let is_no_name = |p: &mut Self| {
                 p.next();
@@ -33,13 +35,11 @@ impl Parser<'_> {
                     self.finish_expr(ExprKind::Unary { op, operand }, minus)
                 }
                 _ if is_value => self.primary_expression(),
-                T::OpenBrace => self.object_literal(),
-                // `parseObjectLiteralExpression` without its `{`
-                _ => {
-                    self.fail();
-                    break;
-                }
+                _ => self.object_literal(),
             };
+            if self.has_failed() {
+                break;
+            }
             self.s.ids.push(expression.0);
             // "Error recovery: collect multiple top-level expressions"
             if self.s.ids.len() == base + 1 && self.token() != T::Eof {

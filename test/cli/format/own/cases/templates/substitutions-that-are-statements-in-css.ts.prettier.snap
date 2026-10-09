@@ -35,6 +35,12 @@ html {
   ${j}
 `;
 
+const k = css`
+  --shadow:
+    0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft},
+    ${l};
+`;
+
 -------------------
 { printWidth: 100 }
 -------------------
@@ -70,6 +76,10 @@ html {
   color   :   red;
   ${i};
   ${j}
+`;
+
+const k = css`
+  --shadow: 0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft}, ${l};
 `;
 
 ===================== End =====================

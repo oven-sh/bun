@@ -119,6 +119,8 @@ pub struct ConfiguredJsRule {
     pub severity: Severity,
     /// What follows the severity.
     pub options: Arc<[Json]>,
+    /// How many of [`ResolvedConfig::rules`] the configuration has before it.
+    pub position: usize,
 }
 
 pub(crate) fn find_js_rule<'p>(
@@ -127,7 +129,11 @@ pub(crate) fn find_js_rule<'p>(
 ) -> Option<Option<&'p Arc<js_plugin::Rule>>> {
     let (prefix, name) = parse_rule_id(id);
     let plugin = plugins.iter().find(|it| *it.name == *prefix)?;
-    Some(plugin.rule(name))
+    match plugin.rule(name) {
+        // Beside the rules of `--rulesdir`, which have no prefix, there are those of ESLint.
+        None if prefix.is_empty() => None,
+        found => Some(found),
+    }
 }
 
 /// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
@@ -156,6 +162,9 @@ pub struct ResolvedConfig {
     /// A rule that is configured for the file, and not off, is skipped. Nobody can say then that an `eslint-disable` without
     /// names is unused.
     pub has_skipped_rules: bool,
+    /// With the configuration files of ESLint 8: the rules that are on and that it has no definition of, in the order of the
+    /// configuration. Each is a message at the start of the file.
+    pub missing_rules: Vec<Box<[u8]>>,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     pub prefers_typescript_rules: bool,
     /// `oxlint-disable` and the like mean what `eslint-disable` means. ESLint ignores them, and so does a configuration of

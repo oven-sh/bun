@@ -52,10 +52,12 @@ fn merge_kind(declaration: Declaration) -> MergeKind {
     }
 }
 
-/// The range of the `Identifier` that ESLint has for the name.
+/// The range of the `Identifier` that ESLint has for the name. For oxlint the type annotation is not part of it.
 fn identifier_span(declaration: Declaration) -> Option<Span> {
     match declaration {
-        Declaration::Var(pat) | Declaration::Param(pat) => Some(utils::estree_span(Node::Pat(pat))),
+        Declaration::Var(pat) | Declaration::Param(pat) if !pat.file().language().is_oxlint => {
+            Some(utils::estree_span(Node::Pat(pat)))
+        }
         _ => declaration.name_span(),
     }
 }

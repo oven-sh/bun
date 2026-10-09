@@ -33,6 +33,59 @@ Checking formatting...
 
 `bun format` reads the same configuration, formats the same files, and takes the same flags. The one difference: it writes unless you tell it not to.
 
+<Steps>
+  <Step title="Change the format scripts">
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "format": "bun format",
+        "format:check": "bun format --check"
+      }
+    }
+    ```
+
+    `prettier --write .` becomes `bun format`, and `prettier --check .` becomes `bun format --check`. Keep the other flags and the arguments.
+
+    Change the `format` script before you try the command. While the script says `prettier`, `bun format` [runs the script](#if-packagejson-has-a-format-script), so it runs Prettier.
+
+  </Step>
+  <Step title="Check that nothing changes">
+
+    ```bash terminal icon="terminal"
+    bun run format --check
+    ```
+
+    ```txt
+    Checking formatting...
+    All matched files use Prettier code style!
+    ```
+
+    A run that ends with exit code `2` names the files or the plugin that `bun format` [left out](#differences-from-prettier).
+
+  </Step>
+  <Step title="Change CI, lint-staged, and Git hooks">
+
+    Replace `prettier`, `npx prettier`, and `bunx prettier` with `bun format`. See [Run in CI](#run-in-ci) and [Format before you commit](#format-before-you-commit).
+
+  </Step>
+  <Step title="Remove the packages">
+
+    ```bash terminal icon="terminal"
+    bun remove prettier
+    ```
+
+    Remove the plugins that are built in too: the three that [sort imports](#sort-imports), and `prettier-plugin-tailwindcss`. Leave their names in `plugins`.
+
+    Keep `prettier` in any of these cases:
+
+    - The Prettier extension of your editor uses it.
+    - `eslint-plugin-prettier` runs it.
+    - A plugin formats files in a language that `bun format` does not have, like Svelte: `bun format` hands them to it.
+
+  </Step>
+</Steps>
+
 | Instead of                       | Run                                |
 | -------------------------------- | ---------------------------------- |
 | `prettier --write .`             | `bun format`                       |
@@ -41,27 +94,79 @@ Checking formatting...
 | `prettier -l .`                  | `bun format -l`                    |
 | `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
 
-`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.js.flow`, the other names that Prettier takes for JavaScript (`.es6`, `.jsm`, `Jakefile`, ..., and a file without an extension that starts with `#!/usr/bin/env node`), `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.mdx`, `.graphql`, `.gql`, `.hbs`, `.handlebars`, `.html`, `.htm`, `.xhtml`, `.vue`, `.component.html`, and `.mjml` files. A `.js` file with a `@flow` comment at the top is read as Flow. Scripts, styles, and expressions in HTML, Vue, and Angular templates are formatted too. So is HTML in `` html`...` `` and `` /* HTML */ `...` `` templates, in the `template` of an Angular `@Component`, and in `html`, `vue`, and `angular-html` code blocks in Markdown; `--embedded-language-formatting=off` leaves those as they are.
-It leaves files in a language that Prettier or oxfmt would format and it cannot, like Svelte with `prettier-plugin-svelte`, as they are. It formats the rest, and then ends with an error that says how many files of which kind it left, and exit code `2`: a check that skips files in silence is not the check you replaced. `--allow-unsupported` makes that a warning. Keep Prettier for those files:
+`bun format` takes every flag of Prettier 3 except `--file-info` and `--support-info`.
 
-```json package.json icon="file-json"
-{
-  "scripts": {
-    "format": "bun format --allow-unsupported && prettier --write \"**/*.svelte\""
-  }
-}
-```
+`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.js.flow`, the other names that Prettier takes for JavaScript (`.es6`, `.jsm`, `Jakefile`, ..., and a file without an extension that starts with `#!/usr/bin/env node`), `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.mdx`, `.graphql`, `.gql`, `.hbs`, `.handlebars`, `.html`, `.htm`, `.xhtml`, `.vue`, `.component.html`, and `.mjml` files. A `.js` file with a `@flow` comment at the top is read as Flow. Scripts, styles, and expressions in HTML, Vue, and Angular templates are formatted too. So is HTML in `` html`...` `` and `` /* HTML */ `...` `` templates, in the `template` of an Angular `@Component`, and in `html`, `vue`, and `angular-html` code blocks in Markdown; `--embedded-language-formatting=off` leaves those as they are.
+**Svelte, Astro, and the other languages of plugins** go over a bridge. If the configuration of Prettier names a plugin that adds a language, like `prettier-plugin-svelte`, and `prettier` and the plugin are installed, `bun format` hands the files of that language to them, with the configuration file and the flags, and checks or writes what comes back. The output is Prettier's, and so is the speed. Prettier stays installed for these files, with every plugin that the configuration names, the built-in ones too. The run says how many went that way.
+
+Without the packages, and with an `.oxfmtrc.json`, it leaves such files as they are. It formats the rest, and then ends with an error that says how many files of which kind it left, and exit code `2`: a check that skips files in silence is not the check you replaced. `--allow-unsupported` makes that a warning.
 
 ## Replace oxfmt
 
 `bun format` reads `.oxfmtrc.json`, `.oxfmtrc.jsonc`, and `oxfmt.config.ts`, including `overrides`, `ignorePatterns`, and `insertFinalNewline`, and takes the flags of `oxfmt`.
+
+<Steps>
+  <Step title="Change the format scripts">
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "format": "bun format",
+        "format:check": "bun format --check"
+      }
+    }
+    ```
+
+    Keep the flags and the arguments. Change the `format` script before you try the command. While the script says `oxfmt`, `bun format` [runs the script](#if-packagejson-has-a-format-script), so it runs oxfmt.
+
+  </Step>
+  <Step title="Check that nothing changes">
+
+    ```bash terminal icon="terminal"
+    bun run format --check
+    ```
+
+    ```txt
+    Checking formatting...
+    All matched files use the correct format.
+    ```
+
+    A project that pins a version of oxfmt before 0.72 has a few files reformatted once, as when it upgrades oxfmt.
+
+  </Step>
+  <Step title="Change CI, lint-staged, and Git hooks">
+
+    Replace `oxfmt`, `npx oxfmt`, and `bunx oxfmt` with `bun format`.
+
+  </Step>
+  <Step title="Write a configuration file if there is none">
+
+    ```bash terminal icon="terminal"
+    bun run format --init
+    ```
+
+    Without a configuration file, `bun format` knows from the `oxfmt` dependency that it stands in for oxfmt. `--init` writes an `.oxfmtrc.json`, so the choice stays when you remove the package.
+
+  </Step>
+  <Step title="Remove the package">
+
+    ```bash terminal icon="terminal"
+    bun remove oxfmt
+    ```
+
+    Keep `oxfmt` if the oxc extension of your editor uses it. `bun format` has no language server.
+
+  </Step>
+</Steps>
 
 | Instead of        | Run                  |
 | ----------------- | -------------------- |
 | `oxfmt`           | `bun format`         |
 | `oxfmt --check .` | `bun format --check` |
 
-Without any configuration file, `bun format` is like oxfmt if the nearest `package.json` has `oxfmt` or `vite-plus` among its dependencies and not `prettier`, or if you pass `--flavor oxfmt`. `bun format --init` writes an `.oxfmtrc.json`, so that the choice stays when you remove the package. With `vite-plus`, the options are the `fmt` of the nearest `vite.config.ts` that has one, as for `vp fmt`.
+`bun format` takes every flag of oxfmt 0.72 except `--lsp` and `--migrate`. See [Differences from oxfmt](#differences-from-oxfmt).
+
+Without any configuration file, `bun format` is like oxfmt if the nearest `package.json` has `oxfmt` or `vite-plus` among its dependencies and not `prettier`, or if you pass `--flavor oxfmt`. With `vite-plus`, the options are the `fmt` of the nearest `vite.config.ts` that has one, as for `vp fmt`.
 
 If the configuration file nearest to the working directory is one of these, `bun format` finds files and configuration the way oxfmt does:
 
@@ -221,6 +326,10 @@ The path decides the language, the configuration, and whether the file is ignore
 
 Your script wins. `bun format` runs it, like `bun run format`. Inside that script, and in any script it starts, `bun format` is the formatter, so `"format": "bun format"` works.
 
+The first line of the output tells you that the script ran: `$ bun format`.
+
+In another script, `bun format` runs the `format` script too, with the flags added. So `"format:check": "bun format --check"` runs the `format` script with `--check`.
+
 ## Differences from Prettier
 
 `bun format` aims to print exactly what Prettier 3 prints. If it prints something else, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
@@ -230,14 +339,29 @@ These differences are intentional:
 - **It writes by default.** `prettier` without `--write` prints the formatted code. `--write` is accepted and changes nothing.
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
-- **No Svelte or Astro.** Files in a language that is not supported are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning.
-- **Plugins do not load.** The three that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-svelte` or `prettier-plugin-astro`, changes nothing for the rest: the files of that language, and those whose `parser` in the configuration is that of a plugin, count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
+- **No Svelte or Astro of its own.** The files go to the project's own Prettier and its plugin, if they are installed. If not, they are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning.
+- **Plugins do not load.** The three that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-svelte` or `prettier-plugin-astro`, changes nothing for the rest: the files of that language are handed to the project's own Prettier. Those whose `parser` in the configuration is that of a plugin that `bun format` does not know count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.
 - **Templates keep their expressions.** Prettier closes `` html`<${Tag}>` `` with a second `${Tag}`. If a template would end up with more or fewer `${}` than it has, `bun format` leaves the file as it is, reports it, and exits with 2.
 - **A Handlebars template that Prettier would damage is left as it is.** Prettier deletes `<!DOCTYPE html>`, joins the lines of an inline `<script>`, and turns `{{this/name}}` into `{{name}}`. `bun format` reports such a file and exits with 2.
+- **Nothing is written through a link that leads out of the repository**, or out of the working directory if that is in no repository. Prettier writes there. The run fails and names the file.
 - **`--cache` has no effect.** Every run formats every file.
+- **`--file-info` and `--support-info` are errors.**
+
+## Differences from oxfmt
+
+With an `.oxfmtrc.json`, `bun format` aims to print exactly what oxfmt 0.72 prints. If it prints something else, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
+These differences are intentional:
+
+- **The output is that of oxfmt 0.72**, whichever version you had installed.
+- **No language server, no migration.** `--lsp` and `--migrate` are errors: `bun format does not support --lsp.`
+- **No Svelte.** `bun format` leaves the files as they are, and the run ends with an error that counts them and exit code `2`. With `--allow-unsupported` it is a warning.
+- **Errors and warnings are in the words of Bun**, with `[error]` or `[warn]` before each line. What else is printed about a run is what oxfmt prints, on the same stream.
+- **A TOML file that is not valid is left as it is**, with a warning. oxfmt rewrites the rest of the file.
+- **A file is checked before it is written**, as in [Differences from Prettier](#differences-from-prettier).
 
 ## CLI usage
 

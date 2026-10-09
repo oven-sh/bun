@@ -164,8 +164,12 @@ impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
     fn report(&self, span: Span, message: Message) -> Report<'a> {
-        let message = match self.file.language().is_oxlint {
+        let language = self.file.language();
+        let message = match language.is_oxlint {
             true => crate::oxlint_messages::of(self.meta, message),
+            false if language.eslint_8.is_some() => {
+                crate::linter::config::eslint8::message_of(self.meta, message)
+            }
             false => message,
         };
         let diagnostic = |message: Message| Diagnostic {

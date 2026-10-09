@@ -3,7 +3,7 @@
 //! The processor takes blocks out of the file. Each has a path of its own, `a.md/0_example.js`, hence a configuration of its own, and
 //! is linted like a file at that path.
 
-use crate::configs::Loaded;
+use crate::configs::{Flavor, Loaded};
 use crate::lint::Context;
 use crate::paths;
 use crate::results::FileResult;
@@ -134,8 +134,13 @@ impl Context<'_, '_> {
             }
             Block::Named { path, text } => (paths::from_native(path), text),
         };
-        // ESLint's `filterCodeBlock`.
-        let FileConfig::Matched(own) = loaded.config.get(self.linter.registry(), &path) else {
+        // ESLint's `filterCodeBlock`. ESLint 8 asks `isTargetPath`: whether it lints a file of that name in a directory.
+        let registry = self.linter.registry();
+        let found = match loaded.flavor {
+            Flavor::EslintRc => loaded.config.get_unless_ignored(registry, &path),
+            _ => loaded.config.get(registry, &path),
+        };
+        let FileConfig::Matched(own) = found else {
             return LintResult::default();
         };
         if text == file.text && extname(&path) == extname(file.path) {

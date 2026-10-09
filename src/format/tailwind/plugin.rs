@@ -54,6 +54,11 @@ fn is_other_node_to_babel(e: Expr<'_>) -> bool {
     e.file().is_javascript() && e.is_in_optional_chain()
 }
 
+/// To Babel `"use strict"` is no `StringLiteral`.
+fn is_directive_to_babel(e: Expr<'_>) -> bool {
+    e.file().is_javascript() && matches!(e.parent(), Node::Stmt(it) if it.directive().is_some())
+}
+
 /// `isSortableExpression`
 fn is_sortable(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
     let mut node = callee;
@@ -64,7 +69,7 @@ fn is_sortable(callee: Expr<'_>, tailwind: &Tailwind) -> bool {
         node = match node.kind() {
             ExprKind::Call(call) => call.callee(),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Ident(_) => return tailwind.functions.iter().any(|it| it == node.text()),
+            ExprKind::Ident(_) => return tailwind.functions.has(node.text()),
             _ => return false,
         };
     }
@@ -76,8 +81,7 @@ fn has_classes(attribute: Prop<'_>, tailwind: &Tailwind) -> bool {
     attribute.is_jsx_attribute()
         && attribute.key().is_some_and(|key| {
             let name = file.slice(key.span(file));
-            matches!(name, b"class" | b"className")
-                || tailwind.attributes.iter().any(|it| it == name)
+            matches!(name, b"class" | b"className") || tailwind.attributes.has(name)
         })
 }
 
@@ -130,7 +134,7 @@ impl<'a> Sorter<'a, '_> {
             Around::Template(expressions) => {
                 let behind = expressions.partition_point(|it| it.start <= span.start);
                 (behind.checked_sub(1).and_then(|at| expressions.get(at)))
-                    .map_or(Kept::default(), |it| it.kept)
+                    .map_or_else(Kept::default, |it| it.kept)
             }
         };
         Kept {
@@ -249,7 +253,7 @@ impl<'a> Visitor<'a> for Sorter<'a, '_> {
                 left,
                 right,
             } => self.push(Around::Concatenation(left.span(), right.span()), e.span()),
-            ExprKind::String(_) if e.is_jsx_text() => {}
+            ExprKind::String(_) if e.is_jsx_text() || is_directive_to_babel(e) => {}
             ExprKind::String(_) if self.roots > 0 => {
                 self.sort_string(e.file(), e.span(), self.kept_at(e.span()));
             }
@@ -294,13 +298,14 @@ impl<'a> Visitor<'a> for Sorter<'a, '_> {
 /// The text of `file` with the classes in it sorted. `None`: it is the same.
 pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8>> {
     let text = file.text();
+    let (functions, attributes) = (&tailwind.functions, &tailwind.attributes);
     let mut names = [&b"class"[..]]
         .into_iter()
-        .chain((tailwind.functions.iter().chain(&tailwind.attributes)).map(|it| &it[..]));
-    if !tailwind.follows_plugin
-        || file.has_parse_errors()
-        || !names.any(|name| strings::contains(text, name))
-    {
+        .chain((functions.names().iter().chain(attributes.names())).map(|it| &it[..]));
+    let may_have_classes = functions.has_patterns()
+        || attributes.has_patterns()
+        || names.any(|name| strings::contains(text, name));
+    if !tailwind.follows_plugin || file.has_parse_errors() || !may_have_classes {
         return None;
     }
     let mut sorter = Sorter {

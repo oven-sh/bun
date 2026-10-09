@@ -3297,7 +3297,10 @@ test("react-compiler compile time is not exponential in the function nesting dep
 // The parser has a stack check. The lowering, which takes more of the stack for a
 // level of the source than the parser does, had none: `bun build --react-compiler`
 // died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
-// `if` statements or elements of JSX, and on a sum of 16,000 operands.
+// `if` statements or elements of JSX, and on a sum of 16,000 operands. With a check
+// in the lowering alone, 800 `switch` statements still overflowed in a later pass,
+// and where a thread has a larger stack 1,600 `try` statements took all the memory.
+// So a function that is nested more than 256 levels deep is not compiled anywhere.
 describe("react-compiler does not overflow the stack on a component that is nested deeply", () => {
   const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
     Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
@@ -3309,10 +3312,12 @@ describe("react-compiler does not overflow the stack on a component that is nest
       return ${result};
     }
   `;
-  // How large a frame is depends on the build. Each depth is more than the lowering
-  // has the stack for in that build, and less than the parser and the printer have.
+  // How large a frame is depends on the build. Each depth is less than the parser and
+  // the printer have the stack for in that build. A debug build has the stack for fewer
+  // than 256 levels, so there each is more than the lowering has the stack for.
   const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
     isDebug ? debug : isASAN ? releaseWithASAN : release;
+  const flat = "scopes that statements in a row nest";
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
     ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
     [
@@ -3327,6 +3332,13 @@ describe("react-compiler does not overflow the stack on a component that is nest
     ["try", depthOf(90, 600, 1600), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
     ["switch", depthOf(90, 600, 1600), n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}"))],
     ["labels", depthOf(90, 600, 1600), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["try, half as deep", depthOf(45, 300, 800), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    [
+      "switch, half as deep",
+      depthOf(45, 300, 800),
+      n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}")),
+    ],
+    ["labels, half as deep", depthOf(45, 300, 800), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
     ["calls", depthOf(280, 600, 1600), n => component(`const x = ${nest(n, () => "f(", "s", ")")};`)],
     [
       "conditional expressions",
@@ -3344,9 +3356,21 @@ describe("react-compiler does not overflow the stack on a component that is nest
     ],
     ["a sum", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" + ")};`)],
     ["a chain of ||", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" || ")};`)],
+    ["an optional chain", depthOf(200, 400, 1000), n => component(`const x = props${Array(n).fill("?.b").join("")};`)],
+    // Each array is changed after all that were made after it, so its scope has theirs in it.
+    [
+      flat,
+      depthOf(60, 300, 1000),
+      n =>
+        component(
+          Array.from({ length: n }, (_, i) => `const a${i} = [];`).join("") +
+            Array.from({ length: n }, (_, i) => `a${n - 1 - i}.push(s);`).join(""),
+          "<div>{a0}</div>",
+        ),
+    ],
   ];
 
-  test.concurrent.each(shapes)("%s", async (_, depth, source) => {
+  test.concurrent.each(shapes)("%s", async (name, depth, source) => {
     using dir = tempDir("react-compiler-depth", { "entry.jsx": source(depth) });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "--outfile=out.js", "entry.jsx"],
@@ -3357,8 +3381,10 @@ describe("react-compiler does not overflow the stack on a component that is nest
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // Compiled or not: that depends on how much of the stack the build has left.
-    expect(await Bun.file(join(String(dir), "out.js")).text()).toContain("useState(0)");
+    const out = await Bun.file(join(String(dir), "out.js")).text();
+    expect(out).toContain("useState(0)");
+    // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
+    if (!isDebug && name !== flat) expect(out).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });
 });

@@ -59,7 +59,8 @@ fn name_in_closing_tag(reference: Reference) -> Option<Span> {
     while let ExprKind::Dot { obj, .. } = first.kind() {
         first = obj;
     }
-    Some(first.span())
+    // With the parser of typescript-eslint it is a reference of its own already.
+    first.reference().is_none().then(|| first.span())
 }
 
 impl NoUseBeforeDefine {
@@ -76,7 +77,19 @@ impl NoUseBeforeDefine {
         if kind == DeclarationKind::FunctionName {
             return config.functions;
         }
-        let is_outer = variable.scope().variable_scope() != reference.scope().variable_scope();
+        // oxc has no scope for the initializer of a field.
+        let is_oxlint = variable.file().language().is_oxlint;
+        let variable_scope = |scope: Scope<'a>| {
+            let mut found = scope.variable_scope();
+            while is_oxlint
+                && found.kind() == ScopeKind::ClassFieldInitializer
+                && let Some(parent) = found.parent()
+            {
+                found = parent.variable_scope();
+            }
+            found
+        };
+        let is_outer = variable_scope(variable.scope()) != variable_scope(reference.scope());
         match kind {
             DeclarationKind::ClassName if is_outer => config.classes,
             DeclarationKind::Variable if is_outer => config.variables,
@@ -111,6 +124,10 @@ impl NoUseBeforeDefine {
             let is_defined_before_use =
                 definition_end <= identifier.end && !(reference.is_value() && is_in_initializer());
             if is_defined_before_use {
+                continue;
+            }
+            // For oxlint nothing more is asked about an `export { a }` that is allowed.
+            if cx.language().is_oxlint && self.config.allow_named_exports && is_named_export(reference) {
                 continue;
             }
             if !self.config.allow_named_exports && is_named_export(reference)

@@ -88,6 +88,9 @@ fn is_in_another_language(e: Expr<'_>) -> bool {
                 matches!(
                     call.callee().text(),
                     b"gql" | b"graphql" | b"graphql.experimental" | b"md" | b"markdown"
+                ) || matches!(
+                    crate::css::embed::root_name_of_tag(call.callee()),
+                    Some(b"css" | b"styled" | b"gql" | b"graphql")
                 )
             }
             ExprKind::Call(call) => call.callee().text() == b"graphql",

@@ -2,7 +2,7 @@
 
 The fuzzers one directory up make texts that look like a language and compare with Prettier. These feed bytes: [libFuzzer](https://llvm.org/docs/LibFuzzer.html) changes an input, sees which code that reaches, and keeps what reaches something new. The code is compiled with overflow checks and debug assertions, which a release build of Bun does not have, and with AddressSanitizer if asked for. None runs in CI.
 
-The crate is not a member of Bun's workspace. It links the crates that it tests without the rest of Bun, as `bun-lint` does: `src/sema/standalone/native.rs` stands in for Bun's C and C++ side, `mimalloc.rs` for mimalloc.
+The crate is not a member of Bun's workspace. It links the crates that it tests without the rest of Bun, as `bun-lint` does: `src/sema/standalone/native.rs` stands in for Bun's C and C++ side, `mimalloc.rs` for mimalloc. Nothing stands in for JavaScriptCore's regular expressions: `build.sh` links what `scripts/build/lint-standalone-native.ts` makes of the prebuilt WebKit.
 
 | target | what runs | the first byte chooses |
 | --- | --- | --- |
@@ -110,5 +110,6 @@ The crates of the formatter, the linter and the new parser forbid `unsafe`, so t
 
 - It sees every block of the global allocator, which is `malloc` here as in Bun's own builds with AddressSanitizer (`--cfg bun_asan`).
 - It sees every block of an arena, which it would not in Bun: there an arena is a heap of mimalloc, whose blocks lie side by side in pages that AddressSanitizer knows nothing about. `mimalloc.rs` makes each a block of `malloc`: reading past the end of one, or using one after its heap is destroyed, is reported. Reading up to 48 bytes before the start of one is not: the list of the heap's blocks is there.
+- It sees JavaScriptCore's regular expressions and what calls them (`src/yarr`, `src/jsc/bindings/RegularExpression.cpp`), with WebKit's assertions.
 - It does not see Bun's SIMD kernels (Highway, simdutf): plain loops in Rust stand in for them. A kernel that reads past the end of a text is not found here, unless those of Highway are linked: `KERNELS=<directory with the objects> ./build.sh asan`.
 - The widths of characters are an approximation of Bun's, so where a line with wide characters breaks can differ from `bun format`.

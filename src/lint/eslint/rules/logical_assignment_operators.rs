@@ -308,7 +308,7 @@ impl LogicalAssignmentOperators {
         if !is_logical(op) {
             return;
         }
-        let ExprKind::Assign { op: None, target, .. } = right.kind() else {
+        let ExprKind::Assign { op: None, target, .. } = seen(right).kind() else {
             return;
         };
         if !is_reference(left) || !is_same_reference(left, target) {

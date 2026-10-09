@@ -1809,6 +1809,33 @@ describe("a slice of an in-memory Blob as the data of a write", () => {
     });
   });
 
+  // A write of `archive`, against `tar`, the bytes that the object must hold.
+  async function writtenArchive(archive: Bun.Archive, tar: Uint8Array) {
+    const key = randomUUIDv7();
+    const resolved = await client.write(key, archive);
+    const stored = server.buckets.get("slices")!.current(key)!.data.bytes();
+    expect({ resolved, stored: stored.length, isTheArchive: Buffer.from(stored).equals(tar) }).toEqual({
+      resolved: tar.length,
+      stored: tar.length,
+      isTheArchive: true,
+    });
+  }
+
+  it("an Archive that was made from a slice", async () => {
+    const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+    const padded = new Blob(["junk", tar, "junk"]);
+    await writtenArchive(new Bun.Archive(padded.slice(4, 4 + tar.length)), tar);
+  });
+
+  // Control: an archive keeps the store of a file as it is.
+  it("an Archive that was made from a Bun.file()", async () => {
+    using dir = tempDir("s3-archive-of-file", {});
+    const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+    const tarPath = path.join(String(dir), "in.tar");
+    await Bun.write(tarPath, tar);
+    await writtenArchive(new Bun.Archive(Bun.file(tarPath)), tar);
+  });
+
   it("a failed write of an empty slice reports the key, as a failed write of an empty string does", async () => {
     const denied = new S3Client({ ...options, secretAccessKey: "not-the-secret" });
     const key = randomUUIDv7();

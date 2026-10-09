@@ -2141,7 +2141,12 @@ fn extension_dependencies<'a>(
             }
         };
         if matches {
-            extended.extend(extension.dependencies.iter().map(|(n, r)| (&**n, &**r)));
+            // the first extension that adds a name wins, as in yarn
+            for (dep_name, dep_range) in &extension.dependencies {
+                if !extended.iter().any(|(n, _)| *n == &**dep_name) {
+                    extended.push((&**dep_name, &**dep_range));
+                }
+            }
         }
     }
     Ok(extended)

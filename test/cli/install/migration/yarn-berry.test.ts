@@ -1525,7 +1525,8 @@ catalogs:
             devDependencies: { "a-dep": "~1.0.2" },
           }),
           // yarn adds `one-fixed-dep` to `one-range-dep` when it installs; yarn.lock has the entry, not the edge
-          ".yarnrc.yml": `packageExtensions:\n  one-range-dep@1:\n    dependencies:\n      one-fixed-dep: 1.0.0\n  one-range-dep@^2.0.0:\n    dependencies:\n      a-dep: 1.0.1\n`,
+          // (a second extension that matches adds nothing for a name the first one added)
+          ".yarnrc.yml": `packageExtensions:\n  one-range-dep@1:\n    dependencies:\n      one-fixed-dep: 1.0.0\n  one-range-dep@*:\n    dependencies:\n      one-fixed-dep: 2.0.0\n  one-range-dep@^2.0.0:\n    dependencies:\n      a-dep: 1.0.1\n`,
           "yarn.lock": yarnLock({
             "a-dep@npm:~1.0.2": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
             "berry-real@workspace:.": [

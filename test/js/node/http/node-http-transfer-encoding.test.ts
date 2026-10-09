@@ -1458,6 +1458,48 @@ describe("response trailers on server.emit('connection') and http2 allowHTTP1 co
     });
   });
 
+  // The framing of the body decides, and the response of a listen() connection carries its trailer section into
+  // the call that ends it. Each arm of that call is here: a body that ends with the last chunk, a body that the
+  // close of the connection ends, and a body that a Content-Length or a one-shot end() sizes. Each expected value
+  // is what node v26.3.0 sends.
+  test("listen(): the arms of the end call that carries the section", async () => {
+    const framings: Record<string, Respond> = {
+      "Transfer-Encoding: chunked, end()": res => (chunked(res), res.end()),
+      "Transfer-Encoding: chunked, write() then end()": res => (chunked(res), res.write("ok"), res.end()),
+      "removeHeader('Transfer-Encoding'), write() then end()": res => {
+        res.removeHeader("Transfer-Encoding");
+        res.write("ok");
+        res.end();
+      },
+      "removeHeader('Transfer-Encoding'), write() then end(chunk)": res => {
+        res.removeHeader("Transfer-Encoding");
+        res.write("ok");
+        res.end("more");
+      },
+      "useChunkedEncodingByDefault = false, end(chunk)": res => {
+        res.useChunkedEncodingByDefault = false;
+        res.end("ok");
+      },
+    };
+    const bodies: Record<string, string[]> = {};
+    for (const [name, respond] of Object.entries(framings)) {
+      bodies[name] = await wire(
+        (req, res) => {
+          res.addTrailers({ "X-Foo": "bar" });
+          respond(res);
+        },
+        { entry: "listen()" },
+      );
+    }
+    expect(bodies).toEqual({
+      "Transfer-Encoding: chunked, end()": ["0\r\nX-Foo: bar\r\n\r\n"],
+      "Transfer-Encoding: chunked, write() then end()": ["2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n"],
+      "removeHeader('Transfer-Encoding'), write() then end()": ["ok"],
+      "removeHeader('Transfer-Encoding'), write() then end(chunk)": ["okmore"],
+      "useChunkedEncodingByDefault = false, end(chunk)": ["ok"],
+    });
+  });
+
   // Like Node's _storeHeader: a Trailer header makes a response with no framing header chunk-framed, with or
   // without addTrailers(). addTrailers() alone does not: that is the "no framing header" row above.
   test.each(Object.keys(fallback))("%s: a Trailer header makes end(chunk) chunk-framed", async entry => {

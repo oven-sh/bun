@@ -159,7 +159,19 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       const head = (length: number) =>
         `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      // The two entries that take a trailer section are in the list: a queued handle must drop the
+      // section with the rest of the call.
+      const calls = [
+        "write",
+        "end",
+        "endWithTrailers",
+        "writeHead",
+        "writeHeadAndEndWithTrailers",
+        "flushHeaders",
+        "writeContinue",
+        "writeInformational",
+        "cork",
+      ];
       expect(await run("queued", transport)).toEqual({
         results: calls.map(call => ({
           call,
@@ -189,24 +201,24 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   );
 
   // The frames of the WebSocket are all that follows the 101, and end() does the same with trailers
-  // as without. The last case is the order of a timing wrapper: it adds the trailer in its finally,
-  // so the response ends after the WebSocket carried frames.
+  // as without. Node's end() returns here too, and writes the response into the WebSocket stream.
+  // The "after the WebSocket closed" cases are the order of a timing wrapper: it adds the trailer in
+  // its finally, so the response ends after the WebSocket carried frames. The last two cases use an
+  // 'upgrade' listener, which builds the response itself, as @fastify/websocket does.
   test(
     "the response of the request that a WebSocket adopted can end with trailers",
     async () => {
+      const hello = Buffer.from("\x81\x05hello", "latin1").toString("hex");
+      // The echo frame, then the Close frame of the server.
+      const helloAndClose = Buffer.from("\x81\x05hello\x88\x00", "latin1").toString("hex");
       expect(await run("upgraded", transport)).toEqual({
         results: [
-          ...["end", "addTrailers+end"].map(use => ({
-            use,
-            result: "threw ERR_STREAM_ALREADY_FINISHED",
-            afterSwitch: Buffer.from("\x81\x05hello", "latin1").toString("hex"),
-          })),
-          {
-            use: "after the WebSocket closed",
-            result: "returned",
-            // The echo frame, then the Close frame of the server.
-            afterSwitch: Buffer.from("\x81\x05hello\x88\x00", "latin1").toString("hex"),
-          },
+          { use: "end", result: "returned", afterSwitch: hello },
+          { use: "addTrailers+end", result: "returned", afterSwitch: hello },
+          { use: "flushHeaders+addTrailers+end", result: "returned", afterSwitch: hello },
+          { use: "after the WebSocket closed", result: "returned", afterSwitch: helloAndClose },
+          { use: "'upgrade' listener: addTrailers+end", result: "returned", afterSwitch: hello },
+          { use: "'upgrade' listener: after the WebSocket closed", result: "returned", afterSwitch: helloAndClose },
         ],
         stderr: "",
         exitCode: 0,

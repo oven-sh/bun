@@ -145,7 +145,8 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 
 void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response)
 {
-    if (!socket || us_socket_is_closed(socket)) {
+    /* A WebSocket that adopted the connection put its own data in the ext block: it is no longer an HttpResponseData. */
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
         return;
     }
     /* Like Node's http server connections (allowHalfOpen: true): the peer
@@ -436,7 +437,8 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully
-    if (!is_ssl || !socket)
+    // A WebSocket that adopted the connection put its own data in the ext block: it is no longer an HttpResponseData.
+    if (!is_ssl || upgraded || !socket)
         return false;
 
     // Check if the handshake callback has fired. If so, use the isAuthorized flag

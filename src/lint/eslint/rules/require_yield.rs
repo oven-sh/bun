@@ -20,7 +20,13 @@ impl Rule for RequireYield {
                 && func.body_statements().is_some_and(|body| !body.is_empty())
                 && func.yields().next().is_none()
             {
-                cx.report(ast_utils::get_function_head_loc(func), MISSING_YIELD);
+                // oxlint points at the name of the function, if it has one of its own.
+                let place = match func.name() {
+                    _ if !cx.language().is_oxlint => ast_utils::get_function_head_loc(func),
+                    Some(name) => name.span(),
+                    None => func.estree_span(),
+                };
+                cx.report(place, MISSING_YIELD);
             }
         });
     }

@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
+use bun_lint::utils::oxlint::AmbientAncestors;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 
@@ -99,6 +100,7 @@ pub struct State<'a> {
     first_calls: RefCell<FxHashMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
+    ambient: AmbientAncestors<'a>,
 }
 
 impl<'a> State<'a> {
@@ -230,7 +232,13 @@ impl NoVar {
             return;
         }
         let span = statement.span_without_export();
-        cx.report(span, UNEXPECTED_VAR).fix(|fixer| {
+        // oxlint says nothing about ambient declarations, and points at the keyword.
+        let is_oxlint = cx.language().is_oxlint;
+        if is_oxlint && cx.state.ambient.has_ambient_typescript_ancestor(statement.into()) {
+            return;
+        }
+        let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
+        cx.report(place, UNEXPECTED_VAR).fix(|fixer| {
             let var = var_keyword(statement)?;
             (cx.state.can_fix(statement, declarations))
                 .then(|| FixTracker::new(fixer).retain_range(span).replace_text_range(var, "let"))

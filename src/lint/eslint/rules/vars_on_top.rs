@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::AmbientAncestors;
 use rustc_hash::FxHashMap;
 
 /// Require `var` declarations be placed at the top of their containing scope.
@@ -32,8 +33,12 @@ fn end_of_top<'a>(statements: List<'a, Stmt<'a>>, skips_prologue: bool, limit: u
     statements.next().is_none().then_some(u32::MAX)
 }
 
-/// [`end_of_top`] of the bodies that start with many declarations, by what they are the body of.
-type State<'a> = FxHashMap<Node<'a>, u32>;
+#[derive(Default)]
+pub struct State<'a> {
+    /// [`end_of_top`] of the bodies that start with many declarations, by what they are the body of.
+    ends: FxHashMap<Node<'a>, u32>,
+    ambient: AmbientAncestors<'a>,
+}
 
 /// Whether only variable declarations precede `node`, which is one of `statements`, the body of
 /// `parent`.
@@ -46,7 +51,7 @@ fn is_var_on_top<'a>(
 ) -> bool {
     let end = end_of_top(statements, skips_prologue, 8).unwrap_or_else(|| {
         let all = || end_of_top(statements, skips_prologue, usize::MAX).unwrap_or(u32::MAX);
-        *state.entry(parent).or_insert_with(all)
+        *state.ends.entry(parent).or_insert_with(all)
     });
     node.span().start < end
 }
@@ -83,9 +88,14 @@ impl Rule for VarsOnTop {
                 },
                 _ => false,
             };
-            if !is_on_top {
-                cx.report(statement, TOP);
+            if is_on_top {
+                return;
             }
+            // oxlint says nothing about ambient declarations.
+            if cx.language().is_oxlint && cx.state.ambient.has_ambient_typescript_ancestor(statement.into()) {
+                return;
+            }
+            cx.report(statement, TOP);
         });
         State::default()
     }

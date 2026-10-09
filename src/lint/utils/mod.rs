@@ -93,6 +93,7 @@ pub mod fix_tracker;
 pub mod ignore;
 pub mod keywords;
 pub mod naming;
+pub mod oxlint;
 pub mod regular_expressions;
 pub mod string_utils;
 pub mod text;

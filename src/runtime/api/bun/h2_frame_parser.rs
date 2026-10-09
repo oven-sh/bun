@@ -4139,14 +4139,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(old_state as f64),
             );
         } else {
-            // The third argument says that the inbound side reset the stream: the peer's
+            // The third argument is the state that the inbound reset found: the peer's
             // RST_STREAM, or a stream error the engine raised. emit_error_to_all_streams
             // dispatches the same event without it.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamError,
                 stream_ctx,
                 JSValue::js_number(code as f64),
-                JSValue::TRUE,
+                JSValue::js_number(old_state as f64),
             );
         }
         // The reset closes the stream; free the legacy slot (queueing the engine eviction)

@@ -604,7 +604,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
             if (options.env.has_value()) {
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
+                OrderedHashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();
 
                 // In theory, a GC could happen before we finish putting all the properties on the object.

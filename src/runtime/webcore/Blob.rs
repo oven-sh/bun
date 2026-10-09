@@ -4472,6 +4472,11 @@ pub(crate) fn write_file_with_source_destination(
         let blob_value = source_blob.get_slice_from(cx.global(), 0, 0, BlobContentType::default());
         return Ok(JSPromise::resolved_promise_value(cx.global(), blob_value));
     } else if destination_type == store::DataTag::S3 {
+        let view = source_blob.shared_view();
+        // An in-memory source with no bytes, such as an empty slice, is an empty source.
+        if source_type == store::DataTag::Bytes && view.is_empty() {
+            return write_file_with_empty_source_to_destination(cx, destination_blob, options);
+        }
         let s3 = destination_store.data.as_s3();
         let aws_options = match s3.get_credentials_with_options(options.extra_options, cx.global())
         {
@@ -4524,7 +4529,9 @@ pub(crate) fn write_file_with_source_destination(
                     }
                 } else {
                     struct Wrapper {
-                        store: RefPtr<Store>,
+                        /// Held only when it has a name, which a failure reports as `path`.
+                        named_source: Option<RefPtr<Store>>,
+                        written: usize,
                         promise: jsc::JSPromiseStrong,
                         global: bun_ptr::BackRef<JSGlobalObject>,
                     }
@@ -4539,17 +4546,17 @@ pub(crate) fn write_file_with_source_destination(
                             let global = this.global.get();
                             match result {
                                 S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
+                                    this.promise
+                                        .resolve(global, JSValue::js_number(this.written as f64))?;
                                 }
                                 S3UploadResult::Failure(err) => {
                                     let err_js =
                                         s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                             &err,
                                             global,
-                                            this.store.get_path(),
+                                            this.named_source
+                                                .as_ref()
+                                                .and_then(|store| store.get_path()),
                                             this.promise.get(),
                                         );
                                     this.promise.reject(global, Ok(err_js))?;
@@ -4564,7 +4571,7 @@ pub(crate) fn write_file_with_source_destination(
                         &aws_options.credentials,
                         cx.context(),
                         s3.path(),
-                        bytes.slice(),
+                        view,
                         destination_blob.content_type_or_mime_type(),
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
@@ -4573,7 +4580,11 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.request_payer,
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
+                            named_source: source_store
+                                .get_path()
+                                .is_some()
+                                .then(|| source_store.clone()),
+                            written: view.len(),
                             promise,
                             global: bun_ptr::BackRef::new(cx.global()),
                         }))

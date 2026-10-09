@@ -696,8 +696,8 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
 ///   - path to package in node_modules
 /// 2. Calculate cache dir for package
 /// 3. Overwrite the input package with the one from the cache (cuz it could be hardlinked)
-/// 4. Print to user
-pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
+/// 4. Return what to print to the user once the install has printed its summary
+pub fn prepare_patch(manager: &mut PackageManager) -> Result<PreparedPatch, crate::Error> {
     let argument: &'static [u8] = manager.options.positionals[1];
 
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
@@ -938,9 +938,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             }
         };
 
-    let module_folder: &[u8] = &module_folder;
-    let pkg_name: &[u8] = &pkg_name;
-
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.
     //
@@ -954,10 +951,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // edits into the shared cache. Detach first: walk up `module_folder` to
     // find the first symlink ancestor, replace it with a real directory, and
     // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
+    detach_module_folder_from_shared_store(&module_folder);
 
     if let Err(e) =
-        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
+        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, &module_folder)
     {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
@@ -966,42 +963,59 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         Global::crash();
     }
 
-    if not_in_workspace_root {
-        let mut bufn = bun_paths::path_buffer_pool::get();
-        bun_core::pretty!(
-            "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
-            bstr::BStr::new(pkg_name),
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
-        );
-        bun_core::pretty!(
-            "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
-        );
-    } else {
-        bun_core::pretty!(
-            "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
-            bstr::BStr::new(pkg_name),
-            bstr::BStr::new(module_folder)
-        );
-        bun_core::pretty!(
-            "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
-            bstr::BStr::new(module_folder)
-        );
-    }
+    Ok(PreparedPatch {
+        pkg_name,
+        module_folder,
+        not_in_workspace_root,
+    })
+}
 
-    Ok(())
+/// The package that `prepare_patch` made ready for edits.
+pub struct PreparedPatch {
+    pkg_name: Vec<u8>,
+    module_folder: Vec<u8>,
+    not_in_workspace_root: bool,
+}
+
+impl PreparedPatch {
+    pub fn print_instructions(&self) {
+        let pkg_name: &[u8] = &self.pkg_name;
+        let module_folder: &[u8] = &self.module_folder;
+        if self.not_in_workspace_root {
+            let mut bufn = bun_paths::path_buffer_pool::get();
+            bun_core::pretty!(
+                "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
+                bstr::BStr::new(pkg_name),
+                bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
+                    &mut bufn[..],
+                    &[
+                        FileSystem::instance().top_level_dir_without_trailing_slash(),
+                        module_folder
+                    ]
+                )),
+            );
+            bun_core::pretty!(
+                "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
+                bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
+                    &mut bufn[..],
+                    &[
+                        FileSystem::instance().top_level_dir_without_trailing_slash(),
+                        module_folder
+                    ]
+                )),
+            );
+        } else {
+            bun_core::pretty!(
+                "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
+                bstr::BStr::new(pkg_name),
+                bstr::BStr::new(module_folder)
+            );
+            bun_core::pretty!(
+                "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
+                bstr::BStr::new(module_folder)
+            );
+        }
+    }
 }
 
 fn is_real_dir_not_symlink(path: &[u8]) -> bool {

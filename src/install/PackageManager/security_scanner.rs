@@ -1048,13 +1048,17 @@ impl<'a> SecurityScanSubprocess<'a> {
                 == 5 * core::mem::size_of::<usize>()
         );
 
+        // The loader's environment, not the process's: it names the project lock this process holds.
+        let env_map = self.manager.env_mut().map.create_null_delimited_env_map()?;
+        let envp = env_map.as_ptr().cast::<*const core::ffi::c_char>();
+
         #[cfg(windows)]
         {
-            self.spawn_windows(&mut argv, ipc_output_fds)?;
+            self.spawn_windows(&mut argv, envp, ipc_output_fds)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&mut argv, ipc_output_fds)?;
+            self.spawn_posix(&mut argv, envp, ipc_output_fds)?;
         }
 
         Ok(())
@@ -1068,6 +1072,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_posix(
         &mut self,
         argv: &mut [*const core::ffi::c_char; 5],
+        envp: *const *const core::ffi::c_char,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1085,15 +1090,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        // non-null argv[0]; `envp` is null-terminated and outlives the call.
+        let mut spawned =
+            unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) }?
+                .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1118,6 +1118,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_windows(
         &mut self,
         argv: &mut [*const core::ffi::c_char; 5],
+        envp: *const *const core::ffi::c_char,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -1197,15 +1198,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        // non-null argv[0]; `envp` is null-terminated and outlives the call.
+        let mut spawned =
+            unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) }?
+                .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();

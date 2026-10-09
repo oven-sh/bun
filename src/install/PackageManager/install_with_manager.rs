@@ -45,7 +45,9 @@ use crate::package_manager_real::{
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
+use super::options::{Do, PatchFeatures};
 use super::security_scanner;
+use super::update_package_json_and_install::remove_leftover_node_modules;
 
 pub fn install_with_manager(
     manager: &mut PackageManager,
@@ -967,8 +969,17 @@ pub fn install_with_manager(
         )?;
     }
 
-    // Before root lifecycle scripts, which exit the process on failure.
+    // Root lifecycle scripts run without the project lock, and they exit the process on failure:
+    // every write to the project comes before them.
+    let remove_leftovers = manager.subcommand == Subcommand::Remove
+        && !manager.edited_package_jsons.is_empty()
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON);
     super::package_json_write_back::flush(manager)?;
+    if remove_leftovers {
+        let updates = core::mem::take(&mut manager.update_requests);
+        remove_leftover_node_modules(manager, &updates);
+        manager.update_requests = updates;
+    }
 
     if needs_new_lockfile {
         manager.summary.add = manager.lockfile.packages.len() as u32;
@@ -977,6 +988,12 @@ pub fn install_with_manager(
     if manager.options.do_.save_yarn_lock() {
         write_yarn_lock_with_progress(manager, log_level)?;
     }
+
+    let prepared_patch = if matches!(manager.options.patch_features, PatchFeatures::Patch) {
+        Some(super::patch_package::prepare_patch(manager)?)
+    } else {
+        None
+    };
 
     if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
         run_root_lifecycle_scripts(manager, ctx, log_level)?;
@@ -991,6 +1008,10 @@ pub fn install_with_manager(
             requests_removed_from_lockfile,
             log_level,
         )?;
+    }
+
+    if let Some(prepared_patch) = prepared_patch {
+        prepared_patch.print_instructions();
     }
 
     if install_summary.fail > 0 {
@@ -2305,6 +2326,9 @@ fn run_root_lifecycle_scripts(
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
         debug_assert!(scripts.total > 0);
+
+        // A bun that a root script starts takes the lock itself, whatever its environment is.
+        manager.unlock_project();
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

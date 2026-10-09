@@ -27,19 +27,32 @@ pub(crate) struct EditedPackageJson {
     pub(crate) target: WorkspaceTarget,
     /// The command's positionals were applied to this file's dependency lists.
     pub(crate) received_requests: bool,
+    /// The edit took a dependency out, so `flush` has no need to read the file to see that it differs.
+    pub(crate) removed_dependencies: bool,
 }
 
-fn push(edited: &mut Vec<EditedPackageJson>, target: WorkspaceTarget, received_requests: bool) {
-    match edited
-        .iter_mut()
-        .find(|e| e.target.name_hash == target.name_hash)
+fn push(
+    edited: &mut Vec<EditedPackageJson>,
+    target: WorkspaceTarget,
+    received_requests: bool,
+) -> &mut EditedPackageJson {
+    let index = match edited
+        .iter()
+        .position(|e| e.target.name_hash == target.name_hash)
     {
-        Some(existing) => existing.received_requests |= received_requests,
-        None => edited.push(EditedPackageJson {
-            target,
-            received_requests,
-        }),
-    }
+        Some(index) => index,
+        None => {
+            edited.push(EditedPackageJson {
+                target,
+                received_requests: false,
+                removed_dependencies: false,
+            });
+            edited.len() - 1
+        }
+    };
+    let entry = &mut edited[index];
+    entry.received_requests |= received_requests;
+    entry
 }
 
 pub(crate) fn record(
@@ -48,6 +61,11 @@ pub(crate) fn record(
     received_requests: bool,
 ) {
     push(&mut manager.edited_package_jsons, target, received_requests);
+}
+
+/// `bun remove` took dependencies out of this file.
+pub(crate) fn record_removal(manager: &mut PackageManager, target: WorkspaceTarget) {
+    push(&mut manager.edited_package_jsons, target, false).removed_dependencies = true;
 }
 
 fn root_target() -> WorkspaceTarget {
@@ -403,7 +421,7 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
             PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
             print_package_json_into_cache_entry(entry, root);
         }
-        if unchanged_on_disk(manager, &e.target) {
+        if !e.removed_dependencies && unchanged_on_disk(manager, &e.target) {
             continue;
         }
         any_failed |= !write_target(manager, &e.target);

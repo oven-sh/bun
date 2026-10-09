@@ -15,12 +15,11 @@ use bun_sys::File;
 
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
-use super::options::{Do, LogLevel};
+use super::options::LogLevel;
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
     print_package_json_into_cache_entry, remove_dependencies_from_package_json,
-    remove_leftover_node_modules,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
@@ -297,6 +296,15 @@ pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarge
     let path = resolve_path::z(&target.package_json_path, &mut zbuf);
     match File::write_file_atomically(path, &entry.source.contents, 0o644) {
         Ok(()) => true,
+        // The package.json of the directory the command runs in has no name here.
+        Err(err) if target.name.is_empty() => {
+            Output::err(
+                err,
+                "failed to write package.json at '{s}'",
+                (BStr::new(path.as_bytes()),),
+            );
+            false
+        }
         Err(err) => {
             Output::err_generic(
                 "failed to write package.json for workspace '{}': {}",
@@ -685,11 +693,11 @@ pub(super) fn update_filtered_workspaces_and_install(
         });
     }
     for pending in &changed {
-        package_json_write_back::record(
-            manager,
-            pending.target.clone(),
-            subcommand != Subcommand::Remove,
-        );
+        if subcommand == Subcommand::Remove {
+            package_json_write_back::record_removal(manager, pending.target.clone());
+        } else {
+            package_json_write_back::record(manager, pending.target.clone(), true);
+        }
     }
     if subcommand == Subcommand::Remove && changed.is_empty() {
         if manager.options.log_level != LogLevel::Silent {
@@ -736,12 +744,5 @@ pub(super) fn update_filtered_workspaces_and_install(
         let root_package_json_path = resolve_path::z(&root_package_json_path, &mut zbuf);
         install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
     }
-    package_json_write_back::flush(manager)?;
-
-    if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-        remove_leftover_node_modules(manager, &updates);
-    }
-
-    Ok(())
+    package_json_write_back::flush(manager)
 }

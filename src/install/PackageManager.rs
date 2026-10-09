@@ -338,8 +338,8 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    /// Held from `lock_project` until the process exits.
-    pub(crate) project_lock: Option<bun_sys::File>,
+    /// Held from `lock_project` until `unlock_project` or the process exits.
+    pub(crate) project_lock: Option<directories::ProjectLock>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.

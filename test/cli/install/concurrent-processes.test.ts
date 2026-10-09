@@ -17,7 +17,9 @@ describe("package manager processes that share a project", () => {
   // one cache), and the project lock does not serialize different projects on purpose.
   const cacheRoot = tempDir("concurrent-processes-cache", {});
   const cacheDir = join(String(cacheRoot), "cache");
-  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+  // A command waits 60 seconds for the lock and then goes on without it. These tests are about
+  // the order of the commands, and a queue of eight debug builds can take longer than that.
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir, BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS: "600000" };
   // Packages with an index.js to edit, and nothing to run.
   const PATCHABLE = [
     "no-deps@1.0.0",
@@ -139,14 +141,14 @@ describe("package manager processes that share a project", () => {
     });
   });
 
-  // The same lost update, with the order forced. `bun remove` writes package.json after the root
-  // scripts ran, so a remove held in its postinstall script still has its edit in memory while
-  // the add arrives. Before the lock the add went through at once and the remove then wrote its
-  // stale copy over it. Now the add waits and starts from the remove's result.
+  // The same lost update, with the order forced. `bun remove` saves bun.lock and package.json
+  // once the scripts of every package have ended, so a remove held in the postinstall script of
+  // a workspace package still has its edit in memory while the add arrives. Before the lock the
+  // add went through at once and the remove then wrote its stale copy over it. Now the add waits
+  // and starts from the remove's result.
   for (const where of ["the project root", "a workspace package"]) {
     test.concurrent(`a bun add that arrives while bun remove holds ${where} waits, and both edits land`, async () => {
       const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
-      const postinstall = `${bunExe()} hold.js`;
       const { packageDir, packageJson } = await registry.createTestDir({
         files: {
           // Holds only the process started with HOLD in its environment; the `bun add` and the
@@ -154,29 +156,31 @@ describe("package manager processes that share a project", () => {
           // the damage if it never does.
           "hold.js": `
             const fs = require("fs");
+            const path = require("path");
             if (!process.env.HOLD) process.exit(0);
-            fs.writeFileSync("postinstall-started", "");
+            fs.writeFileSync(path.join(__dirname, "postinstall-started"), "");
             const deadline = Date.now() + 30_000;
-            while (!fs.existsSync("release") && Date.now() < deadline) Bun.sleepSync(5);
+            while (!fs.existsSync(path.join(__dirname, "release")) && Date.now() < deadline) Bun.sleepSync(5);
           `,
+          "packages/holder/package.json": JSON.stringify({
+            name: "holder",
+            scripts: { postinstall: `${bunExe()} ../../hold.js` },
+          }),
         },
       });
       let cwd = packageDir;
       let editedPackageJson = packageJson;
       if (where === "the project root") {
-        await write(packageJson, JSON.stringify({ name: "held", dependencies, scripts: { postinstall } }));
+        await write(packageJson, JSON.stringify({ name: "held", workspaces: ["packages/*"], dependencies }));
       } else {
-        await write(
-          packageJson,
-          JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { postinstall } }),
-        );
+        await write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
         cwd = join(packageDir, "packages", "app");
         editedPackageJson = join(cwd, "package.json");
         await write(editedPackageJson, JSON.stringify({ name: "app", dependencies }));
       }
 
-      // Also the first install of the project. It holds in the postinstall script once it has
-      // placed the packages, and writes package.json after that.
+      // Also the first install of the project. It holds in the workspace package's postinstall
+      // script once it has placed the packages, and writes bun.lock and package.json after that.
       const removeArgs = ["remove", "a-dep"];
       await using remove = spawn({
         cmd: [bunExe(), ...removeArgs],
@@ -233,9 +237,9 @@ describe("package manager processes that share a project", () => {
     });
   }
 
-  // The install holds the project while its scripts run. The nested `bun add` runs under that
-  // lock instead of waiting for it. (`--ignore-scripts` keeps the nested add from running this
-  // postinstall script again.)
+  // The install has written the project and given up the lock before its root scripts run, so
+  // the nested `bun add` takes the lock itself. (`--ignore-scripts` keeps the nested add from
+  // running this postinstall script again.)
   test.concurrent("a lifecycle script can run bun add in the project being installed", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     await write(
@@ -252,6 +256,190 @@ describe("package manager processes that share a project", () => {
     expect(result.stderr).not.toContain("Waiting for another bun process");
     expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "left-pad": "1.0.0" });
     expect(existsSync(join(packageDir, "node_modules", "left-pad"))).toBe(true);
+  });
+
+  // Runs a command whose lifecycle scripts start bun again. A nested bun that waits for the lock
+  // of its own ancestor never gets it, so the command is ended as soon as one says that it waits.
+  async function runNested(cwd: string, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const stdout = proc.stdout.text();
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += Buffer.from(chunk).toString();
+      if (stderr.includes("Waiting for another bun process")) proc.kill("SIGKILL");
+    }
+    return { args, stdout: await stdout, stderr, exitCode: await proc.exited };
+  }
+
+  // A script of one project installs a second project, and a script of the second one installs
+  // the first one again.
+  test.concurrent("a lifecycle script can install a project whose script installs the first one again", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const first = join(packageDir, "first");
+    const second = join(packageDir, "second");
+    await write(
+      join(first, "package.json"),
+      JSON.stringify({ name: "first", scripts: { postinstall: `cd ../second && ${bunExe()} install` } }),
+    );
+    await write(
+      join(second, "package.json"),
+      JSON.stringify({
+        name: "second",
+        scripts: {
+          postinstall: `cd ../first && ${bunExe()} install --ignore-scripts && ${bunExe()} -e "require('fs').writeFileSync('../done', '')"`,
+        },
+      }),
+    );
+
+    succeeded(await runNested(first, "install"));
+    expect(existsSync(join(packageDir, "done"))).toBe(true);
+  });
+
+  // A task runner with an allow list, `env -i`, and `sudo` start their command with few of the
+  // variables they got. What is left still names the same package cache, and with it the same lock.
+  test.concurrent("a lifecycle script can run bun install in its own project with a cleaned environment", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      files: {
+        "nested.js": `
+          const keep = ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "TMPDIR", "BUN_INSTALL_CACHE_DIR", "BUN_DEBUG_QUIET_LOGS", "ASAN_OPTIONS"];
+          const env = Object.fromEntries(keep.filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
+          const { exitCode } = Bun.spawnSync({ cmd: [process.execPath, "install", "--ignore-scripts"], env, stdio: ["ignore", "inherit", "inherit"] });
+          if (exitCode === 0) require("fs").writeFileSync("done", "");
+          process.exit(exitCode);
+        `,
+      },
+    });
+    await write(packageJson, JSON.stringify({ name: "cleaned", scripts: { postinstall: `${bunExe()} nested.js` } }));
+
+    succeeded(await runNested(packageDir, "install"));
+    expect(existsSync(join(packageDir, "done"))).toBe(true);
+  });
+
+  // `bun remove` writes package.json and gives up the lock before its root scripts run, so an
+  // add that arrives while the remove sits in its root postinstall script does not wait for it.
+  test.concurrent("a bun add that arrives while bun remove runs its root postinstall does not wait", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      files: {
+        "hold.js": `
+          const fs = require("fs");
+          if (!process.env.HOLD) process.exit(0);
+          fs.writeFileSync("postinstall-started", "");
+          const deadline = Date.now() + 30_000;
+          while (!fs.existsSync("release") && Date.now() < deadline) Bun.sleepSync(5);
+        `,
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "released",
+        dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+        scripts: { postinstall: `${bunExe()} hold.js` },
+      }),
+    );
+    const removeArgs = ["remove", "a-dep"];
+    await using remove = spawn({
+      cmd: [bunExe(), ...removeArgs],
+      cwd: packageDir,
+      env: { ...env, HOLD: "1" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const removeOutput = Promise.all([remove.stdout.text(), remove.stderr.text(), remove.exited]);
+    while (!existsSync(join(packageDir, "postinstall-started"))) {
+      expect(remove.exitCode).toBeNull();
+      await Bun.sleep(5);
+    }
+    const whileHeld = await run(packageDir, "add", "is-number@1.0.0");
+    const removeStillRuns = remove.exitCode === null;
+    await write(join(packageDir, "release"), "");
+    const [removeStdout, removeStderr, removeExitCode] = await removeOutput;
+
+    expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "is-number": "1.0.0" });
+    expect({ removeStillRuns, waited: whileHeld.stderr.includes("Waiting for another bun process") }).toEqual({
+      removeStillRuns: true,
+      waited: false,
+    });
+    succeeded(whileHeld);
+    succeeded({ args: removeArgs, stdout: removeStdout, stderr: removeStderr, exitCode: removeExitCode });
+    succeeded(await run(packageDir, "install", "--frozen-lockfile"));
+  });
+
+  // The remove's edit is on disk before its root scripts run, so the nested add starts from it.
+  test.concurrent("a root script of bun remove can run bun add, and both edits land", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
+    await write(packageJson, JSON.stringify({ name: "remove-then-add", dependencies }));
+    await installed(packageDir);
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "remove-then-add",
+        dependencies,
+        scripts: { postinstall: `${bunExe()} add --ignore-scripts is-number@1.0.0` },
+      }),
+    );
+
+    succeeded(await runNested(packageDir, "remove", "a-dep"));
+    expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "is-number": "1.0.0" });
+    succeeded(await run(packageDir, "install", "--frozen-lockfile", "--ignore-scripts"));
+  });
+
+  // The scripts of workspace packages run while the lock is held. Each bun that takes a lock adds
+  // its project to the list its scripts inherit, so the innermost bun finds the first project in it.
+  test.concurrent(
+    "a workspace package's script can install a project whose script installs the first one",
+    async () => {
+      const { packageDir } = await registry.createTestDir();
+      const first = join(packageDir, "first");
+      const second = join(packageDir, "second");
+      for (const [dir, other, flags] of [
+        [first, second, ""],
+        [second, first, " --ignore-scripts"],
+      ]) {
+        await write(join(dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+        await write(
+          join(dir, "packages", "member", "package.json"),
+          JSON.stringify({
+            name: "member",
+            scripts: { postinstall: `cd ${JSON.stringify(other)} && ${bunExe()} install${flags}` },
+          }),
+        );
+      }
+
+      const result = await runNested(first, "install");
+      succeeded(result);
+      expect(result.stderr).not.toContain("Waiting for another bun process");
+    },
+  );
+
+  // A script of a workspace package runs while the lock is held. When it starts bun without the
+  // list, the nested bun waits for the lock of its own ancestor, which never ends. It gives up
+  // after the bound and goes on without the lock. (The output of such a script is not shown, so
+  // the script keeps it in a file.)
+  test.concurrent("a nested bun install that cannot see its ancestor's lock stops waiting", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      files: {
+        "nested.js": `
+          const keep = ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "TMPDIR", "BUN_INSTALL_CACHE_DIR", "BUN_DEBUG_QUIET_LOGS", "ASAN_OPTIONS", "BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS"];
+          const env = Object.fromEntries(keep.filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
+          const { exitCode, stderr } = Bun.spawnSync({ cmd: [process.execPath, "install", "--ignore-scripts"], cwd: "../..", env, stdio: ["ignore", "ignore", "pipe"] });
+          require("fs").writeFileSync("../../nested-stderr", stderr);
+          process.exit(exitCode);
+        `,
+        "packages/member/package.json": JSON.stringify({
+          name: "member",
+          scripts: { postinstall: `${bunExe()} ../../nested.js` },
+        }),
+      },
+    });
+    await write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+
+    succeeded(await runWithEnv({ ...env, BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS: "50" }, packageDir, "install"));
+    const nestedStderr = await file(join(packageDir, "nested-stderr")).text();
+    expect(nestedStderr).toContain(`Waiting for another bun process to finish in ${packageDir}`);
+    expect(nestedStderr).toContain("continuing without the project lock");
   });
 
   // `bun patch <pkg>` installs, then replaces the package's hard links into the cache with copies,
@@ -324,6 +512,7 @@ describe("package manager processes that share a project", () => {
       BUN_TMPDIR: temp,
       TEMP: temp,
       BUN_INSTALL_CACHE_DIR: join(temp, "install-cache"),
+      BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS: env.BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS,
       npm_config_registry: registry.registryUrl(),
     };
 

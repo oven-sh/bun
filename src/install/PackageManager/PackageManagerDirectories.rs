@@ -71,11 +71,26 @@ impl PackageManager {
     pub fn lock_project(&mut self) {
         lock_project(self)
     }
+
+    #[inline]
+    pub fn unlock_project(&mut self) {
+        unlock_project(self)
+    }
 }
 
 // ───────────────────────────── project lock ───────────────────────────────────
 
-/// Serializes the processes that edit one project; held until exit, and best effort.
+pub(crate) struct ProjectLock {
+    file: File,
+    /// Length of `BUN_INTERNAL_INSTALL_LOCK_DIR` before this project was appended to it.
+    inherited_len: usize,
+}
+
+/// How long a command waits for the process that holds the project. A nested bun that cannot
+/// see that its own ancestor is the holder would wait forever.
+const PROJECT_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Serializes the processes that edit one project; best effort. Held until `unlock_project` or exit.
 pub fn lock_project(this: &mut PackageManager) {
     if this.project_lock.is_some() {
         return;
@@ -87,10 +102,10 @@ pub fn lock_project(this: &mut PackageManager) {
     let project_dir = bun_core::strings::without_trailing_slash(
         sys::realpath(top_level_dir_z.as_zstr(), &mut project_dir_buf).unwrap_or(top_level_dir),
     );
-    if env_var::BUN_INTERNAL_INSTALL_LOCK_DIR
-        .get()
-        .is_some_and(|held| bun_core::strings::without_trailing_slash(held) == project_dir)
-    {
+    // A lifecycle script started this process while an ancestor holds the project.
+    let key = env_var::BUN_INTERNAL_INSTALL_LOCK_DIR.key();
+    let mut held: Vec<u8> = this.env().get(key).unwrap_or_default().to_vec();
+    if held_projects(&held).any(|dir| dir == project_dir) {
         return;
     }
 
@@ -100,19 +115,7 @@ pub fn lock_project(this: &mut PackageManager) {
     };
     let locked = match sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, true) {
         Ok(true) => true,
-        Ok(false) => {
-            if !this.options.log_level.is_silent() {
-                bun_core::pretty_errorln!(
-                    "<d>Waiting for another bun process to finish in {}<r>",
-                    bstr::BStr::new(project_dir)
-                );
-                Output::flush();
-            }
-            matches!(
-                sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, false),
-                Ok(true)
-            )
-        }
+        Ok(false) => wait_for_project_lock(&lock_file, project_dir, this.options.log_level),
         Err(_) => false,
     };
     if !locked {
@@ -126,12 +129,82 @@ pub fn lock_project(this: &mut PackageManager) {
 
     // The process this one may have waited for has rewritten the package.json files read so far.
     this.workspace_package_json_cache.map.clear();
-    bun_core::handle_oom(
-        this.env_mut()
-            .map
-            .put(env_var::BUN_INTERNAL_INSTALL_LOCK_DIR.key(), project_dir),
-    );
-    this.project_lock = Some(lock_file);
+    let inherited_len = held.len();
+    held.reserve(project_dir.len() + "18446744073709551615:".len());
+    let _ = write!(held, "{}:", project_dir.len());
+    held.extend_from_slice(project_dir);
+    bun_core::handle_oom(this.env_mut().map.put(key, &held));
+    this.project_lock = Some(ProjectLock {
+        file: lock_file,
+        inherited_len,
+    });
+}
+
+/// For a holder that has written everything it writes to the project: what it starts from here
+/// on takes the lock itself.
+pub fn unlock_project(this: &mut PackageManager) {
+    let Some(lock) = this.project_lock.take() else {
+        return;
+    };
+    let key = env_var::BUN_INTERNAL_INSTALL_LOCK_DIR.key();
+    let inherited = this
+        .env()
+        .get(key)
+        .and_then(|held| held.get(..lock.inherited_len))
+        .unwrap_or_default()
+        .to_vec();
+    if inherited.is_empty() {
+        this.env_mut().map.remove(key);
+    } else {
+        bun_core::handle_oom(this.env_mut().map.put(key, &inherited));
+    }
+    drop(lock.file);
+}
+
+/// The entries of `BUN_INTERNAL_INSTALL_LOCK_DIR`: each is a length, `:`, and that many bytes.
+fn held_projects(mut held: &[u8]) -> impl Iterator<Item = &[u8]> {
+    core::iter::from_fn(move || {
+        let colon = bun_core::strings::index_of_char_usize(held, b':')?;
+        let len: usize = core::str::from_utf8(&held[..colon]).ok()?.parse().ok()?;
+        let (entry, rest) = held[colon + 1..].split_at_checked(len)?;
+        held = rest;
+        Some(entry)
+    })
+}
+
+#[cold]
+#[inline(never)]
+fn wait_for_project_lock(lock_file: &File, project_dir: &[u8], log_level: LogLevel) -> bool {
+    if !log_level.is_silent() {
+        bun_core::pretty_errorln!(
+            "<d>Waiting for another bun process to finish in {}<r>",
+            bstr::BStr::new(project_dir)
+        );
+        Output::flush();
+    }
+    let wait = env_var::BUN_DEBUG_TEST_PROJECT_LOCK_WAIT_MS
+        .get()
+        .map_or(PROJECT_LOCK_WAIT, std::time::Duration::from_millis);
+    let deadline = std::time::Instant::now() + wait;
+    let mut retries: u32 = 0;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(10u64 << retries.min(4)));
+        retries += 1;
+        match sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, true) {
+            Ok(true) => return true,
+            Ok(false) if std::time::Instant::now() < deadline => {}
+            Ok(false) => break,
+            Err(_) => return false,
+        }
+    }
+    if !log_level.is_silent() {
+        bun_core::warn!(
+            "another bun process is still running in {}, continuing without the project lock",
+            bstr::BStr::new(project_dir)
+        );
+        Output::flush();
+    }
+    false
 }
 
 bun_core::declare_scope!(project_lock, hidden);

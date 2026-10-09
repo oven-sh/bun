@@ -11,12 +11,12 @@ use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
-use bun_sys::{self, File};
 
 use super::add_catalog;
 use super::add_remove_with_filter::WorkspaceTarget;
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
+use super::package_json_write_back;
 use super::update_request::Array as UpdateRequestArray;
 use super::workspace_selection;
 use super::{
@@ -487,7 +487,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         .written_without_trailing_zero()
         .to_vec();
     // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, so it needs its own copy.
-    current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
+    current_package_json.source.contents = Cow::Owned(new_package_json_source);
     // The edits above went into a promoted copy
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
@@ -497,20 +497,31 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    if matches!(
-        subcommand,
-        Subcommand::Add | Subcommand::Update | Subcommand::Link
-    ) && manager.update_target_workspaces.is_none()
-    {
-        super::package_json_write_back::record(
-            manager,
-            WorkspaceTarget {
-                name: Box::default(),
-                name_hash: manager.workspace_name_hash,
-                package_json_path: manager.original_package_json_path.as_bytes().into(),
-            },
-            true,
-        );
+    // Written once bun.lock is saved, before the root lifecycle scripts run.
+    match subcommand {
+        Subcommand::Add | Subcommand::Update | Subcommand::Link => {
+            if manager.update_target_workspaces.is_none() {
+                package_json_write_back::record(manager, cwd_target(manager), true);
+            }
+        }
+        Subcommand::Remove => {
+            if any_changes {
+                package_json_write_back::record_removal(manager, cwd_target(manager));
+            }
+        }
+        // `bun patch --commit` puts `patchedDependencies` into the package.json of the workspace root.
+        _ if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) => {
+            package_json_write_back::record(
+                manager,
+                WorkspaceTarget {
+                    name: Box::default(),
+                    name_hash: None,
+                    package_json_path: super::add_remove_with_filter::root_package_json_path(),
+                },
+                false,
+            );
+        }
+        _ => package_json_write_back::record(manager, cwd_target(manager), false),
     }
 
     // may or may not be the package json we are editing
@@ -652,70 +663,25 @@ fn update_package_json_and_install_with_manager_with_updates(
     if matches!(
         subcommand,
         Subcommand::Update | Subcommand::Add | Subcommand::Link
-    ) {
-        if manager.update_requests.iter().any(|request| request.failed) {
-            Global::exit(1);
-        }
-        return super::package_json_write_back::flush(manager);
+    ) && manager.update_requests.iter().any(|request| request.failed)
+    {
+        Global::exit(1);
     }
-
-    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let (source, path): (&[u8], &ZStr) =
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                'source_and_path: {
-                    let root_package_json_entry = match manager
-                        .workspace_package_json_cache
-                        .get_with_path(
-                            manager.log_mut(),
-                            root_package_json_path.as_bytes(),
-                            GetJSONOptions::default(),
-                        )
-                        .unwrap()
-                    {
-                        Ok(e) => e,
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
-                            );
-                            Global::exit(1);
-                        }
-                    };
-
-                    break 'source_and_path (
-                        &root_package_json_entry.source.contents,
-                        root_package_json_path,
-                    );
-                }
-            } else {
-                (
-                    &new_package_json_source,
-                    manager.original_package_json_path.as_zstr(),
-                )
-            };
-
-        // Now that we've run the install step
-        // We can save our in-memory package.json to disk
-        if let Err(err) = File::write_file_atomically(path, source, 0o644) {
-            Output::err(
-                err,
-                "failed to write package.json at '{s}'",
-                (BStr::new(path.as_bytes()),),
-            );
-            Global::exit(1);
-        }
-
-        if subcommand == Subcommand::Remove {
-            if !any_changes {
-                Global::exit(0);
-            }
-            let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-            remove_leftover_node_modules(manager, &updates);
-        }
+    // `--lockfile-only` returns before the flush in `install_with_manager`.
+    package_json_write_back::flush(manager)?;
+    if subcommand == Subcommand::Remove && !any_changes {
+        Global::exit(0);
     }
 
     Ok(())
+}
+
+fn cwd_target(manager: &PackageManager) -> WorkspaceTarget {
+    WorkspaceTarget {
+        name: Box::default(),
+        name_hash: manager.workspace_name_hash,
+        package_json_path: manager.original_package_json_path.as_bytes().into(),
+    }
 }
 
 pub(super) fn remove_leftover_node_modules(
@@ -850,8 +816,11 @@ pub fn update_package_json_and_install_and_cli(
 
     update_package_json_and_install_with_manager(manager, ctx, original_cwd)?;
 
-    if matches!(manager.options.patch_features, PatchFeatures::Patch) {
-        patch_package::prepare_patch(manager)?;
+    // `--lockfile-only` returns from the install before the package is prepared.
+    if manager.options.lockfile_only
+        && matches!(manager.options.patch_features, PatchFeatures::Patch)
+    {
+        patch_package::prepare_patch(manager)?.print_instructions();
     }
 
     if manager.any_failed_to_install {

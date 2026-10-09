@@ -691,6 +691,13 @@ describe.concurrent("bun format", () => {
     "class A { @a static {} }",
     "class A extends B extends C {}",
     "try {} catch (a = 1) {}",
+    "let a!",
+    "class A { a! }",
+    "x = {[a]?: 1}",
+    "x = {readonly a: 1}",
+    "function f(this) {}",
+    "class A { get a?() {} }",
+    "export export class A {}",
   ])("what only TypeScript's parser reads is a syntax error in JavaScript: %j", async code => {
     const result = await format({ "a.js": code + "\n" }, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": code + "\n" });

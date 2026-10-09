@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -725,15 +725,17 @@ try {
     expect(result.exitCode).toBe(2);
   });
 
+  // A debug build is 30 times slower or more: a third of the size shows as much there.
+  const times = (text: string, count: number) => text.repeat(isDebug || isASAN ? count / 3 : count);
   test.each([
-    ["interpolations in <pre>", "a.vue", `<template><pre>${"{{a}}".repeat(30_000)}</pre></template>\n`],
+    ["interpolations in <pre>", "a.vue", `<template><pre>${times("{{a}}", 30_000)}</pre></template>\n`],
     [
       "names after prettier-ignore-attribute",
       "a.html",
-      `<!-- prettier-ignore-attribute${" a".repeat(20_000)} -->\n<div${" b".repeat(20_000)}></div>\n`,
+      `<!-- prettier-ignore-attribute${times(" a", 20_000)} -->\n<div${times(" b", 20_000)}></div>\n`,
     ],
-    ["end tags in a string of TypeScript", "a.vue", `<script lang="ts">\na = "${"</ ".repeat(60_000)}";\n</script>\n`],
-    ["blanks in v-for", "a.vue", `<template><a v-for="a${" ".repeat(60_000)}b"></a></template>\n`],
+    ["end tags in a string of TypeScript", "a.vue", `<script lang="ts">\na = "${times("</ ", 60_000)}";\n</script>\n`],
+    ["blanks in v-for", "a.vue", `<template><a v-for="a${times(" ", 60_000)}b"></a></template>\n`],
   ])("HTML does not take quadratic time: %s", async (_, name, text) => {
     const result = await format({ [name]: text }, ["--check", name]);
     expect(result.stderr).not.toContain("[error]");

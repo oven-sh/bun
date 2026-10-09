@@ -5,7 +5,14 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const {
+  kHandle,
+  kOutHeaders,
+  kNeedDrain,
+  kPendingCallbacks,
+  serverResponseMethods,
+  utcDate,
+} = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -861,6 +868,20 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableNeedDrain", {
 
 const crlf_buf = Buffer.from("\r\n");
 OutgoingMessage.prototype.write = function write(chunk, encoding, callback) {
+  // In Node.js a ServerResponse inherits write() and end(), so a call through this prototype is a
+  // call of its own method. Bun's ServerResponse has its own two for a response with a handle:
+  // the call goes there. https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L243-L244
+  // Only the ServerResponse constructor sets kPendingCallbacks. The HTTP/1 fallback also gives a
+  // handle to a response class that does not extend ServerResponse.
+  if (this[kHandle] && this[kPendingCallbacks] !== undefined) {
+    // The checks of write_(), which this call does not reach.
+    if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    if (typeof chunk !== "string" && !isUint8Array(chunk)) {
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+    return serverResponseMethods.write.$call(this, chunk, encoding, callback);
+  }
+
   if (typeof encoding === "function") {
     callback = encoding;
     encoding = null;
@@ -1035,6 +1056,13 @@ function onFinish(outmsg) {
 }
 
 OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
+  if (this[kHandle] && this[kPendingCallbacks] !== undefined) {
+    if (chunk && typeof chunk !== "function" && typeof chunk !== "string" && !isUint8Array(chunk)) {
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+    return serverResponseMethods.end.$call(this, chunk, encoding, callback);
+  }
+
   if (typeof chunk === "function") {
     callback = chunk;
     chunk = null;

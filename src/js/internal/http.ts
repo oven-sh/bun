@@ -59,6 +59,12 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// In Node.js a ServerResponse inherits write() and end() from OutgoingMessage. Bun's ServerResponse
+// has its own two for a response with a handle. node:_http_server keeps them here at module
+// initialization, so that the two of OutgoingMessage.prototype can call them.
+type ServerResponseMethod = (this: unknown, ...args: unknown[]) => unknown;
+const serverResponseMethods: { write?: ServerResponseMethod; end?: ServerResponseMethod } = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -559,6 +565,7 @@ export {
   parseProxyUrl,
   redactInvalidProxyUrl,
   serverSymbol,
+  serverResponseMethods,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,

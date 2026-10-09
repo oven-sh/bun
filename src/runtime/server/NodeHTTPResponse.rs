@@ -1277,9 +1277,11 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    // Writes a caller-built 1xx informational response block to the same
-    // AsyncSocket buffer writeStatus/end use, so a pipelined replay stays
-    // ordered ahead of the final response bytes (node:http _writeRaw).
+    // Writes caller-built bytes as they are (node:http _writeRaw): a 1xx
+    // informational response block, or the data of res._send(). They go to the
+    // same AsyncSocket buffer writeStatus/end use, so they keep their place
+    // among the bytes of the response. Returns the bytes that wait in the
+    // socket, or -1 when there is no connection to write on.
     pub(crate) fn write_informational(
         &self,
         global_object: &JSGlobalObject,
@@ -1288,7 +1290,7 @@ impl NodeHTTPResponse {
         let arguments = callframe.arguments();
         let input_value = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         if input_value.is_undefined_or_null() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::js_number_from_int32(0));
         }
         let encoding_value = arguments.get(1).copied().unwrap_or(JSValue::UNDEFINED);
         let encoding = if encoding_value.is_string() {
@@ -1314,14 +1316,34 @@ impl NodeHTTPResponse {
 
         // Response state is read only after the conversion above, which can run JS.
         if self.is_done() || self.is_socket_closed_or_closing() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::js_number_from_int32(-1));
         }
         let Some(raw_response) = self.writer() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::js_number_from_int32(-1));
         };
         handle_ended_if_necessary(raw_response.state(), global_object)?;
-        raw_response.write_informational(string_or_buffer.slice());
-        Ok(JSValue::UNDEFINED)
+        let bytes = string_or_buffer.slice();
+        // Corked, so that the end of the header block and the bytes are one send.
+        raw_response.corked(|| {
+            // uWS ends the header block at the first body write. Before that, the bytes would land inside it.
+            if raw_response.state().is_http_status_called() {
+                raw_response.flush_headers(false);
+            }
+            if !bytes.is_empty() {
+                // The tail of an earlier write() that is held by reference goes out first.
+                self.spill_pending_pinned_write(global_object);
+                raw_response.write_informational(bytes);
+            }
+        });
+        // Node writes these bytes to the socket inside the call. The request dispatch and
+        // writeHead() hold the cork, and a close drops what the cork holds.
+        raw_response.send_corked();
+        // The bytes that wait in the socket: the caller holds its callback until they are out.
+        Ok(JSValue::js_number_from_uint64(
+            raw_response
+                .get_buffered_amount()
+                .saturating_add(self.pending_pinned_write.get().remaining.len() as u64),
+        ))
     }
 }
 

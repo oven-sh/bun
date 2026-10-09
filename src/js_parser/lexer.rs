@@ -345,6 +345,66 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
     fn syntax_err() -> Error {
         Error::SyntaxError
     }
+
+    #[cold]
+    fn add_error(&mut self, loc: usize, args: fmt::Arguments<'_>) {
+        let loc = bun_ast::usize2loc(loc);
+        let _ = self.add_range_error(Range { loc, len: 0 }, args);
+    }
+
+    #[cold]
+    fn add_range_error(&mut self, r: Range, args: fmt::Arguments<'_>) -> Result<(), Error> {
+        if self.is_log_disabled || r.loc.eql(self.prev_error_loc) {
+            return Ok(());
+        }
+        self.prev_error_loc = r.loc;
+        let log = self.log();
+        if !self.tolerant {
+            log.add_error_fmt_opts(
+                args,
+                bun_ast::AddErrorOptions {
+                    source: Some(self.source),
+                    loc: r.loc,
+                    len: r.len,
+                    ..Default::default()
+                },
+            );
+            return Ok(());
+        }
+        log.errors += 1;
+        log.add_msg(bun_ast::Msg {
+            kind: bun_ast::Kind::Err,
+            data: bun_ast::Data {
+                text: bun_ast::alloc_print(args),
+                location: Some(location_without_line(r)),
+            },
+            ..Default::default()
+        });
+        Ok(())
+    }
+}
+
+/// FOR SPEED, in tolerant mode: the type checker reads the offset and the length of a location
+/// (`sema::diagnostic`). The line, the column and the text of the line take a scan of the source,
+/// from its start after a speculative parse has gone back, and a speculative parse drops most of
+/// what it logs.
+fn location_without_line(r: Range) -> bun_ast::Location {
+    bun_ast::Location {
+        file: std::borrow::Cow::Borrowed(b""),
+        namespace: std::borrow::Cow::Borrowed(b""),
+        line_text: None,
+        length: match r.len {
+            _ if r.is_empty() => 0,
+            len if len > -1 => len as usize,
+            _ => 1,
+        },
+        offset: match r.is_empty() {
+            true => 0,
+            false => r.loc.start.max(0) as usize,
+        },
+        line: 0,
+        column: 0,
+    }
 }
 
 impl<'a> Lexer<'a> {
@@ -1177,7 +1237,10 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn add_related_info(&mut self, index: usize, r: Range, text: &'static [u8]) {
-        let note = bun_ast::range_data(Some(self.source), r, text);
+        let note = bun_ast::Data {
+            text: std::borrow::Cow::Borrowed(text),
+            location: Some(location_without_line(r)),
+        };
         let msg = &mut self.log().msgs[index];
         let mut notes = core::mem::take(&mut msg.notes).into_vec();
         notes.push(note);
@@ -1225,24 +1288,6 @@ impl<'a> Lexer<'a> {
             }
             self.prev_error_loc = r.loc;
         }
-        // FOR SPEED: the type checker reads the offset and the length (`sema::diagnostic`). The line, the column and the text of
-        // the line take a scan of the source and an allocation, and a speculative parse drops most of what it logs.
-        let location = bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(b""),
-            namespace: std::borrow::Cow::Borrowed(b""),
-            line_text: None,
-            length: match r.len {
-                _ if r.is_empty() => 0,
-                len if len > -1 => len as usize,
-                _ => 1,
-            },
-            offset: match r.is_empty() {
-                true => 0,
-                false => r.loc.start.max(0) as usize,
-            },
-            line: 0,
-            column: 0,
-        };
         let log = self.log();
         log.errors += 1;
         log.add_msg(bun_ast::Msg {
@@ -1250,7 +1295,7 @@ impl<'a> Lexer<'a> {
             data: bun_ast::Data {
                 // The bytes as they are: `Format` replaces what is not valid UTF-8.
                 text: what.unwrap_or_default().to_vec().into(),
-                location: Some(location),
+                location: Some(location_without_line(r)),
             },
             metadata: bun_ast::Metadata::TypeScript { code, kind },
             ..Default::default()

@@ -1121,6 +1121,13 @@ impl JsonTape {
     fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
         &self.items[first as usize..first as usize + count as usize]
     }
+
+    /// The strings of an [`ArrayJSON::item_span`] of this tape, for a reader that keeps the tape and not the node.
+    pub fn string_items(&self, first: u32, count: u32) -> impl Iterator<Item = &[u8]> {
+        self.items_span(first, count)
+            .iter()
+            .filter_map(JsonValue::as_str)
+    }
 }
 
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
@@ -1256,6 +1263,12 @@ impl ArrayJSON {
         }
         // SAFETY: see `ObjectJSON::properties`.
         unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
+    }
+
+    /// The `(first, count)` span of [`Self::items`] on the item tape.
+    #[inline]
+    pub fn item_span(&self) -> (u32, u32) {
+        (self.first, self.count)
     }
 
     /// Parallel to [`Self::items`]; `None` unless the parse recorded item locations.

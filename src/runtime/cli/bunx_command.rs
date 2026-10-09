@@ -796,9 +796,9 @@ impl BunxCommand {
         if !ignore_cwd.is_empty() {
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
         }
-        // The node-gyp shim of `bun install` runs `bun x node-gyp`: its `INIT_CWD` stays.
+        // The node-gyp shim of `bun install` runs `bun x node-gyp`: it keeps the directories of the install.
         if ignore_cwd.is_empty() || update_request.name != b"node-gyp" {
-            env_loader.set_init_cwd()?;
+            env_loader.set_run_dirs()?;
         }
 
         let mut path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();

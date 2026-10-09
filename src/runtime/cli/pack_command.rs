@@ -2155,6 +2155,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         unsafe { (*transpiler_for_deinit).deinit() };
     }
     ctx.manager.env_mut().map.put(b"npm_command", b"pack")?;
+    // `PackageManager::init` went to the workspace root: the scripts get that directory, not a root above it.
+    ctx.manager.env_mut().local_prefix =
+        bun_paths::string_paths::without_trailing_slash_windows_path(
+            bun_resolver::fs::FileSystem::get().top_level_dir,
+        );
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,

@@ -281,7 +281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
-        env.set_init_cwd()?;
+        env.set_run_dirs()?;
         crate::cli::check_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
@@ -653,6 +653,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.store_fd = false;
 
+        let local_prefix = match root_dir_info.npm_local_prefix() {
+            // The bytes of the current directory: on Windows the resolver spells a directory its own way.
+            Some(dir) => strings::paths::without_trailing_slash_windows_path(
+                match top_level_dir.get(..dir.len().min(top_level_dir.len())) {
+                    Some(cwd)
+                        if strings::eql_case_insensitive_asciii_check_length(
+                            cwd,
+                            &dir[..cwd.len()],
+                        ) =>
+                    {
+                        cwd
+                    }
+                    _ => dir,
+                },
+            ),
+            None => top_level_dir,
+        };
+
         if env_is_none {
             // Re-derive — borrowck won't let `env_loader` straddle the
             // `&mut this_transpiler.resolver` above. Scoped to this block so it
@@ -678,9 +696,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
+        // A file that bun runs itself keeps an inherited value. `set_run_dirs` writes this one for a script or a bin.
+        env_loader.local_prefix = local_prefix;
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
+            .put_default(b"npm_config_local_prefix", local_prefix)
             .expect("unreachable");
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
@@ -2654,7 +2674,7 @@ impl RunCommand {
         }
 
         // Not a script and not a file of the user: what is left is a bin.
-        env_loader.set_init_cwd()?;
+        env_loader.set_run_dirs()?;
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         // With `--check` the way below is taken, on which the project is checked.

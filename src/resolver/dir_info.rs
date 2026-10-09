@@ -69,6 +69,42 @@ impl DirInfoRef {
     pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
+
+    /// The directory of the nearest package.json, or of the nearest one above it that lists it in "workspaces".
+    pub fn npm_local_prefix(self) -> Option<&'static [u8]> {
+        let mut node_modules_dir = None;
+        let mut dir = self;
+        let base = loop {
+            if dir.package_json.is_some() {
+                break dir;
+            }
+            // With no package.json up to the root, npm takes the nearest directory with "node_modules".
+            if node_modules_dir.is_none() && dir.has_node_modules() {
+                node_modules_dir = Some(dir.abs_path);
+            }
+            match dir.get_parent() {
+                Some(parent) => dir = parent,
+                None => return node_modules_dir,
+            }
+        };
+
+        let mut above = base.get_parent();
+        while let Some(dir) = above {
+            // Inherited from above: `None` means no package.json is left up to the root.
+            if dir.package_json_for_module_type.is_none() {
+                break;
+            }
+            if let Some(package_json) = dir.package_json() {
+                if package_json.has_workspaces()
+                    && package_json.lists_workspace(dir.abs_path, base.abs_path)
+                {
+                    return Some(dir.abs_path);
+                }
+            }
+            above = dir.get_parent();
+        }
+        Some(base.abs_path)
+    }
 }
 
 impl core::ops::Deref for DirInfoRef {

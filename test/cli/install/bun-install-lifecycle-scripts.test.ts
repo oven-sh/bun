@@ -615,6 +615,53 @@ test.concurrent("binary lockfile trusted dependency entries require an exact nam
   expect(await exited).toBe(0);
 });
 
+// bun.lockb stores the list as hashes without names, and a hash without a name trusts nothing.
+// After the list is removed, the install must go back to the default list, not keep those hashes.
+test.concurrent(
+  "removing a trustedDependencies list that names every default package restores the default list (bun.lockb)",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const preinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+    const dependencies = { electron: "1.0.0" };
+
+    await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+
+    await using listing = spawn({
+      cmd: [bunExe(), "pm", "default-trusted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [listed, listingErr, listingCode] = await Promise.all([
+      listing.stdout.text(),
+      listing.stderr.text(),
+      listing.exited,
+    ]);
+    const defaultNames = listed
+      .split("\n")
+      .filter(line => line.startsWith(" - "))
+      .map(line => line.slice(3));
+    expect(listingErr).not.toContain("error:");
+    expect(defaultNames).toContain("electron");
+    expect(defaultNames.length).toBe(Number(listed.match(/\((\d+)\)/)?.[1]));
+    expect(listingCode).toBe(0);
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: defaultNames }));
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
+    expect(await exists(preinstall)).toBeTrue();
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await exists(preinstall)).toBeTrue();
+  },
+);
+
 test.concurrent(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
   async () => {

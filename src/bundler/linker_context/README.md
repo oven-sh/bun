@@ -757,7 +757,7 @@ The renamed symbols are then used during final code generation to produce output
 - A wrapped file runs when some code calls `init_x()`, and an unwrapped one when its chunk loads, which is earlier. Two rules keep each load in order, and apply until nothing is added:
   - a file that imports a wrapped file is wrapped, also a file that tree shaking dropped (an `export *` barrel with `"sideEffects": false`), which brings it back
   - a file that some load runs after a wrapped file is wrapped, unless loading it runs nothing (`"sideEffects": false`, data), which cannot be seen
-- An entry point in a chunk of its own is not wrapped: it is the last file of its load, and prints each `init_x()` in place
+- An entry point that no file imports is not wrapped: it is alone in its chunk and the last file of its load, and prints each `init_x()` in place
 - The order of a load counts an `import` statement that nothing uses, as the unbundled program runs it. One that names a wrapped file is kept, and prints `init_x()`
 - Wrapping does what `scanImportsAndExports()` does for a file that it wraps (wrapper part, `init_` name, a use of the wrapper in each part that imports the file). `link()` then marks live parts and entry bits again
 

@@ -492,14 +492,6 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
         let c = self.c;
         let files_len = c.graph.files.len();
         let entry_bits = c.graph.files.items_entry_bits();
-        // An entry point in a chunk of its own is the last file of its load, and prints each `init_x()` in place. Without
-        // side effects, another file can import it and not load it.
-        let mut pinned = AutoBitSet::init_empty(files_len)?;
-        for &file in c.graph.entry_points.items_source_index() {
-            if self.load_class_ids[file as usize] == NONE && !c.file_has_no_side_effects(file) {
-                pinned.set(file as usize);
-            }
-        }
         // `"sideEffects": false` vouches for the file's statements, not for the wrapped files that it calls at load.
         let has_no_load_effects = |file: IndexInt| {
             c.file_has_no_side_effects(file) && c.loading_file_has_no_side_effects(file)
@@ -507,7 +499,7 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
         let mut importers: Vec<Vec<IndexInt>> = vec![Vec::new(); files_len];
         for source_index in c.graph.reachable_files.iter() {
             let file = source_index.get();
-            if !is_unwrapped_js(c, file) || pinned.is_set(file as usize) {
+            if !is_unwrapped_js(c, file) {
                 continue;
             }
             let records = c.graph.ast.items_import_records()[file as usize].as_slice();
@@ -534,6 +526,15 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
             }
         }
 
+        // An entry point that no file imports is alone in its chunk, whatever this pass brings back. It is the last file of
+        // its load, and prints each `init_x()` in place.
+        let mut pinned = AutoBitSet::init_empty(files_len)?;
+        for &file in c.graph.entry_points.items_source_index() {
+            if importers[file as usize].is_empty() {
+                pinned.set(file as usize);
+            }
+        }
+
         let mut wrapped = AutoBitSet::init_empty(files_len)?;
         for &source_index in &contested {
             wrapped.set(source_index as usize);
@@ -547,7 +548,7 @@ impl<'c, 'a> CycleAnalysis<'c, 'a> {
                     class => &self.load_classes[class as usize],
                 });
                 for &importer in &importers[source_index as usize] {
-                    if !wrapped.is_set(importer as usize) {
+                    if !wrapped.is_set(importer as usize) && !pinned.is_set(importer as usize) {
                         wrapped.set(importer as usize);
                         worklist.push(importer);
                     }

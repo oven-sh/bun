@@ -1734,6 +1734,35 @@ describe("bundler", () => {
     ],
   });
 
+  // Only an import() loads lazy.js until the pass brings back pkg/p.js, which imports it. Then e1.js loads lazy.js too,
+  // so it is not alone in its chunk, and needs a wrapper to call the one of a.js in its turn.
+  itBundled("splitting/ContestedCycleLazyEntryStaticImporter", {
+    files: {
+      "/e1.js": /* js */ `
+        import "./set1.js"; import { unused } from "pkg"; import { a } from "./a.js";
+        console.log("e1", a);
+        globalThis.later = () => import("./lazy.js");
+      `,
+      "/e2.js": `import "./set2.js"; import { b } from "./b.js"; console.log("e2", b);`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/a.js": `import { b } from "./b.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+      "/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/lazy.js": `import { a } from "./a.js"; console.log("lazy", a);`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `export * from "./p.js";`,
+      "/node_modules/pkg/p.js": `import "../../lazy.js"; import { a } from "../../a.js"; export const unused = () => a;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "lazy a+b\ne1 a+b" },
+      { file: "/out/e2.js", stdout: "e2 b+a" },
+    ],
+  });
+
   // Nothing uses what five.js imports from pkg, which has no side effects. Under e1.js that import is still the first
   // one that leads to six.js, so six.js runs ahead of five.js.
   itBundled("splitting/ContestedCycleUnusedImport", {

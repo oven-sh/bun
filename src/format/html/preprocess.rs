@@ -38,6 +38,24 @@ fn slice<'a>(value: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
     }
 }
 
+/// `ParseLocation.moveBy`: where `units` UTF-16 code units of `text` end that start at `start`.
+fn moved_by(text: &[u8], start: u32, mut units: u32) -> u32 {
+    let mut at = start as usize;
+    while units > 0
+        && let Some(&first) = text.get(at)
+    {
+        let len = match first {
+            ..0xC0 => 1,
+            0xC0..0xE0 => 2,
+            0xE0..0xF0 => 3,
+            0xF0.. => 4,
+        };
+        units = units.saturating_sub(if len == 4 { 2 } else { 1 });
+        at += len;
+    }
+    at.min(text.len()) as u32
+}
+
 impl<'a> Preprocessor<'_, 'a, '_> {
     fn visit(&mut self, id: Id, is_in_svg_foreign_object: bool) {
         if !self.stack_check.is_safe_to_recurse() {
@@ -208,6 +226,13 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 continue;
             }
             if !strings::contains(&self.tree[child].value, b"{{") {
+                // `start.moveBy(value.length)`: a text that has been put together has less in it than there is from its
+                // start to its end.
+                let node = &mut self.tree[child];
+                if node.value.len() != node.span.len() as usize {
+                    let units = crate::text::utf16_len(&node.value);
+                    node.span.end = moved_by(self.options.original_text, node.span.start, units);
+                }
                 continue;
             }
             let value = std::mem::take(&mut self.tree[child].value);

@@ -590,12 +590,12 @@ macro_rules! opaque_extern {
 // ─── Mutex / RwLock (poison-free std::sync wrappers) ──────────────────────
 //
 // LAYERING: `bun_core` sits *below* `bun_threading` in the crate graph, so it
-// cannot use the futex-backed `Guarded<T>` / `RwLock<T>` defined there. The
+// cannot use the futex-backed `Guarded<T>` defined there. The
 // handful of low-tier call sites (this crate, `bun_ptr`, `bun_alloc`) instead
 // get thin newtype wrappers around `std::sync` that strip the poisoning API —
 // Bun aborts on panic, so a poisoned lock is unreachable in practice and the
 // `LockResult` ceremony is pure noise. Higher-tier crates should use
-// `bun_threading::Guarded` / `bun_threading::RwLock` directly.
+// `bun_threading::Guarded` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
 // `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.

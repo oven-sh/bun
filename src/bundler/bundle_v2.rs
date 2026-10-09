@@ -7727,6 +7727,17 @@ pub mod bv2_impl {
                         }
                     }
 
+                    if let Some(dev) = this.dev_server
+                        && !result.import_meta_globs.is_empty()
+                    {
+                        dev.track_import_meta_globs(
+                            source_path_text,
+                            result.ast.target.bake_graph(),
+                            core::mem::take(&mut result.import_meta_globs),
+                        )
+                        .expect("oom");
+                    }
+
                     // Record which loader we used for this file
                     this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
 

@@ -649,7 +649,7 @@ impl ScopeFunctions {
                     };
                     match error {
                         Some(error) => callback = Some(test_context::rejecting(global, error)?),
-                        None => bun_test.set_context_parameter(function, parameter.clone()),
+                        None => bun_test.set_context_parameter(function, Rc::clone(&parameter)),
                     }
                     if TestFixtures::has_scope_beyond_test(self.fixtures) {
                         bun_test.expect_file_scoped_fixtures();
@@ -972,7 +972,7 @@ pub(crate) fn parse_arguments(
         }
         if let Some(mut retries) = options.get(global, "retry")? {
             if is_vitest && retries.is_object() {
-                retries = retries.get(global, "count")?.unwrap_or(JSValue::js_number(0.0));
+                retries = retries.get(global, "count")?.unwrap_or_else(|| JSValue::js_number(0.0));
             }
             if !retries.is_number() {
                 return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));

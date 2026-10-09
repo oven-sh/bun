@@ -17,6 +17,15 @@ extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, En
     uncheckedDowncast<JSPromise>(JSValue::decode(promise))->performPromiseThenWithContext(getVM(globalObject), globalObject, callback, callback, jsUndefined(), JSValue::decode(deferred));
 }
 
+// `promise.then(onFulfilled)`, whatever has been done to Promise.
+extern "C" EncodedJSValue ExpectDeferred__then(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue onFulfilled)
+{
+    auto& vm = getVM(globalObject);
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    uncheckedDowncast<JSPromise>(JSValue::decode(promise))->performPromiseThen(vm, globalObject, JSValue::decode(onFulfilled), jsUndefined(), result);
+    return JSValue::encode(result);
+}
+
 // The ExpectDeferred that is being thrown, which is then no longer thrown. Empty when anything else is.
 extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObject)
 {

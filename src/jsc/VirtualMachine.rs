@@ -1788,7 +1788,7 @@ impl VirtualMachine {
     /// Whether anything is left that could run script again. [`is_event_loop_alive`](Self::is_event_loop_alive) asks
     /// what keeps the process alive; a handle or a timer that does not (unref'd) can still settle what a wait is for.
     pub fn has_work_left(&self) -> bool {
-        // Before the queues: that thread posts a child's exit, then forgets the child.
+        // Read before the queues: the waiter thread posts a child's exit, then stops counting the child.
         #[cfg(unix)]
         if bun_spawn::process::WaiterThread::is_watching() {
             return true;
@@ -1806,14 +1806,7 @@ impl VirtualMachine {
 
     /// What wakes the loop from a thread of its own: a `Worker`, `fs.watch()`, a napi threadsafe function.
     fn has_handles_off_the_loop(&self) -> bool {
-        !self.child_workers.is_empty()
-            || !self.root_context.owns_nothing()
-            || self
-                .graph_contexts
-                .values()
-                .iter()
-                // SAFETY: registered ⇒ not freed.
-                .any(|context| !unsafe { context.as_ref() }.owns_nothing())
+        !self.child_workers.is_empty() || !self.root_context.owns_nothing()
     }
 
     /// Every ref on the loop counts as a poll too.
@@ -1824,9 +1817,7 @@ impl VirtualMachine {
             .rare_data
             .as_deref()
             .is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.is_null());
-        let not_the_programs = i32::from(timers_hold_loop_ref)
-            + i32::from(self.event_loop_shared().holds_forever_poll)
-            + i32::from(has_coordinator);
+        let not_the_programs = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator);
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls > not_the_programs)
     }

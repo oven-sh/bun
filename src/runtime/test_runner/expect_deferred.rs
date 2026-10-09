@@ -5,16 +5,17 @@ use core::ffi::c_uint;
 use core::ptr::NonNull;
 
 use bun_jsc::call_frame::CallerSrcLoc;
-use bun_jsc::js_promise::Status;
+use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
-    AnyPromise, CallFrame, JSFunction, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsError, JsResult,
+    AnyPromise, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
+    JsClass as _, JsError, JsResult,
 };
 
-use super::{Expect, ExpectMatcherUtils, Promise, expect_matcher_utils_js as utils_js};
+use super::{Expect, ExpectMatcherUtils, Flags, Promise, expect_matcher_utils_js as utils_js};
 use crate::test_runner::bun_test::{BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue};
-use crate::test_runner::execution::ExecutionSequence;
+use crate::test_runner::execution::{ConcurrentGroup, ExecutionSequence};
 use crate::test_runner::expect::js as expect_js;
+use crate::test_runner::vi_wait::ViWait;
 
 pub(crate) type Matcher = fn(&Expect, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
@@ -28,6 +29,7 @@ unsafe extern "C" {
         function: JSValue,
         deferred: JSValue,
     );
+    safe fn ExpectDeferred__then(global: &JSGlobalObject, promise: JSValue, on_fulfilled: JSValue) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
@@ -41,17 +43,17 @@ unsafe extern "C" {
     );
 }
 
-/// The entry of a test that does not end before a matcher it called has run.
-struct Held {
+/// The callback of a test or of a hook, for as long as the runner waits for it. Of concurrent tests, when it is not known which: their group.
+pub(crate) struct RunningEntry {
     buntest: BunTestPtrWeak,
     entry: RefDataValue,
     /// `entry` does not tell one attempt at a test from the next.
     remaining_retry_count: u32,
 }
 
-impl Held {
-    /// The running entry that `expect` belongs to. `None`: no test is known to have called it.
-    fn entry_of(expect: &Expect) -> Option<(BunTestPtr, RefDataValue, NonNull<ExecutionSequence>)> {
+impl RunningEntry {
+    /// The one that `expect` belongs to. `None`: no test is known to have called it.
+    fn of(expect: &Expect) -> Option<RunningEntry> {
         let parent = expect.parent.as_ref()?;
         let buntest = parent.bun_test()?;
         let execution = &buntest.get().execution;
@@ -61,20 +63,21 @@ impl Held {
             }
             phase => phase,
         };
-        let sequence = Self::sequence_running(&buntest, &entry)?;
-        Some((buntest, entry, sequence))
+        let remaining_retry_count = match Self::sequence_running(&buntest, &entry) {
+            // SAFETY: points into `buntest.execution.sequences`; nothing else borrows it here.
+            Some(sequence) => unsafe { sequence.as_ref() }.remaining_retry_count,
+            None => Self::group_running(&buntest, &entry).map(|_| 0)?,
+        };
+        Some(RunningEntry { buntest: parent.buntest_weak.clone(), entry, remaining_retry_count })
     }
 
-    fn new(expect: &Expect) -> Option<Held> {
-        let (buntest, entry, sequence) = Self::entry_of(expect)?;
-        // SAFETY: points into `buntest.execution.sequences`; nothing else borrows it here.
-        let sequence = unsafe { &mut *sequence.as_ptr() };
-        sequence.pending_matchers += 1;
-        Some(Held {
-            buntest: std::rc::Rc::downgrade(&buntest),
-            entry,
-            remaining_retry_count: sequence.remaining_retry_count,
-        })
+    fn group_running(buntest: &BunTestPtr, entry: &RefDataValue) -> Option<NonNull<ConcurrentGroup>> {
+        let RefDataValue::Execution { group_index, entry_data: None } = *entry else { return None };
+        let buntest = buntest.get();
+        if buntest.phase != Phase::Execution || buntest.execution.group_index != group_index {
+            return None;
+        }
+        buntest.execution.groups.get_mut(group_index).map(NonNull::from)
     }
 
     fn sequence_running(buntest: &BunTestPtr, entry: &RefDataValue) -> Option<NonNull<ExecutionSequence>> {
@@ -88,31 +91,60 @@ impl Held {
     /// `None` once the entry has ended.
     fn sequence(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {
         let sequence = Self::sequence_running(buntest, &self.entry)?;
-        // SAFETY: as in `new`.
+        // SAFETY: as in `of`.
         let remaining_retry_count = unsafe { sequence.as_ref() }.remaining_retry_count;
         (remaining_retry_count == self.remaining_retry_count).then_some(sequence)
     }
 
-    fn is_running(&self) -> bool {
-        self.buntest.upgrade().is_some_and(|buntest| self.sequence(&buntest).is_some())
+    /// Its count of the matchers it waits for.
+    fn pending_matchers(&self, buntest: &BunTestPtr) -> Option<NonNull<u32>> {
+        // SAFETY: as in `of`.
+        unsafe {
+            match self.sequence(buntest) {
+                Some(sequence) => Some(NonNull::from(&mut (*sequence.as_ptr()).pending_matchers)),
+                None => Self::group_running(buntest, &self.entry)
+                    .map(|group| NonNull::from(&mut (*group.as_ptr()).pending_matchers)),
+            }
+        }
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        self.buntest.upgrade().is_some_and(|buntest| self.pending_matchers(&buntest).is_some())
+    }
+
+    /// It does not end before `release()`.
+    fn hold(self) -> Self {
+        if let Some(pending_matchers) = self.buntest.upgrade().and_then(|buntest| self.pending_matchers(&buntest)) {
+            // SAFETY: as in `of`.
+            unsafe { *pending_matchers.as_ptr() += 1 };
+        }
+        self
     }
 
     /// `failure`: what the matcher threw, when nothing else reports it.
     fn release(self, global: &JSGlobalObject, failure: Option<JSValue>) {
         let Some(buntest) = self.buntest.upgrade() else { return };
-        if self.sequence(&buntest).is_none() {
+        if self.pending_matchers(&buntest).is_none() {
             return;
         }
         if let Some(failure) = failure {
             buntest.get().on_uncaught_exception(global, Some(failure), true, &self.entry);
         }
-        let Some(sequence) = self.sequence(&buntest) else { return };
-        // SAFETY: as in `new`.
-        let sequence = unsafe { &mut *sequence.as_ptr() };
-        sequence.pending_matchers -= 1;
-        if sequence.callback_done && (sequence.pending_matchers == 0 || sequence.maybe_skip) {
-            buntest.get().add_result(self.entry);
-            BunTest::run_next_tick(&self.buntest, global, self.entry);
+        let Some(pending_matchers) = self.pending_matchers(&buntest) else { return };
+        // SAFETY: as in `of`.
+        let none_left = unsafe {
+            *pending_matchers.as_ptr() -= 1;
+            *pending_matchers.as_ptr() == 0
+        };
+        let next = match self.sequence(&buntest) {
+            // SAFETY: as in `of`.
+            Some(sequence) => unsafe { sequence.as_ref().callback_done && (none_left || sequence.as_ref().maybe_skip) }
+                .then_some(self.entry),
+            None => none_left.then_some(RefDataValue::Start),
+        };
+        if let Some(next) = next {
+            buntest.get().add_result(next);
+            BunTest::run_next_tick(&self.buntest, global, next);
         }
     }
 }
@@ -120,7 +152,7 @@ impl Held {
 /// A matcher call that waits for a promise. Thrown, by [`ExpectDeferred::wait_for`], to the call it will stand for.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ExpectDeferred {
-    held: JsCell<Option<Held>>,
+    held: JsCell<Option<RunningEntry>>,
 }
 
 pub(crate) mod js {
@@ -220,17 +252,7 @@ impl ExpectDeferred {
     fn arm(global: &JSGlobalObject, deferred: JSValue) -> JsResult<()> {
         let Some(awaited) = js::awaited_get_cached(deferred) else { return Ok(()) };
         let promise = awaited.get_index(global, awaited.get_length(global)? as u32 - 1)?;
-        let on_settled = JSFunction::create(
-            global,
-            "",
-            __jsc_host_on_settled,
-            2,
-            bun_jsc::js_function::CreateJSFunctionOptions {
-                implementation_visibility: bun_jsc::js_function::ImplementationVisibility::Private,
-                ..Default::default()
-            },
-        );
-        ExpectDeferred__callWhenSettled(global, promise, on_settled, deferred);
+        ExpectDeferred__callWhenSettled(global, promise, private_function(global, __jsc_host_on_settled), deferred);
         Ok(())
     }
 
@@ -260,37 +282,21 @@ impl ExpectDeferred {
         Self::arm(global, thrown)?;
         if let Some(this) = Self::from_js(thrown) {
             // SAFETY: `thrown` is on the stack and owns the payload.
-            unsafe { &*this }.held.set(Held::new(expect));
+            unsafe { &*this }.held.set(RunningEntry::of(expect).map(RunningEntry::hold));
         }
         Ok(promise)
     }
 
-    /// Whether the outcome of the matcher still matters to the test that called it.
-    fn is_wanted(&self, expect: &Expect) -> bool {
-        match (self.held.get(), expect.parent.as_ref()) {
-            (Some(held), _) => held.is_running(),
-            (None, None) => true,
-            (None, Some(parent)) => parent.bun_test().is_some_and(|buntest| match parent.phase {
-                RefDataValue::Execution { group_index, .. } => {
-                    buntest.phase == Phase::Execution && buntest.execution.group_index == group_index
-                }
-                _ => true,
-            }),
-        }
-    }
-
     fn run_again(global: &JSGlobalObject, deferred: JSValue) -> JsResult<()> {
-        let (Some(this), Some(expect), Some(call), Some(promise)) = (
-            Self::from_js(deferred),
-            js::expect_get_cached(deferred).and_then(Expect::from_js),
-            js::call_get_cached(deferred),
-            js::promise_get_cached(deferred),
-        ) else {
+        let (Some(this), Some(call), Some(promise)) =
+            (Self::from_js(deferred), js::call_get_cached(deferred), js::promise_get_cached(deferred))
+        else {
             return Ok(());
         };
-        // SAFETY: `deferred` is an argument of the running call. It owns `this`, and keeps the owner of `expect` alive.
-        let (this, expect) = unsafe { (&*this, &*expect) };
-        if !this.is_wanted(expect) {
+        // SAFETY: `deferred` is an argument of the running call, and owns `this`.
+        let this = unsafe { &*this };
+        // The test that waited for the matcher has ended.
+        if this.held.get().as_ref().is_some_and(|held| !held.is_running()) {
             return Ok(());
         }
 
@@ -339,11 +345,54 @@ impl ExpectDeferred {
     }
 }
 
+/// A function that no stack trace shows.
+fn private_function(global: &JSGlobalObject, function: JSHostFn) -> JSValue {
+    JSFunction::create(
+        global,
+        "",
+        function,
+        0,
+        bun_jsc::js_function::CreateJSFunctionOptions {
+            implementation_visibility: bun_jsc::js_function::ImplementationVisibility::Private,
+            ..Default::default()
+        },
+    )
+}
+
 #[bun_jsc::host_fn]
 fn on_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     ExpectDeferred::run_again(global, frame.argument(1))?;
     Ok(JSValue::UNDEFINED)
 }
+
+/// One attempt of `expect.poll(function)`: `check(await function())`.
+#[bun_jsc::host_fn]
+fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [function, check] = frame.arguments_as_array::<2>();
+    let value = function.call(global, JSValue::UNDEFINED, &[])?;
+    match Expect::promise_to_await(global, value)? {
+        Some(promise) => Ok(ExpectDeferred__then(global, promise.as_value(), check)),
+        None => check.call(global, JSValue::UNDEFINED, &[value]),
+    }
+}
+
+/// `call()`, which calls a matcher on `expect`, for `expect(value)`.
+#[bun_jsc::host_fn]
+fn check_polled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [expect, call, value] = frame.arguments_as_array::<3>();
+    expect_js::captured_value_set_cached(expect, global, value);
+    call.call(global, JSValue::UNDEFINED, &[])
+}
+
+/// Each would call the function it polls, or write a snapshot at every attempt.
+const NOT_POLLED: [&[u8]; 6] = [
+    b"toThrow",
+    b"toThrowError",
+    b"toMatchSnapshot",
+    b"toMatchInlineSnapshot",
+    b"toThrowErrorMatchingSnapshot",
+    b"toThrowErrorMatchingInlineSnapshot",
+];
 
 impl Expect {
     /// Every matcher is called through here.
@@ -371,12 +420,14 @@ impl Expect {
         matcher: Matcher,
     ) -> JsResult<JSValue> {
         let flags = self.flags.get();
-        let result = match flags.promise() {
-            Promise::None => match matcher(self, global, frame) {
+        let result = if flags.promise() != Promise::None {
+            self.call_matcher_on_promise(global, frame, matcher)
+        } else {
+            let result = if flags.poll() { self.poll_matcher(global, frame) } else { matcher(self, global, frame) };
+            match result {
                 Err(JsError::Thrown) => self.matcher_threw(global, frame),
                 result => result,
-            },
-            _ => self.call_matcher_on_promise(global, frame, matcher),
+            }
         };
         match result {
             Err(JsError::Thrown) if flags.soft() => self.fail_softly(global, frame),
@@ -386,7 +437,9 @@ impl Expect {
 
     /// `expect.soft()`: what the matcher threw fails the test, which goes on. It stays thrown when no test is known to have called the matcher.
     fn fail_softly(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let Some((buntest, entry, sequence)) = Held::entry_of(self) else { return Err(JsError::Thrown) };
+        let Some(test) = RunningEntry::of(self) else { return Err(JsError::Thrown) };
+        let Some(buntest) = test.buntest.upgrade() else { return Err(JsError::Thrown) };
+        let Some(sequence) = test.sequence(&buntest) else { return Err(JsError::Thrown) };
         if global.has_pending_termination_exception() {
             return Err(JsError::Thrown);
         }
@@ -399,13 +452,64 @@ impl Expect {
         }
         // SAFETY: points into `buntest.execution.sequences`; read and written between the calls that may borrow it.
         let maybe_skip = unsafe { sequence.as_ref() }.maybe_skip;
-        buntest.get().on_uncaught_exception(global, Some(error), false, &entry);
+        buntest.get().on_uncaught_exception(global, Some(error), false, &test.entry);
         // SAFETY: as above.
         unsafe { (*sequence.as_ptr()).maybe_skip = maybe_skip };
         Ok(match self.flags.get().promise() {
             Promise::None => JSValue::UNDEFINED,
             _ => JSPromise::resolved_promise_value(global, JSValue::UNDEFINED),
         })
+    }
+
+    /// `expect.poll()`: the matcher in `frame` is called on what the function returns, time and again, until it passes.
+    fn poll_matcher(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        self.increment_expect_call_counter();
+        let this_value = frame.this();
+        let function = expect_js::captured_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
+        let key = [function, JSValue::UNDEFINED];
+        let polling = match ExpectDeferred::waited_for(global, key)? {
+            Some(polling) => Some(polling),
+            None => self.start_polling(global, frame, function)?.as_any_promise(),
+        };
+        let Some(polling) = polling else { return Ok(JSValue::UNDEFINED) };
+        match polling.unwrap(global.vm(), UnwrapMode::MarkHandled) {
+            Unwrapped::Fulfilled(_) => Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
+            Unwrapped::Rejected(error) => Err(global.throw_value(error)),
+            Unwrapped::Pending => Err(ExpectDeferred::wait_for(global, key, polling)),
+        }
+    }
+
+    fn start_polling(&self, global: &JSGlobalObject, frame: &CallFrame, function: JSValue) -> JsResult<JSValue> {
+        let name = frame.callee().get_name(global)?;
+        if NOT_POLLED.iter().any(|not_polled| name.eq_ascii(not_polled)) {
+            return Err(global.throw(format_args!(
+                "expect.poll() does not support .{name}(). Use vi.waitFor() for a condition that takes time to hold"
+            )));
+        }
+        let times = expect_js::result_value_get_cached(frame.this()).unwrap_or(JSValue::UNDEFINED);
+        let [interval_ms, timeout_ms] = [times.get_index(global, 0)?, times.get_index(global, 1)?];
+
+        // The attempts are not counted: the call in `frame` is.
+        let expect = Expect {
+            flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
+            parent: None,
+            custom_label: self.custom_label.clone(),
+        }
+        .to_js(global);
+        let bind = |function: JSValue, this_value: JSValue, arguments: &[JSValue]| {
+            function.bind(global, this_value, &bun_core::String::EMPTY, 0.0, arguments)
+        };
+        let call = bind(frame.callee(), expect, frame.arguments())?;
+        let check = bind(private_function(global, __jsc_host_check_polled), JSValue::UNDEFINED, &[expect, call])?;
+        let attempt = bind(private_function(global, __jsc_host_poll_once), JSValue::UNDEFINED, &[function, check])?;
+        ViWait::poll_matcher(
+            global,
+            frame,
+            attempt,
+            interval_ms.to_int32() as u32,
+            timeout_ms.to_int32() as u32,
+            RunningEntry::of(self),
+        )
     }
 
     /// `.resolves` / `.rejects`: the matcher is called once the promise has settled, and returns a promise.

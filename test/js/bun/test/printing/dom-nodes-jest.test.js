@@ -144,6 +144,134 @@ describe.each([
   ])("message: %s", (_, value) => {
     expect(utils.stringify(value)).toMatchSnapshot();
   });
+
+  describe("two nodes are equal when isEqualNode() says so", () => {
+    const a = () => html(`<p class="a" id="i">x<b>y</b></p>`);
+    const b = () => html(`<p class="b" id="i">x<b>y</b></p>`);
+    const fragment = node => document.createDocumentFragment().appendChild(node).parentNode;
+
+    test("elements", () => {
+      expect(a()).toEqual(a());
+      expect(a()).toStrictEqual(a());
+      expect(a()).toEqual(html(`<p id="i" class="a">x<b>y</b></p>`));
+      expect(a()).not.toBe(a());
+      expect(a()).not.toEqual(b());
+      expect(a()).not.toStrictEqual(b());
+      expect(a()).not.toEqual(html(`<span class="a" id="i">x<b>y</b></span>`));
+      expect(html(`<p>x</p>`)).not.toEqual(html(`<p>y</p>`));
+      expect(html(`<p><i></i></p>`)).not.toEqual(html(`<p><i></i><i></i></p>`));
+    });
+
+    test("what is not in the markup does not count", () => {
+      expect(document.body.appendChild(a())).toEqual(a());
+      expect(Object.assign(a(), { expando: 1 })).toEqual(a());
+      expect(Object.assign(a(), { expando: 1 })).toStrictEqual(a());
+      expect(Object.assign(html(`<input>`), { value: "typed" })).toEqual(html(`<input>`));
+    });
+
+    test("other kinds of node", () => {
+      expect(document.createTextNode("a")).toEqual(document.createTextNode("a"));
+      expect(document.createTextNode("a")).not.toEqual(document.createTextNode("b"));
+      expect(document.createComment("a")).toEqual(document.createComment("a"));
+      expect(document.createComment("a")).not.toEqual(document.createComment("b"));
+      expect(document.createTextNode("a")).not.toEqual(document.createComment("a"));
+      expect(fragment(a())).toEqual(fragment(a()));
+      expect(fragment(a())).not.toEqual(fragment(b()));
+      expect(a().getAttributeNode("class")).toEqual(a().getAttributeNode("class"));
+      expect(a().getAttributeNode("class")).not.toEqual(b().getAttributeNode("class"));
+      expect(document).toEqual(document);
+    });
+
+    test("nodes of two windows", () => {
+      const other = createWindow().document.createElement("div");
+      other.innerHTML = `<p class="a" id="i">x<b>y</b></p><p class="b" id="i">x<b>y</b></p>`;
+      expect(a()).toEqual(other.firstChild);
+      expect(a()).not.toEqual(other.lastChild);
+    });
+
+    test("a node and something else", () => {
+      expect(a()).not.toEqual({});
+      expect({}).not.toEqual(a());
+      expect(a()).not.toEqual(null);
+      expect(a()).not.toEqual("<p>");
+      expect(a()).not.toEqual({ nodeType: 1, nodeName: "P" });
+    });
+
+    test("inside other values", () => {
+      expect({ n: a(), k: 1 }).toEqual({ n: a(), k: 1 });
+      expect({ n: a() }).not.toEqual({ n: b() });
+      expect([a(), b()]).toEqual([a(), b()]);
+      expect([a(), b()]).not.toEqual([a(), a()]);
+      expect({ x: [{ y: { z: a() } }] }).not.toEqual({ x: [{ y: { z: b() } }] });
+      expect(new Map([["k", a()]])).toEqual(new Map([["k", a()]]));
+      expect(new Map([["k", a()]])).not.toEqual(new Map([["k", b()]]));
+      expect(new Map([[a(), 1]])).toEqual(new Map([[a(), 1]]));
+      expect(new Map([[a(), 1]])).not.toEqual(new Map([[b(), 1]]));
+      expect(new Set([a()])).toEqual(new Set([a()]));
+      expect(new Set([a()])).not.toEqual(new Set([b()]));
+    });
+
+    test("every matcher that compares values", () => {
+      expect([b(), a()]).toContainEqual(a());
+      expect([b(), b()]).not.toContainEqual(a());
+      const fn = jest.fn(() => a());
+      fn(a());
+      expect(fn).toHaveBeenCalledWith(a());
+      expect(fn).not.toHaveBeenCalledWith(b());
+      expect(fn).toHaveReturnedWith(a());
+      expect(fn).not.toHaveReturnedWith(b());
+      expect({ n: a() }).toHaveProperty("n", a());
+      expect({ n: a() }).not.toHaveProperty("n", b());
+      expect({ n: a(), x: 1 }).toMatchObject({ n: a() });
+      expect(a()).toMatchObject(a());
+      expect(a()).toMatchObject({ id: "i" });
+      expect(a()).not.toMatchObject({ id: "nope" });
+      expect({ n: a(), x: 1 }).toEqual(expect.objectContaining({ n: a() }));
+      expect({ n: a(), x: 1 }).not.toEqual(expect.objectContaining({ n: b() }));
+      expect([a(), b()]).toEqual(expect.arrayContaining([b()]));
+      expect([a(), a()]).not.toEqual(expect.arrayContaining([b()]));
+    });
+
+    test("collections", () => {
+      expect(html(`<p><i></i>t</p>`).childNodes).not.toEqual(html(`<p><b></b>t</p>`).childNodes);
+      expect(html(`<p><i></i>t</p>`).childNodes).not.toEqual(html(`<p><i></i></p>`).childNodes);
+      expect(html(`<p><i></i></p>`).children).not.toEqual(html(`<p><b></b></p>`).children);
+      expect(a().attributes).not.toEqual(b().attributes);
+      expect(a().classList).not.toEqual(b().classList);
+      expect(html(`<p data-a="1"></p>`).dataset).not.toEqual(html(`<p data-a="2"></p>`).dataset);
+    });
+
+    test("it is the isEqualNode() of the received node", () => {
+      expect(Object.assign(a(), { isEqualNode: () => true })).toEqual(b());
+      expect(a()).not.toEqual(Object.assign(b(), { isEqualNode: () => true }));
+      const throws = Object.assign(a(), {
+        isEqualNode() {
+          throw new Error("isEqualNode() threw");
+        },
+      });
+      expect(() => expect(throws).toEqual(a())).toThrow("isEqualNode() threw");
+    });
+
+    test("custom equality testers come first", () => {
+      let verdict;
+      expect.addEqualityTesters([(x, y) => (x && x.nodeType === 1 && y && y.nodeType === 1 ? verdict : undefined)]);
+      verdict = true;
+      expect(a()).toEqual(b());
+      verdict = false;
+      expect(a()).not.toEqual(a());
+      verdict = undefined;
+      expect(a()).toEqual(a());
+      expect(a()).not.toEqual(b());
+    });
+  });
+});
+
+test("a jsdom node and a happy-dom node", () => {
+  const p = ({ document }) => Object.assign(document.createElement("p"), { textContent: "x" });
+  const [jsdom, happyDOM] = [p(new JSDOM("").window), p(new Window())];
+  expect(() => expect(jsdom).toEqual(happyDOM)).toThrow("parameter 1 is not of type 'Node'");
+  expect(happyDOM).not.toEqual(jsdom);
+  expect(jsdom).not.toStrictEqual(happyDOM);
 });
 
 test("jsdom: DOMStringMap", () => {

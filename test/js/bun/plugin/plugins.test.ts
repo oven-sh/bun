@@ -2882,6 +2882,54 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     expect(exitCode).toBe(0);
   });
 
+  it("and is transpiled once for all the test files of a process under --isolate, until it changes", async () => {
+    const test = (name: string, transpiled: number, version: number) => `
+      import { readdirSync, rmSync, writeFileSync } from "node:fs";
+      import imported from "./imported-esm.virtual";
+      import importedCommonJS from "./imported-cjs.virtual";
+      test("${name}", () => {
+        const loaded = [imported, importedCommonJS, require("./required-esm.virtual").default, require("./required-cjs.virtual")];
+        expect(loaded).toEqual(["imported-esm", "imported-cjs", "required-esm", "required-cjs"].map(name => name + " ${version}"));
+        // Each transpilation leaves a file in the transpiler's cache on disk.
+        expect(readdirSync(import.meta.dir + "/cache")).toHaveLength(${transpiled});
+        rmSync(import.meta.dir + "/cache", { recursive: true });
+        writeFileSync(import.meta.dir + "/ran-${name}", "");
+      });
+    `;
+    const extra = {
+      "imported-esm.virtual": "",
+      "imported-cjs.virtual": "",
+      "required-esm.virtual": "",
+      "required-cjs.virtual": "",
+      // That cache is for sources of 4 KiB and more.
+      "long.js": Array.from({ length: 400 }, (_, i) => `function f${i}() { return ${i}; }\n`).join(""),
+      "plugin.ts": `
+        import { existsSync, mkdirSync, readFileSync } from "node:fs";
+        import { basename } from "node:path";
+        mkdirSync(import.meta.dir + "/cache", { recursive: true });
+        const long = readFileSync(import.meta.dir + "/long.js", "utf8");
+        const version = existsSync(import.meta.dir + "/ran-b") ? 2 : 1;
+        Bun.plugin({ name: "supplies", setup(build) {
+          build.onLoad({ filter: /\\.virtual$/ }, ({ path }) => {
+            const name = basename(path, ".virtual");
+            return { contents: long + (name.endsWith("esm") ? "export default" : "module.exports =") + JSON.stringify(name + " " + version), loader: "js" };
+          });
+        } });
+      `,
+      "a.test.ts": test("a", 4, 1),
+      "b.test.ts": test("b", 0, 1),
+      "c.test.ts": test("c", 4, 2),
+      "d.test.ts": test("d", 0, 2),
+    };
+    const { stderr, exitCode } = await run(
+      extra,
+      ["test", "--isolate", "--preload", "./plugin.ts", "./a.test.ts", "./b.test.ts", "./c.test.ts", "./d.test.ts"],
+      { BUN_RUNTIME_TRANSPILER_CACHE_PATH: "cache" },
+    );
+    expect(stderr).toContain(" 4 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("whichever of import() and require() comes first", async () => {
     const entry = `
       ${sync}

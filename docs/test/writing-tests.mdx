@@ -530,6 +530,25 @@ test("response", async () => {
 
 `expect.soft()` works with `.not`, `.resolves`, `.rejects`, and custom matchers. Outside of a test, and in a concurrent test after its first `await`, the failure is thrown like any other.
 
+## Polling
+
+`expect.poll()` calls a function, awaits what it returns, and runs the matcher on the result, again and again until the matcher passes. The matcher returns a promise:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("the queue drains", async () => {
+  await expect.poll(() => queue.length).toBe(0);
+  await expect.poll(() => fetchStatus(), { interval: 10, timeout: 500, message: "status" }).toBe("ready");
+});
+```
+
+| Option     | Default | Description                                                              |
+| ---------- | ------- | ------------------------------------------------------------------------ |
+| `interval` | `50`    | Milliseconds between two attempts                                        |
+| `timeout`  | `1000`  | Milliseconds after which the promise rejects with the last failure       |
+| `message`  |         | A custom message to display if the matcher fails, as in `expect(x, msg)` |
+
+The time is real even under [fake timers](/test/dates-times), which each attempt advances by `interval`. `.resolves`, `.rejects`, `toThrow()`, and the snapshot matchers are not supported: use `vi.waitFor()` for those.
+
 ## Assertion Counting
 
 Bun supports verifying that a specific number of assertions were called during a test:

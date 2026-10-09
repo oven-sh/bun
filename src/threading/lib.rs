@@ -9,8 +9,6 @@ pub mod futex;
 pub mod mutex;
 #[path = "ResetEvent.rs"]
 pub mod reset_event;
-#[path = "RwLock.rs"]
-pub mod rwlock;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
 #[path = "ThreadPool.rs"]
@@ -34,7 +32,6 @@ pub use futex as Futex;
 pub use guarded::Guarded;
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
-pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;

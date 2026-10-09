@@ -630,11 +630,10 @@ impl TimerObjectInternals {
                 )
             };
 
-            // The callback ended the fake clock this timer was on, which dropped the timers in its heap.
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-            if s.flags.get().fake()
-                && unsafe { (*state).timer.fake_timers.installs() } != fake_clock
-            {
+            let fake_clock_after = unsafe { (*state).timer.fake_timers.installs() };
+            // The callback ended the fake clock this timer was on, which dropped the timers in its heap.
+            if s.flags.get().fake() && fake_clock_after != fake_clock {
                 s.cancel(vm);
             }
 

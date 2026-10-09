@@ -1602,8 +1602,8 @@ describe("bun pm migrate for existing yarn.lock", () => {
       stdin: "ignore",
     });
 
-    expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tmpDir, "bun.lock")).exists()).resolves.toBe(true);
+    await expect(migrateResult.exited).resolves.toBe(0);
+    await expect(Bun.file(join(tmpDir, "bun.lock")).exists()).resolves.toBe(true);
 
     const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
     expect(bunLockContent).toMatchSnapshot(folder);

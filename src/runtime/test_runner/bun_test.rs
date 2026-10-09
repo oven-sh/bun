@@ -798,10 +798,11 @@ impl BunTest {
     }
 
     pub(crate) fn context_parameter(&mut self, callback: JSValue) -> Rc<ContextParameter> {
-        self.context_parameters
-            .entry(callback)
-            .or_insert_with(|| Rc::new(ContextParameter::of(callback, 0)))
-            .clone()
+        Rc::clone(
+            self.context_parameters
+                .entry(callback)
+                .or_insert_with(|| Rc::new(ContextParameter::of(callback, 0))),
+        )
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {

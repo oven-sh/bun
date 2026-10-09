@@ -478,8 +478,8 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
   // The upgrade client keeps owning the proxy socket after the 101 and forwards
   // whatever arrives on it into the tunnel. It used to flip into that forwarding
   // mode only after the open event had been dispatched, so bytes read off the
-  // proxy socket while an open handler spins the event loop (expect().resolves
-  // here; a debugger pause does the same) were taken for a response to an
+  // proxy socket while an open handler spins the event loop (Bun.build() waiting
+  // for a plugin's setup() here; a debugger pause does the same) were taken for a response to an
   // upgrade that no longer had a WebSocket attached: the upgrade client failed
   // itself and closed the proxy connection, and the WebSocket that had just
   // fired open stayed OPEN forever without ever receiving a message or a close.
@@ -504,7 +504,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
 
     // Once the client is inside its open handler, everything the server still
     // sends is the reply to "go". setImmediate runs at the start of the next
-    // loop iteration and the expect().resolves spin below only re-checks its
+    // loop iteration and the Bun.build() spin below only re-checks its
     // promise after that iteration has also polled I/O, so by the time the spin
     // ends the client has read the forwarded reply off the proxy socket.
     let inOpenHandler = false;
@@ -528,7 +528,10 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       ws.onopen = () => {
         inOpenHandler = true;
         ws.send("go");
-        expect(replyReadByClient.promise).resolves.toBeUndefined();
+        Bun.build({
+          entrypoints: ["./none.js"],
+          plugins: [{ name: "spin", setup: () => replyReadByClient.promise }],
+        }).catch(() => {});
         inOpenHandler = false;
         openReturned.resolve();
       };

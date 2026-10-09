@@ -113,6 +113,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub(crate) failure_skip_to: usize,
+    /// As `ExecutionSequence::pending_matchers`, when it is not known which of the sequences called the matcher.
+    pub(crate) pending_matchers: u32,
 }
 
 impl ConcurrentGroup {
@@ -124,6 +126,7 @@ impl ConcurrentGroup {
             remaining_incomplete_entries: sequence_end - sequence_start,
             failure_skip_to: next_index,
             next_sequence_index: 0,
+            pending_matchers: 0,
         }
     }
 
@@ -1012,6 +1015,18 @@ fn step_group(
 
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
+        if group.pending_matchers > 0 {
+            // The last timeout of the tests, one of which called them, ends the wait.
+            let timeout = this.sequences[group.sequence_start..group.sequence_end]
+                .iter()
+                .filter_map(|sequence| sequence.test_entry)
+                // SAFETY: arena-owned entry
+                .map(|entry| unsafe { entry.as_ref() }.timespec)
+                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
+            if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
+                return Ok(StepResult::Waiting { timeout });
+            }
+        }
         group.executing = false;
         Execution::on_group_completed(global_this);
 
@@ -1222,7 +1237,7 @@ fn step_sequence_one(
             && next_item.added_in_phase != AddedInPhase::Execution
         {
             let parameter = buntest_strong.get().context_parameter(cb.get());
-            let into = context.or(args.first().copied()).unwrap_or(JSValue::UNDEFINED);
+            let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
             match TestFixtures::next(fixtures, global_this, into, fixtures_scope, &parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {

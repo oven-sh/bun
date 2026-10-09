@@ -1241,9 +1241,39 @@ describe("the functions useFakeTimers() replaces", () => {
     vi.advanceTimersByTime(5);
     expect({ ticks, pending: vi.getTimerCount(), now: performance.now() }).toEqual({ ticks: 1, pending: 0, now: 0 });
   });
+});
 
-  test.concurrent("--isolate: the next file has the real functions and the real clock", async () => {
-    using dir = tempDir("fake-timers-isolate", {
+describe.concurrent("the end of a test file", () => {
+  const passed = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\)/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+  /** Never calls useFakeTimers(). */
+  const needsRealTimers = `
+    import { expect, test, vi } from "bun:test";
+    const atTheTop = { setTimeout, date: Date.now() };
+    test("nothing is faked", async () => {
+      expect(vi.isFakeTimers()).toBe(false);
+      expect(vi.getMockedSystemTime()).toBeNull();
+      expect(Object.hasOwn(atTheTop.setTimeout, "clock")).toBe(false);
+      expect(setTimeout).toBe(atTheTop.setTimeout);
+      expect(atTheTop.date).toBeGreaterThan(1e12);
+      expect(performance.now()).toBeGreaterThan(0);
+      const order = [];
+      await new Promise(resolve => {
+        process.nextTick(() => order.push("tick"));
+        queueMicrotask(() => order.push("microtask"));
+        setImmediate(() => order.push("immediate"));
+        setTimeout(resolve, 5);
+      });
+      expect(order).toEqual(["tick", "microtask", "immediate"]);
+    });
+  `;
+
+  test.each([[[]], [["--isolate"]]])("brings back everything the file left faked %j", async flags => {
+    using dir = tempDir("fake-timers-file-end", {
       "a.test.ts": `
         import { test, vi } from "bun:test";
         test("leaves everything faked", () => {
@@ -1259,28 +1289,132 @@ describe("the functions useFakeTimers() replaces", () => {
           vi.runAllTimersAsync().then(() => console.log("a: settled"));
         });
       `,
-      "b.test.ts": `
+      "b.test.ts": needsRealTimers,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", ...flags, "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), passed: passed(stderr), exitCode }, stderr).toEqual({
+      stdout: "a: settled\n",
+      passed: ["(pass) leaves everything faked", "(pass) nothing is faked"],
+      exitCode: 0,
+    });
+  });
+
+  test("ends setSystemTime() without fake timers", async () => {
+    using dir = tempDir("fake-timers-file-end-system-time", {
+      "a.test.ts": `
+        import { setSystemTime, test } from "bun:test";
+        test("leaves the time mocked", () => void setSystemTime(0));
+      `,
+      "b.test.ts": needsRealTimers,
+    });
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+      passed: ["(pass) leaves the time mocked", "(pass) nothing is faked"],
+      exitCode: 0,
+    });
+  });
+
+  test("of a file that fails to load", async () => {
+    using dir = tempDir("fake-timers-file-end-load-error", {
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        vi.useFakeTimers({ now: 0 });
+        throw new Error("a.test.ts does not load");
+      `,
+      "b.test.ts": needsRealTimers,
+    });
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect(stderr).toContain("a.test.ts does not load");
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({ passed: ["(pass) nothing is faked"], exitCode: 1 });
+  });
+
+  test("--rerun-each: every run starts with the real timers", async () => {
+    using dir = tempDir("fake-timers-file-end-rerun", {
+      "a.test.ts": `
         import { expect, test, vi } from "bun:test";
-        test("nothing is faked", async () => {
-          expect(vi.isFakeTimers()).toBe(false);
-          expect(Object.hasOwn(setTimeout, "clock")).toBe(false);
-          expect(Date.now()).toBeGreaterThan(1e12);
-          const order = [];
-          await new Promise(resolve => {
-            process.nextTick(() => order.push("tick"));
-            queueMicrotask(() => order.push("microtask"));
-            setImmediate(() => order.push("immediate"));
-            setTimeout(resolve, 5);
-          });
-          expect(order).toEqual(["tick", "microtask", "immediate"]);
+        const atTheTop = vi.isFakeTimers();
+        test("leaves the timers faked", () => {
+          expect([atTheTop, vi.isFakeTimers(), Object.hasOwn(setTimeout, "clock")]).toEqual([false, false, false]);
           vi.useFakeTimers();
-          expect(vi.getTimerCount()).toBe(0);
         });
       `,
     });
-    const { stdout, stderr, exitCode } = await run(["test", "--isolate", "./a.test.ts", "./b.test.ts"], String(dir));
-    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
-      stdout: "a: settled\n",
+    const { stderr, exitCode } = await run(["test", "--rerun-each=3", "./a.test.ts"], String(dir));
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+      passed: Array(3).fill("(pass) leaves the timers faked"),
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["useFakeTimers({ now: 0, shouldAdvanceTime: true, advanceTimeDelta: 1 })", true],
+    ["setSystemTime(0)", false],
+  ])("leaves what a preload mocked at its top level: %s", async (mock, fake) => {
+    const file = `
+      import { expect, test, vi } from "bun:test";
+      test("is mocked", async () => {
+        expect(vi.isFakeTimers()).toBe(${fake});
+        expect(Date.now()).toBeLessThan(1e9);
+        // On a fake clock, this is left to the clock that advances by itself.
+        await new Promise(resolve => setTimeout(resolve, 3));
+      });
+    `;
+    using dir = tempDir("fake-timers-file-end-preload", {
+      "preload.ts": `import { vi } from "bun:test"; vi.${mock};`,
+      "a.test.ts": file,
+      "b.test.ts": file,
+    });
+    const { stderr, exitCode } = await run(
+      ["test", "--preload=./preload.ts", "./a.test.ts", "./b.test.ts"],
+      String(dir),
+    );
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+      passed: ["(pass) is mocked", "(pass) is mocked"],
+      exitCode: 0,
+    });
+  });
+
+  test("undoes what a hook of a preload fakes in each file", async () => {
+    using dir = tempDir("fake-timers-file-end-preload-hook", {
+      "preload.ts": `import { beforeEach, vi } from "bun:test"; beforeEach(() => void vi.useFakeTimers());`,
+      "a.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        const atTheTop = vi.isFakeTimers();
+        test("is faked by the hook", () => expect([atTheTop, vi.isFakeTimers()]).toEqual([false, true]));
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        const atTheTop = vi.isFakeTimers();
+        test("is faked by the hook again", () => expect([atTheTop, vi.isFakeTimers()]).toEqual([false, true]));
+      `,
+    });
+    const { stderr, exitCode } = await run(
+      ["test", "--preload=./preload.ts", "./a.test.ts", "./b.test.ts"],
+      String(dir),
+    );
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+      passed: ["(pass) is faked by the hook", "(pass) is faked by the hook again"],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    [`vi.useFakeTimers(); vi.stubGlobal("setTimeout", stub);`],
+    [`vi.stubGlobal("setTimeout", stub); vi.useFakeTimers();`],
+  ])("together with vi.stubGlobal(): %s", async leave => {
+    using dir = tempDir("fake-timers-file-end-stub-global", {
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        test("leaves setTimeout replaced twice", () => {
+          const stub = () => {};
+          ${leave}
+        });
+      `,
+      "b.test.ts": needsRealTimers,
+    });
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+      passed: ["(pass) leaves setTimeout replaced twice", "(pass) nothing is faked"],
       exitCode: 0,
     });
   });
@@ -1859,15 +1993,7 @@ describe("advanceTimersToNextTimer", () => {
 });
 
 describe("the loop limit", () => {
-  test.each([
-    [vi, {}, 10_000],
-    [jest, {}, 100_000],
-    [vi, { loopLimit: 5 }, 5],
-    [jest, { timerLimit: 5 }, 5],
-    [vi, { timerLimit: 7 }, 7],
-    [jest, { loopLimit: 7 }, 7],
-    [vi, { loopLimit: 0 }, 10_000],
-  ] as const)("runAllTimers() gives up on a setInterval: %# %j", (api, options, limit) => {
+  function givesUpOnAnInterval(api: typeof vi | typeof jest, options: object, limit: number) {
     api.useFakeTimers(options as any);
     let fires = 0;
     setInterval(() => fires++, 1);
@@ -1877,7 +2003,23 @@ describe("the loop limit", () => {
       pending: 1,
       now: limit,
     });
-  });
+  }
+
+  test.each([
+    [vi, {}, 10_000],
+    [vi, { loopLimit: 5 }, 5],
+    [jest, { timerLimit: 5 }, 5],
+    [vi, { timerLimit: 7 }, 7],
+    [jest, { loopLimit: 7 }, 7],
+    [vi, { loopLimit: 0 }, 10_000],
+  ] as const)("runAllTimers() gives up on a setInterval: %# %j", givesUpOnAnInterval);
+
+  // 100,000 timers take seconds in a debug build.
+  test(
+    "runAllTimers() gives up on a setInterval: the default of jest",
+    () => givesUpOnAnInterval(jest, {}, 100_000),
+    60_000,
+  );
 
   test("as many timers as the limit are not a loop", () => {
     vi.useFakeTimers({ loopLimit: 3 });
@@ -2298,8 +2440,7 @@ describe("the clock that advances by itself", () => {
         "b.test.ts": `
           import { expect, test, vi } from "bun:test";
           test("the clock stands still", async () => {
-            // Without --isolate the fake timers of a.test.ts are still active.
-            expect(vi.isFakeTimers()).toBe(true);
+            vi.useFakeTimers();
             const fired = vi.fn();
             setTimeout(fired, 1);
             const before = Date.now();

@@ -579,3 +579,16 @@ expectType(expect.soft(1, "message").toBe(1)).is<void>();
 expectType(expect.soft(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
 // @ts-expect-error
 expect.soft(1).toBe("1");
+
+expectType(expect.poll(() => 1).toBe(1)).is<Promise<void>>();
+expectType(expect.poll(async () => 1, { interval: 1, timeout: 10, message: "message" }).not.toBe(2)).is<
+  Promise<void>
+>();
+// @ts-expect-error
+expect.poll(async () => 1).toBe("1");
+// @ts-expect-error
+expect.poll(() => 1).toThrow();
+// @ts-expect-error
+expect.poll(() => 1).resolves;
+// @ts-expect-error
+expect.poll(1);

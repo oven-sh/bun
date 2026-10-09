@@ -50,6 +50,8 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    // Bun__hashPluginContents() of what a plugin supplied, for a provider IsolatedModuleCache holds that was not made from the file.
+    uint64_t m_pluginContentsHash { 0 };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,

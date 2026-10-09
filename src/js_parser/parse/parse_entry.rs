@@ -139,7 +139,7 @@ pub struct Options<'a> {
     pub transform_only: bool,
 
     /// Without it, `import.meta.glob()` is left as it is.
-    pub import_meta_glob: Option<crate::ImportMetaGlobResolver>,
+    pub import_meta_glob: Option<crate::ImportMetaGlobHost>,
 
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,

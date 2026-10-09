@@ -440,25 +440,29 @@ impl HotReloadEvent {
                     while let Some(index) = it {
                         // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
+                        let (source_file_path, check, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
+                            (dep.source_file_path, &raw const dep.check, dep.next)
                         };
                         it = next;
 
-                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
-                        // not mutated until after `resolve` returns.
-                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        // SAFETY: the dep is not mutated until after the check.
+                        let resolved = match unsafe { &*check } {
+                            // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
+                            directory_watch_store::Check::Resolves(specifier) => unsafe {
+                                dev.server_transpiler.assume_init_mut()
+                            }
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
-                                unsafe { &*specifier },
+                                specifier,
                                 bun_ast::ImportKind::Stmt,
                             )
-                            .is_ok();
+                            .is_ok(),
+                            directory_watch_store::Check::GlobChanged(scan) => scan.has_changed(),
+                        };
 
                         if resolved {
                             // this resolution result is not preserved as passing it
@@ -1090,15 +1094,21 @@ pub(crate) mod directory_watch_store {
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
         pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
-        /// The specifier that failed. Allocated memory.
-        pub(crate) specifier: Box<[u8]>,
+        pub(crate) check: Check,
+    }
+    /// Whether a change in the directory is a reason to bundle the file again.
+    pub(crate) enum Check {
+        /// The specifier that failed resolves now.
+        Resolves(Box<[u8]>),
+        /// An `import.meta.glob()` call matches other files than it did.
+        GlobChanged(std::rc::Rc<bun_js_parser::ImportMetaGlobScan>),
     }
     impl Default for Dep {
         fn default() -> Self {
             Dep {
                 next: None,
                 source_file_path: bun_ptr::RawSlice::EMPTY,
-                specifier: Box::default(),
+                check: Check::Resolves(Box::default()),
             }
         }
     }
@@ -1141,6 +1151,12 @@ bun_bundler::link_impl_DevServerHandle! {
             (*this)
                 .directory_watchers
                 .track_resolution_failure(import_source, specifier, renderer, loader)
+                .map_err(Into::into)
+        },
+        track_import_meta_globs(import_source, renderer, scans) => {
+            (*this)
+                .directory_watchers
+                .track_import_meta_globs(import_source, renderer, scans)
                 .map_err(Into::into)
         },
         is_file_cached(abs_path, side) => {
@@ -1251,6 +1267,61 @@ impl DirectoryWatchStore {
         );
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
+        let owned_file_path = self.graph_key(import_source, renderer)?;
+        let specifier: Box<[u8]> = if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            Box::<[u8]>::from(specifier)
+        } else {
+            [b"./", specifier].concat().into_boxed_slice()
+        };
+        self.insert_or_ignore(
+            dir,
+            owned_file_path,
+            directory_watch_store::Check::Resolves(specifier),
+        )
+    }
+
+    /// Bundles `import_source` again once one of its `import.meta.glob()` calls matches other
+    /// files than it did.
+    pub(crate) fn track_import_meta_globs(
+        &mut self,
+        import_source: &[u8],
+        renderer: Graph,
+        scans: Vec<bun_js_parser::ImportMetaGlobScan>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        use directory_watch_store::Check;
+        let owned_file_path = self.graph_key(import_source, renderer)?;
+        self.remove_dependencies_for_file_if(owned_file_path.slice(), |check| {
+            matches!(check, Check::GlobChanged(_))
+        });
+        for scan in scans {
+            let scan = std::rc::Rc::new(scan);
+            for dir in scan.directories() {
+                let check = Check::GlobChanged(std::rc::Rc::clone(&scan));
+                self.insert_or_ignore(dir, owned_file_path, check)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_or_ignore(
+        &mut self,
+        dir_name_to_watch: &[u8],
+        file_path: bun_ptr::RawSlice<u8>,
+        check: directory_watch_store::Check,
+    ) -> Result<(), bun_alloc::AllocError> {
+        match self.insert(dir_name_to_watch, file_path, check) {
+            Ok(()) => Ok(()),
+            Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
+            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
+        }
+    }
+
+    /// The path of `import_source` as its graph keeps it.
+    fn graph_key(
+        &mut self,
+        import_source: &[u8],
+        renderer: Graph,
+    ) -> Result<bun_ptr::RawSlice<u8>, bun_alloc::AllocError> {
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.
@@ -1261,7 +1332,7 @@ impl DirectoryWatchStore {
         // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
-        let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
+        Ok(match renderer {
             Graph::Client => {
                 // SAFETY: `dev` is the live DevServer owning this store;
                 // `client_graph` is disjoint from `directory_watchers` so this
@@ -1278,24 +1349,16 @@ impl DirectoryWatchStore {
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
-        };
-
-        match self.insert(dir, owned_file_path, specifier) {
-            Ok(()) => Ok(()),
-            Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
-            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
-        }
+        })
     }
 
-    /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
-    /// `specifier` is cloned.
+    /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch.
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
-        specifier: &[u8],
+        check: directory_watch_store::Check,
     ) -> Result<(), DirectoryWatchInsertError> {
-        debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
         // Note: take a raw pointer so the &mut self borrow from owner() does
         // not overlap subsequent self.* field accesses.
@@ -1303,10 +1366,9 @@ impl DirectoryWatchStore {
 
         bun_core::scoped_log!(
             DevServer,
-            "DirectoryWatchStore.insert({}, {}, {})",
+            "DirectoryWatchStore.insert({}, {})",
             bun_core::fmt::quote(dir_name_to_watch),
             bun_core::fmt::quote(file_path.slice()),
-            bun_core::fmt::quote(specifier),
         );
 
         if self.dependencies_free_list.is_empty() {
@@ -1321,23 +1383,12 @@ impl DirectoryWatchStore {
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        let specifier_cloned: Box<[u8]> =
-            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
-                Box::<[u8]>::from(specifier)
-            } else {
-                let mut v = Vec::with_capacity(2 + specifier.len());
-                v.extend_from_slice(b"./");
-                v.extend_from_slice(specifier);
-                v.into_boxed_slice()
-            };
-        // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
-
         if found_existing {
             let prev_first = Some(self.watches.values()[gop_index].first_dep);
             let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
                 next: prev_first,
                 source_file_path: file_path,
-                specifier: specifier_cloned,
+                check,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
             return Ok(());
@@ -1430,7 +1481,7 @@ impl DirectoryWatchStore {
         let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
             next: None,
             source_file_path: file_path,
-            specifier: specifier_cloned,
+            check,
         });
         self.watches.values_mut()[gop_index] = directory_watch_store::Entry {
             dir: fd,
@@ -1459,6 +1510,14 @@ impl DirectoryWatchStore {
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+        self.remove_dependencies_for_file_if(file_path, |_| true);
+    }
+
+    fn remove_dependencies_for_file_if(
+        &mut self,
+        file_path: &[u8],
+        should_remove: impl Fn(&directory_watch_store::Check) -> bool,
+    ) {
         if self.watches.count() == 0 {
             return;
         }
@@ -1482,7 +1541,9 @@ impl DirectoryWatchStore {
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
                 // Pointer-identity comparison.
-                if dep_path.slice().as_ptr() == file_path.as_ptr() {
+                if dep_path.slice().as_ptr() == file_path.as_ptr()
+                    && should_remove(&self.dependencies[index as usize].check)
+                {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

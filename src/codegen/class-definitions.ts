@@ -121,7 +121,7 @@ export class ClassDefinition {
   /**
    * Name of a method that calls every prototype function of the class:
    * ```rust
-   * pub fn call_proto_fn(&self, global: &JSGlobalObject, frame: &CallFrame, function: impl FnOnce(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>;
+   * pub fn call_proto_fn(&self, global: &JSGlobalObject, frame: &CallFrame, function: fn(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>;
    * ```
    */
   protoFnCaller?: string;

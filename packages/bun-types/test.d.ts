@@ -104,8 +104,9 @@ declare module "bun:test" {
    * - `new Date()`
    * - `Intl.DateTimeFormat().format()`
    *
+   * The real time comes back at the end of the test file, unless a preload set the time.
+   *
    * @param now The time to set the system time to. If omitted, the system time is reset
-   * @returns `this`
    * @since v0.6.13
    *
    * ## Set Date to a specific time
@@ -124,7 +125,7 @@ declare module "bun:test" {
    * setSystemTime();
    * ```
    */
-  export function setSystemTime(now?: Date | number | string): ThisType<void>;
+  export function setSystemTime(now?: Date | number | string): void;
 
   /**
    * A function or clock that `useFakeTimers()` can fake, by its name in `@sinonjs/fake-timers`.
@@ -250,6 +251,8 @@ declare module "bun:test" {
     /**
      * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
      * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     *
+     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
      */
     function useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof jest;
     /**
@@ -496,6 +499,8 @@ declare module "bun:test" {
     /**
      * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
      * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     *
+     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
      */
     useFakeTimers(options?: FakeTimersOptions): typeof vi;
     /**
@@ -1448,6 +1453,44 @@ declare module "bun:test" {
      * @param customFailMessage an optional custom message to display if the test fails.
      */
     soft<T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
+
+    /**
+     * Calls `fn`, awaits what it returns and runs the matcher on it, again and again until the matcher passes.
+     * The matcher returns a promise, which rejects with the last failure once `timeout` is up.
+     *
+     * The time is real even under fake timers, which each attempt advances by `interval`.
+     *
+     * @example
+     * await expect.poll(() => document.querySelector(".ready")).not.toBeNull();
+     * await expect.poll(() => queue.length, { interval: 10, timeout: 500 }).toBe(0);
+     */
+    poll<T>(
+      fn: () => T,
+      options?: {
+        /**
+         * Milliseconds between two attempts.
+         * @default 50
+         */
+        interval?: number;
+        /**
+         * Milliseconds after which the matcher fails.
+         * @default 1000
+         */
+        timeout?: number;
+        /** A custom message to display if the matcher fails. */
+        message?: string;
+      },
+    ): Omit<
+      AsyncMatchers<Awaited<T>>,
+      | "resolves"
+      | "rejects"
+      | "toThrow"
+      | "toThrowError"
+      | "toMatchSnapshot"
+      | "toMatchInlineSnapshot"
+      | "toThrowErrorMatchingSnapshot"
+      | "toThrowErrorMatchingInlineSnapshot"
+    >;
 
     /**
      * Ensures that an assertion is made

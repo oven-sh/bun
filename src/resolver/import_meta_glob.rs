@@ -5,9 +5,10 @@ use crate::package_json::{ESModule, Status};
 use crate::resolver::Resolver;
 use crate::tsconfig_json::TSConfigJSON;
 
-bun_js_parser::link_impl_ImportMetaGlobResolver! {
+bun_js_parser::link_impl_ImportMetaGlobHost! {
     Resolver for Resolver<'static> => |this| {
         resolve_alias(importer_dir, glob) => (*this).import_meta_glob_alias(importer_dir, glob),
+        did_scan(scan) => drop(scan),
     }
 }
 
@@ -17,7 +18,11 @@ type GlobInDir = (Vec<u8>, Vec<u8>);
 impl Resolver<'_> {
     /// Where a pattern such as `@/pages/*.tsx` or `#pages/*.tsx` is, in the order that an import
     /// path is looked up in.
-    fn import_meta_glob_alias(&mut self, importer_dir: &[u8], glob: &[u8]) -> Option<GlobInDir> {
+    pub fn import_meta_glob_alias(
+        &mut self,
+        importer_dir: &[u8],
+        glob: &[u8],
+    ) -> Option<GlobInDir> {
         let dir_info = self.read_dir_info_ignore_error(importer_dir)?;
         let tsconfig = self.enclosing_tsconfig_json(&dir_info);
         if let Some(tsconfig) = &tsconfig

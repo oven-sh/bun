@@ -243,7 +243,7 @@ fn compare_code_units(a: &String, b: &String) -> Ordering {
     (0..a.len.min(b.len))
         .map(|i| a.char_at(i).cmp(&b.char_at(i)))
         .find(|order| order.is_ne())
-        .unwrap_or(a.len.cmp(&b.len))
+        .unwrap_or_else(|| a.len.cmp(&b.len))
 }
 
 fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
@@ -331,14 +331,11 @@ impl Printer<'_> {
                 self.out.extend_from_slice(b"-->");
             }
             Dom::Element { tag_name } => {
-                let mut tag = tag_name.to_utf8().slice().to_vec();
-                if strings::is_all_ascii(&tag) {
-                    tag.make_ascii_lowercase();
-                } else {
-                    tag = std::string::String::from_utf8_lossy(&tag)
-                        .to_lowercase()
-                        .into_bytes();
-                }
+                let utf8 = tag_name.to_utf8();
+                let tag = match bun_core::str_utf8(utf8.slice()) {
+                    Some(text) => text.to_lowercase().into_bytes(),
+                    None => utf8.slice().to_ascii_lowercase(),
+                };
                 self.print_element(value, &tag, true, indent, depth)?;
             }
             Dom::Fragment => {

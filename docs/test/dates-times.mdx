@@ -133,6 +133,8 @@ test("fires after a minute", () => {
 
 An error that a timer callback throws comes out of the function that ran the timer.
 
+At the end of each test file, Bun puts the real timers and the real time back. Fake timers and a system time that a [preload](/test/configuration#preload-scripts) sets at its top level stay on for every file.
+
 `runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` does not run forever. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
 
 ### Timers armed after an `await`

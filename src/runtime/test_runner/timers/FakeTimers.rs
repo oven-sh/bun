@@ -129,7 +129,7 @@ impl ApiSet {
                     "'{option}' has \"{name}\", which is not a timer function or clock that can be faked"
                 )));
             };
-            let set = set.get_or_insert(ApiSet::default());
+            let set = set.get_or_insert_with(ApiSet::default);
             if let Some(api) = api {
                 set.0 |= 1 << *api as u16;
             }
@@ -1014,11 +1014,10 @@ impl FakeTimers {
         id: u32,
     ) -> Option<Option<*mut EventLoopTimer>> {
         let now = self.now;
-        // SAFETY: `last` is reachable in the heap and live while linked.
-        let to_last = self
-            .timers
-            .find_max()
-            .map(|last| unsafe { (*last).next }.duration(&now));
+        let to_last = self.timers.find_max().map(|last| {
+            // SAFETY: `last` is reachable in the heap and live while linked.
+            unsafe { (*last).next }.duration(&now)
+        });
         let index = self.drives.iter().position(|drive| drive.id == id)?;
         let Drive::Tick(remaining) = self.drives[index].drive else {
             return None;
@@ -1456,9 +1455,9 @@ fn drive_async(
     global: &JSGlobalObject,
     frame: &CallFrame,
     flavor: Flavor,
-    drive: impl FnOnce() -> JsResult<Drive>,
+    drive: JsResult<Drive>,
 ) -> JsResult<JSValue> {
-    match error_unless_fake_timers(global).and_then(|()| drive()) {
+    match drive {
         Ok(drive) => Ok(FakeTimers::start_drive(
             global,
             drive,
@@ -1476,10 +1475,10 @@ fn advance_timers_by_time_async(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    drive_async(global, frame, flavor, || {
-        let ms = milliseconds_argument(global, frame, "advanceTimersByTimeAsync")?;
-        Ok(Drive::Tick(Some(Timespec::EPOCH.add_ms_float(ms))))
-    })
+    let drive = error_unless_fake_timers(global)
+        .and_then(|()| milliseconds_argument(global, frame, "advanceTimersByTimeAsync"))
+        .map(|ms| Drive::Tick(Some(Timespec::EPOCH.add_ms_float(ms))));
+    drive_async(global, frame, flavor, drive)
 }
 
 fn advance_timers_to_next_timer_async(
@@ -1487,12 +1486,10 @@ fn advance_timers_to_next_timer_async(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    drive_async(global, frame, flavor, || {
-        Ok(Drive::Next(
-            steps_argument(global, frame, "advanceTimersToNextTimerAsync")?,
-            NextStep::First,
-        ))
-    })
+    let drive = error_unless_fake_timers(global)
+        .and_then(|()| steps_argument(global, frame, "advanceTimersToNextTimerAsync"))
+        .map(|steps| Drive::Next(steps, NextStep::First));
+    drive_async(global, frame, flavor, drive)
 }
 
 fn run_all_timers_async(
@@ -1500,7 +1497,8 @@ fn run_all_timers_async(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    drive_async(global, frame, flavor, || Ok(Drive::All(0)))
+    let drive = error_unless_fake_timers(global).map(|()| Drive::All(0));
+    drive_async(global, frame, flavor, drive)
 }
 
 fn run_only_pending_timers_async(
@@ -1508,7 +1506,8 @@ fn run_only_pending_timers_async(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    drive_async(global, frame, flavor, || Ok(Drive::Tick(None)))
+    let drive = error_unless_fake_timers(global).map(|()| Drive::Tick(None));
+    drive_async(global, frame, flavor, drive)
 }
 
 macro_rules! both_flavors {

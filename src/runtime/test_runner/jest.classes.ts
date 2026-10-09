@@ -296,6 +296,10 @@ export default [
         fn: "soft",
         length: 1,
       },
+      poll: {
+        fn: "poll",
+        length: 1,
+      },
     },
     proto: {
       pass: {

@@ -62,6 +62,8 @@ describe.concurrent(".resolves and .rejects", () => {
           ["not", expect(later(1)).resolves.not.toBe(2)],
           ["not first", expect(later(1)).not.resolves.toBe(2)],
           ["returns this", expect(later({ a: 1 })).resolves.toContainKey("a")],
+          ["toSatisfy", expect(later(5)).resolves.toSatisfy(value => value === 5)],
+          ["toIncludeRepeated", expect(laterReject("aba")).rejects.toIncludeRepeated("a", 2)],
         ]) {
           console.log(name, matcher instanceof Promise, await matcher);
         }
@@ -76,6 +78,8 @@ describe.concurrent(".resolves and .rejects", () => {
       "not true undefined",
       "not first true undefined",
       "returns this true undefined",
+      "toSatisfy true undefined",
+      "toIncludeRepeated true undefined",
       "thenable false",
     ]);
     expect(exitCode).toBe(0);
@@ -371,19 +375,69 @@ describe.concurrent(".resolves and .rejects", () => {
           await expect(later(1)).resolves.toBe(1);
         });
       });
+      describe("which test called the matcher is not known after its first await", () => {
+        test.concurrent("c", async () => {
+          await later(0);
+          expect(later(1, 5)).resolves.toBe(1).then(() => console.log("checked before the next test"));
+        });
+        test.concurrent("d", () => {});
+      });
+      test("next", () => console.log("next"));
     `;
     const { stdout, stderr, results, exitCode, signalCode } = await runTests(source);
-    expect(stdout).toEqual(["a starts,b starts,b ends,a ends"]);
+    expect(stdout).toEqual(["a starts,b starts,b ends,a ends", "checked before the next test", "next"]);
     expect(results.toSorted()).toEqual([
       "(fail) failures > awaited",
       "(fail) failures > not awaited",
       "(pass) each settles the promise of the other > a",
       "(pass) each settles the promise of the other > b",
       "(pass) failures > passes",
+      "(pass) next",
       "(pass) order",
+      "(pass) which test called the matcher is not known after its first await > c",
+      "(pass) which test called the matcher is not known after its first await > d",
     ]);
     expect(stderr).not.toContain("Unhandled error");
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("the expect of a test context names its test, whichever tests run beside it", async () => {
+    const { stdout, stderr, results, exitCode } = await run(["test"], {
+      "a.test.js": `
+        import { test } from "vitest";
+        const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
+        test.concurrent("not awaited", async ({ expect }) => {
+          await later();
+          expect(later(1)).resolves.toBe(2);
+        });
+        test.concurrent("soft", async ({ expect }) => {
+          await later();
+          expect.soft(1).toBe(2);
+          console.log("soft: goes on");
+        });
+        test.concurrent("poll", async ({ expect }) => {
+          await later();
+          expect.assertions(1);
+          let calls = 0;
+          expect.poll(() => ++calls, { interval: 1 }).toBe(3);
+        });
+        test.concurrent("poll fails", async ({ expect }) => {
+          await later();
+          expect.poll(() => 1, { interval: 1, timeout: 5 }).toBe(2);
+        });
+        test.concurrent("passes", () => later(0, 20));
+      `,
+    });
+    expect(stdout).toEqual(["soft: goes on"]);
+    expect(results.toSorted()).toEqual([
+      "(fail) not awaited",
+      "(fail) poll fails",
+      "(fail) soft",
+      "(pass) passes",
+      "(pass) poll",
+    ]);
+    expect(stderr).not.toContain("Unhandled error");
+    expect(exitCode).toBe(1);
   });
 
   test("count towards expect.assertions() once, when they run", async () => {
@@ -701,7 +755,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
         const matcher = expect(later("one")).toEqual(expect.resolvesTo.stringContaining("on"));
         console.log(matcher instanceof Promise, await matcher);
         console.log(expect(Promise.resolve("one")).toEqual(expect.resolvesTo.stringContaining("on")));
-        await expect({ a: later("one", 5), b: [laterReject("two")] }).toEqual({
+        await expect({ a: later("one"), b: [laterReject("two", 5)] }).toEqual({
           a: expect.resolvesTo.stringContaining("on"),
           b: [expect.rejectsTo.stringContaining("tw")],
         });
@@ -923,6 +977,201 @@ describe.concurrent("expect.soft()", () => {
       `,
     });
     expect(stdout).toEqual(["expect(received).toBe(expected)"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("expect.poll()", () => {
+  test("calls the function and the matcher until the matcher passes", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      const options = { interval: 1 };
+      test("passes", async () => {
+        let calls = 0;
+        const matcher = expect.poll(() => ++calls, options).toBe(3);
+        console.log(matcher instanceof Promise, await matcher, calls);
+        console.log(await expect.poll(() => 1).toBe(1));
+      });
+      test("awaits what the function returns", async () => {
+        let calls = 0;
+        await expect.poll(async () => { await later(); return ++calls; }, options).toBe(2);
+        await expect.poll(() => ({ then: resolve => resolve(++calls) }), options).toBe(4);
+        console.log(calls);
+      });
+      test("a function that throws or rejects is called again", async () => {
+        let calls = 0;
+        await expect.poll(() => { if (++calls < 3) throw new Error("not yet"); return calls; }, options).toBe(3);
+        await expect.poll(async () => { if (++calls < 6) throw new Error("not yet"); return calls; }, options).toBe(6);
+      });
+      test("not, custom and asymmetric matchers", async () => {
+        expect.extend({
+          toBeFoo: received => ({ pass: received === "foo", message: () => "" }),
+          toBeLater: async (received, expected) => (await later(), { pass: received === expected, message: () => "" }),
+        });
+        let calls = 0;
+        await expect.poll(() => ++calls, options).not.toBe(1);
+        await expect.poll(() => (++calls > 3 ? "foo" : "bar"), options).toBeFoo();
+        await expect.poll(() => ++calls, options).toBeLater(6);
+        await expect.poll(() => ({ calls: ++calls }), options).toEqual({ calls: expect.toBeLater(8) });
+        await expect.poll(() => [later(++calls)], options).toEqual([expect.resolvesTo.toBeLater(10)]);
+        console.log(calls);
+      });
+      test("counts as one assertion", async () => {
+        expect.assertions(2);
+        let calls = 0;
+        await expect.poll(() => ++calls, options).toBe(3);
+        await expect.poll(() => { if (++calls < 6) throw new Error("not yet"); return calls; }, options).toBeGreaterThan(5);
+      });
+      const { poll } = expect;
+      test("on its own", async () => {
+        let calls = 0;
+        await poll(() => ++calls, options).toBe(2);
+      });
+    `);
+    expect(stdout).toEqual(["true undefined 3", "undefined", "4", "10"]);
+    expect(results).toEqual([
+      "(pass) passes",
+      "(pass) awaits what the function returns",
+      "(pass) a function that throws or rejects is called again",
+      "(pass) not, custom and asymmetric matchers",
+      "(pass) counts as one assertion",
+      "(pass) on its own",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejects with the last failure once the time is up", async () => {
+    const source = `
+      const show = error => [error.constructor.name, Bun.stripANSI(error.message).replaceAll("\\n", " ").trim(), "<-", error.cause?.message].join(" ");
+      test("caught", async () => {
+        let calls = 0;
+        console.log(show(await expect.poll(() => ++calls, { timeout: 60, interval: 10 }).toBe(-1).catch(error => error)).replace(String(calls), "<calls>"), calls > 1);
+        console.log(show(await expect.poll(() => 1, { timeout: 5, interval: 1, message: "my message" }).toBe(2).catch(error => error)));
+        console.log(show(await expect.poll(() => { throw new TypeError("thrown " + ++calls); }, { timeout: 5, interval: 1 }).toBe(2).catch(error => error)).replace(String(calls), "<calls>"));
+        console.log(show(await expect.poll(async () => { throw new RangeError("rejected"); }, { timeout: 5, interval: 1 }).toBe(2).catch(error => error)));
+        console.log(show(await expect.poll(() => { throw new Error("has a cause", { cause: new Error("its own") }); }, { timeout: 5, interval: 1 }).toBe(2).catch(error => error)));
+        console.log(show(await expect.poll(never, { timeout: 5, interval: 1 }).toBe(2).catch(error => error)));
+      });
+      test("fails", async () => {
+        await expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("awaited");
+      });
+      test("fails, not awaited", () => {
+        expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("not awaited");
+      });
+      function thrower() {
+        throw new Error("thrown by the function");
+      }
+      test("the function throws", async () => {
+        await expect.poll(thrower, { timeout: 5, interval: 1 }).toBe(1);
+      });
+      test("passes, not awaited", () => {
+        let calls = 0;
+        expect.poll(() => ++calls, { interval: 1 }).toBe(3).then(() => console.log("checked"));
+      });
+    `;
+    const { stdout, stderr, results, exitCode } = await runTests(source);
+    expect(stdout).toEqual([
+      "Error expect(received).toBe(expected)  Expected: -1 Received: <calls> <- Matcher did not succeed in time. true",
+      "Error my message  Expected: 2 Received: 1 <- Matcher did not succeed in time.",
+      "TypeError thrown <calls> <- Matcher did not succeed in time.",
+      "RangeError rejected <- Matcher did not succeed in time.",
+      "Error has a cause <- its own",
+      "Error Matcher did not succeed in time. <- ",
+      "checked",
+    ]);
+    // Each failure, then its cause.
+    expect(failingLines(stderr, source)).toEqual([
+      'await expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("awaited");',
+      'await expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("awaited");',
+      'expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("not awaited");',
+      'expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("not awaited");',
+      'throw new Error("thrown by the function");',
+      "await expect.poll(thrower, { timeout: 5, interval: 1 }).toBe(1);",
+    ]);
+    expect(stderr).toMatch(/at thrower \(.*\n\s+at <anonymous> \(.*a\.test\.js/);
+    expect(results).toEqual([
+      "(pass) caught",
+      "(fail) fails",
+      "(fail) fails, not awaited",
+      "(fail) the function throws",
+      "(pass) passes, not awaited",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("ends with its test", async () => {
+    const { stdout, report, exitCode, signalCode } = await runTests(`
+      let calls = 0;
+      test("times out", async () => {
+        await expect.poll(() => ++calls, { timeout: 60_000, interval: 1 }).toBe(-1);
+      }, 50);
+      test("next", async () => {
+        const before = calls;
+        await later(0, 20);
+        console.log(calls > 1, calls - before);
+      });
+    `);
+    expect(stdout).toEqual(["true 0"]);
+    expect(report).toEqual(["(fail) times out", "  ^ this test timed out after 50ms.", "(pass) next"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("keeps real time under fake timers, and advances them by the interval", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      test("fake timers", async () => {
+        jest.useFakeTimers();
+        const start = Date.now();
+        let fired = 0;
+        setInterval(() => fired++, 50);
+        await expect.poll(() => fired, { interval: 50 }).toBe(3);
+        console.log(fired, Date.now() - start);
+        jest.useRealTimers();
+      });
+    `);
+    expect(stdout).toEqual(["3 150"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("refuses what cannot be polled", async () => {
+    const { stdout, exitCode } = await runTests(`
+      test("refusals", () => {
+        const fn = jest.fn();
+        for (const call of [
+          () => expect.poll(fn).toThrow(),
+          () => expect.poll(fn).not.toThrowError(),
+          () => expect.poll(fn).toMatchSnapshot(),
+          () => expect.poll(fn).toMatchInlineSnapshot(),
+          () => expect.poll(fn).toThrowErrorMatchingSnapshot(),
+          () => expect.poll(fn).toThrowErrorMatchingInlineSnapshot(),
+          () => expect.poll(fn).resolves,
+          () => expect.poll(fn).rejects,
+          () => expect.poll(1),
+          () => expect.poll(),
+          () => expect.poll(fn, 1),
+        ]) {
+          try {
+            console.log("returned", call());
+          } catch (error) {
+            console.log(error.message);
+          }
+        }
+        console.log(fn.mock.calls.length);
+      });
+    `);
+    const use = "Use vi.waitFor() for a condition that takes time to hold";
+    expect(stdout).toEqual([
+      `expect.poll() does not support .toThrow(). ${use}`,
+      `expect.poll() does not support .toThrowError(). ${use}`,
+      `expect.poll() does not support .toMatchSnapshot(). ${use}`,
+      `expect.poll() does not support .toMatchInlineSnapshot(). ${use}`,
+      `expect.poll() does not support .toThrowErrorMatchingSnapshot(). ${use}`,
+      `expect.poll() does not support .toThrowErrorMatchingInlineSnapshot(). ${use}`,
+      "expect.poll() does not support .resolves",
+      "expect.poll() does not support .rejects",
+      'The "fn" argument must be of type function. Received type number (1)',
+      'The "fn" argument must be of type function. Received undefined',
+      'The "options" argument must be of type object. Received type number (1)',
+      "0",
+    ]);
     expect(exitCode).toBe(0);
   });
 });

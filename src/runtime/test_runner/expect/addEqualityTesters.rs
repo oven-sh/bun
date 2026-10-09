@@ -140,7 +140,7 @@ pub(crate) struct EqualityTestersScope<'a> {
 
 impl<'a> EqualityTestersScope<'a> {
     pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Self> {
-        let outer = Expect::equality_testers(global)?.unwrap_or(JSValue::ZERO);
+        let outer = Expect::equality_testers(global)?.unwrap_or_default();
         js::equality_testers_set_cached(ExpectMatcherUtils::singleton(global), global, testers);
         Ok(Self { global, outer })
     }

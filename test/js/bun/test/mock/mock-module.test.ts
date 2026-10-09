@@ -1093,6 +1093,12 @@ describe.concurrent("resetModules", () => {
             expect((await import("bun:test")).vi).toBe(vi);
           });
 
+          // Its \`this\` is then the scope that holds the name, which is not for script to see.
+          test("resetModules() called by a bare name returns undefined", () => {
+            const [ofVi, ofJest] = [vi.resetModules, jest.resetModules];
+            expect((() => [ofVi(), ofJest()])()).toEqual([undefined, undefined]);
+          });
+
           test("mocks stay. vi.resetModules keeps their exports, jest.resetModules calls the factories again", async () => {
             vi.resetModules();
             let calls = 0;
@@ -1125,7 +1131,7 @@ describe.concurrent("resetModules", () => {
           });
         `,
       },
-      3,
+      4,
     );
   });
 

@@ -698,6 +698,96 @@ static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globa
     return verdict != 0;
 }
 
+// A DOM written in JavaScript makes its nodes from classes, some of them behind a Proxy.
+static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
+{
+    JSC::JSType type = object->type();
+    return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
+}
+
+// `isDomNode` of Jest and vitest. No code of the value runs unless it has an `isEqualNode`.
+static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, const Identifier& isEqualNodeName, JSValue& isEqualNode)
+{
+    VM& vm = globalObject->vm();
+    if (!mayBeDOMNode(globalObject, object))
+        return false;
+
+    JSObject* target = object;
+    while (auto* proxy = dynamicDowncast<ProxyObject>(target)) {
+        if (proxy->isRevoked())
+            return false;
+        target = proxy->target();
+    }
+    {
+        // The slot forbids entering the VM for as long as it lives.
+        PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasIsEqualNode = target->getPropertySlot(globalObject, isEqualNodeName, inquiry);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasIsEqualNode)
+            return false;
+    }
+
+    JSValue nodeType = object->get(globalObject, Identifier::fromString(vm, "nodeType"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeType.isNumber())
+        return false;
+    JSValue nodeName = object->get(globalObject, Identifier::fromString(vm, "nodeName"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeName.isString())
+        return false;
+    isEqualNode = object->get(globalObject, isEqualNodeName);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqualNode.isCallable();
+}
+
+enum class DOMNodeComparison : uint8_t {
+    Equal,
+    StrictEqual,
+    // toMatchObject: a node is still matched against a plain pattern by its properties.
+    Match,
+};
+
+// What `equals` of Jest and vitest does before it compares properties. nullopt: compare the properties.
+static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
+{
+    VM& vm = globalObject->vm();
+    const Identifier isEqualNodeName = Identifier::fromString(vm, "isEqualNode"_s);
+    JSValue isEqualNode;
+    JSValue isEqualNodeOfOther;
+    bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNodeName, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeName, isEqualNodeOfOther);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (comparison == DOMNodeComparison::Match ? !(isNode1 && isNode2) : !(isNode1 || isNode2))
+        return std::nullopt;
+
+    JSString* tag1 = objectPrototypeToString(globalObject, o1);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    JSString* tag2 = objectPrototypeToString(globalObject, o2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!sameTag)
+        return false;
+    if (!isNode1 || !isNode2)
+        return std::nullopt;
+
+    if (comparison == DOMNodeComparison::StrictEqual) {
+        JSValue constructor1 = o1->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        JSValue constructor2 = o2->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (constructor1 != constructor2)
+            return false;
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(o2);
+    JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return result.toBoolean(globalObject);
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -1113,6 +1203,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         return true;
+    }
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, o1) || mayBeDOMNode(globalObject, o2)) {
+            auto nodesEqual = domNodesDequal(globalObject, scope, o1, o2, isStrict ? DOMNodeComparison::StrictEqual : DOMNodeComparison::Equal);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
     }
 
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
@@ -2251,6 +2350,15 @@ bool Bun__deepMatch(
     if (objValue == subsetValue) return true;
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
+            auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
+    }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);

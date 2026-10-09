@@ -19,23 +19,32 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
     return true;
 }
 
-Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key)
+extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
+
+static uint64_t pluginContentsHash(const CodeString* pluginContents)
+{
+    return pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;
+}
+
+Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
     auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
     auto it = cache.find(key);
     if (it == cache.end())
         return nullptr;
     ASSERT(it->value);
-    return static_cast<Zig::SourceProvider*>(it->value.get());
+    auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
+    return provider->m_pluginContentsHash == pluginContentsHash(pluginContents) ? provider : nullptr;
 }
 
-void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
     if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)))
         return;
-    auto result = WebCore::clientData(vm)->isolationSourceProviderCache.add(key, RefPtr<JSC::SourceProvider>(&provider));
-    ASSERT_WITH_MESSAGE(result.isNewEntry, "IsolatedModuleCache::insert for already-cached key — a lookup was bypassed");
-    UNUSED_VARIABLE(result);
+    provider.m_pluginContentsHash = pluginContentsHash(pluginContents);
+    auto result = WebCore::clientData(vm)->isolationSourceProviderCache.add(key, nullptr);
+    ASSERT_WITH_MESSAGE(result.isNewEntry || static_cast<Zig::SourceProvider*>(result.iterator->value.get())->m_pluginContentsHash != provider.m_pluginContentsHash, "IsolatedModuleCache::insert for already-cached key — a lookup was bypassed");
+    result.iterator->value = &provider;
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

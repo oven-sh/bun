@@ -7,7 +7,7 @@
 // next unrelated timer happens to wake the loop.
 //
 // The drop happens when a poll callback re-enters `us_loop_run_bun_tick`
-// (e.g. `expect(p).resolves` → `waitForPromise` → `autoTick`), which
+// (e.g. `Bun.build()` with an async plugin `setup()` → `waitForPromise` → `autoTick`), which
 // overwrites the shared `loop->ready_polls` / `num_ready_polls` /
 // `current_ready_poll` while the outer dispatch is still mid-iteration.
 // The outer loop resumes with the inner tick's indices and silently skips
@@ -20,7 +20,7 @@
 // Fix: register the pidfd level-triggered (no EPOLLONESHOT). A pidfd stays
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { isLinux } from "harness";
 
 // pidfd path is Linux-only; macOS/FreeBSD use EVFILT_PROC which is keyed
@@ -54,7 +54,10 @@ test.skipIf(!isLinux)(
           // the kernel with no re-arm path.
           if (!nested) {
             nested = true;
-            expect(Bun.sleep(1)).resolves.toBe(undefined);
+            Bun.build({
+              entrypoints: ["./none.js"],
+              plugins: [{ name: "nested tick", setup: () => Bun.sleep(1) }],
+            }).catch(() => {});
           }
           resolve();
         },

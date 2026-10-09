@@ -129,13 +129,13 @@ impl Flags {
 
     #[inline]
     pub(crate) fn promise(self) -> Promise {
-        // The unused bit pattern 3 is representable in the packed bits but
+        // The bit pattern 3 is representable in the packed bits but
         // is not a valid discriminant — transmuting it would be instant UB. `Flags` is fed from C++ via
         // `from_bitset`/`decode`, so the bits are not statically constrained.
         match self.0 & Self::PROMISE_MASK {
             1 => Promise::Resolves,
             2 => Promise::Rejects,
-            // 0 and the unreachable-in-practice 3 both map to None.
+            // 3 is `poll()`.
             _ => Promise::None,
         }
     }
@@ -173,6 +173,11 @@ impl Flags {
     #[inline]
     pub(crate) fn set_asymmetric_matcher_constructor_type(&mut self, t: AsymmetricMatcherConstructorType) {
         self.0 = (self.0 & !Self::AMCT_MASK) | ((t as u8) << Self::AMCT_SHIFT);
+    }
+    /// `expect.poll()`, which excludes `.resolves` and `.rejects`.
+    #[inline]
+    pub(crate) fn poll(self) -> bool {
+        (self.0 & Self::PROMISE_MASK) == Self::PROMISE_MASK
     }
     /// `expect.soft()`
     #[inline]
@@ -403,6 +408,9 @@ impl Expect {
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        if this.flags.get().poll() {
+            return Err(global_this.throw(format_args!("expect.poll() does not support .resolves")));
+        }
         match this.flags.get().promise() {
             Promise::Resolves | Promise::None => this.update_flags(|f| f.set_promise(Promise::Resolves)),
             Promise::Rejects => {
@@ -418,6 +426,9 @@ impl Expect {
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        if this.flags.get().poll() {
+            return Err(global_this.throw(format_args!("expect.poll() does not support .rejects")));
+        }
         match this.flags.get().promise() {
             Promise::None | Promise::Rejects => this.update_flags(|f| f.set_promise(Promise::Rejects)),
             Promise::Resolves => {
@@ -737,18 +748,62 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// `expect.soft()`, of whichever `expect` it is called on.
-    pub(crate) fn soft(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let expect_fn = callframe.this();
-        let expect_js_value = if expect_fn.is_callable() {
-            expect_fn.call(global_this, JSValue::UNDEFINED, callframe.arguments())?
-        } else {
-            Self::call(global_this, callframe)?
+    /// `expect(...arguments)` with `flags` set, for a static function of whichever `expect` `callframe` calls it on.
+    fn call_with_flags(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        arguments: &[JSValue],
+        flags: u8,
+    ) -> JsResult<JSValue> {
+        let expect_fn = match callframe.this() {
+            expect_fn if expect_fn.is_callable() => expect_fn,
+            _ => <Self as bun_jsc::JsClass>::get_constructor(global_this),
         };
+        let expect_js_value = expect_fn.call(global_this, JSValue::UNDEFINED, arguments)?;
         if let Some(expect_ptr) = Self::from_js(expect_js_value) {
             // SAFETY: `expect_js_value` is on the stack and owns the payload.
-            unsafe { &*expect_ptr }.update_flags(|f| f.0 |= Flags::SOFT_MASK);
+            unsafe { &*expect_ptr }.update_flags(|f| f.0 |= flags);
         }
+        Ok(expect_js_value)
+    }
+
+    /// `expect.soft(value, message?)`
+    pub(crate) fn soft(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        Self::call_with_flags(global_this, callframe, callframe.arguments(), Flags::SOFT_MASK)
+    }
+
+    /// `expect.poll(function, { interval, timeout, message }?)`
+    pub(crate) fn poll(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [function, options] = callframe.arguments_as_array::<2>();
+        if !function.is_callable() {
+            return Err(global_this.throw_invalid_argument_type_value("fn", "function", function));
+        }
+        let (interval, timeout, message) = if options.is_object() {
+            (
+                options.get(global_this, "interval")?,
+                options.get(global_this, "timeout")?,
+                options.get(global_this, "message")?,
+            )
+        } else if options.is_undefined() {
+            (None, None, None)
+        } else {
+            return Err(global_this.throw_invalid_argument_type_value("options", "object", options));
+        };
+        let times = [
+            JSValue::js_number_from_int32(super::vi_wait::delay_ms(global_this, interval, 50)? as i32),
+            JSValue::js_number_from_int32(super::vi_wait::delay_ms(global_this, timeout, 1000)? as i32),
+        ];
+        let expect_js_value = Self::call_with_flags(
+            global_this,
+            callframe,
+            &[function, message.unwrap_or(JSValue::UNDEFINED)],
+            Flags::PROMISE_MASK,
+        )?;
+        super::expect::js::result_value_set_cached(
+            expect_js_value,
+            global_this,
+            JSValue::create_array_from_slice(global_this, &times)?,
+        );
         Ok(expect_js_value)
     }
 

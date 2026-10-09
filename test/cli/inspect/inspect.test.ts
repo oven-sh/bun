@@ -263,7 +263,7 @@ describe("websocket", () => {
       }).toMatchObject(expected);
 
       const webSocket = new WebSocket(url);
-      expect(
+      await expect(
         new Promise<void>((resolve, reject) => {
           webSocket.addEventListener("open", () => resolve());
           webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
@@ -272,7 +272,7 @@ describe("websocket", () => {
       ).resolves.toBeUndefined();
 
       webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-      expect(
+      await expect(
         new Promise(resolve => {
           webSocket.addEventListener("message", ({ data }) => {
             resolve(JSON.parse(data.toString()));

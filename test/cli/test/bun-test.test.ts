@@ -2681,7 +2681,7 @@ describe.concurrent("a test file that can never finish running", () => {
         test.concurrent("second", () => new Promise(() => {}), 0);
       `,
     ],
-  ])("%s without a timeout that never settle(s) end the file, and the run goes on", async (_, contents) => {
+  ])("the file ends at %s without a timeout that can never settle, and the run goes on", async (_, contents) => {
     const { errors, counts, exitCode } = await runFiles(
       { "a.test.ts": contents, "b.test.ts": passes },
       "./a.test.ts",

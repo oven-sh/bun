@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { afterEach, describe, expect, jest, mock, setSystemTime, test, vi } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -1115,5 +1115,133 @@ describe.concurrent("a wait that is still pending", () => {
       `,
     });
     expect({ stdout, exitCode }).toEqual({ stdout: "terminated\n", exitCode: 0 });
+  });
+});
+
+// A native function is given the raw `this` of a call. When the function is called by a bare name that is not a
+// local variable, that is the engine's own scope object, which holds the variables of the scope the name is in.
+describe("a function that returns `this` for chaining", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  /** `callee` is a variable of this call's scope, which the arrow function finds it in. */
+  const byBareName = (callee: Function, ...args: unknown[]) => (() => callee(...args))();
+
+  const ofViAndJest: [name: string, ...args: unknown[]][] = [
+    ["useFakeTimers"],
+    ["useRealTimers"],
+    ["setSystemTime", 0],
+    ["advanceTimersByTime", 1],
+    ["advanceTimersToNextTimer"],
+    ["advanceTimersToNextFrame"],
+    ["runOnlyPendingTimers"],
+    ["runAllTimers"],
+    ["runAllTicks"],
+    ["runAllImmediates"],
+    ["setTimerTickMode", "manual"],
+    ["clearAllTimers"],
+    ["clearAllMocks"],
+    ["resetAllMocks"],
+    ["restoreAllMocks"],
+  ];
+  const rows = (
+    [
+      ...ofViAndJest.map(row => ["vi", vi, ...row]),
+      ...ofViAndJest.map(row => ["jest", jest, ...row]),
+      ["vi", vi, "stubGlobal", "viUtilsCalledByBareName", 1],
+      ["vi", vi, "unstubAllGlobals"],
+      ["vi", vi, "stubEnv", "VI_UTILS_CALLED_BY_BARE_NAME", "1"],
+      ["vi", vi, "unstubAllEnvs"],
+      ["mock", mock, "restore"],
+      ["mock", mock, "clearAllMocks"],
+    ] as [owner: string, object: object, name: string, ...args: unknown[]][]
+  ).map(([owner, object, name, ...args]) => [`${owner}.${name}`, owner, object, name, args] as const);
+
+  test.each(rows)("%s() returns %s, and undefined when it is called by a bare name", (_, __, object, name, args) => {
+    vi.useFakeTimers();
+    expect(object[name](...args)).toBe(object);
+    vi.useFakeTimers();
+    expect(byBareName(object[name], ...args)).toBeUndefined();
+  });
+
+  test.each([
+    ["advanceTimersByTimeAsync", 1],
+    ["advanceTimersToNextTimerAsync"],
+    ["runAllTimersAsync"],
+    ["runOnlyPendingTimersAsync"],
+  ] as const)(
+    "vi.%s() resolves with vi, and with undefined when it is called by a bare name",
+    async (name, ...args) => {
+      vi.useFakeTimers();
+      expect(await (vi[name] as Function)(...args)).toBe(vi);
+      expect(await byBareName(vi[name], ...args)).toBeUndefined();
+    },
+  );
+
+  test("setSystemTime() that is imported returns undefined", () => {
+    expect(setSystemTime(0)).toBeUndefined();
+    expect(setSystemTime()).toBeUndefined();
+  });
+
+  test("the getter of mock.settledResults does not read the variables of a scope", () => {
+    const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(vi.fn().mock), "settledResults")!.get!;
+    // The getter reads `this.results`.
+    const results = [{ type: "return", value: "a variable, not a result" }];
+    expect((() => [getter(), results.length])()).toEqual([undefined, 1]);
+  });
+
+  test.concurrent("no function of the test module lets a scope object out", async () => {
+    const { stdout, stderr, exitCode } = await run(["test", "./sweep.test.ts"], {
+      "sweep.test.ts": `
+        import * as bunTest from "bun:test";
+        import * as vitest from "vitest";
+        import * as jestGlobals from "@jest/globals";
+
+        const byBareName = (callee, ...args) => (() => callee(...args))();
+        const isInternal = value =>
+          value !== null && ["object", "function"].includes(typeof value) && Bun.inspect(value).startsWith("[native code");
+        const turn = () => new Promise(resolve => setImmediate(resolve, "pending"));
+
+        bunTest.test("sweep", async () => {
+          const escaped = [];
+          const swept = new Set();
+          let calls = 0;
+          async function sweep(path, object) {
+            for (const [name, callee] of Object.entries(object)) {
+              // What expectTypeOf() returns has every property.
+              if (typeof callee !== "function" || name === "expectTypeOf" || swept.has(callee)) continue;
+              swept.add(callee);
+              for (const fake of [false, true]) {
+                for (const args of [[], [0], ["sweep", 1]]) {
+                  fake ? bunTest.vi.useFakeTimers() : bunTest.vi.useRealTimers();
+                  let result;
+                  try {
+                    result = byBareName(callee, ...args);
+                  } catch {
+                    continue;
+                  }
+                  calls++;
+                  if (result instanceof Promise) result = await Promise.race([result.catch(error => error), turn()]);
+                  if (isInternal(result)) escaped.push(path + "." + name + "(" + args + ")");
+                }
+              }
+            }
+          }
+          for (const [from, module] of Object.entries({ "bun:test": bunTest, vitest, "@jest/globals": jestGlobals })) {
+            await sweep(from, module);
+            for (const name of ["vi", "jest", "mock"]) if (module[name]) await sweep(from + "." + name, module[name]);
+          }
+          bunTest.vi.useRealTimers();
+          console.log(JSON.stringify({ escaped, swept: calls > 100 }));
+        });
+      `,
+    });
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+      stdout: '{"escaped":[],"swept":true}\n',
+      exitCode: 0,
+    });
   });
 });

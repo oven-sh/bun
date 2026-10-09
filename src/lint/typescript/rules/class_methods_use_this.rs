@@ -16,8 +16,10 @@ impl Rule for ClassMethodsUseThis {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let key = "ignoreClassesThatImplementAnInterface";
-        let ignore_classes_with_implements = match (options.bool(key), options.str(key)) {
-            (Some(true), _) => IgnoreClassesWithImplements::All,
+        // oxlint, where this rule runs as `class-methods-use-this`, has the option as ESLint calls it.
+        let of_eslint = options.str("ignoreClassesWithImplements");
+        let ignore_classes_with_implements = match (options.bool(key), options.str(key).or(of_eslint)) {
+            (Some(true), _) | (_, Some("all")) => IgnoreClassesWithImplements::All,
             (_, Some("public-fields")) => IgnoreClassesWithImplements::PublicFields,
             _ => IgnoreClassesWithImplements::None,
         };

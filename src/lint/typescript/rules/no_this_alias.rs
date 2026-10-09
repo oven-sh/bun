@@ -53,9 +53,11 @@ impl Rule for NoThisAlias {
         let options = options.object(0);
         NoThisAlias {
             allow_destructuring: options.bool_or("allowDestructuring", true),
+            // `allowNames` is what oxlint called it at first.
             allowed_names: options
                 .strings("allowedNames")
                 .into_iter()
+                .chain(options.strings("allowNames"))
                 .map(|name| name.as_bytes().into())
                 .collect(),
         }

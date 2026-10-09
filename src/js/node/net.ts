@@ -1589,7 +1589,8 @@ const SocketHandlers2 = {
         // keeps its identity — Node's onStreamRead does
         // `stream.destroy(errnoException(nread, 'read'))` for any nread that
         // is not UV_EOF. The native on_close only passes a non-undefined err
-        // when the close was driven by a recv() failure (libus close-code
+        // when the close was driven by a recv() failure, or by a failed send
+        // whose errno a read would also return (libus close-code
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }

@@ -640,6 +640,63 @@ describe("autoClose of FileHandle.writer() and pullSync() under another pending 
   });
 });
 
+// A getter of an argument is caller code and can close the handle. The methods that read
+// their arguments in JavaScript take their ref first, so that close() waits for the call.
+it.each([
+  [
+    "appendFile(data, options)",
+    (handle, getter) =>
+      handle.appendFile("x", {
+        get encoding() {
+          getter();
+          return "utf8";
+        },
+      }),
+  ],
+  [
+    "writeFile(data, options)",
+    (handle, getter) =>
+      handle.writeFile("x", {
+        get encoding() {
+          getter();
+          return "utf8";
+        },
+      }),
+  ],
+  [
+    "read(options)",
+    (handle, getter) =>
+      handle.read({
+        get buffer() {
+          getter();
+          return Buffer.alloc(5);
+        },
+      }),
+  ],
+  [
+    "write(buffer, options)",
+    (handle, getter) =>
+      handle.write(Buffer.from("x"), {
+        get offset() {
+          getter();
+          return 0;
+        },
+      }),
+  ],
+])("FileHandle.%s takes its ref before it reads its arguments", async (_name, call) => {
+  await using dir = tempDir("handle-method-getter", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  const fd = fh.fd;
+  let closed, fdInGetter;
+  await call(fh, () => {
+    closed ??= fh.close();
+    fdInGetter ??= fh.fd;
+  });
+  expect(fdInGetter).toBe(fd);
+  await closed;
+  expect(fh.fd).toBe(-1);
+});
+
 // Each form parks one read of a FileHandle on a named pipe. While the read is pending, the
 // handle is closed or dropped, or a writer()/pullSync() with autoClose ends. Then another
 // file takes the descriptor number if the number is free. The read must give the bytes of

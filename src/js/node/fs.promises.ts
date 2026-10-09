@@ -519,18 +519,19 @@ function asyncWrap(fn: any, name: string) {
     async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: BufferEncoding = "utf8";
-      let flush = false;
-      if (options == null || typeof options === "function") {
-      } else if (typeof options === "string") {
-        encoding = options;
-      } else {
-        encoding = options?.encoding ?? encoding;
-        flush = options?.flush ?? flush;
-      }
 
       try {
+        // The ref comes before the arguments are read: a getter of an argument is caller code.
         this[kRef]();
+        let encoding: BufferEncoding = "utf8";
+        let flush = false;
+        if (options == null || typeof options === "function") {
+        } else if (typeof options === "string") {
+          encoding = options;
+        } else {
+          encoding = options?.encoding ?? encoding;
+          flush = options?.flush ?? flush;
+        }
         return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
       } finally {
         this[kUnref]();
@@ -589,38 +590,38 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 
-      let buffer = bufferOrParams;
-      if (!types.isArrayBufferView(buffer)) {
-        // This is fh.read(params)
-        if (bufferOrParams !== undefined) {
-          // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
-          if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
-            throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
-          }
-        }
-        ({
-          buffer = Buffer.alloc(16384),
-          offset = 0,
-          length = buffer.byteLength - offset,
-          position = null,
-        } = bufferOrParams ?? kEmptyObject);
-      }
-
-      if (offset !== null && typeof offset === "object") {
-        // This is fh.read(buffer, options)
-        ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
-      }
-
-      if (offset == null) {
-        offset = 0;
-      } else {
-        validateInteger(offset, "offset", 0);
-      }
-
-      length ??= buffer?.byteLength - offset;
-
       try {
         this[kRef]();
+        let buffer = bufferOrParams;
+        if (!types.isArrayBufferView(buffer)) {
+          // This is fh.read(params)
+          if (bufferOrParams !== undefined) {
+            // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
+            if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
+              throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
+            }
+          }
+          ({
+            buffer = Buffer.alloc(16384),
+            offset = 0,
+            length = buffer.byteLength - offset,
+            position = null,
+          } = bufferOrParams ?? kEmptyObject);
+        }
+
+        if (offset !== null && typeof offset === "object") {
+          // This is fh.read(buffer, options)
+          ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
+        }
+
+        if (offset == null) {
+          offset = 0;
+        } else {
+          validateInteger(offset, "offset", 0);
+        }
+
+        length ??= buffer?.byteLength - offset;
+
         const bytesRead = await read(fd, buffer, offset, length, position);
         return { buffer, bytesRead };
       } finally {
@@ -700,29 +701,29 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("write", fd);
 
-      if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
-
-      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
-      if (isArrayBufferView(buffer)) {
-        if (typeof offset === "object") {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
-        }
-
-        if (offset == null) {
-          offset = 0;
-        }
-        if (typeof length !== "number") length = buffer.byteLength - offset;
-        if (typeof position !== "number") position = null;
-      } else {
-        // filehandle.write(string[, position[, encoding]]): `length` is the
-        // encoding. Node rejects a non-string before it validates the encoding.
-        if (typeof buffer !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
-        }
-        validateEncoding(buffer, length);
-      }
       try {
         this[kRef]();
+        if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
+
+        isArrayBufferView ??= require("node:util/types").isArrayBufferView;
+        if (isArrayBufferView(buffer)) {
+          if (typeof offset === "object") {
+            ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
+          }
+
+          if (offset == null) {
+            offset = 0;
+          }
+          if (typeof length !== "number") length = buffer.byteLength - offset;
+          if (typeof position !== "number") position = null;
+        } else {
+          // filehandle.write(string[, position[, encoding]]): `length` is the
+          // encoding. Node rejects a non-string before it validates the encoding.
+          if (typeof buffer !== "string") {
+            throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+          }
+          validateEncoding(buffer, length);
+        }
         return {
           buffer,
           bytesWritten: await write(fd, buffer, offset, length, position),
@@ -750,19 +751,20 @@ function asyncWrap(fn: any, name: string) {
     ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: BufferEncoding = "utf8";
-      let signal: AbortSignal | undefined = undefined;
-
-      if (options == null || typeof options === "function") {
-      } else if (typeof options === "string") {
-        encoding = options;
-      } else {
-        encoding = options?.encoding ?? encoding;
-        signal = options?.signal ?? undefined;
-      }
 
       try {
         this[kRef]();
+        let encoding: BufferEncoding = "utf8";
+        let signal: AbortSignal | undefined = undefined;
+
+        if (options == null || typeof options === "function") {
+        } else if (typeof options === "string") {
+          encoding = options;
+        } else {
+          encoding = options?.encoding ?? encoding;
+          signal = options?.signal ?? undefined;
+        }
+
         return await writeFile(fd, data, {
           encoding,
           flag: this[kFlag],

@@ -279,7 +279,7 @@ impl<'e> Host<'e> {
     /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
     pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
         let mut rules = self.state.lock().asked_for_types.clone();
-        rules.sort_by(|a, b| a.id.cmp(&b.id));
+        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
         rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
         rules
     }
@@ -691,7 +691,7 @@ fn plugin_of(
         })
     };
     let mut rules: Vec<Arc<Rule>> = rules.iter().enumerate().map(rule).collect();
-    rules.sort_by(|a, b| a.id.cmp(&b.id));
+    crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
     Plugin {
         name: name.into(),
         rules,

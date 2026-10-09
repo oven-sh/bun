@@ -336,6 +336,8 @@ pub type Listener<'a, R, N> = fn(&R, N, &mut Cx<'a, R>);
 /// What a rule listens for in one file. What the file has no node for is not kept.
 pub struct Listeners<'a, R: Rule> {
     pub(crate) entries: Entries<'a, R>,
+    /// One of them is called in the order of the source or at the end.
+    pub(crate) has_later: bool,
     file: &'a File<'a>,
 }
 
@@ -367,25 +369,6 @@ macro_rules! sorts {
             UnreachableSegmentEnd(OnSegment<'a, R>),
             SegmentLoop(OnSegmentLoop<'a, R>),
             Finish(fn(&R, &mut Cx<'a, R>)),
-        }
-
-        impl<R: Rule> Entry<'_, R> {
-            /// Whether it is called in the order of the source or at the end.
-            pub(crate) fn is_for_later(&self) -> bool {
-                matches!(
-                    self,
-                    Entry::Enter(..)
-                        | Entry::Exit(..)
-                        | Entry::CodePathStart(_)
-                        | Entry::CodePathEnd(_)
-                        | Entry::SegmentStart(_)
-                        | Entry::SegmentEnd(_)
-                        | Entry::UnreachableSegmentStart(_)
-                        | Entry::UnreachableSegmentEnd(_)
-                        | Entry::SegmentLoop(_)
-                        | Entry::Finish(_)
-                )
-            }
         }
 
         impl<'a, R: Rule> Listeners<'a, R> {
@@ -442,8 +425,14 @@ impl<'a, R: Rule> Listeners<'a, R> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
         Listeners {
             entries: SmallVec::new(),
+            has_later: false,
             file,
         }
+    }
+
+    fn later(&mut self, entry: Entry<'a, R>) {
+        self.has_later = true;
+        self.entries.push(entry);
     }
 
     /// Every expression of one of these kinds, in no particular order.
@@ -539,53 +528,53 @@ impl<'a, R: Rule> Listeners<'a, R> {
     ///
     /// This makes the linter walk the file, which the listeners above do not need.
     pub fn enter(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.entries.push(Entry::Enter(tags.into(), listener));
+        self.later(Entry::Enter(tags.into(), listener));
     }
 
     /// Every node of one of these kinds, in source order, after its children.
     pub fn exit(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.entries.push(Entry::Exit(tags.into(), listener));
+        self.later(Entry::Exit(tags.into(), listener));
     }
 
     /// Once, after everything else.
     pub fn finish(&mut self, listener: fn(&R, &mut Cx<'a, R>)) {
-        self.entries.push(Entry::Finish(listener));
+        self.later(Entry::Finish(listener));
     }
 
     /// ESLint's `onCodePathStart`. Like all of the following, it is called during the walk, in
     /// order with [`Listeners::enter`] and [`Listeners::exit`].
     pub fn code_path_start(&mut self, listener: OnCodePath<'a, R>) {
-        self.entries.push(Entry::CodePathStart(listener));
+        self.later(Entry::CodePathStart(listener));
     }
 
     /// ESLint's `onCodePathEnd`.
     pub fn code_path_end(&mut self, listener: OnCodePath<'a, R>) {
-        self.entries.push(Entry::CodePathEnd(listener));
+        self.later(Entry::CodePathEnd(listener));
     }
 
     /// ESLint's `onCodePathSegmentStart`.
     pub fn segment_start(&mut self, listener: OnSegment<'a, R>) {
-        self.entries.push(Entry::SegmentStart(listener));
+        self.later(Entry::SegmentStart(listener));
     }
 
     /// ESLint's `onCodePathSegmentEnd`.
     pub fn segment_end(&mut self, listener: OnSegment<'a, R>) {
-        self.entries.push(Entry::SegmentEnd(listener));
+        self.later(Entry::SegmentEnd(listener));
     }
 
     /// ESLint's `onUnreachableCodePathSegmentStart`.
     pub fn unreachable_segment_start(&mut self, listener: OnSegment<'a, R>) {
-        self.entries.push(Entry::UnreachableSegmentStart(listener));
+        self.later(Entry::UnreachableSegmentStart(listener));
     }
 
     /// ESLint's `onUnreachableCodePathSegmentEnd`.
     pub fn unreachable_segment_end(&mut self, listener: OnSegment<'a, R>) {
-        self.entries.push(Entry::UnreachableSegmentEnd(listener));
+        self.later(Entry::UnreachableSegmentEnd(listener));
     }
 
     /// ESLint's `onCodePathSegmentLoop`: from the first segment to the second.
     pub fn segment_loop(&mut self, listener: OnSegmentLoop<'a, R>) {
-        self.entries.push(Entry::SegmentLoop(listener));
+        self.later(Entry::SegmentLoop(listener));
     }
 }
 

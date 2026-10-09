@@ -735,18 +735,28 @@ impl<'a, 's> Parser<'a, 's> {
         }
     }
 
+    /// The string at `at`, which is in double quotes. `IS_NAME`: a colon that follows at once is passed
+    /// too, and that is returned.
+    #[inline(always)]
+    fn parse_short_string<const IS_NAME: bool>(&mut self) -> PResult<(E::Str, bool)> {
+        let open = self.at;
+        let rest = &self.contents[open + 1..];
+        let len = short_plain_len(rest, b'"');
+        if rest.get(len) == Some(&b'"') {
+            let has_colon = IS_NAME && rest.get(len + 1) == Some(&b':');
+            self.skip_from(open + len + 2 + usize::from(has_colon));
+            return Ok((E::Str::new(&rest[..len]), has_colon));
+        }
+        Ok((self.parse_long_string(open, open + 1 + len)?, false))
+    }
+
     /// The string at `at`.
     #[inline(always)]
     fn parse_string_utf8(&mut self) -> PResult<E::Str> {
-        let open = self.at;
-        let quote = self.contents[open];
-        let rest = &self.contents[open + 1..];
-        let len = short_plain_len(rest, quote);
-        if rest.get(len) == Some(&quote) {
-            self.skip_from(open + len + 2);
-            return Ok(E::Str::new(&rest[..len]));
+        match self.contents[self.at] {
+            b'"' => Ok(self.parse_short_string::<false>()?.0),
+            _ => self.parse_long_string(self.at, self.at + 1),
         }
-        self.parse_long_string(open, open + 1 + len)
     }
 
     /// A string of more than 16 bytes, at the end of the text, or with a backslash or a control
@@ -1024,14 +1034,18 @@ impl<'a, 's> Parser<'a, 's> {
             }
 
             let key_start = p;
-            let key = if b == b'"' || b == b'\'' {
-                match self.parse_string_utf8() {
-                    Ok(d) => d,
-                    Err(e) => break Err(e),
-                }
+            let key = if b == b'"' {
+                self.parse_short_string::<true>()
+            } else if b == b'\'' {
+                self.parse_long_string(key_start, key_start + 1)
+                    .map(|key| (key, false))
             } else {
                 self.expected(key_start, "string");
                 break Err(self.unexpected(key_start));
+            };
+            let (key, has_colon) = match key {
+                Ok(key) => key,
+                Err(e) => break Err(e),
             };
             let key_loc = loc_at(key_start);
 
@@ -1040,11 +1054,12 @@ impl<'a, 's> Parser<'a, 's> {
                 self.warn_duplicate_key(key.slice(), key_range);
             }
 
-            if self.peek_byte() == b':' {
+            if !has_colon {
+                if self.peek_byte() != b':' {
+                    self.expected(self.at, "\":\"");
+                    break Err(crate::Error::ParserError);
+                }
                 self.bump();
-            } else {
-                self.expected(self.at, "\":\"");
-                break Err(crate::Error::ParserError);
             }
 
             let (value, value_loc) = match self.parse_json_value() {

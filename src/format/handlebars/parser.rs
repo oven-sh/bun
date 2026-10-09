@@ -7,6 +7,7 @@
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::lexer::{Token, TokenKind};
 use super::{Error, MAX_DEPTH};
+use crate::syntax_error::{Message, SyntaxError};
 use bun_core::strings;
 use smallvec::SmallVec;
 
@@ -152,6 +153,19 @@ struct Parser<'a> {
     is_damaged: bool,
 }
 
+/// What is said where there is no token of `kind`.
+#[cold]
+fn expected(kind: TokenKind) -> Message {
+    match kind {
+        TokenKind::Close | TokenKind::CloseUnescaped | TokenKind::CloseRawBlock => {
+            Message::ExpectedEndOfMustache
+        }
+        TokenKind::CloseSexpr => Message::ExpectedClosingParenthesis,
+        TokenKind::Id => Message::ExpectedName,
+        _ => Message::UnexpectedToken,
+    }
+}
+
 impl Parser<'_> {
     fn peek(&self) -> Token {
         self.peek_at(0)
@@ -171,12 +185,28 @@ impl Parser<'_> {
         token
     }
 
+    /// `message`, where the token is that has been taken last.
+    #[cold]
+    fn error(&self, message: Message) -> Error {
+        let token = self.tokens.get(self.at.saturating_sub(1));
+        let (kind, start) = token.map_or((TokenKind::Eof, self.source.len() as u32), |it| {
+            (it.kind, it.start)
+        });
+        Error::Syntax(SyntaxError(
+            match kind {
+                TokenKind::Eof => Message::UnexpectedEnd,
+                _ => message,
+            },
+            start,
+        ))
+    }
+
     fn expect(&mut self, kind: TokenKind) -> Result<Token, Error> {
         let token = self.next();
         if token.kind == kind {
             Ok(token)
         } else {
-            Err(Error::Syntax)
+            Err(self.error(expected(kind)))
         }
     }
 
@@ -347,7 +377,7 @@ impl Parser<'_> {
             }
             TokenKind::Undefined => Ok(self.literal(Kind::Undefined, Original::Undefined, false)),
             TokenKind::Null => Ok(self.literal(Kind::Null, Original::Null, false)),
-            _ => Err(Error::Syntax),
+            _ => Err(self.error(Message::UnexpectedToken)),
         }
     }
 
@@ -355,7 +385,7 @@ impl Parser<'_> {
     fn helper_name(&mut self) -> Result<Expression, Error> {
         let expression = self.expression()?;
         match expression.class {
-            Class::SubExpression | Class::HashLiteral => Err(Error::Syntax),
+            Class::SubExpression | Class::HashLiteral => Err(self.error(Message::UnexpectedToken)),
             Class::Path | Class::Literal => Ok(expression),
         }
     }
@@ -490,7 +520,7 @@ impl Parser<'_> {
         for segment in &segments {
             if !segment.is_literal && matches!(self.text(segment.part), b".." | b"." | b"this") {
                 if !parts.is_empty() {
-                    return Err(Error::Syntax);
+                    return Err(self.error(Message::InvalidPath));
                 }
                 dropped += 1;
                 continue;
@@ -637,7 +667,7 @@ impl Parser<'_> {
         }
         self.expect(TokenKind::CloseBlockParams)?;
         let (Some(first), Some(last)) = (names.first(), names.last()) else {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::ExpectedName));
         };
         // `yy.id` is given the list. It takes it for a text, and if that is in brackets, fails.
         if self.text(*first).starts_with(b"[")
@@ -646,7 +676,7 @@ impl Parser<'_> {
                 .iter()
                 .any(|name| has_line_terminator(self.text(*name)))
         {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::UnexpectedToken));
         }
         self.is_damaged |= names.iter().any(|name| self.text(*name).starts_with(b"["));
         Ok(self.tree.add_names(&names))
@@ -683,7 +713,10 @@ impl Parser<'_> {
         let path = self.helper_name()?;
         let last = self.expect(TokenKind::Close)?;
         if !self.closes(open, path.original) {
-            return Err(Error::Syntax);
+            return Err(Error::Syntax(SyntaxError(
+                Message::WrongNameAtEndOfBlock,
+                first.start,
+            )));
         }
         Ok(self.strip(first, last))
     }
@@ -790,10 +823,16 @@ impl Parser<'_> {
             true => None,
             false => self.inverse_chain()?,
         };
+        if self.peek().kind == TokenKind::Eof {
+            return Err(Error::Syntax(SyntaxError(
+                Message::UnclosedBlock,
+                open.start,
+            )));
+        }
         let close = self.close_block(header.path.original)?;
         if is_decorator {
             if inverse.is_some() {
-                return Err(Error::Syntax);
+                return Err(self.error(Message::UnexpectedToken));
             }
             self.end_statement(index, StatementKind::Unsupported);
         } else {
@@ -827,7 +866,10 @@ impl Parser<'_> {
         let close = self.expect(TokenKind::EndRawBlock)?;
         let name = Text::source(close.start as usize + 5, close.end as usize - 4);
         if !self.closes(header.path.original, Original::Text(name)) {
-            return Err(Error::Syntax);
+            return Err(Error::Syntax(SyntaxError(
+                Message::WrongNameAtEndOfBlock,
+                close.start,
+            )));
         }
         let first_end = self.statements.len() as u32;
         self.end_block(index, &header, first_end, None, None, false);

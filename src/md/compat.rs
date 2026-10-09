@@ -102,6 +102,34 @@ pub(crate) fn table_does_not_interrupt_a_paragraph(flags: &Flags) -> bool {
     flags.mdx
 }
 
+/// remark-parse 8: the header of a table need not have as many cells as the
+/// row under it.
+pub(crate) fn table_header_has_any_number_of_cells(flags: &Flags) -> bool {
+    flags.mdx
+}
+
+/// remark-parse 8: HTML ends a paragraph, but not the list items that the
+/// paragraph is in, however little it is indented.
+///
+/// ```markdown
+/// - a
+/// </B>
+/// ```
+pub(crate) fn tag_does_not_end_a_list(flags: &Flags) -> bool {
+    flags.mdx
+}
+
+/// remark-parse 8: the line behind the marker of a list item with nothing else
+/// on its line is in the item, however little it is indented.
+///
+/// ```markdown
+/// -
+/// a
+/// ```
+pub(crate) fn text_goes_on_in_an_empty_item(flags: &Flags) -> bool {
+    flags.mdx
+}
+
 /// remark-parse 8: a line with nothing but blanks on it does not end HTML.
 pub(crate) fn only_a_line_without_blanks_ends_html(flags: &Flags) -> bool {
     flags.mdx

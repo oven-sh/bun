@@ -26,6 +26,7 @@ pub mod options;
 pub mod pragma;
 pub mod range;
 mod sort;
+pub mod syntax_error;
 pub mod tailwind;
 mod text;
 pub mod toml;
@@ -59,11 +60,27 @@ pub(crate) mod prelude {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FormatError {
-    /// The file has syntax errors. It is left as it is.
+    /// The file has syntax errors. It is left as it is. What they are is for the caller to know: the parser of scripts
+    /// has told it.
     SyntaxError,
+    /// The same, from a parser of this crate.
+    SyntaxErrorAt(syntax_error::SyntaxError),
     /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left
     /// as it is.
     NestedTooDeeply,
     /// A bug in the formatter: the document it wrote is malformed.
     InvalidDocument,
+}
+
+impl FormatError {
+    /// See [`syntax_error::SyntaxError::before_normalizing_end_of_line`].
+    #[cold]
+    pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> FormatError {
+        match self {
+            FormatError::SyntaxErrorAt(error) => {
+                FormatError::SyntaxErrorAt(error.before_normalizing_end_of_line(original))
+            }
+            other => other,
+        }
+    }
 }

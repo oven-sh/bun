@@ -1319,7 +1319,11 @@ impl Parser<'_> {
 }
 
 /// `[...new Parser().parse(text)]`
-pub(crate) fn parse(text: &[u8], lexemes: &[Lexeme]) -> Result<Tree> {
+/// The tree, or why there is none, and where the parser was then.
+pub(crate) fn parse(
+    text: &[u8],
+    lexemes: &[Lexeme],
+) -> std::result::Result<Tree, (ParseError, u32)> {
     let mut parser = Parser {
         text,
         at_new_line: true,
@@ -1335,10 +1339,12 @@ pub(crate) fn parse(text: &[u8], lexemes: &[Lexeme]) -> Result<Tree> {
         lists: Vec::with_capacity(lexemes.len()),
     };
     for &lexeme in lexemes {
-        parser.next(lexeme)?;
+        parser
+            .next(lexeme)
+            .map_err(|error| (error, parser.offset))?;
     }
     while !parser.stack.is_empty() {
-        parser.pop()?;
+        parser.pop().map_err(|error| (error, parser.offset))?;
     }
     Ok(Tree {
         tokens: parser.out,

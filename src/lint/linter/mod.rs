@@ -515,7 +515,7 @@ impl Linter {
             }
             problems.push(message);
         }
-        problems.sort_by_key(|it| (it.line, it.column));
+        crate::utils::sort::sort_by_key(&mut problems, |it| (it.line, it.column));
 
         // Of a rule that has reported as much as it can, the rest is missing. So it cannot be told whether a comment that
         // disables it does nothing, and no comment of the file is removed: one that is in use would be damage to the source.
@@ -565,7 +565,7 @@ impl Linter {
                         comments.iter().filter(is_directive).filter(is_understood),
                         messages,
                     );
-                    messages.sort_by_key(|it| (it.line, it.column));
+                    crate::utils::sort::sort_by_key(messages, |it| (it.line, it.column));
                 } else {
                     disable::apply_disable_directives(
                         &disable::Input {

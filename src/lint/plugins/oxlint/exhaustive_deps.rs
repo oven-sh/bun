@@ -367,22 +367,53 @@ impl<'a> Found<'a> {
     /// missing in that order, and prints the report where the first is. The same hashes in the same table give the same order.
     /// `symbols`: [`places_of_symbols`].
     fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
-        let mut table: FxHashSet<Hashed> = FxHashSet::default();
-        for &at in &self.inserted {
-            if let Some((dependency, _)) = self.dependencies.get(at as usize) {
-                let place = dependency.symbol.and_then(place_of_symbol);
-                table.insert(Hashed {
-                    dependency,
-                    // oxc keeps the number so that `u32::MAX` is 0.
-                    symbol: place
-                        .and_then(|it| symbols.binary_search(&it).ok())
-                        .map(|it| it as u32 ^ u32::MAX),
-                    at,
-                });
-            }
-        }
-        table.iter().map(|it| it.at).collect()
+        let dependency = |at: &u32| Some((&self.dependencies.get(*at as usize)?.0, *at));
+        order_in_table(&mut self.inserted.iter().filter_map(dependency), symbols)
     }
+}
+
+/// The numbers of `inserted` in the order of a hash table of oxlint that they are put into one after the other.
+fn order_in_table<'d, 'a>(
+    inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
+    symbols: &[(u32, u32)],
+) -> Vec<u32> {
+    let mut table: FxHashSet<Hashed> = FxHashSet::default();
+    for (dependency, at) in inserted {
+        let place = dependency.symbol.and_then(place_of_symbol);
+        table.insert(Hashed {
+            dependency,
+            // oxc keeps the number so that `u32::MAX` is 0.
+            symbol: place
+                .and_then(|it| symbols.binary_search(&it).ok())
+                .map(|it| it as u32 ^ u32::MAX),
+            at,
+        });
+    }
+    table.iter().map(|it| it.at).collect()
+}
+
+/// Of `candidates`, which are positions in `declared`, the one that oxlint comes to first: it has them in a hash table.
+fn first_of_oxlint<'a>(
+    candidates: &[usize],
+    declared: &[(Dependency<'a>, u32)],
+    file: &'a File<'a>,
+    memo: &mut Memo<'a>,
+) -> Option<usize> {
+    if candidates.len() < 2 {
+        return candidates.first().copied();
+    }
+    let mut is_candidate = vec![false; declared.len()];
+    for at in candidates {
+        if let Some(it) = is_candidate.get_mut(*at) {
+            *it = true;
+        }
+    }
+    let symbols = memo
+        .places_of_symbols
+        .get_or_insert_with(|| places_of_symbols(file));
+    let mut inserted = (declared.iter().enumerate()).map(|(at, it)| (&it.0, at as u32));
+    let order = order_in_table(&mut inserted, symbols);
+    (order.into_iter().map(|at| at as usize)).find(|at| is_candidate.get(*at) == Some(&true))
 }
 
 /// A dependency that is hashed and compared as oxlint's `Dependency`.
@@ -846,14 +877,14 @@ fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
     }
 }
 
-/// `appended_to`: the array literal, if oxlint offers to put them at its end.
+/// `appended_to`: the array literal, if oxlint offers to put them at its end, and the `is_first` of [`replace_array`].
 fn report_missing<'a, R: Rule>(
     cx: &Cx<'a, R>,
     hook: Name<'a>,
     missing: &[(Span, Vec<u8>)],
     array: Span,
     mutable: Option<&[u8]>,
-    appended_to: Option<Expr<'a>>,
+    appended_to: Option<(Expr<'a>, bool)>,
 ) {
     let Some(first) = missing.first() else {
         return;
@@ -889,10 +920,22 @@ fn report_missing<'a, R: Rule>(
         .data("hook", hook)
         .data("dependencies", names)
         .data("mutable", mutable);
-    if let Some(array) = appended_to {
+    if let Some((array, is_first)) = appended_to {
         report.suggest_dangerously(INCLUDE_OR_REMOVE, |fixer| {
-            fixer.replace(array, print_array(array, None, missing))
+            replace_array(fixer, array, &print_array(array, None, missing), is_first)
         });
+    }
+}
+
+/// Puts `text` in the place of `array`. Of the changes to one array, oxlint makes the one that it comes to first and leaves
+/// the others to the next run. Here the one that starts first is made: the others leave the `[` as it is.
+fn replace_array<'a>(fixer: Fixer<'a>, array: Expr<'a>, text: &[u8], is_first: bool) -> Fix {
+    let whole = array.span();
+    match text {
+        [b'[', rest @ ..] if !is_first => {
+            fixer.replace(Span::new(whole.start + 1, whole.end), rest)
+        }
+        _ => fixer.replace(whole, text),
     }
 }
 
@@ -1129,7 +1172,9 @@ pub(crate) fn run<'a, R: Rule>(
         }
     }
 
-    for (dependency, _) in &declared {
+    // Their positions in `declared`.
+    let mut outer: Vec<usize> = Vec::new();
+    for (at, (dependency, _)) in declared.iter().enumerate() {
         if let Some(symbol) = dependency.symbol {
             let is_ref_current = dependency.chain.len() == 1
                 && dependency.ends_in_current()
@@ -1138,10 +1183,20 @@ pub(crate) fn run<'a, R: Rule>(
                 continue;
             }
         }
+        outer.push(at);
+    }
+    let first_outer = first_of_oxlint(&outer, &declared, cx.file(), memo);
+    for (at, (dependency, _)) in outer
+        .iter()
+        .filter_map(|at| Some((*at, declared.get(*at)?)))
+    {
         cx.report(dependency.span, UNNECESSARY_OUTER_SCOPE)
             .data("hook", hook)
             .data("dependency", dependency.name)
-            .fix(|fixer| fixer.replace(array, print_array(array, Some(dependency.span), &[])));
+            .fix(|fixer| {
+                let text = print_array(array, Some(dependency.span), &[]);
+                replace_array(fixer, array, &text, first_outer == Some(at))
+            });
     }
 
     // Their positions in `found.dependencies`.
@@ -1187,7 +1242,7 @@ pub(crate) fn run<'a, R: Rule>(
             &missing,
             array.span(),
             mutable.map(|it| it.0.text()).as_deref(),
-            Some(array),
+            Some((array, outer.is_empty())),
         );
     }
 
@@ -1235,18 +1290,26 @@ pub(crate) fn run<'a, R: Rule>(
         }
     }
 
-    for (dependency, _) in &declared {
-        if let Some(symbol) = dependency
-            .symbol
-            .filter(|it| dependency.chain.is_empty() && is_declaration_referentially_unique(*it))
-        {
-            cx.report(dependency.span, CHANGES_EVERY_RENDER)
-                .data("hook", hook)
-                .data("dependency", symbol.name())
-                .suggest_dangerously(MEMOIZE, |fixer| {
-                    fixer.replace(array, print_array(array, Some(dependency.span), &[]))
-                });
-        }
+    let is_unique = |it: &Dependency<'a>| {
+        it.chain.is_empty() && it.symbol.is_some_and(is_declaration_referentially_unique)
+    };
+    let changing: Vec<usize> = (declared.iter().enumerate())
+        .filter(|(_, it)| is_unique(&it.0))
+        .map(|it| it.0)
+        .collect();
+    let first_changing = first_of_oxlint(&changing, &declared, cx.file(), memo)
+        .filter(|_| outer.is_empty() && undeclared.is_empty());
+    for (at, (dependency, _)) in changing
+        .iter()
+        .filter_map(|at| Some((*at, declared.get(*at)?)))
+    {
+        cx.report(dependency.span, CHANGES_EVERY_RENDER)
+            .data("hook", hook)
+            .data("dependency", dependency.name)
+            .suggest_dangerously(MEMOIZE, |fixer| {
+                let text = print_array(array, Some(dependency.span), &[]);
+                replace_array(fixer, array, &text, first_changing == Some(at))
+            });
     }
 }
 

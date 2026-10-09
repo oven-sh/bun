@@ -95,9 +95,10 @@ fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut 
         }
         write!(f, comment);
 
-        let lines_after = f
-            .source_text()
-            .lines_after(end_with_semicolon_of_statement_before(comment, f));
+        let lines_after = (f.source_text().lines_after(comment.span.end)).max(
+            f.source_text()
+                .lines_after(end_with_semicolon_of_statement_before(comment, f)),
+        );
         match comment.kind {
             CommentKind::SingleLineBlock | CommentKind::MultiLineBlock => match lines_after {
                 0 => write!(f, space()),

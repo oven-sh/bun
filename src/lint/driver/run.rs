@@ -542,7 +542,7 @@ impl Run<'_> {
                     None => kinds.push((&name[dot..], 1)),
                 }
             }
-            kinds.sort_by_key(|it| std::cmp::Reverse(it.1));
+            bun_lint::utils::sort::sort_by_key(&mut kinds, |it| std::cmp::Reverse(it.1));
             let kinds: Vec<Vec<u8>> = (kinds.iter())
                 .map(|it| [format!("{} *", it.1).as_bytes(), it.0].concat())
                 .collect();
@@ -633,7 +633,9 @@ impl Run<'_> {
         let started = Instant::now();
         // What takes longest first, so that no thread begins it when the others are nearly done: what needs JavaScript, then
         // the largest.
-        without_types.sort_by_cached_key(|target| std::cmp::Reverse((needs(target), target.size)));
+        bun_lint::utils::sort::sort_by_cached_key(&mut without_types, |target| {
+            std::cmp::Reverse((needs(target), target.size))
+        });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
         let (with_configuration, with_engine) = with_engine.split_at(count(Needs::Configuration));
@@ -926,8 +928,10 @@ impl Run<'_> {
             options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
         match results.iter().all(|it| is_ordered_by_bytes(&it.path)) {
-            true => results.sort_by(|a, b| a.path.cmp(&b.path)),
-            false => results.sort_by(|a, b| compare_paths(&a.path, &b.path)),
+            true => bun_lint::utils::sort::sort_by(&mut results, |a, b| a.path.cmp(&b.path)),
+            false => {
+                bun_lint::utils::sort::sort_by(&mut results, |a, b| compare_paths(&a.path, &b.path))
+            }
         }
 
         let started = Instant::now();

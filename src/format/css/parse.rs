@@ -6,6 +6,7 @@ use super::media_query::{self, MediaNode};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
 use super::value_parser::{ValueId, Values};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, ByteSet};
 use std::borrow::Cow;
 
@@ -75,14 +76,6 @@ pub(crate) struct CssNode<'a> {
     pub(crate) mixin: bool,
     pub(crate) function: bool,
     pub(crate) variable: bool,
-}
-
-pub(crate) struct SyntaxError;
-
-impl From<postcss::SyntaxError> for SyntaxError {
-    fn from(_: postcss::SyntaxError) -> Self {
-        SyntaxError
-    }
 }
 
 pub(crate) struct Context<'a> {
@@ -254,7 +247,7 @@ impl<'a> Context<'a> {
             values
                 .parse(&text, self.syntax, value_root_offset(node), selectors)
                 .map(Value::Parsed)
-                .map_err(|_| SyntaxError)
+                .map_err(|_| SyntaxError(Message::UnreadableAtRule, raw.start))
         };
         // `node.params`
         let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
@@ -415,7 +408,7 @@ impl<'a> Context<'a> {
                 if text::trim(&node.raw_selector).is_empty()
                     || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))
                 {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::RuleWithoutSelector, raw.start));
                 }
                 {
                     let clean = raw
@@ -489,7 +482,9 @@ impl<'a> Context<'a> {
             node.value = match rules {
                 Some(rules) => Value::Rule(rules),
                 // Prettier reads `raws.value.raw`, which is only there if the value has comments.
-                None if raw.clean_value.is_none() => return Err(SyntaxError),
+                None if raw.clean_value.is_none() => {
+                    return Err(SyntaxError(Message::UnreadableValue, root_offset));
+                }
                 None => Value::Parsed(parsed.values.unknown(value, root_offset)),
             };
             return Ok(());
@@ -526,7 +521,7 @@ impl<'a> Context<'a> {
             let root = parsed
                 .values
                 .parse(value, self.syntax, root_offset, &mut parsed.selectors)
-                .map_err(|_| SyntaxError)?;
+                .map_err(|_| SyntaxError(Message::UnreadableValue, root_offset))?;
             node.value = Value::Parsed(root);
         }
 
@@ -584,7 +579,7 @@ impl<'a> Context<'a> {
         let value = |text: &[u8], values: &mut Values, selectors: &mut Selectors| {
             values
                 .parse(text, self.syntax, root_offset, selectors)
-                .map_err(|_| SyntaxError)
+                .map_err(|_| SyntaxError(Message::UnreadableAtRule, raw.start))
         };
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
@@ -593,13 +588,14 @@ impl<'a> Context<'a> {
                 Some(clean) => Cow::Owned(clean.to_vec()),
                 None => Cow::Borrowed(self.of(raw.params)),
             };
-            let start = text::index_of_from(&clean, b":--", 0).ok_or(SyntaxError)?;
+            let unreadable = SyntaxError(Message::UnreadableAtRule, raw.start);
+            let start = text::index_of_from(&clean, b":--", 0).ok_or(unreadable)?;
             let name_len = clean[start..]
                 .iter()
                 .position(|&b| text::starts_with_white_space(&[b]))
-                .ok_or(SyntaxError)?;
+                .ok_or(unreadable)?;
             if name_len <= 3 {
-                return Err(SyntaxError);
+                return Err(unreadable);
             }
             node.custom_selector = Some(slice(&clean, start, start + name_len));
             node.selector = Some(selectors.parse(&trim(&slice(&clean, name_len, clean.len()))));

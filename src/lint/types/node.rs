@@ -271,6 +271,11 @@ impl<'a> TsNode<'a> {
         Some(Type::new(self.file, id))
     }
 
+    /// `checker.getContextFreeTypeOfExpression(node)`
+    pub fn get_context_free_type_of_expression(self) -> Type<'a> {
+        Type::new(self.file, self.file.query(|q| q.context_free_type_of_expression(self.raw)))
+    }
+
     /// `checker.getContextualTypeForArgumentAtIndex(node, index)`
     pub fn get_contextual_type_for_argument_at_index(self, index: usize) -> Option<Type<'a>> {
         let index = index as u32;

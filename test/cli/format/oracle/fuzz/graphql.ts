@@ -26,7 +26,7 @@ async function check(text: string, options: Record<string, unknown>, what: strin
   const expected: string | null = await prettier.format(text, { parser: "graphql", ...options }).catch(() => null);
   writeFileSync(input, text);
   const result = Bun.spawnSync([bin, "format", "file", input, ...Object.entries(options).map(([key, value]) => `--${key}=${value}`)]);
-  const actual = result.exitCode === 0 && result.stdout.toString() !== "SyntaxError\n" ? result.stdout.toString() : null;
+  const actual = result.exitCode === 0 && !result.stdout.toString().startsWith("SyntaxError") ? result.stdout.toString() : null;
   total++;
   if (actual === expected) same++;
   else if (shown++ < show) console.log(`##### ${what} ${JSON.stringify(options)}\n--- input\n${text}\n--- expected\n${expected}\n--- actual\n${actual}`);

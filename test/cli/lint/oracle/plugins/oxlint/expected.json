@@ -1838,5 +1838,31 @@
   "a.ts:6:9 eslint(no-shadow)",
   "a.ts:9:8 eslint(no-shadow)",
   "b.ts:3:12 eslint(no-shadow)"
+ ],
+ "no-unnecessary-type-arguments/new": [
+  "a.ts:10:7 typescript(no-unnecessary-type-arguments)",
+  "a.ts:13:5 typescript(no-unnecessary-type-arguments)",
+  "a.ts:14:13 typescript(no-unnecessary-type-arguments)",
+  "a.ts:17:3 typescript(no-unnecessary-type-arguments)",
+  "a.ts:6:7 typescript(no-unnecessary-type-arguments)",
+  "a.ts:7:7 typescript(no-unnecessary-type-arguments)",
+  "a.ts:9:15 typescript(no-unnecessary-type-arguments)"
+ ],
+ "no-unnecessary-type-assertion/narrowing-assignment": [
+  "a.ts:11:16 typescript(no-unnecessary-type-assertion)",
+  "a.ts:7:5 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:7 typescript(no-unnecessary-type-assertion)",
+  "a.ts:9:7 typescript(no-unnecessary-type-assertion)"
+ ],
+ "no-unnecessary-type-assertion/array-literal-argument-of-a-generic-call": [
+  "a.ts:10:4 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:49 typescript(no-unnecessary-type-assertion)"
+ ],
+ "no-unnecessary-type-assertion/what-a-call-infers-from-the-assertion": [
+  "a.ts:11:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:13:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:20 typescript(no-unnecessary-type-assertion)",
+  "a.ts:9:18 typescript(no-unnecessary-type-assertion)"
  ]
 }

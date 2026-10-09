@@ -29,6 +29,14 @@ impl Span {
         self.end <= self.start
     }
 
+    /// A number to sort spans that nest by, into the order of a walk: by the start, of two that start together the one that
+    /// ends later first, then by `rank`, then by `index`, which is the low 32 bits. Lists of such numbers share one sort.
+    #[inline]
+    pub fn sort_key(self, rank: u16, index: usize) -> u128 {
+        let range = (u128::from(self.start) << 32) | u128::from(u32::MAX - self.end);
+        (range << 64) | (u128::from(rank) << 32) | index as u128
+    }
+
     /// From the start of `self` to the end of `other`.
     #[inline]
     pub const fn to(self, other: Span) -> Span {

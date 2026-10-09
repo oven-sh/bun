@@ -1362,10 +1362,10 @@ impl<'a> Node<'a> {
             .enumerate()
             .map(|(i, it)| (it.index, i))
             .collect();
-        first.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut first);
         first.dedup_by_key(|it| it.0);
         if first.len() < found.len() {
-            first.sort_unstable_by_key(|it| it.1);
+            crate::utils::sort::sort_unstable_by_key(&mut first, |it| it.1);
             found = first.iter().map(|it| found[it.1]).collect();
         }
         found

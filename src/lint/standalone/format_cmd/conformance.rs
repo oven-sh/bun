@@ -51,7 +51,7 @@ pub(super) fn run(args: &Args, raw: &[String], run: fn(&Bundle<'_>, &Flags<'_>, 
     run(&bundle, &flags, &|path, text, options| {
         super::format_text_with_cursor(&crate::text(path), text, options).map_err(|error| {
             match error {
-                FormatError::SyntaxError => Failure::SyntaxError,
+                FormatError::SyntaxError | FormatError::SyntaxErrorAt(_) => Failure::SyntaxError,
                 _ => Failure::Other,
             }
         })

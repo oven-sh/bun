@@ -160,7 +160,7 @@ pub(super) fn optimize(program: &mut Program) {
             Op::All(list) => {
                 let ops = &program.ops;
                 let cost_of = |id: &Id| cost_of_op(ops, *id);
-                list.of_mut(&mut program.lists).sort_by_key(cost_of);
+                crate::utils::sort::sort_by_key(list.of_mut(&mut program.lists), cost_of);
                 bind(program, list);
                 // `*` adds nothing, except on its own.
                 let wildcards = list

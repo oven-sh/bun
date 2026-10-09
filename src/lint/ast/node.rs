@@ -665,7 +665,7 @@ impl Parents {
                 this_names.push((this.pat, func.this_param));
             }
         }
-        this_names.sort_unstable_by_key(|it| it.0);
+        crate::utils::sort::sort_unstable_by_key(&mut this_names, |it| it.0);
         for (i, param) in hir.params.iter().enumerate() {
             one(param.ty, packed(Tag::Param, i));
         }
@@ -740,7 +740,7 @@ impl Parents {
             one(ty, parent);
             list!(type_args, parent);
         }
-        type_query_operands.sort_unstable_by_key(|it| it.0);
+        crate::utils::sort::sort_unstable_by_key(&mut type_query_operands, |it| it.0);
         Parents {
             types,
             type_params,

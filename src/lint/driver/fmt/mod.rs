@@ -15,6 +15,7 @@ use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
+use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
@@ -202,6 +203,24 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
+/// `SyntaxError: This string is not closed (3:6)`, of a file that is not a script.
+#[cold]
+fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
+    let text = strings::without_utf8_bom(text);
+    let before = &text[..text.len().min(offset as usize)];
+    let (mut line, mut line_start, mut from) = (1, 0, 0);
+    while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
+        from += found + 1;
+        // The `\n` of `\r\n` ends the line.
+        if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
+            (line, line_start) = (line + 1, from);
+        }
+    }
+    // As Prettier counts them: in UTF-16 code units.
+    let column = 1 + strings::element_length_utf8_into_utf16(&before[line_start..]);
+    format!("SyntaxError: {} ({line}:{column})", message.text()).into_bytes()
+}
+
 /// What is allocated to format a file, and used again for the next.
 #[derive(Default)]
 struct Scratches {
@@ -328,6 +347,9 @@ fn format(
         Err(FormatError::SyntaxError) => Err(Failure::Syntax(
             format!("SyntaxError: It is not {what}.").into_bytes(),
         )),
+        Err(FormatError::SyntaxErrorAt(error)) => {
+            Err(Failure::Syntax(syntax_error_at(text, error)))
+        }
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
@@ -530,6 +552,9 @@ fn print<'a>(
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => {
             return Err(Failure::Syntax(syntax_error(file, first_error)));
+        }
+        Err(FormatError::SyntaxErrorAt(error)) => {
+            return Err(Failure::Syntax(syntax_error_at(file.text(), error)));
         }
         Err(FormatError::NestedTooDeeply) => {
             return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));

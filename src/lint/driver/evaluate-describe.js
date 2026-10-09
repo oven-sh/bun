@@ -13,23 +13,65 @@ function objectId(object) {
 // How a worker for JavaScript plugins gets hold of a plugin: `{ module, export }`, the file of a module that is loaded and
 // the path to the plugin in what it exports. `null` if there is no such module: then it is where the configuration has it.
 const located = new Map();
-function locate(plugin) {
-  if (located.size === 0) {
-    for (const [module, { exports }] of Object.entries(require.cache)) {
-      const note = (value, path) => {
-        if (value !== null && typeof value === "object" && !located.has(value))
-          located.set(value, { module, export: path });
-      };
-      try {
-        note(exports, []);
-        for (const [name, value] of Object.entries(exports ?? {})) {
-          note(value, [name]);
-          if (name === "default") for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
-        }
-      } catch {}
-    }
+// The modules that have been looked at.
+const scanned = new Set();
+// Looks at those that were loaded since the last time: a plugin can load its rules when it is asked for them.
+function scan() {
+  for (const [module, { exports }] of Object.entries(require.cache)) {
+    // What only the configuration file has is not to be had without running it.
+    if (scanned.has(module) || module === path) continue;
+    scanned.add(module);
+    const note = (value, path) => {
+      if (value !== null && typeof value === "object" && !located.has(value))
+        located.set(value, { module, export: path });
+    };
+    try {
+      note(exports, []);
+      for (const [name, value] of Object.entries(exports ?? {})) {
+        note(value, [name]);
+        if (name === "default") for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
+      }
+    } catch {}
   }
+}
+
+function locate(plugin) {
   return located.get(plugin) ?? locateWrapped(plugin);
+}
+
+// By plugin, parser or processor: what `locateDeep` has found.
+const locatedDeep = new Map();
+
+// As `locate`, also for what is further inside: `configs.recommended.plugins.x` of a package with configurations.
+function locateDeep(plugin) {
+  if (!locatedDeep.has(plugin)) locatedDeep.set(plugin, search(plugin));
+  return locatedDeep.get(plugin);
+}
+
+function search(plugin) {
+  scan();
+  const found = locate(plugin);
+  if (found !== null) return found;
+  const pathIn = (value, depth) => {
+    if (value === plugin) return [];
+    if (depth === 0 || value === null || typeof value !== "object") return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null && !Array.isArray(value)) return null;
+    for (const key of Object.keys(value)) {
+      const inner = pathIn(value[key], depth - 1);
+      if (inner !== null) return [key, ...inner];
+    }
+    return null;
+  };
+  for (const module of scanned) {
+    // Those of plugins and of configurations, not all that these are made of.
+    if (!/[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]*eslint[^\\/]*[\\/]/.test(module)) continue;
+    try {
+      const inner = pathIn(require.cache[module]?.exports, 5);
+      if (inner !== null) return { module, export: inner };
+    } catch {}
+  }
+  return null;
 }
 
 // `fixupPluginRules` of the `@eslint/compat` that the configuration has loaded, if it has.
@@ -79,22 +121,22 @@ function stringify(value) {
 // The rules are in the order in which a worker numbers them. `at`: the module that exports the very rule, if there is one. A worker
 // loads that, and not the plugin with all its other rules.
 function describe(name, plugin) {
-  locate(plugin);
+  const names = Object.keys(plugin.rules).sort();
+  locateDeep(plugin);
+  scan();
   const original = wrapped.get(plugin) ?? plugin;
-  const rules = Object.keys(plugin.rules)
-    .sort()
-    .map(ruleName => {
-      const meta = plugin.rules[ruleName]?.meta;
-      return {
-        name: ruleName,
-        at: locate(original.rules[ruleName]) ?? undefined,
-        type: meta?.type,
-        fixable: Boolean(meta?.fixable),
-        hasSuggestions: meta?.hasSuggestions === true,
-        schema: asJson(meta?.schema),
-        defaultOptions: asJson(meta?.defaultOptions),
-      };
-    });
+  const rules = names.map(ruleName => {
+    const meta = plugin.rules[ruleName]?.meta;
+    return {
+      name: ruleName,
+      at: locate(original.rules[ruleName]) ?? undefined,
+      type: meta?.type,
+      fixable: Boolean(meta?.fixable),
+      hasSuggestions: meta?.hasSuggestions === true,
+      schema: asJson(meta?.schema),
+      defaultOptions: asJson(meta?.defaultOptions),
+    };
+  });
   return stringify({ name, rules });
 }
 

@@ -100,7 +100,7 @@ impl IntoFix for Vec<Fix> {
         if self.len() <= 1 {
             return self.pop();
         }
-        self.sort_by_key(|fix| (fix.span.start, fix.span.end));
+        crate::utils::sort::sort_by_key(&mut self, |fix| (fix.span.start, fix.span.end));
         let (start, end) = (self.first()?.span.start, self.last()?.span.end);
         let mut text = Vec::new();
         let mut at = start;
@@ -128,7 +128,7 @@ impl<const N: usize> IntoFix for [Fix; N] {
 /// ESLint's `SourceCodeFixer.applyFixes`: applies those of `fixes` that do not overlap an earlier
 /// one, and returns the new text. `None` if nothing is applied.
 pub fn apply_fixes(text: &[u8], fixes: &mut Vec<&Fix>) -> Option<Vec<u8>> {
-    fixes.sort_by_key(|fix| (fix.span.start, fix.span.end));
+    crate::utils::sort::sort_by_key(fixes, |fix| (fix.span.start, fix.span.end));
     let mut out = Vec::with_capacity(text.len());
     // ESLint starts at -1, so that an insertion at 0 does not conflict with nothing.
     let mut last: i64 = -1;

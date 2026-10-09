@@ -74,7 +74,7 @@ impl Short {
     /// `regex.flags`, which has them in alphabetical order.
     fn of_flags(flags: &[u8]) -> Short {
         let mut short = Short::new(flags);
-        short.bytes[..short.len as usize].sort_unstable();
+        crate::utils::sort::sort_unstable(&mut short.bytes[..short.len as usize]);
         short
     }
 }

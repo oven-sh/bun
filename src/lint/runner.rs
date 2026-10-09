@@ -10,6 +10,7 @@ use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
 use crate::semantic::Symbol;
+use crate::span::Span;
 use bun_sema::hir;
 use std::cell::OnceCell;
 
@@ -508,26 +509,38 @@ impl<R: Rule> AnyRule for R {
         if on.entries.is_empty() {
             return None;
         }
-        let mut run = Run {
-            rule: self,
-            entries: on.entries,
-            cx: Cx {
-                state,
-                base: CxBase {
-                    file: start.file,
-                    meta: &R::META,
-                    rule: start.rule,
-                    severity: start.severity,
-                    reports: std::cell::Cell::new(0),
-                    is_capped: std::cell::Cell::new(false),
-                },
+        run_started(self, on, state, start, &R::META)
+    }
+}
+
+/// Not inlined: it is the same code for all rules whose states are as large, of which the linker then keeps one copy.
+#[inline(never)]
+fn run_started<'r, 'a: 'r, R: Rule>(
+    rule: &'r R,
+    on: Listeners<'a, R>,
+    state: R::State<'a>,
+    start: Start<'a>,
+    meta: &'static Meta,
+) -> Option<Box<dyn Running<'a> + 'r>> {
+    let mut run = Run {
+        rule,
+        entries: on.entries,
+        cx: Cx {
+            state,
+            base: CxBase {
+                file: start.file,
+                meta,
+                rule: start.rule,
+                severity: start.severity,
+                reports: std::cell::Cell::new(0),
+                is_capped: std::cell::Cell::new(false),
             },
-        };
-        run.run_unordered();
-        match run.entries.iter().any(Entry::is_for_later) {
-            true => Some(Box::new(run)),
-            false => None,
-        }
+        },
+    };
+    run_unordered(rule, &run.entries, start.file, &mut run.cx);
+    match on.has_later {
+        true => Some(Box::new(run)),
+        false => None,
     }
 }
 
@@ -594,83 +607,85 @@ struct Run<'r, 'a, R: Rule> {
     cx: Cx<'a, R>,
 }
 
-impl<'a, R: Rule> Run<'_, 'a, R> {
-    /// Not inlined: it is the same code for most rules, of which the linker then keeps one copy.
-    #[inline(never)]
-    fn run_unordered(&mut self) {
-        let (rule, cx) = (self.rule, &mut self.cx);
-        let file = cx.base.file;
-        for entry in &self.entries {
-            match *entry {
-                Entry::Exprs(tag, listener) => {
-                    for &id in file.exprs_of(tag) {
-                        listener(rule, Expr::from_raw(file, id), cx);
-                    }
+/// Not inlined: it looks neither into the rule nor into its state, so it is the same code for all rules, of which the linker then
+/// keeps one copy.
+#[inline(never)]
+fn run_unordered<'a, R: Rule>(
+    rule: &R,
+    entries: &[Entry<'a, R>],
+    file: &'a File<'a>,
+    cx: &mut Cx<'a, R>,
+) {
+    for entry in entries {
+        match *entry {
+            Entry::Exprs(tag, listener) => {
+                for &id in file.exprs_of(tag) {
+                    listener(rule, Expr::from_raw(file, id), cx);
                 }
-                Entry::Stmts(tag, listener) => {
-                    for &id in file.stmts_of(tag) {
-                        listener(rule, Stmt::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Types(tag, listener) => {
-                    for &id in file.types_of(tag) {
-                        listener(rule, TypeNode::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Pats(tag, listener) => {
-                    for &id in file.pats_of(tag) {
-                        listener(rule, Pat::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Chained(tag, listener) => {
-                    for &id in file.chained_exprs_of(tag) {
-                        listener(rule, Expr::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Binaries(op, listener) => {
-                    for &id in file.binaries_of(op) {
-                        listener(rule, Expr::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Unaries(op, listener) => {
-                    for &id in file.unaries_of(op) {
-                        listener(rule, Expr::from_raw(file, id), cx);
-                    }
-                }
-                Entry::Funcs(listener) => file.every_func(|it| listener(rule, it, cx)),
-                Entry::Classes(listener) => file.every_class(|it| listener(rule, it, cx)),
-                Entry::Members(listener) => file.every_member(|it| listener(rule, it, cx)),
-                Entry::Props(listener) => file.every_prop(|it| listener(rule, it, cx)),
-                Entry::Params(listener) => file.every_param(|it| listener(rule, it, cx)),
-                Entry::TypeParams(listener) => file.every_type_param(|it| listener(rule, it, cx)),
-                Entry::VarDecls(listener) => file.every_var_decl(|it| listener(rule, it, cx)),
-                Entry::Cases(listener) => file.every_case(|it| listener(rule, it, cx)),
-                Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
-                Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
-                Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
-                Entry::StringLiterals(listener) => {
-                    file.every_string_literal(|it| listener(rule, it, cx))
-                }
-                Entry::NumberLiterals(listener) => {
-                    file.every_number_literal(&mut |it| listener(rule, it, cx))
-                }
-                Entry::Symbols(listener) => {
-                    every_symbol(file, &mut |symbol| listener(rule, symbol, cx))
-                }
-                Entry::Nodes(tags, listener) => {
-                    file.every_node_of(tags, &mut |node| listener(rule, node, cx))
-                }
-                Entry::Enter(..)
-                | Entry::Exit(..)
-                | Entry::CodePathStart(_)
-                | Entry::CodePathEnd(_)
-                | Entry::SegmentStart(_)
-                | Entry::SegmentEnd(_)
-                | Entry::UnreachableSegmentStart(_)
-                | Entry::UnreachableSegmentEnd(_)
-                | Entry::SegmentLoop(_)
-                | Entry::Finish(_) => {}
             }
+            Entry::Stmts(tag, listener) => {
+                for &id in file.stmts_of(tag) {
+                    listener(rule, Stmt::from_raw(file, id), cx);
+                }
+            }
+            Entry::Types(tag, listener) => {
+                for &id in file.types_of(tag) {
+                    listener(rule, TypeNode::from_raw(file, id), cx);
+                }
+            }
+            Entry::Pats(tag, listener) => {
+                for &id in file.pats_of(tag) {
+                    listener(rule, Pat::from_raw(file, id), cx);
+                }
+            }
+            Entry::Chained(tag, listener) => {
+                for &id in file.chained_exprs_of(tag) {
+                    listener(rule, Expr::from_raw(file, id), cx);
+                }
+            }
+            Entry::Binaries(op, listener) => {
+                for &id in file.binaries_of(op) {
+                    listener(rule, Expr::from_raw(file, id), cx);
+                }
+            }
+            Entry::Unaries(op, listener) => {
+                for &id in file.unaries_of(op) {
+                    listener(rule, Expr::from_raw(file, id), cx);
+                }
+            }
+            Entry::Funcs(listener) => file.every_func(|it| listener(rule, it, cx)),
+            Entry::Classes(listener) => file.every_class(|it| listener(rule, it, cx)),
+            Entry::Members(listener) => file.every_member(|it| listener(rule, it, cx)),
+            Entry::Props(listener) => file.every_prop(|it| listener(rule, it, cx)),
+            Entry::Params(listener) => file.every_param(|it| listener(rule, it, cx)),
+            Entry::TypeParams(listener) => file.every_type_param(|it| listener(rule, it, cx)),
+            Entry::VarDecls(listener) => file.every_var_decl(|it| listener(rule, it, cx)),
+            Entry::Cases(listener) => file.every_case(|it| listener(rule, it, cx)),
+            Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
+            Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
+            Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
+            Entry::StringLiterals(listener) => {
+                file.every_string_literal(|it| listener(rule, it, cx))
+            }
+            Entry::NumberLiterals(listener) => {
+                file.every_number_literal(&mut |it| listener(rule, it, cx))
+            }
+            Entry::Symbols(listener) => {
+                every_symbol(file, &mut |symbol| listener(rule, symbol, cx))
+            }
+            Entry::Nodes(tags, listener) => {
+                file.every_node_of(tags, &mut |node| listener(rule, node, cx))
+            }
+            Entry::Enter(..)
+            | Entry::Exit(..)
+            | Entry::CodePathStart(_)
+            | Entry::CodePathEnd(_)
+            | Entry::SegmentStart(_)
+            | Entry::SegmentEnd(_)
+            | Entry::UnreachableSegmentStart(_)
+            | Entry::UnreachableSegmentEnd(_)
+            | Entry::SegmentLoop(_)
+            | Entry::Finish(_) => {}
         }
     }
 }
@@ -852,11 +867,17 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
             node,
         });
     });
-    found.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end), it.rank));
+    let keys = found.iter().enumerate();
+    let keys = keys.map(|(at, it)| Span::new(it.start, it.end).sort_key(u16::from(it.rank), at));
+    let mut order: Vec<u128> = keys.collect();
+    order.sort();
 
     // The nodes that have been entered and not left, each with its end.
     let mut open: Vec<(u32, Node<'a>)> = Vec::new();
-    for it in &found {
+    for it in order
+        .iter()
+        .filter_map(|&key| found.get(key as u32 as usize))
+    {
         while let Some(&(end, node)) = open.last()
             && end <= it.start
             && !matches!(node, Node::File(_))
@@ -941,16 +962,16 @@ pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> 
         return diagnostics;
     }
     // The keys are sorted, not what is reported, which is many times as large.
-    let mut order: Vec<_> = diagnostics
+    let mut order: Vec<u128> = diagnostics
         .iter()
         .enumerate()
-        .map(|(at, it)| (key(it), at as u32))
+        .map(|(at, it)| it.span.sort_key(it.rule, at))
         .collect();
-    order.sort_unstable();
+    order.sort();
     let mut diagnostics: Vec<Option<Diagnostic>> = diagnostics.into_iter().map(Some).collect();
     order
         .iter()
-        .filter_map(|&(_, at)| diagnostics.get_mut(at as usize)?.take())
+        .filter_map(|&key| diagnostics.get_mut(key as u32 as usize)?.take())
         .collect()
 }
 

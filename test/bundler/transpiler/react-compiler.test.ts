@@ -3293,3 +3293,68 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
 });
+
+// The parser has a stack check. The lowering, which takes more of the stack for a
+// level of the source than the parser does, had none: `bun build --react-compiler`
+// died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
+// `if` statements or elements of JSX, and on a sum of 16,000 operands.
+describe("react-compiler leaves a component alone that is nested too deeply for the stack", () => {
+  // The frames of a debug build are ten times as large, and its parser gives up earlier.
+  const small = isDebug || isASAN;
+  const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
+    Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
+  const component = (body: string, result = "<div>{s}</div>") => `
+    import { useEffect, useMemo, useState } from "react";
+    export default function App(props) {
+      const [s, setS] = useState(0);
+      ${body}
+      return ${result};
+    }
+  `;
+  // Twice the first depth that crashed.
+  const shapes: [name: string, depth: number, source: (n: number) => string][] = [
+    ["effects", small ? 60 : 500, n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
+    ["called arrow functions", small ? 120 : 600, n => component(`const x = ${nest(n, () => "(() => ", "s", ")()")};`)],
+    ["useMemo", small ? 120 : 600, n => component(`const x = ${nest(n, () => "useMemo(() => ", "s", ", [s])")};`)],
+    ["arrow functions", small ? 180 : 1000, n => component(`const f = ${nest(n, i => `(a${i}) => `, "s", "")};`)],
+    ["function declarations", small ? 100 : 1000, n => component(nest(n, i => `function f${i}() {`, "s;", "}"))],
+    ["if", small ? 70 : 1600, n => component(nest(n, () => "if (props.a) {", "s;", "}"))],
+    ["try", small ? 90 : 1600, n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    ["switch", small ? 90 : 1600, n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}"))],
+    ["labels", small ? 90 : 1600, n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["calls", small ? 280 : 1600, n => component(`const x = ${nest(n, () => "f(", "s", ")")};`)],
+    [
+      "conditional expressions",
+      small ? 220 : 1600,
+      n => component(`const x = ${nest(n, () => "props.a ? s : ", "s", "")};`),
+    ],
+    [
+      "JSX",
+      small ? 200 : 1600,
+      n =>
+        component(
+          "",
+          nest(n, () => "<a>", "{s}", "</a>"),
+        ),
+    ],
+    ["a sum", small ? 2000 : 32000, n => component(`const x = ${Array(n).fill("s").join(" + ")};`)],
+    ["a chain of ||", small ? 2000 : 32000, n => component(`const x = ${Array(n).fill("s").join(" || ")};`)],
+  ];
+
+  test.concurrent.each(shapes)("%s", async (_, depth, source) => {
+    using dir = tempDir("react-compiler-depth", { "entry.jsx": source(depth) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "--outfile=out.js", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = await Bun.file(join(String(dir), "out.js")).text();
+    expect(out).toContain("useState(0)");
+    expect(out).not.toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  });
+});

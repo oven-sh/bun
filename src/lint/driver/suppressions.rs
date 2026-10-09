@@ -84,10 +84,10 @@ impl Suppressions {
 
     /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`.
     pub(crate) fn save(&mut self, path: &[u8]) -> Result<(), Fatal> {
-        self.0.sort_by(|a, b| a.0.cmp(&b.0));
+        bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));
         let mut out = b"{".to_vec();
         for (i, (file, rules)) in self.0.iter_mut().enumerate() {
-            rules.sort_by(|a, b| a.0.cmp(&b.0));
+            bun_lint::utils::sort::sort_by(rules, |a, b| a.0.cmp(&b.0));
             out.extend_from_slice(if i > 0 { b",\n  " } else { b"\n  " });
             write_json_string(&mut out, file);
             out.extend_from_slice(b": {");

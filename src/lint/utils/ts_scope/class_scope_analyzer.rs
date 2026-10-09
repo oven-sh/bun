@@ -421,7 +421,7 @@ struct Names {
 impl Names {
     fn new(usage: &ClassMemberUsage) -> Names {
         let mut sorted: Vec<Atom> = usage.keys.iter().map(|key| key.name).collect();
-        sorted.sort_unstable_by_key(|name| name.0);
+        crate::utils::sort::sort_unstable_by_key(&mut sorted, |name| name.0);
         sorted.dedup();
         let mut bits = [0; 16];
         for name in &sorted {
@@ -488,7 +488,9 @@ impl<'a> Analyzer<'a> {
                 all.push((span, Err(func)));
             }
         }
-        all.sort_unstable_by_key(|it| (it.0.start, std::cmp::Reverse(it.0.end)));
+        crate::utils::sort::sort_unstable_by_key(&mut all, |it| {
+            (it.0.start, std::cmp::Reverse(it.0.end))
+        });
         self.scopes.reserve(all.len());
         let mut upper = NONE;
         for (span, what) in all {

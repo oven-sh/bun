@@ -279,7 +279,7 @@ impl LanguageOptions {
         }
         // The last of two entries with the same name counts.
         globals.reverse();
-        globals.sort_by(|a, b| a.0.cmp(&b.0));
+        crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
         globals.dedup_by(|a, b| a.0 == b.0);
         LanguageOptions {
             ecma_version: match language_options.get(b"ecmaVersion") {

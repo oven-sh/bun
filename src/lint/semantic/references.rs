@@ -97,6 +97,13 @@ pub(crate) const HAS_WRITE: u32 = 1 << 30;
 pub(crate) const HAS_MODIFYING_WRITE: u32 = 1 << 31;
 const COUNT: u32 = HAS_READ - 1;
 
+/// By where they are. Those at the same place keep their order. It is sorted for every file, by the standard library, and in
+/// one function, so that the sort is compiled once.
+#[inline(never)]
+fn sort_by_pos(found: &mut [RawReference]) {
+    found.sort_by_key(|it| it.pos);
+}
+
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
@@ -1035,7 +1042,7 @@ impl<'f> Collector<'f, '_> {
             }
         }
         // A type is stored after its parts.
-        self.found[start..].sort_unstable_by_key(|it| it.pos);
+        sort_by_pos(&mut self.found[start..]);
         for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind
@@ -1124,7 +1131,7 @@ impl<'f> Collector<'f, '_> {
                 }
             }
         }
-        self.found[start..].sort_unstable_by_key(|it| it.pos);
+        sort_by_pos(&mut self.found[start..]);
     }
 
     /// `ExportVisitor`
@@ -1294,7 +1301,7 @@ impl References {
             }
         }
         // Each part is nearly in order already. References at the same place keep their order.
-        collector.found.sort_by_key(|it| it.pos);
+        sort_by_pos(&mut collector.found);
         // More would not fit beside the marks in `Resolver::counts`.
         if hir.exprs.len() + collector.found.len() >= COUNT as usize {
             collector.found.clear();
@@ -1316,7 +1323,9 @@ impl References {
                 .iter()
                 .for_each(|&(index, visit)| visits[index as usize] = visit);
             visiting_order.extend(0..all.len() as u32);
-            visiting_order.sort_by_key(|&it| visits[it as usize]);
+            crate::utils::sort::sort_indices(&mut visiting_order, &mut |a, b| {
+                visits[a as usize].cmp(&visits[b as usize])
+            });
         }
 
         let key = Key::Variable(variables.list.len());
@@ -1385,7 +1394,9 @@ impl References {
     pub(crate) fn unresolved_named(&self, name: Atom) -> &[u32] {
         let sorted = self.unresolved_by_name.get_or_init(|| {
             let mut sorted = self.unresolved().to_vec();
-            sorted.sort_by_key(|&it| self.all[it as usize].name.0);
+            crate::utils::sort::sort_indices(&mut sorted, &mut |a, b| {
+                (self.all[a as usize].name.0).cmp(&self.all[b as usize].name.0)
+            });
             sorted
         });
         let start = sorted.partition_point(|&it| self.all[it as usize].name.0 < name.0);

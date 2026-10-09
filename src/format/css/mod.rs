@@ -273,7 +273,7 @@ fn parse_and_print<'o>(
         }
     }
 
-    let tree = postcss::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
+    let tree = postcss::parse(&blanked, parser).map_err(FormatError::SyntaxErrorAt)?;
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
@@ -345,15 +345,15 @@ fn parse_and_print<'o>(
         value_stack: Vec::new(),
         comment_behind_comma: 0,
         scratch: Vec::new(),
-        has_failed: false,
+        failure: None,
         sink,
         memo,
         is_memoizable: false,
     };
     printer.print_root(&tree, &mut parse::Parsed::default());
-    match printer.has_failed {
-        true => Err(FormatError::SyntaxError),
-        false => Ok(printer.sink),
+    match printer.failure {
+        Some(error) => Err(FormatError::SyntaxErrorAt(error)),
+        None => Ok(printer.sink),
     }
 }
 
@@ -383,6 +383,7 @@ pub fn format(
         Some(rest) => (true, rest),
         None => (false, text),
     };
+    let in_original = |error: FormatError| error.before_normalizing_end_of_line(text);
     let text = normalize_end_of_line(text);
     let text = match crate::pragma::before_parsing_css(
         &text,
@@ -419,7 +420,8 @@ pub fn format(
             Sink::to_document(),
             &mut scratch.memo,
         )
-        .inspect_err(|_| out.truncate(start))?;
+        .inspect_err(|_| out.truncate(start))
+        .map_err(in_original)?;
         doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
             options,
@@ -431,5 +433,7 @@ pub fn format(
     let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
     let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
     let result = parse_and_print(text, parser, options, sink, &mut scratch.memo).map(drop);
-    result.inspect_err(|_| out.truncate(start))
+    result
+        .inspect_err(|_| out.truncate(start))
+        .map_err(in_original)
 }

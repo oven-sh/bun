@@ -936,7 +936,7 @@ pub fn get_static_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
                 false => {
                     let mut text = e.text().to_vec();
                     let at = text.len() - flags.len();
-                    text[at..].sort_unstable();
+                    crate::utils::sort::sort_unstable(&mut text[at..]);
                     Cow::Owned(text)
                 }
             }

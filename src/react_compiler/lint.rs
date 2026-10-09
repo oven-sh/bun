@@ -12,7 +12,9 @@ use crate::collections::IndexMap;
 use crate::diagnostics::CompilerError;
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::EnvironmentConfig;
-use crate::hir::{HirFunction, InstructionValue, ReactFunctionType, VariableBinding};
+use crate::hir::{
+    HirFunction, InstructionKind, InstructionValue, ReactFunctionType, VariableBinding,
+};
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
 use crate::options::ReactCompilerOptions;
@@ -28,16 +30,26 @@ pub struct Linted {
     pub result: Result<(), CompilerError>,
 }
 
-/// `everything`: also the passes that can only say `Todo` or `Invariant` of this function.
-/// Without it they are left out where that changes nothing else: nothing is recorded that an
-/// error of theirs would drop, and there is no manual memoization to validate.
+/// For which functions the passes after the validations run. They take as long as all before them.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LatePasses {
+    /// Where they can change what is said in a category other than `Todo` and `Invariant`: an
+    /// error is recorded, which an error of theirs would drop, or there is manual memoization to
+    /// validate.
+    WhereTheyCount,
+    /// Also where they can say a `Todo`, which is about a function declaration that is referred
+    /// to before it. Their invariants are not looked for.
+    AlsoForTodos,
+    Always,
+}
+
 pub fn lint_function(
     func: &FunctionNode<'_>,
     host: &dyn Host,
     fn_type: ReactFunctionType,
     config: &EnvironmentConfig,
     import_bindings: &[(bun_ast::Ref, VariableBinding)],
-    everything: bool,
+    late_passes: LatePasses,
 ) -> Linted {
     let mut bindings = IndexMap::new();
     for (ref_, binding) in import_bindings {
@@ -49,7 +61,7 @@ pub fn lint_function(
     env.fn_type = fn_type;
     env.output_mode = OutputMode::Lint;
     env.seed_uid_known_names(&HashSet::new());
-    let result = run(func, host, &mut env, &mut context, &bindings, everything);
+    let result = run(func, host, &mut env, &mut context, &bindings, late_passes);
     Linted {
         logged: context.logged,
         result,
@@ -62,7 +74,7 @@ fn run(
     env: &mut Environment,
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
-    everything: bool,
+    late_passes: LatePasses,
 ) -> Result<(), CompilerError> {
     let mut hir = lowering::lower(func, None, host, env, import_bindings)?;
     pipeline::dump_lowered(&hir, env);
@@ -70,7 +82,19 @@ fn run(
         return Err(env.take_invariant_errors());
     }
     pipeline::run_analysis_passes(&mut hir, env, context)?;
-    if everything || env.has_errors() || has_manual_memoization(&hir, env) {
+    let is_start_of_memoization =
+        |value: &InstructionValue| matches!(value, InstructionValue::StartMemoize { .. });
+    let is_hoisted_function = |value: &InstructionValue| {
+        matches!(value, InstructionValue::DeclareContext { lvalue, .. }
+            if lvalue.kind == InstructionKind::HoistedFunction)
+    };
+    let runs = match late_passes {
+        LatePasses::Always => true,
+        _ if env.has_errors() || has_instruction(&hir, env, is_start_of_memoization) => true,
+        LatePasses::AlsoForTodos => has_instruction(&hir, env, is_hoisted_function),
+        LatePasses::WhereTheyCount => false,
+    };
+    if runs {
         pipeline::run_reactive_scope_passes(&mut hir, env, context)?;
     }
     match env.has_errors() {
@@ -79,12 +103,12 @@ fn run(
     }
 }
 
-/// Whether `validate_preserved_manual_memoization` has anything to look at.
-fn has_manual_memoization(hir: &HirFunction, env: &Environment) -> bool {
-    std::iter::once(hir).chain(&env.functions).any(|function| {
-        function
-            .instructions
-            .iter()
-            .any(|instruction| matches!(instruction.value, InstructionValue::StartMemoize { .. }))
-    })
+/// In the function or in a function in it.
+fn has_instruction(
+    hir: &HirFunction,
+    env: &Environment,
+    is_one: impl Fn(&InstructionValue) -> bool,
+) -> bool {
+    (std::iter::once(hir).chain(&env.functions))
+        .any(|function| function.instructions.iter().any(|it| is_one(&it.value)))
 }

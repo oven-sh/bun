@@ -822,7 +822,9 @@ impl Rc<'_, '_> {
             }
         }
         // Those of ESLint first.
-        rules.sort_by(|a, b| parse_rule_id(&a.0).cmp(&parse_rule_id(&b.0)));
+        crate::utils::sort::sort_by(&mut rules, |a, b| {
+            parse_rule_id(&a.0).cmp(&parse_rule_id(&b.0))
+        });
         let rules =
             (rules.into_iter()).map(|(key, it)| (key, printed_setting(it.severity, &it.options)));
         let is_on =

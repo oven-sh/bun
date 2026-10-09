@@ -13,7 +13,7 @@ for (const line of (await Bun.file(file).text()).split("\n").filter(Boolean)) {
   writeFileSync(path, line + "\n");
   const { stdout, exitCode } = Bun.spawnSync([bin, "format", "file", path]);
   const actual = stdout.toString();
-  const failed = exitCode !== 0 || actual.trim() === "SyntaxError";
+  const failed = exitCode !== 0 || actual.startsWith("SyntaxError");
   if (expected === null) {
     rejected++;
     console.log(`rejected by Prettier${failed ? " and by ours" : ", formatted by ours"}: ${line}`);

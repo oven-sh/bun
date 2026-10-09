@@ -64,6 +64,10 @@ impl Parser<'_> {
         let mut n_children: u32 = 0;
         let mut container = Container::default();
         let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
+        // The line before is the marker of a list item and nothing else.
+        let follows_empty_item = self.last_header_opens_list_item
+            && self.current_block.is_none()
+            && !self.last_list_item_starts_with_two_blank_lines;
         // Nothing is on the line but the markers of containers that were open before it.
         let mut is_empty = false;
 
@@ -570,6 +574,16 @@ impl Parser<'_> {
                         self.html_block_type = 0;
                     }
                 }
+                if self.html_block_type > 0
+                    && effective_pivot_type == LineType::Text
+                    && n_brothers + n_children == 0
+                    && compat::tag_does_not_end_a_list(&self.flags)
+                    && self.containers[n_parents as usize..self.n_containers as usize]
+                        .iter()
+                        .all(|it| it.ch != b'>')
+                {
+                    n_parents = self.n_containers;
+                }
 
                 if self.html_block_type > 0 {
                     line.data = if self.html_block_type <= 5 {
@@ -655,7 +669,8 @@ impl Parser<'_> {
                         && compat::indented_line_is_no_table_header(&self.flags);
                     let interrupts_paragraph = self.current_block_lines.len() > 1
                         && compat::table_does_not_interrupt_a_paragraph(&self.flags);
-                    if header_cols == tbl_result.col_count
+                    if (header_cols == tbl_result.col_count
+                        || compat::table_header_has_any_number_of_cells(&self.flags))
                         && !is_header_too_far_in
                         && !interrupts_paragraph
                     {
@@ -668,7 +683,8 @@ impl Parser<'_> {
 
             // Default: normal text line
             line.r#type = LineType::Text;
-            if effective_pivot_type == LineType::Text
+            if (effective_pivot_type == LineType::Text
+                || (follows_empty_item && compat::text_goes_on_in_an_empty_item(&self.flags)))
                 && n_brothers + n_children == 0
                 && !self.containers[n_parents as usize..self.n_containers as usize]
                     .iter()

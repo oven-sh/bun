@@ -29,6 +29,14 @@ export const RULES: readonly (readonly [rule: string, oxlint: string, compiler: 
   ["void-use-memo", "correctness", "VoidUseMemo"],
 ];
 
+/** The rules that only eslint-plugin-react-hooks has, each with the category of the compiler's diagnostics that it reports. */
+export const ESLINT_ONLY: readonly (readonly [rule: string, compiler: string])[] = [
+  ["memoized-effect-dependencies", "EffectDependencies"],
+  ["config", "Config"],
+  ["gating", "Gating"],
+  ["fbt", "FBT"],
+];
+
 export const RULE_NAMES: readonly string[] = RULES.map(([rule]) => `react/${rule}`);
 const RULE_OF_CATEGORY = new Map(RULES.map(([rule, , compiler]) => [compiler, `react/${rule}`]));
 

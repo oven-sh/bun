@@ -137,6 +137,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !self.env.has_stack() {
+            return;
+        }
         match &binding.data {
             B::BIdentifier(id) => self.record_decl(id.r#ref),
             B::BArray(arr) => {
@@ -230,6 +233,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !self.env.has_stack() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -382,6 +388,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {
+        if !self.env.has_stack() {
+            return;
+        }
         match &e.data {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
@@ -546,6 +555,9 @@ fn walk_lval_for_reassignment(
     visitor: &mut ContextIdentifierVisitor<'_>,
     pattern: &Expr,
 ) -> Result<(), CompilerError> {
+    if !visitor.env.has_stack() {
+        return Ok(());
+    }
     match &pattern.data {
         Data::EIdentifier(ident) => {
             visitor.handle_reassignment_identifier(ident.ref_);
@@ -671,6 +683,9 @@ pub(crate) fn find_context_identifiers(
     visitor.walk_args(func.args());
     visitor.walk_stmts(func.body().stmts.slice());
 
+    if !visitor.env.has_stack() {
+        return Err(super::nested_too_deeply().into());
+    }
     if let Some(error) = visitor.error {
         return Err(error);
     }

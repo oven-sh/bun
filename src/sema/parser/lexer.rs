@@ -1,14 +1,15 @@
 //! The scanner. It works on bytes: one dispatch on the first byte of a token, 16 bytes at a time
 //! through names, strings and comments. Everything that is not ASCII takes a slow path.
 //!
-//! It never reports an error. What it cannot scan it refuses ([`Lexer::refuse`]): from then on every
-//! token is the end of the file, so the parser unwinds without testing anything.
+//! What it cannot scan it refuses ([`Lexer::refuse`]): from then on every token is the end of the
+//! file, so the parser unwinds without testing anything. With `Options::recovers` it reports an error
+//! and goes on as TypeScript's scanner does ([`Lexer::error`]), where that is written.
 
 use crate::Refusal;
 use crate::names::{Names, Text};
 use crate::token::T;
 use bun_sema::atom::{Atom, Intern};
-use bun_sema::hir::{CommentDirective, CommentDirectiveKind};
+use bun_sema::hir::{CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind};
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::u8x16;
 
@@ -51,6 +52,11 @@ pub(crate) struct Lexer<'a> {
     /// What TypeScript's scanner reports and ECMAScript allows outside strict code: the code of the
     /// message, and from where to where. Only with `is_ecmascript`: otherwise the text is refused.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// `Options::recovers`
+    pub(crate) recovers: bool,
+    /// What [`Lexer::error`] has reported and the parser has not taken yet
+    /// (`Parser::take_errors_of_scanner`), in the order of events.
+    pub(crate) errors: Vec<Diagnostic>,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -162,6 +168,8 @@ impl<'a> Lexer<'a> {
             leading_comments: Vec::new(),
             comments: Vec::new(),
             flagged: Vec::new(),
+            recovers: false,
+            errors: Vec::new(),
             buffer: Vec::new(),
             stack_check: bun_core::StackCheck::init(),
         }
@@ -197,6 +205,46 @@ impl<'a> Lexer<'a> {
         if self.flagged.last().is_some_and(|last| last.1 >= mark.end) {
             self.forget_flagged_from(mark.end);
         }
+        if self
+            .errors
+            .last()
+            .is_some_and(|last| last.start >= mark.end)
+        {
+            self.forget_errors_from(mark.end);
+        }
+    }
+
+    /// What follows `pos` is scanned again, and reported again.
+    #[cold]
+    #[inline(never)]
+    fn forget_errors_from(&mut self, pos: u32) {
+        self.errors.retain(|it| it.start < pos);
+    }
+
+    /// `s.errorAt(message, pos, length)`: the message `code` with `args`, from `start` to `end`.
+    /// Returns whether the scanner goes on. Without recovery it does not: the text is refused for
+    /// `why`, and the caller returns.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn error(
+        &mut self,
+        why: Refusal,
+        code: u32,
+        (start, end): (usize, usize),
+        args: &[&[u8]],
+    ) -> bool {
+        if !self.recovers {
+            self.refuse(why);
+            return false;
+        }
+        let at = match start == end {
+            true => (start as u32, Diagnostic::NO_LENGTH),
+            false => (start as u32, end as u32),
+        };
+        self.errors
+            .push(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
+        true
     }
 
     #[cold]
@@ -839,8 +887,11 @@ impl<'a> Lexer<'a> {
                 pos += mask.trailing_zeros() as usize;
             }
             let Some(&byte) = src.get(pos) else {
-                self.refuse(Refusal::Unterminated);
-                return None;
+                // "'*/' expected.", at the end of the text. The comment ends there.
+                if !self.error(Refusal::Unterminated, 1010, (pos, pos), &[]) {
+                    return None;
+                }
+                break pos;
             };
             match byte {
                 b'*' if src.get(pos + 1) == Some(&b'/') => break pos + 2,

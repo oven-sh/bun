@@ -13,5 +13,15 @@ mod find_context_identifiers;
 mod hir_builder;
 
 pub(crate) use build_hir::lower;
+/// Why a function that is nested more deeply than there is stack for is not compiled.
+#[cold]
+pub(crate) fn nested_too_deeply() -> crate::diagnostics::CompilerDiagnostic {
+    crate::diagnostics::CompilerDiagnostic::new(
+        crate::diagnostics::ErrorCategory::Todo,
+        "Support functions of this size",
+        Some("What is in it is nested too deeply".to_string()),
+    )
+}
+
 pub use hir_builder::FunctionNode;
 pub(crate) use hir_builder::convert_loc;

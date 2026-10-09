@@ -139,10 +139,11 @@ fn printed_key<'a>(
     }
 }
 
-/// Whether Prettier's `parser` is `babel` and the like, not one of those for an expression in HTML, which it does not
-/// name where it takes a number out of its quotes.
+/// Whether Prettier's `parser` is `babel` and the like, not one of those for an expression in HTML or for JSX in MDX,
+/// which it does not name where it takes a number out of its quotes.
 fn is_parser_for_programs(f: &Formatter<'_>) -> bool {
     matches!(f.options().in_html.root, HtmlRoot::None | HtmlRoot::Program)
+        && !f.options().is_mdx_jsx
 }
 
 /// Prettier's `isKeySafeToUnquote`. `string`: a string literal that is the name of `parent`.

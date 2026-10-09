@@ -288,7 +288,7 @@ fn ranges<'a>(
         justification: it.justification,
         is_used: false,
     }));
-    ranges.sort_by_key(|it| (it.start, it.stop, it.name_span.start));
+    crate::utils::sort::sort_by_key(&mut ranges, |it| (it.start, it.stop, it.name_span.start));
     (ranges, unused_enables)
 }
 
@@ -316,7 +316,7 @@ impl<'a> Index<'a> {
         let mut entries: Vec<_> = numbered
             .map(|(it, i)| (it.name.map_or(&b""[..], last_part), i))
             .collect();
-        entries.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut entries);
         let mut index = Index {
             last_stop: vec![(0, 0); entries.len()],
             entries,

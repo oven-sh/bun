@@ -8,6 +8,7 @@ use bun_lint::types::utils::{
 };
 use bun_lint::types::{NameOf, SignatureList, SymbolList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::oxlint::tsgolint_function_head_loc;
 use bun_lint::utils::ts_utils::get_function_head_loc;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
@@ -468,6 +469,23 @@ fn void_function_arguments<'a>(
     }
 }
 
+/// tsgolint's `promiseRange` of a function: its return type, or else its `=>`, or else its head.
+fn tsgolint_promise_range(func: Func) -> Span {
+    match (func.return_type(), func.arrow_span()) {
+        (Some(return_type), _) => return_type.span(),
+        (None, Some(arrow)) => arrow,
+        (None, None) => tsgolint_function_head_loc(func),
+    }
+}
+
+/// Where a value is reported. oxlint points into a function.
+fn place(value: Expr) -> Span {
+    match value.as_fn().filter(|_| value.file().language().is_oxlint) {
+        Some(func) => tsgolint_promise_range(func),
+        None => value.span(),
+    }
+}
+
 impl NoMisusedPromises {
     // ───────────────────────────── conditionals ─────────────────────────────
 
@@ -547,7 +565,7 @@ impl NoMisusedPromises {
         let is_member_expression =
             |it: &Expr| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
         for _ in 0..=call.args().iter().filter(is_member_expression).count() {
-            cx.report(callback, PREDICATE);
+            cx.report(place(callback), PREDICATE);
         }
     }
 
@@ -577,7 +595,7 @@ impl NoMisusedPromises {
         void_function_arguments(node, call, &mut arguments, &mut cx.state.parameters);
         for argument in arguments {
             if argument.accepted.void_return && !argument.accepted.thenable_return {
-                cx.report(argument.node, VOID_RETURN_ARGUMENT);
+                cx.report(place(argument.node), VOID_RETURN_ARGUMENT);
             }
         }
     }
@@ -592,7 +610,7 @@ impl NoMisusedPromises {
         }
         let left = target.ts_node();
         if returns_thenable(value.ts_node()) && is_void_returning_function_type(left, left.get_type_at_location()) {
-            cx.report(value, VOID_RETURN_VARIABLE);
+            cx.report(place(value), VOID_RETURN_VARIABLE);
         }
     }
 
@@ -609,7 +627,7 @@ impl NoMisusedPromises {
             has_dispose_method(initializer, initializer.get_type_at_location(), is_thenable_returning_function_type)
         };
         if is_using && disposes_asynchronously() {
-            cx.report(init, VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE);
         }
         let Some(annotation) = annotation else {
             return;
@@ -628,14 +646,14 @@ impl NoMisusedPromises {
         let name = node.pat().ts_node();
         let variable_type = name.get_type_at_location();
         if has_dispose_method(name, variable_type, is_void_returning_function_type) && disposes_asynchronously() {
-            cx.report(init, VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE);
         }
         if is_possibly_function_type(annotation)
             && can_be_function(init, &cx.state.callable_literals)
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
         {
-            cx.report(init, VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE);
         }
     }
 
@@ -643,6 +661,9 @@ impl NoMisusedPromises {
     fn report_property_function<'a>(function_node: Func<'a>, cx: &Cx<'a, Self>) {
         match function_node.return_type() {
             Some(return_type) => cx.report(return_type, VOID_RETURN_PROPERTY),
+            None if cx.language().is_oxlint => {
+                cx.report(tsgolint_promise_range(function_node), VOID_RETURN_PROPERTY)
+            }
             None => cx.report(get_function_head_loc(function_node), VOID_RETURN_PROPERTY),
         };
     }
@@ -703,7 +724,8 @@ impl NoMisusedPromises {
                 .get_contextual_type()
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
-            cx.report(expression_container, VOID_RETURN_ATTRIBUTE);
+            let at = if cx.language().is_oxlint { place(value) } else { expression_container };
+            cx.report(at, VOID_RETURN_ATTRIBUTE);
         }
     }
 
@@ -727,7 +749,7 @@ impl NoMisusedPromises {
                 .get_contextual_type()
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
-            cx.report(argument, VOID_RETURN_RETURN_VALUE);
+            cx.report(place(argument), VOID_RETURN_RETURN_VALUE);
         }
     }
 
@@ -764,7 +786,11 @@ impl NoMisusedPromises {
                     continue;
                 };
                 if is_void_returning_function_type(node_member, heritage_member.get_type_at_location(node_member)) {
-                    cx.report(member, VOID_RETURN_INHERITED_METHOD).data("heritageTypeName", heritage_type.ty.to_text());
+                    let place = match member.func().filter(|_| cx.language().is_oxlint) {
+                        Some(func) => tsgolint_promise_range(func),
+                        None => member.span(),
+                    };
+                    cx.report(place, VOID_RETURN_INHERITED_METHOD).data("heritageTypeName", heritage_type.ty.to_text());
                 }
             }
         }

@@ -104,6 +104,9 @@ pub(crate) fn lower(
         import_bindings,
         true, // is_top_level
     )?;
+    if !env.has_stack() {
+        return Err(super::nested_too_deeply().into());
+    }
 
     Ok(hir_func)
 }
@@ -384,9 +387,11 @@ pub(super) fn gather_captured_context<'h>(
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
     _component_scope: &ast::Scope,
-) -> IndexMap<Ref, Option<SourceLocation>> {
+) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
+        stack: bun_core::StackCheck::init(),
+        is_out_of_stack: false,
         scope_stack: vec![enclosing_scope],
         declared: RefSet::default(),
         referenced: Vec::new(),
@@ -395,6 +400,9 @@ pub(super) fn gather_captured_context<'h>(
     walker.push_scope(func.body().loc);
     walker.walk_args(func.args());
     walker.walk_stmts(func.body().stmts.slice());
+    if walker.is_out_of_stack {
+        return Err(super::nested_too_deeply());
+    }
 
     let symbols = host.symbols();
 
@@ -447,20 +455,27 @@ pub(super) fn gather_captured_context<'h>(
     let mut sorted: Vec<_> = captured.into_iter().collect();
     sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
 
-    sorted
+    Ok(sorted
         .into_iter()
         .map(|(ref_, (_, loc))| (ref_, loc))
-        .collect()
+        .collect())
 }
 
 struct CaptureWalker<'h> {
     host: &'h dyn Host,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: bool,
     scope_stack: Vec<&'h ast::Scope>,
     declared: RefSet,
     referenced: Vec<(Ref, Loc)>,
 }
 
 impl<'h> CaptureWalker<'h> {
+    fn has_stack(&mut self) -> bool {
+        self.is_out_of_stack |= !self.stack.is_safe_to_recurse();
+        !self.is_out_of_stack
+    }
+
     fn push_scope(&mut self, loc: Loc) {
         let next = self
             .host
@@ -507,6 +522,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !self.has_stack() {
+            return;
+        }
         match &binding.data {
             b::B::BIdentifier(id) => self.record_decl(id.r#ref),
             b::B::BArray(arr) => {
@@ -563,6 +581,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !self.has_stack() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -686,6 +707,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_expr(&mut self, e: &Expr) {
+        if !self.has_stack() {
+            return;
+        }
         match &e.data {
             ExprData::EIdentifier(id) => self.record_ref(id.ref_, e.loc),
             ExprData::EImportIdentifier(id) => self.record_ref(id.ref_, e.loc),

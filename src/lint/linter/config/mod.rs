@@ -33,6 +33,8 @@
 //!     "processor": "markdown/markdown",
 //!     // With `settings`: the file, and which object this is of what it exports.
 //!     "$source": { "config": "/app/eslint.config.js", "index": 3 },
+//!     // With `languageOptions.parser`: see `describeParser` in `evaluate-eslint.js`.
+//!     "$parser": { "module": "/app/node_modules/@typescript-eslint/parser/dist/index.js", "export": [], "functions": ["parse", "parseForESLint"], "values": { "version": "8.0.0" } },
 //!     // Where it is: see `js_plugin::Processor::new`.
 //!     "$processor": { "plugin": { "module": "/app/node_modules/@eslint/markdown/dist/index.js", "export": ["default"] }, "prefix": "markdown", "name": "markdown" },
 //!     "rules": { "eqeqeq": ["error", "smart"] },
@@ -192,6 +194,8 @@ struct ConfigObject {
     /// `$source`: `{ config, index }`, the configuration file, and which object this is of what it exports. One with `settings`
     /// has it.
     source: Option<Json>,
+    /// `$parser`
+    parser_location: Option<Json>,
 }
 
 impl Default for ConfigObject {
@@ -213,6 +217,7 @@ impl Default for ConfigObject {
             processor: None,
             processor_location: None,
             source: None,
+            parser_location: None,
         }
     }
 }
@@ -818,9 +823,12 @@ impl Config {
                 .iter()
                 .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref())
                 .collect();
+            let parser = (indices.iter().rev())
+                .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
             config.js_settings = Some(js_plugin::FileSettings::from_objects(
                 &config.language,
                 &sources,
+                parser,
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.

@@ -496,7 +496,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
         .iter()
         .map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta))
         .collect();
-    all.sort_by_key(|it| (it.0, it.1.name));
+    bun_lint::utils::sort::sort_by_key(&mut all, |it| (it.0, it.1.name));
     if !as_json {
         for (scope, meta) in all {
             out.extend_from_slice(scope);

@@ -40,7 +40,22 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         );
     }
     write!(f, FormatStatements(file.body()));
-    let rest = f.comments().unprinted_comments();
+    let mut rest = f.comments().unprinted_comments();
+    // The empty lines before the first thing in a file go.
+    let is_blank = |before: &[u8]| {
+        (before.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(before))
+            .trim_ascii()
+            .is_empty()
+    };
+    if let Some((first, others)) = rest.split_first()
+        && source
+            .get(..first.span.start as usize)
+            .is_some_and(is_blank)
+    {
+        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
+        write!(f, FormatDanglingComments::Comments { comments, indent });
+        rest = others;
+    }
     write!(
         f,
         [FormatTrailingComments::Comments(rest), hard_line_break()]

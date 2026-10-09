@@ -8,7 +8,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
     is_type_flag_set,
 };
-use bun_lint::types::{Signature, SyntaxKind, Type, TypeFlags};
+use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
@@ -595,8 +595,152 @@ fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
         && is_in_generic_context(node)
 }
 
-fn should_skip_contextual_type_fallback(assertion: Assertion, cast_is_any: bool) -> bool {
+/// Where an element or an argument is matters for a tuple and for the parameters, of which there are fewer than this.
+const MAX_INDEX: usize = 64;
+
+/// tsgolint's `hasGenericInferenceParameterAtArgument`: the type of the parameter, as it is declared, has a type
+/// variable at `element_path`, which goes from the argument inwards.
+fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
+    call: Expr<'a>,
+    arg_index: usize,
+    element_path: impl Iterator<Item = usize>,
+    known: &mut Contained<'a>,
+) -> bool {
+    let Some(declaration) = call.resolved_signature().and_then(|it| it.declaration()) else {
+        return false;
+    };
+    let has_type_parameters = |node: TsNode| node.children().any(|it| it.kind() == SyntaxKind::TypeParameter);
+    // The type parameters of the signature of a constructor are those of the class.
+    if !has_type_parameters(declaration)
+        && !(declaration.kind() == SyntaxKind::Constructor && declaration.parent().is_some_and(has_type_parameters))
+    {
+        return false;
+    }
+    let is_parameter =
+        |it: &TsNode| it.kind() == SyntaxKind::Parameter && it.name().is_none_or(|name| name.text() != b"this");
+    let params: SmallVec<[TsNode; 8]> = declaration.children().filter(is_parameter).collect();
+    let param_index = arg_index.min(params.len().saturating_sub(1));
+    let Some(param) = params.get(param_index) else {
+        return false;
+    };
+    let Some(mut param_type) = param.type_node().map(TsNode::get_type_at_location) else {
+        return false;
+    };
+    if param.has_dot_dot_dot_token() {
+        let mut type_arguments = get_type_arguments(param_type);
+        let last = type_arguments.len().saturating_sub(1);
+        param_type = type_arguments.nth((arg_index - param_index).min(last)).unwrap_or(param_type);
+    }
+    for element_index in element_path {
+        let element_type = match param_type.is_tuple_type() {
+            true => {
+                let type_arguments = param_type.get_type_arguments();
+                type_arguments.get(element_index.min(type_arguments.len().saturating_sub(1)))
+            }
+            false => param_type.get_number_index_type(),
+        };
+        match element_type {
+            Some(element_type) => param_type = element_type,
+            None => break,
+        }
+    }
+    contains_type_variable(param_type, known)
+}
+
+/// tsgolint's `isNestedInArrayLiteralArgumentToGenericCall`: `new Map([["a", b as string]])`. That the context accepts
+/// the element does not say what is inferred from it.
+fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
+    node: Expr<'a>,
+    known: &mut Contained<'a>,
+) -> bool {
+    // From the innermost array outwards.
+    let mut element_path: SmallVec<[usize; 4]> = SmallVec::new();
+    let mut child = Node::Expr(node);
+    for current in Node::Expr(node).ancestors() {
+        let element = std::mem::replace(&mut child, current);
+        let array = match current {
+            Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow) => return false,
+            Node::Expr(array) => array,
+            _ => continue,
+        };
+        let ExprKind::Array(elements) = array.kind() else {
+            continue;
+        };
+        let is_element = |it: Expr<'a>| Node::Expr(it) == element;
+        let element_index = elements.iter().take(MAX_INDEX).position(is_element).unwrap_or(MAX_INDEX);
+        element_path.push(element_index);
+
+        let (argument, is_spread) = match array.parent() {
+            Node::Expr(spread) if spread.tag() == ExprTag::Spread => (spread, true),
+            _ => (array, false),
+        };
+        let Node::Expr(parent) = argument.parent() else {
+            continue;
+        };
+        let (ExprKind::Call(call) | ExprKind::New(call)) = parent.kind() else {
+            continue;
+        };
+        if !call.type_args().is_empty() {
+            return false;
+        }
+        if call.callee() == argument {
+            continue;
+        }
+        let arg_index = call.args().iter().take(MAX_INDEX).position(|it| it == argument).unwrap_or(MAX_INDEX);
+        let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
+        let element_path = element_path.into_iter().rev().skip(left_out);
+        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path, known);
+    }
+    false
+}
+
+/// More pairs of members than this are not compared.
+const MAX_PAIRS: usize = 4096;
+
+/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after `assigned` has been
+/// assigned to a variable of that type.
+fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> SmallVec<[Type<'a>; 8]> {
+    if assigned.has_flags(TypeFlags::NEVER) {
+        return SmallVec::new();
+    }
+    let members: SmallVec<[Type<'a>; 8]> = declared.types().iter().collect();
+    let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned).iter().collect();
+    if members == assigned || members.len().saturating_mul(assigned.len()) > MAX_PAIRS {
+        return members;
+    }
+    let accepts_some = |target: &Type<'a>| assigned.iter().any(|it| it.is_assignable_to(*target));
+    let left: SmallVec<[Type<'a>; 8]> = members.iter().copied().filter(accepts_some).collect();
+    match assigned.iter().all(|it| left.iter().any(|target| it.is_assignable_to(*target))) {
+        true => left,
+        false => members,
+    }
+}
+
+/// tsgolint's `isInNarrowingAssignment`, for an assertion that is all of what is assigned: `a = b as C;` narrows `a`
+/// for the statements that follow, so that `a` accepts `b` does not make the assertion unnecessary.
+fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>, cast_type: Type<'a>) -> bool {
+    let Some((assignment, None)) = as_assigned_value(node) else {
+        return false;
+    };
+    let ExprKind::Assign { target, .. } = assignment.kind() else {
+        return false;
+    };
+    let receiver_type = target.ty();
+    let receiver_type = receiver_type.get_base_constraint_of_type().unwrap_or(receiver_type);
+    receiver_type.is_union()
+        && get_assignment_reduced_type(receiver_type, uncast_type)
+            != get_assignment_reduced_type(receiver_type, cast_type)
+}
+
+fn should_skip_contextual_type_fallback<'a>(
+    assertion: Assertion<'a>,
+    cast_is_any: bool,
+    (uncast_type, cast_type): (Type<'a>, Type<'a>),
+) -> bool {
     let Assertion { node, expression, .. } = assertion;
+    if node.file().language().is_oxlint && tsgolint_is_in_narrowing_assignment(node, uncast_type, cast_type) {
+        return true;
+    }
     if cast_is_any {
         let is_in_logical_expression = matches!(
             node.parent(),
@@ -639,6 +783,16 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
             return expression.file().type_checker().get_void_type();
         }
         return return_type;
+    }
+    // For tsgolint what the assertion expects does not count for what is inferred for a call.
+    let mut call = expression;
+    while let ExprKind::Await(argument) = call.kind() {
+        call = argument;
+    }
+    if expression.file().language().is_oxlint
+        && matches!(call.tag(), ExprTag::Call | ExprTag::New | ExprTag::TaggedTemplate)
+    {
+        return expression.context_free_type();
     }
     expression.ty()
 }
@@ -711,7 +865,7 @@ impl NoUnnecessaryTypeAssertion {
         if would_same_type_be_inferred
             && is_type_unchanged(type_annotation, expression, uncast_type, cast_type, &mut cx.state)
         {
-            if is_generic_call_with_inferred_type_arguments(expression) {
+            if !cx.language().is_oxlint && is_generic_call_with_inferred_type_arguments(expression) {
                 cx.report(node, CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS);
             } else {
                 cx.report(node, UNNECESSARY_ASSERTION).fix(|fixer| fix_assertion(fixer, assertion));
@@ -720,7 +874,12 @@ impl NoUnnecessaryTypeAssertion {
         }
 
         let cast_is_any = is_type_flag_set(cast_type, TypeFlags::ANY) && !has_parent_to_skip(node);
-        let contextual_type = match should_skip_contextual_type_fallback(assertion, cast_is_any) {
+        let types = (uncast_type, cast_type);
+        let skips_contextual_type = should_skip_contextual_type_fallback(assertion, cast_is_any, types)
+            || cx.language().is_oxlint
+                && !cast_is_any
+                && tsgolint_is_nested_in_array_literal_argument_to_generic_call(node, &mut cx.state);
+        let contextual_type = match skips_contextual_type {
             true => None,
             false => node.contextual_type(),
         };

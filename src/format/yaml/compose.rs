@@ -5,11 +5,10 @@
 //! Of the values of scalars there is only what an error or Prettier's printer depends on.
 
 use super::cst::{Item, SourceToken, Token, TokenType, Tree};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
-
-pub(crate) struct SyntaxError;
 
 type Result<T> = std::result::Result<T, SyntaxError>;
 
@@ -168,7 +167,8 @@ impl<'a> Directives<'a> {
         result
     }
 
-    fn add(&mut self, line: &'a [u8]) -> Result<()> {
+    /// `at`: where `line` is.
+    fn add(&mut self, line: &'a [u8], at: u32) -> Result<()> {
         if self.at_next_document {
             self.is_explicit = false;
             self.is_version_1_1 = true;
@@ -182,14 +182,14 @@ impl<'a> Directives<'a> {
         match name {
             b"%TAG" => {
                 let [handle, prefix] = parts[..] else {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::InvalidDirective, at));
                 };
                 self.tags.push((handle, prefix));
             }
             b"%YAML" => {
                 self.is_explicit = true;
                 let [version] = parts[..] else {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::InvalidDirective, at));
                 };
                 match version {
                     b"1.1" => self.is_version_1_1 = true,
@@ -203,7 +203,7 @@ impl<'a> Directives<'a> {
                                 is_number(&version[..dot]) && is_number(&version[dot + 1..])
                             });
                         if !is_valid {
-                            return Err(SyntaxError);
+                            return Err(SyntaxError(Message::InvalidDirective, at));
                         }
                     }
                 }
@@ -213,36 +213,38 @@ impl<'a> Directives<'a> {
         Ok(())
     }
 
-    /// `tagName`. `None` is the non-specific tag `!`.
-    fn tag_name(&self, source: &[u8]) -> Result<Option<Vec<u8>>> {
+    /// `tagName`. `None` is the non-specific tag `!`. `at`: where `source` is.
+    fn tag_name(&self, source: &[u8], at: u32) -> Result<Option<Vec<u8>>> {
         if source == b"!" {
             return Ok(None);
         }
         if source.get(1) == Some(&b'<') {
             let verbatim = source.get(2..source.len() - 1).unwrap_or_default();
             if matches!(verbatim, b"!" | b"!!") || !source.ends_with(b">") {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::InvalidTag, at));
             }
             return Ok(Some(verbatim.to_vec()));
         }
         // `/^(.*!)([^!]*)$/s`
-        let handle_len = strings::last_index_of_char(source, b'!').ok_or(SyntaxError)? + 1;
+        let handle_len = strings::last_index_of_char(source, b'!')
+            .ok_or(SyntaxError(Message::InvalidTag, at))?
+            + 1;
         let (handle, suffix) = source.split_at(handle_len);
         if suffix.is_empty() {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::InvalidTag, at));
         }
         match self.tags.iter().rev().find(|(it, _)| *it == handle) {
             Some((_, prefix)) if !prefix.is_empty() => {
-                Ok(Some([*prefix, &decode_uri_component(suffix)?].concat()))
+                Ok(Some([*prefix, &decode_uri_component(suffix, at)?].concat()))
             }
             _ if handle == b"!" => Ok(Some(source.to_vec())),
-            _ => Err(SyntaxError),
+            _ => Err(SyntaxError(Message::InvalidTag, at)),
         }
     }
 }
 
-/// `decodeURIComponent`
-fn decode_uri_component(text: &[u8]) -> Result<Vec<u8>> {
+/// `decodeURIComponent`. `at`: where an error is said to be.
+fn decode_uri_component(text: &[u8], at: u32) -> Result<Vec<u8>> {
     if !strings::contains_char(text, b'%') {
         return Ok(text.to_vec());
     }
@@ -255,7 +257,7 @@ fn decode_uri_component(text: &[u8]) -> Result<Vec<u8>> {
             if let Some(from) = decoded_from.take()
                 && std::str::from_utf8(&out[from..]).is_err()
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::InvalidTag, at));
             }
             out.push(byte);
             i += 1;
@@ -263,7 +265,7 @@ fn decode_uri_component(text: &[u8]) -> Result<Vec<u8>> {
         }
         let hex = |at: usize| text.get(at).and_then(|&b| (b as char).to_digit(16));
         let (Some(high), Some(low)) = (hex(i + 1), hex(i + 2)) else {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::InvalidTag, at));
         };
         decoded_from.get_or_insert(out.len());
         out.push((high * 16 + low) as u8);
@@ -272,7 +274,7 @@ fn decode_uri_component(text: &[u8]) -> Result<Vec<u8>> {
     if let Some(from) = decoded_from
         && std::str::from_utf8(&out[from..]).is_err()
     {
-        return Err(SyntaxError);
+        return Err(SyntaxError(Message::InvalidTag, at));
     }
     Ok(out)
 }
@@ -298,12 +300,12 @@ fn resolve_end(
             TokenType::Space => has_space = true,
             TokenType::Comment => {
                 if req_space && !has_space {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::ExpectedWhiteSpace, token.offset));
                 }
                 has_comment = true;
             }
             TokenType::Newline => has_space = true,
-            _ => return Err(SyntaxError),
+            _ => return Err(SyntaxError(Message::UnexpectedToken, token.offset)),
         }
         offset += token.len();
     }
@@ -407,18 +409,26 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// The errors of `resolveFlowScalar`, for a scalar that is written `source`.
-fn check_flow_scalar(kind: ScalarType, source: &[u8]) -> Result<()> {
-    let is_valid = match kind {
-        ScalarType::Plain => !matches!(
-            source.first(),
-            Some(b'\t' | b',' | b'%' | b'|' | b'>' | b'@' | b'`')
+/// The errors of `resolveFlowScalar`, for a scalar that is written `source`, at `at`.
+fn check_flow_scalar(kind: ScalarType, source: &[u8], at: u32) -> Result<()> {
+    let is_closed = |quote: &[u8]| source.ends_with(quote) && source.len() != 1;
+    let (is_valid, message) = match kind {
+        ScalarType::Plain => (
+            !matches!(
+                source.first(),
+                Some(b'\t' | b',' | b'%' | b'|' | b'>' | b'@' | b'`')
+            ),
+            Message::InvalidStartOfPlainScalar,
         ),
-        ScalarType::QuoteSingle => source.ends_with(b"'") && source.len() != 1,
-        ScalarType::QuoteDouble => double_quoted_value(source).1,
-        ScalarType::BlockFolded | ScalarType::BlockLiteral => true,
+        ScalarType::QuoteSingle => (is_closed(b"'"), Message::UnclosedString),
+        ScalarType::QuoteDouble if !is_closed(b"\"") => (false, Message::UnclosedString),
+        ScalarType::QuoteDouble => (double_quoted_value(source).1, Message::InvalidString),
+        ScalarType::BlockFolded | ScalarType::BlockLiteral => return Ok(()),
     };
-    if is_valid { Ok(()) } else { Err(SyntaxError) }
+    match is_valid {
+        true => Ok(()),
+        false => Err(SyntaxError(message, at)),
+    }
 }
 
 /// `scalar.source`, for a scalar that is written `source`. As in `yaml`, every text has one: whether the text is a
@@ -721,15 +731,15 @@ impl<'t, 'a> Context<'t, 'a> {
                     token.kind,
                     TokenType::Space | TokenType::Newline | TokenType::Comma
                 ) {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::ExpectedWhiteSpace, token.offset));
                 }
                 req_space = false;
             }
-            if tab.take().is_some()
+            if let Some(tab) = tab.take()
                 && at_newline
                 && !matches!(token.kind, TokenType::Comment | TokenType::Newline)
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::TabAsIndentation, tab.offset));
             }
             match token.kind {
                 TokenType::Space => {
@@ -745,7 +755,7 @@ impl<'t, 'a> Context<'t, 'a> {
                 }
                 TokenType::Comment => {
                     if !has_space {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::ExpectedWhiteSpace, token.offset));
                     }
                     let len = (token.len() as usize - 1).max(1);
                     props.comment_len += if props.comment_len == 0 {
@@ -778,7 +788,7 @@ impl<'t, 'a> Context<'t, 'a> {
                         &mut props.tag
                     };
                     if slot.replace(token).is_some() {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::RepeatedProperty, token.offset));
                     }
                     start.get_or_insert(token.offset);
                     at_newline = false;
@@ -787,7 +797,7 @@ impl<'t, 'a> Context<'t, 'a> {
                 }
                 kind if kind == indicator => {
                     if props.anchor.is_some() || props.tag.is_some() || props.found.is_some() {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::UnexpectedIndicator, token.offset));
                     }
                     props.found = Some(token);
                     at_newline =
@@ -796,12 +806,12 @@ impl<'t, 'a> Context<'t, 'a> {
                 }
                 TokenType::Comma if is_flow => {
                     if props.comma.replace(token).is_some() {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::UnexpectedToken, token.offset));
                     }
                     at_newline = false;
                     has_space = false;
                 }
-                _ => return Err(SyntaxError),
+                _ => return Err(SyntaxError(Message::UnexpectedToken, token.offset)),
             }
         }
         props.end = tokens.last().map_or(offset, |last| last.end);
@@ -818,7 +828,7 @@ impl<'t, 'a> Context<'t, 'a> {
                 Some(NextToken::Token(_)) => false,
             };
             if !is_separated {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::ExpectedWhiteSpace, props.end));
             }
         }
         if let Some(tab) = tab
@@ -830,7 +840,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     ))
                 ))
         {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::TabAsIndentation, tab.offset));
         }
         props.start = start.unwrap_or(props.end);
         Ok(props)
@@ -839,7 +849,9 @@ impl<'t, 'a> Context<'t, 'a> {
     fn anchor_of(&self, anchor: Option<SourceToken>) -> Result<Option<(u32, u32)>> {
         match anchor {
             // An anchor cannot be an empty string.
-            Some(anchor) if anchor.len() <= 1 => Err(SyntaxError),
+            Some(anchor) if anchor.len() <= 1 => {
+                Err(SyntaxError(Message::EmptyAnchor, anchor.offset))
+            }
             Some(anchor) => Ok(Some((anchor.offset + 1, anchor.end))),
             None => Ok(None),
         }
@@ -849,7 +861,7 @@ impl<'t, 'a> Context<'t, 'a> {
         let mut node = match token {
             Token::FlowScalar { token: source, end } if source.kind == TokenType::Alias => {
                 if props.anchor.is_some() || props.tag.is_some() || source.len() <= 1 {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::InvalidAlias, source.offset));
                 }
                 let end = end.map(|end| self.tree.list(end));
                 let (has_comment, offset) = resolve_end(end, source.end, true)?;
@@ -869,7 +881,7 @@ impl<'t, 'a> Context<'t, 'a> {
             Token::BlockMap { .. } | Token::BlockSeq { .. } | Token::FlowCollection { .. } => {
                 self.compose_collection(token, props)?
             }
-            _ => return Err(SyntaxError),
+            _ => return Err(SyntaxError(Message::UnexpectedToken, token.offset())),
         };
         if !matches!(node.kind, NodeKind::Alias) {
             node.anchor = self.anchor_of(props.anchor)?;
@@ -905,7 +917,9 @@ impl<'t, 'a> Context<'t, 'a> {
         tag_token: Option<SourceToken>,
     ) -> Result<Node<'t>> {
         let tag_name = match tag_token {
-            Some(tag) => self.directives.tag_name(tag.source(self.text))?,
+            Some(tag) => self
+                .directives
+                .tag_name(tag.source(self.text), tag.offset)?,
             None => None,
         };
         match tag_name
@@ -916,10 +930,10 @@ impl<'t, 'a> Context<'t, 'a> {
                 if !self.directives.is_version_1_1
                     && !is_timestamp(&scalar_source(kind, source)) =>
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::ValueDoesNotFitTag, range[0]));
             }
             Some(b"binary") if !is_base64(&scalar_source(kind, source)) => {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::ValueDoesNotFitTag, range[0]));
             }
             _ => {}
         }
@@ -949,9 +963,9 @@ impl<'t, 'a> Context<'t, 'a> {
                     TokenType::Scalar => ScalarType::Plain,
                     TokenType::SingleQuotedScalar => ScalarType::QuoteSingle,
                     TokenType::DoubleQuotedScalar => ScalarType::QuoteDouble,
-                    _ => return Err(SyntaxError),
+                    _ => return Err(SyntaxError(Message::UnexpectedToken, source_token.offset)),
                 };
-                check_flow_scalar(kind, source)?;
+                check_flow_scalar(kind, source, source_token.offset)?;
                 let end = end.map(|end| self.tree.list(end));
                 let (has_comment, offset) = resolve_end(end, source_token.end, true)?;
                 let range = [source_token.offset, source_token.end, offset];
@@ -971,7 +985,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     .unwrap_or_default();
                 self.finish_scalar(kind, source, range, has_comment, tag_token)
             }
-            _ => Err(SyntaxError),
+            _ => Err(SyntaxError(Message::UnexpectedToken, token.offset())),
         }
     }
 
@@ -985,7 +999,7 @@ impl<'t, 'a> Context<'t, 'a> {
     ) -> Result<(ScalarType, [u32; 3], bool)> {
         // `parseBlockScalarHeader`
         let [header, rest @ ..] = props else {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::InvalidBlockScalarHeader, start));
         };
         let header_source = header.source(self.text);
         let mut header_indent = 0usize;
@@ -996,7 +1010,10 @@ impl<'t, 'a> Context<'t, 'a> {
             } else if header_indent == 0 && matches!(ch, b'1'..=b'9') {
                 header_indent = usize::from(ch - b'0');
             } else {
-                return Err(SyntaxError);
+                return Err(SyntaxError(
+                    Message::InvalidBlockScalarHeader,
+                    header.offset,
+                ));
             }
         }
         let mut has_space = false;
@@ -1008,11 +1025,11 @@ impl<'t, 'a> Context<'t, 'a> {
                 TokenType::Newline => {}
                 TokenType::Comment => {
                     if !has_space {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::ExpectedWhiteSpace, token.offset));
                     }
                     has_comment = token.len() > 1;
                 }
-                _ => return Err(SyntaxError),
+                _ => return Err(SyntaxError(Message::InvalidBlockScalarHeader, token.offset)),
             }
             length += token.len();
         }
@@ -1052,14 +1069,14 @@ impl<'t, 'a> Context<'t, 'a> {
                 continue;
             }
             if indent < trim_indent {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::BadIndentation, start));
             }
             if header_indent == 0 {
                 trim_indent = indent;
             }
             content_start = i;
             if trim_indent == 0 && !self.at_root {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::BadIndentation, start));
             }
             break;
         }
@@ -1067,14 +1084,16 @@ impl<'t, 'a> Context<'t, 'a> {
             .iter()
             .any(|&(indent, content)| !content.is_empty() && indent < trim_indent)
         {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::BadIndentation, start));
         }
         Ok((kind, range, has_comment))
     }
 
     fn compose_collection(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t>> {
         let tag_name = match props.tag {
-            Some(tag) => self.directives.tag_name(tag.source(self.text))?,
+            Some(tag) => self
+                .directives
+                .tag_name(tag.source(self.text), tag.offset)?,
             None => None,
         };
         if matches!(token, Token::BlockSeq { .. }) {
@@ -1091,7 +1110,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     .newline_after_prop
                     .is_none_or(|nl| nl.offset < last_prop.offset)
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::ExpectedLineBreak, last_prop.end));
             }
         }
         let mut node = match token {
@@ -1126,7 +1145,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     })
                 });
                 if !are_all_null {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::ValueDoesNotFitTag, node.range[0]));
                 }
                 node.has_set_tag = true;
             }
@@ -1138,10 +1157,10 @@ impl<'t, 'a> Context<'t, 'a> {
                     };
                     let NodeKind::Map { items: pairs, .. } = &mut node.kind else {
                         // `yaml-unist-parser` cannot cope with a pair that is made up.
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::ValueDoesNotFitTag, node.range[0]));
                     };
                     if pairs.len() != 1 {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::ValueDoesNotFitTag, node.range[0]));
                     }
                     if let Some(pair) = pairs.pop() {
                         *item = SeqItem::Pair(pair);
@@ -1162,7 +1181,7 @@ impl<'t, 'a> Context<'t, 'a> {
                             a.0 == b.0 && (a.0 != ScalarValue::String || a.1 == b.1)
                         };
                     if (1..keys.len()).any(|i| keys[..i].iter().any(|key| is_same(key, &keys[i]))) {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::ValueDoesNotFitTag, node.range[0]));
                     }
                 }
             }
@@ -1224,7 +1243,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     && (matches!(key, Token::BlockSeq { .. })
                         || key.indent().is_some_and(|indent| indent != map_indent))
                 {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::BadIndentation, key.offset()));
                 }
                 if key_props.anchor.is_none() && key_props.tag.is_none() && sep.is_none() {
                     comment_end = Some(key_props.end);
@@ -1233,13 +1252,12 @@ impl<'t, 'a> Context<'t, 'a> {
                 if key_props.newline_after_prop.is_some()
                     || contains_newline(self.tree, key, self.text)
                 {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::KeyOverSeveralLines, key_props.start));
                 }
-            } else if key_props
-                .found
-                .is_some_and(|found| found.indent != map_indent)
+            } else if let Some(found) = key_props.found
+                && found.indent != map_indent
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::BadIndentation, found.offset));
             }
 
             self.at_key = true;
@@ -1265,7 +1283,7 @@ impl<'t, 'a> Context<'t, 'a> {
             let Some(found) = value_props.found else {
                 // A key without a value.
                 if is_implicit_key {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::ExpectedColon, key_node.range[1]));
                 }
                 pairs.push(Pair {
                     key: key_node,
@@ -1275,10 +1293,13 @@ impl<'t, 'a> Context<'t, 'a> {
                 continue;
             };
             if is_implicit_key
-                && ((matches!(value, Some(Token::BlockMap { .. })) && !value_props.has_newline)
-                    || i64::from(key_props.start) < i64::from(found.offset) - 1024)
+                && matches!(value, Some(Token::BlockMap { .. }))
+                && !value_props.has_newline
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::MappingOnLineOfKey, value_props.end));
+            }
+            if is_implicit_key && i64::from(key_props.start) < i64::from(found.offset) - 1024 {
+                return Err(SyntaxError(Message::KeyTooLong, key_props.start));
             }
             let value_node = match value {
                 Some(value) => self.compose_node(value, &value_props)?,
@@ -1291,8 +1312,11 @@ impl<'t, 'a> Context<'t, 'a> {
                 src_token: Some(item),
             });
         }
-        if comment_end.is_some_and(|end| end != 0 && end < offset) {
-            return Err(SyntaxError);
+        if let Some(end) = comment_end
+            && end != 0
+            && end < offset
+        {
+            return Err(SyntaxError(Message::UnexpectedToken, end));
         }
         let kind = NodeKind::Map {
             flow: false,
@@ -1330,7 +1354,7 @@ impl<'t, 'a> Context<'t, 'a> {
             )?;
             if props.found.is_none() {
                 if props.anchor.is_some() || props.tag.is_some() || value.is_some() {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::BadIndentation, props.end));
                 }
                 comment_end = Some(props.end);
                 continue;
@@ -1361,7 +1385,7 @@ impl<'t, 'a> Context<'t, 'a> {
             end,
         } = token
         else {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::UnexpectedToken, token.offset()));
         };
         let is_map = collection_start.kind == TokenType::FlowMapStart;
         let mut pairs = Vec::new();
@@ -1400,22 +1424,22 @@ impl<'t, 'a> Context<'t, 'a> {
                     if (i == 0 && props.comma.is_some())
                         || (!(i == 0 && props.comma.is_some()) && i + 1 < items.len())
                     {
-                        return Err(SyntaxError);
+                        return Err(SyntaxError(Message::UnexpectedToken, props.start));
                     }
                     offset = props.end;
                     continue;
                 }
                 if !is_map && contains_newline(self.tree, key, self.text) {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::KeyOverSeveralLines, props.start));
                 }
             }
             if i == 0 {
-                if props.comma.is_some() {
-                    return Err(SyntaxError);
+                if let Some(comma) = props.comma {
+                    return Err(SyntaxError(Message::UnexpectedToken, comma.offset));
                 }
             } else {
                 if props.comma.is_none() {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::ExpectedComma, props.start));
                 }
                 if props.comment_len > 0 {
                     // A comment right behind the comma belongs to the item before.
@@ -1439,7 +1463,7 @@ impl<'t, 'a> Context<'t, 'a> {
                     None => self.compose_empty_node(props.end, None, &props)?,
                 };
                 if is_block(value) {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(Message::BlockInFlow, value_node.range[0]));
                 }
                 offset = value_node.range[2];
                 nodes.push(SeqItem::Node(value_node));
@@ -1452,7 +1476,7 @@ impl<'t, 'a> Context<'t, 'a> {
                 None => self.compose_empty_node(props.end, Some(start), &props)?,
             };
             if is_block(key) {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::BlockInFlow, key_node.range[0]));
             }
             self.at_key = false;
             let value_props = self.resolve_props(
@@ -1472,14 +1496,15 @@ impl<'t, 'a> Context<'t, 'a> {
                         .unwrap_or_default()
                         .iter()
                         .take_while(|st| st.offset != found.offset);
-                    if before_found.clone().any(|st| st.kind == TokenType::Newline)
-                        || i64::from(props.start) < i64::from(found.offset) - 1024
-                    {
-                        return Err(SyntaxError);
+                    if before_found.clone().any(|st| st.kind == TokenType::Newline) {
+                        return Err(SyntaxError(Message::KeyOverSeveralLines, props.start));
+                    }
+                    if i64::from(props.start) < i64::from(found.offset) - 1024 {
+                        return Err(SyntaxError(Message::KeyTooLong, props.start));
                     }
                 }
             } else if value.is_some() {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::ExpectedCommaOrColon, value_props.end));
             }
             let value_node = match value {
                 Some(value) => Some(self.compose_node(value, &value_props)?),
@@ -1489,7 +1514,7 @@ impl<'t, 'a> Context<'t, 'a> {
                 None => None,
             };
             if value_node.is_some() && is_block(value) {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::BlockInFlow, value_props.end));
             }
             offset = value_node
                 .as_ref()
@@ -1517,10 +1542,10 @@ impl<'t, 'a> Context<'t, 'a> {
             TokenType::FlowSeqEnd
         };
         let [close, rest @ ..] = self.tree.list(*end) else {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::UnclosedBracket, *collection_offset));
         };
         if close.kind != expected_end {
-            return Err(SyntaxError);
+            return Err(SyntaxError(Message::UnclosedBracket, *collection_offset));
         }
         let (_, end_offset) = resolve_end(Some(rest), close.end, true)?;
         let kind = match is_map {
@@ -1554,7 +1579,7 @@ fn compose_doc<'t, 'a>(
         end,
     } = token
     else {
-        return Err(SyntaxError);
+        return Err(SyntaxError(Message::UnexpectedToken, token.offset()));
     };
     let mut context = Context {
         text,
@@ -1580,7 +1605,7 @@ fn compose_doc<'t, 'a>(
         },
     )?;
     if props.found.is_some() && is_block(value) && !props.has_newline {
-        return Err(SyntaxError);
+        return Err(SyntaxError(Message::ExpectedLineBreak, props.end));
     }
     let contents = match value {
         Some(value) => context.compose_node(value, &props)?,
@@ -1608,29 +1633,37 @@ pub(crate) fn compose<'t>(text: &[u8], tree: &'t Tree) -> Result<Vec<Document<'t
     for token in &tree.tokens {
         match token {
             Token::Directive(directive) => {
-                directives.add(directive.source(text))?;
+                directives.add(directive.source(text), directive.offset)?;
                 at_directives = true;
             }
             Token::Document { .. } => {
                 let (document, has_doc_start) =
                     compose_doc(text, tree, directives.at_document(), token)?;
                 if at_directives && !has_doc_start {
-                    return Err(SyntaxError);
+                    return Err(SyntaxError(
+                        Message::ExpectedDocumentStart,
+                        document.range[0],
+                    ));
                 }
                 documents.push(document);
                 at_directives = false;
             }
             Token::Source(_) => {}
             Token::DocEnd { token, end } => {
-                let document = documents.last_mut().ok_or(SyntaxError)?;
+                let document = documents
+                    .last_mut()
+                    .ok_or(SyntaxError(Message::UnexpectedToken, token.offset))?;
                 let (_, offset) = resolve_end(end.map(|end| tree.list(end)), token.end, true)?;
                 document.range[2] = offset;
             }
-            _ => return Err(SyntaxError),
+            _ => return Err(SyntaxError(Message::UnexpectedToken, token.offset())),
         }
     }
     if at_directives {
-        return Err(SyntaxError);
+        return Err(SyntaxError(
+            Message::ExpectedDocumentStart,
+            text.len() as u32,
+        ));
     }
     if documents.is_empty() {
         let end = text.len() as u32;

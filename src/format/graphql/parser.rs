@@ -5,6 +5,7 @@
 //! which are all the nodes that graphql-js has in it. What a child is to its parent is told from its
 //! kind and its place among the others.
 
+use crate::syntax_error::{Message, SyntaxError};
 use bun_lint::span::Span;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -140,10 +141,6 @@ impl Tree {
     }
 }
 
-/// The text is not GraphQL.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct SyntaxError;
-
 type Result<T> = std::result::Result<T, SyntaxError>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -256,7 +253,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Result<()> {
     tree.comments.clear();
     tree.pending.clear();
     if u32::try_from(text.len()).is_err() {
-        return Err(SyntaxError);
+        return Err(SyntaxError(Message::TooLarge, 0));
     }
     let mut parser = Parser {
         text,
@@ -271,6 +268,20 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Result<()> {
         stack_check: bun_core::StackCheck::init(),
     };
     parser.parse_document()
+}
+
+/// What is said where there is no token of `kind`.
+#[cold]
+fn expected(kind: TokenKind) -> Message {
+    match kind {
+        TokenKind::Name => Message::ExpectedName,
+        TokenKind::Colon => Message::ExpectedColon,
+        TokenKind::BraceL => Message::ExpectedOpeningBrace,
+        TokenKind::BraceR => Message::ExpectedClosingBrace,
+        TokenKind::ParenR => Message::ExpectedClosingParenthesis,
+        TokenKind::BracketR => Message::ExpectedClosingBracket,
+        _ => Message::UnexpectedToken,
+    }
 }
 
 impl Parser<'_> {
@@ -348,7 +359,7 @@ impl Parser<'_> {
                         .count();
                     return token(TokenKind::Name, position, position + len);
                 }
-                _ => return Err(SyntaxError),
+                _ => return Err(SyntaxError(Message::UnexpectedCharacter, position as u32)),
             };
             return token(punctuator, position, position + 1);
         }
@@ -358,7 +369,7 @@ impl Parser<'_> {
     fn read_digits(&self, position: usize) -> Result<usize> {
         let rest = self.text.get(position..).unwrap_or_default();
         match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
-            0 => Err(SyntaxError),
+            0 => Err(SyntaxError(Message::ExpectedDigit, position as u32)),
             count => Ok(position + count),
         }
     }
@@ -375,7 +386,7 @@ impl Parser<'_> {
                 .byte(position)
                 .is_some_and(|byte| byte.is_ascii_digit())
             {
-                return Err(SyntaxError);
+                return Err(SyntaxError(Message::InvalidNumber, start as u32));
             }
         } else {
             position = self.read_digits(position)?;
@@ -393,7 +404,9 @@ impl Parser<'_> {
             position = self.read_digits(position)?;
         }
         match self.byte(position) {
-            Some(byte) if byte == b'.' || is_name_start(byte) => Err(SyntaxError),
+            Some(byte) if byte == b'.' || is_name_start(byte) => {
+                Err(SyntaxError(Message::InvalidNumber, start as u32))
+            }
             _ => Ok((kind, position)),
         }
     }
@@ -403,13 +416,16 @@ impl Parser<'_> {
         let mut position = start + 1;
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
-            position += bun_core::strings::index_of_any(rest, b"\"\\\n\r").ok_or(SyntaxError)?;
+            position += bun_core::strings::index_of_any(rest, b"\"\\\n\r")
+                .ok_or(SyntaxError(Message::UnclosedString, start as u32))?;
             match self.byte(position) {
                 Some(b'"') => return Ok(position + 1),
                 Some(b'\\') => {
-                    position += read_escape(&self.text[position..]).ok_or(SyntaxError)?.1
+                    position += read_escape(&self.text[position..])
+                        .ok_or(SyntaxError(Message::InvalidEscapeSequence, position as u32))?
+                        .1
                 }
-                _ => return Err(SyntaxError),
+                _ => return Err(SyntaxError(Message::UnclosedString, start as u32)),
             }
         }
     }
@@ -418,7 +434,8 @@ impl Parser<'_> {
         let mut position = start + 3;
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
-            position += bun_core::strings::index_of(rest, b"\"\"\"").ok_or(SyntaxError)?;
+            position += bun_core::strings::index_of(rest, b"\"\"\"")
+                .ok_or(SyntaxError(Message::UnclosedString, start as u32))?;
             // `\"""` is not the end.
             if position > start + 3 && self.byte(position - 1) == Some(b'\\') {
                 position += 3;
@@ -464,10 +481,20 @@ impl Parser<'_> {
         token.kind == TokenKind::Name && self.text_of(token) == keyword
     }
 
+    /// `message`, where the current token is.
+    #[cold]
+    fn unexpected(&self, message: Message) -> SyntaxError {
+        let message = match self.token.kind {
+            TokenKind::EndOfFile => Message::UnexpectedEnd,
+            _ => message,
+        };
+        SyntaxError(message, self.token.start)
+    }
+
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         let token = self.token;
         if token.kind != kind {
-            return Err(SyntaxError);
+            return Err(self.unexpected(expected(kind)));
         }
         self.advance()?;
         Ok(token)
@@ -484,7 +511,7 @@ impl Parser<'_> {
     fn expect_keyword(&mut self, keyword: &[u8]) -> Result<()> {
         match self.eat_keyword(keyword)? {
             true => Ok(()),
-            false => Err(SyntaxError),
+            false => Err(self.unexpected(Message::UnexpectedToken)),
         }
     }
 
@@ -531,7 +558,7 @@ impl Parser<'_> {
     fn check_depth(&self) -> Result<()> {
         match self.stack_check.is_safe_to_recurse() {
             true => Ok(()),
-            false => Err(SyntaxError),
+            false => Err(SyntaxError(Message::NestedTooDeeply, self.token.start)),
         }
     }
 
@@ -599,7 +626,7 @@ impl Parser<'_> {
     fn parse_name(&mut self) -> Result<()> {
         match self.peek(TokenKind::Name) {
             true => self.token_as(Kind::Name, 0),
-            false => Err(SyntaxError),
+            false => Err(self.unexpected(Message::ExpectedName)),
         }
     }
 
@@ -625,7 +652,7 @@ impl Parser<'_> {
             self.token
         };
         if keyword.kind != TokenKind::Name {
-            return Err(SyntaxError);
+            return Err(self.unexpected(Message::ExpectedDefinition));
         }
         match self.text_of(keyword) {
             b"schema" => self.parse_schema_definition(),
@@ -641,7 +668,7 @@ impl Parser<'_> {
             b"query" | b"mutation" | b"subscription" => self.parse_operation_definition(),
             b"fragment" => self.parse_fragment_definition(),
             b"extend" if !has_description => self.parse_type_system_extension(),
-            _ => Err(SyntaxError),
+            _ => Err(self.unexpected(Message::ExpectedDefinition)),
         }
     }
 
@@ -669,7 +696,7 @@ impl Parser<'_> {
             b"query" => Ok(QUERY),
             b"mutation" => Ok(MUTATION),
             b"subscription" => Ok(SUBSCRIPTION),
-            _ => Err(SyntaxError),
+            _ => Err(SyntaxError(Message::ExpectedDefinition, token.start)),
         }
     }
 
@@ -796,7 +823,7 @@ impl Parser<'_> {
 
     fn parse_fragment_name(&mut self) -> Result<()> {
         match self.is_keyword(self.token, b"on") {
-            true => Err(SyntaxError),
+            true => Err(self.unexpected(Message::ExpectedName)),
             false => self.parse_name(),
         }
     }
@@ -848,7 +875,7 @@ impl Parser<'_> {
                 self.token_as(kind, 0)
             }
             TokenKind::Dollar if !is_const => self.parse_variable(),
-            _ => Err(SyntaxError),
+            _ => Err(self.unexpected(Message::ExpectedValue)),
         }
     }
 
@@ -1054,7 +1081,7 @@ impl Parser<'_> {
         let begin = self.begin();
         self.parse_description()?;
         if matches!(self.text_of(self.token), b"true" | b"false" | b"null") {
-            return Err(SyntaxError);
+            return Err(self.unexpected(Message::ExpectedName));
         }
         self.parse_name()?;
         self.parse_const_directives()?;
@@ -1135,10 +1162,10 @@ impl Parser<'_> {
                 self.parse_name()?;
                 (Kind::DirectiveExtension, self.parse_const_directives()?)
             }
-            _ => return Err(SyntaxError),
+            _ => return Err(self.unexpected(Message::ExpectedDefinition)),
         };
         if !adds_something {
-            return Err(SyntaxError);
+            return Err(self.unexpected(Message::EmptyExtension));
         }
         self.finish(kind, 0, begin);
         Ok(())
@@ -1189,7 +1216,7 @@ impl Parser<'_> {
         ];
         match LOCATIONS.contains(&self.text_of(self.token)) {
             true => self.parse_name(),
-            false => Err(SyntaxError),
+            false => Err(self.unexpected(Message::ExpectedDirectiveLocation)),
         }
     }
 }

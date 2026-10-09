@@ -96,7 +96,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         all.extend(variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)));
         if let Some(added) = all.get_mut(from..) {
             let folded = |it: &(Cow<'static, [u8]>, Global)| it.0.to_ascii_lowercase();
-            added.sort_by_cached_key(folded);
+            crate::utils::sort::sort_by_cached_key(added, folded);
         }
     };
     let versions = tables::ECMA_VERSIONS.iter();
@@ -162,7 +162,7 @@ impl ConfigGlobals {
         );
         // Of two with the same name, the later one counts.
         settings.reverse();
-        settings.sort_by(|a, b| a.0.cmp(&b.0));
+        crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
         settings.dedup_by(|a, b| a.0 == b.0);
         ConfigGlobals {
             settings,

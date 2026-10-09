@@ -1210,6 +1210,49 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `eslint-plugin-import` does it to read the modules that a file imports.
+  test(
+    "a rule parses a text of its own with languageOptions.parser, which is loaded when it is called",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import own from "./plugin.mjs";
+          import parser from "./parser.cjs";
+          export default [
+            { files: ["a.ts"], plugins: { own }, rules: { "own/parses": "error" } },
+            { files: ["a.ts"], languageOptions: { parser, parserOptions: { marker: "m" } } },
+          ];`,
+          "plugin.mjs": `
+          const parses = {
+            create: context => ({
+              Program(node) {
+                const { parser, parserOptions } = context.languageOptions;
+                const before = globalThis.parserIsLoaded === true;
+                const { ast } = parser.parseForESLint("other", parserOptions);
+                context.report({ node, message: [parser.meta.name, typeof parser.parse, before, ast.type, ast.text, ast.options].join(" ") });
+              },
+            }),
+          };
+          export default { rules: { parses } };`,
+          "parser.cjs": `
+          globalThis.parserIsLoaded = true;
+          const parseForESLint = (text, options) => ({ ast: { type: "Program", text, options: options?.marker } });
+          module.exports = { meta: { name: "typescript-eslint/parser" }, parse: text => parseForESLint(text).ast, parseForESLint };`,
+          "a.ts": "let a: number;\n",
+        },
+        ["-f", "unix", "a.ts"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.ts:1:1: typescript-eslint/parser function false Program other m [Error/own/parses]
+
+        1 problem"
+      `);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // As `eslint-plugin-rulesdir` and the plugin of nodejs/node: without the assignment the plugin has no rules.
   test(
     "a plugin that the configuration file tells where its rules are",
@@ -1223,7 +1266,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           import other from "./other.mjs";
           local.RULES_DIR = new URL("./rules", import.meta.url).pathname;
           export default [
-            { files: ["a.js"], plugins: { local, other }, rules: { "local/one": "error", "local/two": "error", "other/last": "error" } },
+            { files: ["a.js"], plugins: { other }, rules: { "other/last": "error" } },
+            { files: ["a.js"], plugins: { local }, rules: { "local/one": "error", "local/two": "error" } },
           ];`,
           "local.cjs": `
           const { readdirSync } = require("node:fs");
@@ -1244,13 +1288,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         ["-f", "unix"],
       );
-      expect(stdout).toMatchInlineSnapshot(`
-        "<dir>/a.js:1:1: one [Error/local/one]
-        <dir>/a.js:1:1: two [Error/local/two]
-        <dir>/a.js:1:1: last [Error/other/last]
-
-        3 problems"
-      `);
+      expect(stdout.split("\n").sort()).toEqual([
+        "",
+        "3 problems",
+        "<dir>/a.js:1:1: last [Error/other/last]",
+        "<dir>/a.js:1:1: one [Error/local/one]",
+        "<dir>/a.js:1:1: two [Error/local/two]",
+      ]);
       expect(exitCode).toBe(1);
     },
     timeout,

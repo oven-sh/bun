@@ -2,7 +2,7 @@
 //
 //   sudo bun repos.ts --work=<work of ../repos/run.ts> --out=<jsonl> [--only=owner/repo,..] [--manifest=<path>]
 //                     [--judge=<oxlint>] [--judge-only] [--tool="<path> <arguments>"] [--all] [--runs=<directory>]
-//                     [--cpus=0-7] [--seconds=600] [--memory-kb=8000000]
+//                     [--config=<file>] [--cpus=0-7] [--seconds=600] [--memory-kb=8000000]
 //
 // The clones are those of `../repos/run.ts --stages=clone,install`. Each command runs in its sandbox, in a copy of the clone.
 // Their oxlint runs if it has the rules (1.79.0 or later), else the judge: `--judge`, or the one in <work>/.tools. With
@@ -13,8 +13,11 @@
 // Their arguments, but for those that hide diagnostics (`--quiet`) and those that cost time and change nothing for these rules
 // (`--type-aware`, `--type-check`). A repository is left out if `--print-config` does not have the plugin `react`, unless `--all`.
 //
-// The output: a line {"repo", "version", "files", "exit", ..} for each run, then a line as of oxlint.ts for each file that has
-// diagnostics of the rules; the path starts with `owner__repo/`.
+// With `--config` nothing of a repository's configuration is read: one run for each repository, over all its files, with that file
+// (`-c <file> --disable-nested-config .`). Repositories switch on some of the rules; this judges all of them on real code.
+//
+// The output: a line {"repo", "version", "files", "exit", "seconds", "cpu", "rssMb", ..} for each run, then a line as of oxlint.ts
+// for each file that has diagnostics of the rules or a syntax error; the path starts with `owner__repo/`.
 
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
@@ -42,6 +45,7 @@ const manifest: Entry[] = JSON.parse(readFileSync(manifestPath, "utf8"));
 const only = flags.has("only") ? new Set(flags.get("only")!.split(",")) : null;
 const judge = resolve(flags.get("judge") ?? join(tools, "node_modules", ".bin", "oxlint"));
 const instead = flags.get("tool")?.split(" ") ?? null;
+const ownConfig = flags.has("config") ? realpathSync(flags.get("config")!) : null;
 const limits: Limits = {
   cpus: flags.get("cpus") ?? null,
   memoryKb: Number(flags.get("memory-kb") ?? 8_000_000),
@@ -64,7 +68,7 @@ async function inCopy(
   entry: Entry,
   run: Run,
   cmd: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
+): Promise<{ code: number; stdout: string; stderr: string; seconds: number; cpu: number; rssMb: number }> {
   const runs = join(allRuns, nameOf(entry.repo));
   const base = join(runs, `react-compiler-${process.pid}-${serial++}`);
   const [upper, scratch, out] = ["upper", "work", "out"].map(name => ownDirectory(join(base, name)));
@@ -73,14 +77,29 @@ async function inCopy(
     cmd,
     cwd: join(clone, run.cwd ?? "."),
     env: run.env,
-    ro: [tools, around(judge), ...(instead ? [around(instead[0])] : [])].filter(existsSync),
+    ro: [
+      tools,
+      around(judge),
+      ...(instead ? [around(instead[0])] : []),
+      ...(ownConfig ? [dirname(ownConfig)] : []),
+    ].filter(existsSync),
     rw: [out],
     overlay: { lower: clone, upper, work: scratch },
     stdout: join(out, "stdout"),
     stderr: join(out, "stderr"),
+    time: join(out, "time"),
     limits,
   });
-  const result = { code, stdout: read(join(out, "stdout")), stderr: read(join(out, "stderr")) };
+  // `time` writes a line of its own first if the command fails.
+  const [seconds, user, system, rss] = (read(join(out, "time")).trim().split("\n").at(-1) ?? "").split(" ").map(Number);
+  const result = {
+    code,
+    stdout: read(join(out, "stdout")),
+    stderr: read(join(out, "stderr")),
+    seconds,
+    cpu: Math.round((user + system) * 100) / 100,
+    rssMb: Math.round(rss / 1024),
+  };
   if (!realpathSync(base).startsWith(realpathSync(runs) + "/react-compiler-"))
     throw new Error(`not a directory of this script: ${base}`);
   rmSync(base, { recursive: true, force: true });
@@ -118,7 +137,10 @@ const byRule = new Map<string, number>(RULE_NAMES.map(rule => [rule, 0]));
 for (const entry of manifest) {
   if (only !== null && !only.has(entry.repo)) continue;
   if (!existsSync(join(work, nameOf(entry.repo), ".git"))) continue;
-  for (const run of entry.lint ?? []) {
+  const runs: Run[] = ownConfig
+    ? [{ tool: "oxlint", args: ["-c", ownConfig, "--disable-nested-config", "."] }]
+    : (entry.lint ?? []);
+  for (const run of runs) {
     if (run.tool !== "oxlint") continue;
     let command = instead;
     let version: string | null = null;
@@ -135,7 +157,7 @@ for (const entry of manifest) {
       }
     }
     const args = [...run.args, ...(run.theirArgs ?? [])].filter(arg => !DROPPED.test(arg));
-    if (!flags.has("all")) {
+    if (!flags.has("all") && ownConfig === null) {
       const at = args.findIndex(arg => arg === "-c" || arg === "--config");
       const config = at >= 0 ? args.slice(at, at + 2) : args.filter(arg => /^(?:--config|-c)=/.test(arg));
       const plugin = args.includes("--react-plugin");
@@ -151,19 +173,32 @@ for (const entry of manifest) {
     }
     let diagnostics = 0;
     let files = 0;
-    const header = { repo: entry.repo, cwd: run.cwd ?? ".", args, whose, version, exit: result.code };
+    const { seconds, cpu, rssMb } = result;
+    const header = {
+      repo: entry.repo,
+      cwd: run.cwd ?? ".",
+      args,
+      whose,
+      version,
+      exit: result.code,
+      seconds,
+      cpu,
+      rssMb,
+    };
     if (report === null) {
       writer.write({ ...header, failed: (result.stderr + result.stdout).slice(0, 1500) });
     } else {
       writer.write({ ...header, files: report.number_of_files, rules: report.number_of_rules });
       for (const [file, found] of [...byFile(report)].sort(([a], [b]) => (a < b ? -1 : 1))) {
         const ofTheRules = found.filter(d => d.rule !== null && RULE_NAMES.includes(d.rule));
-        if (ofTheRules.length === 0) continue;
-        files++;
+        // A syntax error has no code, or one like `TS(8016)`.
+        const isRefused = found.some(d => d.rule === null || /^[A-Z]+\//.test(d.rule));
+        if (ofTheRules.length === 0 && !isRefused) continue;
+        if (ofTheRules.length > 0) files++;
         diagnostics += ofTheRules.length;
         for (const diagnostic of ofTheRules) byRule.set(diagnostic.rule!, byRule.get(diagnostic.rule!)! + 1);
         const path = normalize(join(nameOf(entry.repo), run.cwd ?? ".", file));
-        writer.write({ path, parse: "ok", diagnostics: ofTheRules });
+        writer.write({ path, parse: isRefused ? "error" : "ok", diagnostics: ofTheRules });
       }
     }
     rows.push([
@@ -174,13 +209,19 @@ for (const entry of manifest) {
       report?.number_of_files ?? 0,
       files,
       diagnostics,
+      Number.isFinite(seconds) ? seconds : 0,
+      Number.isFinite(cpu) ? cpu : 0,
+      Number.isFinite(rssMb) ? rssMb : 0,
     ]);
   }
 }
 writer.close();
 console.log(
   table(
-    ["Repository", "Whose oxlint", "Version", "Exit", "Files", "Files with diagnostics", "Diagnostics of the 22 rules"],
+    [
+      ...["Repository", "Whose oxlint", "Version", "Exit", "Files", "Files with diagnostics"],
+      ...["Diagnostics of the 22 rules", "Wall (s)", "CPU (s)", "Max RSS (MB)"],
+    ],
     rows,
   ),
 );

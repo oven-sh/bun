@@ -2,6 +2,7 @@
 
 use super::Error;
 use super::positions::Positions;
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::white_space_len;
 use bun_core::strings;
 
@@ -172,17 +173,23 @@ impl Lexer<'_> {
         Some(from + strings::index_of(self.text.get(from..)?, needle)?)
     }
 
+    /// `message`, where the lexer is.
+    #[cold]
+    fn error(&self, message: Message) -> Error {
+        Error::Syntax(SyntaxError(message, self.at as u32))
+    }
+
     fn initial(&mut self) -> Result<(), Error> {
         let at = self.at;
         let Some(mustache) = self.find(b"{{", at) else {
             if !self.is_without_nul(self.text.len()) {
-                return Err(Error::Syntax);
+                return Err(self.error(Message::UnexpectedCharacter));
             }
             self.token(TokenKind::Content, self.text.len() - at);
             return Ok(());
         };
         if !self.is_without_nul(mustache) {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::UnexpectedCharacter));
         }
         let content = &self.text[at..mustache];
         let (end, state) = if content.ends_with(b"\\\\") {
@@ -216,7 +223,7 @@ impl Lexer<'_> {
             }
         };
         if !self.is_without_nul(end) {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::UnexpectedCharacter));
         }
         self.pop_state();
         self.token(TokenKind::Content, end - self.at);
@@ -227,7 +234,9 @@ impl Lexer<'_> {
     fn comment(&mut self) -> Result<(), Error> {
         let mut from = self.at;
         loop {
-            let dashes = self.find(b"--", from).ok_or(Error::Syntax)?;
+            let dashes = self
+                .find(b"--", from)
+                .ok_or_else(|| self.error(Message::UnclosedComment))?;
             let rest = &self.text[dashes + 2..];
             let rest_len = rest.len();
             if let Some(rest) = rest.strip_prefix(b"~").unwrap_or(rest).strip_prefix(b"}}") {
@@ -270,9 +279,11 @@ impl Lexer<'_> {
                 }
             }
         }
-        let end = self.find(b"{{{{", self.at + 1).ok_or(Error::Syntax)?;
+        let end = self
+            .find(b"{{{{", self.at + 1)
+            .ok_or_else(|| self.error(Message::UnclosedBlock))?;
         if !self.is_without_nul(end) {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::UnexpectedCharacter));
         }
         self.token(TokenKind::Content, end - self.at);
         Ok(())
@@ -318,7 +329,8 @@ impl Lexer<'_> {
                 self.states.push(State::Com);
             }
             Some(b'!') => {
-                let end = strings::index_of(&rest[at + 1..], b"}}").ok_or(Error::Syntax)?;
+                let end = strings::index_of(&rest[at + 1..], b"}}")
+                    .ok_or_else(|| self.error(Message::UnclosedComment))?;
                 self.pop_state();
                 self.token(TokenKind::Comment, at + 1 + end + 2);
             }
@@ -347,11 +359,15 @@ impl Lexer<'_> {
     fn mustache(&mut self) -> Result<(), Error> {
         let rest = &self.text[self.at..];
         let followed_by = |word: &[u8]| rest.strip_prefix(word).is_some_and(is_literal_lookahead);
-        match *rest.first().ok_or(Error::Syntax)? {
+        match *rest
+            .first()
+            .ok_or_else(|| self.error(Message::UnexpectedEnd))?
+        {
             b'(' => self.token(TokenKind::OpenSexpr, 1),
             b')' => self.token(TokenKind::CloseSexpr, 1),
             b'[' => {
-                let len = delimited_len(rest, b']').ok_or(Error::Syntax)?;
+                let len = delimited_len(rest, b']')
+                    .ok_or_else(|| self.error(Message::UnclosedBracket))?;
                 self.token(TokenKind::Id, len);
             }
             b'{' if rest.starts_with(b"{{") => return self.open(),
@@ -381,7 +397,8 @@ impl Lexer<'_> {
             b'.' if rest.starts_with(b".#") => self.token(TokenKind::PrivateSep, 2),
             b'.' | b'/' => self.token(TokenKind::Sep, 1),
             quote @ (b'"' | b'\'') => {
-                let len = delimited_len(rest, quote).ok_or(Error::Syntax)?;
+                let len = delimited_len(rest, quote)
+                    .ok_or_else(|| self.error(Message::UnclosedString))?;
                 self.token(TokenKind::String, len);
             }
             b'@' => self.token(TokenKind::Data, 1),
@@ -405,7 +422,7 @@ impl Lexer<'_> {
                 }
                 let len = id_len(rest);
                 if len == 0 || !is_lookahead(&rest[len..]) {
-                    return Err(Error::Syntax);
+                    return Err(self.error(Message::UnexpectedCharacter));
                 }
                 self.token(TokenKind::Id, len);
             }
@@ -457,7 +474,7 @@ pub(crate) fn lex(
         if lexer.at >= text.len() {
             // Only there is the end of the text something that the grammar can go on with.
             if state != State::Initial {
-                return Err(Error::Syntax);
+                return Err(lexer.error(Message::UnexpectedEnd));
             }
             lexer.token(TokenKind::Eof, 0);
             positions.finish(text);

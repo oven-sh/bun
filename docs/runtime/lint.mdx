@@ -86,10 +86,9 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
 - The rules in JavaScript run on one thread at first. More such threads are started, 16 at most, if the files that are left take long enough for that to pay: each has to load the plugins again.
 
-Three things are not there for a rule in JavaScript:
+Two things are not there for a rule in JavaScript:
 
 - Types. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
-- `languageOptions.parser`. A rule cannot parse text of its own.
 - Parsers other than those of ESLint and typescript-eslint, and languages other than JavaScript.
 
 ### Processors

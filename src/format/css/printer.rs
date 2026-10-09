@@ -12,6 +12,7 @@ use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
 use super::value_parser::{Before, ValueId, ValueKind, Values};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
 use std::borrow::Cow;
 
@@ -106,7 +107,7 @@ pub(crate) struct Printer<'a, 'o> {
     /// For a text that is made to be written.
     pub(crate) scratch: Vec<u8>,
     /// Prettier throws an error for the style sheet.
-    pub(crate) has_failed: bool,
+    pub(crate) failure: Option<SyntaxError>,
     pub(crate) sink: Sink<'o>,
     pub(crate) memo: &'o mut Memo,
     /// What has been printed of the declaration depends on nothing but its text and what `memo_context` takes into
@@ -242,10 +243,16 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
+    /// The style sheet is refused. The first reason is the one that is given.
+    #[cold]
+    pub(crate) fn fail(&mut self, error: SyntaxError) {
+        self.failure.get_or_insert(error);
+    }
+
     pub(crate) fn print_root(&mut self, tree: &Tree, parsed: &mut Parsed) {
-        let Ok(root) = self.context.convert(tree, 0, parsed) else {
-            self.has_failed = true;
-            return;
+        let root = match self.context.convert(tree, 0, parsed) {
+            Ok(root) => root,
+            Err(error) => return self.fail(error),
         };
         let mut after = text::trim(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
@@ -517,10 +524,12 @@ impl<'a> Printer<'a, '_> {
         let mut own = None;
         let converted = converted.unwrap_or(&mut own);
         if converted.is_none() {
-            *converted = self.context.convert(tree, id, parsed).ok();
+            match self.context.convert(tree, id, parsed) {
+                Ok(node) => *converted = Some(node),
+                Err(error) => return self.fail(error),
+            }
         }
         let Some(node) = converted else {
-            self.has_failed = true;
             return;
         };
         let scope = Scope {
@@ -537,7 +546,7 @@ impl<'a> Printer<'a, '_> {
         }
         if let Some(((context, text), position)) = position
             && self.is_memoizable
-            && !self.has_failed
+            && self.failure.is_none()
             && let Some((output, has_group)) = self.sink.written_since(position)
         {
             self.memo.insert(context, text, output, has_group);
@@ -807,7 +816,10 @@ impl<'a> Printer<'a, '_> {
         let parent = scope.parent.map(|parent| parent.node);
         // What Prettier makes of `--a: { .. }` has no `raws` to look at.
         if parent.is_some_and(|parent| matches!(parent.value, Value::Rule(_))) {
-            self.has_failed = true;
+            self.fail(SyntaxError(
+                Message::UnreadableValue,
+                scope.node.start as u32,
+            ));
         }
         parent.is_some_and(|parent| !parent.semicolon)
             && scope

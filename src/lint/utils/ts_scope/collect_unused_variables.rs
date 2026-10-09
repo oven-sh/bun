@@ -904,7 +904,7 @@ impl Ranges {
     }
 
     fn of(mut sorted: Vec<Span>) -> Ranges {
-        sorted.sort_unstable_by_key(|it| it.start);
+        crate::utils::sort::sort_unstable_by_key(&mut sorted, |it| it.start);
         let mut end = 0;
         for range in &mut sorted {
             end = end.max(range.end);

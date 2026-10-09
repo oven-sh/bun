@@ -481,6 +481,9 @@ pub(super) fn lower_assignment(
     value: Place,
     assignment_style: AssignmentStyle,
 ) -> Result<Option<Place>, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     match &target.data {
         Data::EIdentifier(_) | Data::EImportIdentifier(_) => {
             let ref_ = assignment_target_ref(target).unwrap();
@@ -1184,6 +1187,9 @@ fn lower_optional_member_expression_impl(
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<(Place, Place), CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let optional = matches!(optional_chain_of(expr), Some(OptionalChain::Start));
     let loc = convert_loc(expr.loc);
     let place = build_temporary_place(builder, loc);
@@ -1304,6 +1310,9 @@ fn lower_optional_call_expression_impl(
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let Data::ECall(call) = &expr.data else {
         return Err(cold_todo(
             "lower_optional_call_expression: expected ECall",

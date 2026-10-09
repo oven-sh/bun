@@ -418,13 +418,13 @@ pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMes
             source,
         });
     }
-    blocks.sort_by_key(|it| (it.line, it.column));
-    lines.sort_by_key(|it| (it.line, it.column));
+    crate::utils::sort::sort_by_key(&mut blocks, |it| (it.line, it.column));
+    crate::utils::sort::sort_by_key(&mut lines, |it| (it.line, it.column));
     let mut unused = Vec::new();
     input.apply(&blocks, messages, &mut unused);
     input.apply(&lines, messages, &mut unused);
     if !unused.is_empty() {
         messages.append(&mut unused);
-        messages.sort_by_key(|it| (it.line, it.column));
+        crate::utils::sort::sort_by_key(messages, |it| (it.line, it.column));
     }
 }

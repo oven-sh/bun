@@ -337,7 +337,7 @@ impl Candidates {
                 found.push((2 * tag as u8 + u8::from(is_chained), i as u32));
             }
         }
-        found.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut found);
         Candidates { found }
     }
 
@@ -366,7 +366,7 @@ impl Candidates {
                 at += next + 1;
             }
         }
-        found.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut found);
         Candidates { found }
     }
 
@@ -1279,7 +1279,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         let mut sorted: SmallVec<[(u32, Binding); 4]> = declarations
             .filter_map(|it| Some((it.name_span()?.start, Binding::of(it, scope)?)))
             .collect();
-        sorted.sort_unstable_by_key(|it| it.0);
+        crate::utils::sort::sort_unstable_by_key(&mut sorted, |it| it.0);
         let as_var = Self::treats_functions_as_var(scope);
         let (mut lexical, mut function, mut var) = (false, false, false);
         for (at, binding) in sorted {

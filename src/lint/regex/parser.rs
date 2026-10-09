@@ -256,7 +256,7 @@ impl Builder<'_> {
             let all = self.capturing_groups.iter();
             with_name
                 .extend(all.filter_map(|&group| Some((name_of(&self.ast.nodes, group)?, group))));
-            with_name.sort_by_key(|it| text_of(it.0));
+            crate::utils::sort::sort_by_key(&mut with_name, |it| text_of(it.0));
             let mut first = 0;
             for same in with_name.chunk_by(|a, b| text_of(a.0) == text_of(b.0)) {
                 names.push(Named {
@@ -319,7 +319,7 @@ impl Builder<'_> {
                 set_references(self, group, list);
             }
         }
-        by_number.sort_by_key(|(group, _)| group.0);
+        crate::utils::sort::sort_by_key(&mut by_number, |(group, _)| group.0);
         for same in by_number.chunk_by(|a, b| a.0 == b.0) {
             let group = same[0].0;
             let by_name = name_of(&self.ast.nodes, group)
@@ -335,7 +335,7 @@ impl Builder<'_> {
                 .map(|it| it.1)
                 .chain(by_name.iter().copied())
                 .collect();
-            all.sort_by_key(|it| it.0);
+            crate::utils::sort::sort_by_key(&mut all, |it| it.0);
             let list = self.list(all.into_iter());
             set_references(self, group, list);
         }

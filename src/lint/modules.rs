@@ -217,7 +217,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
             });
         }
     }
-    requests.sort_unstable_by_key(|it| it.line);
+    crate::utils::sort::sort_unstable_by_key(&mut requests, |it| it.line);
     match flavor {
         Flavor::EslintPluginImport => {
             add_static_requests(file, &mut requests);
@@ -367,7 +367,9 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
 /// a small part.
 pub fn set_lines(text: &[u8], requests: &mut [Request]) {
     let mut order: SmallVec<[u32; 32]> = (0..requests.len() as u32).collect();
-    order.sort_unstable_by_key(|&at| requests[at as usize].line);
+    crate::utils::sort::sort_indices_unstable(&mut order, &mut |a, b| {
+        requests[a as usize].line.cmp(&requests[b as usize].line)
+    });
     let (mut line, mut line_end) = (1, 0);
     for at in order {
         let offset = requests[at as usize].line as usize;

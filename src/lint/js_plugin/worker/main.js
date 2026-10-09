@@ -265,7 +265,33 @@ async function loadSettings([id, settings, sources]) {
   for (const { config, index } of sources) merged = deepMerge(merged, (await configObjects(config))[index].settings);
   loadingTime += performance.now() - started;
   allSettings.set(id, { ...settings, settings: merged });
+  addParser(settings);
   return DONE;
+}
+
+// The parser of ESLint itself, of the `eslint` that is installed.
+function espree() {
+  try {
+    const eslint = createRequire(nodePath.join(cwd, "noop.js")).resolve("eslint/package.json");
+    return createRequire(eslint)("espree");
+  } catch {
+    return undefined;
+  }
+}
+
+// `languageOptions.parser`, with which a rule parses another file than the one that is linted. `parser`: `null`, or what
+// `describeParser` in `evaluate-eslint.js` says about it. It is loaded when one of its functions is called.
+function addParser({ languageOptions, parser: known }) {
+  let loaded;
+  if (known === null) {
+    const get = () => (loaded ??= espree() ?? null) ?? undefined;
+    Object.defineProperty(languageOptions, "parser", { get, enumerable: true, configurable: true });
+    return;
+  }
+  // One that only the configuration file has cannot be called.
+  const names = known.module === undefined ? [] : known.functions;
+  const functions = names.map(name => [name, (...args) => (loaded ??= ruleAt(known))[name](...args)]);
+  languageOptions.parser = { ...known.values, ...Object.fromEntries(functions) };
 }
 
 function deepFreeze(value) {
@@ -661,6 +687,7 @@ function lint() {
     if ((flags & 8) !== 0) return NEEDS_SETTINGS;
     allSettings.set(settingsId, (fileSettings = askForJson(SETTINGS)));
     if (fileSettings.freezes) deepFreeze(fileSettings);
+    else addParser(fileSettings);
   }
   const entries = Array.from(ids, (id, position) => configured.get(id) ?? configure(id, position));
   const unloaded = new Set(entries.filter(it => typeof it === "number"));

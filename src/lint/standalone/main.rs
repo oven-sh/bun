@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod ast_cmd;
+mod code_frame_cmd;
 mod code_path_cmd;
 mod conformance_cmd;
 mod driver_cmd;
@@ -231,6 +232,7 @@ fn main() {
         Some("selector") => selector_cmd::run(&args[1..]),
         Some("plugins") => plugins_cmd::run(&args[1..]),
         Some("react-compiler") => react_compiler_cmd::run(&args[1..]),
+        Some("code-frame") => code_frame_cmd::run(&args[1..]),
         Some("js_plugin") => js_plugin_cmd::run(&args[1..]),
         Some("jsdoc") => jsdoc_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),

@@ -8,6 +8,7 @@ use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
 use super::positions::Positions;
 use super::{Error, MAX_DEPTH};
+use crate::syntax_error::{Message, SyntaxError};
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -270,6 +271,17 @@ impl Builder<'_> {
         list
     }
 
+    /// `message`, where the tokenizer is.
+    #[cold]
+    fn error(&self, message: Message) -> Error {
+        self.error_at(message, self.index)
+    }
+
+    #[cold]
+    fn error_at(&self, message: Message, at: usize) -> Error {
+        Error::Syntax(SyntaxError(message, at as u32))
+    }
+
     fn finish_tag(&mut self) -> Result<(), Error> {
         if self.tag.is_end {
             return self.finish_end_tag(false);
@@ -302,7 +314,7 @@ impl Builder<'_> {
         });
         let name = self.text(self.tag.name);
         if name == b":" {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::InvalidTagName, self.tag.start));
         }
         if is_void_tag(name) || self.tag.is_self_closing {
             return self.finish_end_tag(true);
@@ -311,13 +323,16 @@ impl Builder<'_> {
     }
 
     fn finish_end_tag(&mut self, is_void: bool) -> Result<(), Error> {
-        let frame = self.stack.pop().ok_or(Error::Syntax)?;
+        let frame = self
+            .stack
+            .pop()
+            .ok_or_else(|| self.error_at(Message::EndTagWithoutStartTag, self.tag.start))?;
         let Kind::Element { tag, .. } = self.tree.kind(frame.element) else {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::EndTagWithoutStartTag, self.tag.start));
         };
         let name = self.text(self.tag.name);
         if (is_void_tag(name) && !is_void) || self.text(tag) != name {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::EndTagWithoutStartTag, self.tag.start));
         }
         let list = self.take_children(frame.base);
         let end = self.position() as u32;
@@ -394,14 +409,14 @@ impl Builder<'_> {
             ..
         } = self.attribute;
         if self.tag.is_end {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::AttributeInEndTag, start));
         }
         if self.text(name).starts_with(b"|")
             && self.attribute_parts.is_empty()
             && !is_quoted
             && !is_dynamic
         {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::InvalidBlockParameters, start));
         }
         // `assembleAttributeValue`
         let value = match self.attribute_parts[..] {
@@ -412,7 +427,7 @@ impl Builder<'_> {
             [head] => head,
             [head, next, ..] => match self.tree.kind(next) {
                 Kind::Text { chars } if self.text(chars) == b"/" => head,
-                _ => return Err(Error::Syntax),
+                _ => return Err(self.error_at(Message::UnquotedValueWithMustache, value_start)),
             },
             [] => self.tree.add(Kind::Text { chars: Text::EMPTY }, 0, 0),
         };
@@ -432,7 +447,7 @@ impl Builder<'_> {
                 self.state = State::AfterAttributeName;
                 self.index += 1;
             }
-            Some(b'|') => return Err(Error::Syntax),
+            Some(b'|') => return Err(self.error(Message::InvalidBlockParameters)),
             _ => return Ok(()),
         }
         loop {
@@ -445,23 +460,31 @@ impl Builder<'_> {
         self.state = State::BeforeAttributeName;
         self.index += 1;
         if self.tag.is_end {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::InvalidBlockParameters));
         }
         loop {
-            match self.peek().ok_or(Error::Syntax)? {
+            match self
+                .peek()
+                .ok_or_else(|| self.error(Message::InvalidBlockParameters))?
+            {
                 next if is_space(next) => self.index += 1,
-                b'|' if self.tag_params.is_empty() => return Err(Error::Syntax),
+                b'|' if self.tag_params.is_empty() => {
+                    return Err(self.error(Message::InvalidBlockParameters));
+                }
                 b'|' => {
                     self.index += 1;
                     break;
                 }
-                b'>' | b'/' => return Err(Error::Syntax),
+                b'>' | b'/' => return Err(self.error(Message::InvalidBlockParameters)),
                 _ => {
                     let start = self.index;
                     let last = loop {
                         self.index += 1;
-                        match self.peek().ok_or(Error::Syntax)? {
-                            b'>' | b'/' => return Err(Error::Syntax),
+                        match self
+                            .peek()
+                            .ok_or_else(|| self.error(Message::InvalidBlockParameters))?
+                        {
+                            b'>' | b'/' => return Err(self.error(Message::InvalidBlockParameters)),
                             next if next == b'|' || is_space(next) => break next,
                             _ => {}
                         }
@@ -470,7 +493,7 @@ impl Builder<'_> {
                     if name == b"this"
                         || strings::index_of_any(name, b"!\"#%&'()*+./;<=>@[\\]^`{|}~").is_some()
                     {
-                        return Err(Error::Syntax);
+                        return Err(self.error_at(Message::InvalidBlockParameters, start));
                     }
                     self.tag_params.push(Text::source(start, self.index));
                     self.index += 1;
@@ -481,10 +504,13 @@ impl Builder<'_> {
             }
         }
         loop {
-            match self.peek().ok_or(Error::Syntax)? {
+            match self
+                .peek()
+                .ok_or_else(|| self.error(Message::InvalidBlockParameters))?
+            {
                 next if is_space(next) => self.index += 1,
                 b'>' | b'/' => return Ok(()),
-                _ => return Err(Error::Syntax),
+                _ => return Err(self.error(Message::InvalidBlockParameters)),
             }
         }
     }
@@ -517,7 +543,7 @@ impl Builder<'_> {
             None | Some(..0xC0) => 1,
             Some(0xC0..0xE0) => 2,
             Some(0xE0..0xF0) => 3,
-            Some(0xF0..) => return Err(Error::Syntax),
+            Some(0xF0..) => return Err(self.error(Message::UnexpectedCharacter)),
         };
         Ok(())
     }
@@ -664,12 +690,12 @@ impl Builder<'_> {
                     b'\'' => State::DoctypePublicIdentifierSingleQuoted,
                     b'>' => State::BeforeData,
                     // The tokenizer stays where it is for ever.
-                    _ => return Err(Error::Syntax),
+                    _ => return Err(self.error(Message::InvalidDoctype)),
                 };
                 self.index += 1;
             }
             State::BeforeDoctypePublicIdentifier | State::AfterDoctypeSystemKeyword => {
-                return Err(Error::Syntax);
+                return Err(self.error(Message::InvalidDoctype));
             }
             State::DoctypePublicIdentifierDoubleQuoted => {
                 self.doctype(|next| (next == b'"').then_some(State::AfterDoctypePublicIdentifier))
@@ -811,7 +837,7 @@ impl Builder<'_> {
                     self.finish_tag()?;
                     self.state = State::BeforeData;
                 } else if character == b'=' {
-                    return Err(Error::Syntax);
+                    return Err(self.error(Message::UnexpectedCharacter));
                 } else {
                     self.state = State::AttributeName;
                     self.begin_attribute();
@@ -829,7 +855,7 @@ impl Builder<'_> {
                 } else if character == b'>' {
                     self.finish_attribute_and_tag()?;
                 } else if matches!(character, b'"' | b'\'' | b'<') {
-                    return Err(Error::Syntax);
+                    return Err(self.error(Message::UnexpectedCharacter));
                 } else if match self.text(self.attribute.name) {
                     b"" => self.rest().starts_with(b"as"),
                     b"a" => character == b's',
@@ -934,7 +960,7 @@ impl Builder<'_> {
                 if character == b'>' {
                     self.index += 1;
                     if self.tag.is_end {
-                        return Err(Error::Syntax);
+                        return Err(self.error_at(Message::SelfClosingEndTag, self.tag.start));
                     }
                     self.tag.is_self_closing = true;
                     self.finish_tag()?;
@@ -980,7 +1006,7 @@ impl Builder<'_> {
             // It skips a character, and does not count it.
             if has_read_too_far {
                 if line.is_empty() {
-                    return Err(Error::Syntax);
+                    return Err(self.error(Message::UnexpectedCharacter));
                 }
                 self.consume_unit()?;
                 self.shift += 1;
@@ -1007,7 +1033,7 @@ impl Builder<'_> {
             strip,
         } = self.tree.kind(mustache)
         else {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::MisplacedMustache));
         };
         self.tree.is_damaged |= is_trusting || strip != 0;
         if self.tag.is_end
@@ -1016,7 +1042,7 @@ impl Builder<'_> {
                 Kind::Path { .. } | Kind::SubExpression { .. }
             )
         {
-            return Err(Error::Syntax);
+            return Err(self.error(Message::MisplacedMustache));
         }
         if let Some(kind) = self.tree.kind_mut(mustache) {
             *kind = Kind::ElementModifier { call };
@@ -1027,7 +1053,7 @@ impl Builder<'_> {
 
     fn mustache(&mut self, mustache: NodeId) -> Result<(), Error> {
         match self.state {
-            State::TagOpen | State::TagName => return Err(Error::Syntax),
+            State::TagOpen | State::TagName => return Err(self.error(Message::MisplacedMustache)),
             State::BeforeAttributeName => self.add_element_modifier(mustache)?,
             State::AttributeName | State::AfterAttributeName => {
                 self.begin_attribute_value(false);
@@ -1065,7 +1091,7 @@ impl Builder<'_> {
         let [start, end] = [statement.start, statement.end]
             .map(|offset| self.positions.of_token(self.source, offset as usize));
         if let StatementKind::Unsupported = statement.kind {
-            return Err(Error::Syntax);
+            return Err(self.error_at(Message::UnsupportedMustache, statement.start as usize));
         }
         // In an HTML comment, mustaches are text.
         if self.state == State::Comment {
@@ -1081,7 +1107,11 @@ impl Builder<'_> {
                         self.tag_parts[2].push(comment)
                     }
                     State::BeforeData | State::Data => self.children.push(comment),
-                    _ => return Err(Error::Syntax),
+                    _ => {
+                        return Err(
+                            self.error_at(Message::MisplacedComment, statement.start as usize)
+                        );
+                    }
                 }
             }
             StatementKind::Mustache {
@@ -1090,7 +1120,9 @@ impl Builder<'_> {
                 is_damaged,
             } => {
                 if !is_valid {
-                    return Err(Error::Syntax);
+                    return Err(
+                        self.error_at(Message::UnsupportedMustache, statement.start as usize)
+                    );
                 }
                 self.tree.is_damaged |= is_damaged;
                 if let Some(mustache) = self.tree.nodes.get_mut(node as usize) {
@@ -1108,7 +1140,7 @@ impl Builder<'_> {
                 block_params,
             } => {
                 if !matches!(self.state, State::Data | State::BeforeData) || !is_valid {
-                    return Err(Error::Syntax);
+                    return Err(self.error_at(Message::MisplacedBlock, statement.start as usize));
                 }
                 self.tree.is_damaged |= is_damaged;
                 let first = (index + 1, first_end as usize);
@@ -1165,7 +1197,11 @@ impl Builder<'_> {
         // An element that is open stays so.
         match self.stack.pop() {
             Some(frame) if self.stack.len() == depth => Ok(self.take_children(frame.base)),
-            _ => Err(Error::Syntax),
+            Some(frame) if frame.element != NOTHING => Err(self.error_at(
+                Message::UnclosedElement,
+                self.tree.node(frame.element).start as usize,
+            )),
+            _ => Err(self.error(Message::EndTagWithoutStartTag)),
         }
     }
 

@@ -2,6 +2,7 @@
 
 use super::compose::{Document, Node as Composed, NodeKind, Pair, ScalarType, SeqItem};
 use super::cst::{self, Item, SourceToken, Token, TokenType};
+use crate::syntax_error::{Message, SyntaxError};
 use bun_core::strings;
 
 /// An error that `yaml-unist-parser` throws, or a `TypeError` in it.
@@ -231,6 +232,9 @@ struct Context<'c, 'a> {
     line_starts: Vec<u32>,
     /// The line that has been asked for last: its number, where it starts, and where the next one does.
     last_line: std::cell::Cell<(u32, u32, u32)>,
+    /// A place in that line, and how many UTF-16 code units are before it in the line. The next place that is asked for is
+    /// near it as a rule, and a line can be as long as the text.
+    last_place: std::cell::Cell<(u32, u32)>,
     nodes: Vec<Node<'a>>,
     comments: Vec<Id>,
     /// The nodes whose parents are not made yet.
@@ -280,23 +284,32 @@ impl<'a> Context<'_, 'a> {
             .max(1);
             (start, next) = (start_of(line), start_of(line + 1));
             self.last_line.set((line, start, next));
+            self.last_place.set((start, 0));
         }
-        let before = self
-            .text
-            .get(start as usize..offset as usize)
-            .unwrap_or_default();
         // Columns count UTF-16 code units.
-        let column = match self.is_ascii || before.is_ascii() {
-            true => before.len(),
+        let column = match self.is_ascii {
+            true => offset.saturating_sub(start),
             false => {
-                before.iter().filter(|&&b| b & 0xC0 != 0x80).count()
-                    + before.iter().filter(|&&b| b >= 0xF0).count()
+                let units = |from: u32, to: u32| {
+                    let between = self.text.get(from as usize..to as usize);
+                    let between = between.unwrap_or_default();
+                    let count = between.iter().filter(|&&b| b & 0xC0 != 0x80).count()
+                        + between.iter().filter(|&&b| b >= 0xF0).count();
+                    count as u32
+                };
+                let (place, before_place) = self.last_place.get();
+                let column = match offset >= place {
+                    true => before_place + units(place, offset),
+                    false => before_place.saturating_sub(units(offset, place)),
+                };
+                self.last_place.set((offset, column));
+                column
             }
         };
         Point {
             offset,
             line,
-            column: column as u32 + 1,
+            column: column + 1,
         }
     }
 
@@ -1437,7 +1450,7 @@ pub(crate) fn build<'a>(
     text: &'a [u8],
     documents: &[Document<'_>],
     cst: &cst::Tree,
-) -> Result<Tree<'a>> {
+) -> std::result::Result<Tree<'a>, SyntaxError> {
     let mut line_starts = vec![0u32];
     let mut from = 0;
     while let Some(at) = strings::index_of_char_usize(&text[from..], b'\n') {
@@ -1450,6 +1463,7 @@ pub(crate) fn build<'a>(
         is_ascii: text.is_ascii(),
         // Before the first.
         last_line: std::cell::Cell::new((0, 0, 0)),
+        last_place: std::cell::Cell::new((0, 0)),
         line_starts,
         // A key and its value are two tokens and five nodes.
         nodes: Vec::with_capacity(cst.len() * 3 + 16),
@@ -1457,7 +1471,16 @@ pub(crate) fn build<'a>(
         pending: Vec::new(),
         has_properties: false,
     };
-    let children = context.transform_documents(documents, &cst.tokens)?;
+    // What has been made last is next to what cannot be.
+    let children = context
+        .transform_documents(documents, &cst.tokens)
+        .map_err(|Unexpected| {
+            let last = context.nodes.last();
+            SyntaxError(
+                Message::CannotBeFormatted,
+                last.map_or(0, |it| it.position.start.offset),
+            )
+        })?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
     for &child in &children {
         context.add_child(root, child);
@@ -1504,13 +1527,18 @@ pub(crate) fn build<'a>(
         {
             rest_documents = &rest_documents[1..];
         }
+        let misplaced = SyntaxError(
+            Message::MisplacedComment,
+            nodes[comment.index()].position.start.offset,
+        );
         attach_comment(
             &mut nodes,
             &table,
             &next_leading,
             comment,
-            *rest_documents.first().ok_or(Unexpected)?,
-        )?;
+            *rest_documents.first().ok_or(misplaced)?,
+        )
+        .map_err(|Unexpected| misplaced)?;
     }
     update_positions(&mut nodes, root, true);
     Ok(Tree { nodes, root })

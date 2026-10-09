@@ -7,6 +7,7 @@
 use super::ScopeKind;
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
+use crate::span::Span;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
 use bun_sema::hir::{self, FnKind, StmtKind, TypeNodeKind, VarKind};
 use std::cell::OnceCell;
@@ -120,8 +121,7 @@ struct Proto {
 /// By start. Of two that start together, the one that ends later contains the other.
 #[inline]
 fn sort_key(start: u32, end: u32, rank: u8, index: usize) -> u128 {
-    let range = u128::from(start) << 32 | u128::from(u32::MAX - end);
-    range << 64 | u128::from(rank) << 32 | index as u128
+    Span::new(start, end).sort_key(u16::from(rank), index)
 }
 
 fn rank_of(kind: ScopeKind, block: Block) -> u8 {

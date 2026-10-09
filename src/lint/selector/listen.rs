@@ -170,7 +170,7 @@ fn relation<'a>(a: VNode<'a>, b: VNode<'a>) -> Relation {
 /// [`Selector::compare`]: super::Selector::compare
 /// [`Selector::is_exit`]: super::Selector::is_exit
 pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usize) -> bool) {
-    matches.sort_by_cached_key(|it| {
+    crate::utils::sort::sort_by_cached_key(matches, |it| {
         let span = it.0.span();
         (span.start, Reverse(span.end))
     });
@@ -178,8 +178,8 @@ pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usiz
         .chunk_by_mut(|a, b| a.0.span() == b.0.span())
         .filter(|it| it.len() > 1)
     {
-        same.sort_by(
-            |a, b| match (relation(a.0.node, b.0.node), is_exit(a.1), is_exit(b.1)) {
+        crate::utils::sort::sort_by(same, |a, b| {
+            match (relation(a.0.node, b.0.node), is_exit(a.1), is_exit(b.1)) {
                 (Relation::Same, a_is_exit, b_is_exit) => {
                     a_is_exit.cmp(&b_is_exit).then(a.1.cmp(&b.1))
                 }
@@ -189,8 +189,8 @@ pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usiz
                 (Relation::Above, true, _)
                 | (Relation::Below, _, false)
                 | (Relation::After, ..) => Ordering::Greater,
-            },
-        );
+            }
+        });
         // For espree both names of `import { a }` are one node, which is visited twice: all the listeners are called for the
         // first visit, then all for the second.
         for visits in same.chunk_by_mut(|a, b| a.0 == b.0) {
@@ -205,7 +205,7 @@ pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usiz
             });
             let mut numbered: SmallVec<[(u32, (EsNode<'_>, usize)); 8]> = numbered.collect();
             if numbered.iter().any(|it| it.0 > 0) {
-                numbered.sort_by_key(|it| it.0);
+                crate::utils::sort::sort_by_key(&mut numbered, |it| it.0);
                 visits
                     .iter_mut()
                     .zip(numbered)

@@ -1,6 +1,7 @@
 // Two sets of diagnostics of the React Compiler's rules for the same files, one against the other.
 //
 //   bun compare.ts <theirs> <ours> [--name=oxlint] [--ignore=help,note] [--rule=react/refs] [--examples=40] [--strip=<prefix>]
+//                  [--messages=react/todo,react/invariant]
 //
 // Each side is one of (told apart by what is in it):
 //   - the lines of oxlint.ts or repos.ts                         {"path", "parse", "diagnostics": [..]}
@@ -10,7 +11,7 @@
 //
 // A diagnostic is the same if the rule, the message, all labels (start, end, text, order), the help and the note are the same,
 // and the severity where both sides have one. `--ignore` leaves fields out: severity, message, help, note, text (of labels),
-// order (of labels).
+// order (of labels). `--messages`: also a table of the messages of these rules, with what is in `..` left out.
 //
 // Where theirs comes from frames.ts there are no rules, and the fixtures were compiled with other options than a linter has:
 // an error is a case only if ours has a diagnostic with the same message in the same file, and nothing is "only ours".
@@ -257,6 +258,16 @@ if (!byMessage) for (const rule of RULE_NAMES) if (onlyRule === undefined || onl
 const files = { cases: 0, same: 0, withAny: 0, withAnySame: 0, order: 0, notParsed: 0, notParsedSame: 0, missing: 0 };
 const total = { cases: 0, same: 0, firstLabel: 0, texts: 0 };
 const causes = new Map<string, number>();
+const messagesOf = new Set((flags.get("messages") ?? "").split(",").filter(rule => rule !== ""));
+const messages = new Map<string, { rule: string; message: string; theirs: number; ours: number; same: number }>();
+function messageCount(diagnostic: Diagnostic) {
+  if (diagnostic.rule === null || !messagesOf.has(diagnostic.rule)) return null;
+  const message = diagnostic.message.replace(/`[^`]*`/g, "`..`");
+  const key = `${diagnostic.rule} ${message}`;
+  let entry = messages.get(key);
+  if (entry === undefined) messages.set(key, (entry = { rule: diagnostic.rule, message, theirs: 0, ours: 0, same: 0 }));
+  return entry;
+}
 const shown: string[] = [];
 let differing = 0;
 
@@ -297,6 +308,16 @@ for (const path of [...paths].sort()) {
   for (const diagnostic of outcome.same) {
     const entry = ruleCount(diagnostic.rule);
     (entry.theirs++, entry.ours++, entry.same++);
+    const message = messageCount(diagnostic);
+    if (message !== null) (message.theirs++, message.ours++, message.same++);
+  }
+  for (const diagnostic of [...outcome.pairs.map(pair => pair.theirs), ...outcome.onlyTheirs]) {
+    const message = messageCount(diagnostic);
+    if (message !== null) message.theirs++;
+  }
+  for (const diagnostic of [...outcome.pairs.map(pair => pair.ours), ...outcome.onlyOurs]) {
+    const message = messageCount(diagnostic);
+    if (message !== null) message.ours++;
   }
   for (const pair of outcome.pairs) {
     const entry = ruleCount(pair.theirs.rule);
@@ -373,6 +394,19 @@ console.log(
     [...causes].sort((a, b) => b[1] - a[1]),
   ),
 );
+if (messages.size > 0) {
+  const sorted = [...messages.values()].sort(
+    (a, b) =>
+      a.rule.localeCompare(b.rule) || b.theirs + b.ours - a.theirs - a.ours || a.message.localeCompare(b.message),
+  );
+  console.log();
+  console.log(
+    table(
+      ["Rule", "Message", "Theirs", "Ours", "Same"],
+      sorted.map(it => [it.rule, it.message, it.theirs, it.ours, it.same]),
+    ),
+  );
+}
 if (shown.length > 0) {
   console.log(`\nThe first ${shown.length} of ${differing} files that differ:\n`);
   console.log(shown.join("\n"));

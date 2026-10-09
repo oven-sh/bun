@@ -65,6 +65,24 @@ fn get_type_parameters_from_type(
     })
 }
 
+/// tsgolint's `constructorArgumentsCanInferTypeParameters`: the type of a parameter of `constructor` names one of
+/// `type_parameters`, so without type arguments they would be inferred from the arguments of `new`.
+fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[TsNode<'a>]) -> bool {
+    let names = type_parameters.iter().filter_map(|it| it.name());
+    let symbols: SmallVec<[TsSymbol; 4]> = names.filter_map(|it| it.get_symbol_at_location()).collect();
+    let parameters = constructor.children().filter(|it| it.kind() == SyntaxKind::Parameter);
+    let mut pending: Vec<TsNode> = parameters.filter_map(TsNode::type_node).collect();
+    while let Some(node) = pending.pop() {
+        if node.kind() == SyntaxKind::Identifier
+            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(&it))
+        {
+            return true;
+        }
+        pending.extend(node.children());
+    }
+    false
+}
+
 /// Whether two types that are not one are references to the same generic type with the same type
 /// arguments.
 fn is_same_type_reference<'a>(a: Type<'a>, b: Type<'a>) -> bool {
@@ -142,20 +160,40 @@ impl NoUnnecessaryTypeArguments {
     fn check_call<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (args, class) = match node.kind() {
             ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => (call.type_args(), None),
-            ExprKind::New(call) => (call.type_args(), Some(call.callee())),
+            ExprKind::New(call) => (call.type_args(), Some(call)),
             ExprKind::Jsx(jsx) => (jsx.type_args(), None),
             _ => return,
         };
         if args.is_empty() {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
+        let of_class = || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false);
         let sig_decl = node.resolved_signature().and_then(|sig| sig.declaration());
         let type_parameters = match sig_decl {
-            Some(sig_decl) => type_parameters_of(sig_decl),
-            None => class.and_then(|it| get_type_parameters_from_type(get_symbol_at_location(it), false)),
+            // A constructor has none. tsgolint goes on to those of the class.
+            Some(sig_decl) => type_parameters_of(sig_decl).or_else(|| of_class().filter(|_| is_oxlint)),
+            None => of_class(),
         };
-        if let Some(type_parameters) = type_parameters {
-            check_ts_args_and_parameters(args, &type_parameters, cx);
+        let Some(type_parameters) = type_parameters else {
+            return;
+        };
+        if is_oxlint
+            && args.len() == 1
+            && class.is_some_and(|it| !it.args().is_empty())
+            && sig_decl.is_some_and(|it| tsgolint_arguments_can_infer(it, &type_parameters))
+        {
+            return;
+        }
+        check_ts_args_and_parameters(args, &type_parameters, cx);
+    }
+
+    /// `A<B>` that is not called, which tsgolint looks at as at the class that a class extends.
+    fn check_instantiation<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Instantiation { expr, type_args } = node.kind()
+            && let Some(type_parameters) = get_type_parameters_from_type(get_symbol_at_location(expr), false)
+        {
+            check_ts_args_and_parameters(type_args, &type_parameters, cx);
         }
     }
 }
@@ -173,7 +211,10 @@ impl Rule for NoUnnecessaryTypeArguments {
 
     // The type arguments of a `TSInstantiationExpression`, where defaults do not apply, of a
     // `TSTypeQuery` and of a `TSImportType` are not checked.
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if file.language().is_oxlint {
+            on.exprs([ExprTag::Instantiation], Self::check_instantiation);
+        }
         on.types([TypeTag::Ref, TypeTag::Heritage], Self::check_type);
         on.classes(Self::check_class);
         on.exprs(

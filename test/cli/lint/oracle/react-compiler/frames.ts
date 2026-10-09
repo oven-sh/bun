@@ -66,7 +66,7 @@ const SOURCE = /^([> ]) *(\d+) \|(?: (.*))?$/;
 const MARKER = /^ +\| ([ \t]*)(\^+)(?: (.*))?$/s;
 const ELLIPSIS = /^ +…$/;
 
-class Source {
+export class Source {
   #text: string;
   #starts: number[] = [0];
   readonly lines: string[];
@@ -74,6 +74,17 @@ class Source {
     this.#text = text;
     for (const match of text.matchAll(/\r\n|[\n\r\u2028\u2029]/g)) this.#starts.push(match.index + match[0].length);
     this.lines = text.split(/\r\n|[\n\r\u2028\u2029]/);
+  }
+  /** The index in UTF-16 units of an offset in bytes. */
+  index(offset: number): number {
+    return Buffer.from(this.#text).subarray(0, offset).toString().length;
+  }
+  /** The line from 1 and the column from 0 in UTF-16 units of an offset in bytes. */
+  position(offset: number): { line: number; column: number } {
+    const index = this.index(offset);
+    let line = this.#starts.length;
+    while (line > 1 && this.#starts[line - 1] > index) line--;
+    return { line, column: index - this.#starts[line - 1] };
   }
   /** The offset in bytes of a line from 1 and a column from 0 in UTF-16 units. */
   offset(line: number, column: number): number {
@@ -83,9 +94,15 @@ class Source {
   }
 }
 
-const problems: string[] = [];
+export const problems: string[] = [];
 
-function frame(path: string, source: Source, where: RegExpExecArray | null, lines: string[]): Place | null {
+function frame(
+  path: string,
+  source: Source,
+  where: RegExpExecArray | null,
+  lines: string[],
+  firstColumn: 0 | 1,
+): Place | null {
   let first: { line: number; spacing: number; carets: number } | null = null;
   let last: { line: number; carets: number } | null = null;
   let marked = -1;
@@ -115,7 +132,7 @@ function frame(path: string, source: Source, where: RegExpExecArray | null, line
     return null;
   }
   const line = where === null ? first.line : Number(where[2]);
-  const column = where === null ? first.spacing : Number(where[3]);
+  const column = where === null ? first.spacing : Number(where[3]) - firstColumn;
   if (line !== first.line || column !== first.spacing)
     problems.push(`${path}: ${line}:${column} is not where the ^ start`);
   const oneLine = last.line === line;
@@ -151,7 +168,11 @@ function paragraphs(text: string): string[][] {
   return found;
 }
 
-function printed(path: string, source: Source, text: string): ExpectedError[] {
+/**
+ * The errors that `text` prints, one after the other. `firstColumn`: what `file:line:column` counts columns from, which is 1 in
+ * the messages of the ESLint plugin.
+ */
+export function printed(path: string, source: Source, text: string, firstColumn: 0 | 1 = 0): ExpectedError[] {
   const errors: ExpectedError[] = [];
   let description: string[] = [];
   const flush = () => {
@@ -170,11 +191,11 @@ function printed(path: string, source: Source, text: string): ExpectedError[] {
       problems.push(`${path}: text before the first error: ${lines[0]}`);
     } else if (lines.length > 1 && WHERE.test(lines[0]) && SOURCE.test(lines[1])) {
       flush();
-      const place = frame(path, source, WHERE.exec(lines[0]), lines.slice(1));
+      const place = frame(path, source, WHERE.exec(lines[0]), lines.slice(1), firstColumn);
       if (place !== null) error.details.push(place);
     } else if (SOURCE.test(lines[0])) {
       flush();
-      const place = frame(path, source, null, lines);
+      const place = frame(path, source, null, lines, firstColumn);
       if (place !== null) error.details.push(place);
     } else if (error.details.length === 0) {
       description.push(lines.join("\n"));

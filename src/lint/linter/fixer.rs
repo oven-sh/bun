@@ -62,7 +62,9 @@ pub fn apply_fixes(
             remaining,
         };
     }
-    fixable.sort_by_key(|it| it.fix.as_ref().map(|fix| (fix.span.start, fix.span.end)));
+    crate::utils::sort::sort_by_key(&mut fixable, |it| {
+        it.fix.as_ref().map(|fix| (fix.span.start, fix.span.end))
+    });
     let mut output = Vec::with_capacity(text.len());
     let mut last: Option<usize> = None;
     let mut is_fixed = false;
@@ -83,7 +85,7 @@ pub fn apply_fixes(
         last = Some(end);
     }
     output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..]);
-    remaining.sort_by_key(|it| (it.line, it.column));
+    crate::utils::sort::sort_by_key(&mut remaining, |it| (it.line, it.column));
     Fixed {
         is_fixed,
         output,

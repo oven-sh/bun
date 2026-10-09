@@ -18,6 +18,7 @@ mod tokenizer;
 use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, BOM};
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
@@ -27,7 +28,7 @@ const MAX_DEPTH: usize = 256;
 
 #[derive(Copy, Clone, Debug)]
 enum Error {
-    Syntax,
+    Syntax(SyntaxError),
     NestedTooDeeply,
 }
 
@@ -80,7 +81,7 @@ fn parse(
     tree.clear();
     // Positions have 31 bits.
     if content.len() > i32::MAX as usize {
-        return Err(Error::Syntax);
+        return Err(Error::Syntax(SyntaxError(Message::TooLarge, 0)));
     }
     lexer::lex(content, tokens, positions)?;
     parser::parse(content, tokens, tree, statements)?;
@@ -125,7 +126,9 @@ pub fn format(
         }
     }
     let template = parse(&content, front_matter_end, scratch).map_err(|error| match error {
-        Error::Syntax => FormatError::SyntaxError,
+        Error::Syntax(error) => {
+            FormatError::SyntaxErrorAt(error).before_normalizing_end_of_line(&original[first..])
+        }
         Error::NestedTooDeeply => FormatError::NestedTooDeeply,
     })?;
     out.extend_from_slice(&original[..first]);

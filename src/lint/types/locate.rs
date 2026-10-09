@@ -264,6 +264,12 @@ impl<'a> Expr<'a> {
         self.ts_node().get_contextual_type()
     }
 
+    /// `checker.getContextFreeTypeOfExpression(node)`: its type where nothing is expected of it, so that nothing is
+    /// inferred from its position for the type arguments of a call.
+    pub fn context_free_type(self) -> Type<'a> {
+        self.ts_node().get_context_free_type_of_expression()
+    }
+
     /// `checker.getResolvedSignature(node)`: the overload that a call, a `new`, a tagged template
     /// or a JSX element resolves to. `None`: the callee is untyped or the call is in error.
     pub fn resolved_signature(self) -> Option<Signature<'a>> {

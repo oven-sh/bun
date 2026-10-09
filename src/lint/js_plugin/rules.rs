@@ -155,11 +155,16 @@ fn has_what_json_lacks(json: &Json) -> bool {
 
 impl FileSettings {
     pub fn new(language: &LanguageOptions) -> Arc<FileSettings> {
-        Self::from_objects(language, &[])
+        Self::from_objects(language, &[], None)
     }
 
-    /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order.
-    pub fn from_objects(language: &LanguageOptions, sources: &[&Json]) -> Arc<FileSettings> {
+    /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
+    /// `$parser` of the one that `languageOptions.parser` is from.
+    pub fn from_objects(
+        language: &LanguageOptions,
+        sources: &[&Json],
+        parser: Option<&Json>,
+    ) -> Arc<FileSettings> {
         let sources = has_what_json_lacks(&language.settings).then(|| {
             let sources = sources.iter().map(|it| (*it).clone());
             let mut written = Vec::new();
@@ -225,6 +230,7 @@ impl FileSettings {
             (b"globals".to_vec(), Json::Object(all_globals)),
             (b"libs".to_vec(), Json::Object(libs.collect())),
             (b"freezes".to_vec(), Json::Bool(language.is_oxlint)),
+            (b"parser".to_vec(), parser.cloned().unwrap_or(Json::Null)),
         ]);
         let mut json = Vec::new();
         write_json(&mut json, &all);

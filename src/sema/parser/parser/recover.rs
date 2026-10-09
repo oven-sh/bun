@@ -192,11 +192,34 @@ impl Parser<'_> {
         if self.errors_at.1 > 64 {
             return self.refuse(Refusal::Unsupported);
         }
+        self.take_errors_of_scanner();
+        self.add_error(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
+    }
+
+    /// The end of `parseErrorAtRange`.
+    fn add_error(&mut self, error: Diagnostic) {
         // "Don't report another error if it would just be at the same location as the last error"
         let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
         let last = self.f.diagnostics.iter().rfind(is_of_parser);
-        if last.is_none_or(|last| last.start != at.0) {
-            self.flag(DiagnosticKind::Parse, code, at, args);
+        if last.is_none_or(|last| last.start != error.start) {
+            self.f.diagnostics.push(error);
+        }
+    }
+
+    /// `scanError`: what the scanner has reported goes where the errors of the parser go, before
+    /// the next of them.
+    #[inline(always)]
+    pub(crate) fn take_errors_of_scanner(&mut self) {
+        if !self.lx.errors.is_empty() {
+            self.take_errors_of_scanner_slowly();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn take_errors_of_scanner_slowly(&mut self) {
+        for error in std::mem::take(&mut self.lx.errors) {
+            self.add_error(error);
         }
     }
 

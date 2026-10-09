@@ -9,7 +9,7 @@ const pluginsByPrefix = new Map();
 // `null`: there is no such processor.
 function locateProcessor(processor, index) {
   if (typeof processor !== "string") {
-    const object = locate(processor);
+    const object = locateDeep(processor);
     return object === null ? { config: path, index } : { object };
   }
   const parts = processor.split("/");
@@ -17,7 +17,7 @@ function locateProcessor(processor, index) {
   const prefix = parts.join("/");
   const found = pluginsByPrefix.get(prefix);
   if (found?.plugin?.processors?.[name] === undefined) return null;
-  return { plugin: locate(found.plugin) ?? { config: path, index: found.index }, prefix, name };
+  return { plugin: locateDeep(found.plugin) ?? { config: path, index: found.index }, prefix, name };
 }
 
 function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
@@ -33,6 +33,18 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
     if (programs) out.parserOptions.programs = true;
   }
   return out;
+}
+
+// What a worker has to know of a parser to stand in for it until a rule calls it: `module` and `export`, the module that exports
+// it, if there is one, the names of its functions, and what else it has that is JSON.
+function describeParser(parser) {
+  const entries = Object.entries(parser);
+  const values = entries.map(([name, value]) => [name, typeof value === "function" ? undefined : asJson(value)]);
+  return {
+    ...locateDeep(parser),
+    functions: entries.filter(([, value]) => typeof value === "function").map(([name]) => name),
+    values: Object.fromEntries(values.filter(([, value]) => value !== undefined)),
+  };
 }
 
 // Many objects have the same plugins: only the first says what is in one.
@@ -158,12 +170,13 @@ function serializeConfigObject(given, index) {
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [
         prefix,
-        { ...(locate(plugin) ?? { config: path, index }), described: describedOnce(prefix, plugin) },
+        { ...(locateDeep(plugin) ?? { config: path, index }), described: describedOnce(prefix, plugin) },
       ]),
     );
   }
   if (languageOptions && typeof languageOptions === "object") {
     out.languageOptions = serializeLanguageOptions(languageOptions);
+    if (languageOptions.parser) out.$parser = describeParser(languageOptions.parser);
   }
   if (processor !== undefined) {
     out.processor = typeof processor === "string" ? processor : ((processor && objectId(processor)) ?? "unknown");

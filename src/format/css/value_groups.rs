@@ -5,6 +5,7 @@ use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
 use super::value_parser::{Before, ValueId, ValueKind, ValueRef};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
 
 /// `isAtWordPlaceholderNode`
@@ -331,7 +332,12 @@ impl<'a> Printer<'a, '_> {
                 && prev_node.is_some_and(|it| is_the_word(it, b"as"))
             {
                 // Prettier takes it for granted that something follows.
-                self.has_failed |= next_node.is_none();
+                if next_node.is_none() {
+                    self.fail(SyntaxError(
+                        Message::UnreadableAtRule,
+                        statement.node().start as u32,
+                    ));
+                }
                 if next_node.is_some_and(is_multiplication) {
                     continue;
                 }
@@ -679,7 +685,10 @@ impl<'a> Printer<'a, '_> {
                     }
                     ValueKind::Func => {}
                     // Prettier takes it for a function.
-                    _ => self.has_failed = true,
+                    _ => self.fail(SyntaxError(
+                        Message::UnreadableValue,
+                        statement.node().start as u32,
+                    )),
                 }
             }
 

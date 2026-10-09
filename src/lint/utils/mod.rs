@@ -84,6 +84,7 @@ pub mod ancestor_memo;
 pub mod array;
 pub mod ast_utils;
 pub mod char_source;
+pub mod code_frame;
 pub mod collation;
 pub mod directives;
 pub mod eslint_utils;

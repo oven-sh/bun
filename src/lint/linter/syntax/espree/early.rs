@@ -1532,7 +1532,7 @@ impl<'a> Checks<'a, '_> {
                 _ => {}
             }
         }
-        exported.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut exported);
         for (first, second) in exported.iter().zip(exported.iter().skip(1)) {
             if first.0 == second.0 {
                 self.fail(second.1, [b"Duplicate export '", second.0, b"'"].concat());

@@ -611,7 +611,7 @@ impl Variables {
             slot.last += 1;
         }
         let mut declarations: Vec<Decl> = Vec::new();
-        later.sort_by_key(|it| it.0);
+        crate::utils::sort::sort_by_key(&mut later, |it| it.0);
         for of_one in later.chunk_by(|a, b| a.0 == b.0) {
             let variable = &mut list[of_one[0].0 as usize];
             variable.start = declarations.len() as u32;
@@ -621,8 +621,10 @@ impl Variables {
             if tree.scopes[variable.scope as usize].kind == ScopeKind::Function
                 && variable.flags == VALUE | TYPE
             {
-                declarations[variable.start as usize..]
-                    .sort_by_key(|it| !matches!(it, Decl::Param(_)));
+                crate::utils::sort::sort_by_key(
+                    &mut declarations[variable.start as usize..],
+                    |it| !matches!(it, Decl::Param(_)),
+                );
             }
         }
         Variables {

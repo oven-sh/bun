@@ -141,7 +141,7 @@ fn grouped<'r>(problems: &[Problem<'r>]) -> Vec<Vec<Problem<'r>>> {
             });
         groups[at].push(*problem);
     }
-    groups.sort_by_key(|group| std::cmp::Reverse(group.len()));
+    bun_lint::utils::sort::sort_by_key(&mut groups, |group| std::cmp::Reverse(group.len()));
     groups
 }
 
@@ -159,7 +159,7 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
             _ => files.push((*problem, 1)),
         }
     }
-    files.sort_by_key(|it| std::cmp::Reverse(it.1));
+    bun_lint::utils::sort::sort_by_key(&mut files, |it| std::cmp::Reverse(it.1));
     files
 }
 

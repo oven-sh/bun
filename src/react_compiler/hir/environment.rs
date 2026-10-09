@@ -54,6 +54,10 @@ pub struct Environment {
     // Error accumulation
     pub errors: CompilerError,
 
+    /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
+
     // Function type classification (Component, Hook, Other)
     pub fn_type: ReactFunctionType,
 
@@ -182,6 +186,8 @@ impl Environment {
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
+            stack: bun_core::StackCheck::init(),
+            is_out_of_stack: std::cell::Cell::new(false),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
             code: None,
@@ -207,6 +213,15 @@ impl Environment {
             uid_known_names: None,
             config,
         }
+    }
+
+    /// Whether the thread has the stack for one more level of the source. Once it had not, the
+    /// answer stays no: something was left out, and `lower` fails.
+    pub(crate) fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
     }
 
     pub fn next_block_id(&mut self) -> BlockId {

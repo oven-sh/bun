@@ -32,7 +32,7 @@ pub(crate) mod pipeline;
 pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
-pub use lint::{Linted, lint_function};
+pub use lint::{LatePasses, Linted, lint_function};
 pub use options::ReactCompilerOptions;
 pub use program::{
     CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,

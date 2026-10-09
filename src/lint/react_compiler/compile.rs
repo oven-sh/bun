@@ -6,7 +6,6 @@ use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
 use bun_lint::ast::{File, Func};
 use bun_lint::span::Span;
-use bun_react_compiler::EnvironmentConfig;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
     CompilerSuggestion, ErrorCategory, SourceLocation,
@@ -14,12 +13,14 @@ use bun_react_compiler::diagnostics::{
 use bun_react_compiler::hir::ReactFunctionType;
 use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
 use bun_react_compiler::lowering::FunctionNode;
+use bun_react_compiler::{EnvironmentConfig, LatePasses};
 
 /// How much of the compiler runs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Depth {
     /// All that can change what is reported in a category other than `Todo` and `Invariant`.
     Validations,
+    /// Also what says a `Todo`.
     Everything,
 }
 
@@ -90,8 +91,12 @@ impl<'a> Compiler<'a> {
             fn_type,
             &self.config,
             &converted.import_bindings,
-            // An error that a late pass throws drops what is recorded, which these are.
-            self.depth == Depth::Everything || !converted.implicit_arguments.is_empty(),
+            match self.depth {
+                // An error that a late pass throws drops what is recorded, which these are.
+                _ if !converted.implicit_arguments.is_empty() => LatePasses::Always,
+                Depth::Validations => LatePasses::WhereTheyCount,
+                Depth::Everything => LatePasses::AlsoForTodos,
+            },
         );
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted

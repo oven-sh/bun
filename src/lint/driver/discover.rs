@@ -418,7 +418,7 @@ pub(crate) fn find_files(
             false => no_files_found(raw),
         });
     }
-    found.sort_by(|a, b| a.path.cmp(&b.path));
+    bun_lint::utils::sort::sort_by(&mut found, |a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
     Ok(found)
 }

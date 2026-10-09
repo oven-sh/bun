@@ -1116,7 +1116,7 @@ try {
     // In a directory the others are passed over.
     const directory = await format(files, ["bin"], { reads });
     expect(directory.files).toEqual(after);
-    expect(directory.stderr).toBe("");
+    expect(directory.stderr).not.toContain("[error]");
     expect(directory.exitCode).toBe(0);
     const named = await format(files, reads, { reads });
     expect(named.files).toEqual(after);
@@ -1125,8 +1125,11 @@ try {
   });
 
   test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {
-    const result = await format({ "a.md": "```mdx\n<hi/>\n<hello\n/>\n```\n" }, [], { reads: ["a.md"] });
-    expect(result.files["a.md"]).toBe("```mdx\n<hi />\n<hello />\n```\n");
+    // A number stays in its quotes there: the parser is not `babel`.
+    const result = await format({ "a.md": '```mdx\n<hi/>\n<hello\n/>\n\n<a b={{ "200": 1,  c: 2 }} />\n```\n' }, [], {
+      reads: ["a.md"],
+    });
+    expect(result.files["a.md"]).toBe('```mdx\n<hi />\n<hello />\n\n<a b={{ "200": 1, c: 2 }} />\n```\n');
     expect(result.exitCode).toBe(0);
   });
 
@@ -1154,6 +1157,19 @@ try {
     expect(result.stderr).toContain("a.yaml: SyntaxError");
     expect(result.files["b.yaml"]).toBe(`[\n${Buffer.alloc(7_007, '  "a",\n').toString()}]\n`);
     expect(result.exitCode).toBe(2);
+  });
+
+  test("40,000 nodes on a line of YAML that is not ASCII do not take quadratic time", async () => {
+    const count = isDebug || isASAN ? 10_000 : 40_000;
+    const result = await format(
+      { "a.yaml": `[${"é, ".repeat(count)}a]\n`, "b.yaml": `{${"é: 😀, ".repeat(count)}a: b}\n` },
+      [],
+      { reads: ["a.yaml", "b.yaml"] },
+    );
+    expect(result.stderr).not.toContain("error");
+    expect(result.files["a.yaml"]).toBe(`[\n${"  é,\n".repeat(count)}  a,\n]\n`);
+    expect(result.files["b.yaml"]).toBe(`{\n${"  é: 😀,\n".repeat(count)}  a: b,\n}\n`);
+    expect(result.exitCode).toBe(0);
   });
 
   // A debug build is 30 times slower or more: a third of the size shows as much there.

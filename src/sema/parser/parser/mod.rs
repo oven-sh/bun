@@ -222,6 +222,7 @@ impl<'a> Parser<'a> {
         stacks.clear();
         let mut lx = Lexer::new(text, atoms, &mut scratch.names);
         lx.is_jsx = options.is_jsx;
+        lx.recovers = options.recovers;
         lx.comments = std::mem::take(&mut file.comments);
         let is_ecmascript = options.dialect.ecmascript && options.is_javascript;
         lx.is_ecmascript = is_ecmascript;
@@ -334,6 +335,7 @@ impl<'a> Parser<'a> {
             self.s.ids.push(statement.0);
         }
         self.f.body = self.take_ids(base);
+        self.take_errors_of_scanner();
         if self.unclaimed_nullable_types > 0 {
             self.refuse(Refusal::Reported);
         }
@@ -637,7 +639,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(crate) fn checkpoint(&self) -> Checkpoint {
+    pub(crate) fn checkpoint(&mut self) -> Checkpoint {
+        // What is taken after this would be forgotten by `rollback`, and it is not scanned again.
+        self.take_errors_of_scanner();
         Checkpoint {
             mark: self.lx.mark(),
             file: file_lens(&self.f),

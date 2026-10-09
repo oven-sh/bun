@@ -538,9 +538,9 @@ impl Compiler {
             self.emit_single(single, context);
             return Ok(());
         }
-        value
-            .strings
-            .sort_by_key(|string| std::cmp::Reverse(string.len()));
+        crate::utils::sort::sort_by_key(&mut value.strings, |string| {
+            std::cmp::Reverse(string.len())
+        });
         let has_empty = value.strings.last().is_some_and(Vec::is_empty);
         if has_empty {
             value.strings.pop();
@@ -601,7 +601,7 @@ impl Compiler {
             }
         }
         value.chars = CharSet::from_ranges(ranges);
-        value.strings.sort_unstable();
+        crate::utils::sort::sort_unstable(&mut value.strings);
         value.strings.dedup();
         Ok(value)
     }
@@ -648,7 +648,7 @@ impl Compiler {
                 key, strings: true, ..
             }) => {
                 (value.chars, value.strings) = unicode::property_of_strings(key);
-                value.strings.sort_unstable();
+                crate::utils::sort::sort_unstable(&mut value.strings);
             }
             Kind::CharacterSet(CharacterSet::Property {
                 key,
@@ -706,7 +706,7 @@ impl Compiler {
                     value.strings.push(string);
                 }
                 value.chars = CharSet::from_ranges(ranges);
-                value.strings.sort_unstable();
+                crate::utils::sort::sort_unstable(&mut value.strings);
                 value.strings.dedup();
             }
             _ => {}

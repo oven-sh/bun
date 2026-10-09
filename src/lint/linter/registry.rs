@@ -205,7 +205,7 @@ impl Registry {
     /// `lists`: `RULES` of each crate that has rules.
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
         let mut rules: Vec<_> = lists.iter().flat_map(|list| list.iter()).collect();
-        rules.sort_by_key(|it| (it.meta.plugin as u8, it.meta.name));
+        crate::utils::sort::sort_by_key(&mut rules, |it| (it.meta.plugin as u8, it.meta.name));
         Registry { rules }
     }
 

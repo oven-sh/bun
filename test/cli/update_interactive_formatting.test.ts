@@ -318,6 +318,42 @@ describe.concurrent("bun update --interactive", () => {
     expect(appPackageJson.dependencies["no-deps"]).toBe("catalog:");
   });
 
+  // 0 bytes are what a writer that stopped between truncating package.json and writing it
+  // leaves. The catalog update must not write the new version into that file: the install after
+  // it would see a project without dependencies.
+  it("should stop at a root package.json of 0 bytes before the catalog update is saved", async () => {
+    await using dir = tempDir("update-interactive-catalog-empty-root", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: {
+          "no-deps": "1.0.0",
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "@test/app",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "catalog:",
+        },
+      }),
+    });
+
+    await install(dir);
+    const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+    expect(lockfile).toContain('"no-deps@1.0.0"');
+    await Bun.write(join(dir, "package.json"), "");
+
+    const { stderr, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
+
+    expect(stderr).toContain("package.json': file is empty");
+    expect(exitCode).toBe(1);
+    expect(await Bun.file(join(dir, "package.json")).text()).toBe("");
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
+  });
+
   it("should work correctly when run from inside a workspace directory", async () => {
     await using dir = tempDir("update-interactive-from-workspace", {
       "bunfig.toml": bunfig(),

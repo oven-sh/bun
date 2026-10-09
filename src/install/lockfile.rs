@@ -366,6 +366,17 @@ pub enum LoadResult<'a> {
 }
 
 impl<'a> LoadResult<'a> {
+    /// The project has a lockfile that an install from this result replaces: one that loaded
+    /// (bun's own, or another package manager's), or bun's own that did not load, which
+    /// `save_lockfile` still overwrites or unlinks.
+    pub(crate) fn has_lockfile_to_replace(&self) -> bool {
+        match self {
+            LoadResult::NotFound => false,
+            LoadResult::Err(err) => !matches!(err.step, LoadStep::Migrating),
+            LoadResult::Ok(_) => true,
+        }
+    }
+
     pub(crate) fn loaded_from_text_lockfile(&self) -> bool {
         match self {
             LoadResult::NotFound => false,

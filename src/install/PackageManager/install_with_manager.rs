@@ -163,7 +163,8 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
+                let source_copy =
+                    root_package_json_source(manager, root_package_json_path, &load_result)?;
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -1867,13 +1868,19 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
+    load_result: &lockfile::LoadResult,
 ) -> crate::Result<Source> {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::Entry(entry) => {
+            if entry.was_read_empty() && load_result.has_lockfile_to_replace() {
+                exit_on_empty_package_json(root_package_json_path.as_bytes());
+            }
+            return Ok(entry.source.clone());
+        }
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
@@ -1888,6 +1895,19 @@ fn root_package_json_source(
         (verb, bstr::BStr::new(root_package_json_path.as_bytes())),
     );
     Global::exit(1);
+}
+
+/// A 0-byte package.json parses as `{}`, and an install from `{}` removes every dependency from
+/// the lockfile beside it, or deletes that lockfile.
+#[cold]
+#[inline(never)]
+pub fn exit_on_empty_package_json(path: &[u8]) -> ! {
+    Output::err_generic(
+        "failed to parse '{}': file is empty",
+        (bstr::BStr::new(path),),
+    );
+    bun_core::note!("Restore package.json, or write {{}} to it to start without dependencies");
+    Global::exit(1)
 }
 
 #[cold]
@@ -1927,7 +1947,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+    let source_copy = root_package_json_source(manager, root_package_json_path, load_result)?;
 
     let mut resolver: () = ();
     {

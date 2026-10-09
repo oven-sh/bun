@@ -13,7 +13,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, exit_on_empty_package_json, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -191,6 +191,11 @@ impl UpdateInteractiveCommand {
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
     ) -> crate::Result<()> {
+        // The write puts JSON where the truncated file is, and the install that follows no
+        // longer sees a file that needs attention.
+        if package_json.was_read_empty() {
+            exit_on_empty_package_json(package_json_path);
+        }
         let preserve_trailing_newline = !package_json.source.contents.is_empty()
             && *package_json.source.contents.last().unwrap() == b'\n';
 

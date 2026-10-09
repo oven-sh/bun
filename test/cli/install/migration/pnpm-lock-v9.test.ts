@@ -2906,6 +2906,25 @@ snapshots:
       expect(bunLock).toContain(`"no-deps@1.0.1"`);
     });
 
+    // 0 bytes are what a writer that stopped between truncating package.json and writing it
+    // leaves. The catalog must not be moved into that file: the file would parse again, as a
+    // project without dependencies.
+    test("a package.json of 0 bytes is reported and the catalog is not moved into it", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-catalog-default"),
+      });
+      await Bun.write(join(packageDir, "package.json"), "");
+
+      const { stderr, exitCode } = await run(packageDir, "install");
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).toContain("package.json': file is empty");
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(join(packageDir, "package.json")).text()).toBe("");
+      expect(existsSync(join(packageDir, "bun.lock"))).toBe(false);
+    });
+
     // pnpm/pnpm#10456: `pnpm remove` can drop the catalogs: section while importers still say catalog:
     test.concurrent("importer catalog: reference without a catalogs: section is reported", async () => {
       using dir = fixture("v9-catalog-default");

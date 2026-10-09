@@ -5378,6 +5378,205 @@ describe.concurrent("bun-install", () => {
     }
   });
 
+  // A writer that stops between truncating package.json and writing it leaves 0 bytes, and 0
+  // bytes parse as `{}`. An install from `{}` removes every dependency from the lockfile beside
+  // it, or deletes that lockfile. So with a lockfile there, a command that installs stops.
+  describe.concurrent("root package.json of 0 bytes", () => {
+    const FILES = {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { a: "file:./a", b: "file:./b" } }),
+      "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "c/package.json": JSON.stringify({ name: "c", version: "1.0.0" }),
+    };
+    const FILE_IS_EMPTY = [
+      "error: failed to parse '<dir>/package.json': file is empty",
+      "note: Restore package.json, or write {} to it to start without dependencies",
+    ].join("\n");
+
+    // `bun link` keeps its registrations in the global directory.
+    const envFor = (dir: string) => ({
+      ...env,
+      BUN_INSTALL: join(dir, ".bun"),
+      BUN_INSTALL_GLOBAL_DIR: join(dir, ".bun", "global"),
+    });
+
+    async function run(cwd: string, dir: string, ...cmd: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd,
+        env: envFor(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { cmd, stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+
+    // Installs `a` and `b`, registers `c` for `bun link c`, and returns bun.lock.
+    async function installed(dir: string) {
+      expect(await run(dir, dir, "install")).toMatchObject({ exitCode: 0 });
+      expect(await run(join(dir, "c"), dir, "link")).toMatchObject({ exitCode: 0 });
+      const lockfile = await file(join(dir, "bun.lock")).text();
+      expect(lockfile).toContain('"a@file:a"');
+      expect(lockfile).toContain('"b@file:b"');
+      return lockfile;
+    }
+
+    const state = async (dir: string) => ({
+      packageJson: await file(join(dir, "package.json")).text(),
+      lockfile: (await exists(join(dir, "bun.lock"))) ? await file(join(dir, "bun.lock")).text() : null,
+      installed: (await readdirSorted(join(dir, "node_modules"))).filter(name => !name.startsWith(".")),
+    });
+
+    for (const command of [
+      ["install"],
+      ["install", "--lockfile-only"],
+      ["install", "--frozen-lockfile"],
+      ["install", "./c"],
+      ["add", "./c"],
+      ["add", "./c", "--filter", "."],
+      ["link", "c"],
+      ["link", "c", "--save"],
+      ["update"],
+      ["update", "a"],
+      ["patch", "a"],
+    ]) {
+      it(`bun ${command.join(" ")} beside a bun.lock stops and changes nothing`, async () => {
+        using tmp = tempDir("empty-root-package-json", FILES);
+        const dir = String(tmp);
+        const lockfile = await installed(dir);
+        await writeFile(join(dir, "package.json"), "");
+
+        const { stderr, exitCode } = await run(dir, dir, ...command);
+        expect({ stderr, exitCode, ...(await state(dir)) }).toEqual({
+          stderr: FILE_IS_EMPTY,
+          exitCode: 1,
+          packageJson: "",
+          lockfile,
+          installed: ["a", "b"],
+        });
+      });
+    }
+
+    // Without a lockfile nothing is pinned, and an empty file is a project that has not started.
+    it("bun install without a lockfile installs nothing and exits 0", async () => {
+      using tmp = tempDir("empty-root-package-json", { ...FILES, "package.json": "" });
+      const dir = String(tmp);
+      const { stderr, exitCode } = await run(dir, dir, "install");
+      expect({ stderr, exitCode, lockfile: await exists(join(dir, "bun.lock")) }).toEqual({
+        stderr: "No packages! Deleted empty lockfile",
+        exitCode: 0,
+        lockfile: false,
+      });
+    });
+
+    it("bun add without a lockfile puts the dependency into the empty file", async () => {
+      using tmp = tempDir("empty-root-package-json", { ...FILES, "package.json": "" });
+      const dir = String(tmp);
+      const { stderr, exitCode } = await run(dir, dir, "add", "./c");
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+      expect(await file(join(dir, "package.json")).json()).toEqual({ dependencies: { c: "./c" } });
+      expect(await file(join(dir, "bun.lock")).text()).toContain('"c@file:c"');
+    });
+
+    // `{}` is what the user wrote: a project without dependencies.
+    it("bun install with {} beside a bun.lock deletes the lockfile", async () => {
+      using tmp = tempDir("empty-root-package-json", FILES);
+      const dir = String(tmp);
+      await installed(dir);
+      await writeFile(join(dir, "package.json"), "{}");
+
+      const { stderr, exitCode } = await run(dir, dir, "install");
+      const { packageJson, lockfile } = await state(dir);
+      expect({ stderr, exitCode, packageJson, lockfile }).toEqual({
+        stderr: "No packages! Deleted empty lockfile",
+        exitCode: 0,
+        packageJson: "{}",
+        lockfile: null,
+      });
+    });
+
+    // Another package manager's lockfile pins the same dependencies.
+    it("bun install beside a package-lock.json that migrates stops and writes no bun.lock", async () => {
+      const packageLock = JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "foo", version: "0.0.1", dependencies: { a: "file:./a" } },
+          "a": { version: "1.0.0" },
+          "node_modules/a": { resolved: "a", link: true },
+        },
+      });
+      using tmp = tempDir("empty-root-package-json", {
+        ...FILES,
+        "package.json": "",
+        "package-lock.json": packageLock,
+      });
+      const dir = String(tmp);
+      const { stderr, exitCode } = await run(dir, dir, "install");
+      expect(stderr).toContain("migrated lockfile from package-lock.json");
+      expect(stderr).toEndWith(FILE_IS_EMPTY);
+      expect(exitCode).toBe(1);
+      expect(await exists(join(dir, "bun.lock"))).toBe(false);
+      expect(await file(join(dir, "package-lock.json")).text()).toBe(packageLock);
+    });
+
+    // A bun.lock that does not load is still the project's lockfile, and the install would
+    // replace it.
+    it("bun install beside a bun.lock that does not parse stops and keeps it", async () => {
+      using tmp = tempDir("empty-root-package-json", { ...FILES, "package.json": "", "bun.lock": "not a lockfile" });
+      const dir = String(tmp);
+      const { stderr, exitCode } = await run(dir, dir, "install");
+      expect(stderr).toEndWith(FILE_IS_EMPTY);
+      expect(exitCode).toBe(1);
+      expect(await file(join(dir, "bun.lock")).text()).toBe("not a lockfile");
+    });
+  });
+
+  // A workspace member needs a name, so a member manifest of 0 bytes fails before anything is
+  // installed. Pinned here because it is the same kind of file.
+  it("a workspace member package.json of 0 bytes fails on the missing name and keeps bun.lock", async () => {
+    using dir = tempDir("empty-workspace-member", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/foo/package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:../../dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    await using first = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [firstStdout, firstStderr, firstExitCode] = await Promise.all([
+      first.stdout.text(),
+      first.stderr.text(),
+      first.exited,
+    ]);
+    expect(firstExitCode, `bun install --lockfile-only failed: ${firstStdout}${firstStderr}`).toBe(0);
+    const lockfileBefore = await file(join(String(dir), "bun.lock")).text();
+    expect(lockfileBefore).toContain('"dep"');
+
+    await writeFile(join(String(dir), "packages", "foo", "package.json"), "");
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toStartWith("bun install v1.");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+      ['error: Missing "name" from package.json in packages/foo/package.json', "    at <dir>/package.json"].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfileBefore);
+  });
+
   test.serial("should report error on invalid format for dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

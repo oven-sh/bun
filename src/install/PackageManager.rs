@@ -196,7 +196,7 @@ pub use self::command_line_arguments::CommandLineArguments;
 pub use self::package_manager_options::Options;
 // `PackageJSONEditor` is a module-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
-pub use self::install_with_manager::install_with_manager;
+pub use self::install_with_manager::{exit_on_empty_package_json, install_with_manager};
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;

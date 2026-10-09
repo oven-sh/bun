@@ -2354,6 +2354,11 @@ fn update_package_json_after_migration(
         Err(_) => return Ok(()),
     };
 
+    // Nothing is moved into a truncated package.json. The install reports the file.
+    if root_pkg_json.was_read_empty() {
+        return Ok(());
+    }
+
     let mut json = root_pkg_json.root;
     if !json.is_object() {
         return Ok(());

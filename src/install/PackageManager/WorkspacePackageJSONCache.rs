@@ -23,6 +23,9 @@ pub struct MapEntry {
     pub source: Source,
     pub indentation: Indentation,
     indentation_guessed: bool,
+    /// The file had no bytes when it was read. Editors replace `source.contents`; nothing
+    /// replaces this.
+    read_empty: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
@@ -49,6 +52,7 @@ impl Default for MapEntry {
             source: Source::default(),
             indentation: Indentation::default(),
             indentation_guessed: false,
+            read_empty: false,
             _path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
             stale_contents: Vec::new(),
@@ -57,6 +61,12 @@ impl Default for MapEntry {
 }
 
 impl MapEntry {
+    /// A 0-byte file parses as `{}`. It is what a writer that stopped between truncating the
+    /// file and writing it leaves behind.
+    pub fn was_read_empty(&self) -> bool {
+        self.read_empty
+    }
+
     /// Re-parse `self.source.contents` into `self.root`.
     ///
     /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
@@ -195,6 +205,7 @@ impl WorkspacePackageJSONCache {
 
         let value = MapEntry {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            read_empty: source.contents.is_empty(),
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
